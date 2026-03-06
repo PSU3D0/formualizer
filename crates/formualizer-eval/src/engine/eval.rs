@@ -1324,7 +1324,27 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
-        self.graph.define_name(name, definition, scope)
+        // 1. Run the graph definition (which now triggers the rescue above)
+        let result = self.graph.define_name(name, definition, scope);
+
+        // 2. Clear Evaluator state if successful
+        if result.is_ok() {
+            if let Ok(mut cache) = self.source_cache.write() {
+                // Ensure this matches exactly how names are stored in your cache
+                cache.scalars.clear();
+                cache.tables.clear();
+            }
+
+            // This is crucial for evaluate_all() to notice the change
+            self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+            self.invalidate_row_visibility_mask_cache();
+            println!(
+                "DEBUG: [Engine] Source cache cleared and epoch bumped for '{}'",
+                name
+            );
+        }
+
+        result
     }
 
     pub fn update_name(
@@ -3672,6 +3692,10 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
+        println!(
+            "DEBUG: set_cell_formula sheet:{} row: {}, col: {}, ast: {:?}",
+            sheet, row, col, ast
+        );
         let volatile = self.is_ast_volatile_with_provider(&ast);
         self.graph
             .set_cell_formula_with_volatility(sheet, row, col, ast, volatile)?;

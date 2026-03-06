@@ -7,6 +7,7 @@ pub enum EntityKind {
     Sheet,
     NamedRange,
     Table,
+    TableColumn,
     CustomFunction,
 }
 
@@ -21,22 +22,38 @@ pub struct TombstoneRegistry {
 impl TombstoneRegistry {
     /// Registers a vertex as "waiting" for a specific entity.
     pub fn register(&mut self, kind: EntityKind, name: &str, dependent: VertexId) {
-        self.pending
-            .entry((kind, name.to_string()))
-            .or_default()
-            .push(dependent);
+        let key = Self::make_key(kind, name);
+        self.pending.entry(key).or_default().push(dependent);
     }
 
-    /// Retrieves all vertices waiting for a specific entity and clears them.
-    /// This is called when the entity is created or renamed.
     pub fn take_dependents(&mut self, kind: EntityKind, name: &str) -> Vec<VertexId> {
-        self.pending
-            .remove(&(kind, name.to_string()))
-            .unwrap_or_default()
+        let key = Self::make_key(kind, name);
+        self.pending.remove(&key).unwrap_or_default()
     }
 
     /// Checks if any formulas are currently orphaned.
     pub fn has_orphans(&self) -> bool {
         !self.pending.is_empty()
+    }
+
+    /// Internal helper to create a consistent lookup key based on entity rules
+    fn make_key(kind: EntityKind, name: &str) -> (EntityKind, String) {
+        match kind {
+            EntityKind::NamedRange
+            | EntityKind::Table
+            | EntityKind::TableColumn
+            | EntityKind::Sheet => {
+                // These are all case-insensitive in Excel
+                (kind, name.to_uppercase())
+            }
+            _ => (kind, name.to_string()),
+        }
+    }
+
+    pub fn list_all_keys(&self) -> Vec<(EntityKind, String)> {
+        self.pending
+            .keys()
+            .cloned() // Assumes EntityKind and String are Clone
+            .collect()
     }
 }
