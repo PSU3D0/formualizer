@@ -1,56 +1,167 @@
 version: 1
 
-# Scenario-to-feature mapping used for fairness and support disclosure.
+# Scenario-to-feature mapping used for fairness, support disclosure, and claim safety.
+
+support_policies:
+  all_engines:
+    description: >-
+      Strong public tables require every engine in the selected comparison
+      profile to support the scenario without fallback.
+  profile_subset:
+    description: >-
+      Scenario is reportable only inside its declared comparison-profile subset,
+      and tables must name that subset explicitly.
+  explicit_caveat:
+    description: >-
+      Scenario is reportable only with explicit caveat labels and should not
+      anchor blanket public claims.
+
+claim_classes:
+  claim_safe_now:
+    description: >-
+      Strong public comparisons are allowed when correctness passes and no
+      fallback label is present.
+  claim_safe_with_caveats:
+    description: >-
+      Public reporting is allowed only with explicit scope, runtime, or support
+      caveats.
+  internal_only:
+    description: >-
+      Exploratory or advantage-biased scenario; exclude from strong public
+      comparison claims.
+
+caveat_labels:
+  fallback_path:
+    description: >-
+      Adapter used a fallback or import-rebuild path; disclose before using the
+      result in a comparison narrative.
+  unsupported_path:
+    description: >-
+      Adapter or runtime cannot execute the scenario on its intended surface.
+  execution_failure:
+    description: >-
+      Adapter execution failed before the scenario completed successfully.
+  correctness_failure:
+    description: >-
+      Correctness verification failed, so the row is ineligible for strong
+      comparison claims.
+  runtime_mode_difference:
+    description: >-
+      Scenario is only comparable in a subset of runtime modes.
+  parity_corpus_constraint:
+    description: >-
+      Runtime-parity views use a restricted scenario corpus and should not be
+      generalized beyond that subset.
+  whole_column_bias:
+    description: >-
+      Scenario leans on whole-column references or other engine-specific
+      strengths.
+  structural_edit_support:
+    description: >-
+      Structural operations are only comparable on engines that implement row or
+      sheet mutation semantics.
+  real_world_anchor_scope:
+    description: >-
+      Real workbook anchors should be scoped to the workbook class they
+      represent, not treated as universal workload coverage.
 
 scenarios:
   headline_100k_single_edit:
     functions: [MUL, SUM]
     features: [incremental_recalc, finite_ranges]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   chain_100k:
     functions: [ADD]
     features: [incremental_recalc]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   fanout_100k:
     functions: [MUL]
     features: [incremental_recalc]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   cross_sheet_mesh:
     functions: [ADD, MUL]
     features: [cross_sheet_refs]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   inc_sparse_dirty_region_1m:
     functions: [MUL, ADD, SUM]
     features: [incremental_recalc, sparse_locality, finite_ranges, large_row_span]
+    support_policy: explicit_caveat
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [runtime_mode_difference, parity_corpus_constraint]
   inc_cross_sheet_mesh_3x25k:
     functions: [ADD, MUL]
     features: [incremental_recalc, cross_sheet_refs, selective_cross_sheet_propagation]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   lookup_index_match_dense_50k:
     functions: [INDEX, MATCH]
     features: [cross_sheet_refs, exact_match_lookup, large_lookup_tables, text_keys]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   lookup_cross_sheet_dim_fact:
     functions: [INDEX, MATCH, MUL]
     features: [cross_sheet_refs, exact_match_lookup, dimension_joins, mixed_numeric_text_lanes]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   sparse_whole_column_refs:
     functions: [SUM]
     features: [whole_column_refs]
+    support_policy: explicit_caveat
+    claim_class: internal_only
+    caveat_labels: [whole_column_bias, runtime_mode_difference, parity_corpus_constraint]
   sumifs_fact_table_100k:
     functions: [SUMIFS, MUL]
     features: [text_criteria, whole_column_refs, cross_sheet_refs, mixed_numeric_text_lanes]
+    support_policy: profile_subset
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [whole_column_bias, runtime_mode_difference]
   agg_countifs_multi_criteria_100k:
     functions: [COUNTIFS]
     features: [text_criteria, numeric_criteria, finite_ranges, cross_sheet_refs, repeated_criteria_eval, mixed_numeric_text_lanes]
+    support_policy: all_engines
+    claim_class: claim_safe_now
+    caveat_labels: []
   agg_mixed_rollup_grid_2k_reports:
     functions: [SUMIFS, COUNTIFS, AVERAGEIFS, MUL]
     features: [text_criteria, finite_ranges, cross_sheet_refs, report_grid, multi_aggregate_reports, mixed_numeric_text_lanes]
+    support_policy: profile_subset
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [runtime_mode_difference]
   struct_row_insert_middle_50k_refs:
     functions: [MUL, SUM]
     features: [structural_edits, row_insert_rewrite, finite_ranges, formula_dense_sheet]
+    support_policy: profile_subset
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [structural_edit_support, runtime_mode_difference]
   struct_sheet_rename_rebind:
     functions: [MUL, SUM, ADD]
     features: [structural_edits, sheet_rename_rebind, cross_sheet_refs]
+    support_policy: profile_subset
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [structural_edit_support, runtime_mode_difference]
   structural_sheet_recovery:
     functions: [REF]
     features: [structural_edits, sheet_remove_recreate, cross_sheet_refs]
+    support_policy: profile_subset
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [structural_edit_support, runtime_mode_difference]
   real_finance_model_v1:
     functions: [SUMIFS, XLOOKUP, IF, INDEX, MATCH]
     features: [xlsx_io, mixed_refs, cross_sheet_refs]
+    support_policy: explicit_caveat
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [real_world_anchor_scope, parity_corpus_constraint, runtime_mode_difference]
 
 # Adapter support declaration can be generated dynamically by adapters,
 # but this static template helps track expected support intent.

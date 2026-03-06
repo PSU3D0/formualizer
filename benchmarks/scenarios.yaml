@@ -4,12 +4,89 @@ suite: formualizer-benchmark-v1
 profiles:
   core:
     description: >-
-      Cross-engine compatibility profile (arithmetic, aggregates, finite ranges,
-      simple cross-sheet references).
+      Broad comparison profile for scenarios intended to support recurring
+      cross-engine claims when support-policy requirements are satisfied.
   formualizer_strength:
     description: >-
-      Formualizer-advantaged profile (whole-column refs, dynamic-ish dependency
-      stress, structural edit resilience).
+      Formualizer-advantaged or edit-capable profile. Report only inside named
+      comparison-profile subsets and with explicit caveat labels.
+
+families:
+  incremental_locality:
+    description: >-
+      Value-edit incremental workloads emphasizing dirty-region containment and
+      sparse locality.
+  chain_topology:
+    description: >-
+      Dependency-shape workloads emphasizing chain depth, fan-out, and
+      cross-sheet topology.
+  lookup_dimension_join:
+    description: >-
+      Lookup workloads and dimension/fact joins using broadly supported
+      exact-match formulas.
+  aggregate_analytics:
+    description: >-
+      Repeated report aggregates and report-grid style analytics.
+  structural_edit:
+    description: >-
+      Sheet or row mutation workloads that test formula rewrite and dependency
+      recovery behavior.
+  real_world_anchor:
+    description: >-
+      Curated real XLSX anchors used to ground synthetic results in
+      workbook-shaped reality.
+  nightly_stress:
+    description: >-
+      Scale-biased or engine-advantaged stress workloads reserved for caveated
+      or nightly reporting.
+
+tiers:
+  pr_smoke:
+    description: Fast regression subset expected to stay runnable on PRs.
+  comparative:
+    description: Routine comparative subset for recurring multi-engine runs.
+  nightly_heavy:
+    description: Large or slower workloads reserved for scheduled execution.
+
+comparison_profiles:
+  core_smoke:
+    description: >-
+      Fast claim-safe subset for PR correctness and regression checks.
+  core_comparative:
+    description: >-
+      Broad native-best comparisons across the core scenario profile.
+  runtime_parity_core:
+    description: >-
+      Hosted runtime view restricted to intentionally parity-friendly core
+      scenarios.
+  native_strength:
+    description: >-
+      Native-best view for formualizer-strength and structural scenarios with
+      explicit caveats.
+  nightly_scale:
+    description: >-
+      Scheduled heavy runs; not a public parity claim on its own.
+
+runtime_modes:
+  native_best:
+    description: Best available engine or runtime path for each adapter.
+  runtime_parity:
+    description: >-
+      Hosted runtime view constrained to comparable runtime surfaces.
+
+regression_gates:
+  - headline_100k_single_edit
+  - chain_100k
+  - agg_countifs_multi_criteria_100k
+  - real_finance_model_v1
+
+claim_safety:
+  strong_public_comparison_requires:
+    - correctness_passed
+    - no_fallback_note
+    - scenario_metadata_complete
+    - approved_comparison_profile
+    - support_policy_satisfied
 
 engines:
   - id: formualizer_rust_native
@@ -30,6 +107,11 @@ scenarios:
   - id: headline_100k_single_edit
     name: 100k workbook single-cell incremental recalc
     profile: core
+    family: incremental_locality
+    tier: pr_smoke
+    comparison_profiles: [core_smoke, core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: true
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -76,6 +158,11 @@ scenarios:
   - id: chain_100k
     name: Linear dependency chain depth stress
     profile: core
+    family: chain_topology
+    tier: pr_smoke
+    comparison_profiles: [core_smoke, core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: true
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -110,6 +197,11 @@ scenarios:
   - id: fanout_100k
     name: Massive fan-out single source
     profile: core
+    family: chain_topology
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -142,6 +234,11 @@ scenarios:
   - id: cross_sheet_mesh
     name: Cross-sheet dependency mesh
     profile: core
+    family: chain_topology
+    tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -183,7 +280,10 @@ scenarios:
     name: Sparse dirty-region locality (1M-row span)
     profile: core
     family: incremental_locality
-    tier: comparative
+    tier: nightly_heavy
+    comparison_profiles: [nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -243,6 +343,9 @@ scenarios:
     profile: core
     family: incremental_locality
     tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -298,8 +401,11 @@ scenarios:
   - id: lookup_index_match_dense_50k
     name: Dense INDEX/MATCH lookup mesh (50k table)
     profile: core
-    family: lookup
+    family: lookup_dimension_join
     tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -359,8 +465,11 @@ scenarios:
   - id: lookup_cross_sheet_dim_fact
     name: Cross-sheet dimension/fact INDEX/MATCH join
     profile: core
-    family: lookup
+    family: lookup_dimension_join
     tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -428,6 +537,11 @@ scenarios:
   - id: sparse_whole_column_refs
     name: Sparse sheet with whole-column refs
     profile: formualizer_strength
+    family: nightly_stress
+    tier: nightly_heavy
+    comparison_profiles: [native_strength, nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -464,8 +578,11 @@ scenarios:
   - id: sumifs_fact_table_100k
     name: SUMIFS fact-table stress (100k rows, text+numeric lanes)
     profile: formualizer_strength
-    family: aggregate
+    family: aggregate_analytics
     tier: comparative
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -528,8 +645,11 @@ scenarios:
   - id: agg_countifs_multi_criteria_100k
     name: COUNTIFS multi-criteria fact-table stress (100k rows)
     profile: core
-    family: aggregate
+    family: aggregate_analytics
     tier: comparative
+    comparison_profiles: [core_comparative, runtime_parity_core]
+    runtime_modes: [native_best, runtime_parity]
+    regression_gate: true
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -593,8 +713,11 @@ scenarios:
   - id: agg_mixed_rollup_grid_2k_reports
     name: Mixed aggregate report-grid (500 rows x 4 measures over 10k facts)
     profile: core
-    family: aggregate
+    family: aggregate_analytics
     tier: comparative
+    comparison_profiles: [core_comparative]
+    runtime_modes: [native_best]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -669,6 +792,9 @@ scenarios:
     profile: formualizer_strength
     family: structural_edit
     tier: comparative
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -749,6 +875,9 @@ scenarios:
     profile: formualizer_strength
     family: structural_edit
     tier: comparative
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -953,6 +1082,9 @@ scenarios:
     profile: formualizer_strength
     family: structural_edit
     tier: pr_smoke
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
     source:
       kind: generated
       generator: umya_formualizer_workbook
@@ -994,6 +1126,11 @@ scenarios:
   - id: real_finance_model_v1
     name: Real XLSX anchor (finance model)
     profile: core
+    family: real_world_anchor
+    tier: nightly_heavy
+    comparison_profiles: [nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: true
     source:
       kind: file
       workbook_path: benchmarks/corpus/real/finance_model_v1.xlsx
@@ -1035,6 +1172,12 @@ reporting:
     - json
     - markdown
   summary_tables:
-    - headline_incremental_100k
-    - core_profile_comparison
-    - formualizer_strength_profile
+    - regression_gate_shortlist
+    - core_claim_safe_by_family
+    - runtime_parity_core
+    - native_strength_caveated
+    - nightly_scale_watchlist
+  default_group_by:
+    - family
+    - tier
+  claim_matrix_doc: benchmarks/reporting.md
