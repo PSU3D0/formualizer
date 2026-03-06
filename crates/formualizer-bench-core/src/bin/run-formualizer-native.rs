@@ -132,7 +132,7 @@ fn run() -> Result<()> {
         }
     }
 
-    let correctness = verify_correctness(&mut wb, scenario)?;
+    let correctness = verify_correctness(&mut wb, scenario, &root)?;
     let status = if correctness.passed { "ok" } else { "invalid" }.to_string();
 
     let result = BenchmarkResult {
@@ -247,13 +247,16 @@ fn parse_cell_ref(cell_ref: &str) -> Result<(String, u32, u32)> {
 fn verify_correctness(
     wb: &mut formualizer_workbook::Workbook,
     scenario: &formualizer_bench_core::Scenario,
+    root: &Path,
 ) -> Result<CorrectnessResult> {
     use formualizer_workbook::LiteralValue;
 
     let mut mismatches = 0u64;
     let mut details = Vec::new();
+    let expected_values = scenario.verify.expected_values(root)?;
+    let formula_checks = scenario.verify.formula_checks(root)?;
 
-    for (cell_ref, expected) in &scenario.verify.expected {
+    for (cell_ref, expected) in &expected_values {
         let (sheet, row, col) = parse_cell_ref(cell_ref)?;
         let actual = wb
             .evaluate_cell(&sheet, row, col)
@@ -286,7 +289,7 @@ fn verify_correctness(
         }
     }
 
-    for check in &scenario.verify.formula_checks {
+    for check in &formula_checks {
         if check.check_type == "non_error" {
             let (sheet, row, col) = parse_cell_ref(&check.cell)?;
             let actual = wb

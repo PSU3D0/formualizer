@@ -67,6 +67,7 @@ A scenario row is eligible for a strong public comparison only when all of the f
 | `struct_sheet_rename_rebind` | `structural_edit` | `comparative` | `formualizer_strength` | `native_strength` | `native_best` | no |
 | `structural_sheet_recovery` | `structural_edit` | `pr_smoke` | `formualizer_strength` | `native_strength` | `native_best` | no |
 | `real_finance_model_v1` | `real_world_anchor` | `nightly_heavy` | `core` | `nightly_scale` | `native_best` | yes |
+| `real_ops_model_v1` | `real_world_anchor` | `nightly_heavy` | `core` | `nightly_scale` | `native_best` | no |
 
 ## Support And Claim Matrix
 
@@ -88,6 +89,7 @@ A scenario row is eligible for a strong public comparison only when all of the f
 | `struct_sheet_rename_rebind` | `profile_subset` | `claim_safe_with_caveats` | `structural_edit_support`, `runtime_mode_difference` |
 | `structural_sheet_recovery` | `profile_subset` | `claim_safe_with_caveats` | `structural_edit_support`, `runtime_mode_difference` |
 | `real_finance_model_v1` | `explicit_caveat` | `claim_safe_with_caveats` | `real_world_anchor_scope`, `parity_corpus_constraint`, `runtime_mode_difference` |
+| `real_ops_model_v1` | `explicit_caveat` | `claim_safe_with_caveats` | `real_world_anchor_scope`, `parity_corpus_constraint`, `runtime_mode_difference` |
 
 ## Nightly Scale Strategy
 
@@ -102,6 +104,7 @@ Current nightly-scale watchlist:
 - `inc_sparse_dirty_region_1m`
 - `sparse_whole_column_refs`
 - `real_finance_model_v1`
+- `real_ops_model_v1`
 
 ## Runtime-Parity Selection
 
@@ -128,6 +131,7 @@ Do not force these into runtime-parity reports unless they are explicitly reclas
 - `struct_sheet_rename_rebind`
 - `structural_sheet_recovery`
 - `real_finance_model_v1`
+- `real_ops_model_v1`
 
 ## Regression Gate Shortlist
 

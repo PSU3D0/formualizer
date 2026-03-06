@@ -147,7 +147,7 @@ fn run() -> Result<()> {
         }
     }
 
-    let correctness = verify_correctness(&model, scenario)?;
+    let correctness = verify_correctness(&model, scenario, &root)?;
     let status = if correctness.passed { "ok" } else { "invalid" }.to_string();
 
     let result = BenchmarkResult {
@@ -862,11 +862,14 @@ fn is_ironcalc_error_text(s: &str) -> bool {
 fn verify_correctness(
     model: &ironcalc::base::Model<'_>,
     scenario: &Scenario,
+    root: &Path,
 ) -> Result<CorrectnessResult> {
     let mut mismatches = 0u64;
     let mut details = Vec::new();
+    let expected_values = scenario.verify.expected_values(root)?;
+    let formula_checks = scenario.verify.formula_checks(root)?;
 
-    for (cell_ref, expected) in &scenario.verify.expected {
+    for (cell_ref, expected) in &expected_values {
         let (sheet_name, row, col) = parse_cell_ref(cell_ref)?;
         let sheet = sheet_index_by_name(model, &sheet_name)?;
         let actual = model
@@ -900,7 +903,7 @@ fn verify_correctness(
         }
     }
 
-    for check in &scenario.verify.formula_checks {
+    for check in &formula_checks {
         if check.check_type == "non_error" {
             let (sheet_name, row, col) = parse_cell_ref(&check.cell)?;
             let sheet = sheet_index_by_name(model, &sheet_name)?;

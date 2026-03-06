@@ -42,7 +42,8 @@ cargo run -p formualizer-bench-core --features xlsx --bin generate-corpus -- \
 - `agg_countifs_multi_criteria_100k` is the claim-safe aggregate/report regression scenario.
 - `agg_mixed_rollup_grid_2k_reports` is the broader native-best report-grid aggregate scenario.
 - `struct_row_insert_middle_50k_refs` and `struct_sheet_rename_rebind` anchor structural-edit reporting with explicit caveats.
-- `real_finance_model_v1` is the real-world anchor used for scheduled realism checks.
+- `real_finance_model_v1` is the real-world finance anchor used for scheduled realism checks.
+- `real_ops_model_v1` adds a service-operations anchor with lookup-driven work orders and dashboard rollups.
 
 ## Design split
 

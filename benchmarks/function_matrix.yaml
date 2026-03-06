@@ -157,8 +157,14 @@ scenarios:
     claim_class: claim_safe_with_caveats
     caveat_labels: [structural_edit_support, runtime_mode_difference]
   real_finance_model_v1:
-    functions: [SUMIFS, XLOOKUP, IF, INDEX, MATCH]
-    features: [xlsx_io, mixed_refs, cross_sheet_refs]
+    functions: [INDEX, MATCH, IF, SUMIFS, MIN, SUM]
+    features: [xlsx_io, cross_sheet_refs, assumptions_drivers, annual_rollups, recursive_balance_schedule]
+    support_policy: explicit_caveat
+    claim_class: claim_safe_with_caveats
+    caveat_labels: [real_world_anchor_scope, parity_corpus_constraint, runtime_mode_difference]
+  real_ops_model_v1:
+    functions: [INDEX, MATCH, IF, SUMIFS, COUNTIFS, SUM, MAX]
+    features: [xlsx_io, cross_sheet_refs, lookup_tables, dashboard_rollups, assumptions_drivers, mixed_numeric_text_lanes]
     support_policy: explicit_caveat
     claim_class: claim_safe_with_caveats
     caveat_labels: [real_world_anchor_scope, parity_corpus_constraint, runtime_mode_difference]

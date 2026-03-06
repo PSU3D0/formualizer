@@ -794,8 +794,520 @@ fn generate_scenario(output: &Path, s: &Scenario) -> Result<()> {
             });
             Ok(())
         }
+        "real_finance_model_v1" => generate_real_finance_model_v1(output),
+        "real_ops_model_v1" => generate_real_ops_model_v1(output),
         other => bail!("no generator implemented for scenario id: {other}"),
     }
+}
+
+#[cfg(feature = "xlsx")]
+fn generate_real_finance_model_v1(output: &Path) -> Result<()> {
+    use formualizer_testkit::write_workbook;
+
+    let segments = [
+        ("Enterprise", 120.0, 5.0, 2_500.0, 0.34),
+        ("SMB", 420.0, 12.0, 950.0, 0.46),
+        ("Services", 60.0, 2.0, 4_200.0, 0.58),
+    ];
+
+    write_workbook(output, |book| {
+        let _ = book.new_sheet("Assumptions");
+        let _ = book.new_sheet("Forecast");
+        let _ = book.new_sheet("Summary");
+
+        let assumptions = book
+            .get_sheet_by_name_mut("Assumptions")
+            .expect("Assumptions exists");
+        assumptions.get_cell_mut((1, 2)).set_value("Driver");
+        assumptions.get_cell_mut((3, 2)).set_value("Value");
+        assumptions.get_cell_mut((1, 4)).set_value("TaxRate");
+        assumptions.get_cell_mut((3, 4)).set_value_number(0.24);
+        assumptions.get_cell_mut((1, 5)).set_value("OpexRatio");
+        assumptions.get_cell_mut((3, 5)).set_value_number(0.18);
+        assumptions.get_cell_mut((1, 6)).set_value("CapexRatio");
+        assumptions.get_cell_mut((3, 6)).set_value_number(0.05);
+        assumptions
+            .get_cell_mut((1, 7))
+            .set_value("WorkingCapitalRatio");
+        assumptions.get_cell_mut((3, 7)).set_value_number(0.02);
+        assumptions.get_cell_mut((1, 8)).set_value("StartingCash");
+        assumptions.get_cell_mut((3, 8)).set_value_number(150_000.0);
+        assumptions.get_cell_mut((1, 9)).set_value("DebtPrincipal");
+        assumptions.get_cell_mut((3, 9)).set_value_number(600_000.0);
+        assumptions
+            .get_cell_mut((1, 10))
+            .set_value("AnnualInterestRate");
+        assumptions.get_cell_mut((3, 10)).set_value_number(0.06);
+        assumptions
+            .get_cell_mut((1, 11))
+            .set_value("MonthlyPrincipalPaydown");
+        assumptions.get_cell_mut((3, 11)).set_value_number(25_000.0);
+        assumptions
+            .get_cell_mut((1, 12))
+            .set_value("Year2PriceUplift");
+        assumptions.get_cell_mut((3, 12)).set_value_number(0.015);
+        assumptions.get_cell_mut((1, 15)).set_value("Segment");
+        assumptions.get_cell_mut((2, 15)).set_value("BaseUnits");
+        assumptions
+            .get_cell_mut((3, 15))
+            .set_value("MonthlyUnitAdd");
+        assumptions.get_cell_mut((4, 15)).set_value("UnitPrice");
+        assumptions.get_cell_mut((5, 15)).set_value("CostPct");
+        for (idx, (segment, base_units, monthly_add, unit_price, cost_pct)) in
+            segments.iter().enumerate()
+        {
+            let row = idx as u32 + 16;
+            assumptions.get_cell_mut((1, row)).set_value(*segment);
+            assumptions
+                .get_cell_mut((2, row))
+                .set_value_number(*base_units);
+            assumptions
+                .get_cell_mut((3, row))
+                .set_value_number(*monthly_add);
+            assumptions
+                .get_cell_mut((4, row))
+                .set_value_number(*unit_price);
+            assumptions
+                .get_cell_mut((5, row))
+                .set_value_number(*cost_pct);
+        }
+
+        let forecast = book
+            .get_sheet_by_name_mut("Forecast")
+            .expect("Forecast exists");
+        for (col, label) in [
+            (1_u32, "Month"),
+            (2, "FiscalYear"),
+            (3, "Quarter"),
+            (4, "Enterprise"),
+            (5, "EnterpriseRevenue"),
+            (6, "EnterpriseGrossProfit"),
+            (7, "SMB"),
+            (8, "SMBRevenue"),
+            (9, "SMBGrossProfit"),
+            (10, "Services"),
+            (11, "ServicesRevenue"),
+            (12, "ServicesGrossProfit"),
+            (13, "TotalRevenue"),
+            (14, "GrossProfit"),
+            (15, "Opex"),
+            (16, "EBITDA"),
+            (17, "Capex"),
+            (18, "WorkingCapital"),
+            (19, "Interest"),
+            (20, "Principal"),
+            (21, "EndingDebt"),
+            (22, "PretaxCash"),
+            (23, "Taxes"),
+            (24, "NetCash"),
+            (25, "EndingCash"),
+        ] {
+            forecast.get_cell_mut((col, 1)).set_value(label);
+        }
+
+        for month in 1..=24_u32 {
+            let row = month + 1;
+            let fiscal_year = if month <= 12 { 2026 } else { 2027 };
+            let quarter = format!("Q{}", ((month - 1) % 12) / 3 + 1);
+
+            forecast
+                .get_cell_mut((1, row))
+                .set_value_number(month as f64);
+            forecast
+                .get_cell_mut((2, row))
+                .set_value_number(fiscal_year as f64);
+            forecast.get_cell_mut((3, row)).set_value(quarter);
+
+            for (units_col, revenue_col, gp_col, segment_col) in [
+                (4_u32, 5_u32, 6_u32, 'D'),
+                (7, 8, 9, 'G'),
+                (10, 11, 12, 'J'),
+            ] {
+                if month == 1 {
+                    forecast.get_cell_mut((units_col, row)).set_formula(format!(
+                        "=INDEX(Assumptions!$B$16:$B$18,MATCH({segment_col}$1,Assumptions!$A$16:$A$18,0))"
+                    ));
+                } else {
+                    forecast.get_cell_mut((units_col, row)).set_formula(format!(
+                        "={segment_col}{prev}+INDEX(Assumptions!$C$16:$C$18,MATCH({segment_col}$1,Assumptions!$A$16:$A$18,0))",
+                        prev = row - 1,
+                    ));
+                }
+
+                forecast.get_cell_mut((revenue_col, row)).set_formula(format!(
+                    "={segment_col}{row}*INDEX(Assumptions!$D$16:$D$18,MATCH({segment_col}$1,Assumptions!$A$16:$A$18,0))*IF($B{row}=2026,1,1+Assumptions!$C$12)"
+                ));
+                forecast.get_cell_mut((gp_col, row)).set_formula(format!(
+                    "={revenue_col_name}{row}*(1-INDEX(Assumptions!$E$16:$E$18,MATCH({segment_col}$1,Assumptions!$A$16:$A$18,0)))",
+                    revenue_col_name = match revenue_col {
+                        5 => "E",
+                        8 => "H",
+                        11 => "K",
+                        _ => unreachable!(),
+                    }
+                ));
+            }
+
+            forecast
+                .get_cell_mut((13, row))
+                .set_formula(format!("=SUM(E{row},H{row},K{row})"));
+            forecast
+                .get_cell_mut((14, row))
+                .set_formula(format!("=SUM(F{row},I{row},L{row})"));
+            forecast
+                .get_cell_mut((15, row))
+                .set_formula(format!("=M{row}*Assumptions!$C$5"));
+            forecast
+                .get_cell_mut((16, row))
+                .set_formula(format!("=N{row}-O{row}"));
+            forecast
+                .get_cell_mut((17, row))
+                .set_formula(format!("=M{row}*Assumptions!$C$6"));
+            forecast
+                .get_cell_mut((18, row))
+                .set_formula(format!("=M{row}*Assumptions!$C$7"));
+            if month == 1 {
+                forecast
+                    .get_cell_mut((19, row))
+                    .set_formula("=Assumptions!$C$9*Assumptions!$C$10/12");
+                forecast
+                    .get_cell_mut((20, row))
+                    .set_formula("=MIN(Assumptions!$C$11,Assumptions!$C$9)");
+                forecast
+                    .get_cell_mut((21, row))
+                    .set_formula("=Assumptions!$C$9-T2");
+                forecast
+                    .get_cell_mut((25, row))
+                    .set_formula("=Assumptions!$C$8+X2");
+            } else {
+                forecast
+                    .get_cell_mut((19, row))
+                    .set_formula(format!("=U{}*Assumptions!$C$10/12", row - 1));
+                forecast
+                    .get_cell_mut((20, row))
+                    .set_formula(format!("=MIN(Assumptions!$C$11,U{})", row - 1));
+                forecast
+                    .get_cell_mut((21, row))
+                    .set_formula(format!("=U{}-T{row}", row - 1));
+                forecast
+                    .get_cell_mut((25, row))
+                    .set_formula(format!("=Y{}+X{row}", row - 1));
+            }
+            forecast
+                .get_cell_mut((22, row))
+                .set_formula(format!("=P{row}-Q{row}-R{row}-S{row}"));
+            forecast
+                .get_cell_mut((23, row))
+                .set_formula(format!("=IF(V{row}>0,V{row}*Assumptions!$C$4,0)"));
+            forecast
+                .get_cell_mut((24, row))
+                .set_formula(format!("=V{row}-W{row}-T{row}"));
+        }
+
+        let summary = book
+            .get_sheet_by_name_mut("Summary")
+            .expect("Summary exists");
+        summary.get_cell_mut((1, 1)).set_value("Metric");
+        summary.get_cell_mut((2, 1)).set_value_number(2026.0);
+        summary.get_cell_mut((3, 1)).set_value_number(2027.0);
+        for (row, metric) in [
+            (2_u32, "Revenue"),
+            (3, "GrossProfit"),
+            (4, "EBITDA"),
+            (5, "Taxes"),
+            (6, "NetCash"),
+            (7, "EndingCash"),
+            (8, "DSCR"),
+            (9, "CovenantPass"),
+            (10, "EndingDebt"),
+            (11, "CashConversion"),
+        ] {
+            summary.get_cell_mut((1, row)).set_value(metric);
+        }
+
+        for (col, year_cell) in [(2_u32, 'B'), (3_u32, 'C')] {
+            summary.get_cell_mut((col, 2)).set_formula(format!(
+                "=SUMIFS(Forecast!$M$2:$M$25,Forecast!$B$2:$B$25,{year_cell}$1)"
+            ));
+            summary.get_cell_mut((col, 3)).set_formula(format!(
+                "=SUMIFS(Forecast!$N$2:$N$25,Forecast!$B$2:$B$25,{year_cell}$1)"
+            ));
+            summary.get_cell_mut((col, 4)).set_formula(format!(
+                "=SUMIFS(Forecast!$P$2:$P$25,Forecast!$B$2:$B$25,{year_cell}$1)"
+            ));
+            summary.get_cell_mut((col, 5)).set_formula(format!(
+                "=SUMIFS(Forecast!$W$2:$W$25,Forecast!$B$2:$B$25,{year_cell}$1)"
+            ));
+            summary.get_cell_mut((col, 6)).set_formula(format!(
+                "=SUMIFS(Forecast!$X$2:$X$25,Forecast!$B$2:$B$25,{year_cell}$1)"
+            ));
+            summary.get_cell_mut((col, 7)).set_formula(if col == 2 {
+                "=Forecast!Y13".to_string()
+            } else {
+                "=Forecast!Y25".to_string()
+            });
+            summary.get_cell_mut((col, 8)).set_formula(format!(
+                "=SUMIFS(Forecast!$P$2:$P$25,Forecast!$B$2:$B$25,{year_cell}$1)/(SUMIFS(Forecast!$S$2:$S$25,Forecast!$B$2:$B$25,{year_cell}$1)+SUMIFS(Forecast!$T$2:$T$25,Forecast!$B$2:$B$25,{year_cell}$1))"
+            ));
+            summary
+                .get_cell_mut((col, 9))
+                .set_formula(format!("=IF({year_cell}8>1.5,TRUE,FALSE)"));
+            summary.get_cell_mut((col, 10)).set_formula(if col == 2 {
+                "=Forecast!U13".to_string()
+            } else {
+                "=Forecast!U25".to_string()
+            });
+            summary
+                .get_cell_mut((col, 11))
+                .set_formula(format!("={year_cell}6/{year_cell}4"));
+        }
+    });
+
+    Ok(())
+}
+
+#[cfg(feature = "xlsx")]
+fn generate_real_ops_model_v1(output: &Path) -> Result<()> {
+    use formualizer_testkit::write_workbook;
+
+    let sites = ["Denver", "Phoenix", "Austin", "Boise"];
+    let queues = [
+        ("Install", "Field", 185.0, 92.0, 240.0),
+        ("BreakFix", "Rapid", 210.0, 110.0, 200.0),
+        ("Audit", "Compliance", 165.0, 80.0, 160.0),
+        ("Depot", "Bench", 140.0, 70.0, 180.0),
+    ];
+    let priorities = [
+        ("Critical", 4.0, 1.35),
+        ("Expedited", 8.0, 1.15),
+        ("Standard", 24.0, 1.0),
+    ];
+    let statuses = ["Open", "Scheduled", "Closed"];
+
+    write_workbook(output, |book| {
+        let _ = book.new_sheet("Assumptions");
+        let _ = book.new_sheet("QueueConfig");
+        let _ = book.new_sheet("PriorityConfig");
+        let _ = book.new_sheet("WorkOrders");
+        let _ = book.new_sheet("Dashboard");
+        let _ = book.new_sheet("Summary");
+
+        let assumptions = book
+            .get_sheet_by_name_mut("Assumptions")
+            .expect("Assumptions exists");
+        assumptions
+            .get_cell_mut((1, 4))
+            .set_value("BacklogTargetHours");
+        assumptions.get_cell_mut((3, 4)).set_value_number(160.0);
+        assumptions
+            .get_cell_mut((1, 5))
+            .set_value("EscalationThreshold");
+        assumptions.get_cell_mut((3, 5)).set_value_number(0.9);
+        assumptions
+            .get_cell_mut((1, 6))
+            .set_value("LaborCostInflator");
+        assumptions.get_cell_mut((3, 6)).set_value_number(1.08);
+
+        let queue_config = book
+            .get_sheet_by_name_mut("QueueConfig")
+            .expect("QueueConfig exists");
+        for (col, label) in [
+            (1_u32, "Queue"),
+            (2, "Team"),
+            (3, "BillRate"),
+            (4, "LaborRate"),
+            (5, "WeeklyCapacity"),
+        ] {
+            queue_config.get_cell_mut((col, 9)).set_value(label);
+        }
+        for (idx, (queue, team, bill_rate, labor_rate, capacity)) in queues.iter().enumerate() {
+            let row = idx as u32 + 10;
+            queue_config.get_cell_mut((1, row)).set_value(*queue);
+            queue_config.get_cell_mut((2, row)).set_value(*team);
+            queue_config
+                .get_cell_mut((3, row))
+                .set_value_number(*bill_rate);
+            queue_config
+                .get_cell_mut((4, row))
+                .set_value_number(*labor_rate);
+            queue_config
+                .get_cell_mut((5, row))
+                .set_value_number(*capacity);
+        }
+
+        let priority_config = book
+            .get_sheet_by_name_mut("PriorityConfig")
+            .expect("PriorityConfig exists");
+        for (col, label) in [
+            (1_u32, "Priority"),
+            (2, "ResponseHours"),
+            (3, "LaborMultiplier"),
+        ] {
+            priority_config.get_cell_mut((col, 17)).set_value(label);
+        }
+        for (idx, (priority, response_hours, multiplier)) in priorities.iter().enumerate() {
+            let row = idx as u32 + 18;
+            priority_config.get_cell_mut((1, row)).set_value(*priority);
+            priority_config
+                .get_cell_mut((2, row))
+                .set_value_number(*response_hours);
+            priority_config
+                .get_cell_mut((3, row))
+                .set_value_number(*multiplier);
+        }
+
+        let work_orders = book
+            .get_sheet_by_name_mut("WorkOrders")
+            .expect("WorkOrders exists");
+        for (col, label) in [
+            (1_u32, "OrderId"),
+            (2, "Site"),
+            (3, "Queue"),
+            (4, "Priority"),
+            (5, "Status"),
+            (6, "EstHours"),
+            (7, "MaterialCost"),
+            (8, "BillRate"),
+            (9, "LaborRate"),
+            (10, "LaborMultiplier"),
+            (11, "ResponseHours"),
+            (12, "BillableValue"),
+            (13, "LaborCost"),
+            (14, "GrossMargin"),
+            (15, "SLARisk"),
+            (16, "BacklogHours"),
+            (17, "Team"),
+        ] {
+            work_orders.get_cell_mut((col, 1)).set_value(label);
+        }
+
+        for i in 0..1_500_u32 {
+            let row = i + 2;
+            let site = sites[(i as usize) % sites.len()];
+            let queue_idx = ((i / 4) as usize) % queues.len();
+            let priority_idx = ((i / 16) as usize) % priorities.len();
+            let status_idx = ((i / 48) as usize) % statuses.len();
+            let queue = queues[queue_idx].0;
+            let priority = priorities[priority_idx].0;
+            let status = statuses[status_idx];
+            let est_hours = 2.0 + ((i % 8) * 2) as f64 + queue_idx as f64;
+            let material_cost = 40.0 + ((i % 9) * 15) as f64 + ((i % 4) * 5) as f64;
+
+            work_orders
+                .get_cell_mut((1, row))
+                .set_value(format!("WO{:05}", i + 1));
+            work_orders.get_cell_mut((2, row)).set_value(site);
+            work_orders.get_cell_mut((3, row)).set_value(queue);
+            work_orders.get_cell_mut((4, row)).set_value(priority);
+            work_orders.get_cell_mut((5, row)).set_value(status);
+            work_orders
+                .get_cell_mut((6, row))
+                .set_value_number(est_hours);
+            work_orders
+                .get_cell_mut((7, row))
+                .set_value_number(material_cost);
+            work_orders.get_cell_mut((8, row)).set_formula(format!(
+                "=INDEX(QueueConfig!$C$10:$C$13,MATCH(C{row},QueueConfig!$A$10:$A$13,0))"
+            ));
+            work_orders.get_cell_mut((9, row)).set_formula(format!(
+                "=INDEX(QueueConfig!$D$10:$D$13,MATCH(C{row},QueueConfig!$A$10:$A$13,0))"
+            ));
+            work_orders.get_cell_mut((10, row)).set_formula(format!(
+                "=INDEX(PriorityConfig!$C$18:$C$20,MATCH(D{row},PriorityConfig!$A$18:$A$20,0))*Assumptions!$C$6"
+            ));
+            work_orders.get_cell_mut((11, row)).set_formula(format!(
+                "=INDEX(PriorityConfig!$B$18:$B$20,MATCH(D{row},PriorityConfig!$A$18:$A$20,0))"
+            ));
+            work_orders
+                .get_cell_mut((12, row))
+                .set_formula(format!("=F{row}*H{row}"));
+            work_orders
+                .get_cell_mut((13, row))
+                .set_formula(format!("=F{row}*I{row}*J{row}"));
+            work_orders
+                .get_cell_mut((14, row))
+                .set_formula(format!("=L{row}-M{row}-G{row}"));
+            work_orders
+                .get_cell_mut((15, row))
+                .set_formula(format!("=IF(F{row}>K{row},1,0)"));
+            work_orders
+                .get_cell_mut((16, row))
+                .set_formula(format!("=IF(E{row}=\"Closed\",0,F{row})"));
+            work_orders.get_cell_mut((17, row)).set_formula(format!(
+                "=INDEX(QueueConfig!$B$10:$B$13,MATCH(C{row},QueueConfig!$A$10:$A$13,0))"
+            ));
+        }
+
+        let dashboard = book
+            .get_sheet_by_name_mut("Dashboard")
+            .expect("Dashboard exists");
+        for (col, label) in [
+            (1_u32, "Site"),
+            (2, "Queue"),
+            (3, "BacklogHours"),
+            (4, "OpenOrders"),
+            (5, "GrossMargin"),
+            (6, "SLARiskCount"),
+            (7, "Capacity"),
+            (8, "StaffingGap"),
+        ] {
+            dashboard.get_cell_mut((col, 1)).set_value(label);
+        }
+        let mut dashboard_row = 2_u32;
+        for site in sites {
+            for (queue, _, _, _, _) in queues {
+                dashboard.get_cell_mut((1, dashboard_row)).set_value(site);
+                dashboard.get_cell_mut((2, dashboard_row)).set_value(queue);
+                dashboard.get_cell_mut((3, dashboard_row)).set_formula(format!(
+                    "=SUMIFS(WorkOrders!$P$2:$P$1501,WorkOrders!$B$2:$B$1501,A{dashboard_row},WorkOrders!$C$2:$C$1501,B{dashboard_row})"
+                ));
+                dashboard.get_cell_mut((4, dashboard_row)).set_formula(format!(
+                    "=COUNTIFS(WorkOrders!$B$2:$B$1501,A{dashboard_row},WorkOrders!$C$2:$C$1501,B{dashboard_row},WorkOrders!$E$2:$E$1501,\"<>Closed\")"
+                ));
+                dashboard.get_cell_mut((5, dashboard_row)).set_formula(format!(
+                    "=SUMIFS(WorkOrders!$N$2:$N$1501,WorkOrders!$B$2:$B$1501,A{dashboard_row},WorkOrders!$C$2:$C$1501,B{dashboard_row})"
+                ));
+                dashboard.get_cell_mut((6, dashboard_row)).set_formula(format!(
+                    "=SUMIFS(WorkOrders!$O$2:$O$1501,WorkOrders!$B$2:$B$1501,A{dashboard_row},WorkOrders!$C$2:$C$1501,B{dashboard_row},WorkOrders!$E$2:$E$1501,\"<>Closed\")"
+                ));
+                dashboard.get_cell_mut((7, dashboard_row)).set_formula(format!(
+                    "=INDEX(QueueConfig!$E$10:$E$13,MATCH(B{dashboard_row},QueueConfig!$A$10:$A$13,0))"
+                ));
+                dashboard
+                    .get_cell_mut((8, dashboard_row))
+                    .set_formula(format!("=C{dashboard_row}-G{dashboard_row}"));
+                dashboard_row += 1;
+            }
+        }
+
+        let summary = book
+            .get_sheet_by_name_mut("Summary")
+            .expect("Summary exists");
+        summary.get_cell_mut((1, 2)).set_value("TotalBacklog");
+        summary
+            .get_cell_mut((2, 2))
+            .set_formula("=SUM(Dashboard!C2:C17)");
+        summary.get_cell_mut((1, 3)).set_value("TotalMargin");
+        summary
+            .get_cell_mut((2, 3))
+            .set_formula("=SUM(Dashboard!E2:E17)");
+        summary.get_cell_mut((1, 4)).set_value("TotalRisk");
+        summary
+            .get_cell_mut((2, 4))
+            .set_formula("=SUM(Dashboard!F2:F17)");
+        summary.get_cell_mut((1, 5)).set_value("WorstGap");
+        summary
+            .get_cell_mut((2, 5))
+            .set_formula("=MAX(Dashboard!H2:H17)");
+        summary
+            .get_cell_mut((1, 6))
+            .set_value("DenverInstallBacklog");
+        summary.get_cell_mut((2, 6)).set_formula("=Dashboard!C2");
+        summary.get_cell_mut((1, 7)).set_value("DenverDepotMargin");
+        summary.get_cell_mut((2, 7)).set_formula("=Dashboard!E5");
+    });
+
+    Ok(())
 }
 
 #[cfg(feature = "xlsx")]

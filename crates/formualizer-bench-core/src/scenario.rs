@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -73,12 +76,55 @@ pub struct FormulaCheck {
     pub check_type: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct VerifyFile {
+    #[serde(default)]
+    pub expected: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub formula_checks: Vec<FormulaCheck>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScenarioMetrics {
     #[serde(default)]
     pub primary: Vec<String>,
     #[serde(default)]
     pub secondary: Vec<String>,
+}
+
+impl Verify {
+    pub fn expected_values(&self, root: &Path) -> anyhow::Result<BTreeMap<String, Value>> {
+        let mut expected = self.load_verify_file(root)?.expected;
+        expected.extend(self.expected.clone());
+        Ok(expected)
+    }
+
+    pub fn formula_checks(&self, root: &Path) -> anyhow::Result<Vec<FormulaCheck>> {
+        let mut checks = self.load_verify_file(root)?.formula_checks;
+        checks.extend(self.formula_checks.clone());
+        Ok(checks)
+    }
+
+    fn load_verify_file(&self, root: &Path) -> anyhow::Result<VerifyFile> {
+        let Some(path) = self.expected_file.as_deref() else {
+            return Ok(VerifyFile::default());
+        };
+
+        let resolved = resolve_relative_path(root, path);
+        let raw = std::fs::read_to_string(&resolved)
+            .with_context(|| format!("failed reading verify file: {}", resolved.display()))?;
+        serde_yaml::from_str(&raw)
+            .with_context(|| format!("failed parsing verify file yaml: {}", resolved.display()))
+    }
+}
+
+fn resolve_relative_path(root: &Path, value: &str) -> PathBuf {
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
 }
 
 impl BenchmarkSuite {

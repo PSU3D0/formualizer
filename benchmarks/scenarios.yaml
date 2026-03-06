@@ -1158,6 +1158,94 @@ scenarios:
         - peak_rss_mb
         - load_ms
 
+  - id: real_finance_model_v1
+    name: "Real-world anchor: forecast finance model"
+    profile: core
+    family: real_world_anchor
+    tier: nightly_heavy
+    comparison_profiles: [nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: true
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/real/real_finance_model_v1.xlsx
+      notes: >-
+        Deterministically generated in-repo finance-style forecast workbook with
+        editable pricing assumptions, segment lookups, annual SUMIFS rollups,
+        and a recursive debt/cash schedule. No third-party workbook content.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Assumptions
+        row: 12
+        col: 3
+        value: 0.035
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Summary!B8", "Summary!C2", "Summary!C7", "Forecast!M14", "Forecast!Y25"]
+    verify:
+      expected_file: benchmarks/expected/real_finance_model_v1.yaml
+      formula_checks:
+        - cell: "Summary!B8"
+          type: non_error
+        - cell: "Summary!C8"
+          type: non_error
+        - cell: "Forecast!Y25"
+          type: non_error
+    metrics:
+      primary:
+        - full_eval_ms
+        - incremental_latency_us_p50
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
+  - id: real_ops_model_v1
+    name: "Real-world anchor: service operations workbook"
+    profile: core
+    family: real_world_anchor
+    tier: nightly_heavy
+    comparison_profiles: [nightly_scale]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: generated
+      generator: umya_formualizer_workbook
+      workbook_path: benchmarks/corpus/real/real_ops_model_v1.xlsx
+      notes: >-
+        Deterministically generated in-repo service ops workbook with queue and
+        priority lookup tables, line-item work orders, dashboard rollups, and a
+        wage-pressure assumption edit. No third-party workbook content.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+        sheet: Assumptions
+        row: 6
+        col: 3
+        value: 1.25
+      - op: evaluate_incremental
+      - op: read_cells
+        cells: ["Summary!B2", "Summary!B3", "Summary!B5", "Dashboard!E5", "WorkOrders!N245"]
+    verify:
+      expected_file: benchmarks/expected/real_ops_model_v1.yaml
+      formula_checks:
+        - cell: "Summary!B3"
+          type: non_error
+        - cell: "Dashboard!E5"
+          type: non_error
+        - cell: "WorkOrders!N245"
+          type: non_error
+    metrics:
+      primary:
+        - full_eval_ms
+        - incremental_latency_us_p50
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
 runs:
   warmup_runs: 5
   measured_runs: 30
