@@ -933,6 +933,43 @@ impl<'a> Interpreter<'a> {
             return self.compare(op, l, r);
         }
 
+        // Reference-level operators: evaluate as references first, before
+        // materialising values, to avoid double evaluation.
+        if op == ":" {
+            let lref = self.evaluate_ast_as_reference(left)?;
+            let rref = self.evaluate_ast_as_reference(right)?;
+            return match crate::reference::combine_references(&lref, &rref) {
+                Ok(_r) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                    "Reference produced by ':' cannot be used directly as a value",
+                )),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            };
+        }
+
+        if op == " " {
+            // Intersection operator: try reference intersection first.
+            // For array operands (e.g. in SUMPRODUCT), fall back to
+            // element-wise multiplication.
+            match (
+                self.evaluate_ast_as_reference(left),
+                self.evaluate_ast_as_reference(right),
+            ) {
+                (Ok(lref), Ok(rref)) => {
+                    return match crate::reference::intersect_references(&lref, &rref) {
+                        Ok(iref) => {
+                            self.eval_reference_to_calc(&iref).map(|cv| cv.into_literal())
+                        }
+                        Err(e) => Ok(LiteralValue::Error(e)),
+                    };
+                }
+                _ => {
+                    let l_val = self.evaluate_ast(left)?.into_literal();
+                    let r_val = self.evaluate_ast(right)?.into_literal();
+                    return self.numeric_binary(l_val, r_val, |a, b| a * b);
+                }
+            }
+        }
+
         let l_val = self.evaluate_ast(left)?.into_literal();
         let r_val = self.evaluate_ast(right)?.into_literal();
 
@@ -947,38 +984,6 @@ impl<'a> Interpreter<'a> {
                 crate::coercion::to_text_invariant(&l_val),
                 crate::coercion::to_text_invariant(&r_val)
             ))),
-            ":" => {
-                // Compute a combined reference; in value context return #REF! for now.
-                let lref = self.evaluate_ast_as_reference(left)?;
-                let rref = self.evaluate_ast_as_reference(right)?;
-                match crate::reference::combine_references(&lref, &rref) {
-                    Ok(_r) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
-                        "Reference produced by ':' cannot be used directly as a value",
-                    )),
-                    Err(e) => Ok(LiteralValue::Error(e)),
-                }
-            }
-            " " => {
-                // Intersection operator: attempt to intersect references.
-                // If both sides are references, compute the intersection.
-                // For array operands (e.g. in SUMPRODUCT), perform element-wise
-                // multiplication as a best-effort approximation.
-                match (
-                    self.evaluate_ast_as_reference(left),
-                    self.evaluate_ast_as_reference(right),
-                ) {
-                    (Ok(lref), Ok(rref)) => {
-                        match crate::reference::intersect_references(&lref, &rref) {
-                            Ok(iref) => self.eval_reference_to_calc(&iref).map(|cv| cv.into_literal()),
-                            Err(e) => Ok(LiteralValue::Error(e)),
-                        }
-                    }
-                    _ => {
-                        // Fallback: element-wise multiplication (SUMPRODUCT idiom).
-                        self.numeric_binary(l_val, r_val, |a, b| a * b)
-                    }
-                }
-            }
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message(format!("Binary op '{op}'")))

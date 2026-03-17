@@ -203,10 +203,12 @@ pub fn intersect_references(
                 end_col,
                 ..
             } => {
-                let (sr, sc, er, ec) = match (start_row, start_col, end_row, end_col) {
-                    (Some(sr), Some(sc), Some(er), Some(ec)) => (*sr, *sc, *er, *ec),
-                    _ => return None,
-                };
+                // Treat None bounds as sheet extents so full-row (1:1) and
+                // full-column (A:A) ranges participate in intersections.
+                let sr = start_row.unwrap_or(0);
+                let sc = start_col.unwrap_or(0);
+                let er = end_row.unwrap_or(u32::MAX);
+                let ec = end_col.unwrap_or(u32::MAX);
                 Some((sheet.clone(), (sr, sc, er, ec)))
             }
             _ => None,

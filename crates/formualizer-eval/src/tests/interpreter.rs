@@ -676,4 +676,51 @@ mod tests {
             panic!("Expected numeric result");
         }
     }
+
+    // ---------------------------------------------------------------
+    // Intersection / space operator
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn intersection_overlapping_ranges() {
+        // A1:C3 ∩ B2:D4 → B2:C3
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(crate::builtins::math::SumFn))
+            .with_cell("Sheet1", 2, 2, LiteralValue::Int(10))
+            .with_cell("Sheet1", 2, 3, LiteralValue::Int(20))
+            .with_cell("Sheet1", 3, 2, LiteralValue::Int(30))
+            .with_cell("Sheet1", 3, 3, LiteralValue::Int(40));
+        let result = evaluate_formula("=SUM(A1:C3 B2:D4)", &wb).unwrap();
+        assert_eq!(result, LiteralValue::Number(100.0));
+    }
+
+    #[test]
+    fn intersection_non_overlapping_returns_null() {
+        // A1:A5 ∩ C1:C5 → #NULL!
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(crate::builtins::math::SumFn));
+        let result = evaluate_formula("=SUM(A1:A5 C1:C5)", &wb).unwrap();
+        match result {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Null),
+            other => panic!("Expected #NULL! error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn intersection_single_cell_result() {
+        // A1:A3 ∩ A2:C2 → A2
+        let wb = TestWorkbook::new()
+            .with_cell("Sheet1", 2, 1, LiteralValue::Int(42));
+        let result = evaluate_formula("=A1:A3 A2:C2", &wb).unwrap();
+        // Range resolution coerces Int to Number.
+        assert_eq!(result, LiteralValue::Number(42.0));
+    }
+
+    #[test]
+    fn implicit_intersection_juxtaposed_parens_multiplies() {
+        // (2)*(3) via implicit intersection should yield 6
+        let wb = TestWorkbook::new();
+        let result = evaluate_formula("=(2)(3)", &wb).unwrap();
+        assert_eq!(result, LiteralValue::Number(6.0));
+    }
 }
