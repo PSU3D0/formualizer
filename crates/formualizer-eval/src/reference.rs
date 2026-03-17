@@ -182,6 +182,84 @@ pub fn combine_references(
     })
 }
 
+/// Compute the intersection of two references (Excel space operator).
+/// Returns the overlapping rectangular region, or `#NULL!` if the ranges
+/// do not share any cells.
+pub fn intersect_references(
+    a: &ReferenceType,
+    b: &ReferenceType,
+) -> Result<ReferenceType, ExcelError> {
+    // Reuse the same SheetBounds helper shape as combine_references.
+    fn to_isect_bounds(r: &ReferenceType) -> Option<(Option<String>, (u32, u32, u32, u32))> {
+        match r {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => Some((sheet.clone(), (*row, *col, *row, *col))),
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                ..
+            } => {
+                let (sr, sc, er, ec) = match (start_row, start_col, end_row, end_col) {
+                    (Some(sr), Some(sc), Some(er), Some(ec)) => (*sr, *sc, *er, *ec),
+                    _ => return None,
+                };
+                Some((sheet.clone(), (sr, sc, er, ec)))
+            }
+            _ => None,
+        }
+    }
+
+    let (sheet_a, (a_sr, a_sc, a_er, a_ec)) = to_isect_bounds(a).ok_or_else(|| {
+        ExcelError::new(ExcelErrorKind::Null).with_message("Unsupported reference for intersection")
+    })?;
+    let (sheet_b, (b_sr, b_sc, b_er, b_ec)) = to_isect_bounds(b).ok_or_else(|| {
+        ExcelError::new(ExcelErrorKind::Null).with_message("Unsupported reference for intersection")
+    })?;
+
+    if sheet_a != sheet_b {
+        return Err(
+            ExcelError::new(ExcelErrorKind::Null).with_message("Intersection across sheets")
+        );
+    }
+
+    let sr = a_sr.max(b_sr);
+    let sc = a_sc.max(b_sc);
+    let er = a_er.min(b_er);
+    let ec = a_ec.min(b_ec);
+
+    if sr > er || sc > ec {
+        return Err(
+            ExcelError::new(ExcelErrorKind::Null).with_message("Ranges do not intersect")
+        );
+    }
+
+    if sr == er && sc == ec {
+        Ok(ReferenceType::Cell {
+            sheet: sheet_a,
+            row: sr,
+            col: sc,
+            row_abs: false,
+            col_abs: false,
+        })
+    } else {
+        Ok(ReferenceType::Range {
+            sheet: sheet_a,
+            start_row: Some(sr),
+            start_col: Some(sc),
+            end_row: Some(er),
+            end_col: Some(ec),
+            start_row_abs: false,
+            start_col_abs: false,
+            end_row_abs: false,
+            end_col_abs: false,
+        })
+    }
+}
+
 impl fmt::Display for Coord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.col_abs() {

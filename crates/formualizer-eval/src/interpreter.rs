@@ -184,6 +184,11 @@ impl<'a> Interpreter<'a> {
                 let rref = self.evaluate_ast_as_reference(right)?;
                 crate::reference::combine_references(&lref, &rref)
             }
+            ASTNodeType::BinaryOp { op, left, right } if op == " " => {
+                let lref = self.evaluate_ast_as_reference(left)?;
+                let rref = self.evaluate_ast_as_reference(right)?;
+                crate::reference::intersect_references(&lref, &rref)
+            }
             ASTNodeType::Array(_)
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
@@ -239,15 +244,22 @@ impl<'a> Interpreter<'a> {
                 right_id,
             } => {
                 let op = data_store.resolve_ast_string(*op_id);
-                if op != ":" {
+                if op == ":" {
+                    let lref =
+                        self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
+                    let rref =
+                        self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
+                    crate::reference::combine_references(&lref, &rref)
+                } else if op == " " {
+                    let lref =
+                        self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
+                    let rref =
+                        self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
+                    crate::reference::intersect_references(&lref, &rref)
+                } else {
                     return Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Expression cannot be used as a reference"));
                 }
-                let lref =
-                    self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
-                let rref =
-                    self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
-                crate::reference::combine_references(&lref, &rref)
             }
             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Expression cannot be used as a reference")),
@@ -355,6 +367,32 @@ impl<'a> Interpreter<'a> {
                         ))),
                         Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
                     };
+                }
+
+                if op == " " {
+                    // Intersection: try reference intersection first.
+                    let lref_result =
+                        self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry);
+                    let rref_result =
+                        self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry);
+                    if let (Ok(lref), Ok(rref)) = (lref_result, rref_result) {
+                        return match crate::reference::intersect_references(&lref, &rref) {
+                            Ok(iref) => self.eval_reference_to_calc(&iref),
+                            Err(e) => {
+                                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)))
+                            }
+                        };
+                    }
+                    // Fallback: element-wise multiplication.
+                    let left = self
+                        .evaluate_arena_ast(*left_id, data_store, sheet_registry)?
+                        .into_literal();
+                    let right = self
+                        .evaluate_arena_ast(*right_id, data_store, sheet_registry)?
+                        .into_literal();
+                    return self
+                        .numeric_binary(left, right, |a, b| a * b)
+                        .map(crate::traits::CalcValue::Scalar);
                 }
 
                 let left = self
@@ -918,6 +956,27 @@ impl<'a> Interpreter<'a> {
                         "Reference produced by ':' cannot be used directly as a value",
                     )),
                     Err(e) => Ok(LiteralValue::Error(e)),
+                }
+            }
+            " " => {
+                // Intersection operator: attempt to intersect references.
+                // If both sides are references, compute the intersection.
+                // For array operands (e.g. in SUMPRODUCT), perform element-wise
+                // multiplication as a best-effort approximation.
+                match (
+                    self.evaluate_ast_as_reference(left),
+                    self.evaluate_ast_as_reference(right),
+                ) {
+                    (Ok(lref), Ok(rref)) => {
+                        match crate::reference::intersect_references(&lref, &rref) {
+                            Ok(iref) => self.eval_reference_to_calc(&iref).map(|cv| cv.into_literal()),
+                            Err(e) => Ok(LiteralValue::Error(e)),
+                        }
+                    }
+                    _ => {
+                        // Fallback: element-wise multiplication (SUMPRODUCT idiom).
+                        self.numeric_binary(l_val, r_val, |a, b| a * b)
+                    }
                 }
             }
             _ => {

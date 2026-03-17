@@ -2057,4 +2057,95 @@ mod semantics_regressions {
             ReferenceType::cell(Some("Bob's Sheet".to_string()), 1, 1)
         );
     }
+
+}
+
+mod intersection_operator_tests {
+    use crate::parser::{ASTNodeType, ParserError};
+    use crate::tokenizer::Tokenizer;
+    use crate::parser::{ASTNode, Parser};
+
+    fn parse_formula(formula: &str) -> Result<ASTNode, ParserError> {
+        let tokenizer = Tokenizer::new(formula).map_err(|e| ParserError {
+            message: e.to_string(),
+            position: Some(e.pos),
+        })?;
+        let mut parser = Parser::new(tokenizer.items, false);
+        parser.parse()
+    }
+
+    #[test]
+    fn test_space_intersection_operator_between_ranges() {
+        // =SUM(A1:A10 B1:B10)  — the space is the intersection operator
+        let ast = parse_formula("=SUM(A1:A10 B1:B10)").unwrap();
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1, "intersection should produce a single argument");
+            if let ASTNodeType::BinaryOp { op, .. } = &args[0].node_type {
+                assert_eq!(op, " ", "operator should be the space (intersection)");
+            } else {
+                panic!("Expected BinaryOp for intersection, got {:?}", args[0].node_type);
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_space_intersection_in_sumproduct() {
+        // =SUMPRODUCT((A1:A10="x") (B1:B10))
+        let ast = parse_formula("=SUMPRODUCT((A1:A10=\"x\") (B1:B10))").unwrap();
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUMPRODUCT");
+            assert_eq!(args.len(), 1);
+            if let ASTNodeType::BinaryOp { op, .. } = &args[0].node_type {
+                assert_eq!(op, " ");
+            } else {
+                panic!("Expected BinaryOp for intersection, got {:?}", args[0].node_type);
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_implicit_intersection_juxtaposed_parens() {
+        // =SUMPRODUCT((A1:A10>50)(B1:B10>25)) — no space between )(
+        let ast = parse_formula("=SUMPRODUCT((A1:A10>50)(B1:B10>25))").unwrap();
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUMPRODUCT");
+            assert_eq!(args.len(), 1);
+            if let ASTNodeType::BinaryOp { op, .. } = &args[0].node_type {
+                assert_eq!(op, " ");
+            } else {
+                panic!("Expected BinaryOp for implicit intersection, got {:?}", args[0].node_type);
+            }
+        } else {
+            panic!("Expected Function node");
+        }
+    }
+
+    #[test]
+    fn test_insignificant_whitespace_still_ignored() {
+        // Whitespace around regular operators should NOT become intersection ops
+        let ast = parse_formula("= A1 + B2 ").unwrap();
+        if let ASTNodeType::BinaryOp { op, .. } = &ast.node_type {
+            assert_eq!(op, "+");
+        } else {
+            panic!("Expected BinaryOp(+)");
+        }
+    }
+
+    #[test]
+    fn test_table_intersection_now_parses() {
+        // The table intersection test from before should now parse
+        let ast = parse_formula("=Table1[@] Table2[#All]");
+        assert!(ast.is_ok(), "table intersection should parse: {:?}", ast.err());
+        let ast = ast.unwrap();
+        if let ASTNodeType::BinaryOp { op, .. } = &ast.node_type {
+            assert_eq!(op, " ");
+        } else {
+            panic!("Expected BinaryOp for table intersection, got {:?}", ast.node_type);
+        }
+    }
 }
