@@ -383,16 +383,25 @@ impl<'a> Interpreter<'a> {
                             }
                         };
                     }
-                    // Fallback: element-wise multiplication.
-                    let left = self
-                        .evaluate_arena_ast(*left_id, data_store, sheet_registry)?
-                        .into_literal();
-                    let right = self
-                        .evaluate_arena_ast(*right_id, data_store, sheet_registry)?
-                        .into_literal();
-                    return self
-                        .numeric_binary(left, right, |a, b| a * b)
-                        .map(crate::traits::CalcValue::Scalar);
+                    // Fallback: element-wise multiplication for array
+                    // operands only (SUMPRODUCT idiom).
+                    let l_cv = self
+                        .evaluate_arena_ast(*left_id, data_store, sheet_registry)?;
+                    let r_cv = self
+                        .evaluate_arena_ast(*right_id, data_store, sheet_registry)?;
+                    let is_array = matches!(&l_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)))
+                        || matches!(&r_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)));
+                    if is_array {
+                        let left = l_cv.into_literal();
+                        let right = r_cv.into_literal();
+                        return self
+                            .numeric_binary(left, right, |a, b| a * b)
+                            .map(crate::traits::CalcValue::Scalar);
+                    }
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Null)
+                            .with_message("Intersection operands are not references or arrays"),
+                    )));
                 }
 
                 let left = self
@@ -948,8 +957,6 @@ impl<'a> Interpreter<'a> {
 
         if op == " " {
             // Intersection operator: try reference intersection first.
-            // For array operands (e.g. in SUMPRODUCT), fall back to
-            // element-wise multiplication.
             match (
                 self.evaluate_ast_as_reference(left),
                 self.evaluate_ast_as_reference(right),
@@ -963,9 +970,23 @@ impl<'a> Interpreter<'a> {
                     };
                 }
                 _ => {
-                    let l_val = self.evaluate_ast(left)?.into_literal();
-                    let r_val = self.evaluate_ast(right)?.into_literal();
-                    return self.numeric_binary(l_val, r_val, |a, b| a * b);
+                    // Fallback: element-wise multiplication for array
+                    // operands (SUMPRODUCT idiom).  Only multiply when at
+                    // least one side is an array; scalar-scalar intersection
+                    // is not valid Excel and should return #NULL!.
+                    let l_cv = self.evaluate_ast(left)?;
+                    let r_cv = self.evaluate_ast(right)?;
+                    let is_array = matches!(&l_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)))
+                        || matches!(&r_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)));
+                    if is_array {
+                        let l_val = l_cv.into_literal();
+                        let r_val = r_cv.into_literal();
+                        return self.numeric_binary(l_val, r_val, |a, b| a * b);
+                    }
+                    return Ok(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Null)
+                            .with_message("Intersection operands are not references or arrays"),
+                    ));
                 }
             }
         }

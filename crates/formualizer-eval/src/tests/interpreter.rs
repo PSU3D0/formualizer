@@ -717,10 +717,14 @@ mod tests {
     }
 
     #[test]
-    fn implicit_intersection_juxtaposed_parens_multiplies() {
-        // (2)*(3) via implicit intersection should yield 6
+    fn implicit_intersection_scalar_returns_null() {
+        // Scalar-scalar intersection is not valid — should return #NULL!
+        // (only array operands get implicit multiplication).
         let wb = TestWorkbook::new();
         let result = evaluate_formula("=(2)(3)", &wb).unwrap();
-        assert_eq!(result, LiteralValue::Number(6.0));
+        match result {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Null),
+            other => panic!("Expected #NULL! error, got {:?}", other),
+        }
     }
 }

@@ -1973,6 +1973,23 @@ fn is_value_ending(tt: TokenType, st: TokenSubType) -> bool {
     )
 }
 
+/// Check if a token can begin a new value expression.  Only `Paren/Open` is
+/// included for the implicit-insertion pass — `Func/Open`, `Operand`, and
+/// `OpPrefix` are excluded to avoid inventing multiplication for cases like
+/// `1(A1)`, `A1 SUM(...)`, or `50%-A1` which are not valid Excel patterns.
+fn is_paren_starting(_tt: TokenType, _st: TokenSubType) -> bool {
+    matches!((_tt, _st), (TokenType::Paren, TokenSubType::Open))
+}
+
+/// Check if a token can end a value expression on the "closing" side only.
+fn is_paren_ending(_tt: TokenType, _st: TokenSubType) -> bool {
+    matches!(
+        (_tt, _st),
+        (TokenType::Paren, TokenSubType::Close)
+            | (TokenType::Func, TokenSubType::Close)
+    )
+}
+
 fn is_value_starting(tt: TokenType, st: TokenSubType) -> bool {
     matches!(
         (tt, st),
@@ -1985,6 +2002,9 @@ fn is_value_starting(tt: TokenType, st: TokenSubType) -> bool {
 
 /// Promote significant whitespace tokens to `OpInfix` (intersection operator)
 /// and drop insignificant whitespace.  Works on the legacy `Token` vec.
+///
+/// Multi-character whitespace (e.g. `"  "`, `"\n"`) is normalized to a single
+/// `" "` value so precedence lookup is consistent across all entry points.
 fn promote_intersection_tokens(tokens: &mut Vec<Token>) {
     let len = tokens.len();
     for i in 0..len {
@@ -2019,6 +2039,9 @@ fn promote_intersection_tokens(tokens: &mut Vec<Token>) {
 /// Promote significant whitespace spans to `OpInfix` and drop insignificant
 /// whitespace.  Works on the span-based token stream used by `SpanParser` and
 /// `BatchParser`.
+///
+/// Multi-character whitespace spans are collapsed to a single-char slice
+/// (`start..start+1`) so that `span_value()` always returns exactly `" "`.
 fn promote_intersection_spans(spans: &mut Vec<crate::tokenizer::TokenSpan>) {
     let len = spans.len();
     for i in 0..len {
@@ -2044,29 +2067,32 @@ fn promote_intersection_spans(spans: &mut Vec<crate::tokenizer::TokenSpan>) {
         if dominated {
             spans[i].token_type = TokenType::OpInfix;
             spans[i].subtype = TokenSubType::None;
-            // Keep start/end pointing at the whitespace in the source so
+            // Collapse multi-char whitespace to exactly one space char so
             // span_value() returns " " for precedence lookup.
+            spans[i].end = spans[i].start + 1;
         }
     }
     spans.retain(|t| t.token_type != TokenType::Whitespace);
 }
 
-/// Insert synthetic intersection operators for implicit intersection, where a
-/// value-ending token is directly adjacent to a value-starting token with no
-/// operator between them.  E.g. `(A1:A10>50)(B1:B10>25)`.
+/// Insert synthetic intersection operators for implicit intersection between
+/// juxtaposed parenthesized expressions, e.g. `(A1:A10>50)(B1:B10>25)`.
+///
+/// Only triggers for `Paren/Close` or `Func/Close` followed by `Paren/Open`
+/// to avoid inventing multiplication for unintended cases like `1(A1)` or
+/// `A1 SUM(...)`.
 ///
 /// Must be called *after* whitespace promotion so that all insignificant
 /// whitespace has already been removed.
 fn insert_implicit_intersection_spans(
     spans: &mut Vec<crate::tokenizer::TokenSpan>,
-    _source: &str,
 ) {
     let mut i = 0;
     while i + 1 < spans.len() {
         let cur = &spans[i];
         let nxt = &spans[i + 1];
-        if is_value_ending(cur.token_type, cur.subtype)
-            && is_value_starting(nxt.token_type, nxt.subtype)
+        if is_paren_ending(cur.token_type, cur.subtype)
+            && is_paren_starting(nxt.token_type, nxt.subtype)
         {
             // Insert a zero-width OpInfix " " between cur and nxt.
             let boundary = cur.end;
@@ -2092,8 +2118,8 @@ fn insert_implicit_intersection_tokens(tokens: &mut Vec<Token>) {
     while i + 1 < tokens.len() {
         let cur = &tokens[i];
         let nxt = &tokens[i + 1];
-        if is_value_ending(cur.token_type, cur.subtype)
-            && is_value_starting(nxt.token_type, nxt.subtype)
+        if is_paren_ending(cur.token_type, cur.subtype)
+            && is_paren_starting(nxt.token_type, nxt.subtype)
         {
             let boundary = cur.end;
             tokens.insert(
@@ -2686,7 +2712,9 @@ impl<'a> SpanParser<'a> {
         };
 
         match op {
-            ":" | " " | "," => Some((8, Associativity::Left)),
+            ":" => Some((10, Associativity::Left)),
+            " " => Some((9, Associativity::Left)),
+            "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "^" => Some((6, Associativity::Right)),
             "u" => Some((5, Associativity::Right)),
@@ -3138,7 +3166,7 @@ pub fn parse_with_dialect<T: AsRef<str>>(
 ) -> Result<ASTNode, ParserError> {
     let mut spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
     promote_intersection_spans(&mut spans);
-    insert_implicit_intersection_spans(&mut spans, formula.as_ref());
+    insert_implicit_intersection_spans(&mut spans);
     let mut parser = SpanParser::new(formula.as_ref(), &spans, dialect);
     parser.parse()
 }
@@ -3167,7 +3195,7 @@ where
 {
     let mut spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
     promote_intersection_spans(&mut spans);
-    insert_implicit_intersection_spans(&mut spans, formula.as_ref());
+    insert_implicit_intersection_spans(&mut spans);
     let mut parser =
         SpanParser::new(formula.as_ref(), &spans, dialect).with_volatility_classifier(classifier);
     parser.parse()
@@ -3197,7 +3225,7 @@ impl BatchParser {
             let mut spans = crate::tokenizer::tokenize_spans_with_dialect(formula, self.dialect)?;
             if !self.include_whitespace {
                 promote_intersection_spans(&mut spans);
-                insert_implicit_intersection_spans(&mut spans, formula);
+                insert_implicit_intersection_spans(&mut spans);
             }
 
             let spans: Arc<[crate::tokenizer::TokenSpan]> = Arc::from(spans.into_boxed_slice());

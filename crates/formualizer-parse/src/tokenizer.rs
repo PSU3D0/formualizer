@@ -255,7 +255,9 @@ impl Token {
         //   &
         //   comparisons
         match op {
-            ":" | " " | "," => Some((8, Associativity::Left)),
+            ":" => Some((10, Associativity::Left)),
+            " " => Some((9, Associativity::Left)),
+            "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "^" => Some((6, Associativity::Right)),
             "u" => Some((5, Associativity::Right)),

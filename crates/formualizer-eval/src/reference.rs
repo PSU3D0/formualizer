@@ -185,16 +185,30 @@ pub fn combine_references(
 /// Compute the intersection of two references (Excel space operator).
 /// Returns the overlapping rectangular region, or `#NULL!` if the ranges
 /// do not share any cells.
+/// Sentinel value representing an open-ended bound (full-row or full-column).
+const OPEN_BOUND: u32 = u32::MAX;
+
+/// Compute the intersection of two references (Excel space operator).
+/// Returns the overlapping rectangular region, or `#NULL!` if the ranges
+/// do not share any cells.
+///
+/// Handles reversed ranges (e.g. `A5:A1`), full-row (`1:3`), and
+/// full-column (`A:C`) references.  Treats `None` sheet qualifiers as
+/// compatible with any named sheet (unqualified ≈ current sheet).
 pub fn intersect_references(
     a: &ReferenceType,
     b: &ReferenceType,
 ) -> Result<ReferenceType, ExcelError> {
-    // Reuse the same SheetBounds helper shape as combine_references.
-    fn to_isect_bounds(r: &ReferenceType) -> Option<(Option<String>, (u32, u32, u32, u32))> {
+    /// Bounds are (sheet, row_start, col_start, row_end, col_end) with
+    /// `None` row/col bounds mapped to 0 / OPEN_BOUND.  The bools track
+    /// whether row/col were originally open-ended.
+    type Bounds = (Option<String>, u32, u32, u32, u32, bool, bool);
+
+    fn to_isect_bounds(r: &ReferenceType) -> Option<Bounds> {
         match r {
             ReferenceType::Cell {
                 sheet, row, col, ..
-            } => Some((sheet.clone(), (*row, *col, *row, *col))),
+            } => Some((sheet.clone(), *row, *col, *row, *col, false, false)),
             ReferenceType::Range {
                 sheet,
                 start_row,
@@ -203,30 +217,51 @@ pub fn intersect_references(
                 end_col,
                 ..
             } => {
-                // Treat None bounds as sheet extents so full-row (1:1) and
-                // full-column (A:A) ranges participate in intersections.
+                let row_open = start_row.is_none() || end_row.is_none();
+                let col_open = start_col.is_none() || end_col.is_none();
                 let sr = start_row.unwrap_or(0);
                 let sc = start_col.unwrap_or(0);
-                let er = end_row.unwrap_or(u32::MAX);
-                let ec = end_col.unwrap_or(u32::MAX);
-                Some((sheet.clone(), (sr, sc, er, ec)))
+                let er = end_row.unwrap_or(OPEN_BOUND);
+                let ec = end_col.unwrap_or(OPEN_BOUND);
+                // Normalize reversed ranges (e.g. A5:A1 → A1:A5).
+                Some((
+                    sheet.clone(),
+                    sr.min(er),
+                    sc.min(ec),
+                    sr.max(er),
+                    sc.max(ec),
+                    row_open,
+                    col_open,
+                ))
             }
             _ => None,
         }
     }
 
-    let (sheet_a, (a_sr, a_sc, a_er, a_ec)) = to_isect_bounds(a).ok_or_else(|| {
-        ExcelError::new(ExcelErrorKind::Null).with_message("Unsupported reference for intersection")
-    })?;
-    let (sheet_b, (b_sr, b_sc, b_er, b_ec)) = to_isect_bounds(b).ok_or_else(|| {
-        ExcelError::new(ExcelErrorKind::Null).with_message("Unsupported reference for intersection")
-    })?;
+    let (sheet_a, a_sr, a_sc, a_er, a_ec, a_row_open, a_col_open) =
+        to_isect_bounds(a).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Null)
+                .with_message("Unsupported reference for intersection")
+        })?;
+    let (sheet_b, b_sr, b_sc, b_er, b_ec, b_row_open, b_col_open) =
+        to_isect_bounds(b).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Null)
+                .with_message("Unsupported reference for intersection")
+        })?;
 
-    if sheet_a != sheet_b {
-        return Err(
-            ExcelError::new(ExcelErrorKind::Null).with_message("Intersection across sheets")
-        );
-    }
+    // Sheets must match.  Treat unqualified (None) as compatible with any
+    // named sheet so `A1:A3 Sheet1!A2:A4` works on Sheet1.
+    let result_sheet = match (&sheet_a, &sheet_b) {
+        (None, _) => sheet_b.clone(),
+        (_, None) => sheet_a.clone(),
+        (Some(sa), Some(sb)) if sa == sb => sheet_a.clone(),
+        _ => {
+            return Err(
+                ExcelError::new(ExcelErrorKind::Null)
+                    .with_message("Intersection across sheets"),
+            )
+        }
+    };
 
     let sr = a_sr.max(b_sr);
     let sc = a_sc.max(b_sc);
@@ -235,13 +270,18 @@ pub fn intersect_references(
 
     if sr > er || sc > ec {
         return Err(
-            ExcelError::new(ExcelErrorKind::Null).with_message("Ranges do not intersect")
+            ExcelError::new(ExcelErrorKind::Null).with_message("Ranges do not intersect"),
         );
     }
 
-    if sr == er && sc == ec {
+    // If the result is still open-ended on an axis (both inputs were
+    // open on that axis), preserve `None` bounds.
+    let row_open = a_row_open && b_row_open;
+    let col_open = a_col_open && b_col_open;
+
+    if !row_open && !col_open && sr == er && sc == ec {
         Ok(ReferenceType::Cell {
-            sheet: sheet_a,
+            sheet: result_sheet,
             row: sr,
             col: sc,
             row_abs: false,
@@ -249,11 +289,19 @@ pub fn intersect_references(
         })
     } else {
         Ok(ReferenceType::Range {
-            sheet: sheet_a,
-            start_row: Some(sr),
-            start_col: Some(sc),
-            end_row: Some(er),
-            end_col: Some(ec),
+            sheet: result_sheet,
+            start_row: if row_open && sr == 0 { None } else { Some(sr) },
+            start_col: if col_open && sc == 0 { None } else { Some(sc) },
+            end_row: if row_open && er == OPEN_BOUND {
+                None
+            } else {
+                Some(er)
+            },
+            end_col: if col_open && ec == OPEN_BOUND {
+                None
+            } else {
+                Some(ec)
+            },
             start_row_abs: false,
             start_col_abs: false,
             end_row_abs: false,

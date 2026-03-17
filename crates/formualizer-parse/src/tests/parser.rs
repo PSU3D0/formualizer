@@ -2148,4 +2148,37 @@ mod intersection_operator_tests {
             panic!("Expected BinaryOp for table intersection, got {:?}", ast.node_type);
         }
     }
+
+    #[test]
+    fn test_double_space_intersection_via_public_parse() {
+        // Double-space and newline-containing whitespace must also produce " "
+        // via the public parse() which uses SpanParser.
+        let ast = crate::parser::parse("=SUM(A1:A10  B1:B10)").unwrap();
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1);
+            if let ASTNodeType::BinaryOp { op, .. } = &args[0].node_type {
+                assert_eq!(op, " ", "multi-space should normalize to single space op");
+            } else {
+                panic!("Expected BinaryOp");
+            }
+        } else {
+            panic!("Expected Function");
+        }
+    }
+
+    #[test]
+    fn test_precedence_colon_tighter_than_space() {
+        // =A1:B2 C2:D3 should parse as (A1:B2) ISECT (C2:D3)
+        // The tokenizer produces range references as single operand tokens,
+        // so both sides are Reference nodes, not BinaryOp(":").
+        let ast = parse_formula("=A1:B2 C2:D3").unwrap();
+        if let ASTNodeType::BinaryOp { op, left, right } = &ast.node_type {
+            assert_eq!(op, " ");
+            assert!(matches!(&left.node_type, ASTNodeType::Reference { .. }));
+            assert!(matches!(&right.node_type, ASTNodeType::Reference { .. }));
+        } else {
+            panic!("Expected intersection BinaryOp, got {:?}", ast.node_type);
+        }
+    }
 }
