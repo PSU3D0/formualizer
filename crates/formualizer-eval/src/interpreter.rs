@@ -84,6 +84,11 @@ impl<'a> Interpreter<'a> {
                 let rref = self.evaluate_ast_as_reference(right)?;
                 crate::reference::combine_references(&lref, &rref)
             }
+            ASTNodeType::BinaryOp { op, left, right } if op == " " => {
+                let lref = self.evaluate_ast_as_reference(left)?;
+                let rref = self.evaluate_ast_as_reference(right)?;
+                crate::reference::intersect_references(&lref, &rref)
+            }
             ASTNodeType::Array(_)
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
@@ -139,15 +144,22 @@ impl<'a> Interpreter<'a> {
                 right_id,
             } => {
                 let op = data_store.resolve_ast_string(*op_id);
-                if op != ":" {
+                if op == ":" {
+                    let lref =
+                        self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
+                    let rref =
+                        self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
+                    crate::reference::combine_references(&lref, &rref)
+                } else if op == " " {
+                    let lref =
+                        self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
+                    let rref =
+                        self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
+                    crate::reference::intersect_references(&lref, &rref)
+                } else {
                     return Err(ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Expression cannot be used as a reference"));
                 }
-                let lref =
-                    self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry)?;
-                let rref =
-                    self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry)?;
-                crate::reference::combine_references(&lref, &rref)
             }
             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Expression cannot be used as a reference")),
@@ -215,6 +227,41 @@ impl<'a> Interpreter<'a> {
                         ))),
                         Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
                     };
+                }
+
+                if op == " " {
+                    // Intersection: try reference intersection first.
+                    let lref_result =
+                        self.evaluate_arena_ast_as_reference(*left_id, data_store, sheet_registry);
+                    let rref_result =
+                        self.evaluate_arena_ast_as_reference(*right_id, data_store, sheet_registry);
+                    if let (Ok(lref), Ok(rref)) = (lref_result, rref_result) {
+                        return match crate::reference::intersect_references(&lref, &rref) {
+                            Ok(iref) => self.eval_reference_to_calc(&iref),
+                            Err(e) => {
+                                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)))
+                            }
+                        };
+                    }
+                    // Fallback: element-wise multiplication for array
+                    // operands only (SUMPRODUCT idiom).
+                    let l_cv = self
+                        .evaluate_arena_ast(*left_id, data_store, sheet_registry)?;
+                    let r_cv = self
+                        .evaluate_arena_ast(*right_id, data_store, sheet_registry)?;
+                    let is_array = matches!(&l_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)))
+                        || matches!(&r_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)));
+                    if is_array {
+                        let left = l_cv.into_literal();
+                        let right = r_cv.into_literal();
+                        return self
+                            .numeric_binary(left, right, |a, b| a * b)
+                            .map(crate::traits::CalcValue::Scalar);
+                    }
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Null)
+                            .with_message("Intersection operands are not references or arrays"),
+                    )));
                 }
 
                 let left = self
@@ -563,6 +610,55 @@ impl<'a> Interpreter<'a> {
             return self.compare(op, l, r);
         }
 
+        // Reference-level operators: evaluate as references first, before
+        // materialising values, to avoid double evaluation.
+        if op == ":" {
+            let lref = self.evaluate_ast_as_reference(left)?;
+            let rref = self.evaluate_ast_as_reference(right)?;
+            return match crate::reference::combine_references(&lref, &rref) {
+                Ok(_r) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                    "Reference produced by ':' cannot be used directly as a value",
+                )),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            };
+        }
+
+        if op == " " {
+            // Intersection operator: try reference intersection first.
+            match (
+                self.evaluate_ast_as_reference(left),
+                self.evaluate_ast_as_reference(right),
+            ) {
+                (Ok(lref), Ok(rref)) => {
+                    return match crate::reference::intersect_references(&lref, &rref) {
+                        Ok(iref) => {
+                            self.eval_reference_to_calc(&iref).map(|cv| cv.into_literal())
+                        }
+                        Err(e) => Ok(LiteralValue::Error(e)),
+                    };
+                }
+                _ => {
+                    // Fallback: element-wise multiplication for array
+                    // operands (SUMPRODUCT idiom).  Only multiply when at
+                    // least one side is an array; scalar-scalar intersection
+                    // is not valid Excel and should return #NULL!.
+                    let l_cv = self.evaluate_ast(left)?;
+                    let r_cv = self.evaluate_ast(right)?;
+                    let is_array = matches!(&l_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)))
+                        || matches!(&r_cv, crate::traits::CalcValue::Scalar(LiteralValue::Array(_)));
+                    if is_array {
+                        let l_val = l_cv.into_literal();
+                        let r_val = r_cv.into_literal();
+                        return self.numeric_binary(l_val, r_val, |a, b| a * b);
+                    }
+                    return Ok(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Null)
+                            .with_message("Intersection operands are not references or arrays"),
+                    ));
+                }
+            }
+        }
+
         let l_val = self.evaluate_ast(left)?.into_literal();
         let r_val = self.evaluate_ast(right)?.into_literal();
 
@@ -577,17 +673,6 @@ impl<'a> Interpreter<'a> {
                 crate::coercion::to_text_invariant(&l_val),
                 crate::coercion::to_text_invariant(&r_val)
             ))),
-            ":" => {
-                // Compute a combined reference; in value context return #REF! for now.
-                let lref = self.evaluate_ast_as_reference(left)?;
-                let rref = self.evaluate_ast_as_reference(right)?;
-                match crate::reference::combine_references(&lref, &rref) {
-                    Ok(_r) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
-                        "Reference produced by ':' cannot be used directly as a value",
-                    )),
-                    Err(e) => Ok(LiteralValue::Error(e)),
-                }
-            }
             _ => {
                 Err(ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message(format!("Binary op '{op}'")))

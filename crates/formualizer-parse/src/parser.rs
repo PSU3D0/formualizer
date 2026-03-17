@@ -1859,6 +1859,194 @@ impl TryFrom<String> for Parser {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Intersection-operator promotion
+// ---------------------------------------------------------------------------
+// In Excel, whitespace between two "value-producing" tokens acts as the
+// intersection (space) operator.  The tokenizer emits these as plain
+// `Whitespace` tokens.  Before parsing we promote significant whitespace to
+// `OpInfix` so the Pratt parser handles it like any other binary operator.
+//
+// A whitespace token is "significant" when:
+//   prev non-WS token is value-ending:  Operand, Func/Close, Paren/Close, OpPostfix
+//   next non-WS token is value-starting: Operand, Func/Open,  Paren/Open,  OpPrefix
+
+fn is_value_ending(tt: TokenType, st: TokenSubType) -> bool {
+    matches!(
+        (tt, st),
+        (TokenType::Operand, _)
+            | (TokenType::Func, TokenSubType::Close)
+            | (TokenType::Paren, TokenSubType::Close)
+            | (TokenType::OpPostfix, _)
+    )
+}
+
+/// Check if a token can begin a new value expression.  Only `Paren/Open` is
+/// included for the implicit-insertion pass — `Func/Open`, `Operand`, and
+/// `OpPrefix` are excluded to avoid inventing multiplication for cases like
+/// `1(A1)`, `A1 SUM(...)`, or `50%-A1` which are not valid Excel patterns.
+fn is_paren_starting(_tt: TokenType, _st: TokenSubType) -> bool {
+    matches!((_tt, _st), (TokenType::Paren, TokenSubType::Open))
+}
+
+/// Check if a token can end a value expression on the "closing" side only.
+fn is_paren_ending(_tt: TokenType, _st: TokenSubType) -> bool {
+    matches!(
+        (_tt, _st),
+        (TokenType::Paren, TokenSubType::Close)
+            | (TokenType::Func, TokenSubType::Close)
+    )
+}
+
+fn is_value_starting(tt: TokenType, st: TokenSubType) -> bool {
+    matches!(
+        (tt, st),
+        (TokenType::Operand, _)
+            | (TokenType::Func, TokenSubType::Open)
+            | (TokenType::Paren, TokenSubType::Open)
+            | (TokenType::OpPrefix, _)
+    )
+}
+
+/// Promote significant whitespace tokens to `OpInfix` (intersection operator)
+/// and drop insignificant whitespace.  Works on the legacy `Token` vec.
+///
+/// Multi-character whitespace (e.g. `"  "`, `"\n"`) is normalized to a single
+/// `" "` value so precedence lookup is consistent across all entry points.
+fn promote_intersection_tokens(tokens: &mut Vec<Token>) {
+    let len = tokens.len();
+    for i in 0..len {
+        if tokens[i].token_type != TokenType::Whitespace {
+            continue;
+        }
+        let prev = tokens[..i]
+            .iter()
+            .rev()
+            .find(|t| t.token_type != TokenType::Whitespace);
+        let next = tokens[i + 1..]
+            .iter()
+            .find(|t| t.token_type != TokenType::Whitespace);
+        let dominated = match (prev, next) {
+            (Some(p), Some(n))
+                if is_value_ending(p.token_type, p.subtype)
+                    && is_value_starting(n.token_type, n.subtype) =>
+            {
+                true
+            }
+            _ => false,
+        };
+        if dominated {
+            tokens[i].token_type = TokenType::OpInfix;
+            tokens[i].subtype = TokenSubType::None;
+            tokens[i].value = " ".to_string();
+        }
+    }
+    tokens.retain(|t| t.token_type != TokenType::Whitespace);
+}
+
+/// Promote significant whitespace spans to `OpInfix` and drop insignificant
+/// whitespace.  Works on the span-based token stream used by `SpanParser` and
+/// `BatchParser`.
+///
+/// Multi-character whitespace spans are collapsed to a single-char slice
+/// (`start..start+1`) so that `span_value()` always returns exactly `" "`.
+fn promote_intersection_spans(spans: &mut Vec<crate::tokenizer::TokenSpan>) {
+    let len = spans.len();
+    for i in 0..len {
+        if spans[i].token_type != TokenType::Whitespace {
+            continue;
+        }
+        let prev = spans[..i]
+            .iter()
+            .rev()
+            .find(|t| t.token_type != TokenType::Whitespace);
+        let next = spans[i + 1..]
+            .iter()
+            .find(|t| t.token_type != TokenType::Whitespace);
+        let dominated = match (prev, next) {
+            (Some(p), Some(n))
+                if is_value_ending(p.token_type, p.subtype)
+                    && is_value_starting(n.token_type, n.subtype) =>
+            {
+                true
+            }
+            _ => false,
+        };
+        if dominated {
+            spans[i].token_type = TokenType::OpInfix;
+            spans[i].subtype = TokenSubType::None;
+            // Collapse multi-char whitespace to exactly one space char so
+            // span_value() returns " " for precedence lookup.
+            spans[i].end = spans[i].start + 1;
+        }
+    }
+    spans.retain(|t| t.token_type != TokenType::Whitespace);
+}
+
+/// Insert synthetic intersection operators for implicit intersection between
+/// juxtaposed parenthesized expressions, e.g. `(A1:A10>50)(B1:B10>25)`.
+///
+/// Only triggers for `Paren/Close` or `Func/Close` followed by `Paren/Open`
+/// to avoid inventing multiplication for unintended cases like `1(A1)` or
+/// `A1 SUM(...)`.
+///
+/// Must be called *after* whitespace promotion so that all insignificant
+/// whitespace has already been removed.
+fn insert_implicit_intersection_spans(
+    spans: &mut Vec<crate::tokenizer::TokenSpan>,
+) {
+    let mut i = 0;
+    while i + 1 < spans.len() {
+        let cur = &spans[i];
+        let nxt = &spans[i + 1];
+        if is_paren_ending(cur.token_type, cur.subtype)
+            && is_paren_starting(nxt.token_type, nxt.subtype)
+        {
+            // Insert a zero-width OpInfix " " between cur and nxt.
+            let boundary = cur.end;
+            spans.insert(
+                i + 1,
+                crate::tokenizer::TokenSpan {
+                    token_type: TokenType::OpInfix,
+                    subtype: TokenSubType::None,
+                    start: boundary,
+                    end: boundary,
+                },
+            );
+            i += 2; // skip the synthetic token
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Same as above but for legacy `Token` vec.
+fn insert_implicit_intersection_tokens(tokens: &mut Vec<Token>) {
+    let mut i = 0;
+    while i + 1 < tokens.len() {
+        let cur = &tokens[i];
+        let nxt = &tokens[i + 1];
+        if is_paren_ending(cur.token_type, cur.subtype)
+            && is_paren_starting(nxt.token_type, nxt.subtype)
+        {
+            let boundary = cur.end;
+            tokens.insert(
+                i + 1,
+                Token::new_with_span(
+                    " ".to_string(),
+                    TokenType::OpInfix,
+                    TokenSubType::None,
+                    boundary,
+                    boundary,
+                ),
+            );
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+}
+
 impl Parser {
     pub fn new(tokens: Vec<Token>, include_whitespace: bool) -> Self {
         Self::new_with_dialect(tokens, include_whitespace, FormulaDialect::Excel)
@@ -1870,7 +2058,8 @@ impl Parser {
         dialect: FormulaDialect,
     ) -> Self {
         if !include_whitespace {
-            tokens.retain(|t| t.token_type != TokenType::Whitespace);
+            promote_intersection_tokens(&mut tokens);
+            insert_implicit_intersection_tokens(&mut tokens);
         }
 
         Parser {
@@ -2392,8 +2581,17 @@ impl<'a> SpanParser<'a> {
     }
 
     fn span_to_token(&self, span: &crate::tokenizer::TokenSpan) -> Token {
+        let value = {
+            let v = self.span_value(span);
+            // Synthetic zero-width intersection operators need " " as value.
+            if v.is_empty() && span.token_type == TokenType::OpInfix {
+                " ".to_string()
+            } else {
+                v.to_string()
+            }
+        };
         Token::new_with_span(
-            self.span_value(span).to_string(),
+            value,
             span.token_type,
             span.subtype,
             span.start,
@@ -2412,11 +2610,19 @@ impl<'a> SpanParser<'a> {
         let op = if span.token_type == TokenType::OpPrefix {
             "u"
         } else {
-            self.span_value(span)
+            let v = self.span_value(span);
+            // Zero-width synthetic spans (implicit intersection) map to " ".
+            if v.is_empty() && span.token_type == TokenType::OpInfix {
+                " "
+            } else {
+                v
+            }
         };
 
         match op {
-            ":" | " " | "," => Some((8, Associativity::Left)),
+            ":" => Some((10, Associativity::Left)),
+            " " => Some((9, Associativity::Left)),
+            "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "^" => Some((6, Associativity::Right)),
             "u" => Some((5, Associativity::Right)),
@@ -2866,7 +3072,9 @@ pub fn parse_with_dialect<T: AsRef<str>>(
     formula: T,
     dialect: FormulaDialect,
 ) -> Result<ASTNode, ParserError> {
-    let spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
+    let mut spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
+    promote_intersection_spans(&mut spans);
+    insert_implicit_intersection_spans(&mut spans);
     let mut parser = SpanParser::new(formula.as_ref(), &spans, dialect);
     parser.parse()
 }
@@ -2893,7 +3101,9 @@ where
     T: AsRef<str>,
     F: Fn(&str) -> bool + Send + Sync + 'static,
 {
-    let spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
+    let mut spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
+    promote_intersection_spans(&mut spans);
+    insert_implicit_intersection_spans(&mut spans);
     let mut parser =
         SpanParser::new(formula.as_ref(), &spans, dialect).with_volatility_classifier(classifier);
     parser.parse()
@@ -2922,7 +3132,8 @@ impl BatchParser {
         } else {
             let mut spans = crate::tokenizer::tokenize_spans_with_dialect(formula, self.dialect)?;
             if !self.include_whitespace {
-                spans.retain(|t| t.token_type != TokenType::Whitespace);
+                promote_intersection_spans(&mut spans);
+                insert_implicit_intersection_spans(&mut spans);
             }
 
             let spans: Arc<[crate::tokenizer::TokenSpan]> = Arc::from(spans.into_boxed_slice());
