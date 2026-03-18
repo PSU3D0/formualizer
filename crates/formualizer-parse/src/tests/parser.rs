@@ -811,6 +811,13 @@ mod tests {
             panic!("Expected a Function node");
         }
     }
+
+    #[test]
+    fn test_array_constant_in_function_arg() {
+        let result = parse_formula("=SUM({1,2,3})");
+        println!("Result: {result:?}");
+        assert!(result.is_ok(), "SUM({{1,2,3}}) should parse: {result:?}");
+    }
 }
 
 #[cfg(test)]
@@ -2092,5 +2099,241 @@ mod intersection_operator_tests {
         } else {
             panic!("Expected intersection BinaryOp, got {:?}", ast.node_type);
         }
+    }
+}
+
+#[cfg(test)]
+mod array_in_function_tests {
+    use crate::parser::{ASTNodeType, parse};
+    use formualizer_common::LiteralValue;
+
+    #[test]
+    fn sum_with_array_constant() {
+        let ast = parse("=SUM({1,2,3})").expect("should parse =SUM({1,2,3})");
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1);
+            assert!(matches!(&args[0].node_type, ASTNodeType::Array(_)));
+        } else {
+            panic!("Expected Function, got {:?}", ast.node_type);
+        }
+    }
+
+    #[test]
+    fn sum_with_multi_row_array() {
+        let ast = parse("=SUM({1,2;3,4})").expect("should parse =SUM({1,2;3,4})");
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1);
+            if let ASTNodeType::Array(rows) = &args[0].node_type {
+                assert_eq!(rows.len(), 2);
+                assert_eq!(rows[0].len(), 2);
+                assert_eq!(rows[1].len(), 2);
+            } else {
+                panic!("Expected Array arg, got {:?}", args[0].node_type);
+            }
+        } else {
+            panic!("Expected Function, got {:?}", ast.node_type);
+        }
+    }
+
+    #[test]
+    fn array_as_second_argument() {
+        let ast = parse("=INDEX({10,20,30},2)").expect("should parse");
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "INDEX");
+            assert_eq!(args.len(), 2);
+            assert!(matches!(&args[0].node_type, ASTNodeType::Array(_)));
+            if let ASTNodeType::Literal(LiteralValue::Number(n)) = &args[1].node_type {
+                assert_eq!(*n, 2.0);
+            } else {
+                panic!("Expected number, got {:?}", args[1].node_type);
+            }
+        } else {
+            panic!("Expected Function, got {:?}", ast.node_type);
+        }
+    }
+
+    #[test]
+    fn nested_function_with_array() {
+        let ast = parse("=IF(TRUE,SUM({1,2,3}),0)").expect("should parse");
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+            if let ASTNodeType::Function { name: inner_name, args: inner_args } = &args[1].node_type {
+                assert_eq!(inner_name, "SUM");
+                assert_eq!(inner_args.len(), 1);
+                assert!(matches!(&inner_args[0].node_type, ASTNodeType::Array(_)));
+            } else {
+                panic!("Expected nested SUM, got {:?}", args[1].node_type);
+            }
+        } else {
+            panic!("Expected IF, got {:?}", ast.node_type);
+        }
+    }
+
+    #[test]
+    fn sumproduct_with_array_constants() {
+        let ast = parse("=SUMPRODUCT({1,2,3},{4,5,6})").expect("should parse");
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUMPRODUCT");
+            assert_eq!(args.len(), 2);
+            assert!(matches!(&args[0].node_type, ASTNodeType::Array(_)));
+            assert!(matches!(&args[1].node_type, ASTNodeType::Array(_)));
+        } else {
+            panic!("Expected SUMPRODUCT, got {:?}", ast.node_type);
+        }
+    }
+
+    #[test]
+    fn array_with_mixed_args() {
+        // Array mixed with cell references
+        let ast = parse("=SUMPRODUCT({1,2,3},A1:A3)").expect("should parse");
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUMPRODUCT");
+            assert_eq!(args.len(), 2);
+            assert!(matches!(&args[0].node_type, ASTNodeType::Array(_)));
+        } else {
+            panic!("Expected SUMPRODUCT, got {:?}", ast.node_type);
+        }
+    }
+
+    #[test]
+    fn empty_array_in_function() {
+        let ast = parse("=SUM({})").expect("should parse =SUM({})");
+        if let ASTNodeType::Function { name, args } = &ast.node_type {
+            assert_eq!(name, "SUM");
+            assert_eq!(args.len(), 1);
+            if let ASTNodeType::Array(rows) = &args[0].node_type {
+                assert!(rows.is_empty());
+            } else {
+                panic!("Expected empty Array, got {:?}", args[0].node_type);
+            }
+        } else {
+            panic!("Expected Function, got {:?}", ast.node_type);
+        }
+    }
+}
+
+#[cfg(test)]
+mod array_parser_regression_tests {
+    use crate::parser::parse;
+
+    // Formulas that commonly appear with _xlfn prefixes in OOXML files
+    #[test]
+    fn xlfn_filter_with_array() {
+        // FILTER function uses array constants
+        let ast = parse("=_xlfn.FILTER(A1:A10,B1:B10>{0})");
+        println!("FILTER result: {ast:?}");
+        // May or may not parse depending on FILTER support, but should not panic
+    }
+
+    #[test]
+    fn xlws_filter_with_array() {
+        let ast = parse("=_xlfn._xlws.FILTER(A1:A10,B1:B10>{0})");
+        println!("xlws FILTER result: {ast:?}");
+    }
+
+    #[test]
+    fn choose_with_array() {
+        let result = parse("=CHOOSE({1,2,3},A1,B1,C1)");
+        assert!(result.is_ok(), "CHOOSE with array should parse: {result:?}");
+    }
+
+    #[test]
+    fn lookup_with_array() {
+        let result = parse("=LOOKUP(2,{1,2,3},{10,20,30})");
+        assert!(result.is_ok(), "LOOKUP with array should parse: {result:?}");
+    }
+
+    #[test]
+    fn match_with_array() {
+        let result = parse("=MATCH(\"b\",{\"a\",\"b\",\"c\"},0)");
+        assert!(result.is_ok(), "MATCH with string array should parse: {result:?}");
+    }
+
+    #[test]
+    fn array_in_arithmetic_inside_function() {
+        // Array used in arithmetic expression within function arg
+        let result = parse("=SUM({1,2,3}*{4,5,6})");
+        assert!(result.is_ok(), "SUM with array multiplication should parse: {result:?}");
+    }
+
+    #[test]
+    fn nested_arrays_in_function() {
+        let result = parse("=MMULT({1,2;3,4},{5;6})");
+        assert!(result.is_ok(), "MMULT with multi-row arrays should parse: {result:?}");
+    }
+
+    #[test]
+    fn large_array_constant() {
+        let result = parse("=SUM({1,2,3,4,5,6,7,8,9,10})");
+        assert!(result.is_ok(), "SUM with 10-element array should parse: {result:?}");
+    }
+
+    #[test]
+    fn array_with_negative_numbers() {
+        let result = parse("=SUM({-1,-2,-3})");
+        assert!(result.is_ok(), "SUM with negative array should parse: {result:?}");
+    }
+
+    #[test]
+    fn array_with_boolean_values() {
+        let result = parse("=AND({TRUE,FALSE,TRUE})");
+        assert!(result.is_ok(), "AND with boolean array should parse: {result:?}");
+    }
+
+    #[test]
+    fn array_comparison_in_sumproduct() {
+        // Common SUMPRODUCT idiom: array comparison generating boolean arrays
+        let result = parse("=SUMPRODUCT((A1:A10=\"X\")*{1,0,1})");
+        assert!(result.is_ok(), "SUMPRODUCT with comparison and array should parse: {result:?}");
+    }
+
+    #[test]
+    fn array_in_deeply_nested_function() {
+        let result = parse("=IF(A1>0,VLOOKUP(A1,{1,10;2,20;3,30},2,FALSE),0)");
+        assert!(result.is_ok(), "VLOOKUP with inline table array should parse: {result:?}");
+    }
+}
+
+#[cfg(test)]
+mod crlf_whitespace_tests {
+    use crate::parser::parse;
+
+    #[test]
+    fn crlf_in_function_args_with_array_constant() {
+        // Reproducer: Excel formulas from Windows can contain \r\n
+        let formula = "=MAX(\r\n  COUNTIF(\r\n    A1:A4,\r\n    {1,2,3,4,5,6,7}))/\r\nCOUNTA(A1:A4)";
+        let result = parse(formula);
+        assert!(result.is_ok(), "CRLF whitespace in formula should parse: {result:?}");
+    }
+
+    #[test]
+    fn crlf_in_structured_ref_formula() {
+        let formula = "=MAX(\r\n  COUNTIF(\r\n    RawData[[#This Row],[Q27_1]:[Q27_4]],\r\n    {1,2,3,4,5,6,7}))/\r\nCOUNTA(RawData[[#This Row],[Q27_1]:[Q27_4]])";
+        let result = parse(formula);
+        assert!(result.is_ok(), "CRLF with structured refs should parse: {result:?}");
+    }
+
+    #[test]
+    fn bare_cr_in_formula() {
+        let formula = "=SUM(\rA1,\rA2)";
+        let result = parse(formula);
+        assert!(result.is_ok(), "Bare CR should be treated as whitespace: {result:?}");
+    }
+
+    #[test]
+    fn mixed_line_endings() {
+        let formula = "=IF(\r\n  A1>0,\n  B1,\r  C1)";
+        let result = parse(formula);
+        assert!(result.is_ok(), "Mixed line endings should parse: {result:?}");
+    }
+
+    #[test]
+    fn crlf_in_and_formula() {
+        let formula = "=AND(\r\n  A1=B1,\r\n  A2=B2,\r\n  A3=B3)";
+        let result = parse(formula);
+        assert!(result.is_ok(), "CRLF in AND() should parse: {result:?}");
     }
 }

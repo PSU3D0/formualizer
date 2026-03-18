@@ -625,7 +625,7 @@ impl<'a> SpanTokenizer<'a> {
                 b'"' | b'\'' => self.parse_string()?,
                 b'[' => self.parse_brackets()?,
                 b'#' => self.parse_error()?,
-                b' ' | b'\n' => self.parse_whitespace()?,
+                b' ' | b'\n' | b'\r' => self.parse_whitespace()?,
                 b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' => {
                     self.parse_operator()?
                 }
@@ -786,7 +786,7 @@ impl<'a> SpanTokenizer<'a> {
         let ws_start = self.offset;
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
-                b' ' | b'\n' => self.offset += 1,
+                b' ' | b'\n' | b'\r' => self.offset += 1,
                 _ => break,
             }
         }
@@ -1086,7 +1086,7 @@ impl Tokenizer {
                 b'"' | b'\'' => self.parse_string()?,
                 b'[' => self.parse_brackets()?,
                 b'#' => self.parse_error()?,
-                b' ' | b'\n' => self.parse_whitespace()?,
+                b' ' | b'\n' | b'\r' => self.parse_whitespace()?,
                 // operator characters
                 b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' => {
                     self.parse_operator()?
@@ -1321,7 +1321,7 @@ impl Tokenizer {
         let ws_start = self.offset;
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
-                b' ' | b'\n' => self.offset += 1,
+                b' ' | b'\n' | b'\r' => self.offset += 1,
                 _ => break,
             }
         }
