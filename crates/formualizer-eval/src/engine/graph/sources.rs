@@ -1,5 +1,6 @@
 use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
+use crate::engine::named_range::NameScope;
 use crate::engine::vertex::{VertexId, VertexKind};
 use formualizer_common::{Coord as AbsCoord, ExcelError, ExcelErrorKind};
 
@@ -73,6 +74,7 @@ impl DependencyGraph {
             version,
         };
         self.source_scalars.insert(name.to_string(), entry);
+        self.resolve_pending_name_references(NameScope::Workbook, name);
         Ok(())
     }
 

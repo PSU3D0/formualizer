@@ -188,16 +188,56 @@ impl Resolver for SourceCtx {}
 impl EvaluationContext for SourceCtx {}
 
 #[test]
-fn undeclared_source_is_name_error() {
+fn undeclared_source_symbol_is_stored_and_evaluates_to_name_error() {
     let ctx = SourceCtx::default();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
     engine.add_sheet("Sheet1").unwrap();
 
     let ast = formualizer_parse::parser::parse("=Foo").unwrap();
-    let err = engine
-        .set_cell_formula("Sheet1", 1, 1, ast)
-        .expect_err("undeclared source should be a hard error");
-    assert_eq!(err.kind, ExcelErrorKind::Name);
+    engine.set_cell_formula("Sheet1", 1, 1, ast).unwrap();
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected #NAME? for unresolved source-like symbol, got {other:?}"),
+    }
+}
+
+#[test]
+fn defining_source_scalar_heals_pending_formula_symbol() {
+    let ctx = SourceCtx::default();
+    ctx.set_scalar("Foo", LiteralValue::Number(9.0));
+
+    let mut engine: Engine<_> = Engine::new(ctx.clone(), EvalConfig::default());
+    engine.add_sheet("Sheet1").unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            formualizer_parse::parser::parse("=Foo+1").unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected pending symbol to start unresolved, got {other:?}"),
+    }
+
+    engine.define_source_scalar("Foo", Some(1)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(10.0))
+    );
+
+    ctx.set_scalar("Foo", LiteralValue::Number(12.0));
+    engine.invalidate_source("Foo").unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(13.0))
+    );
 }
 
 #[test]

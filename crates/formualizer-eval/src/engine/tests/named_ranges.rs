@@ -990,15 +990,270 @@ fn test_duplicate_name_error() {
 }
 
 #[test]
-fn test_undefined_name_error() {
-    let mut graph = DependencyGraph::new();
+fn test_undefined_name_evaluates_to_name_and_heals() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
 
-    // Try to use undefined name in formula
-    let ast = parse("=UndefinedName*2").unwrap();
-    let result = graph.set_cell_formula("Sheet1", 1, 1, ast);
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=UndefinedName*2").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
 
-    assert!(result.is_err());
-    assert!(matches!(result.unwrap_err().kind, ExcelErrorKind::Name));
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected #NAME? for unresolved symbol, got {other:?}"),
+    }
+
+    engine
+        .define_name(
+            "UndefinedName",
+            NamedDefinition::Literal(LiteralValue::Number(5.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(10.0))
+    );
+}
+
+#[test]
+fn pending_workbook_name_heal_tracks_future_updates() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Foo+1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected #NAME? before healing, got {other:?}"),
+    }
+
+    engine
+        .define_name(
+            "Foo",
+            NamedDefinition::Literal(LiteralValue::Number(10.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(11.0))
+    );
+
+    engine
+        .update_name(
+            "Foo",
+            NamedDefinition::Literal(LiteralValue::Number(20.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(21.0))
+    );
+}
+
+#[test]
+fn pending_name_heal_is_case_insensitive_by_default() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=foo+1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected unresolved lower-case symbol to yield #NAME?, got {other:?}"),
+    }
+
+    engine
+        .define_name(
+            "Foo",
+            NamedDefinition::Literal(LiteralValue::Number(3.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(4.0))
+    );
+}
+
+#[test]
+fn pending_sheet_scoped_name_heals_only_same_sheet() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let sheet1 = engine.sheet_id_mut("Sheet1");
+    engine.add_sheet("Sheet2").unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=LocalX").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet2", 1, 1, parse("=LocalX").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine
+        .define_name(
+            "LocalX",
+            NamedDefinition::Literal(LiteralValue::Number(7.0)),
+            NameScope::Sheet(sheet1),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+    match engine.get_cell_value("Sheet2", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected Sheet2 formula to remain unresolved, got {other:?}"),
+    }
+}
+
+#[test]
+fn pending_formula_edit_clears_stale_name_intent() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Foo").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Bar").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine
+        .define_name(
+            "Foo",
+            NamedDefinition::Literal(LiteralValue::Number(10.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected formula to keep waiting on Bar, got {other:?}"),
+    }
+
+    engine
+        .define_name(
+            "Bar",
+            NamedDefinition::Literal(LiteralValue::Number(20.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(20.0))
+    );
+}
+
+#[test]
+fn pending_formula_overwrite_with_value_clears_stale_name_intent() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Foo").unwrap())
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(42.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine
+        .define_name(
+            "Foo",
+            NamedDefinition::Literal(LiteralValue::Number(10.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(42.0))
+    );
+}
+
+#[test]
+fn pending_mixed_and_multi_name_formulas_heal_incrementally() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    engine
+        .define_name(
+            "Known",
+            NamedDefinition::Literal(LiteralValue::Number(2.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Known+Missing").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=Foo+Bar").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 1, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected mixed formula to start unresolved, got {other:?}"),
+    }
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected double-missing formula to start unresolved, got {other:?}"),
+    }
+
+    engine
+        .define_name(
+            "Missing",
+            NamedDefinition::Literal(LiteralValue::Number(5.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "Foo",
+            NamedDefinition::Literal(LiteralValue::Number(10.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+    match engine.get_cell_value("Sheet1", 1, 2) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected Foo+Bar to remain unresolved until Bar exists, got {other:?}"),
+    }
+
+    engine
+        .define_name(
+            "Bar",
+            NamedDefinition::Literal(LiteralValue::Number(3.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(13.0))
+    );
 }
 
 #[test]

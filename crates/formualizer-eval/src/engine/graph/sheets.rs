@@ -143,6 +143,7 @@ impl DependencyGraph {
                 index.remove_vertex(coord, vertex_id);
             }
 
+            self.clear_pending_name_references(vertex_id);
             self.vertex_formulas.remove(&vertex_id);
             self.vertex_values.remove(&vertex_id);
 

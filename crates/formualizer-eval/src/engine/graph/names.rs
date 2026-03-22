@@ -224,7 +224,7 @@ impl DependencyGraph {
         }
 
         self.name_vertex_lookup.insert(vertex_id, (scope, key));
-        self.resolve_pending_name_references(scope, name, vertex_id);
+        self.resolve_pending_name_references(scope, name);
 
         Ok(())
     }
@@ -495,34 +495,49 @@ impl DependencyGraph {
     ) {
         let key = self.name_lookup_key(name);
         self.pending_name_links
-            .entry(key)
+            .entry(key.clone())
             .or_default()
-            .push((sheet_id, formula_vertex));
+            .insert((sheet_id, formula_vertex));
+        self.vertex_to_pending_names
+            .entry(formula_vertex)
+            .or_default()
+            .insert(key);
     }
 
-    fn resolve_pending_name_references(
-        &mut self,
-        scope: NameScope,
-        name: &str,
-        named_vertex: VertexId,
-    ) {
+    pub(crate) fn clear_pending_name_references(&mut self, formula_vertex: VertexId) {
+        let Some(keys) = self.vertex_to_pending_names.remove(&formula_vertex) else {
+            return;
+        };
+
+        for key in keys {
+            let mut remove_key = false;
+            if let Some(entries) = self.pending_name_links.get_mut(&key) {
+                entries.retain(|(_, vertex_id)| *vertex_id != formula_vertex);
+                remove_key = entries.is_empty();
+            }
+            if remove_key {
+                self.pending_name_links.remove(&key);
+            }
+        }
+    }
+
+    pub(super) fn resolve_pending_name_references(&mut self, scope: NameScope, name: &str) {
         let key = self.name_lookup_key(name);
-        if let Some(mut entries) = self.pending_name_links.remove(&key) {
-            let mut remaining: Vec<(SheetId, VertexId)> = Vec::new();
-            for (sheet_id, formula_vertex) in entries.drain(..) {
+        if let Some(entries) = self.pending_name_links.remove(&key) {
+            for (sheet_id, formula_vertex) in entries {
                 let attach = match scope {
                     NameScope::Workbook => true,
                     NameScope::Sheet(expected) => expected == sheet_id,
                 };
                 if attach {
-                    self.add_dependent_edges(formula_vertex, &[named_vertex]);
-                    self.attach_vertex_to_names(formula_vertex, &[named_vertex]);
+                    if let Some(ast) = self.get_formula(formula_vertex) {
+                        self.rebuild_formula_dependencies(formula_vertex, &ast);
+                    } else {
+                        self.clear_pending_name_references(formula_vertex);
+                    }
                 } else {
-                    remaining.push((sheet_id, formula_vertex));
+                    self.record_pending_name_reference(sheet_id, name, formula_vertex);
                 }
-            }
-            if !remaining.is_empty() {
-                self.pending_name_links.insert(key, remaining);
             }
         }
     }
