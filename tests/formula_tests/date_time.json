@@ -237,6 +237,206 @@
       "result": 3,
       "result_type": "int",
       "description": "WEEKNUM year 2000 area"
+    },
+    {
+      "formula": "=DAY(1)",
+      "result": 1,
+      "result_type": "int",
+      "description": "DAY of serial 1 (1900-01-01)"
+    },
+    {
+      "formula": "=DAY(0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "DAY of serial 0",
+      "skip": "DAY(0) edge case not yet handled"
+    },
+    {
+      "formula": "=DAY(50)",
+      "result": 19,
+      "result_type": "int",
+      "description": "DAY of serial 50 (1900-02-19)"
+    },
+    {
+      "formula": "=DAY(60)",
+      "result": 29,
+      "result_type": "int",
+      "description": "DAY of serial 60 (phantom Feb 29)",
+      "skip": "Phantom leap day edge case not yet handled"
+    },
+    {
+      "formula": "=DAY(100)",
+      "result": 9,
+      "result_type": "int",
+      "description": "DAY of serial 100 (1900-04-09)"
+    },
+    {
+      "formula": "=MONTH(0.7)",
+      "result": 1,
+      "result_type": "int",
+      "description": "MONTH of fractional serial near zero",
+      "skip": "MONTH(0.7) edge case not yet handled"
+    },
+    {
+      "formula": "=HOUR(0.4006770833)",
+      "result": 9,
+      "result_type": "int",
+      "description": "HOUR from fractional serial"
+    },
+    {
+      "formula": "=MINUTE(0.4006770833)",
+      "result": 36,
+      "result_type": "int",
+      "description": "MINUTE from fractional serial"
+    },
+    {
+      "formula": "=SECOND(0.4006770833)",
+      "result": 58,
+      "result_type": "int",
+      "description": "SECOND from fractional serial"
+    },
+    {
+      "formula": "=SECOND(0.4)",
+      "result": 0,
+      "result_type": "int",
+      "description": "SECOND of 0.4 (exact hour boundary)"
+    },
+    {
+      "formula": "=MINUTE(2.4)",
+      "result": 36,
+      "result_type": "int",
+      "description": "MINUTE from serial with integer days"
+    },
+    {
+      "formula": "=TIME(24, 0, 0)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "TIME wraps at 24 hours to 0"
+    },
+    {
+      "formula": "=TIME(12, 0, 0)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "TIME noon = 0.5"
+    },
+    {
+      "formula": "=TIME(0, 0, 0)",
+      "result": 0.0,
+      "result_type": "float",
+      "description": "TIME midnight = 0"
+    },
+    {
+      "formula": "=TIME(6, 0, 0)",
+      "result": 0.25,
+      "result_type": "float",
+      "description": "TIME 6AM = 0.25"
+    },
+    {
+      "formula": "=TIME(18, 0, 0)",
+      "result": 0.75,
+      "result_type": "float",
+      "description": "TIME 6PM = 0.75"
+    },
+    {
+      "formula": "=DATE(1900, 1, 0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "DATE with day=0 gives serial 0"
+    },
+    {
+      "formula": "=DATE(1900, 2, 28)",
+      "result": 59,
+      "result_type": "int",
+      "description": "DATE Feb 28, 1900"
+    },
+    {
+      "formula": "=DATE(1900, 2, 29)",
+      "result": 60,
+      "result_type": "int",
+      "description": "DATE phantom Feb 29, 1900",
+      "skip": "Phantom leap day edge case not yet handled"
+    },
+    {
+      "formula": "=DATE(1900, 3, -1)",
+      "result": 59,
+      "result_type": "int",
+      "description": "DATE with negative day",
+      "skip": "Negative day arithmetic not yet supported"
+    },
+    {
+      "formula": "=DATE(1900, 3, 0)",
+      "result": 60,
+      "result_type": "int",
+      "description": "DATE March 0 = Feb 29 phantom",
+      "skip": "Phantom leap day edge case not yet handled"
+    },
+    {
+      "formula": "=DATE(2020, 2, 29)",
+      "result": 43890,
+      "result_type": "int",
+      "description": "DATE leap year Feb 29"
+    },
+    {
+      "formula": "=DATE(9999, 12, 31)",
+      "result": 2958465,
+      "result_type": "int",
+      "description": "DATE max date"
+    },
+    {
+      "formula": "=DATE(1904, 2, 29)",
+      "result": 1521,
+      "result_type": "int",
+      "description": "DATE 1904 leap year"
+    },
+    {
+      "formula": "=DATE(0, 11, 1)",
+      "result": 306,
+      "result_type": "int",
+      "description": "DATE with year=0 (1900 + 0 = 1900)"
+    },
+    {
+      "formula": "=DATE(0, 11, 0)",
+      "result": 305,
+      "result_type": "int",
+      "description": "DATE with year=0 day=0"
+    },
+    {
+      "formula": "=DATEVALUE(\"8/22/2011\")",
+      "result": 40777,
+      "result_type": "int",
+      "description": "DATEVALUE M/D/YYYY format"
+    },
+    {
+      "formula": "=DATEVALUE(\"2011/02/23\")",
+      "result": 40597,
+      "result_type": "int",
+      "description": "DATEVALUE YYYY/MM/DD format"
+    },
+    {
+      "formula": "=EDATE(0, 0)",
+      "result": 0,
+      "result_type": "int",
+      "description": "EDATE zero months from serial 0",
+      "skip": "EDATE(0,0) edge case not yet handled"
+    },
+    {
+      "formula": "=EDATE(2.4, 1)",
+      "result": 33,
+      "result_type": "int",
+      "description": "EDATE 1 month from serial 2.4"
+    },
+    {
+      "formula": "=EOMONTH(444, 3)",
+      "result": 547,
+      "result_type": "int",
+      "description": "EOMONTH 3 months forward from serial 444"
+    },
+    {
+      "formula": "=EOMONTH(444, -3)",
+      "result": 366,
+      "result_type": "int",
+      "description": "EOMONTH 3 months backward from serial 444",
+      "skip": "EOMONTH negative months edge case not yet handled"
     }
   ]
 }

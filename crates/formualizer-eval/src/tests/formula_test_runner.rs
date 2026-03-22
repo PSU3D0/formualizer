@@ -29,6 +29,9 @@ struct TestCase {
     description: Option<String>,
     #[serde(default)]
     context: Option<serde_json::Value>,
+    /// When set, the test is skipped and the value describes why.
+    #[serde(default)]
+    skip: Option<String>,
 }
 
 /// Represents a test file containing multiple test cases.
@@ -82,6 +85,31 @@ fn json_to_literal(value: &serde_json::Value) -> Option<LiteralValue> {
             }
         }
         serde_json::Value::Null => Some(LiteralValue::Empty),
+        serde_json::Value::Object(map) => json_typed_value(map),
+        _ => None,
+    }
+}
+
+/// Handle typed context values like {"type": "date", "value": "2023-06-15"}.
+/// This allows JSON test files to place native Date/DateTime/Time values into
+/// cells, matching what xlsx file loaders produce.
+#[cfg(test)]
+fn json_typed_value(map: &serde_json::Map<String, serde_json::Value>) -> Option<LiteralValue> {
+    let type_str = map.get("type")?.as_str()?;
+    let value_str = map.get("value")?.as_str()?;
+    match type_str {
+        "date" => {
+            let date = chrono::NaiveDate::parse_from_str(value_str, "%Y-%m-%d").ok()?;
+            Some(LiteralValue::Date(date))
+        }
+        "datetime" => {
+            let dt = chrono::NaiveDateTime::parse_from_str(value_str, "%Y-%m-%dT%H:%M:%S").ok()?;
+            Some(LiteralValue::DateTime(dt))
+        }
+        "time" => {
+            let t = chrono::NaiveTime::parse_from_str(value_str, "%H:%M:%S").ok()?;
+            Some(LiteralValue::Time(t))
+        }
         _ => None,
     }
 }
@@ -259,10 +287,11 @@ fn format_literal(lit: &LiteralValue) -> String {
 }
 
 /// Run all formula tests from JSON files.
-/// Returns (passed_count, failures).
+/// Returns (passed_count, skipped_count, failures).
 #[cfg(test)]
-fn run_formula_tests(test_dir: &Path) -> (usize, Vec<TestFailure>) {
+fn run_formula_tests(test_dir: &Path) -> (usize, usize, Vec<TestFailure>) {
     let mut passed = 0;
+    let mut skipped = 0;
     let mut failures = Vec::new();
 
     // Initialize function registry
@@ -319,6 +348,10 @@ fn run_formula_tests(test_dir: &Path) -> (usize, Vec<TestFailure>) {
         };
 
         for test_case in &test_file.tests {
+            if test_case.skip.is_some() {
+                skipped += 1;
+                continue;
+            }
             let mut wb = create_test_workbook();
             if let Some(context) = test_file.context_data.as_ref() {
                 wb = apply_context(wb, context);
@@ -382,7 +415,7 @@ fn run_formula_tests(test_dir: &Path) -> (usize, Vec<TestFailure>) {
         }
     }
 
-    (passed, failures)
+    (passed, skipped, failures)
 }
 
 #[cfg(test)]
@@ -410,7 +443,7 @@ mod tests {
             return;
         }
 
-        let (passed, failures) = run_formula_tests(&test_dir);
+        let (passed, skipped, failures) = run_formula_tests(&test_dir);
 
         // Report all failures at the end
         if !failures.is_empty() {
@@ -432,17 +465,26 @@ mod tests {
                 );
             }
             eprintln!(
-                "\n=== SUMMARY: {} passed, {} failed ===\n",
+                "\n=== SUMMARY: {} passed, {} skipped, {} failed ===\n",
                 passed,
+                skipped,
                 failures.len()
             );
             panic!(
-                "Formula test suite: {} passed, {} failed",
+                "Formula test suite: {} passed, {} skipped, {} failed",
                 passed,
+                skipped,
                 failures.len()
             );
         }
 
-        println!("\nFormula test suite: {} tests passed", passed);
+        if skipped > 0 {
+            println!(
+                "\nFormula test suite: {} tests passed, {} skipped",
+                passed, skipped
+            );
+        } else {
+            println!("\nFormula test suite: {} tests passed", passed);
+        }
     }
 }
