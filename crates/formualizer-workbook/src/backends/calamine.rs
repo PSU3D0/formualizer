@@ -6,7 +6,7 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 
 use calamine::{Data, Range, Reader, Xlsx, open_workbook};
@@ -16,6 +16,9 @@ use formualizer_eval::engine::Engine as EvalEngine;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::ReferenceType;
+use quick_xml::Reader as XmlReader;
+use quick_xml::events::{BytesRef, BytesStart, Event};
+use quick_xml::name::QName;
 use zip::ZipArchive;
 
 type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
@@ -24,6 +27,7 @@ pub struct CalamineAdapter {
     workbook: RwLock<Xlsx<BufReader<File>>>,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
+    defined_names: Vec<DefinedName>,
     external_link_targets: BTreeMap<u32, String>,
 }
 
@@ -81,7 +85,12 @@ impl CalamineAdapter {
         Some((sr, sc, er, ec))
     }
 
-    fn convert_defined_name(name: &str, raw_formula: &str) -> Option<DefinedName> {
+    fn convert_defined_name(
+        name: &str,
+        raw_formula: &str,
+        local_sheet_id: Option<usize>,
+        sheet_names: &[String],
+    ) -> Option<DefinedName> {
         let mut trimmed = raw_formula.trim();
         if let Some(rest) = trimmed.strip_prefix('=') {
             trimmed = rest.trim();
@@ -91,12 +100,19 @@ impl CalamineAdapter {
         }
 
         let reference = ReferenceType::from_string(trimmed).ok()?;
+        let scope_sheet = local_sheet_id.and_then(|idx| sheet_names.get(idx).cloned());
+        let scope = if scope_sheet.is_some() {
+            DefinedNameScope::Sheet
+        } else {
+            DefinedNameScope::Workbook
+        };
+        let base_sheet = scope_sheet.as_deref();
 
         let (sheet_name, start_row, start_col, end_row, end_col) = match reference {
             ReferenceType::Cell {
                 sheet, row, col, ..
             } => {
-                let sheet = sheet?;
+                let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
                 (sheet, row, col, row, col)
             }
             ReferenceType::Range {
@@ -109,7 +125,7 @@ impl CalamineAdapter {
             } => {
                 let (sr, sc, er, ec) =
                     Self::normalize_open_ended_bounds(start_row, start_col, end_row, end_col)?;
-                let sheet = sheet?;
+                let sheet = sheet.or_else(|| base_sheet.map(|s| s.to_string()))?;
                 (sheet, sr, sc, er, ec)
             }
             _ => return None,
@@ -119,10 +135,163 @@ impl CalamineAdapter {
 
         Some(DefinedName {
             name: name.to_string(),
-            scope: DefinedNameScope::Workbook,
-            scope_sheet: None,
+            scope,
+            scope_sheet,
             definition: DefinedNameDefinition::Range { address },
         })
+    }
+
+    fn decode_attr<R: BufRead>(
+        reader: &XmlReader<R>,
+        start: &BytesStart<'_>,
+        key: &[u8],
+    ) -> Option<String> {
+        start
+            .attributes()
+            .filter_map(Result::ok)
+            .find(|attr| attr.key == QName(key))
+            .and_then(|attr| {
+                attr.decode_and_unescape_value(reader.decoder())
+                    .ok()
+                    .map(|v| v.into_owned())
+            })
+    }
+
+    fn append_xml_entity(
+        entity: &BytesRef<'_>,
+        buffer: &mut String,
+    ) -> Result<(), quick_xml::Error> {
+        let decoded = entity.decode()?;
+        match decoded.as_ref() {
+            "lt" => buffer.push('<'),
+            "gt" => buffer.push('>'),
+            "amp" => buffer.push('&'),
+            "apos" => buffer.push('\''),
+            "quot" => buffer.push('"'),
+            _ => {
+                if let Some(ch) = entity.resolve_char_ref()? {
+                    buffer.push(ch);
+                } else {
+                    return Err(quick_xml::Error::Escape(
+                        quick_xml::escape::EscapeError::UnrecognizedEntity(
+                            0..0,
+                            format!("&{decoded};"),
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn fallback_defined_names_from_workbook(
+        workbook: &Xlsx<BufReader<File>>,
+        sheet_names: &[String],
+    ) -> Vec<DefinedName> {
+        let mut out = Vec::new();
+        let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
+
+        for (name, formula) in workbook.defined_names() {
+            if let Some(converted) = Self::convert_defined_name(name, formula, None, sheet_names) {
+                let key = (
+                    converted.scope.clone(),
+                    converted.scope_sheet.clone(),
+                    converted.name.clone(),
+                );
+                if seen.insert(key) {
+                    out.push(converted);
+                }
+            }
+        }
+
+        out
+    }
+
+    fn scan_defined_names(path: &Path, sheet_names: &[String]) -> Vec<DefinedName> {
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+        let reader = BufReader::new(file);
+        let mut archive = match ZipArchive::new(reader) {
+            Ok(a) => a,
+            Err(_) => return Vec::new(),
+        };
+        let entry = match archive.by_name("xl/workbook.xml") {
+            Ok(e) => e,
+            Err(_) => return Vec::new(),
+        };
+
+        // Calamine's public defined_names() surface flattens OOXML defined names to
+        // (name, formula_text) and drops localSheetId. We recover only the scoped
+        // defined-name metadata we need here with a targeted streaming pass over
+        // workbook.xml, avoiding a full file String allocation or any sheet XML reparse.
+        let mut xml = XmlReader::from_reader(BufReader::new(entry));
+        xml.config_mut().trim_text(true);
+
+        let mut out = Vec::new();
+        let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
+        let mut buf = Vec::new();
+        let mut inner_buf = Vec::new();
+        let mut in_defined_names = false;
+
+        loop {
+            buf.clear();
+            match xml.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"definedNames" => {
+                    in_defined_names = true;
+                }
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"definedNames" => {
+                    break;
+                }
+                Ok(Event::Start(ref e))
+                    if in_defined_names && e.local_name().as_ref() == b"definedName" =>
+                {
+                    let name = Self::decode_attr(&xml, e, b"name");
+                    let local_sheet_id = Self::decode_attr(&xml, e, b"localSheetId")
+                        .and_then(|v| v.parse::<usize>().ok());
+                    let mut value = String::new();
+
+                    loop {
+                        inner_buf.clear();
+                        match xml.read_event_into(&mut inner_buf) {
+                            Ok(Event::Text(t)) => match t.xml10_content() {
+                                Ok(text) => value.push_str(&text),
+                                Err(_) => return Vec::new(),
+                            },
+                            Ok(Event::GeneralRef(entity)) => {
+                                if Self::append_xml_entity(&entity, &mut value).is_err() {
+                                    return Vec::new();
+                                }
+                            }
+                            Ok(Event::End(end)) if end.name() == e.name() => break,
+                            Ok(Event::Eof) => return Vec::new(),
+                            Err(_) => return Vec::new(),
+                            _ => {}
+                        }
+                    }
+
+                    if let Some(name) = name
+                        && let Some(converted) =
+                            Self::convert_defined_name(&name, &value, local_sheet_id, sheet_names)
+                    {
+                        let key = (
+                            converted.scope.clone(),
+                            converted.scope_sheet.clone(),
+                            converted.name.clone(),
+                        );
+                        if seen.insert(key) {
+                            out.push(converted);
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(_) => return Vec::new(),
+                _ => {}
+            }
+        }
+
+        out
     }
 
     fn scan_external_link_targets(path: &Path) -> BTreeMap<u32, String> {
@@ -311,24 +480,7 @@ impl SpreadsheetReader for CalamineAdapter {
     }
 
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
-        let wb = self.workbook.read();
-        let mut out: Vec<DefinedName> = Vec::new();
-        let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
-
-        for (name, formula) in wb.defined_names() {
-            if let Some(converted) = Self::convert_defined_name(name, formula) {
-                let key = (
-                    converted.scope.clone(),
-                    converted.scope_sheet.clone(),
-                    converted.name.clone(),
-                );
-                if seen.insert(key) {
-                    out.push(converted);
-                }
-            }
-        }
-
-        Ok(out)
+        Ok(self.defined_names.clone())
     }
 
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
@@ -338,10 +490,22 @@ impl SpreadsheetReader for CalamineAdapter {
         let path = path.as_ref();
         let external_link_targets = Self::scan_external_link_targets(path);
         let workbook: Xlsx<BufReader<File>> = open_workbook(path)?;
+        let sheet_names = workbook.sheet_names().to_vec();
+        let defined_names = if workbook.defined_names().is_empty() {
+            Vec::new()
+        } else {
+            let parsed = Self::scan_defined_names(path, &sheet_names);
+            if parsed.is_empty() {
+                Self::fallback_defined_names_from_workbook(&workbook, &sheet_names)
+            } else {
+                parsed
+            }
+        };
         Ok(Self {
             workbook: RwLock::new(workbook),
             loaded_sheets: HashSet::new(),
-            cached_names: None,
+            cached_names: Some(sheet_names),
+            defined_names,
             external_link_targets,
         })
     }
