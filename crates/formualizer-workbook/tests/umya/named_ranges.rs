@@ -1,4 +1,4 @@
-use formualizer_common::LiteralValue;
+use formualizer_common::{LiteralValue, error::ExcelErrorKind};
 use formualizer_workbook::{
     CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, Workbook,
     WorkbookConfig,
@@ -223,6 +223,13 @@ fn book_to_bytes(book: &umya_spreadsheet::Spreadsheet) -> Vec<u8> {
     buf
 }
 
+fn assert_name_error(value: LiteralValue) {
+    match value {
+        LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Name),
+        other => panic!("expected #NAME?, got {other:?}"),
+    }
+}
+
 /// Workbook-scoped names must remain Workbook-scoped in `defined_names()` regardless of
 /// which worksheet object they were associated with when the file was built.
 /// Before the fix, names without a localSheetId that came through the sheet-level
@@ -346,6 +353,178 @@ fn workbook_scoped_name_resolves_cross_sheet() {
         LiteralValue::Int(i) => assert_eq!(i, 20, "VLOOKUP Beta should be 20"),
         other => panic!("expected number for VLOOKUP, got {other:?}"),
     }
+}
+
+#[test]
+fn umya_sheet_local_name_resolves_only_on_declaring_sheet() {
+    let mut book = umya_spreadsheet::new_file();
+    let _ = book.new_sheet("Sheet2");
+
+    {
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        sheet1.get_cell_mut((1, 1)).set_value_number(7.0);
+        sheet1
+            .add_defined_name("LocalOnly", "Sheet1!$A$1")
+            .expect("add local name");
+        let local = sheet1
+            .get_defined_names_mut()
+            .last_mut()
+            .expect("local defined name");
+        local.set_local_sheet_id(0);
+        sheet1.get_cell_mut((2, 1)).set_formula("=LocalOnly*2");
+    }
+
+    {
+        let sheet2 = book.get_sheet_by_name_mut("Sheet2").expect("Sheet2");
+        sheet2.get_cell_mut((2, 1)).set_formula("=LocalOnly");
+    }
+
+    let backend = UmyaAdapter::open_bytes(book_to_bytes(&book)).expect("open bytes");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
+    workbook.evaluate_all().expect("evaluate workbook");
+
+    let local_value = workbook.get_value("Sheet1", 1, 2).expect("Sheet1 B1");
+    assert!(matches!(local_value, LiteralValue::Number(n) if (n - 14.0).abs() < 1e-9));
+
+    let other_sheet_value = workbook.get_value("Sheet2", 1, 2).expect("Sheet2 B1");
+    assert_name_error(other_sheet_value);
+}
+
+#[test]
+fn umya_sheet_local_name_shadows_workbook_name_only_on_declaring_sheet() {
+    let mut book = umya_spreadsheet::new_file();
+    let _ = book.new_sheet("Sheet2");
+
+    {
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        sheet1.get_cell_mut((1, 1)).set_value_number(10.0);
+        sheet1
+            .add_defined_name("ScopedValue", "Sheet1!$A$1")
+            .expect("add local name");
+        let local = sheet1
+            .get_defined_names_mut()
+            .last_mut()
+            .expect("local defined name");
+        local.set_local_sheet_id(0);
+        sheet1.get_cell_mut((2, 1)).set_formula("=ScopedValue*2");
+    }
+
+    {
+        let sheet2 = book.get_sheet_by_name_mut("Sheet2").expect("Sheet2");
+        sheet2.get_cell_mut((1, 1)).set_value_number(100.0);
+        sheet2
+            .add_defined_name("ScopedValue", "Sheet2!$A$1")
+            .expect("add workbook name");
+        sheet2.get_cell_mut((2, 1)).set_formula("=ScopedValue*2");
+    }
+
+    let backend = UmyaAdapter::open_bytes(book_to_bytes(&book)).expect("open bytes");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
+    workbook.evaluate_all().expect("evaluate workbook");
+
+    let local_value = workbook.get_value("Sheet1", 1, 2).expect("Sheet1 B1");
+    assert!(matches!(local_value, LiteralValue::Number(n) if (n - 20.0).abs() < 1e-9));
+
+    let workbook_value = workbook.get_value("Sheet2", 1, 2).expect("Sheet2 B1");
+    assert!(matches!(workbook_value, LiteralValue::Number(n) if (n - 200.0).abs() < 1e-9));
+}
+
+#[test]
+fn umya_same_local_name_on_multiple_sheets_is_isolated() {
+    let mut book = umya_spreadsheet::new_file();
+    let _ = book.new_sheet("Data");
+
+    {
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        sheet1.get_cell_mut((1, 1)).set_value_number(2.0);
+        sheet1
+            .add_defined_name("LocalDup", "Sheet1!$A$1")
+            .expect("add Sheet1 local name");
+        let local = sheet1
+            .get_defined_names_mut()
+            .last_mut()
+            .expect("Sheet1 local defined name");
+        local.set_local_sheet_id(0);
+        sheet1.get_cell_mut((2, 1)).set_formula("=LocalDup*3");
+    }
+
+    {
+        let data = book.get_sheet_by_name_mut("Data").expect("Data");
+        data.get_cell_mut((1, 1)).set_value_number(5.0);
+        data.add_defined_name("LocalDup", "Data!$A$1")
+            .expect("add Data local name");
+        let local = data
+            .get_defined_names_mut()
+            .last_mut()
+            .expect("Data local defined name");
+        local.set_local_sheet_id(1);
+        data.get_cell_mut((2, 1)).set_formula("=LocalDup*3");
+    }
+
+    let backend = UmyaAdapter::open_bytes(book_to_bytes(&book)).expect("open bytes");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
+    workbook.evaluate_all().expect("evaluate workbook");
+
+    let sheet1_value = workbook.get_value("Sheet1", 1, 2).expect("Sheet1 B1");
+    assert!(matches!(sheet1_value, LiteralValue::Number(n) if (n - 6.0).abs() < 1e-9));
+
+    let data_value = workbook.get_value("Data", 1, 2).expect("Data B1");
+    assert!(matches!(data_value, LiteralValue::Number(n) if (n - 15.0).abs() < 1e-9));
+}
+
+#[test]
+fn umya_sheet_local_name_without_sheet_prefix_uses_declaring_sheet() {
+    let mut book = umya_spreadsheet::new_file();
+    let _ = book.new_sheet("Sheet2");
+
+    {
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        sheet1.get_cell_mut((1, 1)).set_value_number(11.0);
+        sheet1
+            .add_defined_name("BareLocal", "$A$1")
+            .expect("add local name without sheet prefix");
+        let local = sheet1
+            .get_defined_names_mut()
+            .last_mut()
+            .expect("local defined name");
+        local.set_local_sheet_id(0);
+        sheet1.get_cell_mut((2, 1)).set_formula("=BareLocal*2");
+    }
+
+    {
+        let sheet2 = book.get_sheet_by_name_mut("Sheet2").expect("Sheet2");
+        sheet2.get_cell_mut((2, 1)).set_formula("=BareLocal");
+    }
+
+    let backend = UmyaAdapter::open_bytes(book_to_bytes(&book)).expect("open bytes");
+    let mut workbook = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load workbook");
+    workbook.evaluate_all().expect("evaluate workbook");
+
+    let local_value = workbook.get_value("Sheet1", 1, 2).expect("Sheet1 B1");
+    assert!(matches!(local_value, LiteralValue::Number(n) if (n - 22.0).abs() < 1e-9));
+
+    let other_sheet_value = workbook.get_value("Sheet2", 1, 2).expect("Sheet2 B1");
+    assert_name_error(other_sheet_value);
 }
 
 #[test]
