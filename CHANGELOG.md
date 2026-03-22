@@ -4,7 +4,9 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-03-22
+## [0.5.1] - 2026-03-22
+
+> Supersedes the incomplete `0.5.0` product release.
 
 ### Added
 
@@ -27,5 +29,10 @@ All notable changes to Formualizer will be documented in this file.
 - Added a comparative benchmark harness with scenario plans, real-world anchors, and fairness-oriented reporting to improve performance validation and regression tracking. (#28)
 - Expanded JSON-driven conformance coverage across info, logical, lookup, text, and date function families. (#32)
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.0...HEAD
-[0.5.0]: https://github.com/PSU3D0/formualizer/compare/v0.4.4...v0.5.0
+## [0.5.0] - 2026-03-22
+
+- Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
+
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/PSU3D0/formualizer/compare/v0.4.4...v0.5.1
+[0.5.0]: https://github.com/PSU3D0/formualizer/releases/tag/v0.5.0
