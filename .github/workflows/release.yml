@@ -545,9 +545,52 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Extract release notes from CHANGELOG.md
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          python - "${VERSION}" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          changelog = Path("CHANGELOG.md")
+          if not changelog.exists():
+              raise SystemExit("CHANGELOG.md not found")
+
+          text = changelog.read_text(encoding="utf-8")
+          heading_re = re.compile(rf"^##\s+\[?{re.escape(version)}\]?(?:\s+-\s+.*)?$", re.MULTILINE)
+          match = heading_re.search(text)
+          if not match:
+              raise SystemExit(f"No CHANGELOG.md section found for version {version}")
+
+          lines = text[match.end():].splitlines()
+          body_lines: list[str] = []
+          for line in lines:
+              if re.match(r"^##\s+", line):
+                  break
+              if re.match(r"^\[[^\]]+\]:\s+", line):
+                  break
+              body_lines.append(line)
+
+          body = "\n".join(body_lines).strip()
+          if not body:
+              raise SystemExit(f"CHANGELOG.md section for version {version} is empty")
+
+          Path("release-notes.md").write_text(body + "\n", encoding="utf-8")
+          PY
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
