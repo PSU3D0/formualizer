@@ -207,6 +207,11 @@ jobs:
 
               echo "${out}"
 
+              if echo "${out}" | grep -qE "failed to verify package tarball|could not compile|error\[E[0-9]+\]|failed to prepare local package for uploading"; then
+                echo "Publish failed with a deterministic verification/compiler error; not retrying"
+                return 1
+              fi
+
               if [[ "${i}" -lt "${attempts}" ]]; then
                 echo "Publish failed; sleeping ${sleep_secs}s before retry"
                 sleep "${sleep_secs}"
@@ -266,6 +271,11 @@ jobs:
 
               echo "${out}"
 
+              if echo "${out}" | grep -qE "failed to verify package tarball|could not compile|error\[E[0-9]+\]|failed to prepare local package for uploading"; then
+                echo "Publish failed with a deterministic verification/compiler error; not retrying"
+                return 1
+              fi
+
               if [[ "${i}" -lt "${attempts}" ]]; then
                 echo "Publish failed; sleeping ${sleep_secs}s before retry"
                 sleep "${sleep_secs}"
@@ -278,35 +288,9 @@ jobs:
 
           publish_with_retry sheetport-spec
 
-  verify-product-publishability:
-    if: startsWith(github.ref_name, 'v')
-    needs: verify-product
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Set up Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-
-      - name: Verify product crates are publishable
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cargo publish -p formualizer-macros --dry-run --locked
-          cargo publish -p formualizer-eval --dry-run --locked
-          cargo publish -p formualizer-workbook --dry-run --locked
-          cargo publish -p formualizer-sheetport --dry-run --locked
-          cargo publish -p formualizer --dry-run --locked
-
   publish-product-crates:
     if: startsWith(github.ref_name, 'v')
-    needs: verify-product-publishability
+    needs: verify-product
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -350,6 +334,11 @@ jobs:
 
               echo "${out}"
 
+              if echo "${out}" | grep -qE "failed to verify package tarball|could not compile|error\[E[0-9]+\]|failed to prepare local package for uploading"; then
+                echo "Publish failed with a deterministic verification/compiler error; not retrying"
+                return 1
+              fi
+
               if [[ "${i}" -lt "${attempts}" ]]; then
                 echo "Publish failed; sleeping ${sleep_secs}s before retry"
                 sleep "${sleep_secs}"
@@ -368,7 +357,7 @@ jobs:
 
   build-wheels-linux:
     if: startsWith(github.ref_name, 'v')
-    needs: verify-product-publishability
+    needs: verify-product
     runs-on: ${{ matrix.platform.runner }}
     strategy:
       matrix:
@@ -475,7 +464,7 @@ jobs:
 
   build-sdist:
     if: startsWith(github.ref_name, 'v')
-    needs: verify-product-publishability
+    needs: verify-product
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
