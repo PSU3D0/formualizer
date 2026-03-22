@@ -1,7 +1,7 @@
 use super::*;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
-// Type alias for complex return type (local to analysis).
+// Type alias for complex return types (local to analysis).
 type ExtractDependenciesResult = Result<
     (
         Vec<VertexId>,
@@ -12,6 +12,23 @@ type ExtractDependenciesResult = Result<
     ExcelError,
 >;
 
+type ExtractDependenciesWithPendingNamesResult = Result<
+    (
+        Vec<VertexId>,
+        Vec<SharedRangeRef<'static>>,
+        Vec<CellRef>,
+        Vec<VertexId>,
+        Vec<String>,
+    ),
+    ExcelError,
+>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnresolvedNamePolicy {
+    Error,
+    Collect,
+}
+
 impl DependencyGraph {
     // Helper methods for formula analysis / dependency extraction.
 
@@ -20,10 +37,30 @@ impl DependencyGraph {
         ast: &ASTNode,
         current_sheet_id: SheetId,
     ) -> ExtractDependenciesResult {
+        let (dependencies, ranges, placeholders, named_dependencies, _pending_names) =
+            self.extract_dependencies_inner(ast, current_sheet_id, UnresolvedNamePolicy::Error)?;
+        Ok((dependencies, ranges, placeholders, named_dependencies))
+    }
+
+    pub(super) fn extract_dependencies_with_pending_names(
+        &mut self,
+        ast: &ASTNode,
+        current_sheet_id: SheetId,
+    ) -> ExtractDependenciesWithPendingNamesResult {
+        self.extract_dependencies_inner(ast, current_sheet_id, UnresolvedNamePolicy::Collect)
+    }
+
+    fn extract_dependencies_inner(
+        &mut self,
+        ast: &ASTNode,
+        current_sheet_id: SheetId,
+        unresolved_name_policy: UnresolvedNamePolicy,
+    ) -> ExtractDependenciesWithPendingNamesResult {
         let mut dependencies = FxHashSet::default();
         let mut range_dependencies: Vec<SharedRangeRef<'static>> = Vec::new();
         let mut created_placeholders = Vec::new();
         let mut named_dependencies = Vec::new();
+        let mut unresolved_names = FxHashSet::default();
         let mut local_scopes: Vec<FxHashSet<String>> = Vec::new();
         self.extract_dependencies_recursive(
             ast,
@@ -32,7 +69,9 @@ impl DependencyGraph {
             &mut range_dependencies,
             &mut created_placeholders,
             &mut named_dependencies,
+            &mut unresolved_names,
             &mut local_scopes,
+            unresolved_name_policy,
         )?;
 
         // Deduplicate range references.
@@ -46,11 +85,15 @@ impl DependencyGraph {
         named_dependencies.sort_unstable_by_key(|v| v.0);
         named_dependencies.dedup_by_key(|v| v.0);
 
+        let mut unresolved_names: Vec<String> = unresolved_names.into_iter().collect();
+        unresolved_names.sort();
+
         Ok((
             dependencies.into_iter().collect(),
             deduped_ranges,
             created_placeholders,
             named_dependencies,
+            unresolved_names,
         ))
     }
 
@@ -62,7 +105,9 @@ impl DependencyGraph {
         range_dependencies: &mut Vec<SharedRangeRef<'static>>,
         created_placeholders: &mut Vec<CellRef>,
         named_dependencies: &mut Vec<VertexId>,
+        unresolved_names: &mut FxHashSet<String>,
         local_scopes: &mut Vec<FxHashSet<String>>,
+        unresolved_name_policy: UnresolvedNamePolicy,
     ) -> Result<(), ExcelError> {
         match &ast.node_type {
             ASTNodeType::Reference { reference, .. } => match reference {
@@ -186,8 +231,15 @@ impl DependencyGraph {
                     } else if let Some(source) = self.resolve_source_scalar_entry(name) {
                         dependencies.insert(source.vertex);
                     } else {
-                        return Err(ExcelError::new(ExcelErrorKind::Name)
-                            .with_message(format!("Undefined name: {name}")));
+                        match unresolved_name_policy {
+                            UnresolvedNamePolicy::Error => {
+                                return Err(ExcelError::new(ExcelErrorKind::Name)
+                                    .with_message(format!("Undefined name: {name}")));
+                            }
+                            UnresolvedNamePolicy::Collect => {
+                                unresolved_names.insert(name.to_string());
+                            }
+                        }
                     }
                 }
                 ReferenceType::Table(tref) => {
@@ -209,7 +261,9 @@ impl DependencyGraph {
                     range_dependencies,
                     created_placeholders,
                     named_dependencies,
+                    unresolved_names,
                     local_scopes,
+                    unresolved_name_policy,
                 )?;
                 self.extract_dependencies_recursive(
                     right,
@@ -218,7 +272,9 @@ impl DependencyGraph {
                     range_dependencies,
                     created_placeholders,
                     named_dependencies,
+                    unresolved_names,
                     local_scopes,
+                    unresolved_name_policy,
                 )?;
             }
             ASTNodeType::UnaryOp { expr, .. } => {
@@ -229,7 +285,9 @@ impl DependencyGraph {
                     range_dependencies,
                     created_placeholders,
                     named_dependencies,
+                    unresolved_names,
                     local_scopes,
+                    unresolved_name_policy,
                 )?;
             }
             ASTNodeType::Function { name, args } => {
@@ -245,7 +303,9 @@ impl DependencyGraph {
                                 range_dependencies,
                                 created_placeholders,
                                 named_dependencies,
+                                unresolved_names,
                                 local_scopes,
+                                unresolved_name_policy,
                             )?;
 
                             if let ASTNodeType::Reference {
@@ -265,7 +325,9 @@ impl DependencyGraph {
                             range_dependencies,
                             created_placeholders,
                             named_dependencies,
+                            unresolved_names,
                             local_scopes,
+                            unresolved_name_policy,
                         )?;
 
                         local_scopes.pop();
@@ -278,7 +340,9 @@ impl DependencyGraph {
                                 range_dependencies,
                                 created_placeholders,
                                 named_dependencies,
+                                unresolved_names,
                                 local_scopes,
+                                unresolved_name_policy,
                             )?;
                         }
                     }
@@ -302,7 +366,9 @@ impl DependencyGraph {
                             range_dependencies,
                             created_placeholders,
                             named_dependencies,
+                            unresolved_names,
                             local_scopes,
+                            unresolved_name_policy,
                         )?;
                         local_scopes.pop();
                     }
@@ -315,7 +381,9 @@ impl DependencyGraph {
                             range_dependencies,
                             created_placeholders,
                             named_dependencies,
+                            unresolved_names,
                             local_scopes,
+                            unresolved_name_policy,
                         )?;
                     }
                 }
@@ -330,7 +398,9 @@ impl DependencyGraph {
                             range_dependencies,
                             created_placeholders,
                             named_dependencies,
+                            unresolved_names,
                             local_scopes,
+                            unresolved_name_policy,
                         )?;
                     }
                 }

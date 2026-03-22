@@ -175,16 +175,20 @@ fn lambda_param_shadowing_and_capture_snapshot_engine() {
 fn let_undefined_symbol_and_non_invoked_lambda_errors_engine() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
 
-    let err = engine
+    engine
         .set_cell_formula("Sheet1", 7, 1, parse("=LET(x,y,y,2,x)").unwrap())
-        .expect_err("undefined y should fail ingest");
-    assert_eq!(err.kind, ExcelErrorKind::Name);
+        .unwrap();
 
     engine
         .set_cell_formula("Sheet1", 7, 2, parse("=LET(f,LAMBDA(x,x+1),f)").unwrap())
         .unwrap();
 
     engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 7, 1) {
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Name),
+        other => panic!("expected #NAME?, got {other:?}"),
+    }
 
     match engine.get_cell_value("Sheet1", 7, 2) {
         Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Calc),

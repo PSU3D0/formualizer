@@ -187,8 +187,15 @@ pub struct DependencyGraph {
     /// Lookup for name vertex -> (scope, name) to avoid map scans
     name_vertex_lookup: FxHashMap<VertexId, (NameScope, String)>,
 
-    /// Pending formula vertices referencing names not yet defined
-    pending_name_links: FxHashMap<String, Vec<(SheetId, VertexId)>>,
+    /// Pending formula vertices referencing unresolved bare symbolic names.
+    ///
+    /// Keys are normalized through `name_lookup_key(...)` so workbook names and
+    /// source scalars can both wake the same waiting formulas when a symbol appears.
+    pending_name_links: FxHashMap<String, FxHashSet<(SheetId, VertexId)>>,
+
+    /// Reverse mapping used to clear stale pending-name registrations when a
+    /// formula is edited, overwritten with a value, or otherwise rebuilt.
+    vertex_to_pending_names: FxHashMap<VertexId, FxHashSet<String>>,
 
     // Native workbook tables (ListObjects)
     tables: FxHashMap<String, tables::TableEntry>,
@@ -574,6 +581,7 @@ impl DependencyGraph {
             vertex_to_names: FxHashMap::default(),
             name_vertex_lookup: FxHashMap::default(),
             pending_name_links: FxHashMap::default(),
+            vertex_to_pending_names: FxHashMap::default(),
             tables: FxHashMap::default(),
             tables_lookup: FxHashMap::default(),
             table_vertex_lookup: FxHashMap::default(),
@@ -747,6 +755,8 @@ impl DependencyGraph {
 
             if is_formula {
                 self.remove_dependent_edges(existing_id);
+                self.detach_vertex_from_names(existing_id);
+                self.clear_pending_name_references(existing_id);
                 self.vertex_formulas.remove(&existing_id);
             }
 
@@ -815,6 +825,15 @@ impl DependencyGraph {
         let addr = CellRef::new(sheet_id, coord);
         if let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
             // Overwrite existing value vertex only (ignore formulas in bulk path)
+            if matches!(
+                self.store.kind(existing_id),
+                VertexKind::FormulaScalar | VertexKind::FormulaArray
+            ) {
+                self.remove_dependent_edges(existing_id);
+                self.detach_vertex_from_names(existing_id);
+                self.clear_pending_name_references(existing_id);
+                self.vertex_formulas.remove(&existing_id);
+            }
             if self.value_cache_enabled {
                 let value_ref = self.data_store.store_value(value);
                 self.vertex_values.insert(existing_id, value_ref);
@@ -871,6 +890,15 @@ impl DependencyGraph {
             let coord = Coord::from_excel(row, col, true, true);
             let addr = CellRef::new(sheet_id, coord);
             if !assume_new && let Some(&existing_id) = self.cell_to_vertex.get(&addr) {
+                if matches!(
+                    self.store.kind(existing_id),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                ) {
+                    self.remove_dependent_edges(existing_id);
+                    self.detach_vertex_from_names(existing_id);
+                    self.clear_pending_name_references(existing_id);
+                    self.vertex_formulas.remove(&existing_id);
+                }
                 if self.value_cache_enabled {
                     let value_ref = self.data_store.store_value(value);
                     self.vertex_values.insert(existing_id, value_ref);
@@ -979,7 +1007,8 @@ impl DependencyGraph {
             new_range_dependencies,
             mut created_placeholders,
             named_dependencies,
-        ) = self.extract_dependencies(&ast, sheet_id)?;
+            unresolved_names,
+        ) = self.extract_dependencies_with_pending_names(&ast, sheet_id)?;
         if let (true, Some(t)) = (dbg, t_dep0) {
             let elapsed = t.elapsed().as_millis();
             // Only log if over threshold or sampled
@@ -1035,6 +1064,7 @@ impl DependencyGraph {
         // Remove old dependencies first
         self.remove_dependent_edges(addr_vertex_id);
         self.detach_vertex_from_names(addr_vertex_id);
+        self.clear_pending_name_references(addr_vertex_id);
 
         // Update vertex properties
         self.store
@@ -1052,6 +1082,9 @@ impl DependencyGraph {
 
         if !named_dependencies.is_empty() {
             self.attach_vertex_to_names(addr_vertex_id, &named_dependencies);
+        }
+        for unresolved_name in &unresolved_names {
+            self.record_pending_name_reference(sheet_id, unresolved_name, addr_vertex_id);
         }
 
         if let (true, Some(t)) = (dbg, t0) {
@@ -2956,18 +2989,24 @@ impl DependencyGraph {
     pub(crate) fn rebuild_formula_dependencies(&mut self, vertex_id: VertexId, ast: &ASTNode) {
         let sheet_id = self.store.sheet_id(vertex_id);
 
-        // Remove old dependency and name links first.
+        // Remove old dependency, name, and pending-name links first.
         self.remove_dependent_edges(vertex_id);
         self.detach_vertex_from_names(vertex_id);
+        self.clear_pending_name_references(vertex_id);
 
-        let (new_dependencies, new_range_dependencies, _created_placeholders, named_dependencies) =
-            match self.extract_dependencies(ast, sheet_id) {
-                Ok(v) => v,
-                Err(_) => {
-                    self.mark_as_ref_error(vertex_id);
-                    return;
-                }
-            };
+        let (
+            new_dependencies,
+            new_range_dependencies,
+            _created_placeholders,
+            named_dependencies,
+            unresolved_names,
+        ) = match self.extract_dependencies_with_pending_names(ast, sheet_id) {
+            Ok(v) => v,
+            Err(_) => {
+                self.mark_as_ref_error(vertex_id);
+                return;
+            }
+        };
 
         // Self-reference / name-cycle safety parity with set_cell_formula.
         if new_dependencies.contains(&vertex_id) {
@@ -2989,6 +3028,9 @@ impl DependencyGraph {
 
         if !named_dependencies.is_empty() {
             self.attach_vertex_to_names(vertex_id, &named_dependencies);
+        }
+        for unresolved_name in &unresolved_names {
+            self.record_pending_name_reference(sheet_id, unresolved_name, vertex_id);
         }
 
         self.add_dependent_edges(vertex_id, &new_dependencies);
