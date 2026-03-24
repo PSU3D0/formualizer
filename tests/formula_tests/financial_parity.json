@@ -1,0 +1,158 @@
+{
+  "name": "financial_parity",
+  "generated": "2026-03-24T00:00:00.000000",
+  "generator": "FZ-PAR-03 (financial tail batch)",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=TBILLPRICE(DATE(2024,1,1), DATE(2024,4,1), 0.038)",
+      "result": 99.03944444444444,
+      "result_type": "float",
+      "description": "TBILLPRICE 91-day bill at 3.8% discount"
+    },
+    {
+      "formula": "=TBILLPRICE(DATE(2024,2,1), DATE(2024,7,30), 0.05)",
+      "result": 97.5,
+      "result_type": "float",
+      "description": "TBILLPRICE 180-day bill at 5% discount"
+    },
+    {
+      "formula": "=TBILLPRICE(DATE(2024,3,1), DATE(2024,5,30), 0.10)",
+      "result": 97.5,
+      "result_type": "float",
+      "description": "TBILLPRICE 90-day bill at 10% discount"
+    },
+    {
+      "formula": "=TBILLPRICE(DATE(2024,4,1), DATE(2024,1,1), 0.05)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "TBILLPRICE error: maturity before settlement"
+    },
+    {
+      "formula": "=TBILLPRICE(DATE(2024,1,1), DATE(2024,4,1), -0.01)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "TBILLPRICE error: negative discount"
+    },
+    {
+      "formula": "=TBILLYIELD(DATE(2024,1,1), DATE(2024,4,1), 98.5)",
+      "result": 0.060244324203715074,
+      "result_type": "float",
+      "description": "TBILLYIELD 91-day bill priced at 98.5"
+    },
+    {
+      "formula": "=TBILLYIELD(DATE(2024,3,1), DATE(2024,5,30), 97.5)",
+      "result": 0.10256410256410256,
+      "result_type": "float",
+      "description": "TBILLYIELD 90-day bill priced at 97.5"
+    },
+    {
+      "formula": "=TBILLYIELD(DATE(2024,1,1), DATE(2024,4,1), 0)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "TBILLYIELD error: zero price"
+    },
+    {
+      "formula": "=TBILLYIELD(DATE(2024,4,1), DATE(2024,1,1), 99)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "TBILLYIELD error: maturity before settlement"
+    },
+    {
+      "formula": "=TBILLEQ(DATE(2024,1,1), DATE(2024,4,1), 0.038)",
+      "result": 0.03890144779577161,
+      "result_type": "float",
+      "description": "TBILLEQ 91-day short bill at 3.8% discount"
+    },
+    {
+      "formula": "=TBILLEQ(DATE(2024,3,1), DATE(2024,5,30), 0.05)",
+      "result": 0.051336146272855133,
+      "result_type": "float",
+      "description": "TBILLEQ 90-day short bill at 5% discount"
+    },
+    {
+      "formula": "=TBILLEQ(DATE(2024,1,1), DATE(2024,9,27), 0.06)",
+      "result": 0.0630555655169978,
+      "result_type": "float",
+      "description": "TBILLEQ 270-day long bill at 6% (coupon-equivalent formula)"
+    },
+    {
+      "formula": "=TBILLEQ(DATE(2024,1,1), DATE(2024,4,1), -0.01)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "TBILLEQ error: negative discount"
+    },
+    {
+      "formula": "=ISPMT(0.005, 1, 24, 100000)",
+      "result": -479.1666666666667,
+      "result_type": "float",
+      "description": "ISPMT period 1 of 24-month loan"
+    },
+    {
+      "formula": "=ISPMT(0.005, 12, 24, 100000)",
+      "result": -250.0,
+      "result_type": "float",
+      "description": "ISPMT period 12 of 24-month loan (half principal repaid)"
+    },
+    {
+      "formula": "=ISPMT(0.10/12, 6, 36, 8000000)",
+      "result": -55555.55555555556,
+      "result_type": "float",
+      "description": "ISPMT large loan period 6 of 36"
+    },
+    {
+      "formula": "=ISPMT(0.005, 0, 24, 100000)",
+      "result": -500.0,
+      "result_type": "float",
+      "description": "ISPMT period 0 (full principal outstanding)"
+    },
+    {
+      "formula": "=ISPMT(0.005, 1, 0, 100000)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "ISPMT error: zero nper"
+    },
+    {
+      "formula": "=PDURATION(0.10, 1000, 2000)",
+      "result": 7.272540897341713,
+      "result_type": "float",
+      "description": "PDURATION double money at 10%"
+    },
+    {
+      "formula": "=PDURATION(0.025, 10000, 75000)",
+      "result": 81.59942627245331,
+      "result_type": "float",
+      "description": "PDURATION 10k to 75k at 2.5%"
+    },
+    {
+      "formula": "=PDURATION(0.08, 1000, 2000)",
+      "result": 9.006468342000588,
+      "result_type": "float",
+      "description": "PDURATION double money at 8%"
+    },
+    {
+      "formula": "=PDURATION(0, 1000, 2000)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "PDURATION error: zero rate"
+    },
+    {
+      "formula": "=PDURATION(0.05, -1000, 2000)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "PDURATION error: negative pv"
+    },
+    {
+      "formula": "=PDURATION(0.05, 1000, -2000)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "PDURATION error: negative fv"
+    },
+    {
+      "formula": "=ACCRINTM(DATE(2023,12,1), DATE(2024,3,1), 0.12, 1000, 1)",
+      "result": 29.86391196945879,
+      "result_type": "float",
+      "description": "ACCRINTM Actual/Actual prorates across year boundary"
+    }
+  ]
+}

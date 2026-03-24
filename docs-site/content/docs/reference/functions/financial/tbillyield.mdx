@@ -1,0 +1,46 @@
+---
+title: "TBILLYIELD"
+description: "TBILLYIELD: Returns the yield for a US Treasury bill."
+---
+
+<FunctionPageSchema id="financial/tbillyield" />
+
+## Summary
+
+`TBILLYIELD` computes the discount-rate yield from a T-bill's price using
+ `yield = (100 - price) / price * (360 / DSM)`.
+
+## Remarks
+ - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
+ - The T-bill must mature within one year of settlement (DSM &lt;= 365).
+ - `price` is the dollar price per $100 face value; must be positive.
+ - Returns `#NUM!` for invalid dates, non-positive price, or DSM out of range.
+
+## Examples
+
+<FunctionSandbox
+  title="Yield from quoted T-bill price"
+  formula={`=TBILLYIELD(DATE(2024,1,1), DATE(2024,4,1), 98.5)`}
+  grid={{}}
+  expected={"0.060244324203715074"}
+/>
+
+## Related functions
+
+- [TBILLPRICE](/docs/reference/functions/financial/tbillprice)
+- [TBILLEQ](/docs/reference/functions/financial/tbilleq)
+- [YIELD](/docs/reference/functions/financial/yield)
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [PDURATION](/docs/reference/functions/financial/pduration)
+- [RRI](/docs/reference/functions/financial/rri)
+
+## FAQ
+
+### Is TBILLYIELD the same as bond-equivalent yield?
+No. TBILLYIELD gives the bill's discount-rate yield, while TBILLEQ converts that pricing into a bond-equivalent yield.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/tbillyield" />
+{/* [formualizer-docgen:function-meta:end] */}

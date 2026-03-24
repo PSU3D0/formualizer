@@ -2383,6 +2383,179 @@ impl Function for RriFn {
     }
 }
 
+/// Returns the interest paid on the outstanding principal for a specific period
+/// of an investment with even principal payments.
+/// Calculates interest paid in a period for a loan repaid with equal-principal payments.
+///
+/// Unlike `IPMT`, `ISPMT` assumes the principal is repaid in equal installments
+/// so the interest portion decreases linearly over the life of the loan.
+///
+/// # Remarks
+/// - `rate` is the interest rate per period.
+/// - `per` is 0-based period number (0 to `nper - 1`).
+/// - `nper` is the total number of payment periods; must be non-zero.
+/// - `pv` is the present value (principal).
+/// - Formula: `pv * rate * (per / nper - 1)`.
+/// - The result is typically negative for a positive loan principal, representing interest paid.
+/// - Returns `#NUM!` when `nper` is zero.
+///
+/// # Examples
+/// ```excel
+/// =ISPMT(0.005, 1, 24, 100000)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Interest in the first period"
+/// formula: '=ISPMT(0.005, 1, 24, 100000)'
+/// expected: -479.1666666666667
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IPMT
+///   - PPMT
+///   - PMT
+/// faq:
+///   - q: "How is ISPMT different from IPMT?"
+///     a: "ISPMT assumes equal principal repayment, so interest declines linearly instead of following an annuity schedule."
+/// ```
+#[derive(Debug)]
+pub struct IspmtFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: ISPMT
+/// Type: IspmtFn
+/// Min args: 4
+/// Max args: 4
+/// Variadic: false
+/// Signature: ISPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IspmtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISPMT"
+    }
+    fn min_args(&self) -> usize {
+        4
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // rate
+                ArgSchema::number_lenient_scalar(), // per
+                ArgSchema::number_lenient_scalar(), // nper
+                ArgSchema::number_lenient_scalar(), // pv
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let per = coerce_num(&args[1])?;
+        let nper = coerce_num(&args[2])?;
+        let pv = coerce_num(&args[3])?;
+
+        if nper == 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        // ISPMT = pv * rate * (per / nper - 1)
+        let result = pv * rate * (per / nper - 1.0);
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// Returns the number of periods required for an investment to reach a
+/// specified future value at a constant interest rate.
+///
+/// # Remarks
+/// - `rate` is the interest rate per compounding period; must be positive.
+/// - `pv` and `fv` must be positive and `fv > pv` (growth scenario) or
+///   `fv < pv` is valid as long as both are positive.
+/// - Formula: `(ln(fv) - ln(pv)) / ln(1 + rate)`.
+/// - Returns `#NUM!` when `rate <= 0`, or `pv` or `fv` are non-positive.
+///
+/// # Examples
+/// ```excel
+/// =PDURATION(0.10, 1000, 2000)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Time to double at ten percent"
+/// formula: '=PDURATION(0.10, 1000, 2000)'
+/// expected: 7.272540897341713
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NPER
+///   - RRI
+///   - FV
+/// faq:
+///   - q: "Does PDURATION require growth?"
+///     a: "It requires positive present and future values plus a positive rate; the logarithmic formula then returns the compounding periods needed to move between them."
+/// ```
+#[derive(Debug)]
+pub struct PdurationFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: PDURATION
+/// Type: PdurationFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: PDURATION(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for PdurationFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "PDURATION"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // rate
+                ArgSchema::number_lenient_scalar(), // pv
+                ArgSchema::number_lenient_scalar(), // fv
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let rate = coerce_num(&args[0])?;
+        let pv = coerce_num(&args[1])?;
+        let fv = coerce_num(&args[2])?;
+
+        if rate <= 0.0 || pv <= 0.0 || fv <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let result = (fv.ln() - pv.ln()) / (1.0 + rate).ln();
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(PmtFn));
@@ -2404,4 +2577,6 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(DollardeFn));
     crate::function_registry::register_function(Arc::new(DollarfrFn));
     crate::function_registry::register_function(Arc::new(RriFn));
+    crate::function_registry::register_function(Arc::new(IspmtFn));
+    crate::function_registry::register_function(Arc::new(PdurationFn));
 }

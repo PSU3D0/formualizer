@@ -1,0 +1,43 @@
+---
+title: "F.INV.RT"
+description: "F.INV.RT: Returns the inverse of the right-tailed F-distribution."
+---
+
+<FunctionPageSchema id="stats/f-inv-rt" />
+
+## Summary
+
+Returns the inverse of the right-tailed F-distribution.
+
+## returns: 0
+ =F.INV.RT(1,5,10)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="A full right tail maps to zero"
+  formula={`=F.INV.RT(1,5,10)`}
+  grid={{}}
+  expected={"0"}
+/>
+
+## Related functions
+
+- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+- [F.TEST](/docs/reference/functions/stats/f-test)
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+
+## FAQ
+
+### What p-values are valid for F.INV.RT?
+p must lie in the range 0 to 1, and p=0 returns #NUM! because the inverse diverges.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/f-inv-rt" />
+{/* [formualizer-docgen:function-meta:end] */}

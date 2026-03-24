@@ -1,0 +1,43 @@
+---
+title: "VARPA"
+description: "VARPA: Returns the population variance using A-variant coercion semantics."
+---
+
+<FunctionPageSchema id="stats/varpa" />
+
+## Summary
+
+Returns the population variance using A-variant coercion semantics.
+
+## returns: 0.6666666666666666
+ =VARPA(TRUE,2,"x")
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Population variance with coerced values"
+  formula={`=VARPA(TRUE,2,"x")`}
+  grid={{}}
+  expected={"0.6666666666666666"}
+/>
+
+## Related functions
+
+- [VARA](/docs/reference/functions/stats/vara)
+- [STDEVPA](/docs/reference/functions/stats/stdevpa)
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+
+## FAQ
+
+### When does VARPA return #DIV/0!?
+It returns #DIV/0! when no coerced values remain after evaluation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/varpa" />
+{/* [formualizer-docgen:function-meta:end] */}

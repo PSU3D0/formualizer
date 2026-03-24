@@ -1,0 +1,43 @@
+---
+title: "MINA"
+description: "MINA: Returns the smallest value after applying A-variant coercion rules."
+---
+
+<FunctionPageSchema id="stats/mina" />
+
+## Summary
+
+Returns the smallest value after applying A-variant coercion rules.
+
+## returns: -2
+ =MINA(TRUE,-2,"x")
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Minimum with logical and text coercion"
+  formula={`=MINA(TRUE,-2,"x")`}
+  grid={{}}
+  expected={"-2"}
+/>
+
+## Related functions
+
+- [MIN](/docs/reference/functions/math/min)
+- [MAXA](/docs/reference/functions/stats/maxa)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### Do text values affect MINA?
+Yes. Text is coerced to 0, so it can become the minimum when all numeric inputs are positive.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/mina" />
+{/* [formualizer-docgen:function-meta:end] */}

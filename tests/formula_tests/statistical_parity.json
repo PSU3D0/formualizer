@@ -1,0 +1,218 @@
+{
+  "name": "statistical_parity",
+  "generated": "2026-03-24T00:00:00.000000",
+  "generator": "FZ-PAR-01 manual fixture",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=AVERAGEA(1,2,3,4,5)",
+      "result": 3,
+      "result_type": "float",
+      "description": "AVERAGEA with numeric scalars"
+    },
+    {
+      "formula": "=AVERAGEA(1,TRUE,FALSE)",
+      "result": 0.6666666666666666,
+      "result_type": "float",
+      "description": "AVERAGEA treats TRUE=1, FALSE=0"
+    },
+    {
+      "formula": "=MAXA(1,2,3)",
+      "result": 3,
+      "result_type": "float",
+      "description": "MAXA numeric max"
+    },
+    {
+      "formula": "=MAXA(-5,-3,-1)",
+      "result": -1,
+      "result_type": "float",
+      "description": "MAXA negative values"
+    },
+    {
+      "formula": "=MINA(1,2,3)",
+      "result": 1,
+      "result_type": "float",
+      "description": "MINA numeric min"
+    },
+    {
+      "formula": "=MINA(-5,-3,-1)",
+      "result": -5,
+      "result_type": "float",
+      "description": "MINA negative values"
+    },
+    {
+      "formula": "=STDEVA(2,4,6)",
+      "result": 2,
+      "result_type": "float",
+      "description": "STDEVA sample stdev numeric"
+    },
+    {
+      "formula": "=STDEVPA(2,4,6)",
+      "result": 1.632993161855452,
+      "result_type": "float",
+      "description": "STDEVPA population stdev numeric"
+    },
+    {
+      "formula": "=VARA(2,4,6)",
+      "result": 4,
+      "result_type": "float",
+      "description": "VARA sample variance numeric"
+    },
+    {
+      "formula": "=VARPA(2,4,6)",
+      "result": 2.6666666666666665,
+      "result_type": "float",
+      "description": "VARPA population variance numeric"
+    },
+    {
+      "formula": "=SKEW.P(1,2,3,4,5)",
+      "result": 0,
+      "result_type": "float",
+      "description": "SKEW.P symmetric data"
+    },
+    {
+      "formula": "=T.DIST.RT(0,10)",
+      "result": 0.5,
+      "result_type": "float",
+      "description": "T.DIST.RT at zero is 0.5"
+    },
+    {
+      "formula": "=T.DIST.RT(1,30)",
+      "result": 0.16265430771301348,
+      "result_type": "float",
+      "description": "T.DIST.RT moderate t value high df"
+    },
+    {
+      "formula": "=CHISQ.DIST.RT(0,4)",
+      "result": 1,
+      "result_type": "float",
+      "description": "CHISQ.DIST.RT at zero"
+    },
+    {
+      "formula": "=CHISQ.DIST.RT(2,2)",
+      "result": 0.36787944117144233,
+      "result_type": "float",
+      "description": "CHISQ.DIST.RT df=2 exact"
+    },
+    {
+      "formula": "=CHISQ.INV.RT(0.5,2)",
+      "result": 1.3862943611198906,
+      "result_type": "float",
+      "description": "CHISQ.INV.RT median df=2"
+    },
+    {
+      "formula": "=F.DIST.RT(0,5,10)",
+      "result": 1,
+      "result_type": "float",
+      "description": "F.DIST.RT at zero"
+    },
+    {
+      "formula": "=F.DIST.RT(1,5,10)",
+      "result": 0.4651194265377998,
+      "result_type": "float",
+      "description": "F.DIST.RT at 1 moderate df"
+    },
+    {
+      "formula": "=BETA.INV(0,2,3)",
+      "result": 0,
+      "result_type": "float",
+      "description": "BETA.INV at p=0"
+    },
+    {
+      "formula": "=BETA.INV(1,2,3)",
+      "result": 1,
+      "result_type": "float",
+      "description": "BETA.INV at p=1"
+    },
+    {
+      "formula": "=BINOM.DIST.RANGE(10,0.5,3)",
+      "result": 0.1171875,
+      "result_type": "float",
+      "description": "BINOM.DIST.RANGE single point"
+    },
+    {
+      "formula": "=BINOM.DIST.RANGE(10,0.5,3,7)",
+      "result": 0.8906249999999998,
+      "result_type": "float",
+      "description": "BINOM.DIST.RANGE with range"
+    },
+    {
+      "formula": "=BINOM.INV(10,0.5,0.5)",
+      "result": 5,
+      "result_type": "float",
+      "description": "BINOM.INV median"
+    },
+    {
+      "formula": "=BINOM.INV(10,0.5,0.05)",
+      "result": 2,
+      "result_type": "float",
+      "description": "BINOM.INV lower tail"
+    },
+    {
+      "formula": "=GAMMA(5)",
+      "result": 24,
+      "result_type": "float",
+      "description": "GAMMA of integer (4!)"
+    },
+    {
+      "formula": "=GAMMA(0.5)",
+      "result": 1.7724538509055159,
+      "result_type": "float",
+      "description": "GAMMA(0.5) = sqrt(pi)"
+    },
+    {
+      "formula": "=GAMMA.INV(0,2,1)",
+      "result": 0,
+      "result_type": "float",
+      "description": "GAMMA.INV at p=0"
+    },
+    {
+      "formula": "=GAMMALN(4)",
+      "result": 1.791759469228327,
+      "result_type": "float",
+      "description": "GAMMALN(4) = ln(6)"
+    },
+    {
+      "formula": "=GAMMALN.PRECISE(4)",
+      "result": 1.791759469228327,
+      "result_type": "float",
+      "description": "GAMMALN.PRECISE(4) same as GAMMALN"
+    },
+    {
+      "formula": "=GAMMALN(0.5)",
+      "result": 0.5723649429247001,
+      "result_type": "float",
+      "description": "GAMMALN(0.5) = ln(sqrt(pi))"
+    },
+    {
+      "formula": "=GAMMA(0)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "GAMMA at 0 is #NUM!"
+    },
+    {
+      "formula": "=GAMMALN(-1)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "GAMMALN negative is #NUM!"
+    },
+    {
+      "formula": "=F.INV.RT(1,5,10)",
+      "result": 0,
+      "result_type": "float",
+      "description": "F.INV.RT at p=1 is 0"
+    },
+    {
+      "formula": "=CRITBINOM(10,0.5,0.5)",
+      "result": 5,
+      "result_type": "float",
+      "description": "CRITBINOM alias for BINOM.INV"
+    },
+    {
+      "formula": "=GAMMAINV(0,2,1)",
+      "result": 0,
+      "result_type": "float",
+      "description": "GAMMAINV alias for GAMMA.INV"
+    }
+  ]
+}

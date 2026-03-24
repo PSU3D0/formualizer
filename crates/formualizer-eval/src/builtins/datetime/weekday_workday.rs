@@ -491,12 +491,154 @@ fn is_weekend(date: &NaiveDate) -> bool {
     matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
 }
 
+/// Weekend mask: 7 bools indexed by chrono weekday (Mon=0 .. Sun=6).
+/// `true` means the day is a non-working (weekend) day.
+type WeekendMask = [bool; 7];
+
+/// Default mask: Saturday and Sunday are weekends.
+const DEFAULT_WEEKEND_MASK: WeekendMask = [false, false, false, false, false, true, true];
+
+/// Parse the `weekend` argument for `.INTL` functions.
+///
+/// Accepts either:
+/// - A **number** code (1-7 for two-day weekends, 11-17 for single-day weekends).
+/// - A **7-character string** of `0`s and `1`s (`1` = weekend) starting from Monday.
+///
+/// Returns `None` if the value is invalid (caller should return `#NUM!`).
+/// The special all-ones string (`"1111111"`) yields `#VALUE!` per Excel.
+fn parse_weekend_mask(arg: &ArgumentHandle) -> Result<Option<WeekendMask>, ExcelError> {
+    let v = arg.value()?.into_literal();
+    match v {
+        LiteralValue::Number(f) => Ok(weekend_mask_from_code(f.trunc() as i64)),
+        LiteralValue::Int(i) => Ok(weekend_mask_from_code(i)),
+        LiteralValue::Boolean(b) => {
+            // TRUE = 1, FALSE not valid (0 weekend days isn't a valid code)
+            if b {
+                Ok(weekend_mask_from_code(1))
+            } else {
+                Ok(None)
+            }
+        }
+        LiteralValue::Text(s) => {
+            if s == "1111111" {
+                Err(ExcelError::new_value())
+            } else {
+                Ok(weekend_mask_from_string(&s))
+            }
+        }
+        LiteralValue::Empty => Ok(Some(DEFAULT_WEEKEND_MASK)),
+        LiteralValue::Error(e) => Err(e),
+        _ => Ok(None),
+    }
+}
+
+/// Map a numeric weekend code to a 7-element mask.
+fn weekend_mask_from_code(code: i64) -> Option<WeekendMask> {
+    // Indices: 0=Mon, 1=Tue, 2=Wed, 3=Thu, 4=Fri, 5=Sat, 6=Sun
+    match code {
+        1 => Some([false, false, false, false, false, true, true]), // Sat, Sun
+        2 => Some([true, false, false, false, false, false, true]), // Sun, Mon
+        3 => Some([true, true, false, false, false, false, false]), // Mon, Tue
+        4 => Some([false, true, true, false, false, false, false]), // Tue, Wed
+        5 => Some([false, false, true, true, false, false, false]), // Wed, Thu
+        6 => Some([false, false, false, true, true, false, false]), // Thu, Fri
+        7 => Some([false, false, false, false, true, true, false]), // Fri, Sat
+        11 => Some([false, false, false, false, false, false, true]), // Sun only
+        12 => Some([true, false, false, false, false, false, false]), // Mon only
+        13 => Some([false, true, false, false, false, false, false]), // Tue only
+        14 => Some([false, false, true, false, false, false, false]), // Wed only
+        15 => Some([false, false, false, true, false, false, false]), // Thu only
+        16 => Some([false, false, false, false, true, false, false]), // Fri only
+        17 => Some([false, false, false, false, false, true, false]), // Sat only
+        _ => None,
+    }
+}
+
+/// Parse a 7-character "0"/"1" string into a weekend mask.
+/// Characters map to Mon..Sun. "1" = weekend, "0" = workday.
+/// Returns `None` if the string is invalid or all-ones (no workdays).
+fn weekend_mask_from_string(s: &str) -> Option<WeekendMask> {
+    if s.len() != 7 {
+        return None;
+    }
+    let mut mask = [false; 7];
+    let mut all_weekend = true;
+    for (i, ch) in s.chars().enumerate() {
+        match ch {
+            '1' => mask[i] = true,
+            '0' => {
+                mask[i] = false;
+                all_weekend = false;
+            }
+            _ => return None,
+        }
+    }
+    if all_weekend {
+        return None; // Excel returns #VALUE! when all 7 days are weekends
+    }
+    Some(mask)
+}
+
+/// Check whether a date falls on a weekend day according to the given mask.
+fn is_weekend_masked(date: &NaiveDate, mask: &WeekendMask) -> bool {
+    let idx = date.weekday().num_days_from_monday() as usize; // Mon=0..Sun=6
+    mask[idx]
+}
+
+/// Collect holiday dates from argument(s) starting at `arg_start`.
+/// Handles scalars, inline arrays, and range references.
+/// Silently skips non-numeric / empty cells (matching Excel behavior).
+fn collect_holidays(args: &[ArgumentHandle], arg_start: usize) -> Vec<NaiveDate> {
+    let mut holidays = Vec::new();
+    for arg in args.iter().skip(arg_start) {
+        match arg.value() {
+            Ok(CalcValue::Scalar(lit)) => collect_holidays_from_literal(&lit, &mut holidays),
+            Ok(CalcValue::Range(rv)) => {
+                let _ = rv.for_each_cell(&mut |val| {
+                    collect_holidays_from_literal(val, &mut holidays);
+                    Ok(())
+                });
+            }
+            _ => {}
+        }
+    }
+    holidays
+}
+
+fn collect_holidays_from_literal(lit: &LiteralValue, out: &mut Vec<NaiveDate>) {
+    match lit {
+        LiteralValue::Array(rows) => {
+            for row in rows {
+                for cell in row {
+                    collect_holidays_from_literal(cell, out);
+                }
+            }
+        }
+        _ => {
+            if let Some(d) = literal_to_date(lit) {
+                out.push(d);
+            }
+        }
+    }
+}
+
+fn literal_to_date(lit: &LiteralValue) -> Option<NaiveDate> {
+    match lit {
+        LiteralValue::Number(f) => serial_to_date(*f).ok(),
+        LiteralValue::Int(i) => serial_to_date(*i as f64).ok(),
+        LiteralValue::Date(d) => Some(*d),
+        LiteralValue::DateTime(dt) => Some(dt.date()),
+        _ => None,
+    }
+}
+
 /// Returns the number of weekday business days between two dates, inclusive.
 ///
 /// # Remarks
 /// - Weekends are fixed to Saturday and Sunday.
 /// - If `start_date > end_date`, the result is negative.
-/// - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+/// - Optional `holidays` arguments are excluded from the count and may be provided as scalars,
+///   inline arrays, or ranges.
 /// - Input serials are interpreted with Excel 1900 date mapping.
 ///
 /// # Examples
@@ -507,9 +649,9 @@ fn is_weekend(date: &NaiveDate) -> bool {
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Holiday argument currently has no effect"
+/// title: "Holiday exclusions reduce the count"
 /// formula: "=NETWORKDAYS(45292, 45299, 45293)"
-/// expected: 6
+/// expected: 5
 /// ```
 ///
 /// ```yaml,docs
@@ -518,8 +660,8 @@ fn is_weekend(date: &NaiveDate) -> bool {
 ///   - WEEKDAY
 ///   - DAYS
 /// faq:
-///   - q: "Are custom holidays excluded in NETWORKDAYS right now?"
-///     a: "Not yet. The third argument is accepted but currently ignored, so only Saturday/Sunday weekends are excluded."
+///   - q: "Can I exclude custom holidays in NETWORKDAYS?"
+///     a: "Yes. Additional arguments can provide holiday serials, arrays, or ranges to exclude from the weekday count."
 /// ```
 #[derive(Debug)]
 pub struct NetworkdaysFn;
@@ -566,14 +708,7 @@ impl Function for NetworkdaysFn {
         let start_date = serial_to_date(start_serial)?;
         let end_date = serial_to_date(end_serial)?;
 
-        // Collect holidays if provided
-        // TODO: Implement holiday array support
-        let holidays: Vec<NaiveDate> = if args.len() > 2 {
-            // For now, skip holiday handling (would need array support)
-            vec![]
-        } else {
-            vec![]
-        };
+        let holidays = collect_holidays(args, 2);
 
         let (start, end, sign) = if start_date <= end_date {
             (start_date, end_date, 1i64)
@@ -599,7 +734,8 @@ impl Function for NetworkdaysFn {
 /// # Remarks
 /// - Positive `days` moves forward; negative `days` moves backward.
 /// - Weekends are fixed to Saturday and Sunday.
-/// - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+/// - Optional `holidays` arguments are excluded and may be provided as scalars, inline arrays,
+///   or ranges.
 /// - Input and output serials use Excel 1900 date mapping.
 ///
 /// # Examples
@@ -610,9 +746,9 @@ impl Function for NetworkdaysFn {
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Holiday argument currently has no effect"
+/// title: "Holiday exclusions push the target date out"
 /// formula: "=WORKDAY(45292, 5, 45293)"
-/// expected: 45299
+/// expected: 45300
 /// ```
 ///
 /// ```yaml,docs
@@ -668,10 +804,7 @@ impl Function for WorkdayFn {
 
         let start_date = serial_to_date(start_serial)?;
 
-        // Collect holidays if provided
-        // TODO: Implement holiday array support
-        // Holidays parameter is currently accepted but ignored.
-        let holidays: Vec<NaiveDate> = Vec::new();
+        let holidays = collect_holidays(args, 2);
 
         let mut current = start_date;
         let mut remaining = days.abs();
@@ -695,6 +828,253 @@ impl Function for WorkdayFn {
     }
 }
 
+/// Returns the number of working days between two dates with configurable weekends.
+///
+/// # Remarks
+/// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
+///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
+/// - The optional `holidays` argument accepts a range or array of date serials to exclude.
+/// - If `start_date > end_date`, the result is negative.
+/// - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
+///
+/// # Examples
+/// ```excel
+/// =NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,31))
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default weekends (same as NETWORKDAYS)"
+/// formula: "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,31))"
+/// expected: 23
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Friday-only weekend"
+/// formula: "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 16)"
+/// expected: 6
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Custom weekend string (Mon+Fri off)"
+/// formula: "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), \"1000100\")"
+/// expected: 5
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - NETWORKDAYS
+///   - WORKDAY.INTL
+///   - WEEKDAY
+/// faq:
+///   - q: "What happens if the weekend string is all 1s?"
+///     a: "NETWORKDAYS.INTL returns #VALUE! because there would be no workdays."
+/// ```
+#[derive(Debug)]
+pub struct NetworkdaysIntlFn;
+/// [formualizer-docgen:schema:start]
+/// Name: NETWORKDAYS.INTL
+/// Type: NetworkdaysIntlFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: NETWORKDAYS.INTL(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar, arg4...: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for NetworkdaysIntlFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NETWORKDAYS.INTL"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // start_date
+                ArgSchema::number_lenient_scalar(), // end_date
+                ArgSchema::any(),                   // weekend (optional)
+                ArgSchema::any(),                   // holidays (optional)
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let start_serial = coerce_to_serial(&args[0])?;
+        let end_serial = coerce_to_serial(&args[1])?;
+
+        let start_date = serial_to_date(start_serial)?;
+        let end_date = serial_to_date(end_serial)?;
+
+        let mask = if args.len() > 2 {
+            match parse_weekend_mask(&args[2]) {
+                Ok(Some(m)) => m,
+                Ok(None) => {
+                    return Ok(CalcValue::Scalar(
+                        LiteralValue::Error(ExcelError::new_num()),
+                    ));
+                }
+                Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            }
+        } else {
+            DEFAULT_WEEKEND_MASK
+        };
+
+        let holidays = collect_holidays(args, 3);
+
+        let (start, end, sign) = if start_date <= end_date {
+            (start_date, end_date, 1i64)
+        } else {
+            (end_date, start_date, -1i64)
+        };
+
+        let mut count = 0i64;
+        let mut current = start;
+        while current <= end {
+            if !is_weekend_masked(&current, &mask) && !holidays.contains(&current) {
+                count += 1;
+            }
+            current = current.succ_opt().unwrap_or(current);
+        }
+
+        Ok(CalcValue::Scalar(LiteralValue::Int(count * sign)))
+    }
+}
+
+/// Returns the date serial that is a given number of workdays from a start date,
+/// with configurable weekends.
+///
+/// # Remarks
+/// - Positive `days` moves forward; negative `days` moves backward.
+/// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
+///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
+/// - The optional `holidays` argument accepts a range or array of date serials to exclude.
+/// - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
+///
+/// # Examples
+/// ```excel
+/// =WORKDAY.INTL(DATE(2024,1,1), 5)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Default weekends (same as WORKDAY)"
+/// formula: "=WORKDAY.INTL(DATE(2024,1,1), 5)"
+/// expected: 45306
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sunday-only weekend"
+/// formula: "=WORKDAY.INTL(DATE(2024,1,1), 5, 11)"
+/// expected: 45302
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Custom weekend string"
+/// formula: "=WORKDAY.INTL(DATE(2024,1,1), 5, \"0000011\")"
+/// expected: 45299
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - WORKDAY
+///   - NETWORKDAYS.INTL
+///   - WEEKDAY
+/// faq:
+///   - q: "What is the difference between WORKDAY and WORKDAY.INTL?"
+///     a: "WORKDAY.INTL adds a weekend parameter that lets you define which days are non-working, instead of always using Saturday/Sunday."
+/// ```
+#[derive(Debug)]
+pub struct WorkdayIntlFn;
+/// [formualizer-docgen:schema:start]
+/// Name: WORKDAY.INTL
+/// Type: WorkdayIntlFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: WORKDAY.INTL(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar, arg4...: any@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for WorkdayIntlFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "WORKDAY.INTL"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // start_date
+                ArgSchema::number_lenient_scalar(), // days
+                ArgSchema::any(),                   // weekend (optional)
+                ArgSchema::any(),                   // holidays (optional)
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let start_serial = coerce_to_serial(&args[0])?;
+        let days = coerce_to_int(&args[1])?;
+
+        let start_date = serial_to_date(start_serial)?;
+
+        let mask = if args.len() > 2 {
+            match parse_weekend_mask(&args[2]) {
+                Ok(Some(m)) => m,
+                Ok(None) => {
+                    return Ok(CalcValue::Scalar(
+                        LiteralValue::Error(ExcelError::new_num()),
+                    ));
+                }
+                Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            }
+        } else {
+            DEFAULT_WEEKEND_MASK
+        };
+
+        let holidays = collect_holidays(args, 3);
+
+        let mut current = start_date;
+        let mut remaining = days.abs();
+        let direction: i64 = if days >= 0 { 1 } else { -1 };
+
+        while remaining > 0 {
+            current = if direction > 0 {
+                current.succ_opt().ok_or_else(ExcelError::new_num)?
+            } else {
+                current.pred_opt().ok_or_else(ExcelError::new_num)?
+            };
+
+            if !is_weekend_masked(&current, &mask) && !holidays.contains(&current) {
+                remaining -= 1;
+            }
+        }
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(date_to_serial(
+            &current,
+        ))))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(WeekdayFn));
@@ -702,6 +1082,8 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(DatedifFn));
     crate::function_registry::register_function(Arc::new(NetworkdaysFn));
     crate::function_registry::register_function(Arc::new(WorkdayFn));
+    crate::function_registry::register_function(Arc::new(NetworkdaysIntlFn));
+    crate::function_registry::register_function(Arc::new(WorkdayIntlFn));
 }
 
 #[cfg(test)]
@@ -762,5 +1144,311 @@ mod tests {
             .into_literal(),
             LiteralValue::Int(4)
         );
+    }
+
+    // ── Weekend mask helpers ──
+
+    #[test]
+    fn weekend_mask_from_code_default() {
+        let m = weekend_mask_from_code(1).unwrap();
+        // Sat(5) and Sun(6) should be true
+        assert!(!m[0]); // Mon
+        assert!(!m[4]); // Fri
+        assert!(m[5]); // Sat
+        assert!(m[6]); // Sun
+    }
+
+    #[test]
+    fn weekend_mask_from_code_sunday_only() {
+        let m = weekend_mask_from_code(11).unwrap();
+        assert!(m[6]); // Sun
+        for weekend in m.iter().take(6) {
+            assert!(!weekend);
+        }
+    }
+
+    #[test]
+    fn weekend_mask_from_code_invalid() {
+        assert!(weekend_mask_from_code(0).is_none());
+        assert!(weekend_mask_from_code(8).is_none());
+        assert!(weekend_mask_from_code(18).is_none());
+    }
+
+    #[test]
+    fn weekend_mask_from_string_basic() {
+        // Mon+Fri off
+        let m = weekend_mask_from_string("1000100").unwrap();
+        assert!(m[0]); // Mon
+        assert!(!m[1]);
+        assert!(m[4]); // Fri
+        assert!(!m[5]);
+    }
+
+    #[test]
+    fn weekend_mask_from_string_all_ones_invalid() {
+        assert!(weekend_mask_from_string("1111111").is_none());
+    }
+
+    #[test]
+    fn weekend_mask_from_string_wrong_length() {
+        assert!(weekend_mask_from_string("000011").is_none());
+        assert!(weekend_mask_from_string("00001100").is_none());
+    }
+
+    #[test]
+    fn weekend_mask_from_string_bad_chars() {
+        assert!(weekend_mask_from_string("000012X").is_none());
+    }
+
+    #[test]
+    fn is_weekend_masked_basic() {
+        let mask = weekend_mask_from_code(1).unwrap(); // Sat+Sun
+        let mon = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(); // Monday
+        let sat = NaiveDate::from_ymd_opt(2024, 1, 6).unwrap(); // Saturday
+        let sun = NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(); // Sunday
+        assert!(!is_weekend_masked(&mon, &mask));
+        assert!(is_weekend_masked(&sat, &mask));
+        assert!(is_weekend_masked(&sun, &mask));
+    }
+
+    // ── NETWORKDAYS.INTL unit tests ──
+
+    #[test]
+    fn networkdays_intl_default_matches_networkdays() {
+        // Jan 1-31 2024: NETWORKDAYS gives 23
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let e = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 31).unwrap(),
+        )));
+        let f = ctx.context.get_function("", "NETWORKDAYS.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[ArgumentHandle::new(&s, &ctx), ArgumentHandle::new(&e, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(23));
+    }
+
+    #[test]
+    fn networkdays_intl_sunday_only_weekend() {
+        // Jan 1-7 2024 (Mon-Sun): code 11 = Sun only weekend => 6 workdays
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let e = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(),
+        )));
+        let wk = lit(LiteralValue::Int(11));
+        let f = ctx.context.get_function("", "NETWORKDAYS.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&e, &ctx),
+                    ArgumentHandle::new(&wk, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(6));
+    }
+
+    #[test]
+    fn networkdays_intl_string_mask() {
+        // Jan 1-7 2024: "0000011" = Sat+Sun off (same as default) => 5 workdays
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let e = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(),
+        )));
+        let wk = lit(LiteralValue::Text("0000011".to_string()));
+        let f = ctx.context.get_function("", "NETWORKDAYS.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&e, &ctx),
+                    ArgumentHandle::new(&wk, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(5));
+    }
+
+    #[test]
+    fn networkdays_intl_invalid_code_returns_num_error() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let e = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(),
+        )));
+        let wk = lit(LiteralValue::Int(99));
+        let f = ctx.context.get_function("", "NETWORKDAYS.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&e, &ctx),
+                    ArgumentHandle::new(&wk, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(matches!(result, LiteralValue::Error(_)));
+    }
+
+    #[test]
+    fn networkdays_intl_all_weekends_string_returns_value_error() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let e = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(),
+        )));
+        let wk = lit(LiteralValue::Text("1111111".to_string()));
+        let f = ctx.context.get_function("", "NETWORKDAYS.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&e, &ctx),
+                    ArgumentHandle::new(&wk, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        match result {
+            LiteralValue::Error(err) => {
+                assert_eq!(err.kind, formualizer_common::ExcelErrorKind::Value)
+            }
+            other => panic!("expected #VALUE! error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn networkdays_collects_inline_array_holidays() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let e = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(),
+        )));
+        let wk = lit(LiteralValue::Int(1));
+        let holidays = lit(LiteralValue::Array(vec![vec![
+            LiteralValue::Number(date_to_serial(
+                &NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            )),
+            LiteralValue::Number(date_to_serial(
+                &NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+            )),
+        ]]));
+        let f = ctx.context.get_function("", "NETWORKDAYS.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&e, &ctx),
+                    ArgumentHandle::new(&wk, &ctx),
+                    ArgumentHandle::new(&holidays, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(3));
+    }
+
+    // ── WORKDAY.INTL unit tests ──
+
+    #[test]
+    fn workday_intl_default_matches_workday() {
+        // WORKDAY(2024-01-01, 10) = 45306
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let d = lit(LiteralValue::Int(10));
+        let f = ctx.context.get_function("", "WORKDAY.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[ArgumentHandle::new(&s, &ctx), ArgumentHandle::new(&d, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        // serial for 2024-01-15 (Mon) = 45306
+        assert_eq!(result, LiteralValue::Number(45306.0));
+    }
+
+    #[test]
+    fn workday_intl_sunday_only() {
+        // 2024-01-01 is Monday. code 11 = Sunday only weekend.
+        // 5 workdays forward: Tue..Sat all work, so 5 days = Jan 6 (Sat)
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let d = lit(LiteralValue::Int(5));
+        let wk = lit(LiteralValue::Int(11));
+        let f = ctx.context.get_function("", "WORKDAY.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&d, &ctx),
+                    ArgumentHandle::new(&wk, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        let expected = date_to_serial(&NaiveDate::from_ymd_opt(2024, 1, 6).unwrap());
+        assert_eq!(result, LiteralValue::Number(expected));
+    }
+
+    #[test]
+    fn workday_intl_backward() {
+        // 2024-01-15 (Mon) minus 5 workdays with default weekends = 2024-01-08 (Mon)
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayIntlFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+        )));
+        let d = lit(LiteralValue::Int(-5));
+        let f = ctx.context.get_function("", "WORKDAY.INTL").unwrap();
+        let result = f
+            .dispatch(
+                &[ArgumentHandle::new(&s, &ctx), ArgumentHandle::new(&d, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        let expected = date_to_serial(&NaiveDate::from_ymd_opt(2024, 1, 8).unwrap());
+        assert_eq!(result, LiteralValue::Number(expected));
     }
 }

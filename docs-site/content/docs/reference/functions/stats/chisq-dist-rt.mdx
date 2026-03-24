@@ -1,0 +1,43 @@
+---
+title: "CHISQ.DIST.RT"
+description: "CHISQ.DIST.RT: Returns the right-tailed chi-squared distribution probability."
+---
+
+<FunctionPageSchema id="stats/chisq-dist-rt" />
+
+## Summary
+
+Returns the right-tailed chi-squared distribution probability.
+
+## returns: 0.36787944117144233
+ =CHISQ.DIST.RT(2,2)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Right-tail chi-squared probability"
+  formula={`=CHISQ.DIST.RT(2,2)`}
+  grid={{}}
+  expected={"0.36787944117144233"}
+/>
+
+## Related functions
+
+- [CHISQ.INV.RT](/docs/reference/functions/stats/chisq-inv-rt)
+- [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+- [F.TEST](/docs/reference/functions/stats/f-test)
+- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+
+## FAQ
+
+### Which inputs return #NUM!?
+Negative x values and degrees of freedom below 1 return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/chisq-dist-rt" />
+{/* [formualizer-docgen:function-meta:end] */}

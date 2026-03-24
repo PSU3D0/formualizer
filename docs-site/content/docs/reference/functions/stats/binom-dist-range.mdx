@@ -1,0 +1,43 @@
+---
+title: "BINOM.DIST.RANGE"
+description: "BINOM.DIST.RANGE: Returns the probability that a binomial random variable falls within a range of successes."
+---
+
+<FunctionPageSchema id="stats/binom-dist-range" />
+
+## Summary
+
+Returns the probability that a binomial random variable falls within a range of successes.
+
+## returns: 0.1171875
+ =BINOM.DIST.RANGE(10,0.5,3,3)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Probability of exactly three successes"
+  formula={`=BINOM.DIST.RANGE(10,0.5,3,3)`}
+  grid={{}}
+  expected={"0.1171875"}
+/>
+
+## Related functions
+
+- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
+- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
+- [POISSON.DIST](/docs/reference/functions/stats/poisson-dist)
+- [BETA.INV](/docs/reference/functions/stats/beta-inv)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+
+## FAQ
+
+### What happens if the upper bound is omitted?
+The function treats the lower and upper bounds as the same value, yielding the probability of exactly that many successes.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/binom-dist-range" />
+{/* [formualizer-docgen:function-meta:end] */}

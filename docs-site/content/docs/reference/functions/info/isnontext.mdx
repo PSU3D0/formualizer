@@ -1,0 +1,58 @@
+---
+title: "ISNONTEXT"
+description: "ISNONTEXT: Returns TRUE when the value is anything other than text."
+---
+
+<FunctionPageSchema id="info/isnontext" />
+
+## Summary
+
+Returns TRUE when the value is anything other than text.
+
+## Remarks
+ - Text literals return FALSE.
+ - Numbers, booleans, blanks, and errors return TRUE.
+ - This is the logical complement of `ISTEXT` in the current engine semantics.
+
+## Examples
+
+<Tabs items={["Number is non-text", "Text is not non-text"]}>
+<Tab value="Number is non-text">
+<FunctionSandbox
+  title="Number is non-text"
+  formula={`=ISNONTEXT(42)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Text is not non-text">
+<FunctionSandbox
+  title="Text is not non-text"
+  formula={`=ISNONTEXT("alpha")`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [ISTEXT](/docs/reference/functions/info/istext)
+- [TYPE](/docs/reference/functions/info/type)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+- [ISERROR](/docs/reference/functions/info/iserror)
+
+## FAQ
+
+### Do errors count as non-text values?
+Yes. This implementation treats any non-text value, including errors, as TRUE for ISNONTEXT.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/isnontext" />
+{/* [formualizer-docgen:function-meta:end] */}

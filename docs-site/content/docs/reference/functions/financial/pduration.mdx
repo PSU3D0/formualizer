@@ -1,0 +1,46 @@
+---
+title: "PDURATION"
+description: "PDURATION: Returns the number of periods required for an investment to reach a specified future value at a constant interest rate."
+---
+
+<FunctionPageSchema id="financial/pduration" />
+
+## Summary
+
+Returns the number of periods required for an investment to reach a specified future value at a constant interest rate.
+
+## Remarks
+ - `rate` is the interest rate per compounding period; must be positive.
+ - `pv` and `fv` must be positive and `fv &gt; pv` (growth scenario) or
+   `fv &lt; pv` is valid as long as both are positive.
+ - Formula: `(ln(fv) - ln(pv)) / ln(1 + rate)`.
+ - Returns `#NUM!` when `rate &lt;= 0`, or `pv` or `fv` are non-positive.
+
+## Examples
+
+<FunctionSandbox
+  title="Time to double at ten percent"
+  formula={`=PDURATION(0.10, 1000, 2000)`}
+  grid={{}}
+  expected={"7.272540897341713"}
+/>
+
+## Related functions
+
+- [NPER](/docs/reference/functions/financial/nper)
+- [RRI](/docs/reference/functions/financial/rri)
+- [FV](/docs/reference/functions/financial/fv)
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [SLN](/docs/reference/functions/financial/sln)
+- [TBILLEQ](/docs/reference/functions/financial/tbilleq)
+
+## FAQ
+
+### Does PDURATION require growth?
+It requires positive present and future values plus a positive rate; the logarithmic formula then returns the compounding periods needed to move between them.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/pduration" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -500,6 +500,135 @@ impl Function for IfsFn {
     }
 }
 
+/// Returns the result corresponding to the first matching candidate value.
+///
+/// `SWITCH(expression, value1, result1, [value2, result2], ..., [default])`
+/// compares `expression` against each candidate from left to right.
+///
+/// # Remarks
+/// - Matching is case-insensitive for text values.
+/// - Numeric comparisons treat `Int` and `Number` values as compatible.
+/// - A trailing unmatched argument acts as the default result.
+/// - When no candidate matches and no default is supplied, returns `#N/A`.
+/// - Errors in `expression` propagate immediately.
+///
+/// # Examples
+///
+/// ```excel
+/// =SWITCH("gold","silver",1,"gold",2,0)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Match a text label"
+/// formula: '=SWITCH("gold","silver",1,"gold",2,0)'
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Fall back to default"
+/// formula: '=SWITCH(3,1,"one",2,"two","other")'
+/// expected: "other"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IF
+///   - IFS
+///   - CHOOSE
+/// faq:
+///   - q: "Does SWITCH compare text case-sensitively?"
+///     a: "No. Text comparisons are case-insensitive in this implementation."
+///   - q: "What happens when nothing matches?"
+///     a: "SWITCH returns the trailing default when provided; otherwise it returns #N/A."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: SWITCH
+/// Type: SwitchFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SWITCH(arg1: any@scalar, arg2...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
+#[derive(Debug)]
+pub struct SwitchFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SWITCH
+/// Type: SwitchFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SWITCH(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE, SHORT_CIRCUIT
+/// [formualizer-docgen:schema:end]
+impl Function for SwitchFn {
+    func_caps!(PURE, SHORT_CIRCUIT);
+    fn name(&self) -> &'static str {
+        "SWITCH"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let expr = args[0].value()?.into_literal();
+        if let LiteralValue::Error(e) = &expr {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                e.clone(),
+            )));
+        }
+        // args[1..] are value/result pairs with optional trailing default
+        let rest = &args[1..];
+        let has_default = rest.len() % 2 == 1;
+        let pairs = if has_default {
+            rest.len() - 1
+        } else {
+            rest.len()
+        };
+        for chunk in rest[..pairs].chunks(2) {
+            let candidate = chunk[0].value()?.into_literal();
+            if switch_values_equal(&expr, &candidate) {
+                return chunk[1].value();
+            }
+        }
+        if has_default {
+            return rest.last().unwrap().value();
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_na(),
+        )))
+    }
+}
+
+fn switch_values_equal(a: &LiteralValue, b: &LiteralValue) -> bool {
+    match (a, b) {
+        (LiteralValue::Number(x), LiteralValue::Number(y)) => (x - y).abs() < 1e-12,
+        (LiteralValue::Int(x), LiteralValue::Int(y)) => x == y,
+        (LiteralValue::Number(x), LiteralValue::Int(y)) => (x - *y as f64).abs() < 1e-12,
+        (LiteralValue::Int(x), LiteralValue::Number(y)) => (*x as f64 - y).abs() < 1e-12,
+        (LiteralValue::Boolean(x), LiteralValue::Boolean(y)) => x == y,
+        (LiteralValue::Text(x), LiteralValue::Text(y)) => x.eq_ignore_ascii_case(y),
+        (LiteralValue::Empty, LiteralValue::Empty) => true,
+        _ => false,
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(NotFn));
@@ -507,6 +636,7 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(IfErrorFn));
     crate::function_registry::register_function(Arc::new(IfNaFn));
     crate::function_registry::register_function(Arc::new(IfsFn));
+    crate::function_registry::register_function(Arc::new(SwitchFn));
 }
 
 #[cfg(test)]
@@ -781,6 +911,80 @@ mod tests {
         ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
             Err(ExcelError::new_name())
         }
+    }
+
+    #[test]
+    fn switch_match_and_default() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SwitchFn));
+        let ctx = interp(&wb);
+        let expr = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let c1 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);
+        let v1 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("a".into())), None);
+        let c2 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let v2 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("b".into())), None);
+        let f = ctx.context.get_function("", "SWITCH").unwrap();
+        let args = vec![
+            ArgumentHandle::new(&expr, &ctx),
+            ArgumentHandle::new(&c1, &ctx),
+            ArgumentHandle::new(&v1, &ctx),
+            ArgumentHandle::new(&c2, &ctx),
+            ArgumentHandle::new(&v2, &ctx),
+        ];
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Text("b".into())
+        );
+    }
+
+    #[test]
+    fn switch_no_match_no_default_returns_na() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SwitchFn));
+        let ctx = interp(&wb);
+        let expr = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(99)), None);
+        let c1 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);
+        let v1 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("a".into())), None);
+        let f = ctx.context.get_function("", "SWITCH").unwrap();
+        let args = vec![
+            ArgumentHandle::new(&expr, &ctx),
+            ArgumentHandle::new(&c1, &ctx),
+            ArgumentHandle::new(&v1, &ctx),
+        ];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#N/A"),
+            other => panic!("expected #N/A got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn switch_with_default() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SwitchFn));
+        let ctx = interp(&wb);
+        let expr = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(99)), None);
+        let c1 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(1)), None);
+        let v1 = ASTNode::new(ASTNodeType::Literal(LiteralValue::Text("a".into())), None);
+        let def = ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Text("default".into())),
+            None,
+        );
+        let f = ctx.context.get_function("", "SWITCH").unwrap();
+        let args = vec![
+            ArgumentHandle::new(&expr, &ctx),
+            ArgumentHandle::new(&c1, &ctx),
+            ArgumentHandle::new(&v1, &ctx),
+            ArgumentHandle::new(&def, &ctx),
+        ];
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Text("default".into())
+        );
     }
 
     #[test]

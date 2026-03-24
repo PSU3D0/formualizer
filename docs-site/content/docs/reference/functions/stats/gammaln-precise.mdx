@@ -1,0 +1,43 @@
+---
+title: "GAMMALN.PRECISE"
+description: "GAMMALN.PRECISE: Returns the natural logarithm of the gamma function using Excel's precise naming variant."
+---
+
+<FunctionPageSchema id="stats/gammaln-precise" />
+
+## Summary
+
+Returns the natural logarithm of the gamma function using Excel's precise naming variant.
+
+## returns: 3.1780538303479458
+ =GAMMALN.PRECISE(5)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Precise log gamma at 5"
+  formula={`=GAMMALN.PRECISE(5)`}
+  grid={{}}
+  expected={"3.1780538303479458"}
+/>
+
+## Related functions
+
+- [GAMMALN](/docs/reference/functions/stats/gammaln)
+- [GAMMA](/docs/reference/functions/stats/gamma)
+- [LN](/docs/reference/functions/math/ln)
+- [FISHER](/docs/reference/functions/stats/fisher)
+- [FISHERINV](/docs/reference/functions/stats/fisherinv)
+- [GAUSS](/docs/reference/functions/stats/gauss)
+
+## FAQ
+
+### How does GAMMALN.PRECISE differ here?
+This implementation uses the same core log-gamma calculation as GAMMALN, matching Excel's function naming split.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/gammaln-precise" />
+{/* [formualizer-docgen:function-meta:end] */}

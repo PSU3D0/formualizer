@@ -1,0 +1,68 @@
+---
+title: "LOOKUP"
+description: "LOOKUP: Searches for a value and returns a corresponding value from another range."
+---
+
+<FunctionPageSchema id="lookup/lookup" />
+
+## Summary
+
+`LOOKUP` always performs approximate matching against ascending-sorted data.
+
+## Remarks
+ - **Vector form** `LOOKUP(value, lookup_vec, result_vec)`: searches `lookup_vec`,
+   returns corresponding position from `result_vec`.
+ - **Array form** `LOOKUP(value, array)`: if width &gt; height searches first row
+   and returns from last row; otherwise searches first column and returns from
+   last column.
+ - Data must be sorted ascending; unsorted data may return incorrect results
+   (Excel does not guarantee #N/A for unsorted LOOKUP, but results are
+   undefined).
+ - Returns `#N/A` when the lookup value is smaller than every value in the
+   search range.
+
+## Examples
+
+<Tabs items={["Vector form exact hit", "Vector form approximate"]}>
+<Tab value="Vector form exact hit">
+<FunctionSandbox
+  title="Vector form exact hit"
+  formula={`=LOOKUP(2,A1:A3,B1:B3)`}
+  grid={{"A1":"1","A2":"2","A3":"3","B1":"a","B2":"b","B3":"c"}}
+  expected={"b"}
+/>
+</Tab>
+
+<Tab value="Vector form approximate">
+<FunctionSandbox
+  title="Vector form approximate"
+  formula={`=LOOKUP(3.5,A1:A5)`}
+  grid={{"A1":"1","A2":"2","A3":"3","A4":"4","A5":"5"}}
+  expected={"3"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VLOOKUP](/docs/reference/functions/lookup/vlookup)
+- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
+- [MATCH](/docs/reference/functions/lookup/match)
+- [CHOOSE](/docs/reference/functions/lookup/choose)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+
+## FAQ
+
+### Does LOOKUP support exact matching?
+No. LOOKUP always performs approximate matching (largest &lt;= lookup value).
+
+### What happens with unsorted data?
+Results are undefined. Unlike MATCH, LOOKUP does not guarantee #N/A for unsorted ranges.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/lookup" />
+{/* [formualizer-docgen:function-meta:end] */}

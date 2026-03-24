@@ -1,0 +1,43 @@
+---
+title: "GAMMALN"
+description: "GAMMALN: Returns the natural logarithm of the gamma function."
+---
+
+<FunctionPageSchema id="stats/gammaln" />
+
+## Summary
+
+Returns the natural logarithm of the gamma function.
+
+## returns: 3.1780538303479458
+ =GAMMALN(5)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Log gamma at 5"
+  formula={`=GAMMALN(5)`}
+  grid={{}}
+  expected={"3.1780538303479458"}
+/>
+
+## Related functions
+
+- [GAMMALN.PRECISE](/docs/reference/functions/stats/gammaln-precise)
+- [GAMMA](/docs/reference/functions/stats/gamma)
+- [LN](/docs/reference/functions/math/ln)
+- [FISHER](/docs/reference/functions/stats/fisher)
+- [FISHERINV](/docs/reference/functions/stats/fisherinv)
+- [GAUSS](/docs/reference/functions/stats/gauss)
+
+## FAQ
+
+### When does GAMMALN return #NUM!?
+It returns #NUM! for zero or negative inputs.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/gammaln" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,69 @@
+---
+title: "WORKDAY.INTL"
+description: "WORKDAY.INTL: Returns the date serial that is a given number of workdays from a start date, with configurable weekends."
+---
+
+<FunctionPageSchema id="datetime/workday-intl" />
+
+## Summary
+
+Returns the date serial that is a given number of workdays from a start date, with configurable weekends.
+
+## Remarks
+ - Positive `days` moves forward; negative `days` moves backward.
+ - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
+   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
+ - The optional `holidays` argument accepts a range or array of date serials to exclude.
+ - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Default weekends (same as WORKDAY)", "Sunday-only weekend", "Custom weekend string"]}>
+<Tab value="Default weekends (same as WORKDAY)">
+<FunctionSandbox
+  title="Default weekends (same as WORKDAY)"
+  formula={`=WORKDAY.INTL(DATE(2024,1,1), 5)`}
+  grid={{}}
+  expected={"45306"}
+/>
+</Tab>
+
+<Tab value="Sunday-only weekend">
+<FunctionSandbox
+  title="Sunday-only weekend"
+  formula={`=WORKDAY.INTL(DATE(2024,1,1), 5, 11)`}
+  grid={{}}
+  expected={"45302"}
+/>
+</Tab>
+
+<Tab value="Custom weekend string">
+<FunctionSandbox
+  title="Custom weekend string"
+  formula={`=WORKDAY.INTL(DATE(2024,1,1), 5, "0000011")`}
+  grid={{}}
+  expected={"45299"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+- [NETWORKDAYS.INTL](/docs/reference/functions/datetime/networkdays-intl)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+
+## FAQ
+
+### What is the difference between WORKDAY and WORKDAY.INTL?
+WORKDAY.INTL adds a weekend parameter that lets you define which days are non-working, instead of always using Saturday/Sunday.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/workday-intl" />
+{/* [formualizer-docgen:function-meta:end] */}

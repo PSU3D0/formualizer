@@ -1,0 +1,39 @@
+---
+title: "ACOTH"
+description: "ACOTH: Returns the inverse hyperbolic cotangent of a number."
+---
+
+<FunctionPageSchema id="math/acoth" />
+
+## Summary
+
+Returns the inverse hyperbolic cotangent of a number.
+
+## Examples
+
+<FunctionSandbox
+  title="Inverse hyperbolic cotangent"
+  formula={`=ACOTH(2)`}
+  grid={{}}
+  expected={"0.5493061443340548"}
+/>
+
+## Related functions
+
+- [ATANH](/docs/reference/functions/math/atanh)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ASIN](/docs/reference/functions/math/asin)
+- [ASINH](/docs/reference/functions/math/asinh)
+- [ATAN](/docs/reference/functions/math/atan)
+
+## FAQ
+
+### When does ACOTH return #NUM!?
+ACOTH requires |x| &gt; 1, so inputs between -1 and 1 inclusive return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/acoth" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,43 @@
+---
+title: "BETA.INV"
+description: "BETA.INV: Returns the inverse cumulative beta distribution, optionally scaled to custom bounds."
+---
+
+<FunctionPageSchema id="stats/beta-inv" />
+
+## Summary
+
+Returns the inverse cumulative beta distribution, optionally scaled to custom bounds.
+
+## returns: 0.5
+ =BETA.INV(0.5,2,2)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Symmetric beta inverse at the median"
+  formula={`=BETA.INV(0.5,2,2)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+
+## Related functions
+
+- [BETA.DIST](/docs/reference/functions/stats/beta-dist)
+- [GAMMA.INV](/docs/reference/functions/stats/gamma-inv)
+- [NORM.INV](/docs/reference/functions/stats/norm-inv)
+- [BINOM.DIST.RANGE](/docs/reference/functions/stats/binom-dist-range)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+
+## FAQ
+
+### When does BETA.INV return #NUM!?
+It returns #NUM! for non-positive alpha or beta, invalid bounds, or probabilities outside 0..1.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/beta-inv" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -541,12 +541,176 @@ impl Function for PermutFn {
     }
 }
 
+#[derive(Debug)]
+pub struct FactDoubleFn;
+/// Returns the double factorial of a number.
+///
+/// # Examples
+///
+/// ```excel
+/// =FACTDOUBLE(7)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Odd double factorial"
+/// formula: '=FACTDOUBLE(7)'
+/// expected: 105
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FACT
+///   - COMBIN
+/// faq:
+///   - q: "What does FACTDOUBLE do with 0 or -1?"
+///     a: "It returns 1, matching spreadsheet double-factorial conventions."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: FACTDOUBLE
+/// Type: FactDoubleFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: FACTDOUBLE(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FactDoubleFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FACTDOUBLE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let v = args[0].value()?.into_literal();
+        let n = match v {
+            LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            other => coerce_num(&other)?,
+        };
+        let n = n.trunc() as i64;
+        if n < -1 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+        if n <= 0 {
+            return Ok(CalcValue::Scalar(LiteralValue::Number(1.0)));
+        }
+        let mut result = 1.0_f64;
+        let mut i = n;
+        while i > 0 {
+            result *= i as f64;
+            i -= 2;
+        }
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+#[derive(Debug)]
+pub struct CombinaFn;
+/// Returns the number of combinations with repetition.
+///
+/// # Examples
+///
+/// ```excel
+/// =COMBINA(4,2)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Choose with repetition"
+/// formula: '=COMBINA(4,3)'
+/// expected: 20
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - COMBIN
+/// faq:
+///   - q: "How is COMBINA different from COMBIN?"
+///     a: "COMBINA counts selections where the same item can be chosen more than once."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: COMBINA
+/// Type: CombinaFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: COMBINA(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for CombinaFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "COMBINA"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() < 2 {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let n_val = args[0].value()?.into_literal();
+        let k_val = args[1].value()?.into_literal();
+        let n = match n_val {
+            LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            other => coerce_num(&other)?,
+        };
+        let k = match k_val {
+            LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            other => coerce_num(&other)?,
+        };
+        let n = n.trunc() as i64;
+        let k = k.trunc() as i64;
+        if n < 0 || k < 0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+        if k == 0 {
+            return Ok(CalcValue::Scalar(LiteralValue::Number(1.0)));
+        }
+        // COMBINA(n,k) = C(n+k-1, k)
+        let nn = n + k - 1;
+        let kk = k.min(nn - k) as u64;
+        let nn = nn as u64;
+        let mut result = 1.0_f64;
+        for i in 0..kk {
+            result = result * (nn - i) as f64 / (i + 1) as f64;
+        }
+        Ok(CalcValue::Scalar(LiteralValue::Number(result.round())))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(FactFn));
+    crate::function_registry::register_function(Arc::new(FactDoubleFn));
     crate::function_registry::register_function(Arc::new(GcdFn));
     crate::function_registry::register_function(Arc::new(LcmFn));
     crate::function_registry::register_function(Arc::new(CombinFn));
+    crate::function_registry::register_function(Arc::new(CombinaFn));
     crate::function_registry::register_function(Arc::new(PermutFn));
 }
 

@@ -1,0 +1,49 @@
+---
+title: "ISPMT"
+description: "ISPMT: Returns the interest paid on the outstanding principal for a specific period of an investment with even principal payments. Calculates interest paid in a per…"
+---
+
+<FunctionPageSchema id="financial/ispmt" />
+
+## Summary
+
+Unlike `IPMT`, `ISPMT` assumes the principal is repaid in equal installments
+ so the interest portion decreases linearly over the life of the loan.
+
+## Remarks
+ - `rate` is the interest rate per period.
+ - `per` is 0-based period number (0 to `nper - 1`).
+ - `nper` is the total number of payment periods; must be non-zero.
+ - `pv` is the present value (principal).
+ - Formula: `pv * rate * (per / nper - 1)`.
+ - The result is typically negative for a positive loan principal, representing interest paid.
+ - Returns `#NUM!` when `nper` is zero.
+
+## Examples
+
+<FunctionSandbox
+  title="Interest in the first period"
+  formula={`=ISPMT(0.005, 1, 24, 100000)`}
+  grid={{}}
+  expected={"-479.1666666666667"}
+/>
+
+## Related functions
+
+- [IPMT](/docs/reference/functions/financial/ipmt)
+- [PPMT](/docs/reference/functions/financial/ppmt)
+- [PMT](/docs/reference/functions/financial/pmt)
+- [SYD](/docs/reference/functions/financial/syd)
+- [ACCRINTM](/docs/reference/functions/financial/accrintm)
+- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
+
+## FAQ
+
+### How is ISPMT different from IPMT?
+ISPMT assumes equal principal repayment, so interest declines linearly instead of following an annuity schedule.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/ispmt" />
+{/* [formualizer-docgen:function-meta:end] */}

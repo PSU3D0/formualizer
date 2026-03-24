@@ -1,0 +1,43 @@
+---
+title: "VARA"
+description: "VARA: Returns the sample variance using A-variant coercion semantics."
+---
+
+<FunctionPageSchema id="stats/vara" />
+
+## Summary
+
+Returns the sample variance using A-variant coercion semantics.
+
+## returns: 1
+ =VARA(TRUE,2,"x")
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Sample variance with coerced values"
+  formula={`=VARA(TRUE,2,"x")`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [VARPA](/docs/reference/functions/stats/varpa)
+- [STDEVA](/docs/reference/functions/stats/stdeva)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### How are blanks handled in VARA?
+Blanks are ignored, while booleans and text are coerced under A-variant rules.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/vara" />
+{/* [formualizer-docgen:function-meta:end] */}

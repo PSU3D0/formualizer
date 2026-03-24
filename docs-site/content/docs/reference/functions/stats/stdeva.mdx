@@ -1,0 +1,43 @@
+---
+title: "STDEVA"
+description: "STDEVA: Returns the sample standard deviation using A-variant coercion semantics."
+---
+
+<FunctionPageSchema id="stats/stdeva" />
+
+## Summary
+
+Returns the sample standard deviation using A-variant coercion semantics.
+
+## returns: 1
+ =STDEVA(TRUE,2,"x")
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Sample deviation with coerced values"
+  formula={`=STDEVA(TRUE,2,"x")`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
+- [STDEVPA](/docs/reference/functions/stats/stdevpa)
+- [VARA](/docs/reference/functions/stats/vara)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+
+## FAQ
+
+### When does STDEVA return #DIV/0!?
+It returns #DIV/0! when fewer than two coerced values remain after evaluation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/stdeva" />
+{/* [formualizer-docgen:function-meta:end] */}

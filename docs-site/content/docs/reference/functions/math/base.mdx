@@ -1,0 +1,39 @@
+---
+title: "BASE"
+description: "BASE: Converts a non-negative integer to text in the requested radix."
+---
+
+<FunctionPageSchema id="math/base" />
+
+## Summary
+
+Converts a non-negative integer to text in the requested radix.
+
+## Examples
+
+<FunctionSandbox
+  title="Convert decimal to hexadecimal"
+  formula={`=BASE(31,16)`}
+  grid={{}}
+  expected={"1F"}
+/>
+
+## Related functions
+
+- [DECIMAL](/docs/reference/functions/math/decimal)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [AVERAGEIF](/docs/reference/functions/math/averageif)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+- [CEILING.PRECISE](/docs/reference/functions/math/ceiling-precise)
+
+## FAQ
+
+### What bases are supported?
+BASE accepts radix values from 2 through 36.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/base" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,39 @@
+---
+title: "FACTDOUBLE"
+description: "FACTDOUBLE: Returns the double factorial of a number."
+---
+
+<FunctionPageSchema id="math/factdouble" />
+
+## Summary
+
+Returns the double factorial of a number.
+
+## Examples
+
+<FunctionSandbox
+  title="Odd double factorial"
+  formula={`=FACTDOUBLE(7)`}
+  grid={{}}
+  expected={"105"}
+/>
+
+## Related functions
+
+- [FACT](/docs/reference/functions/math/fact)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [ABS](/docs/reference/functions/math/abs)
+- [ACOS](/docs/reference/functions/math/acos)
+- [ACOT](/docs/reference/functions/math/acot)
+- [ACOTH](/docs/reference/functions/math/acoth)
+
+## FAQ
+
+### What does FACTDOUBLE do with 0 or -1?
+It returns 1, matching spreadsheet double-factorial conventions.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/factdouble" />
+{/* [formualizer-docgen:function-meta:end] */}

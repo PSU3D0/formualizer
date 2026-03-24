@@ -1,0 +1,43 @@
+---
+title: "GAMMA.INV"
+description: "GAMMA.INV: Returns the inverse cumulative gamma distribution."
+---
+
+<FunctionPageSchema id="stats/gamma-inv" />
+
+## Summary
+
+Returns the inverse cumulative gamma distribution.
+
+## returns: 0.6931471805599453
+ =GAMMA.INV(0.5,1,1)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Exponential special case"
+  formula={`=GAMMA.INV(0.5,1,1)`}
+  grid={{}}
+  expected={"0.6931471805599453"}
+/>
+
+## Related functions
+
+- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
+- [GAMMA](/docs/reference/functions/stats/gamma)
+- [BETA.INV](/docs/reference/functions/stats/beta-inv)
+- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+
+## FAQ
+
+### Is GAMMAINV supported?
+Yes. GAMMAINV is registered as an alias of GAMMA.INV.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/gamma-inv" />
+{/* [formualizer-docgen:function-meta:end] */}
