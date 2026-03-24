@@ -1,0 +1,43 @@
+---
+title: "CHISQ.INV.RT"
+description: "CHISQ.INV.RT: Returns the inverse of the right-tailed chi-squared distribution."
+---
+
+<FunctionPageSchema id="stats/chisq-inv-rt" />
+
+## Summary
+
+Returns the inverse of the right-tailed chi-squared distribution.
+
+## returns: 1.3862943611198906
+ =CHISQ.INV.RT(0.5,2)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Median right-tail inverse for 2 degrees of freedom"
+  formula={`=CHISQ.INV.RT(0.5,2)`}
+  grid={{}}
+  expected={"1.3862943611198906"}
+/>
+
+## Related functions
+
+- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
+- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+- [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [F.TEST](/docs/reference/functions/stats/f-test)
+- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+
+## FAQ
+
+### What p-values are valid for CHISQ.INV.RT?
+p must lie in the range 0 to 1, and p=0 returns #NUM! because the right-tail inverse diverges.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/chisq-inv-rt" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,39 @@
+---
+title: "FLOOR.PRECISE"
+description: "FLOOR.PRECISE: Rounds a number down toward negative infinity using absolute significance."
+---
+
+<FunctionPageSchema id="math/floor-precise" />
+
+## Summary
+
+Rounds a number down toward negative infinity using absolute significance.
+
+## Examples
+
+<FunctionSandbox
+  title="Round a negative number downward"
+  formula={`=FLOOR.PRECISE(-4.3)`}
+  grid={{}}
+  expected={"-5"}
+/>
+
+## Related functions
+
+- [CEILING.PRECISE](/docs/reference/functions/math/ceiling-precise)
+- [FLOOR](/docs/reference/functions/math/floor)
+- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+
+## FAQ
+
+### Does FLOOR.PRECISE keep negative significance?
+No. Like Excel, this implementation uses the absolute value of significance.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/floor-precise" />
+{/* [formualizer-docgen:function-meta:end] */}

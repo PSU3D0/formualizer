@@ -120,37 +120,48 @@ fn days_30_360_eu(start: &NaiveDate, end: &NaiveDate) -> i32 {
     (ey - sy) * 360 + (em - sm) * 30 + (ed - sd)
 }
 
-/// Get the annual basis (denominator for year fraction)
-fn annual_basis(basis: DayCountBasis, start: &NaiveDate, end: &NaiveDate) -> f64 {
-    match basis {
-        DayCountBasis::UsNasd30360 | DayCountBasis::European30360 => 360.0,
-        DayCountBasis::Actual360 => 360.0,
-        DayCountBasis::Actual365 => 365.0,
+/// Calculate the year fraction between two dates.
+///
+/// For Actual/Actual we mirror the prorated year-boundary behavior used by YEARFRAC
+/// rather than averaging year lengths across the entire span. This keeps bond accrual
+/// math aligned with the engine's date-part functions for cross-year ranges.
+fn year_fraction(start: &NaiveDate, end: &NaiveDate, basis: DayCountBasis) -> f64 {
+    if start == end {
+        return 0.0;
+    }
+
+    let (s, e, sign) = if start <= end {
+        (start, end, 1.0)
+    } else {
+        (end, start, -1.0)
+    };
+
+    let frac = match basis {
+        DayCountBasis::UsNasd30360 | DayCountBasis::European30360 => {
+            days_between(s, e, basis) as f64 / 360.0
+        }
+        DayCountBasis::Actual360 => ((*e - *s).num_days() as f64) / 360.0,
+        DayCountBasis::Actual365 => ((*e - *s).num_days() as f64) / 365.0,
         DayCountBasis::ActualActual => {
-            // Determine the average year length based on leap years in the period
-            let sy = start.year();
-            let ey = end.year();
-            if sy == ey {
-                if is_leap_year(sy) { 366.0 } else { 365.0 }
+            let actual_days = (*e - *s).num_days() as f64;
+            if s.year() == e.year() {
+                actual_days / if is_leap_year(s.year()) { 366.0 } else { 365.0 }
             } else {
-                // Average across years
-                let mut total_days = 0.0;
-                let mut years = 0;
-                for y in sy..=ey {
-                    total_days += if is_leap_year(y) { 366.0 } else { 365.0 };
-                    years += 1;
+                let start_year_end = NaiveDate::from_ymd_opt(s.year() + 1, 1, 1).unwrap();
+                let end_year_start = NaiveDate::from_ymd_opt(e.year(), 1, 1).unwrap();
+
+                let mut out = (start_year_end - *s).num_days() as f64
+                    / if is_leap_year(s.year()) { 366.0 } else { 365.0 };
+                for _year in (s.year() + 1)..e.year() {
+                    out += 1.0;
                 }
-                total_days / years as f64
+                out + (*e - end_year_start).num_days() as f64
+                    / if is_leap_year(e.year()) { 366.0 } else { 365.0 }
             }
         }
-    }
-}
+    };
 
-/// Calculate the year fraction between two dates
-fn year_fraction(start: &NaiveDate, end: &NaiveDate, basis: DayCountBasis) -> f64 {
-    let days = days_between(start, end, basis) as f64;
-    let annual = annual_basis(basis, start, end);
-    days / annual
+    sign * frac
 }
 
 /// Find the coupon date before settlement date
@@ -891,10 +902,354 @@ fn calculate_yield(
     }
 }
 
+/// Returns bond-equivalent yield for a US Treasury bill.
+///
+/// `TBILLEQ` converts a T-bill discount rate into an annualized bond-equivalent yield
+/// so it can be compared with coupon-bearing securities.
+///
+/// # Remarks
+/// - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
+/// - The T-bill must mature within one year of settlement (DSM <= 365).
+/// - `discount` is the T-bill discount rate as a decimal (e.g. `0.09` for 9%).
+/// - For bills with DSM <= 182: `yield = 365 * discount / (360 - discount * DSM)`.
+/// - For bills with DSM > 182 a quadratic coupon-equivalent formula is used.
+/// - Returns `#NUM!` for invalid dates, non-positive discount, or DSM out of range.
+///
+/// # Examples
+/// ```excel
+/// =TBILLEQ(DATE(2024,1,1), DATE(2024,4,1), 0.038)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Short bill bond-equivalent yield"
+/// formula: '=TBILLEQ(DATE(2024,1,1), DATE(2024,4,1), 0.038)'
+/// expected: 0.03890144779577161
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TBILLPRICE
+///   - TBILLYIELD
+///   - YIELD
+/// faq:
+///   - q: "Why does TBILLEQ differ from the discount rate?"
+///     a: "TBILLEQ annualizes the bill using a bond-equivalent convention so it can be compared with coupon-bearing yields."
+/// ```
+#[derive(Debug)]
+pub struct TbilleqFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: TBILLEQ
+/// Type: TbilleqFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: TBILLEQ(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for TbilleqFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "TBILLEQ"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // settlement
+                ArgSchema::number_lenient_scalar(), // maturity
+                ArgSchema::number_lenient_scalar(), // discount
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let settlement_serial = coerce_num(&args[0])?;
+        let maturity_serial = coerce_num(&args[1])?;
+        let discount = coerce_num(&args[2])?;
+
+        if discount <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let settlement = serial_to_date(settlement_serial)?;
+        let maturity = serial_to_date(maturity_serial)?;
+
+        if maturity <= settlement {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let dsm = (maturity - settlement).num_days() as f64;
+        if dsm > 365.0 || dsm <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let result = if dsm <= 182.0 {
+            365.0 * discount / (360.0 - discount * dsm)
+        } else {
+            // Coupon-equivalent yield for long-dated T-bills (> 182 days)
+            // Microsoft formula: (-2a + 2*sqrt(a^2 - (2a-1)*(1 - 1/p))) / (2a-1)
+            // where a = DSM/365 and p = price as fraction of par
+            let price_frac = 1.0 - discount * dsm / 360.0;
+            let a = dsm / 365.0;
+            let inner = a * a - (2.0 * a - 1.0) * (1.0 - 1.0 / price_frac);
+            if inner < 0.0 {
+                return Ok(CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new_num()),
+                ));
+            }
+            (-2.0 * a + 2.0 * inner.sqrt()) / (2.0 * a - 1.0)
+        };
+
+        Ok(CalcValue::Scalar(LiteralValue::Number(result)))
+    }
+}
+
+/// Returns price per $100 face value for a US Treasury bill.
+///
+/// `TBILLPRICE` computes the dollar price from a discount rate using
+/// `price = 100 * (1 - discount * DSM / 360)`.
+///
+/// # Remarks
+/// - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
+/// - The T-bill must mature within one year of settlement (DSM <= 365).
+/// - `discount` is a decimal discount rate; must be positive.
+/// - Returns `#NUM!` for invalid dates, non-positive discount, or DSM out of range.
+///
+/// # Examples
+/// ```excel
+/// =TBILLPRICE(DATE(2024,1,1), DATE(2024,4,1), 0.038)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Price a 91-day T-bill"
+/// formula: '=TBILLPRICE(DATE(2024,1,1), DATE(2024,4,1), 0.038)'
+/// expected: 99.03944444444444
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TBILLEQ
+///   - TBILLYIELD
+///   - PRICE
+/// faq:
+///   - q: "What does TBILLPRICE quote?"
+///     a: "The result is the dollar price per 100 of face value, following Excel's Treasury-bill convention."
+/// ```
+#[derive(Debug)]
+pub struct TbillpriceFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: TBILLPRICE
+/// Type: TbillpriceFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: TBILLPRICE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for TbillpriceFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "TBILLPRICE"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // settlement
+                ArgSchema::number_lenient_scalar(), // maturity
+                ArgSchema::number_lenient_scalar(), // discount
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let settlement_serial = coerce_num(&args[0])?;
+        let maturity_serial = coerce_num(&args[1])?;
+        let discount = coerce_num(&args[2])?;
+
+        if discount <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let settlement = serial_to_date(settlement_serial)?;
+        let maturity = serial_to_date(maturity_serial)?;
+
+        if maturity <= settlement {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let dsm = (maturity - settlement).num_days() as f64;
+        if dsm > 365.0 || dsm <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let price = 100.0 * (1.0 - discount * dsm / 360.0);
+        Ok(CalcValue::Scalar(LiteralValue::Number(price)))
+    }
+}
+
+/// Returns the yield for a US Treasury bill.
+///
+/// `TBILLYIELD` computes the discount-rate yield from a T-bill's price using
+/// `yield = (100 - price) / price * (360 / DSM)`.
+///
+/// # Remarks
+/// - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
+/// - The T-bill must mature within one year of settlement (DSM <= 365).
+/// - `price` is the dollar price per $100 face value; must be positive.
+/// - Returns `#NUM!` for invalid dates, non-positive price, or DSM out of range.
+///
+/// # Examples
+/// ```excel
+/// =TBILLYIELD(DATE(2024,1,1), DATE(2024,4,1), 98.5)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Yield from quoted T-bill price"
+/// formula: '=TBILLYIELD(DATE(2024,1,1), DATE(2024,4,1), 98.5)'
+/// expected: 0.060244324203715074
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - TBILLPRICE
+///   - TBILLEQ
+///   - YIELD
+/// faq:
+///   - q: "Is TBILLYIELD the same as bond-equivalent yield?"
+///     a: "No. TBILLYIELD gives the bill's discount-rate yield, while TBILLEQ converts that pricing into a bond-equivalent yield."
+/// ```
+#[derive(Debug)]
+pub struct TbillyieldFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: TBILLYIELD
+/// Type: TbillyieldFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: TBILLYIELD(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for TbillyieldFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "TBILLYIELD"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(), // settlement
+                ArgSchema::number_lenient_scalar(), // maturity
+                ArgSchema::number_lenient_scalar(), // price
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let settlement_serial = coerce_num(&args[0])?;
+        let maturity_serial = coerce_num(&args[1])?;
+        let price = coerce_num(&args[2])?;
+
+        if price <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let settlement = serial_to_date(settlement_serial)?;
+        let maturity = serial_to_date(maturity_serial)?;
+
+        if maturity <= settlement {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let dsm = (maturity - settlement).num_days() as f64;
+        if dsm > 365.0 || dsm <= 0.0 {
+            return Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ));
+        }
+
+        let yld = (100.0 - price) / price * (360.0 / dsm);
+        Ok(CalcValue::Scalar(LiteralValue::Number(yld)))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(AccrintFn));
     crate::function_registry::register_function(Arc::new(AccrintmFn));
     crate::function_registry::register_function(Arc::new(PriceFn));
     crate::function_registry::register_function(Arc::new(YieldFn));
+    crate::function_registry::register_function(Arc::new(TbilleqFn));
+    crate::function_registry::register_function(Arc::new(TbillpriceFn));
+    crate::function_registry::register_function(Arc::new(TbillyieldFn));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn year_fraction_actual_actual_prorates_cross_year_ranges() {
+        let start = NaiveDate::from_ymd_opt(2023, 12, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let expected = 31.0 / 365.0 + 60.0 / 366.0;
+        let actual = year_fraction(&start, &end, DayCountBasis::ActualActual);
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn year_fraction_actual_actual_is_sign_symmetric() {
+        let start = NaiveDate::from_ymd_opt(2023, 12, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let forward = year_fraction(&start, &end, DayCountBasis::ActualActual);
+        let backward = year_fraction(&end, &start, DayCountBasis::ActualActual);
+        assert!((forward + backward).abs() < 1e-12);
+    }
 }

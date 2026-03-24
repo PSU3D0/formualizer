@@ -16,6 +16,7 @@
     "minute",
     "month",
     "networkdays",
+    "networkdays-intl",
     "now",
     "second",
     "time",
@@ -24,6 +25,7 @@
     "weekday",
     "weeknum",
     "workday",
+    "workday-intl",
     "year",
     "yearfrac"
   ],

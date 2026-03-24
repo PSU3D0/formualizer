@@ -2546,12 +2546,123 @@ mod tests_pi {
     }
 }
 
+#[derive(Debug)]
+pub struct AcothFn;
+/// Returns the inverse hyperbolic cotangent of a number.
+///
+/// # Examples
+///
+/// ```excel
+/// =ACOTH(2)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Inverse hyperbolic cotangent"
+/// formula: '=ACOTH(2)'
+/// expected: 0.5493061443340548
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ATANH
+///   - ACOT
+/// faq:
+///   - q: "When does ACOTH return #NUM!?"
+///     a: "ACOTH requires |x| > 1, so inputs between -1 and 1 inclusive return #NUM!."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: ACOTH
+/// Type: AcothFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ACOTH(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, ELEMENTWISE, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for AcothFn {
+    func_caps!(PURE, ELEMENTWISE, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "ACOTH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = unary_numeric_arg(args)?;
+        if x.abs() <= 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // acoth(x) = 0.5 * ln((x+1)/(x-1))
+        let result = 0.5 * ((x + 1.0) / (x - 1.0)).ln();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod tests_acoth {
+    use super::*;
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::ArgumentHandle;
+    use formualizer_parse::LiteralValue;
+    fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
+        wb.interpreter()
+    }
+    fn make_num_ast(n: f64) -> formualizer_parse::parser::ASTNode {
+        formualizer_parse::parser::ASTNode::new(
+            formualizer_parse::parser::ASTNodeType::Literal(LiteralValue::Number(n)),
+            None,
+        )
+    }
+    fn assert_close(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-9, "{a} !~= {b}");
+    }
+    #[test]
+    fn test_acoth_basic_and_domain() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AcothFn));
+        let ctx = interp(&wb);
+        let f = ctx.context.get_function("", "ACOTH").unwrap();
+        let a0 = make_num_ast(2.0);
+        let args = vec![ArgumentHandle::new(&a0, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Number(n) => assert_close(n, 0.5 * (3.0f64 / 1.0).ln()),
+            v => panic!("unexpected {v:?}"),
+        }
+        // domain error for |x| <= 1
+        let a1 = make_num_ast(0.5);
+        let args2 = vec![ArgumentHandle::new(&a1, &ctx)];
+        match f
+            .dispatch(&args2, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e, "#NUM!"),
+            v => panic!("expected error, got {v:?}"),
+        }
+    }
+}
+
 pub fn register_builtins() {
     // --- Trigonometry: circular ---
     crate::function_registry::register_function(std::sync::Arc::new(SinFn));
     crate::function_registry::register_function(std::sync::Arc::new(CosFn));
     crate::function_registry::register_function(std::sync::Arc::new(TanFn));
-    // A few elementwise numeric funcs are wired for map path; extend as needed
     crate::function_registry::register_function(std::sync::Arc::new(AsinFn));
     crate::function_registry::register_function(std::sync::Arc::new(AcosFn));
     crate::function_registry::register_function(std::sync::Arc::new(AtanFn));
@@ -2568,6 +2679,7 @@ pub fn register_builtins() {
     crate::function_registry::register_function(std::sync::Arc::new(AsinhFn));
     crate::function_registry::register_function(std::sync::Arc::new(AcoshFn));
     crate::function_registry::register_function(std::sync::Arc::new(AtanhFn));
+    crate::function_registry::register_function(std::sync::Arc::new(AcothFn));
     crate::function_registry::register_function(std::sync::Arc::new(SechFn));
     crate::function_registry::register_function(std::sync::Arc::new(CschFn));
     crate::function_registry::register_function(std::sync::Arc::new(CothFn));

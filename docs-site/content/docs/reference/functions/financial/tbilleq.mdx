@@ -1,0 +1,48 @@
+---
+title: "TBILLEQ"
+description: "TBILLEQ: Returns bond-equivalent yield for a US Treasury bill."
+---
+
+<FunctionPageSchema id="financial/tbilleq" />
+
+## Summary
+
+`TBILLEQ` converts a T-bill discount rate into an annualized bond-equivalent yield
+ so it can be compared with coupon-bearing securities.
+
+## Remarks
+ - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
+ - The T-bill must mature within one year of settlement (DSM &lt;= 365).
+ - `discount` is the T-bill discount rate as a decimal (e.g. `0.09` for 9%).
+ - For bills with DSM &lt;= 182: `yield = 365 * discount / (360 - discount * DSM)`.
+ - For bills with DSM &gt; 182 a quadratic coupon-equivalent formula is used.
+ - Returns `#NUM!` for invalid dates, non-positive discount, or DSM out of range.
+
+## Examples
+
+<FunctionSandbox
+  title="Short bill bond-equivalent yield"
+  formula={`=TBILLEQ(DATE(2024,1,1), DATE(2024,4,1), 0.038)`}
+  grid={{}}
+  expected={"0.03890144779577161"}
+/>
+
+## Related functions
+
+- [TBILLPRICE](/docs/reference/functions/financial/tbillprice)
+- [TBILLYIELD](/docs/reference/functions/financial/tbillyield)
+- [YIELD](/docs/reference/functions/financial/yield)
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [PDURATION](/docs/reference/functions/financial/pduration)
+- [RRI](/docs/reference/functions/financial/rri)
+
+## FAQ
+
+### Why does TBILLEQ differ from the discount rate?
+TBILLEQ annualizes the bill using a bond-equivalent convention so it can be compared with coupon-bearing yields.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/tbilleq" />
+{/* [formualizer-docgen:function-meta:end] */}

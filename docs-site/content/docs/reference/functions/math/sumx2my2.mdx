@@ -1,0 +1,39 @@
+---
+title: "SUMX2MY2"
+description: "SUMX2MY2: Returns the sum of squares of values in one array minus the squares in another."
+---
+
+<FunctionPageSchema id="math/sumx2my2" />
+
+## Summary
+
+Returns the sum of squares of values in one array minus the squares in another.
+
+## Examples
+
+<FunctionSandbox
+  title="Pairwise squared difference of squares"
+  formula={`=SUMX2MY2({2,3},{1,4})`}
+  grid={{}}
+  expected={"-4"}
+/>
+
+## Related functions
+
+- [SUMX2PY2](/docs/reference/functions/math/sumx2py2)
+- [SUMXMY2](/docs/reference/functions/math/sumxmy2)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [COMBINA](/docs/reference/functions/math/combina)
+- [DECIMAL](/docs/reference/functions/math/decimal)
+
+## FAQ
+
+### What happens when the arrays have different sizes?
+SUMX2MY2 returns #N/A when the two inputs do not contain the same number of values.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sumx2my2" />
+{/* [formualizer-docgen:function-meta:end] */}

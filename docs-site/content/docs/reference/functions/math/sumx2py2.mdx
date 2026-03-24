@@ -1,0 +1,39 @@
+---
+title: "SUMX2PY2"
+description: "SUMX2PY2: Returns the sum of squares of corresponding values from two arrays."
+---
+
+<FunctionPageSchema id="math/sumx2py2" />
+
+## Summary
+
+Returns the sum of squares of corresponding values from two arrays.
+
+## Examples
+
+<FunctionSandbox
+  title="Pairwise squared sums"
+  formula={`=SUMX2PY2({2,3},{1,4})`}
+  grid={{}}
+  expected={"30"}
+/>
+
+## Related functions
+
+- [SUMX2MY2](/docs/reference/functions/math/sumx2my2)
+- [SUMXMY2](/docs/reference/functions/math/sumxmy2)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [COMBINA](/docs/reference/functions/math/combina)
+- [DECIMAL](/docs/reference/functions/math/decimal)
+
+## FAQ
+
+### Does SUMX2PY2 coerce booleans and blanks?
+It follows the same collection rules as the engine's paired-array helpers, coercing booleans and treating blanks/text as zero.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sumx2py2" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,46 @@
+---
+title: "TBILLPRICE"
+description: "TBILLPRICE: Returns price per $100 face value for a US Treasury bill."
+---
+
+<FunctionPageSchema id="financial/tbillprice" />
+
+## Summary
+
+`TBILLPRICE` computes the dollar price from a discount rate using
+ `price = 100 * (1 - discount * DSM / 360)`.
+
+## Remarks
+ - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
+ - The T-bill must mature within one year of settlement (DSM &lt;= 365).
+ - `discount` is a decimal discount rate; must be positive.
+ - Returns `#NUM!` for invalid dates, non-positive discount, or DSM out of range.
+
+## Examples
+
+<FunctionSandbox
+  title="Price a 91-day T-bill"
+  formula={`=TBILLPRICE(DATE(2024,1,1), DATE(2024,4,1), 0.038)`}
+  grid={{}}
+  expected={"99.03944444444444"}
+/>
+
+## Related functions
+
+- [TBILLEQ](/docs/reference/functions/financial/tbilleq)
+- [TBILLYIELD](/docs/reference/functions/financial/tbillyield)
+- [PRICE](/docs/reference/functions/financial/price)
+- [MIRR](/docs/reference/functions/financial/mirr)
+- [PDURATION](/docs/reference/functions/financial/pduration)
+- [RRI](/docs/reference/functions/financial/rri)
+
+## FAQ
+
+### What does TBILLPRICE quote?
+The result is the dollar price per 100 of face value, following Excel's Treasury-bill convention.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="financial/tbillprice" />
+{/* [formualizer-docgen:function-meta:end] */}

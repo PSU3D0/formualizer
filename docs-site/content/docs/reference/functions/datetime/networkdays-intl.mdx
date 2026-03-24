@@ -1,0 +1,69 @@
+---
+title: "NETWORKDAYS.INTL"
+description: "NETWORKDAYS.INTL: Returns the number of working days between two dates with configurable weekends."
+---
+
+<FunctionPageSchema id="datetime/networkdays-intl" />
+
+## Summary
+
+Returns the number of working days between two dates with configurable weekends.
+
+## Remarks
+ - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
+   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
+ - The optional `holidays` argument accepts a range or array of date serials to exclude.
+ - If `start_date &gt; end_date`, the result is negative.
+ - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
+
+## Examples
+
+<Tabs items={["Default weekends (same as NETWORKDAYS)", "Friday-only weekend", "Custom weekend string (Mon+Fri off)"]}>
+<Tab value="Default weekends (same as NETWORKDAYS)">
+<FunctionSandbox
+  title="Default weekends (same as NETWORKDAYS)"
+  formula={`=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,31))`}
+  grid={{}}
+  expected={"23"}
+/>
+</Tab>
+
+<Tab value="Friday-only weekend">
+<FunctionSandbox
+  title="Friday-only weekend"
+  formula={`=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 16)`}
+  grid={{}}
+  expected={"6"}
+/>
+</Tab>
+
+<Tab value="Custom weekend string (Mon+Fri off)">
+<FunctionSandbox
+  title="Custom weekend string (Mon+Fri off)"
+  formula={`=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), "1000100")`}
+  grid={{}}
+  expected={"5"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
+- [WORKDAY.INTL](/docs/reference/functions/datetime/workday-intl)
+- [WEEKDAY](/docs/reference/functions/datetime/weekday)
+- [DAYS360](/docs/reference/functions/datetime/days360)
+- [WORKDAY](/docs/reference/functions/datetime/workday)
+- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
+
+## FAQ
+
+### What happens if the weekend string is all 1s?
+NETWORKDAYS.INTL returns #VALUE! because there would be no workdays.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="datetime/networkdays-intl" />
+{/* [formualizer-docgen:function-meta:end] */}

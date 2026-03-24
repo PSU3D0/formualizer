@@ -1,0 +1,39 @@
+---
+title: "DECIMAL"
+description: "Converts text in a given radix back to a decimal number."
+---
+
+<FunctionPageSchema id="math/decimal" />
+
+## Summary
+
+Converts text in a given radix back to a decimal number.
+
+## Examples
+
+<FunctionSandbox
+  title="Convert hexadecimal to decimal"
+  formula={`=DECIMAL("1F",16)`}
+  grid={{}}
+  expected={"31"}
+/>
+
+## Related functions
+
+- [BASE](/docs/reference/functions/math/base)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [COMBINA](/docs/reference/functions/math/combina)
+- [MOD](/docs/reference/functions/math/mod)
+- [MROUND](/docs/reference/functions/math/mround)
+
+## FAQ
+
+### Is DECIMAL case-sensitive for alphabetic digits?
+No. Inputs like "ff" and "FF" both work for hexadecimal conversions.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/decimal" />
+{/* [formualizer-docgen:function-meta:end] */}

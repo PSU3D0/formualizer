@@ -1,0 +1,43 @@
+---
+title: "MAXA"
+description: "MAXA: Returns the largest value after applying A-variant coercion rules."
+---
+
+<FunctionPageSchema id="stats/maxa" />
+
+## Summary
+
+Returns the largest value after applying A-variant coercion rules.
+
+## returns: 1
+ =MAXA(TRUE,-2,"x")
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Maximum with logical and text coercion"
+  formula={`=MAXA(TRUE,-2,"x")`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [MAX](/docs/reference/functions/math/max)
+- [MINA](/docs/reference/functions/stats/mina)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### What do text values contribute to MAXA?
+Text contributes 0, so negative numeric inputs can still be smaller than text in the aggregate.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/maxa" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,43 @@
+---
+title: "T.DIST.RT"
+description: "T.DIST.RT: Returns the right-tailed Student's t-distribution probability."
+---
+
+<FunctionPageSchema id="stats/t-dist-rt" />
+
+## Summary
+
+Returns the right-tailed Student's t-distribution probability.
+
+## returns: 0.5
+ =T.DIST.RT(0,10)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Zero lies at the midpoint of the t distribution"
+  formula={`=T.DIST.RT(0,10)`}
+  grid={{}}
+  expected={"0.5"}
+/>
+
+## Related functions
+
+- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
+- [T.INV](/docs/reference/functions/stats/t-inv)
+- [T.INV.2T](/docs/reference/functions/stats/t-inv-2t)
+- [T.DIST](/docs/reference/functions/stats/t-dist)
+- [T.TEST](/docs/reference/functions/stats/t-test)
+- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
+
+## FAQ
+
+### When does T.DIST.RT return #NUM!?
+It returns #NUM! when the degrees of freedom are less than 1.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/t-dist-rt" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,230 @@
+{
+  "name": "date_intl",
+  "generated": "2026-03-24T00:00:00.000000",
+  "generator": "manual (FZ-PAR-02)",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,31))",
+      "result": 23,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL default weekends matches NETWORKDAYS"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,31), 1)",
+      "result": 23,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL explicit code 1 (Sat+Sun)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 11)",
+      "result": 6,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 11 (Sun only weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 17)",
+      "result": 6,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 17 (Sat only weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 1)",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 1 one-week span"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 2)",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 2 (Sun+Mon weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 3)",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 3 (Mon+Tue weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 4)",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 4 (Tue+Wed weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 5)",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 5 (Wed+Thu weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 6)",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 6 (Thu+Fri weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 7)",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 7 (Fri+Sat weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 12)",
+      "result": 6,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 12 (Mon only weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 13)",
+      "result": 6,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 13 (Tue only weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 14)",
+      "result": 6,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 14 (Wed only weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 15)",
+      "result": 6,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 15 (Thu only weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 16)",
+      "result": 6,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL code 16 (Fri only weekend)"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), \"0000011\")",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL string mask Sat+Sun"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), \"1000100\")",
+      "result": 5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL string mask Mon+Fri"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), \"0000000\")",
+      "result": 7,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL string mask no weekends"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,7), DATE(2024,1,1), 1)",
+      "result": -5,
+      "result_type": "int",
+      "description": "NETWORKDAYS.INTL reversed dates gives negative"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), 99)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "NETWORKDAYS.INTL invalid weekend code returns #NUM!"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), \"1111111\")",
+      "result": "#VALUE!",
+      "result_type": "error",
+      "description": "NETWORKDAYS.INTL all-weekends string returns #VALUE!"
+    },
+    {
+      "formula": "=NETWORKDAYS.INTL(DATE(2024,1,1), DATE(2024,1,7), \"00001\")",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "NETWORKDAYS.INTL wrong-length string returns #NUM!"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 10)",
+      "result": 45306,
+      "result_type": "float",
+      "description": "WORKDAY.INTL default weekends matches WORKDAY"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 10, 1)",
+      "result": 45306,
+      "result_type": "float",
+      "description": "WORKDAY.INTL explicit code 1"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 5)",
+      "result": 45299,
+      "result_type": "float",
+      "description": "WORKDAY.INTL default 5 workdays forward"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 5, 11)",
+      "result": 45297,
+      "result_type": "float",
+      "description": "WORKDAY.INTL code 11 (Sun only) 5 days forward"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 5, 7)",
+      "result": 45299,
+      "result_type": "float",
+      "description": "WORKDAY.INTL code 7 (Fri+Sat) 5 days forward"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 5, \"0000011\")",
+      "result": 45299,
+      "result_type": "float",
+      "description": "WORKDAY.INTL string mask Sat+Sun 5 days forward"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,15), -5)",
+      "result": 45299,
+      "result_type": "float",
+      "description": "WORKDAY.INTL 5 workdays backward"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 0)",
+      "result": 45292,
+      "result_type": "float",
+      "description": "WORKDAY.INTL 0 days returns start date"
+    },
+    {
+      "formula": "=WORKDAY.INTL(DATE(2024,1,1), 5, 99)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "WORKDAY.INTL invalid weekend code returns #NUM!"
+    },
+    {
+      "formula": "=NETWORKDAYS(DATE(2024,1,1), DATE(2024,1,7), A1)",
+      "result": 4,
+      "result_type": "int",
+      "description": "NETWORKDAYS excludes scalar holiday argument",
+      "context": {
+        "A1": 45293
+      }
+    },
+    {
+      "formula": "=WORKDAY(DATE(2024,1,1), 5, A1)",
+      "result": 45300,
+      "result_type": "float",
+      "description": "WORKDAY excludes scalar holiday argument",
+      "context": {
+        "A1": 45293
+      }
+    },
+    {
+      "formula": "=NETWORKDAYS(DATE(2024,1,1), DATE(2024,1,31))",
+      "result": 23,
+      "result_type": "int",
+      "description": "NETWORKDAYS unchanged without holidays (regression guard)"
+    },
+    {
+      "formula": "=WORKDAY(DATE(2024,1,1), 10)",
+      "result": 45306,
+      "result_type": "float",
+      "description": "WORKDAY unchanged without holidays (regression guard)"
+    }
+  ]
+}

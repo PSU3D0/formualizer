@@ -2581,6 +2581,732 @@ impl Function for ArabicFn {
     }
 }
 
+/* ─────────────────── BASE / DECIMAL / CEILING.PRECISE / FLOOR.PRECISE / ISO.CEILING ─────────────────── */
+
+#[derive(Debug)]
+pub struct BaseFn;
+/// Converts a non-negative integer to text in the requested radix.
+///
+/// # Examples
+///
+/// ```excel
+/// =BASE(31,16)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert decimal to hexadecimal"
+/// formula: '=BASE(31,16)'
+/// expected: "1F"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - DECIMAL
+/// faq:
+///   - q: "What bases are supported?"
+///     a: "BASE accepts radix values from 2 through 36."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: BASE
+/// Type: BaseFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: BASE(arg1: number@scalar, arg2: number@scalar, arg3...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BaseFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BASE"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static THREE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &THREE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() < 2 || args.len() > 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let number = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?.trunc() as i64,
+        };
+        let radix = match args[1].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?.trunc() as i64,
+        };
+        let min_len = if args.len() == 3 {
+            match args[2].value()?.into_literal() {
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                other => coerce_num(&other)?.trunc() as usize,
+            }
+        } else {
+            0
+        };
+        if !(2..=36).contains(&radix) || number < 0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let mut digits = Vec::new();
+        let mut n = number as u64;
+        if n == 0 {
+            digits.push('0');
+        } else {
+            while n > 0 {
+                let d = (n % radix as u64) as u32;
+                digits.push(
+                    char::from_digit(d, radix as u32)
+                        .unwrap()
+                        .to_ascii_uppercase(),
+                );
+                n /= radix as u64;
+            }
+            digits.reverse();
+        }
+        while digits.len() < min_len {
+            digits.insert(0, '0');
+        }
+        let text: String = digits.into_iter().collect();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)))
+    }
+}
+
+#[derive(Debug)]
+pub struct DecimalFn;
+/// Converts text in a given radix back to a decimal number.
+///
+/// # Examples
+///
+/// ```excel
+/// =DECIMAL("1F",16)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert hexadecimal to decimal"
+/// formula: '=DECIMAL("1F",16)'
+/// expected: 31
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BASE
+/// faq:
+///   - q: "Is DECIMAL case-sensitive for alphabetic digits?"
+///     a: "No. Inputs like \"ff\" and \"FF\" both work for hexadecimal conversions."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: DECIMAL
+/// Type: DecimalFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: DECIMAL(arg1: any@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for DecimalFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "DECIMAL"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::any(), ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let text = match args[0].value()?.into_literal() {
+            LiteralValue::Text(s) => s,
+            LiteralValue::Number(n) => format!("{}", n.trunc() as i64),
+            LiteralValue::Int(i) => i.to_string(),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            _ => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+        };
+        let radix = match args[1].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?.trunc() as u32,
+        };
+        if !(2..=36).contains(&radix) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let trimmed = text.trim();
+        match i64::from_str_radix(trimmed, radix) {
+            Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                v as f64,
+            ))),
+            Err(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CeilingPreciseFn;
+/// Rounds a number up toward positive infinity using absolute significance.
+///
+/// # Examples
+///
+/// ```excel
+/// =CEILING.PRECISE(-4.3)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round a negative number upward"
+/// formula: '=CEILING.PRECISE(-4.3)'
+/// expected: -4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FLOOR.PRECISE
+///   - ISO.CEILING
+/// faq:
+///   - q: "Does the sign of significance matter?"
+///     a: "No. CEILING.PRECISE uses the absolute value of significance."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: CEILING.PRECISE
+/// Type: CeilingPreciseFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: CEILING.PRECISE(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for CeilingPreciseFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CEILING.PRECISE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.is_empty() || args.len() > 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let n = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        let sig = if args.len() == 2 {
+            match args[1].value()?.into_literal() {
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                other => {
+                    let v = coerce_num(&other)?;
+                    if v == 0.0 {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+                    }
+                    v.abs()
+                }
+            }
+        } else {
+            1.0
+        };
+        let result = (n / sig).ceil() * sig;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct FloorPreciseFn;
+/// Rounds a number down toward negative infinity using absolute significance.
+///
+/// # Examples
+///
+/// ```excel
+/// =FLOOR.PRECISE(-4.3)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Round a negative number downward"
+/// formula: '=FLOOR.PRECISE(-4.3)'
+/// expected: -5
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CEILING.PRECISE
+/// faq:
+///   - q: "Does FLOOR.PRECISE keep negative significance?"
+///     a: "No. Like Excel, this implementation uses the absolute value of significance."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: FLOOR.PRECISE
+/// Type: FloorPreciseFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: FLOOR.PRECISE(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FloorPreciseFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FLOOR.PRECISE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.is_empty() || args.len() > 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let n = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        let sig = if args.len() == 2 {
+            match args[1].value()?.into_literal() {
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                other => {
+                    let v = coerce_num(&other)?;
+                    if v == 0.0 {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+                    }
+                    v.abs()
+                }
+            }
+        } else {
+            1.0
+        };
+        let result = (n / sig).floor() * sig;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct IsoCeilingFn;
+/// Rounds a number up using ISO ceiling semantics.
+///
+/// # Examples
+///
+/// ```excel
+/// =ISO.CEILING(-4.3)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "ISO ceiling on a negative value"
+/// formula: '=ISO.CEILING(-4.3)'
+/// expected: -4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CEILING.PRECISE
+/// faq:
+///   - q: "How does ISO.CEILING differ from legacy CEILING?"
+///     a: "ISO.CEILING always uses a positive significance and rounds toward positive infinity."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: ISO.CEILING
+/// Type: IsoCeilingFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: ISO.CEILING(arg1: number@scalar, arg2...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsoCeilingFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISO.CEILING"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_NUM_LENIENT_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.is_empty() || args.len() > 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let n = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        let sig = if args.len() == 2 {
+            match args[1].value()?.into_literal() {
+                LiteralValue::Error(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                other => {
+                    let v = coerce_num(&other)?;
+                    if v == 0.0 {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+                    }
+                    v.abs()
+                }
+            }
+        } else {
+            1.0
+        };
+        let result = (n / sig).ceil() * sig;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+/* ─────────────────── SUMX2MY2, SUMX2PY2, SUMXMY2 ─────────────────── */
+
+fn collect_nums_from_arg<'a, 'b>(
+    arg: &'a crate::traits::ArgumentHandle<'a, 'b>,
+) -> Result<Vec<f64>, ExcelError> {
+    let mut out = Vec::new();
+    if let Ok(view) = arg.range_view() {
+        view.for_each_cell(&mut |cell| {
+            match cell {
+                LiteralValue::Error(e) => return Err(e.clone()),
+                LiteralValue::Number(n) => out.push(*n),
+                LiteralValue::Int(i) => out.push(*i as f64),
+                LiteralValue::Boolean(b) => out.push(if *b { 1.0 } else { 0.0 }),
+                _ => out.push(0.0),
+            }
+            Ok(())
+        })?;
+    } else {
+        match arg.value()?.into_literal() {
+            LiteralValue::Error(e) => return Err(e),
+            LiteralValue::Array(rows) => {
+                for row in rows {
+                    for cell in row {
+                        match cell {
+                            LiteralValue::Error(e) => return Err(e),
+                            LiteralValue::Number(n) => out.push(n),
+                            LiteralValue::Int(i) => out.push(i as f64),
+                            LiteralValue::Boolean(b) => out.push(if b { 1.0 } else { 0.0 }),
+                            _ => out.push(0.0),
+                        }
+                    }
+                }
+            }
+            other => {
+                out.push(coerce_num(&other)?);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Debug)]
+pub struct SumX2MY2Fn;
+/// Returns the sum of squares of values in one array minus the squares in another.
+///
+/// # Examples
+///
+/// ```excel
+/// =SUMX2MY2({2,3},{1,4})
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pairwise squared difference of squares"
+/// formula: '=SUMX2MY2({2,3},{1,4})'
+/// expected: -4
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUMX2PY2
+///   - SUMXMY2
+/// faq:
+///   - q: "What happens when the arrays have different sizes?"
+///     a: "SUMX2MY2 returns #N/A when the two inputs do not contain the same number of values."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SUMX2MY2
+/// Type: SumX2MY2Fn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: SUMX2MY2(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SumX2MY2Fn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SUMX2MY2"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let xs = collect_nums_from_arg(&args[0])?;
+        let ys = collect_nums_from_arg(&args[1])?;
+        if xs.len() != ys.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+        let total: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| x * x - y * y).sum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct SumX2PY2Fn;
+/// Returns the sum of squares of corresponding values from two arrays.
+///
+/// # Examples
+///
+/// ```excel
+/// =SUMX2PY2({2,3},{1,4})
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pairwise squared sums"
+/// formula: '=SUMX2PY2({2,3},{1,4})'
+/// expected: 30
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUMX2MY2
+///   - SUMXMY2
+/// faq:
+///   - q: "Does SUMX2PY2 coerce booleans and blanks?"
+///     a: "It follows the same collection rules as the engine's paired-array helpers, coercing booleans and treating blanks/text as zero."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SUMX2PY2
+/// Type: SumX2PY2Fn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: SUMX2PY2(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SumX2PY2Fn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SUMX2PY2"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let xs = collect_nums_from_arg(&args[0])?;
+        let ys = collect_nums_from_arg(&args[1])?;
+        if xs.len() != ys.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+        let total: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| x * x + y * y).sum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total,
+        )))
+    }
+}
+
+#[derive(Debug)]
+pub struct SumXMY2Fn;
+/// Returns the sum of squared differences between corresponding values.
+///
+/// # Examples
+///
+/// ```excel
+/// =SUMXMY2({2,3},{1,4})
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pairwise squared differences"
+/// formula: '=SUMXMY2({2,3},{1,4})'
+/// expected: 2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SUMX2MY2
+///   - SUMX2PY2
+/// faq:
+///   - q: "What shape must the inputs have?"
+///     a: "Both inputs must flatten to the same number of values or the function returns #N/A."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SUMXMY2
+/// Type: SumXMY2Fn
+/// Min args: 2
+/// Max args: 1
+/// Variadic: false
+/// Signature: SUMXMY2(arg1: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SumXMY2Fn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SUMXMY2"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let xs = collect_nums_from_arg(&args[0])?;
+        let ys = collect_nums_from_arg(&args[1])?;
+        if xs.len() != ys.len() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_na(),
+            )));
+        }
+        let total: f64 = xs.iter().zip(ys.iter()).map(|(x, y)| (x - y).powi(2)).sum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            total,
+        )))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(AbsFn));
@@ -2593,8 +3319,11 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(ModFn));
     crate::function_registry::register_function(Arc::new(CeilingFn));
     crate::function_registry::register_function(Arc::new(CeilingMathFn));
+    crate::function_registry::register_function(Arc::new(CeilingPreciseFn));
+    crate::function_registry::register_function(Arc::new(IsoCeilingFn));
     crate::function_registry::register_function(Arc::new(FloorFn));
     crate::function_registry::register_function(Arc::new(FloorMathFn));
+    crate::function_registry::register_function(Arc::new(FloorPreciseFn));
     crate::function_registry::register_function(Arc::new(SqrtFn));
     crate::function_registry::register_function(Arc::new(PowerFn));
     crate::function_registry::register_function(Arc::new(ExpFn));
@@ -2611,6 +3340,11 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(MroundFn));
     crate::function_registry::register_function(Arc::new(RomanFn));
     crate::function_registry::register_function(Arc::new(ArabicFn));
+    crate::function_registry::register_function(Arc::new(BaseFn));
+    crate::function_registry::register_function(Arc::new(DecimalFn));
+    crate::function_registry::register_function(Arc::new(SumX2MY2Fn));
+    crate::function_registry::register_function(Arc::new(SumX2PY2Fn));
+    crate::function_registry::register_function(Arc::new(SumXMY2Fn));
 }
 
 #[cfg(test)]

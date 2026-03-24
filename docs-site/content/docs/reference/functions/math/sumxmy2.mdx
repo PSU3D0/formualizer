@@ -1,0 +1,39 @@
+---
+title: "SUMXMY2"
+description: "SUMXMY2: Returns the sum of squared differences between corresponding values."
+---
+
+<FunctionPageSchema id="math/sumxmy2" />
+
+## Summary
+
+Returns the sum of squared differences between corresponding values.
+
+## Examples
+
+<FunctionSandbox
+  title="Pairwise squared differences"
+  formula={`=SUMXMY2({2,3},{1,4})`}
+  grid={{}}
+  expected={"2"}
+/>
+
+## Related functions
+
+- [SUMX2MY2](/docs/reference/functions/math/sumx2my2)
+- [SUMX2PY2](/docs/reference/functions/math/sumx2py2)
+- [ATAN2](/docs/reference/functions/math/atan2)
+- [COMBIN](/docs/reference/functions/math/combin)
+- [COMBINA](/docs/reference/functions/math/combina)
+- [DECIMAL](/docs/reference/functions/math/decimal)
+
+## FAQ
+
+### What shape must the inputs have?
+Both inputs must flatten to the same number of values or the function returns #N/A.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/sumxmy2" />
+{/* [formualizer-docgen:function-meta:end] */}

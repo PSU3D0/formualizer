@@ -1,0 +1,43 @@
+---
+title: "F.DIST.RT"
+description: "F.DIST.RT: Returns the right-tailed F-distribution probability."
+---
+
+<FunctionPageSchema id="stats/f-dist-rt" />
+
+## Summary
+
+Returns the right-tailed F-distribution probability.
+
+## returns: 1
+ =F.DIST.RT(0,5,10)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Zero leaves the entire right tail"
+  formula={`=F.DIST.RT(0,5,10)`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [F.INV.RT](/docs/reference/functions/stats/f-inv-rt)
+- [F.TEST](/docs/reference/functions/stats/f-test)
+- [F.DIST](/docs/reference/functions/stats/f-dist)
+- [F.INV](/docs/reference/functions/stats/f-inv)
+- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+
+## FAQ
+
+### Which inputs return #NUM!?
+Negative x values or degrees of freedom below 1 return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/f-dist-rt" />
+{/* [formualizer-docgen:function-meta:end] */}

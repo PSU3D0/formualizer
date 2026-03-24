@@ -1,0 +1,43 @@
+---
+title: "BINOM.INV"
+description: "BINOM.INV: Returns the smallest number of successes whose cumulative binomial probability meets a threshold."
+---
+
+<FunctionPageSchema id="stats/binom-inv" />
+
+## Summary
+
+Returns the smallest number of successes whose cumulative binomial probability meets a threshold.
+
+## returns: 5
+ =BINOM.INV(10,0.5,0.5)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Median success threshold"
+  formula={`=BINOM.INV(10,0.5,0.5)`}
+  grid={{}}
+  expected={"5"}
+/>
+
+## Related functions
+
+- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
+- [BINOM.DIST.RANGE](/docs/reference/functions/stats/binom-dist-range)
+- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
+- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
+- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
+
+## FAQ
+
+### Is CRITBINOM supported?
+Yes. CRITBINOM is registered as an alias of BINOM.INV.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/binom-inv" />
+{/* [formualizer-docgen:function-meta:end] */}

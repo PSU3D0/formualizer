@@ -8260,6 +8260,1689 @@ impl Function for ChisqTestFn {
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   FZ-PAR-01: Statistical compatibility batch
+   AVERAGEA, MAXA, MINA, STDEVA, STDEVPA, VARA, VARPA, SKEW.P,
+   T.DIST.RT, CHISQ.DIST.RT, CHISQ.INV.RT, F.DIST.RT, F.INV.RT,
+   BETA.INV, BINOM.DIST.RANGE, BINOM.INV, GAMMA, GAMMA.INV,
+   GAMMALN, GAMMALN.PRECISE
+═══════════════════════════════════════════════════════════════════════════ */
+
+/// Collect numeric inputs applying Excel "A"-variant semantics:
+/// - Range references: include numbers as-is, booleans as 0/1, text as 0. Errors propagate.
+///   Blank cells are skipped.
+/// - Direct scalar arguments: same coercion as standard collect_numeric_stats.
+fn collect_numeric_a(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError> {
+    let mut out = Vec::new();
+    for a in args {
+        if let Some(arr) = a.inline_array_literal()? {
+            for row in arr.into_iter() {
+                for cell in row.into_iter() {
+                    match cell {
+                        LiteralValue::Error(e) => return Err(e),
+                        LiteralValue::Number(n) => out.push(n),
+                        LiteralValue::Int(i) => out.push(i as f64),
+                        LiteralValue::Boolean(b) => out.push(if b { 1.0 } else { 0.0 }),
+                        LiteralValue::Text(_) => out.push(0.0),
+                        _ => {}
+                    }
+                }
+            }
+            continue;
+        }
+
+        if let Ok(view) = a.range_view() {
+            view.for_each_cell(&mut |v| {
+                match v {
+                    LiteralValue::Error(e) => return Err(e.clone()),
+                    LiteralValue::Number(n) => out.push(*n),
+                    LiteralValue::Int(i) => out.push(*i as f64),
+                    LiteralValue::Boolean(b) => out.push(if *b { 1.0 } else { 0.0 }),
+                    LiteralValue::Text(_) => out.push(0.0),
+                    LiteralValue::Empty => {} // skip blanks
+                    _ => {}
+                }
+                Ok(())
+            })?;
+        } else {
+            let v = scalar_like_value(a)?;
+            match v {
+                LiteralValue::Error(e) => return Err(e),
+                other => {
+                    if let Ok(n) = coerce_num(&other) {
+                        out.push(n);
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Helper: inverse of the regularized incomplete beta function.
+/// Given p = I_x(a,b), find x. Uses Newton-Raphson with beta_i / beta PDF.
+fn beta_inv_helper(p: f64, a: f64, b: f64) -> Option<f64> {
+    if p <= 0.0 {
+        return Some(0.0);
+    }
+    if p >= 1.0 {
+        return Some(1.0);
+    }
+    if a <= 0.0 || b <= 0.0 {
+        return None;
+    }
+
+    // Initial guess from normal approximation (Abramowitz & Stegun 26.5.22)
+    let mut x = 0.5f64;
+
+    // Newton-Raphson
+    let ln_beta_ab = ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b);
+    for _ in 0..100 {
+        let cdf = beta_i(x, a, b);
+        // Beta PDF: x^(a-1) * (1-x)^(b-1) / B(a,b)
+        let pdf = if x > 0.0 && x < 1.0 {
+            ((a - 1.0) * x.ln() + (b - 1.0) * (1.0 - x).ln() - ln_beta_ab).exp()
+        } else {
+            1e-30
+        };
+        if pdf.abs() < 1e-30 {
+            break;
+        }
+        let delta = (cdf - p) / pdf;
+        let new_x = (x - delta).clamp(1e-15, 1.0 - 1e-15);
+        if (new_x - x).abs() < 1e-14 {
+            x = new_x;
+            break;
+        }
+        x = new_x;
+    }
+
+    Some(x)
+}
+
+/// Helper: inverse of GAMMA.DIST CDF. Given p = P(alpha, x/beta), find x.
+fn gamma_inv_helper(p: f64, alpha: f64, beta: f64) -> Option<f64> {
+    if p <= 0.0 {
+        return Some(0.0);
+    }
+    if p >= 1.0 {
+        return None;
+    }
+    if alpha <= 0.0 || beta <= 0.0 {
+        return None;
+    }
+
+    // Initial guess
+    let mut x = alpha * beta;
+    if p < 0.5 {
+        x = x.min(beta);
+    }
+
+    // Newton-Raphson on the standardized gamma CDF (gamma_p)
+    for _ in 0..100 {
+        let z = x / beta;
+        let cdf = gamma_p(alpha, z);
+        // Gamma PDF: z^(alpha-1) * e^(-z) / Gamma(alpha) / beta
+        let pdf = if z > 0.0 {
+            ((alpha - 1.0) * z.ln() - z - ln_gamma(alpha)).exp() / beta
+        } else {
+            1e-30
+        };
+        if pdf.abs() < 1e-30 {
+            break;
+        }
+        let delta = (cdf - p) / pdf;
+        let new_x = (x - delta).max(1e-15);
+        if (new_x - x).abs() < 1e-12 * x.max(1e-15) {
+            x = new_x;
+            break;
+        }
+        x = new_x;
+    }
+
+    Some(x)
+}
+
+/* ─────────────────────────── AVERAGEA ──────────────────────────── */
+
+/// Returns the arithmetic mean while treating logical values and text as numeric inputs.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 1
+/// =AVERAGEA(TRUE,2,"x")
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Average with logical and text coercion"
+/// formula: '=AVERAGEA(TRUE,2,"x")'
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - AVERAGE
+///   - MAXA
+///   - MINA
+/// faq:
+///   - q: "How does AVERAGEA treat text and booleans?"
+///     a: "TRUE counts as 1, FALSE and text count as 0, and blanks are ignored."
+/// ```
+#[derive(Debug)]
+pub struct AverageAFn;
+/// [formualizer-docgen:schema:start]
+/// Name: AVERAGEA
+/// Type: AverageAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AVERAGEA(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
+impl Function for AverageAFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "AVERAGEA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_a(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        let avg = nums.iter().sum::<f64>() / nums.len() as f64;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(avg)))
+    }
+}
+
+/* ─────────────────────────── MAXA ──────────────────────────── */
+
+/// Returns the largest value after applying A-variant coercion rules.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 1
+/// =MAXA(TRUE,-2,"x")
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Maximum with logical and text coercion"
+/// formula: '=MAXA(TRUE,-2,"x")'
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MAX
+///   - MINA
+///   - AVERAGEA
+/// faq:
+///   - q: "What do text values contribute to MAXA?"
+///     a: "Text contributes 0, so negative numeric inputs can still be smaller than text in the aggregate."
+/// ```
+#[derive(Debug)]
+pub struct MaxAFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MAXA
+/// Type: MaxAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MAXA(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
+impl Function for MaxAFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "MAXA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_a(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+        let mx = nums.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(mx)))
+    }
+}
+
+/* ─────────────────────────── MINA ──────────────────────────── */
+
+/// Returns the smallest value after applying A-variant coercion rules.
+///
+/// # Formula example
+/// ```excel
+/// # returns: -2
+/// =MINA(TRUE,-2,"x")
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Minimum with logical and text coercion"
+/// formula: '=MINA(TRUE,-2,"x")'
+/// expected: -2
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - MIN
+///   - MAXA
+///   - AVERAGEA
+/// faq:
+///   - q: "Do text values affect MINA?"
+///     a: "Yes. Text is coerced to 0, so it can become the minimum when all numeric inputs are positive."
+/// ```
+#[derive(Debug)]
+pub struct MinAFn;
+/// [formualizer-docgen:schema:start]
+/// Name: MINA
+/// Type: MinAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: MINA(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
+impl Function for MinAFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "MINA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_a(args)?;
+        if nums.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+        let mn = nums.iter().copied().fold(f64::INFINITY, f64::min);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(mn)))
+    }
+}
+
+/* ─────────────────────────── STDEVA ──────────────────────────── */
+
+/// Returns the sample standard deviation using A-variant coercion semantics.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 1
+/// =STDEVA(TRUE,2,"x")
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sample deviation with coerced values"
+/// formula: '=STDEVA(TRUE,2,"x")'
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - STDEV.P
+///   - STDEVPA
+///   - VARA
+/// faq:
+///   - q: "When does STDEVA return #DIV/0!?"
+///     a: "It returns #DIV/0! when fewer than two coerced values remain after evaluation."
+/// ```
+#[derive(Debug)]
+pub struct StdevAFn;
+/// [formualizer-docgen:schema:start]
+/// Name: STDEVA
+/// Type: StdevAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: STDEVA(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
+impl Function for StdevAFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "STDEVA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_a(args)?;
+        let n = nums.len();
+        if n < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        let mean = nums.iter().sum::<f64>() / n as f64;
+        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (ss / (n - 1) as f64).sqrt(),
+        )))
+    }
+}
+
+/* ─────────────────────────── STDEVPA ──────────────────────────── */
+
+/// Returns the population standard deviation using A-variant coercion semantics.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0.816496580927726
+/// =STDEVPA(TRUE,2,"x")
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Population deviation with coerced values"
+/// formula: '=STDEVPA(TRUE,2,"x")'
+/// expected: 0.816496580927726
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - STDEVA
+///   - VARPA
+///   - STDEV.P
+/// faq:
+///   - q: "What is the difference between STDEVA and STDEVPA?"
+///     a: "STDEVA uses the sample denominator n-1, while STDEVPA uses the population denominator n."
+/// ```
+#[derive(Debug)]
+pub struct StdevPAFn;
+/// [formualizer-docgen:schema:start]
+/// Name: STDEVPA
+/// Type: StdevPAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: STDEVPA(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
+impl Function for StdevPAFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "STDEVPA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_a(args)?;
+        let n = nums.len();
+        if n == 0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        let mean = nums.iter().sum::<f64>() / n as f64;
+        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            (ss / n as f64).sqrt(),
+        )))
+    }
+}
+
+/* ─────────────────────────── VARA ──────────────────────────── */
+
+/// Returns the sample variance using A-variant coercion semantics.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 1
+/// =VARA(TRUE,2,"x")
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Sample variance with coerced values"
+/// formula: '=VARA(TRUE,2,"x")'
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VARPA
+///   - STDEVA
+///   - AVERAGEA
+/// faq:
+///   - q: "How are blanks handled in VARA?"
+///     a: "Blanks are ignored, while booleans and text are coerced under A-variant rules."
+/// ```
+#[derive(Debug)]
+pub struct VarAFn;
+/// [formualizer-docgen:schema:start]
+/// Name: VARA
+/// Type: VarAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: VARA(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
+impl Function for VarAFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "VARA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_a(args)?;
+        let n = nums.len();
+        if n < 2 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        let mean = nums.iter().sum::<f64>() / n as f64;
+        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            ss / (n - 1) as f64,
+        )))
+    }
+}
+
+/* ─────────────────────────── VARPA ──────────────────────────── */
+
+/// Returns the population variance using A-variant coercion semantics.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0.6666666666666666
+/// =VARPA(TRUE,2,"x")
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Population variance with coerced values"
+/// formula: '=VARPA(TRUE,2,"x")'
+/// expected: 0.6666666666666666
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VARA
+///   - STDEVPA
+///   - STDEV.P
+/// faq:
+///   - q: "When does VARPA return #DIV/0!?"
+///     a: "It returns #DIV/0! when no coerced values remain after evaluation."
+/// ```
+#[derive(Debug)]
+pub struct VarPAFn;
+/// [formualizer-docgen:schema:start]
+/// Name: VARPA
+/// Type: VarPAFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: VARPA(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION
+/// [formualizer-docgen:schema:end]
+impl Function for VarPAFn {
+    func_caps!(PURE, REDUCTION);
+    fn name(&self) -> &'static str {
+        "VARPA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_a(args)?;
+        let n = nums.len();
+        if n == 0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        let mean = nums.iter().sum::<f64>() / n as f64;
+        let ss: f64 = nums.iter().map(|v| (v - mean).powi(2)).sum();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            ss / n as f64,
+        )))
+    }
+}
+
+/* ─────────────────────────── SKEW.P ──────────────────────────── */
+
+/// Returns the population skewness of a numeric data set.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0
+/// =SKEW.P(1,2,3)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Symmetric data has zero skew"
+/// formula: '=SKEW.P(1,2,3)'
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SKEW
+///   - KURT
+///   - AVERAGE
+/// faq:
+///   - q: "When does SKEW.P return #DIV/0!?"
+///     a: "It returns #DIV/0! when fewer than three numeric values are available or the population standard deviation is zero."
+/// ```
+#[derive(Debug)]
+pub struct SkewPFn;
+/// [formualizer-docgen:schema:start]
+/// Name: SKEW.P
+/// Type: SkewPFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SKEW.P(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE, REDUCTION, NUMERIC_ONLY
+/// [formualizer-docgen:schema:end]
+impl Function for SkewPFn {
+    func_caps!(PURE, REDUCTION, NUMERIC_ONLY);
+    fn name(&self) -> &'static str {
+        "SKEW.P"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_RANGE_NUM_LENIENT_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let nums = collect_numeric_stats(args)?;
+        let n = nums.len();
+        if n < 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        let n_f = n as f64;
+        let mean = nums.iter().sum::<f64>() / n_f;
+        let mut sum_sq = 0.0;
+        for &v in &nums {
+            sum_sq += (v - mean).powi(2);
+        }
+        let stdev_pop = (sum_sq / n_f).sqrt();
+        if stdev_pop == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_div(),
+            )));
+        }
+        let mut sum_cubed = 0.0;
+        for &v in &nums {
+            sum_cubed += ((v - mean) / stdev_pop).powi(3);
+        }
+        // Population skewness: (1/n) * sum((xi - mean)/sigma)^3
+        let skew = sum_cubed / n_f;
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(skew)))
+    }
+}
+
+/* ─────────────────────────── T.DIST.RT ──────────────────────────── */
+
+/// Returns the right-tailed Student's t-distribution probability.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0.5
+/// =T.DIST.RT(0,10)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Zero lies at the midpoint of the t distribution"
+/// formula: '=T.DIST.RT(0,10)'
+/// expected: 0.5
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - T.DIST.2T
+///   - T.INV
+///   - T.INV.2T
+/// faq:
+///   - q: "When does T.DIST.RT return #NUM!?"
+///     a: "It returns #NUM! when the degrees of freedom are less than 1."
+/// ```
+#[derive(Debug)]
+pub struct TDistRtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: T.DIST.RT
+/// Type: TDistRtFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: T.DIST.RT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for TDistRtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "T.DIST.RT"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+        if df < 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let result = 1.0 - t_cdf(x, df);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+/* ─────────────────────────── CHISQ.DIST.RT ──────────────────────────── */
+
+/// Returns the right-tailed chi-squared distribution probability.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0.36787944117144233
+/// =CHISQ.DIST.RT(2,2)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Right-tail chi-squared probability"
+/// formula: '=CHISQ.DIST.RT(2,2)'
+/// expected: 0.36787944117144233
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHISQ.INV.RT
+///   - CHISQ.TEST
+///   - CHISQ.DIST
+/// faq:
+///   - q: "Which inputs return #NUM!?"
+///     a: "Negative x values and degrees of freedom below 1 return #NUM!."
+/// ```
+#[derive(Debug)]
+pub struct ChisqDistRtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CHISQ.DIST.RT
+/// Type: ChisqDistRtFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: CHISQ.DIST.RT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ChisqDistRtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CHISQ.DIST.RT"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+        if df < 1.0 || x < 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let result = 1.0 - chisq_cdf(x, df);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+/* ─────────────────────────── CHISQ.INV.RT ──────────────────────────── */
+
+/// Returns the inverse of the right-tailed chi-squared distribution.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 1.3862943611198906
+/// =CHISQ.INV.RT(0.5,2)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Median right-tail inverse for 2 degrees of freedom"
+/// formula: '=CHISQ.INV.RT(0.5,2)'
+/// expected: 1.3862943611198906
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHISQ.DIST.RT
+///   - CHISQ.INV
+///   - CHISQ.TEST
+/// faq:
+///   - q: "What p-values are valid for CHISQ.INV.RT?"
+///     a: "p must lie in the range 0 to 1, and p=0 returns #NUM! because the right-tail inverse diverges."
+/// ```
+#[derive(Debug)]
+pub struct ChisqInvRtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: CHISQ.INV.RT
+/// Type: ChisqInvRtFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: CHISQ.INV.RT(arg1: number@scalar, arg2: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ChisqInvRtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "CHISQ.INV.RT"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let df = coerce_num(&scalar_like_value(&args[1])?)?;
+        if df < 1.0 || !(0.0..=1.0).contains(&p) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // Right-tail: CHISQ.INV.RT(p, df) = CHISQ.INV(1-p, df)
+        if p == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        match chisq_inv(1.0 - p, df) {
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                result,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/* ─────────────────────────── F.DIST.RT ──────────────────────────── */
+
+/// Returns the right-tailed F-distribution probability.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 1
+/// =F.DIST.RT(0,5,10)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Zero leaves the entire right tail"
+/// formula: '=F.DIST.RT(0,5,10)'
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - F.INV.RT
+///   - F.TEST
+///   - F.DIST
+/// faq:
+///   - q: "Which inputs return #NUM!?"
+///     a: "Negative x values or degrees of freedom below 1 return #NUM!."
+/// ```
+#[derive(Debug)]
+pub struct FDistRtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: F.DIST.RT
+/// Type: FDistRtFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: F.DIST.RT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FDistRtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "F.DIST.RT"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        let d1 = coerce_num(&scalar_like_value(&args[1])?)?;
+        let d2 = coerce_num(&scalar_like_value(&args[2])?)?;
+        if d1 < 1.0 || d2 < 1.0 || x < 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let result = 1.0 - f_cdf(x, d1, d2);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+/* ─────────────────────────── F.INV.RT ──────────────────────────── */
+
+/// Returns the inverse of the right-tailed F-distribution.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0
+/// =F.INV.RT(1,5,10)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "A full right tail maps to zero"
+/// formula: '=F.INV.RT(1,5,10)'
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - F.DIST.RT
+///   - F.INV
+///   - F.TEST
+/// faq:
+///   - q: "What p-values are valid for F.INV.RT?"
+///     a: "p must lie in the range 0 to 1, and p=0 returns #NUM! because the inverse diverges."
+/// ```
+#[derive(Debug)]
+pub struct FInvRtFn;
+/// [formualizer-docgen:schema:start]
+/// Name: F.INV.RT
+/// Type: FInvRtFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: F.INV.RT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FInvRtFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "F.INV.RT"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let d1 = coerce_num(&scalar_like_value(&args[1])?)?;
+        let d2 = coerce_num(&scalar_like_value(&args[2])?)?;
+        if d1 < 1.0 || d2 < 1.0 || !(0.0..=1.0).contains(&p) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        if p == 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        // F.INV.RT(1, d1, d2) = 0 (entire right tail)
+        if p == 1.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
+        }
+        // F.INV.RT(p, d1, d2) = F.INV(1-p, d1, d2)
+        match f_inv(1.0 - p, d1, d2) {
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                result,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/* ─────────────────────────── BETA.INV ──────────────────────────── */
+
+/// Returns the inverse cumulative beta distribution, optionally scaled to custom bounds.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0.5
+/// =BETA.INV(0.5,2,2)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Symmetric beta inverse at the median"
+/// formula: '=BETA.INV(0.5,2,2)'
+/// expected: 0.5
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BETA.DIST
+///   - GAMMA.INV
+///   - NORM.INV
+/// faq:
+///   - q: "When does BETA.INV return #NUM!?"
+///     a: "It returns #NUM! for non-positive alpha or beta, invalid bounds, or probabilities outside 0..1."
+/// ```
+#[derive(Debug)]
+pub struct BetaInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BETA.INV
+/// Type: BetaInvFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: BETA.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BetaInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BETA.INV"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let alpha = coerce_num(&scalar_like_value(&args[1])?)?;
+        let beta_param = coerce_num(&scalar_like_value(&args[2])?)?;
+        let a_bound = if args.len() > 3 {
+            coerce_num(&scalar_like_value(&args[3])?)?
+        } else {
+            0.0
+        };
+        let b_bound = if args.len() > 4 {
+            coerce_num(&scalar_like_value(&args[4])?)?
+        } else {
+            1.0
+        };
+
+        if alpha <= 0.0 || beta_param <= 0.0 || a_bound >= b_bound || !(0.0..=1.0).contains(&p) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        match beta_inv_helper(p, alpha, beta_param) {
+            Some(x_std) => {
+                let result = a_bound + x_std * (b_bound - a_bound);
+                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    result,
+                )))
+            }
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/* ─────────────────────────── BINOM.DIST.RANGE ──────────────────────────── */
+
+/// Returns the probability that a binomial random variable falls within a range of successes.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0.1171875
+/// =BINOM.DIST.RANGE(10,0.5,3,3)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Probability of exactly three successes"
+/// formula: '=BINOM.DIST.RANGE(10,0.5,3,3)'
+/// expected: 0.1171875
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BINOM.DIST
+///   - BINOM.INV
+///   - POISSON.DIST
+/// faq:
+///   - q: "What happens if the upper bound is omitted?"
+///     a: "The function treats the lower and upper bounds as the same value, yielding the probability of exactly that many successes."
+/// ```
+#[derive(Debug)]
+pub struct BinomDistRangeFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BINOM.DIST.RANGE
+/// Type: BinomDistRangeFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: BINOM.DIST.RANGE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BinomDistRangeFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BINOM.DIST.RANGE"
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let n = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;
+        let p = coerce_num(&scalar_like_value(&args[1])?)?;
+        let s = coerce_num(&scalar_like_value(&args[2])?)?.trunc() as i64;
+        let s2 = if args.len() > 3 {
+            coerce_num(&scalar_like_value(&args[3])?)?.trunc() as i64
+        } else {
+            s
+        };
+
+        if n < 0 || !(0.0..=1.0).contains(&p) || s < 0 || s > n || s2 < s || s2 > n {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        let mut sum = 0.0;
+        for k in s..=s2 {
+            let ln_prob = ln_binom(n, k) + (k as f64) * p.ln() + ((n - k) as f64) * (1.0 - p).ln();
+            sum += ln_prob.exp();
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(sum)))
+    }
+}
+
+/* ─────────────────────────── BINOM.INV ──────────────────────────── */
+
+/// Returns the smallest number of successes whose cumulative binomial probability meets a threshold.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 5
+/// =BINOM.INV(10,0.5,0.5)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Median success threshold"
+/// formula: '=BINOM.INV(10,0.5,0.5)'
+/// expected: 5
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BINOM.DIST
+///   - BINOM.DIST.RANGE
+///   - CRITBINOM
+/// faq:
+///   - q: "Is CRITBINOM supported?"
+///     a: "Yes. CRITBINOM is registered as an alias of BINOM.INV."
+/// ```
+#[derive(Debug)]
+pub struct BinomInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BINOM.INV
+/// Type: BinomInvFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: BINOM.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BinomInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BINOM.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["CRITBINOM"]
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let n = coerce_num(&scalar_like_value(&args[0])?)?.trunc() as i64;
+        let p = coerce_num(&scalar_like_value(&args[1])?)?;
+        let alpha = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        if n < 0 || !(0.0..=1.0).contains(&p) || !(0.0..=1.0).contains(&alpha) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        // Find smallest k such that BINOM.DIST(k, n, p, TRUE) >= alpha
+        let mut cum = 0.0;
+        for k in 0..=n {
+            let ln_prob = ln_binom(n, k) + (k as f64) * p.ln() + ((n - k) as f64) * (1.0 - p).ln();
+            cum += ln_prob.exp();
+            if cum >= alpha {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                    k as f64,
+                )));
+            }
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            n as f64,
+        )))
+    }
+}
+
+/* ─────────────────────────── GAMMA ──────────────────────────── */
+
+/// Returns the value of the gamma function.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 24
+/// =GAMMA(5)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Gamma extends factorials"
+/// formula: '=GAMMA(5)'
+/// expected: 24
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GAMMALN
+///   - GAMMA.INV
+///   - FACT
+/// faq:
+///   - q: "When does GAMMA return #NUM!?"
+///     a: "It returns #NUM! for zero and negative integers, where the gamma function has poles."
+/// ```
+#[derive(Debug)]
+pub struct GammaFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GAMMA
+/// Type: GammaFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: GAMMA(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for GammaFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "GAMMA"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        // GAMMA(0) and negative integers are #NUM!
+        if x == 0.0 || (x < 0.0 && x == x.trunc()) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        let result = ln_gamma(x).exp();
+        if result.is_infinite() || result.is_nan() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            result,
+        )))
+    }
+}
+
+/* ─────────────────────────── GAMMA.INV ──────────────────────────── */
+
+/// Returns the inverse cumulative gamma distribution.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 0.6931471805599453
+/// =GAMMA.INV(0.5,1,1)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Exponential special case"
+/// formula: '=GAMMA.INV(0.5,1,1)'
+/// expected: 0.6931471805599453
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GAMMA.DIST
+///   - GAMMA
+///   - BETA.INV
+/// faq:
+///   - q: "Is GAMMAINV supported?"
+///     a: "Yes. GAMMAINV is registered as an alias of GAMMA.INV."
+/// ```
+#[derive(Debug)]
+pub struct GammaInvFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GAMMA.INV
+/// Type: GammaInvFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: GAMMA.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for GammaInvFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "GAMMA.INV"
+    }
+    fn aliases(&self) -> &'static [&'static str] {
+        &["GAMMAINV"]
+    }
+    fn min_args(&self) -> usize {
+        3
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+                ArgSchema::number_lenient_scalar(),
+            ]
+        });
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let p = coerce_num(&scalar_like_value(&args[0])?)?;
+        let alpha = coerce_num(&scalar_like_value(&args[1])?)?;
+        let beta = coerce_num(&scalar_like_value(&args[2])?)?;
+
+        if alpha <= 0.0 || beta <= 0.0 || !(0.0..=1.0).contains(&p) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+
+        match gamma_inv_helper(p, alpha, beta) {
+            Some(result) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+                result,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            ))),
+        }
+    }
+}
+
+/* ─────────────────────────── GAMMALN ──────────────────────────── */
+
+/// Returns the natural logarithm of the gamma function.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 3.1780538303479458
+/// =GAMMALN(5)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Log gamma at 5"
+/// formula: '=GAMMALN(5)'
+/// expected: 3.1780538303479458
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GAMMALN.PRECISE
+///   - GAMMA
+///   - LN
+/// faq:
+///   - q: "When does GAMMALN return #NUM!?"
+///     a: "It returns #NUM! for zero or negative inputs."
+/// ```
+#[derive(Debug)]
+pub struct GammaLnFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GAMMALN
+/// Type: GammaLnFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: GAMMALN(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for GammaLnFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "GAMMALN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        if x <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            ln_gamma(x),
+        )))
+    }
+}
+
+/* ─────────────────────────── GAMMALN.PRECISE ──────────────────────────── */
+
+/// Returns the natural logarithm of the gamma function using Excel's precise naming variant.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 3.1780538303479458
+/// =GAMMALN.PRECISE(5)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Precise log gamma at 5"
+/// formula: '=GAMMALN.PRECISE(5)'
+/// expected: 3.1780538303479458
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GAMMALN
+///   - GAMMA
+///   - LN
+/// faq:
+///   - q: "How does GAMMALN.PRECISE differ here?"
+///     a: "This implementation uses the same core log-gamma calculation as GAMMALN, matching Excel's function naming split."
+/// ```
+#[derive(Debug)]
+pub struct GammaLnPreciseFn;
+/// [formualizer-docgen:schema:start]
+/// Name: GAMMALN.PRECISE
+/// Type: GammaLnPreciseFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: GAMMALN.PRECISE(arg1: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for GammaLnPreciseFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "GAMMALN.PRECISE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> =
+            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+        &SCHEMA[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let x = coerce_num(&scalar_like_value(&args[0])?)?;
+        if x <= 0.0 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_num(),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            ln_gamma(x),
+        )))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(ForecastLinearFn));
@@ -8344,6 +10027,27 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(TTestFn));
     crate::function_registry::register_function(Arc::new(FTestFn));
     crate::function_registry::register_function(Arc::new(ChisqTestFn));
+    // FZ-PAR-01 batch
+    crate::function_registry::register_function(Arc::new(AverageAFn));
+    crate::function_registry::register_function(Arc::new(MaxAFn));
+    crate::function_registry::register_function(Arc::new(MinAFn));
+    crate::function_registry::register_function(Arc::new(StdevAFn));
+    crate::function_registry::register_function(Arc::new(StdevPAFn));
+    crate::function_registry::register_function(Arc::new(VarAFn));
+    crate::function_registry::register_function(Arc::new(VarPAFn));
+    crate::function_registry::register_function(Arc::new(SkewPFn));
+    crate::function_registry::register_function(Arc::new(TDistRtFn));
+    crate::function_registry::register_function(Arc::new(ChisqDistRtFn));
+    crate::function_registry::register_function(Arc::new(ChisqInvRtFn));
+    crate::function_registry::register_function(Arc::new(FDistRtFn));
+    crate::function_registry::register_function(Arc::new(FInvRtFn));
+    crate::function_registry::register_function(Arc::new(BetaInvFn));
+    crate::function_registry::register_function(Arc::new(BinomDistRangeFn));
+    crate::function_registry::register_function(Arc::new(BinomInvFn));
+    crate::function_registry::register_function(Arc::new(GammaFn));
+    crate::function_registry::register_function(Arc::new(GammaInvFn));
+    crate::function_registry::register_function(Arc::new(GammaLnFn));
+    crate::function_registry::register_function(Arc::new(GammaLnPreciseFn));
 }
 
 #[cfg(test)]

@@ -11,6 +11,7 @@
     "isformula",
     "islogical",
     "isna",
+    "isnontext",
     "isnumber",
     "isodd",
     "istext",

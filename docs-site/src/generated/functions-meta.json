@@ -929,6 +929,76 @@
     "typeName": "NetworkdaysFn",
     "variadic": true
   },
+  "datetime/networkdays-intl": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg4",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "datetime",
+    "implementationSource": "crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs",
+    "maxArgs": null,
+    "minArgs": 2,
+    "name": "NETWORKDAYS.INTL",
+    "registrationSource": "crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs",
+    "shortSummary": "Returns the number of working days between two dates with configurable weekends.",
+    "signature": "NETWORKDAYS.INTL(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar, arg4...: any@scalar)",
+    "typeName": "NetworkdaysIntlFn",
+    "variadic": true
+  },
   "datetime/now": {
     "argSchema": "[]",
     "args": [],
@@ -1225,6 +1295,76 @@
     "shortSummary": "Returns the date serial that is a given number of weekdays from a start date.",
     "signature": "WORKDAY(arg1: number@scalar, arg2: number@scalar, arg3...: any@scalar)",
     "typeName": "WorkdayFn",
+    "variadic": true
+  },
+  "datetime/workday-intl": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg4",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "datetime",
+    "implementationSource": "crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs",
+    "maxArgs": null,
+    "minArgs": 2,
+    "name": "WORKDAY.INTL",
+    "registrationSource": "crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs",
+    "shortSummary": "Returns the date serial that is a given number of workdays from a start date, with configurable weekends.",
+    "signature": "WORKDAY.INTL(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar, arg4...: any@scalar)",
+    "typeName": "WorkdayIntlFn",
     "variadic": true
   },
   "datetime/year": {
@@ -3816,6 +3956,76 @@
     "typeName": "IrrFn",
     "variadic": true
   },
+  "financial/ispmt": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg4",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "financial",
+    "implementationSource": "crates/formualizer-eval/src/builtins/financial/tvm.rs",
+    "maxArgs": 4,
+    "minArgs": 4,
+    "name": "ISPMT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/financial/tvm.rs",
+    "shortSummary": "Returns the interest paid on the outstanding principal for a specific period of an investment with even principal payments. Calculates interest paid in a period for a loan repa…",
+    "signature": "ISPMT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)",
+    "typeName": "IspmtFn",
+    "variadic": false
+  },
   "financial/mirr": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -4043,6 +4253,63 @@
     "signature": "NPV(arg1: number@scalar, arg2...: any@scalar)",
     "typeName": "NpvFn",
     "variadic": true
+  },
+  "financial/pduration": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "financial",
+    "implementationSource": "crates/formualizer-eval/src/builtins/financial/tvm.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "PDURATION",
+    "registrationSource": "crates/formualizer-eval/src/builtins/financial/tvm.rs",
+    "shortSummary": "Returns the number of periods required for an investment to reach a specified future value at a constant interest rate.",
+    "signature": "PDURATION(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "PdurationFn",
+    "variadic": false
   },
   "financial/pmt": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
@@ -4511,6 +4778,63 @@
     "typeName": "RateFn",
     "variadic": true
   },
+  "financial/rri": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "financial",
+    "implementationSource": "crates/formualizer-eval/src/builtins/financial/tvm.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "RRI",
+    "registrationSource": "crates/formualizer-eval/src/builtins/financial/tvm.rs",
+    "shortSummary": "RRI(nper, pv, fv) — equivalent interest rate for growth of an investment. Returns (fv/pv)^(1/nper) - 1 (i.e. CAGR).",
+    "signature": "RRI(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "RriFn",
+    "variadic": false
+  },
   "financial/sln": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -4636,6 +4960,177 @@
     "shortSummary": "Returns sum-of-years'-digits depreciation for a requested period.",
     "signature": "SYD(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)",
     "typeName": "SydFn",
+    "variadic": false
+  },
+  "financial/tbilleq": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "financial",
+    "implementationSource": "crates/formualizer-eval/src/builtins/financial/bonds.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "TBILLEQ",
+    "registrationSource": "crates/formualizer-eval/src/builtins/financial/bonds.rs",
+    "shortSummary": "Returns bond-equivalent yield for a US Treasury bill.",
+    "signature": "TBILLEQ(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "TbilleqFn",
+    "variadic": false
+  },
+  "financial/tbillprice": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "financial",
+    "implementationSource": "crates/formualizer-eval/src/builtins/financial/bonds.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "TBILLPRICE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/financial/bonds.rs",
+    "shortSummary": "Returns price per $100 face value for a US Treasury bill.",
+    "signature": "TBILLPRICE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "TbillpriceFn",
+    "variadic": false
+  },
+  "financial/tbillyield": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "financial",
+    "implementationSource": "crates/formualizer-eval/src/builtins/financial/bonds.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "TBILLYIELD",
+    "registrationSource": "crates/formualizer-eval/src/builtins/financial/bonds.rs",
+    "shortSummary": "Returns the yield for a US Treasury bill.",
+    "signature": "TBILLYIELD(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "TbillyieldFn",
     "variadic": false
   },
   "financial/xirr": {
@@ -5109,6 +5604,37 @@
     "typeName": "IsNaFn",
     "variadic": false
   },
+  "info/isnontext": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "info",
+    "implementationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "ISNONTEXT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "shortSummary": "Returns TRUE when the value is anything other than text.",
+    "signature": "ISNONTEXT(arg1: any@scalar)",
+    "typeName": "IsNonTextFn",
+    "variadic": false
+  },
   "info/isnumber": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -5498,6 +6024,38 @@
     "signature": "NOT(arg1: any@scalar)",
     "typeName": "NotFn",
     "variadic": false
+  },
+  "logical-ext/switch": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "SHORT_CIRCUIT"
+    ],
+    "category": "logical_ext",
+    "implementationSource": "crates/formualizer-eval/src/builtins/logical_ext.rs",
+    "maxArgs": null,
+    "minArgs": 3,
+    "name": "SWITCH",
+    "registrationSource": "crates/formualizer-eval/src/builtins/logical_ext.rs",
+    "shortSummary": "Returns the result corresponding to the first matching candidate value.",
+    "signature": "SWITCH(arg1...: any@scalar)",
+    "typeName": "SwitchFn",
+    "variadic": true
   },
   "logical-ext/xor": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
@@ -6260,6 +6818,64 @@
     "signature": "HSTACK(arg1...: range|any@range)",
     "typeName": "HStackFn",
     "variadic": true
+  },
+  "lookup/lookup": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=false,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": false,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "LOOKUP"
+    ],
+    "category": "lookup",
+    "implementationSource": "crates/formualizer-eval/src/builtins/lookup/legacy.rs",
+    "maxArgs": 3,
+    "minArgs": 2,
+    "name": "LOOKUP",
+    "registrationSource": "crates/formualizer-eval/src/builtins/lookup/mod.rs",
+    "shortSummary": "Searches for a value and returns a corresponding value from another range.",
+    "signature": "LOOKUP(arg1: any@scalar, arg2: any@range, arg3?: any@range)",
+    "typeName": "LookupFn",
+    "variadic": false
   },
   "lookup/match": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}",
@@ -7340,6 +7956,73 @@
     "typeName": "AcotFn",
     "variadic": false
   },
+  "math/acoth": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "ELEMENTWISE",
+      "NUMERIC_ONLY"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/trig.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "ACOTH",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/trig.rs",
+    "shortSummary": "Returns the inverse hyperbolic cotangent of a number.",
+    "signature": "ACOTH(arg1: number@scalar)",
+    "typeName": "AcothFn",
+    "variadic": false
+  },
+  "math/aggregate": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "VOLATILE",
+      "REDUCTION",
+      "NUMERIC_ONLY",
+      "STREAM_OK"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/aggregate.rs",
+    "maxArgs": null,
+    "minArgs": 3,
+    "name": "AGGREGATE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/aggregate.rs",
+    "shortSummary": "Reference for the AGGREGATE function.",
+    "signature": "AGGREGATE(arg1...: number@range)",
+    "typeName": "AggregateFn",
+    "variadic": true
+  },
   "math/arabic": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -7655,6 +8338,63 @@
     "typeName": "AverageIfsFn",
     "variadic": true
   },
+  "math/base": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": null,
+    "minArgs": 2,
+    "name": "BASE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Converts a non-negative integer to text in the requested radix.",
+    "signature": "BASE(arg1: number@scalar, arg2: number@scalar, arg3...: number@scalar)",
+    "typeName": "BaseFn",
+    "variadic": true
+  },
   "math/ceiling": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -7743,6 +8483,50 @@
     "typeName": "CeilingMathFn",
     "variadic": true
   },
+  "math/ceiling-precise": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "CEILING.PRECISE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Rounds a number up toward positive infinity using absolute significance.",
+    "signature": "CEILING.PRECISE(arg1: number@scalar, arg2...: number@scalar)",
+    "typeName": "CeilingPreciseFn",
+    "variadic": true
+  },
   "math/combin": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -7785,6 +8569,50 @@
     "shortSummary": "Returns the number of combinations for selecting `k` items from `n`.",
     "signature": "COMBIN(arg1: number@scalar, arg2: number@scalar)",
     "typeName": "CombinFn",
+    "variadic": false
+  },
+  "math/combina": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/combinatorics.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "COMBINA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/combinatorics.rs",
+    "shortSummary": "Returns the number of combinations with repetition.",
+    "signature": "COMBINA(arg1: number@scalar, arg2: number@scalar)",
+    "typeName": "CombinaFn",
     "variadic": false
   },
   "math/cos": {
@@ -8155,6 +8983,50 @@
     "typeName": "CschFn",
     "variadic": false
   },
+  "math/decimal": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "DECIMAL",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Converts text in a given radix back to a decimal number.",
+    "signature": "DECIMAL(arg1: any@scalar, arg2: number@scalar)",
+    "typeName": "DecimalFn",
+    "variadic": false
+  },
   "math/degrees": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -8281,6 +9153,37 @@
     "typeName": "FactFn",
     "variadic": false
   },
+  "math/factdouble": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/combinatorics.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "FACTDOUBLE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/combinatorics.rs",
+    "shortSummary": "Returns the double factorial of a number.",
+    "signature": "FACTDOUBLE(arg1: number@scalar)",
+    "typeName": "FactDoubleFn",
+    "variadic": false
+  },
   "math/floor": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -8369,6 +9272,50 @@
     "typeName": "FloorMathFn",
     "variadic": true
   },
+  "math/floor-precise": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "FLOOR.PRECISE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Rounds a number down toward negative infinity using absolute significance.",
+    "signature": "FLOOR.PRECISE(arg1: number@scalar, arg2...: number@scalar)",
+    "typeName": "FloorPreciseFn",
+    "variadic": true
+  },
   "math/gcd": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -8443,6 +9390,50 @@
     "signature": "INT(arg1: number@scalar)",
     "typeName": "IntFn",
     "variadic": false
+  },
+  "math/iso-ceiling": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "ISO.CEILING",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Rounds a number up using ISO ceiling semantics.",
+    "signature": "ISO.CEILING(arg1: number@scalar, arg2...: number@scalar)",
+    "typeName": "IsoCeilingFn",
+    "variadic": true
   },
   "math/lcm": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
@@ -9463,6 +10454,40 @@
     "typeName": "SqrtPiFn",
     "variadic": false
   },
+  "math/subtotal": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "VOLATILE",
+      "REDUCTION",
+      "NUMERIC_ONLY",
+      "STREAM_OK"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/aggregate.rs",
+    "maxArgs": null,
+    "minArgs": 2,
+    "name": "SUBTOTAL",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/aggregate.rs",
+    "shortSummary": "Reference for the SUBTOTAL function.",
+    "signature": "SUBTOTAL(arg1...: number@range)",
+    "typeName": "SubtotalFn",
+    "variadic": true
+  },
   "math/sum": {
     "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -9634,6 +10659,99 @@
     "signature": "SUMSQ(arg1...: number@range)",
     "typeName": "SumsqFn",
     "variadic": true
+  },
+  "math/sumx2my2": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": 1,
+    "minArgs": 2,
+    "name": "SUMX2MY2",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Returns the sum of squares of values in one array minus the squares in another.",
+    "signature": "SUMX2MY2(arg1: number@range)",
+    "typeName": "SumX2MY2Fn",
+    "variadic": false
+  },
+  "math/sumx2py2": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": 1,
+    "minArgs": 2,
+    "name": "SUMX2PY2",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Returns the sum of squares of corresponding values from two arrays.",
+    "signature": "SUMX2PY2(arg1: number@range)",
+    "typeName": "SumX2PY2Fn",
+    "variadic": false
+  },
+  "math/sumxmy2": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "math",
+    "implementationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "maxArgs": 1,
+    "minArgs": 2,
+    "name": "SUMXMY2",
+    "registrationSource": "crates/formualizer-eval/src/builtins/math/numeric.rs",
+    "shortSummary": "Returns the sum of squared differences between corresponding values.",
+    "signature": "SUMXMY2(arg1: number@range)",
+    "typeName": "SumXMY2Fn",
+    "variadic": false
   },
   "math/tan": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
@@ -10031,6 +11149,38 @@
     "typeName": "AvedevFn",
     "variadic": true
   },
+  "stats/averagea": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "AVERAGEA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the arithmetic mean while treating logical values and text as numeric inputs.",
+    "signature": "AVERAGEA(arg1...: number@range)",
+    "typeName": "AverageAFn",
+    "variadic": true
+  },
   "stats/beta-dist": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg6{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -10127,6 +11277,89 @@
     "typeName": "BetaDistFn",
     "variadic": true
   },
+  "stats/beta-inv": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg5{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg4",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg5",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 3,
+    "name": "BETA.INV",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the inverse cumulative beta distribution, optionally scaled to custom bounds.",
+    "signature": "BETA.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar, arg5...: number@scalar)",
+    "typeName": "BetaInvFn",
+    "variadic": true
+  },
   "stats/binom-dist": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -10197,6 +11430,133 @@
     "typeName": "BinomDistFn",
     "variadic": false
   },
+  "stats/binom-dist-range": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg4",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 3,
+    "name": "BINOM.DIST.RANGE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the probability that a binomial random variable falls within a range of successes.",
+    "signature": "BINOM.DIST.RANGE(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4...: number@scalar)",
+    "typeName": "BinomDistRangeFn",
+    "variadic": true
+  },
+  "stats/binom-inv": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "BINOM.INV",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the smallest number of successes whose cumulative binomial probability meets a threshold.",
+    "signature": "BINOM.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "BinomInvFn",
+    "variadic": false
+  },
   "stats/chisq-dist": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -10254,6 +11614,50 @@
     "typeName": "ChisqDistFn",
     "variadic": false
   },
+  "stats/chisq-dist-rt": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "CHISQ.DIST.RT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the right-tailed chi-squared distribution probability.",
+    "signature": "CHISQ.DIST.RT(arg1: number@scalar, arg2: number@scalar)",
+    "typeName": "ChisqDistRtFn",
+    "variadic": false
+  },
   "stats/chisq-inv": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -10296,6 +11700,50 @@
     "shortSummary": "Returns the chi-square value whose left-tail probability is `probability`.",
     "signature": "CHISQ.INV(arg1: number@scalar, arg2: number@scalar)",
     "typeName": "ChisqInvFn",
+    "variadic": false
+  },
+  "stats/chisq-inv-rt": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "CHISQ.INV.RT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the inverse of the right-tailed chi-squared distribution.",
+    "signature": "CHISQ.INV.RT(arg1: number@scalar, arg2: number@scalar)",
+    "typeName": "ChisqInvRtFn",
     "variadic": false
   },
   "stats/chisq-test": {
@@ -10715,6 +12163,63 @@
     "typeName": "FDistFn",
     "variadic": false
   },
+  "stats/f-dist-rt": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "F.DIST.RT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the right-tailed F-distribution probability.",
+    "signature": "F.DIST.RT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "FDistRtFn",
+    "variadic": false
+  },
   "stats/f-inv": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -10770,6 +12275,63 @@
     "shortSummary": "Returns the F value whose left-tail probability equals `probability`.",
     "signature": "F.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
     "typeName": "FInvFn",
+    "variadic": false
+  },
+  "stats/f-inv-rt": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "F.INV.RT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the inverse of the right-tailed F-distribution.",
+    "signature": "F.INV.RT(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "FInvRtFn",
     "variadic": false
   },
   "stats/f-test": {
@@ -10944,6 +12506,37 @@
     "typeName": "FrequencyFn",
     "variadic": false
   },
+  "stats/gamma": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "GAMMA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the value of the gamma function.",
+    "signature": "GAMMA(arg1: number@scalar)",
+    "typeName": "GammaFn",
+    "variadic": false
+  },
   "stats/gamma-dist": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg4{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -11012,6 +12605,125 @@
     "shortSummary": "Returns the gamma-distribution probability at `x` for shape `alpha` and scale `beta`.",
     "signature": "GAMMA.DIST(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar, arg4: number@scalar)",
     "typeName": "GammaDistFn",
+    "variadic": false
+  },
+  "stats/gamma-inv": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 3,
+    "minArgs": 3,
+    "name": "GAMMA.INV",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the inverse cumulative gamma distribution.",
+    "signature": "GAMMA.INV(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)",
+    "typeName": "GammaInvFn",
+    "variadic": false
+  },
+  "stats/gammaln": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "GAMMALN",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the natural logarithm of the gamma function.",
+    "signature": "GAMMALN(arg1: number@scalar)",
+    "typeName": "GammaLnFn",
+    "variadic": false
+  },
+  "stats/gammaln-precise": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "GAMMALN.PRECISE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the natural logarithm of the gamma function using Excel's precise naming variant.",
+    "signature": "GAMMALN.PRECISE(arg1: number@scalar)",
+    "typeName": "GammaLnPreciseFn",
     "variadic": false
   },
   "stats/gauss": {
@@ -11516,6 +13228,38 @@
     "typeName": "LognormInvFn",
     "variadic": false
   },
+  "stats/maxa": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "MAXA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the largest value after applying A-variant coercion rules.",
+    "signature": "MAXA(arg1...: number@range)",
+    "typeName": "MaxAFn",
+    "variadic": true
+  },
   "stats/maxifs": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -11579,6 +13323,38 @@
     "shortSummary": "Returns the middle value of a numeric data set.",
     "signature": "MEDIAN(arg1...: number@range)",
     "typeName": "MEDIAN",
+    "variadic": true
+  },
+  "stats/mina": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "MINA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the smallest value after applying A-variant coercion rules.",
+    "signature": "MINA(arg1...: number@range)",
+    "typeName": "MinAFn",
     "variadic": true
   },
   "stats/minifs": {
@@ -12427,6 +14203,39 @@
     "typeName": "SkewFn",
     "variadic": true
   },
+  "stats/skew-p": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION",
+      "NUMERIC_ONLY"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "SKEW.P",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the population skewness of a numeric data set.",
+    "signature": "SKEW.P(arg1...: number@range)",
+    "typeName": "SkewPFn",
+    "variadic": true
+  },
   "stats/slope": {
     "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -12618,6 +14427,70 @@
     "typeName": "StdevSample",
     "variadic": true
   },
+  "stats/stdeva": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "STDEVA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the sample standard deviation using A-variant coercion semantics.",
+    "signature": "STDEVA(arg1...: number@range)",
+    "typeName": "StdevAFn",
+    "variadic": true
+  },
+  "stats/stdevpa": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "STDEVPA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the population standard deviation using A-variant coercion semantics.",
+    "signature": "STDEVPA(arg1...: number@range)",
+    "typeName": "StdevPAFn",
+    "variadic": true
+  },
   "stats/steyx": {
     "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -12750,6 +14623,50 @@
     "shortSummary": "Returns the two-tailed Student's t probability beyond `x`.",
     "signature": "T.DIST.2T(arg1: number@scalar, arg2: number@scalar)",
     "typeName": "TDist2TFn",
+    "variadic": false
+  },
+  "stats/t-dist-rt": {
+    "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "T.DIST.RT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the right-tailed Student's t-distribution probability.",
+    "signature": "T.DIST.RT(arg1: number@scalar, arg2: number@scalar)",
+    "typeName": "TDistRtFn",
     "variadic": false
   },
   "stats/t-inv": {
@@ -13041,6 +14958,70 @@
     "shortSummary": "Estimates sample variance using `n-1` in the denominator.",
     "signature": "VAR.S(arg1...: number@range)",
     "typeName": "VarSample",
+    "variadic": true
+  },
+  "stats/vara": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "VARA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the sample variance using A-variant coercion semantics.",
+    "signature": "VARA(arg1...: number@range)",
+    "typeName": "VarAFn",
+    "variadic": true
+  },
+  "stats/varpa": {
+    "argSchema": "arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": false,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      }
+    ],
+    "caps": [
+      "PURE",
+      "REDUCTION"
+    ],
+    "category": "stats",
+    "implementationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "VARPA",
+    "registrationSource": "crates/formualizer-eval/src/builtins/stats/mod.rs",
+    "shortSummary": "Returns the population variance using A-variant coercion semantics.",
+    "signature": "VARPA(arg1...: number@range)",
+    "typeName": "VarPAFn",
     "variadic": true
   },
   "stats/weibull-dist": {

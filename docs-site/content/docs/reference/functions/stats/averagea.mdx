@@ -1,0 +1,43 @@
+---
+title: "AVERAGEA"
+description: "AVERAGEA: Returns the arithmetic mean while treating logical values and text as numeric inputs."
+---
+
+<FunctionPageSchema id="stats/averagea" />
+
+## Summary
+
+Returns the arithmetic mean while treating logical values and text as numeric inputs.
+
+## returns: 1
+ =AVERAGEA(TRUE,2,"x")
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Average with logical and text coercion"
+  formula={`=AVERAGEA(TRUE,2,"x")`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [AVERAGE](/docs/reference/functions/math/average)
+- [MAXA](/docs/reference/functions/stats/maxa)
+- [MINA](/docs/reference/functions/stats/mina)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+- [GEOMEAN](/docs/reference/functions/stats/geomean)
+
+## FAQ
+
+### How does AVERAGEA treat text and booleans?
+TRUE counts as 1, FALSE and text count as 0, and blanks are ignored.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/averagea" />
+{/* [formualizer-docgen:function-meta:end] */}

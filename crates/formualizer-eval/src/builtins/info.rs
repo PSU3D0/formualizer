@@ -1197,10 +1197,94 @@ impl Function for ErrorTypeFn {
     }
 }
 
+/// Returns TRUE when the value is anything other than text.
+///
+/// # Remarks
+/// - Text literals return FALSE.
+/// - Numbers, booleans, blanks, and errors return TRUE.
+/// - This is the logical complement of `ISTEXT` in the current engine semantics.
+///
+/// # Examples
+///
+/// ```excel
+/// =ISNONTEXT(42)
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Number is non-text"
+/// formula: '=ISNONTEXT(42)'
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Text is not non-text"
+/// formula: '=ISNONTEXT("alpha")'
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISTEXT
+///   - TYPE
+/// faq:
+///   - q: "Do errors count as non-text values?"
+///     a: "Yes. This implementation treats any non-text value, including errors, as TRUE for ISNONTEXT."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: ISNONTEXT
+/// Type: IsNonTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNONTEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+#[derive(Debug)]
+pub struct IsNonTextFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ISNONTEXT
+/// Type: IsNonTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISNONTEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsNonTextFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISNONTEXT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = args[0].value()?.into_literal();
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
+            !matches!(v, LiteralValue::Text(_)),
+        )))
+    }
+}
+
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(IsNumberFn));
     crate::function_registry::register_function(Arc::new(IsTextFn));
+    crate::function_registry::register_function(Arc::new(IsNonTextFn));
     crate::function_registry::register_function(Arc::new(IsLogicalFn));
     crate::function_registry::register_function(Arc::new(IsBlankFn));
     crate::function_registry::register_function(Arc::new(IsErrorFn));

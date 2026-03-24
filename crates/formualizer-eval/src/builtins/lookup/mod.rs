@@ -9,6 +9,7 @@ mod address;
 mod choose;
 mod core;
 mod dynamic;
+mod legacy; // classic LOOKUP function (vector & array forms)
 mod lookup_utils; // shared helper utilities for lookup family
 mod reference_info; // modern lookup & dynamic array subset (XLOOKUP, FILTER, UNIQUE)
 mod stack; // stacking & concatenation functions (HSTACK, VSTACK)
@@ -19,6 +20,7 @@ pub use core::{HLookupFn, MatchFn, VLookupFn};
 pub use dynamic::{
     FilterFn, GroupByFn, PivotByFn, RandArrayFn, SortByFn, SortFn, UniqueFn, XLookupFn, XMatchFn,
 };
+pub use legacy::LookupFn;
 pub use reference_info::{ColumnFn, ColumnsFn, RowFn, RowsFn};
 pub use stack::{HStackFn, VStackFn};
 // CHOOSECOLS / CHOOSEROWS live in choose.rs alongside CHOOSE
@@ -33,6 +35,9 @@ pub fn register_builtins() {
     register_function(Arc::new(MatchFn));
     register_function(Arc::new(VLookupFn));
     register_function(Arc::new(HLookupFn));
+
+    // Legacy LOOKUP (vector & array forms)
+    register_function(Arc::new(LookupFn));
 
     // Choose function
     register_function(Arc::new(ChooseFn));

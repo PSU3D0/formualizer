@@ -12,12 +12,13 @@ Returns the number of weekday business days between two dates, inclusive.
 ## Remarks
  - Weekends are fixed to Saturday and Sunday.
  - If `start_date &gt; end_date`, the result is negative.
- - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+ - Optional `holidays` arguments are excluded from the count and may be provided as scalars,
+   inline arrays, or ranges.
  - Input serials are interpreted with Excel 1900 date mapping.
 
 ## Examples
 
-<Tabs items={["Count weekdays in a range", "Holiday argument currently has no effect"]}>
+<Tabs items={["Count weekdays in a range", "Holiday exclusions reduce the count"]}>
 <Tab value="Count weekdays in a range">
 <FunctionSandbox
   title="Count weekdays in a range"
@@ -27,12 +28,12 @@ Returns the number of weekday business days between two dates, inclusive.
 />
 </Tab>
 
-<Tab value="Holiday argument currently has no effect">
+<Tab value="Holiday exclusions reduce the count">
 <FunctionSandbox
-  title="Holiday argument currently has no effect"
+  title="Holiday exclusions reduce the count"
   formula={`=NETWORKDAYS(45292, 45299, 45293)`}
   grid={{}}
-  expected={"6"}
+  expected={"5"}
 />
 </Tab>
 
@@ -43,14 +44,14 @@ Returns the number of weekday business days between two dates, inclusive.
 - [WORKDAY](/docs/reference/functions/datetime/workday)
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
 - [DAYS](/docs/reference/functions/datetime/days)
+- [NETWORKDAYS.INTL](/docs/reference/functions/datetime/networkdays-intl)
 - [DAYS360](/docs/reference/functions/datetime/days360)
-- [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
-- [WEEKNUM](/docs/reference/functions/datetime/weeknum)
+- [WORKDAY.INTL](/docs/reference/functions/datetime/workday-intl)
 
 ## FAQ
 
-### Are custom holidays excluded in NETWORKDAYS right now?
-Not yet. The third argument is accepted but currently ignored, so only Saturday/Sunday weekends are excluded.
+### Can I exclude custom holidays in NETWORKDAYS?
+Yes. Additional arguments can provide holiday serials, arrays, or ranges to exclude from the weekday count.
 
 ## Runtime metadata
 

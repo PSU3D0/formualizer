@@ -1,0 +1,64 @@
+---
+title: "SWITCH"
+description: "SWITCH: Returns the result corresponding to the first matching candidate value."
+---
+
+<FunctionPageSchema id="logical-ext/switch" />
+
+## Summary
+
+`SWITCH(expression, value1, result1, [value2, result2], ..., [default])`
+ compares `expression` against each candidate from left to right.
+
+## Remarks
+ - Matching is case-insensitive for text values.
+ - Numeric comparisons treat `Int` and `Number` values as compatible.
+ - A trailing unmatched argument acts as the default result.
+ - When no candidate matches and no default is supplied, returns `#N/A`.
+ - Errors in `expression` propagate immediately.
+
+## Examples
+
+<Tabs items={["Match a text label", "Fall back to default"]}>
+<Tab value="Match a text label">
+<FunctionSandbox
+  title="Match a text label"
+  formula={`=SWITCH("gold","silver",1,"gold",2,0)`}
+  grid={{}}
+  expected={"2"}
+/>
+</Tab>
+
+<Tab value="Fall back to default">
+<FunctionSandbox
+  title="Fall back to default"
+  formula={`=SWITCH(3,1,"one",2,"two","other")`}
+  grid={{}}
+  expected={"other"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [IF](/docs/reference/functions/logical/if)
+- [IFS](/docs/reference/functions/logical-ext/ifs)
+- [CHOOSE](/docs/reference/functions/lookup/choose)
+- [XOR](/docs/reference/functions/logical-ext/xor)
+- [IFERROR](/docs/reference/functions/logical-ext/iferror)
+- [IFNA](/docs/reference/functions/logical-ext/ifna)
+
+## FAQ
+
+### Does SWITCH compare text case-sensitively?
+No. Text comparisons are case-insensitive in this implementation.
+
+### What happens when nothing matches?
+SWITCH returns the trailing default when provided; otherwise it returns #N/A.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="logical-ext/switch" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,43 @@
+---
+title: "GAMMA"
+description: "Returns the value of the gamma function."
+---
+
+<FunctionPageSchema id="stats/gamma" />
+
+## Summary
+
+Returns the value of the gamma function.
+
+## returns: 24
+ =GAMMA(5)
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Gamma extends factorials"
+  formula={`=GAMMA(5)`}
+  grid={{}}
+  expected={"24"}
+/>
+
+## Related functions
+
+- [GAMMALN](/docs/reference/functions/stats/gammaln)
+- [GAMMA.INV](/docs/reference/functions/stats/gamma-inv)
+- [FACT](/docs/reference/functions/math/fact)
+- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
+- [FISHER](/docs/reference/functions/stats/fisher)
+- [FISHERINV](/docs/reference/functions/stats/fisherinv)
+
+## FAQ
+
+### When does GAMMA return #NUM!?
+It returns #NUM! for zero and negative integers, where the gamma function has poles.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/gamma" />
+{/* [formualizer-docgen:function-meta:end] */}

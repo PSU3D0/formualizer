@@ -1,0 +1,39 @@
+---
+title: "CEILING.PRECISE"
+description: "CEILING.PRECISE: Rounds a number up toward positive infinity using absolute significance."
+---
+
+<FunctionPageSchema id="math/ceiling-precise" />
+
+## Summary
+
+Rounds a number up toward positive infinity using absolute significance.
+
+## Examples
+
+<FunctionSandbox
+  title="Round a negative number upward"
+  formula={`=CEILING.PRECISE(-4.3)`}
+  grid={{}}
+  expected={"-4"}
+/>
+
+## Related functions
+
+- [FLOOR.PRECISE](/docs/reference/functions/math/floor-precise)
+- [ISO.CEILING](/docs/reference/functions/math/iso-ceiling)
+- [CEILING](/docs/reference/functions/math/ceiling)
+- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
+- [AVERAGE](/docs/reference/functions/math/average)
+- [FLOOR](/docs/reference/functions/math/floor)
+
+## FAQ
+
+### Does the sign of significance matter?
+No. CEILING.PRECISE uses the absolute value of significance.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="math/ceiling-precise" />
+{/* [formualizer-docgen:function-meta:end] */}

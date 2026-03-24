@@ -1,0 +1,246 @@
+{
+  "name": "compat_microbatch",
+  "generated": "2026-03-24T00:00:00",
+  "generator": "FZ-PAR-04",
+  "context_data": {},
+  "tests": [
+    {
+      "formula": "=SWITCH(2, 1,\"a\", 2,\"b\", 3,\"c\")",
+      "result": "b",
+      "result_type": "string",
+      "description": "SWITCH matches second value-result pair"
+    },
+    {
+      "formula": "=SWITCH(99, 1,\"a\", 2,\"b\", \"default\")",
+      "result": "default",
+      "result_type": "string",
+      "description": "SWITCH falls through to default"
+    },
+    {
+      "formula": "=SWITCH(99, 1,\"a\", 2,\"b\")",
+      "result": "#N/A",
+      "result_type": "error",
+      "description": "SWITCH no match and no default returns N/A"
+    },
+    {
+      "formula": "=SWITCH(\"hello\", \"HELLO\", 1, \"world\", 2)",
+      "result": 1,
+      "result_type": "int",
+      "description": "SWITCH case-insensitive text matching"
+    },
+
+    {
+      "formula": "=ISNONTEXT(42)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISNONTEXT number returns TRUE"
+    },
+    {
+      "formula": "=ISNONTEXT(\"hello\")",
+      "result": false,
+      "result_type": "bool",
+      "description": "ISNONTEXT text returns FALSE"
+    },
+    {
+      "formula": "=ISNONTEXT(TRUE)",
+      "result": true,
+      "result_type": "bool",
+      "description": "ISNONTEXT boolean returns TRUE"
+    },
+
+    {
+      "formula": "=FACTDOUBLE(5)",
+      "result": 15,
+      "result_type": "float",
+      "description": "FACTDOUBLE(5) = 5*3*1 = 15"
+    },
+    {
+      "formula": "=FACTDOUBLE(6)",
+      "result": 48,
+      "result_type": "float",
+      "description": "FACTDOUBLE(6) = 6*4*2 = 48"
+    },
+    {
+      "formula": "=FACTDOUBLE(0)",
+      "result": 1,
+      "result_type": "float",
+      "description": "FACTDOUBLE(0) = 1"
+    },
+    {
+      "formula": "=FACTDOUBLE(-1)",
+      "result": 1,
+      "result_type": "float",
+      "description": "FACTDOUBLE(-1) = 1"
+    },
+    {
+      "formula": "=FACTDOUBLE(-2)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "FACTDOUBLE negative < -1 returns NUM error"
+    },
+
+    {
+      "formula": "=COMBINA(4,3)",
+      "result": 20,
+      "result_type": "float",
+      "description": "COMBINA(4,3) = C(6,3) = 20"
+    },
+    {
+      "formula": "=COMBINA(10,3)",
+      "result": 220,
+      "result_type": "float",
+      "description": "COMBINA(10,3) = C(12,3) = 220"
+    },
+    {
+      "formula": "=COMBINA(5,0)",
+      "result": 1,
+      "result_type": "float",
+      "description": "COMBINA with k=0 returns 1"
+    },
+
+    {
+      "formula": "=BASE(255,16)",
+      "result": "FF",
+      "result_type": "string",
+      "description": "BASE converts 255 to hex FF"
+    },
+    {
+      "formula": "=BASE(15,2)",
+      "result": "1111",
+      "result_type": "string",
+      "description": "BASE converts 15 to binary"
+    },
+    {
+      "formula": "=BASE(15,2,8)",
+      "result": "00001111",
+      "result_type": "string",
+      "description": "BASE with minimum length pads with zeros"
+    },
+    {
+      "formula": "=BASE(0,10)",
+      "result": "0",
+      "result_type": "string",
+      "description": "BASE of zero"
+    },
+
+    {
+      "formula": "=DECIMAL(\"FF\",16)",
+      "result": 255,
+      "result_type": "float",
+      "description": "DECIMAL converts hex FF to 255"
+    },
+    {
+      "formula": "=DECIMAL(\"1111\",2)",
+      "result": 15,
+      "result_type": "float",
+      "description": "DECIMAL converts binary 1111 to 15"
+    },
+    {
+      "formula": "=DECIMAL(\"zap\",10)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DECIMAL with invalid digits returns NUM error"
+    },
+
+    {
+      "formula": "=CEILING.PRECISE(4.3)",
+      "result": 5,
+      "result_type": "float",
+      "description": "CEILING.PRECISE rounds up to nearest integer"
+    },
+    {
+      "formula": "=CEILING.PRECISE(-4.3)",
+      "result": -4,
+      "result_type": "float",
+      "description": "CEILING.PRECISE negative rounds toward zero"
+    },
+    {
+      "formula": "=CEILING.PRECISE(4.3,2)",
+      "result": 6,
+      "result_type": "float",
+      "description": "CEILING.PRECISE with significance 2"
+    },
+    {
+      "formula": "=CEILING.PRECISE(-4.3,-2)",
+      "result": -4,
+      "result_type": "float",
+      "description": "CEILING.PRECISE ignores sign of significance"
+    },
+
+    {
+      "formula": "=FLOOR.PRECISE(4.3)",
+      "result": 4,
+      "result_type": "float",
+      "description": "FLOOR.PRECISE rounds down to nearest integer"
+    },
+    {
+      "formula": "=FLOOR.PRECISE(-4.3)",
+      "result": -5,
+      "result_type": "float",
+      "description": "FLOOR.PRECISE negative rounds away from zero"
+    },
+    {
+      "formula": "=FLOOR.PRECISE(4.3,2)",
+      "result": 4,
+      "result_type": "float",
+      "description": "FLOOR.PRECISE with significance 2"
+    },
+
+    {
+      "formula": "=ISO.CEILING(4.3)",
+      "result": 5,
+      "result_type": "float",
+      "description": "ISO.CEILING rounds up to nearest integer"
+    },
+    {
+      "formula": "=ISO.CEILING(-4.3)",
+      "result": -4,
+      "result_type": "float",
+      "description": "ISO.CEILING negative rounds toward zero"
+    },
+    {
+      "formula": "=ISO.CEILING(4.3,2)",
+      "result": 6,
+      "result_type": "float",
+      "description": "ISO.CEILING with significance 2"
+    },
+
+    {
+      "formula": "=ACOTH(2)",
+      "result": 0.5493061443340548,
+      "result_type": "float",
+      "description": "ACOTH of 2"
+    },
+    {
+      "formula": "=ACOTH(0.5)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "ACOTH domain error for |x| <= 1"
+    },
+    {
+      "formula": "=ACOTH(-2)",
+      "result": -0.5493061443340548,
+      "result_type": "float",
+      "description": "ACOTH of negative value"
+    },
+
+    {
+      "formula": "=SUMX2MY2({1,2,3},{4,5,6})",
+      "result": -63,
+      "result_type": "float",
+      "description": "SUMX2MY2: sum of (x^2 - y^2) = (1-16)+(4-25)+(9-36) = -63"
+    },
+    {
+      "formula": "=SUMX2PY2({1,2,3},{4,5,6})",
+      "result": 91,
+      "result_type": "float",
+      "description": "SUMX2PY2: sum of (x^2 + y^2) = (1+16)+(4+25)+(9+36) = 91"
+    },
+    {
+      "formula": "=SUMXMY2({1,2,3},{4,5,6})",
+      "result": 27,
+      "result_type": "float",
+      "description": "SUMXMY2: sum of (x-y)^2 = 9+9+9 = 27"
+    }
+  ]
+}

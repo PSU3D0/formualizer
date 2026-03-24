@@ -1,0 +1,43 @@
+---
+title: "STDEVPA"
+description: "STDEVPA: Returns the population standard deviation using A-variant coercion semantics."
+---
+
+<FunctionPageSchema id="stats/stdevpa" />
+
+## Summary
+
+Returns the population standard deviation using A-variant coercion semantics.
+
+## returns: 0.816496580927726
+ =STDEVPA(TRUE,2,"x")
+ ```
+
+## Examples
+
+<FunctionSandbox
+  title="Population deviation with coerced values"
+  formula={`=STDEVPA(TRUE,2,"x")`}
+  grid={{}}
+  expected={"0.816496580927726"}
+/>
+
+## Related functions
+
+- [STDEVA](/docs/reference/functions/stats/stdeva)
+- [VARPA](/docs/reference/functions/stats/varpa)
+- [STDEV.P](/docs/reference/functions/stats/stdev-p)
+- [AVEDEV](/docs/reference/functions/stats/avedev)
+- [AVERAGEA](/docs/reference/functions/stats/averagea)
+- [DEVSQ](/docs/reference/functions/stats/devsq)
+
+## FAQ
+
+### What is the difference between STDEVA and STDEVPA?
+STDEVA uses the sample denominator n-1, while STDEVPA uses the population denominator n.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="stats/stdevpa" />
+{/* [formualizer-docgen:function-meta:end] */}

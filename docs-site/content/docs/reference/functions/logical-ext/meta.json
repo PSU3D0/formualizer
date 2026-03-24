@@ -7,6 +7,7 @@
     "ifna",
     "ifs",
     "not",
+    "switch",
     "xor"
   ],
   "title": "Logical (Extended) Functions"
