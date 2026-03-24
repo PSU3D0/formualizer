@@ -7,6 +7,7 @@ use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use chrono::{Datelike, NaiveDate, Weekday};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
+use std::collections::HashSet;
 
 /// Day of year in a standard 365-day (non-leap) year.
 /// Feb 29 dates are clamped to Feb 28 (day 59).
@@ -491,12 +492,80 @@ fn is_weekend(date: &NaiveDate) -> bool {
     matches!(date.weekday(), Weekday::Sat | Weekday::Sun)
 }
 
+/// Coerce a single `LiteralValue` into a date serial for holiday collection.
+///
+/// Mirrors the coercion rules in `coerce_to_serial` but operates on an
+/// already-evaluated literal rather than an `ArgumentHandle`.  Callers are
+/// expected to filter out `Empty` values before invoking this function.
+fn literal_to_serial(v: &LiteralValue) -> Result<f64, ExcelError> {
+    match v {
+        LiteralValue::Number(f) => Ok(*f),
+        LiteralValue::Int(i) => Ok(*i as f64),
+        LiteralValue::Date(d) => Ok(date_to_serial(d)),
+        LiteralValue::DateTime(dt) => Ok(date_to_serial(&dt.date())),
+        LiteralValue::Text(s) => s
+            .parse::<f64>()
+            .map_err(|_| ExcelError::new_value().with_message("Not a valid number")),
+        LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
+        LiteralValue::Error(e) => Err(e.clone()),
+        _ => Err(ExcelError::new_value()),
+    }
+}
+
+/// Collect the optional holidays argument into a `HashSet<NaiveDate>`.
+///
+/// The argument may be a cell range, an inline array literal, or a single
+/// scalar value.  Each element is coerced to a date serial via the same
+/// rules as the start/end date arguments.  Errors in individual holiday
+/// values propagate immediately (matching Excel behavior).  Empty cells
+/// and duplicate dates are silently ignored.
+fn collect_holidays(
+    args: &[ArgumentHandle<'_, '_>],
+    idx: usize,
+) -> Result<HashSet<NaiveDate>, ExcelError> {
+    if args.len() <= idx {
+        return Ok(HashSet::new());
+    }
+
+    let arg = &args[idx];
+    let mut holidays = HashSet::new();
+
+    for v in arg.lazy_values_owned()? {
+        // `lazy_values_owned` may yield a `LiteralValue::Array` when the
+        // argument evaluates to an array value (for example, from a
+        // pre-evaluated scalar that contains an array). Flatten it so
+        // each element is processed individually.
+        match v {
+            LiteralValue::Empty => continue,
+            LiteralValue::Array(rows) => {
+                for row in &rows {
+                    for cell in row {
+                        if matches!(cell, LiteralValue::Empty) {
+                            continue;
+                        }
+                        let serial = literal_to_serial(cell)?;
+                        holidays.insert(serial_to_date(serial)?);
+                    }
+                }
+            }
+            other => {
+                let serial = literal_to_serial(&other)?;
+                holidays.insert(serial_to_date(serial)?);
+            }
+        }
+    }
+
+    Ok(holidays)
+}
+
 /// Returns the number of weekday business days between two dates, inclusive.
 ///
 /// # Remarks
 /// - Weekends are fixed to Saturday and Sunday.
 /// - If `start_date > end_date`, the result is negative.
-/// - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+/// - The optional `holidays` argument accepts a range, inline array, or single serial.
+///   Dates falling on holidays are excluded from the count in addition to weekends.
+/// - Holidays that fall on weekends have no additional effect.
 /// - Input serials are interpreted with Excel 1900 date mapping.
 ///
 /// # Examples
@@ -507,9 +576,9 @@ fn is_weekend(date: &NaiveDate) -> bool {
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Holiday argument currently has no effect"
+/// title: "Single holiday excluded"
 /// formula: "=NETWORKDAYS(45292, 45299, 45293)"
-/// expected: 6
+/// expected: 5
 /// ```
 ///
 /// ```yaml,docs
@@ -518,8 +587,8 @@ fn is_weekend(date: &NaiveDate) -> bool {
 ///   - WEEKDAY
 ///   - DAYS
 /// faq:
-///   - q: "Are custom holidays excluded in NETWORKDAYS right now?"
-///     a: "Not yet. The third argument is accepted but currently ignored, so only Saturday/Sunday weekends are excluded."
+///   - q: "Are custom holidays excluded in NETWORKDAYS?"
+///     a: "Yes. The third argument accepts a range, inline array, or single date serial. Holiday dates that fall on business days are excluded from the count."
 /// ```
 #[derive(Debug)]
 pub struct NetworkdaysFn;
@@ -566,14 +635,7 @@ impl Function for NetworkdaysFn {
         let start_date = serial_to_date(start_serial)?;
         let end_date = serial_to_date(end_serial)?;
 
-        // Collect holidays if provided
-        // TODO: Implement holiday array support
-        let holidays: Vec<NaiveDate> = if args.len() > 2 {
-            // For now, skip holiday handling (would need array support)
-            vec![]
-        } else {
-            vec![]
-        };
+        let holidays = collect_holidays(args, 2)?;
 
         let (start, end, sign) = if start_date <= end_date {
             (start_date, end_date, 1i64)
@@ -599,7 +661,9 @@ impl Function for NetworkdaysFn {
 /// # Remarks
 /// - Positive `days` moves forward; negative `days` moves backward.
 /// - Weekends are fixed to Saturday and Sunday.
-/// - The optional `holidays` argument is currently accepted but ignored; holiday exclusions are not yet supported.
+/// - The optional `holidays` argument accepts a range, inline array, or single serial.
+///   Dates falling on holidays are skipped in addition to weekends.
+/// - Holidays that fall on weekends have no additional effect.
 /// - Input and output serials use Excel 1900 date mapping.
 ///
 /// # Examples
@@ -610,9 +674,9 @@ impl Function for NetworkdaysFn {
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Holiday argument currently has no effect"
+/// title: "Holiday pushes result forward"
 /// formula: "=WORKDAY(45292, 5, 45293)"
-/// expected: 45299
+/// expected: 45300
 /// ```
 ///
 /// ```yaml,docs
@@ -667,11 +731,7 @@ impl Function for WorkdayFn {
         let days = coerce_to_int(&args[1])?;
 
         let start_date = serial_to_date(start_serial)?;
-
-        // Collect holidays if provided
-        // TODO: Implement holiday array support
-        // Holidays parameter is currently accepted but ignored.
-        let holidays: Vec<NaiveDate> = Vec::new();
+        let holidays = collect_holidays(args, 2)?;
 
         let mut current = start_date;
         let mut remaining = days.abs();
@@ -723,7 +783,6 @@ mod tests {
         let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WeekdayFn));
         let ctx = interp(&wb);
         // Jan 1, 2024 is a Monday
-        // Serial for 2024-01-01: date_to_serial gives us the value
         let serial = date_to_serial(&NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
         let n = lit(LiteralValue::Number(serial));
         let f = ctx.context.get_function("", "WEEKDAY").unwrap();
@@ -762,5 +821,298 @@ mod tests {
             .into_literal(),
             LiteralValue::Int(4)
         );
+    }
+
+    // ── NETWORKDAYS holiday tests ──────────────────────────────────────
+
+    #[test]
+    fn networkdays_no_holidays() {
+        // Jan 1 (Mon) to Jan 8 (Mon) 2024 → 6 business days
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0)); // 2024-01-01
+        let end = lit(LiteralValue::Number(45299.0)); // 2024-01-08
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&end, &ctx),
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(6)
+        );
+    }
+
+    #[test]
+    fn networkdays_single_holiday() {
+        // Jan 1 to Jan 8, with Jan 2 (Tue) as holiday → 5 business days
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0)); // 2024-01-01
+        let end = lit(LiteralValue::Number(45299.0)); // 2024-01-08
+        let hol = lit(LiteralValue::Number(45293.0)); // 2024-01-02
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&end, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(5)
+        );
+    }
+
+    #[test]
+    fn networkdays_array_holidays() {
+        // Jan 1 to Jan 8, with Jan 2 (Tue) and Jan 3 (Wed) as holidays → 4
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0));
+        let end = lit(LiteralValue::Number(45299.0));
+        let hols = lit(LiteralValue::Array(vec![vec![
+            LiteralValue::Number(45293.0), // Jan 2
+            LiteralValue::Number(45294.0), // Jan 3
+        ]]));
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&end, &ctx),
+                    ArgumentHandle::new(&hols, &ctx),
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(4)
+        );
+    }
+
+    #[test]
+    fn networkdays_holiday_on_weekend_no_effect() {
+        // Jan 1 to Jan 8, with Jan 6 (Sat) as holiday → still 6
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0));
+        let end = lit(LiteralValue::Number(45299.0));
+        let hol = lit(LiteralValue::Number(45297.0)); // 2024-01-06 Saturday
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&end, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(6)
+        );
+    }
+
+    #[test]
+    fn networkdays_holiday_on_start_date() {
+        // Jan 1 to Jan 8, with Jan 1 (Mon) as holiday → 5 (start is inclusive but excluded)
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0));
+        let end = lit(LiteralValue::Number(45299.0));
+        let hol = lit(LiteralValue::Number(45292.0)); // Jan 1 itself
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&end, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(5)
+        );
+    }
+
+    #[test]
+    fn networkdays_native_date_holidays() {
+        // Holidays passed as LiteralValue::Date (as from an xlsx import)
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0)); // Jan 1
+        let end = lit(LiteralValue::Number(45299.0)); // Jan 8
+        let hol = lit(LiteralValue::Date(
+            NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+        ));
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&end, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(5)
+        );
+    }
+
+    #[test]
+    fn networkdays_reversed_with_holidays() {
+        // end < start → negative, with holiday excluded
+        // Jan 8 to Jan 1 with Jan 2 holiday → -5
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45299.0)); // Jan 8
+        let end = lit(LiteralValue::Number(45292.0)); // Jan 1
+        let hol = lit(LiteralValue::Number(45293.0)); // Jan 2
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&end, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Int(-5)
+        );
+    }
+
+    // ── WORKDAY holiday tests ──────────────────────────────────────────
+
+    #[test]
+    fn workday_no_holidays() {
+        // 5 workdays from Jan 1 (Mon) → Jan 8 (Mon), serial 45299
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0));
+        let days = lit(LiteralValue::Number(5.0));
+        let f = ctx.context.get_function("", "WORKDAY").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&days, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Number(45299.0));
+    }
+
+    #[test]
+    fn workday_single_holiday() {
+        // 5 workdays from Jan 1, with Jan 2 (Tue) as holiday → Jan 9 (Tue), serial 45300
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0));
+        let days = lit(LiteralValue::Number(5.0));
+        let hol = lit(LiteralValue::Number(45293.0)); // Jan 2
+        let f = ctx.context.get_function("", "WORKDAY").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&days, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Number(45300.0));
+    }
+
+    #[test]
+    fn workday_array_holidays() {
+        // 5 workdays from Jan 1, with Jan 2 + Jan 3 as holidays → Jan 10 (Wed), serial 45301
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0));
+        let days = lit(LiteralValue::Number(5.0));
+        let hols = lit(LiteralValue::Array(vec![vec![
+            LiteralValue::Number(45293.0),
+            LiteralValue::Number(45294.0),
+        ]]));
+        let f = ctx.context.get_function("", "WORKDAY").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&days, &ctx),
+                    ArgumentHandle::new(&hols, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Number(45301.0));
+    }
+
+    #[test]
+    fn workday_negative_with_holiday() {
+        // -3 workdays from Jan 8 (Mon), with Jan 4 (Thu) as holiday → Jan 2 (Tue), serial 45293
+        // Stepping back: Jan 5(Fri)=1, Jan 4(Thu)=holiday skip, Jan 3(Wed)=2, Jan 2(Tue)=3
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45299.0)); // Jan 8
+        let days = lit(LiteralValue::Number(-3.0));
+        let hol = lit(LiteralValue::Number(45295.0)); // Jan 4
+        let f = ctx.context.get_function("", "WORKDAY").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&days, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Number(45293.0));
+    }
+
+    #[test]
+    fn workday_holiday_on_weekend_no_effect() {
+        // 5 workdays from Jan 1, with Jan 6 (Sat) as holiday → still Jan 8
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(WorkdayFn));
+        let ctx = interp(&wb);
+        let start = lit(LiteralValue::Number(45292.0));
+        let days = lit(LiteralValue::Number(5.0));
+        let hol = lit(LiteralValue::Number(45297.0)); // Jan 6 Saturday
+        let f = ctx.context.get_function("", "WORKDAY").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&start, &ctx),
+                    ArgumentHandle::new(&days, &ctx),
+                    ArgumentHandle::new(&hol, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Number(45299.0));
     }
 }

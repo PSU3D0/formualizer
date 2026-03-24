@@ -95,6 +95,62 @@
       "description": "workday"
     },
     {
+      "formula": "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,8),A1)",
+      "result": 5,
+      "result_type": "int",
+      "description": "networkdays single holiday scalar",
+      "context": {
+        "A1": 45293
+      }
+    },
+    {
+      "formula": "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,8),A1:A2)",
+      "result": 4,
+      "result_type": "int",
+      "description": "networkdays holiday range excludes two days",
+      "context": {
+        "A1": 45293,
+        "A2": 45294
+      }
+    },
+    {
+      "formula": "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,8),A1)",
+      "result": 6,
+      "result_type": "int",
+      "description": "networkdays holiday on weekend has no effect",
+      "context": {
+        "A1": 45297
+      }
+    },
+    {
+      "formula": "=WORKDAY(DATE(2024,1,1),5,A1)",
+      "result": 45300,
+      "result_type": "int",
+      "description": "workday single holiday pushes result forward",
+      "context": {
+        "A1": 45293
+      }
+    },
+    {
+      "formula": "=WORKDAY(DATE(2024,1,1),5,A1:A2)",
+      "result": 45301,
+      "result_type": "int",
+      "description": "workday holiday range pushes result further",
+      "context": {
+        "A1": 45293,
+        "A2": 45294
+      }
+    },
+    {
+      "formula": "=WORKDAY(DATE(2024,1,1),5,A1)",
+      "result": 45299,
+      "result_type": "int",
+      "description": "workday holiday on weekend no effect",
+      "context": {
+        "A1": 45297
+      }
+    },
+    {
       "formula": "=TIME(14,30,0)",
       "result": 0.604166666666667,
       "result_type": "float",
