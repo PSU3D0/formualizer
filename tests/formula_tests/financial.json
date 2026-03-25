@@ -77,6 +77,66 @@
       "description": "double declining balance"
     },
     {
+      "formula": "=DDB(10000,1000,5,2)",
+      "result": 2400.0,
+      "result_type": "float",
+      "description": "DDB second period"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,5)",
+      "result": 296.0,
+      "result_type": "float",
+      "description": "DDB final period (salvage floor)"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,1.9)",
+      "result": 4000.0,
+      "result_type": "float",
+      "description": "DDB fractional period truncated to integer"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,2.5)",
+      "result": 2400.0,
+      "result_type": "float",
+      "description": "DDB fractional period 2.5 treated as period 2"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,1,1.5)",
+      "result": 3000.0,
+      "result_type": "float",
+      "description": "DDB custom factor 1.5"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,0)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DDB period zero returns NUM error"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,6)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DDB period exceeding life returns NUM error"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,-1)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DDB negative period returns NUM error"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,0.5)",
+      "result": "#NUM!",
+      "result_type": "error",
+      "description": "DDB sub-unit fractional period truncates to zero and returns NUM error"
+    },
+    {
+      "formula": "=DDB(10000,1000,5,5.9)",
+      "result": 296.0,
+      "result_type": "float",
+      "description": "DDB period 5.9 truncates to 5 (within life) and returns period 5 result"
+    },
+    {
       "formula": "=IRR({-1000, 400, 400, 400, 400})",
       "result": 0.21862269609834224,
       "result_type": "float",
