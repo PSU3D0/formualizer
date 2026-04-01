@@ -1,0 +1,106 @@
+name: WASM Profiles
+
+# Enforces the dual-runtime wasm contract:
+#   portable-wasm — full stack, zero wasm-bindgen/JS imports (wasmtime-safe)
+#   wasm-js       — full stack with JS runtime hooks (browser/Node via wasm-bindgen)
+#
+# Runs on every push/PR that touches Rust sources or Cargo manifests so that
+# neither profile regresses silently.
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'crates/**'
+      - 'bindings/wasm/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/wasm-profiles.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'crates/**'
+      - 'bindings/wasm/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/wasm-profiles.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  portable-wasm:
+    name: portable-wasm (no JS imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-wasm-portable-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo check — portable-wasm facade
+        run: |
+          cargo check \
+            -p formualizer \
+            --no-default-features \
+            --features portable-wasm \
+            --target wasm32-unknown-unknown
+
+      - name: cargo check — core crates individually (no-default-features)
+        run: |
+          for crate in formualizer-eval formualizer-workbook formualizer-sheetport; do
+            echo "--- checking $crate ---"
+            cargo check -p "$crate" --no-default-features --target wasm32-unknown-unknown
+          done
+
+      - name: Verify zero wasm-bindgen in portable-wasm dep tree
+        run: scripts/check-wasm-profiles.sh portable
+
+  wasm-js:
+    name: wasm-js (browser/wasm-bindgen)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-wasm-js-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: cargo check — wasm-js facade
+        run: |
+          cargo check \
+            -p formualizer \
+            --no-default-features \
+            --features wasm-js \
+            --target wasm32-unknown-unknown
+
+      - name: cargo check — formualizer-wasm binding (browser profile)
+        run: cargo check -p formualizer-wasm --target wasm32-unknown-unknown
+
+      - name: Verify wasm-bindgen present in wasm-js dep tree
+        run: scripts/check-wasm-profiles.sh wasm-js

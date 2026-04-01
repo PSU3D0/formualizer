@@ -12,7 +12,9 @@ keywords = ["spreadsheet", "excel", "formula", "arrow", "wasm"]
 categories = ["data-structures", "mathematics", "parser-implementations"]
 
 [features]
-default = ["eval", "workbook", "sheetport", "parse", "common"]
+# Default: preserve the pre-runtime-split user experience — full stack,
+# workbook JSON/CSV support, and ambient system clock behaviour.
+default = ["portable-wasm", "json", "csv", "system-clock"]
 common = ["dep:formualizer-common"]
 parse = ["dep:formualizer-parse", "common"]
 eval = ["dep:formualizer-eval"]
@@ -20,14 +22,44 @@ workbook = ["dep:formualizer-workbook"]
 sheetport = ["workbook", "dep:sheetport-spec", "dep:formualizer-sheetport"]
 calamine = ["workbook", "formualizer-workbook/calamine"]
 json = ["workbook", "formualizer-workbook/json"]
+csv = ["workbook", "formualizer-workbook/csv"]
 umya = ["workbook", "formualizer-workbook/umya"]
 tracing = ["eval", "workbook", "formualizer-eval/tracing", "formualizer-workbook/tracing"]
 tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 
+# --- Runtime profiles ---
+
+# system-clock: ambient wall-clock time (Local::now / Utc::now). Safe for native
+# and wasm-js; disable for portable/wasmtime wasm guests.
+system-clock = [
+  "formualizer-eval/system-clock",
+  "formualizer-workbook/system-clock",
+  "formualizer-sheetport/system-clock",
+]
+
+# js-runtime: browser/wasm-bindgen execution environment — activates web-time
+# and JS-backed getrandom. Only for formualizer-wasm / browser targets.
+js-runtime = [
+  "formualizer-eval/js-runtime",
+  "formualizer-workbook/js-runtime",
+  "formualizer-sheetport/js-runtime",
+]
+
+# --- Named top-level presets ---
+
+# portable-wasm: full evaluation stack with no ambient clock or JS runtime hooks.
+# Safe to compile to wasm32-unknown-unknown and run inside wasmtime/non-JS hosts.
+# Use FixedClock or inject your own ClockProvider for time-dependent functions.
+portable-wasm = ["eval", "workbook", "sheetport", "parse", "common"]
+
+# wasm-js: full evaluation stack with browser/wasm-bindgen runtime hooks
+# and ambient wall-clock time for date/time builtins.
+wasm-js = ["portable-wasm", "system-clock", "js-runtime"]
+
 [dependencies]
 formualizer-common = { path = "../formualizer-common", version = "1.1.2", optional = true }
 formualizer-parse = { path = "../formualizer-parse", version = "1.1.2", optional = true }
-formualizer-eval = { path = "../formualizer-eval", version = "0.5.2", optional = true }
-formualizer-workbook = { path = "../formualizer-workbook", version = "0.5.2", optional = true }
-formualizer-sheetport = { path = "../formualizer-sheetport", version = "0.5.2", optional = true }
+formualizer-eval = { path = "../formualizer-eval", version = "0.5.2", optional = true, default-features = false }
+formualizer-workbook = { path = "../formualizer-workbook", version = "0.5.2", optional = true, default-features = false }
+formualizer-sheetport = { path = "../formualizer-sheetport", version = "0.5.2", optional = true, default-features = false }
 sheetport-spec = { path = "../sheetport-spec", version = "0.3.0", optional = true }

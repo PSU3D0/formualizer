@@ -142,8 +142,20 @@ impl DeterministicMode {
     ) -> Result<std::sync::Arc<dyn crate::timezone::ClockProvider>, ExcelError> {
         self.validate()?;
         Ok(match self {
+            #[cfg(feature = "system-clock")]
             DeterministicMode::Disabled { timezone } => {
                 std::sync::Arc::new(crate::timezone::SystemClock::new(timezone.clone()))
+            }
+            #[cfg(not(feature = "system-clock"))]
+            DeterministicMode::Disabled { timezone: _ } => {
+                // Without the system-clock feature, Disabled mode falls back to a
+                // UTC epoch clock so the engine still initialises cleanly in portable
+                // wasm guests.  Callers that need real wall-clock time must inject a
+                // `ClockProvider` via `EvalConfig::clock`.
+                std::sync::Arc::new(crate::timezone::FixedClock::new(
+                    chrono::DateTime::UNIX_EPOCH,
+                    crate::timezone::TimeZoneSpec::Utc,
+                ))
             }
             DeterministicMode::Enabled {
                 timestamp_utc,

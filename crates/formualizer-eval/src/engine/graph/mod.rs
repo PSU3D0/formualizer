@@ -863,7 +863,7 @@ impl DependencyGraph {
     where
         I: IntoIterator<Item = (u32, u32, LiteralValue)>,
     {
-        use web_time::Instant;
+        use crate::instant::FzInstant as Instant;
         let t0 = Instant::now();
         // Collect first to know size
         let collected: Vec<(u32, u32, LiteralValue)> = cells.into_iter().collect();
@@ -983,7 +983,7 @@ impl DependencyGraph {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         let t0 = if dbg {
-            Some(web_time::Instant::now())
+            Some(crate::instant::FzInstant::now())
         } else {
             None
         };
@@ -998,7 +998,7 @@ impl DependencyGraph {
 
         // Extract dependencies from AST, creating placeholders if needed
         let t_dep0 = if dbg {
-            Some(web_time::Instant::now())
+            Some(crate::instant::FzInstant::now())
         } else {
             None
         };

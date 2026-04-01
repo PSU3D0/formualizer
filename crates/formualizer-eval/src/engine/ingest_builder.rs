@@ -106,7 +106,7 @@ impl<'g> BulkIngestBuilder<'g> {
     }
 
     pub fn finish(mut self) -> Result<BulkIngestSummary, ExcelError> {
-        use web_time::Instant;
+        use crate::instant::FzInstant as Instant;
         let t0 = Instant::now();
         let dbg = std::env::var("FZ_DEBUG_INGEST")
             .ok()

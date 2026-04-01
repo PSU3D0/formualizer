@@ -1189,13 +1189,32 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
 
     /// Clock provider for volatile date/time builtins.
     ///
-    /// Default: SystemClock(Local) for Excel-compatible behavior.
+    /// Default when `system-clock` feature is enabled: `SystemClock(Local)` for
+    /// Excel-compatible wall-clock behaviour.
+    ///
+    /// Default when `system-clock` is **disabled** (portable wasm profile): a
+    /// UTC epoch `FixedClock`. Implementors that need real wall-clock time should
+    /// override this method and inject an appropriate `ClockProvider`.
     fn clock(&self) -> &dyn crate::timezone::ClockProvider {
-        static DEFAULT_CLOCK: std::sync::OnceLock<crate::timezone::SystemClock> =
-            std::sync::OnceLock::new();
-        DEFAULT_CLOCK.get_or_init(|| {
-            crate::timezone::SystemClock::new(crate::timezone::TimeZoneSpec::default())
-        })
+        #[cfg(feature = "system-clock")]
+        {
+            static DEFAULT_CLOCK: std::sync::OnceLock<crate::timezone::SystemClock> =
+                std::sync::OnceLock::new();
+            DEFAULT_CLOCK.get_or_init(|| {
+                crate::timezone::SystemClock::new(crate::timezone::TimeZoneSpec::default())
+            })
+        }
+        #[cfg(not(feature = "system-clock"))]
+        {
+            static DEFAULT_CLOCK: std::sync::OnceLock<crate::timezone::FixedClock> =
+                std::sync::OnceLock::new();
+            DEFAULT_CLOCK.get_or_init(|| {
+                crate::timezone::FixedClock::new(
+                    chrono::DateTime::UNIX_EPOCH,
+                    crate::timezone::TimeZoneSpec::Utc,
+                )
+            })
+        }
     }
 
     /// Timezone spec for date/time functions.

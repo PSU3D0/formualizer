@@ -207,6 +207,19 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 
 ---
 
+## Runtime profile
+
+This package uses the **`wasm-js`** runtime profile of the Formualizer Rust core.
+
+That means:
+- `performance.now()` is used for timing (via `web-time`).
+- `crypto.getRandomValues` is used for entropy.
+- Ambient wall-clock time is available for `NOW()`, `TODAY()`, etc.
+
+This is the correct profile for browser and Node.js hosts. If you are embedding Formualizer inside a raw **wasmtime** guest or any non-JS wasm host, use the `portable-wasm` Rust feature on the `formualizer` crate instead (see the [main README](../../README.md#webassembly-runtime-profiles)).
+
+---
+
 ## Building from source
 
 ```bash

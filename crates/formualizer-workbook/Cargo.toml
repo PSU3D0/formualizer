@@ -14,7 +14,7 @@ categories = ["data-structures", "mathematics"]
 [dependencies]
 formualizer-parse = { workspace = true }
 formualizer-common = { workspace = true }
-formualizer-eval = { workspace = true }
+formualizer-eval = { path = "../formualizer-eval", version = "0.5.2", default-features = false }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
@@ -27,7 +27,13 @@ zip = { version = "0.6.6", default-features = false, features = ["deflate"], opt
 quick-xml = { version = "0.39", features = ["encoding"], optional = true }
 
 [features]
-default = ["json", "csv"]
+# system-clock: forwards eval's ambient-time feature (Local::now/Utc::now).
+# Enabled by default for native + wasm-js consumers. Disable for portable wasm guests.
+default = ["json", "csv", "system-clock"]
+system-clock = ["formualizer-eval/system-clock"]
+# js-runtime: forwards eval's browser/wasm-bindgen runtime feature.
+# Activates web-time + JS getrandom. NOT enabled by default.
+js-runtime = ["formualizer-eval/js-runtime"]
 json = ["dep:serde_json", "formualizer-common/serde"]
 csv = ["dep:csv"]
 calamine = ["dep:calamine", "dep:zip", "dep:quick-xml"]

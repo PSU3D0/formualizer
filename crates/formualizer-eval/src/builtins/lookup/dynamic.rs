@@ -1455,7 +1455,7 @@ impl Function for RandArrayFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         use rand::Rng;
 
@@ -1503,7 +1503,7 @@ impl Function for RandArrayFn {
             )));
         }
 
-        let mut rng = rand::thread_rng();
+        let mut rng = ctx.rng_for_current(self.function_salt());
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows as usize);
 
         for _r in 0..rows {
@@ -1530,7 +1530,7 @@ impl Function for RandArrayFn {
             out.push(row_vec);
         }
 
-        Ok(collapse_if_scalar(out, _ctx.date_system()))
+        Ok(collapse_if_scalar(out, ctx.date_system()))
     }
 }
 

@@ -2,7 +2,10 @@
 ///
 /// Note: deterministic evaluation requires that the evaluation clock is injectable.
 /// Builtins should not call `Local::now()` / `Utc::now()` directly.
+#[cfg(feature = "system-clock")]
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc};
+#[cfg(not(feature = "system-clock"))]
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, Utc};
 
 /// Timezone specification for date/time calculations
 /// Excel behavior: always uses local timezone
@@ -59,17 +62,23 @@ pub trait ClockProvider: std::fmt::Debug + Send + Sync {
 }
 
 /// Default clock implementation: reads from the system clock.
+///
+/// Only available when the `system-clock` feature is enabled.
+/// For portable wasm / raw wasmtime guests use `FixedClock` or inject your own `ClockProvider`.
+#[cfg(feature = "system-clock")]
 #[derive(Clone, Debug)]
 pub struct SystemClock {
     timezone: TimeZoneSpec,
 }
 
+#[cfg(feature = "system-clock")]
 impl SystemClock {
     pub fn new(timezone: TimeZoneSpec) -> Self {
         Self { timezone }
     }
 }
 
+#[cfg(feature = "system-clock")]
 impl ClockProvider for SystemClock {
     fn timezone(&self) -> &TimeZoneSpec {
         &self.timezone
@@ -120,8 +129,17 @@ impl FixedClock {
                 self.timestamp_utc.with_timezone(&off).naive_local()
             }
             TimeZoneSpec::Local => {
-                // Should be unreachable due to validation, but keep behavior predictable.
-                self.timestamp_utc.with_timezone(&Local).naive_local()
+                // Should be unreachable due to validation, but keep behaviour
+                // predictable. Fall back to UTC when Local is unavailable
+                // (portable wasm profile) rather than refusing to compile.
+                #[cfg(feature = "system-clock")]
+                {
+                    self.timestamp_utc.with_timezone(&Local).naive_local()
+                }
+                #[cfg(not(feature = "system-clock"))]
+                {
+                    self.timestamp_utc.naive_utc()
+                }
             }
         }
     }

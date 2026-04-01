@@ -29,14 +29,17 @@ formualizer-macros  = { workspace = true }
 formualizer-common = { workspace = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
-rand = { version = "0.8.5", features = ["small_rng"] }
+# default-features = false: SmallRng + seeded PRNG only; no OsRng / getrandom at runtime.
+rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
 rayon = "1.8"
 dashmap = "6.1.0"
+# clock feature controlled by the `system-clock` cargo feature below.
 chrono = { workspace = true }
 bitflags = "2.9.1"
 bumpalo = { version = "3.16", features = ["collections"] }
 smallvec = { workspace = true }
-web-time = { workspace = true }
+# web-time is only needed for the js-runtime (browser/wasm-bindgen) profile.
+web-time = { workspace = true, optional = true }
 
 # Arrow (per-crate) — pinned to 56.x series
 arrow-array = "56"
@@ -62,11 +65,12 @@ features = ["std", "fmt", "env-filter"]
 version = "0.7"
 optional = true
 
-# Enable wasm32-unknown-unknown support for getrandom (pulled in transitively
-# via arrow → ahash → getrandom 0.3, and rand → getrandom 0.2).
+# JS entropy shims — only needed for the browser/wasm-bindgen profile.
+# For portable raw wasm (wasmtime guests) these are omitted; rand uses SmallRng
+# seeded from context and no ambient OsRng calls are made.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.3", features = ["wasm_js"] }
-getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
+getrandom02 = { package = "getrandom", version = "0.2", features = ["js"], optional = true }
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -83,6 +87,15 @@ name = "sheet_ops"
 harness = false
 
 [features]
-default = []
+# system-clock: enables SystemClock + chrono ambient-time (Local::now / Utc::now).
+# Included in default for native + wasm-js consumers; disable for portable wasm guests.
+default = ["system-clock"]
+system-clock = ["chrono/clock"]
+
+# js-runtime: opt into browser/wasm-bindgen execution environment.
+# Activates web-time (performance.now Instant) and JS-backed getrandom entropy.
+# Used by the formualizer-wasm binding crate; NOT enabled by default.
+js-runtime = ["dep:web-time", "dep:getrandom", "dep:getrandom02"]
+
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
 tracing_chrome = ["tracing", "dep:tracing-chrome"]

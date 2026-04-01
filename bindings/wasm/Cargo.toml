@@ -22,7 +22,7 @@ js-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1", optional = true }
-formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "json"] }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["wasm-js", "json"] }
 serde_json = { workspace = true }
 
 [dependencies.web-sys]
@@ -40,12 +40,6 @@ console_panic = ["console_error_panic_hook"]
 # Expose a local `json` feature and forward it to the workbook dependency
 json = ["formualizer/json"]
 
-# Ensure getrandom works on wasm32-unknown-unknown by enabling the `js` feature.
-# Most of the dependency graph still pulls getrandom 0.2 via rand, so we
-# enable the feature for that version explicitly.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-# getrandom 0.3 is pulled in via arrow/ahash; it needs both the feature flag
-# and the cfg backend selection to compile for wasm32-unknown-unknown.
-getrandom = { version = "0.3", features = ["wasm_js"] }
-# Some transitive deps still pull getrandom 0.2 (via rand/const-random).
-getrandom02 = { package = "getrandom", version = "0.2", features = ["js"] }
+# JS runtime (web-time + JS-backed getrandom) is activated transitively via
+# formualizer/wasm-js → formualizer-eval/js-runtime. No explicit getrandom
+# shims needed here.

@@ -6,6 +6,7 @@ pub mod function;
 pub mod function_registry;
 pub mod interpreter;
 pub mod locale;
+pub mod instant;
 pub mod rng;
 pub mod stripes;
 pub mod timezone;

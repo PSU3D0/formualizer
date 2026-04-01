@@ -852,9 +852,19 @@ where
         crate::builtins::load_builtins();
 
         let clock = config.deterministic_mode.build_clock().unwrap_or_else(|_| {
-            Arc::new(crate::timezone::SystemClock::new(
-                crate::timezone::TimeZoneSpec::default(),
-            ))
+            #[cfg(feature = "system-clock")]
+            {
+                Arc::new(crate::timezone::SystemClock::new(
+                    crate::timezone::TimeZoneSpec::default(),
+                ))
+            }
+            #[cfg(not(feature = "system-clock"))]
+            {
+                Arc::new(crate::timezone::FixedClock::new(
+                    chrono::DateTime::UNIX_EPOCH,
+                    crate::timezone::TimeZoneSpec::Utc,
+                ))
+            }
         });
 
         // Initialize thread pool based on config
@@ -920,9 +930,19 @@ where
     ) -> Self {
         crate::builtins::load_builtins();
         let clock = config.deterministic_mode.build_clock().unwrap_or_else(|_| {
-            Arc::new(crate::timezone::SystemClock::new(
-                crate::timezone::TimeZoneSpec::default(),
-            ))
+            #[cfg(feature = "system-clock")]
+            {
+                Arc::new(crate::timezone::SystemClock::new(
+                    crate::timezone::TimeZoneSpec::default(),
+                ))
+            }
+            #[cfg(not(feature = "system-clock"))]
+            {
+                Arc::new(crate::timezone::FixedClock::new(
+                    chrono::DateTime::UNIX_EPOCH,
+                    crate::timezone::TimeZoneSpec::Utc,
+                ))
+            }
         });
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
@@ -4488,7 +4508,7 @@ where
     ) -> Result<EvalResult, ExcelError> {
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
         let _source_cache = self.source_cache_session();
 
         // Parse target cell addresses
@@ -4589,7 +4609,7 @@ where
         #[cfg(feature = "tracing")]
         let _span_eval =
             tracing::info_span!("evaluate_until_with_delta", targets = targets.len()).entered();
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
         let _source_cache = self.source_cache_session();
 
         let mut target_addrs = Vec::new();
@@ -4701,7 +4721,7 @@ where
             self.build_graph_all()?;
         }
 
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
         let dirty_vertices = self.graph.get_evaluation_vertices();
         if dirty_vertices.is_empty() {
             return Ok(EvalResult {
@@ -4781,7 +4801,7 @@ where
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
         let mut replan_iterations = 0;
@@ -4892,7 +4912,7 @@ where
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all_with_delta").entered();
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
@@ -5310,7 +5330,7 @@ where
         let builder = VirtualDepBuilder::new(self);
         let (vdeps, augmented, builder_elapsed_ms, vdeps_edges) =
             if self.config.enable_virtual_dep_telemetry {
-                let build_started = web_time::Instant::now();
+                let build_started = crate::instant::FzInstant::now();
                 let (vdeps, augmented) = builder.build(to_evaluate);
                 let builder_elapsed_ms = build_started.elapsed().as_millis();
                 let vdeps_edges = vdeps.values().map(|deps| deps.len()).sum::<usize>();
@@ -5528,7 +5548,7 @@ where
             self.build_graph_all()?;
         }
         self.reset_virtual_dep_telemetry_if_disabled();
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
@@ -5670,7 +5690,7 @@ where
         targets: &[&str],
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -8467,7 +8487,7 @@ where
             self.build_graph_all()?;
         }
         self.reset_virtual_dep_telemetry_if_disabled();
-        let start = web_time::Instant::now();
+        let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 

@@ -246,6 +246,45 @@ Formal benchmarks are in progress.
 
 Both Python and WASM bindings expose the same core API surface: tokenization, parsing, workbook operations, evaluation, undo/redo, and SheetPort.
 
+## WebAssembly runtime profiles
+
+Formualizer supports two explicit wasm profiles so the right runtime assumptions are always in scope.
+
+### `portable-wasm` — raw / wasmtime-safe
+
+No JS globals, no `wasm-bindgen` imports, no browser clock or entropy. Safe to compile as a raw `wasm32-unknown-unknown` module and instantiate inside wasmtime or any non-JS wasm host.
+
+Time-dependent functions (`NOW`, `TODAY`, etc.) default to UTC epoch when no clock is injected; supply a `FixedClock` or implement `ClockProvider` to drive them deterministically.
+
+```toml
+# Cargo.toml
+[dependencies]
+formualizer = { version = "0.5", default-features = false, features = ["portable-wasm"] }
+```
+
+For individual crates:
+```toml
+formualizer-eval = { version = "0.5", default-features = false }
+```
+
+### `wasm-js` — browser / Node via wasm-bindgen
+
+Full browser-compatible runtime: `web-time` for `performance.now()` timing, JS-backed entropy (`crypto.getRandomValues`), and ambient wall-clock time for date functions. This is the profile used by the `formualizer` npm package.
+
+```toml
+# Cargo.toml — for crates that also depend on wasm-bindgen
+[dependencies]
+formualizer = { version = "0.5", default-features = false, features = ["wasm-js"] }
+```
+
+The `formualizer` npm package (`bindings/wasm`) selects this profile automatically.
+
+### Default (native)
+
+No action needed for native Rust targets. `cargo add formualizer` gives the full stack with system clock, JSON/CSV support, and no wasm-specific features.
+
+---
+
 ## Roadmap
 
 Roadmap and active development are tracked via GitHub Issues, milestones, and pull requests.
