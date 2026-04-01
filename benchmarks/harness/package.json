@@ -6,9 +6,12 @@
   "scripts": {
     "check:hyperformula": "node -e \"require('hyperformula'); console.log('hyperformula ok')\""
   },
+  "overrides": {
+    "brace-expansion": "^2.0.3"
+  },
   "dependencies": {
     "exceljs": "^4.4.0",
-    "hyperformula": "^3.1.0",
-    "js-yaml": "^4.1.0"
+    "hyperformula": "^3.2.0",
+    "js-yaml": "^4.1.1"
   }
 }
