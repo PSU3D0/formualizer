@@ -563,7 +563,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Extract release notes from CHANGELOG.md
+      - name: Extract release notes
+        id: notes
         shell: bash
         run: |
           set -euo pipefail
@@ -571,41 +572,59 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
 
+          # Try CHANGELOG.md first; fall back to commit log.
           python - "${VERSION}" <<'PY'
           import re
           import sys
           from pathlib import Path
 
           version = sys.argv[1]
+          notes_path = Path("release-notes.md")
           changelog = Path("CHANGELOG.md")
-          if not changelog.exists():
-              raise SystemExit("CHANGELOG.md not found")
 
-          text = changelog.read_text(encoding="utf-8")
-          heading_re = re.compile(rf"^##\s+\[?{re.escape(version)}\]?(?:\s+-\s+.*)?$", re.MULTILINE)
-          match = heading_re.search(text)
-          if not match:
-              raise SystemExit(f"No CHANGELOG.md section found for version {version}")
+          def from_changelog() -> str | None:
+              if not changelog.exists():
+                  return None
+              text = changelog.read_text(encoding="utf-8")
+              heading_re = re.compile(
+                  rf"^##\s+\[?{re.escape(version)}\]?(?:\s+-\s+.*)?$",
+                  re.MULTILINE,
+              )
+              match = heading_re.search(text)
+              if not match:
+                  return None
+              lines = text[match.end() :].splitlines()
+              body_lines: list[str] = []
+              for line in lines:
+                  if re.match(r"^##\s+", line):
+                      break
+                  if re.match(r"^\[[^\]]+\]:\s+", line):
+                      break
+                  body_lines.append(line)
+              body = "\n".join(body_lines).strip()
+              return body or None
 
-          lines = text[match.end():].splitlines()
-          body_lines: list[str] = []
-          for line in lines:
-              if re.match(r"^##\s+", line):
-                  break
-              if re.match(r"^\[[^\]]+\]:\s+", line):
-                  break
-              body_lines.append(line)
+          body = from_changelog()
+          if body:
+              print(f"Using CHANGELOG.md section for {version}")
+          else:
+              print(f"No CHANGELOG.md section for {version}; using commit log")
 
-          body = "\n".join(body_lines).strip()
-          if not body:
-              raise SystemExit(f"CHANGELOG.md section for version {version} is empty")
-
-          Path("release-notes.md").write_text(body + "\n", encoding="utf-8")
+          notes_path.write_text((body or "") + "\n", encoding="utf-8")
           PY
+
+          # Expose whether we got changelog content so the release step
+          # knows whether to also use generate_release_notes.
+          if [ -s release-notes.md ] && [ "$(wc -c < release-notes.md)" -gt 2 ]; then
+            echo "has_changelog=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changelog=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: release-notes.md
+          body_path: ${{ steps.notes.outputs.has_changelog == 'true' && 'release-notes.md' || '' }}
+          generate_release_notes: ${{ steps.notes.outputs.has_changelog != 'true' }}
           draft: false
           prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}

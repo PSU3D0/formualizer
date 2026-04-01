@@ -4,6 +4,18 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-04-01
+
+### Fixed
+
+- Resolved all 9 open Dependabot security alerts (npm): bumped `next`, `rollup`, `picomatch`, `fumadocs-*`, and `brace-expansion` across docs-site, bindings/wasm, and benchmarks/harness.
+- Enabled `formualizer-sheetport` standalone compilation for `wasm32-unknown-unknown` by removing the unconditional `umya_integration` feature and adding target-conditional `getrandom` wasm shims.
+- Enabled `formualizer-eval` (and downstream `formualizer-workbook`, `formualizer-cffi`, `xtask`) compilation for `wasm32-unknown-unknown` by adding the same `getrandom` 0.2 + 0.3 wasm shims.
+
+### Changed
+
+- `formualizer-sheetport` no longer unconditionally enables the `umya_integration` feature on `formualizer-workbook`. Consumers needing umya support should enable the new `umya` feature on `formualizer-sheetport`.
+
 ## [0.5.1] - 2026-03-22
 
 > Supersedes the incomplete `0.5.0` product release.
@@ -33,6 +45,7 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/PSU3D0/formualizer/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/PSU3D0/formualizer/compare/v0.4.4...v0.5.1
 [0.5.0]: https://github.com/PSU3D0/formualizer/releases/tag/v0.5.0
