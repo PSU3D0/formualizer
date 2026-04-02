@@ -207,6 +207,14 @@ jobs:
 
               echo "${out}"
 
+              if echo "${out}" | grep -qE "failed to select a version for the requirement|candidate versions found which didn't match|no matching package named .* found"; then
+                if [[ "${i}" -lt "${attempts}" ]]; then
+                  echo "Publish appears blocked by crates.io index propagation; sleeping ${sleep_secs}s before retry"
+                  sleep "${sleep_secs}"
+                  continue
+                fi
+              fi
+
               if echo "${out}" | grep -qE "failed to verify package tarball|could not compile|error\[E[0-9]+\]|failed to prepare local package for uploading"; then
                 echo "Publish failed with a deterministic verification/compiler error; not retrying"
                 return 1
@@ -271,6 +279,14 @@ jobs:
 
               echo "${out}"
 
+              if echo "${out}" | grep -qE "failed to select a version for the requirement|candidate versions found which didn't match|no matching package named .* found"; then
+                if [[ "${i}" -lt "${attempts}" ]]; then
+                  echo "Publish appears blocked by crates.io index propagation; sleeping ${sleep_secs}s before retry"
+                  sleep "${sleep_secs}"
+                  continue
+                fi
+              fi
+
               if echo "${out}" | grep -qE "failed to verify package tarball|could not compile|error\[E[0-9]+\]|failed to prepare local package for uploading"; then
                 echo "Publish failed with a deterministic verification/compiler error; not retrying"
                 return 1
@@ -333,6 +349,14 @@ jobs:
               fi
 
               echo "${out}"
+
+              if echo "${out}" | grep -qE "failed to select a version for the requirement|candidate versions found which didn't match|no matching package named .* found"; then
+                if [[ "${i}" -lt "${attempts}" ]]; then
+                  echo "Publish appears blocked by crates.io index propagation; sleeping ${sleep_secs}s before retry"
+                  sleep "${sleep_secs}"
+                  continue
+                fi
+              fi
 
               if echo "${out}" | grep -qE "failed to verify package tarball|could not compile|error\[E[0-9]+\]|failed to prepare local package for uploading"; then
                 echo "Publish failed with a deterministic verification/compiler error; not retrying"
