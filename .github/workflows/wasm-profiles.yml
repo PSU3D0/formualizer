@@ -15,6 +15,8 @@ on:
       - 'bindings/wasm/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'scripts/**'
+      - 'tools/wasm-portable-probe/**'
       - '.github/workflows/wasm-profiles.yml'
   pull_request:
     branches: [ main ]
@@ -23,6 +25,8 @@ on:
       - 'bindings/wasm/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'scripts/**'
+      - 'tools/wasm-portable-probe/**'
       - '.github/workflows/wasm-profiles.yml'
 
 env:
@@ -68,6 +72,19 @@ jobs:
 
       - name: Verify zero wasm-bindgen in portable-wasm dep tree
         run: scripts/check-wasm-profiles.sh portable
+
+      - name: Build portable wasm probe artifact
+        run: |
+          cargo build \
+            --manifest-path tools/wasm-portable-probe/Cargo.toml \
+            --target wasm32-unknown-unknown \
+            --release
+
+      - name: Verify portable wasm probe has no JS/browser imports
+        run: |
+          python3 scripts/check-wasm-artifact-imports.py \
+            portable \
+            tools/wasm-portable-probe/target/wasm32-unknown-unknown/release/formualizer_wasm_portable_probe.wasm
 
   wasm-js:
     name: wasm-js (browser/wasm-bindgen)

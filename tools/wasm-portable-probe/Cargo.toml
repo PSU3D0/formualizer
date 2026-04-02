@@ -1,0 +1,13 @@
+[package]
+name = "formualizer-wasm-portable-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["portable-wasm"] }
