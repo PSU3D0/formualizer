@@ -4,6 +4,23 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-04-01
+
+### Added
+
+- Added explicit dual-runtime WebAssembly profiles: `portable-wasm` for raw/wasmtime-safe guests and `wasm-js` for browser/Node hosts via `wasm-bindgen`.
+- Added CI validation for both wasm profiles, including a standalone portable wasm probe that inspects the final emitted `.wasm` import section to catch `wasm-bindgen`/browser regressions.
+
+### Fixed
+
+- Removed `wasm-bindgen`/JS runtime leakage from the portable wasm path by minimizing core chrono features, splitting ambient system clock support from the portable evaluator, and routing dynamic lookup randomness through the deterministic workbook-seeded RNG pathway.
+- Preserved the browser/Node wasm story by making the JS binding crate explicitly opt into the `wasm-js` runtime profile instead of relying on incidental transitive behavior.
+- Made GitHub release creation fall back gracefully to generated release notes when a `CHANGELOG.md` section for the tagged version is missing.
+
+### Tooling and quality
+
+- Excluded `formualizer-bench-core` from the default expensive workspace-wide clippy/test CI path so the comparative IronCalc benchmark harness no longer inflates baseline CI minutes.
+
 ## [0.5.2] - 2026-04-01
 
 ### Fixed
@@ -45,7 +62,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/PSU3D0/formualizer/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/PSU3D0/formualizer/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/PSU3D0/formualizer/compare/v0.4.4...v0.5.1
 [0.5.0]: https://github.com/PSU3D0/formualizer/releases/tag/v0.5.0
