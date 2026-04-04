@@ -325,7 +325,7 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
         (LiteralValue::Number(x), LiteralValue::Number(y)) => (x - y).abs() < 1e-12,
         (LiteralValue::Int(x), LiteralValue::Int(y)) => x == y,
         (LiteralValue::Boolean(x), LiteralValue::Boolean(y)) => x == y,
-        (LiteralValue::Text(x), LiteralValue::Text(y)) => x.eq_ignore_ascii_case(y),
+        (LiteralValue::Text(x), LiteralValue::Text(y)) => x.to_lowercase() == y.to_lowercase(),
         // Treat blank and empty text as equal (Excel semantics)
         (LiteralValue::Text(x), LiteralValue::Empty) if x.is_empty() => true,
         (LiteralValue::Empty, LiteralValue::Text(y)) if y.is_empty() => true,
@@ -362,7 +362,7 @@ fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> b
         _ => return false,
     };
     let (pat, text) = if case_insensitive {
-        (pattern.to_ascii_lowercase(), s.to_ascii_lowercase())
+        (pattern.to_lowercase(), s.to_lowercase())
     } else {
         (pattern.to_string(), s)
     };

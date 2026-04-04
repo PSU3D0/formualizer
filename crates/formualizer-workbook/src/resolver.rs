@@ -160,12 +160,17 @@ impl<B: SpreadsheetReader> TableResolver for IoResolver<B> {
             .sheet_names()
             .map_err(|e| ExcelError::new(ExcelErrorKind::NImpl).with_message(e.to_string()))?;
 
+        let table_name_key = tref.name.to_lowercase();
         let mut found: Option<(String, crate::traits::TableDefinition)> = None;
         for s in sheets {
             let sd = guard
                 .read_sheet(&s)
                 .map_err(|e| ExcelError::new(ExcelErrorKind::NImpl).with_message(e.to_string()))?;
-            if let Some(td) = sd.tables.into_iter().find(|t| t.name == tref.name) {
+            if let Some(td) = sd
+                .tables
+                .into_iter()
+                .find(|t| t.name.to_lowercase() == table_name_key)
+            {
                 found = Some((s, td));
                 break;
             }
@@ -208,9 +213,10 @@ struct BackendTable {
 
 impl BackendTable {
     fn col_index(&self, header: &str) -> Option<usize> {
+        let header_key = header.to_lowercase();
         self.headers
             .iter()
-            .position(|h| h.eq_ignore_ascii_case(header))
+            .position(|h| h.to_lowercase() == header_key)
     }
 
     fn body_bounds(&self) -> (usize, usize) {
