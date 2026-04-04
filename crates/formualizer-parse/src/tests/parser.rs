@@ -1664,6 +1664,30 @@ mod reference_tests {
     }
 
     #[test]
+    fn test_table_reference_with_non_ascii_column_names() {
+        for (reference, expected_table, expected_column) in [
+            ("Sales[Акт]", "Sales", "Акт"),
+            ("Café[Crème brûlée]", "Café", "Crème brûlée"),
+            ("分析[数量]", "分析", "数量"),
+        ] {
+            let ref_type = ReferenceType::from_string(reference).unwrap();
+
+            match ref_type {
+                ReferenceType::Table(table_ref) => {
+                    assert_eq!(table_ref.name, expected_table);
+                    match table_ref.specifier {
+                        Some(TableSpecifier::Column(column)) => {
+                            assert_eq!(column, expected_column)
+                        }
+                        other => panic!("Expected Column specifier, got {other:?}"),
+                    }
+                }
+                other => panic!("Expected Table reference, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn test_table_reference_with_column_range() {
         // Test a table reference with a column range
         let reference = "Table1[Column1:Column2]";

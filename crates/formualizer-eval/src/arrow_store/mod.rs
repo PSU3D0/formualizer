@@ -84,7 +84,7 @@ pub struct ColumnChunk {
     lazy_null_booleans: OnceCell<Arc<BooleanArray>>,
     lazy_null_text: OnceCell<ArrayRef>,
     lazy_null_errors: OnceCell<Arc<UInt8Array>>,
-    // Cache: lowered text lane (ASCII lower), nulls preserved
+    // Cache: lowered text lane, nulls preserved
     lowered_text: OnceCell<ArrayRef>,
     // Phase C: per-chunk overlay (delta edits since last compaction)
     pub overlay: Overlay,
@@ -147,7 +147,7 @@ impl ColumnChunk {
             .clone()
     }
 
-    /// Lowercased text lane (ASCII lower), with nulls preserved. Cached per chunk.
+    /// Lowercased text lane, with nulls preserved. Cached per chunk.
     pub fn text_lower_or_null(&self) -> ArrayRef {
         if let Some(a) = self.lowered_text.get() {
             return a.clone();
@@ -160,7 +160,7 @@ impl ColumnChunk {
                 if sa.is_null(i) {
                     b.append_null();
                 } else {
-                    b.append_value(sa.value(i).to_ascii_lowercase());
+                    b.append_value(sa.value(i).to_lowercase());
                 }
             }
             let lowered = b.finish();

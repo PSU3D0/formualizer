@@ -735,17 +735,17 @@ fn compute_criteria_mask(
     // This avoids concatenating full-string columns just to compute a boolean mask.
     let (text_kind, text_pat, empty_special) = match pred {
         crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(t)) => {
-            (0u8, t.to_ascii_lowercase(), t.is_empty())
+            (0u8, t.to_lowercase(), t.is_empty())
         }
         crate::args::CriteriaPredicate::Ne(formualizer_common::LiteralValue::Text(t)) => {
-            (1u8, t.to_ascii_lowercase(), false)
+            (1u8, t.to_lowercase(), false)
         }
         crate::args::CriteriaPredicate::TextLike {
             pattern,
             case_insensitive,
         } => {
             let p = if *case_insensitive {
-                pattern.to_ascii_lowercase()
+                pattern.to_lowercase()
             } else {
                 pattern.clone()
             };
@@ -1102,8 +1102,10 @@ where
                 let cols = table.columns();
                 let start = start.trim();
                 let end = end.trim();
-                let start_idx = cols.iter().position(|n| n.eq_ignore_ascii_case(start));
-                let end_idx = cols.iter().position(|n| n.eq_ignore_ascii_case(end));
+                let start_key = start.to_lowercase();
+                let end_key = end.to_lowercase();
+                let start_idx = cols.iter().position(|n| n.to_lowercase() == start_key);
+                let end_idx = cols.iter().position(|n| n.to_lowercase() == end_key);
                 if let (Some(mut si), Some(mut ei)) = (start_idx, end_idx) {
                     if si > ei {
                         std::mem::swap(&mut si, &mut ei);

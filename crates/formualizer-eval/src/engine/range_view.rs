@@ -962,7 +962,7 @@ impl<'a> RangeView<'a> {
                             mb.append_value(true);
                             match ov {
                                 arrow_store::OverlayValue::Text(s) => {
-                                    sb.append_value(s.to_ascii_lowercase());
+                                    sb.append_value(s.to_lowercase());
                                 }
                                 arrow_store::OverlayValue::Empty => {
                                     sb.append_null();
@@ -1256,7 +1256,7 @@ impl<'a> RangeView<'a> {
                                     mb.append_value(true);
                                     match ov {
                                         arrow_store::OverlayValue::Text(s) => {
-                                            sb.append_value(s.to_ascii_lowercase());
+                                            sb.append_value(s.to_lowercase());
                                         }
                                         arrow_store::OverlayValue::Empty => {
                                             sb.append_null();
@@ -1536,7 +1536,7 @@ impl<'a> RangeView<'a> {
                                     mask_b.append_value(true);
                                     match ov {
                                         arrow_store::OverlayValue::Text(s) => {
-                                            sb.append_value(s.to_ascii_lowercase())
+                                            sb.append_value(s.to_lowercase())
                                         }
                                         arrow_store::OverlayValue::Number(n)
                                         | arrow_store::OverlayValue::DateTime(n)

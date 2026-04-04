@@ -5,8 +5,8 @@ use crate::reference::RangeRef;
 use formualizer_common::{ExcelError, ExcelErrorKind};
 
 #[inline]
-fn normalize_ascii_key(name: &str) -> String {
-    name.to_ascii_lowercase()
+fn normalize_table_key(name: &str) -> String {
+    name.to_lowercase()
 }
 
 /// Native workbook table (Excel ListObject) metadata.
@@ -26,9 +26,10 @@ impl TableEntry {
     }
 
     pub fn col_index(&self, header: &str) -> Option<usize> {
+        let header_key = header.to_lowercase();
         self.headers
             .iter()
-            .position(|h| h.eq_ignore_ascii_case(header))
+            .position(|h| h.to_lowercase() == header_key)
     }
 }
 
@@ -38,7 +39,7 @@ impl DependencyGraph {
         if self.config.case_sensitive_tables {
             name.to_string()
         } else {
-            normalize_ascii_key(name)
+            normalize_table_key(name)
         }
     }
 

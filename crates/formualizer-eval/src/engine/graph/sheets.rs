@@ -160,7 +160,7 @@ impl DependencyGraph {
         for key in sheet_names_to_remove {
             if let Some(named_range) = self.sheet_named_ranges.remove(&key) {
                 if !self.config.case_sensitive_names {
-                    let normalized = key.1.to_ascii_lowercase();
+                    let normalized = key.1.to_lowercase();
                     self.sheet_named_ranges_lookup
                         .remove(&(sheet_id, normalized));
                 } else {

@@ -100,6 +100,44 @@ fn umya_loads_native_table_metadata_and_eval_structured_ref() {
 }
 
 #[test]
+fn umya_evals_sumifs_with_unicode_structured_refs_and_casefolded_criteria() {
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+
+        // Table region A1:B5: headers + 4 data rows.
+        sh.get_cell_mut((1, 1)).set_value("Статус");
+        sh.get_cell_mut((2, 1)).set_value("Акт");
+        sh.get_cell_mut((1, 2)).set_value("ГОТОВО");
+        sh.get_cell_mut((2, 2)).set_value_number(10);
+        sh.get_cell_mut((1, 3)).set_value("готово");
+        sh.get_cell_mut((2, 3)).set_value_number(20);
+        sh.get_cell_mut((1, 4)).set_value("Черновик");
+        sh.get_cell_mut((2, 4)).set_value_number(30);
+        sh.get_cell_mut((1, 5)).set_value("Готово");
+        sh.get_cell_mut((2, 5)).set_value_number(40);
+
+        sh.get_cell_mut((4, 1))
+            .set_formula("SUMIFS(Продажи[акт],Продажи[статус],\"готово\")");
+
+        let mut table = umya_spreadsheet::structs::Table::new("Продажи", ("A1", "B5"));
+        table.add_column(umya_spreadsheet::structs::TableColumn::new("Статус"));
+        table.add_column(umya_spreadsheet::structs::TableColumn::new("Акт"));
+        sh.add_table(table);
+    });
+
+    let backend = UmyaAdapter::open_path(&path).expect("open workbook");
+    let mut wb = Workbook::from_reader(
+        backend,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .expect("load into engine workbook");
+
+    let v = wb.evaluate_cell("Sheet1", 1, 4).unwrap();
+    assert_eq!(v, LiteralValue::Number(70.0));
+}
+
+#[test]
 fn umya_respects_header_row_count_from_table_xml_when_headerless() {
     let path = build_workbook(|book| {
         let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();

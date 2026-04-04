@@ -213,6 +213,43 @@ fn structured_ref_table_name_resolution_is_case_insensitive_by_default() {
 }
 
 #[test]
+fn structured_ref_unicode_table_and_column_resolution_is_case_insensitive_by_default() {
+    let ctx = crate::test_workbook::TestWorkbook::new();
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+
+    engine.add_sheet("Sheet1").unwrap();
+
+    engine
+        .set_cell_value("Sheet1", 2, 2, LiteralValue::Number(10.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 3, 2, LiteralValue::Number(20.0))
+        .unwrap();
+
+    let sheet_id = engine.sheet_id("Sheet1").unwrap();
+    let start = CellRef::new(sheet_id, Coord::from_excel(1, 1, true, true));
+    let end = CellRef::new(sheet_id, Coord::from_excel(3, 2, true, true));
+    let range = RangeRef::new(start, end);
+    engine
+        .define_table(
+            "Продажи",
+            range,
+            true,
+            vec!["Регион".into(), "Сумма".into()],
+            false,
+        )
+        .unwrap();
+
+    let ast = formualizer_parse::parser::parse("=SUM(продажи[сумма])").unwrap();
+    engine.set_cell_formula("Sheet1", 1, 4, ast).unwrap();
+    let v = engine
+        .evaluate_cell("Sheet1", 1, 4)
+        .unwrap()
+        .expect("computed value");
+    assert_eq!(v, LiteralValue::Number(30.0));
+}
+
+#[test]
 fn table_definition_rejects_case_insensitive_collisions() {
     let ctx = crate::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());

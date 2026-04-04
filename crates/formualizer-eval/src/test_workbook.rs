@@ -109,10 +109,11 @@ impl TestWorkbook {
         impl Table for SimpleTable {
             fn get_cell(&self, row: usize, column: &str) -> Result<V, ExcelError> {
                 // row is 0-based within data body
+                let column_key = column.to_lowercase();
                 let col_idx = self
                     .headers
                     .iter()
-                    .position(|h| h.eq_ignore_ascii_case(column))
+                    .position(|h| h.to_lowercase() == column_key)
                     .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))?;
                 self.data
                     .get(row)
@@ -121,10 +122,11 @@ impl TestWorkbook {
                     .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))
             }
             fn get_column(&self, column: &str) -> Result<Box<dyn Range>, ExcelError> {
+                let column_key = column.to_lowercase();
                 let col_idx = self
                     .headers
                     .iter()
-                    .position(|h| h.eq_ignore_ascii_case(column))
+                    .position(|h| h.to_lowercase() == column_key)
                     .ok_or_else(|| ExcelError::from(ExcelErrorKind::Ref))?;
                 let mut col: Vec<Vec<V>> = Vec::with_capacity(self.data.len());
                 for r in &self.data {

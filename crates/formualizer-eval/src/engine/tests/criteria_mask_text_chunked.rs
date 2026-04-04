@@ -118,3 +118,59 @@ fn criteria_mask_text_matches_values_across_chunks() {
         "expected mixed segments"
     );
 }
+
+#[test]
+fn criteria_mask_text_casefolds_unicode_values_across_chunks() {
+    crate::engine::eval::criteria_mask_test_hooks::reset_text_segment_counters();
+
+    let mut cfg = arrow_eval_config();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+
+    let chunk_rows = 4usize;
+    let values = [
+        "ИВАН",
+        "Мария",
+        "иван",
+        "Петр",
+        "Иван",
+        "Ольга",
+        "ивАн",
+        "Анна",
+    ];
+
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet("Sheet1", 1, chunk_rows);
+        for value in values {
+            ab.append_row("Sheet1", &[LiteralValue::Text(value.into())])
+                .unwrap();
+        }
+        ab.finish().unwrap();
+    }
+
+    let rng = ReferenceType::range(
+        Some("Sheet1".to_string()),
+        Some(1),
+        Some(1),
+        Some(values.len() as u32),
+        Some(1),
+    );
+    let view = engine.resolve_range_view(&rng, "Sheet1").unwrap();
+
+    let pred = crate::args::parse_criteria(&LiteralValue::Text("иван".into())).unwrap();
+    let mask = engine.build_criteria_mask(&view, 0, &pred).expect("mask");
+
+    assert_eq!(mask.len(), values.len());
+    assert_eq!(mask.null_count(), 0);
+
+    let expected = [true, false, true, false, true, false, true, false];
+    for (idx, want) in expected.into_iter().enumerate() {
+        assert!(mask.is_valid(idx));
+        assert_eq!(mask.value(idx), want, "row {idx}");
+    }
+
+    let (segments_total, _) =
+        crate::engine::eval::criteria_mask_test_hooks::text_segment_counters();
+    assert!(segments_total >= 2, "expected multiple chunks");
+}

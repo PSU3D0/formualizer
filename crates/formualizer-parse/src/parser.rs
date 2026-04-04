@@ -1082,7 +1082,7 @@ impl ReferenceType {
         let mut depth = 0;
         let mut end_pos = 0;
 
-        for (i, c) in specifier_str.chars().enumerate() {
+        for (i, c) in specifier_str.char_indices() {
             if c == '[' {
                 depth += 1;
             } else if c == ']' {
