@@ -4,7 +4,7 @@
 //! - XLOOKUP supports: lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]
 //!   * match_mode: 0 exact (default), -1 exact-or-next-smaller, 1 exact-or-next-larger, 2 wildcard (basic * ?)
 //!   * search_mode: 1 forward (default), -1 reverse; (2 / -2 binary not yet implemented -> treated as 1 / -1)
-//!   * Wildcard mode (2) currently case-insensitive ASCII only; TODO: full Excel semantics, escape handling (~)
+//!   * Wildcard mode (2) is case-insensitive and supports Excel-style escapes (~).
 //! - FILTER supports: array, include, [if_empty]; Shapes must be broadcast-compatible by rows (include is 1-D).
 //!   * include may be vertical column vector OR same sized 2D; we reduce any non-zero truthy cell to include row.
 //!   * if_empty omitted -> #CALC! per Excel when no matches.
@@ -31,128 +31,7 @@ use std::collections::HashMap;
 /* ───────────────────────── helpers ───────────────────────── */
 
 pub fn super_wildcard_match(pattern: &str, text: &str) -> bool {
-    // public for shared lookup utils
-    // Excel-style wildcards with escape (~): * any seq, ? single char, ~ escapes next (*, ?, ~)
-    // Implement non-recursive DP for performance & to support escapes.
-    #[derive(Clone, Copy, Debug)]
-    enum Token<'a> {
-        AnySeq,
-        AnyChar,
-        Lit(&'a str),
-    }
-    let mut tokens: Vec<Token> = Vec::new();
-    let mut i = 0;
-    let bytes = pattern.as_bytes();
-    let mut lit_start = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'~' => {
-                // escape next if present
-                if i + 1 < bytes.len() {
-                    // flush pending literal
-                    if lit_start < i {
-                        tokens.push(Token::Lit(&pattern[lit_start..i]));
-                    }
-                    tokens.push(Token::Lit(&pattern[i + 1..i + 2]));
-                    i += 2;
-                    lit_start = i;
-                } else {
-                    // trailing ~ treated literal
-                    i += 1;
-                }
-            }
-            b'*' => {
-                if lit_start < i {
-                    tokens.push(Token::Lit(&pattern[lit_start..i]));
-                }
-                tokens.push(Token::AnySeq);
-                i += 1;
-                lit_start = i;
-            }
-            b'?' => {
-                if lit_start < i {
-                    tokens.push(Token::Lit(&pattern[lit_start..i]));
-                }
-                tokens.push(Token::AnyChar);
-                i += 1;
-                lit_start = i;
-            }
-            _ => i += 1,
-        }
-    }
-    if lit_start < bytes.len() {
-        tokens.push(Token::Lit(&pattern[lit_start..]));
-    }
-    // Simplify consecutive AnySeq
-    let mut compact: Vec<Token> = Vec::new();
-    for t in tokens {
-        match t {
-            Token::AnySeq => {
-                if !matches!(compact.last(), Some(Token::AnySeq)) {
-                    compact.push(t);
-                }
-            }
-            _ => compact.push(t),
-        }
-    }
-    // Backtracking matcher
-    fn match_tokens<'a>(tokens: &[Token<'a>], text: &str) -> bool {
-        fn eq_icase(a: &str, b: &str) -> bool {
-            a.eq_ignore_ascii_case(b)
-        }
-        // Convert Lit tokens into lowercase for quick compare
-        let mut ti = 0;
-        let tb = tokens;
-        // Use manual stack for backtracking when encountering AnySeq
-        let mut backtrack: Vec<(usize, usize)> = Vec::new(); // (token_index, text_index after consuming 1 more char by *)
-        let text_bytes = text.as_bytes();
-        let mut si = 0; // text index
-        loop {
-            if ti == tb.len() {
-                // tokens consumed
-                if si == text_bytes.len() {
-                    return true;
-                }
-                // Maybe backtrack
-            } else {
-                match tb[ti] {
-                    Token::AnySeq => {
-                        // try to match zero chars first
-                        ti += 1;
-                        backtrack.push((ti - 1, si + 1));
-                        continue;
-                    }
-                    Token::AnyChar => {
-                        if si < text_bytes.len() {
-                            ti += 1;
-                            si += 1;
-                            continue;
-                        }
-                    }
-                    Token::Lit(l) => {
-                        let l_len = l.len();
-                        if si + l_len <= text_bytes.len() && eq_icase(&text[si..si + l_len], l) {
-                            ti += 1;
-                            si += l_len;
-                            continue;
-                        }
-                    }
-                }
-            }
-            // failed match; attempt backtrack
-            if let Some((tok_star, new_si)) = backtrack.pop() {
-                if new_si <= text_bytes.len() {
-                    ti = tok_star + 1;
-                    si = new_si;
-                    continue;
-                } else {
-                    continue;
-                }
-            }
-            return false;
-        }
-    }
-    match_tokens(&compact, text)
+    super::lookup_utils::wildcard_pattern_match(pattern, text)
 }
 
 /* ───────────────────────── XLOOKUP() ───────────────────────── */
@@ -3748,6 +3627,51 @@ mod tests {
     }
 
     #[test]
+    fn xlookup_unicode_exact_and_wildcard_are_case_insensitive() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("ИВАН".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("Петр".into()))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Text("Иванов".into()))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(100))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(200))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(300));
+        let ctx = wb.interpreter();
+        let lookup_range = range("A1:A3", 1, 1, 3, 1);
+        let return_range = range("B1:B3", 1, 2, 3, 2);
+        let f = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let nf = lit(LiteralValue::Text("NF".into()));
+
+        let exact = lit(LiteralValue::Text("иван".into()));
+        let exact_args = vec![
+            ArgumentHandle::new(&exact, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+            ArgumentHandle::new(&nf, &ctx),
+        ];
+        let exact_v = f
+            .dispatch(&exact_args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(exact_v, LiteralValue::Number(100.0));
+
+        let wildcard = lit(LiteralValue::Text("ив?н*".into()));
+        let wildcard_mode = lit(LiteralValue::Int(2));
+        let wildcard_args = vec![
+            ArgumentHandle::new(&wildcard, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+            ArgumentHandle::new(&nf, &ctx),
+            ArgumentHandle::new(&wildcard_mode, &ctx),
+        ];
+        let wildcard_v = f
+            .dispatch(&wildcard_args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(wildcard_v, LiteralValue::Number(100.0));
+    }
+
+    #[test]
     fn xlookup_reverse_search_mode_picks_last() {
         let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
         let wb = wb
@@ -4131,6 +4055,30 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v, LiteralValue::Int(2)); // "beta" matches "*eta"
+    }
+
+    #[test]
+    fn xmatch_unicode_wildcard_is_case_insensitive() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XMatchFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("ИВАН".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("Петр".into()))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Text("Иванов".into()));
+        let ctx = wb.interpreter();
+        let lookup_range = range("A1:A3", 1, 1, 3, 1);
+        let f = ctx.context.get_function("", "XMATCH").unwrap();
+        let pattern = lit(LiteralValue::Text("ив?н*".into()));
+        let match_mode = lit(LiteralValue::Int(2));
+        let args = vec![
+            ArgumentHandle::new(&pattern, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&match_mode, &ctx),
+        ];
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Int(1));
     }
 
     #[test]

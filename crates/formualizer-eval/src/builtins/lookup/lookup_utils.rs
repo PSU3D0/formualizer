@@ -23,7 +23,7 @@ pub fn value_to_f64_lenient(v: &LiteralValue) -> Option<f64> {
 
 /// Case-insensitive text equality (no wildcards).
 pub fn text_equal_ci(a: &str, b: &str) -> bool {
-    a.eq_ignore_ascii_case(b)
+    a.to_lowercase() == b.to_lowercase()
 }
 
 /// Compare two values for ordering using lenient numeric coercion first, fallback to case-insensitive text.
@@ -37,8 +37,8 @@ pub fn cmp_for_lookup(a: &LiteralValue, b: &LiteralValue) -> Option<i32> {
     }
     match (a, b) {
         (LiteralValue::Text(x), LiteralValue::Text(y)) => {
-            let xl = x.to_ascii_lowercase();
-            let yl = y.to_ascii_lowercase();
+            let xl = x.to_lowercase();
+            let yl = y.to_lowercase();
             Some(match xl.cmp(&yl) {
                 std::cmp::Ordering::Less => -1,
                 std::cmp::Ordering::Equal => 0,
@@ -149,55 +149,50 @@ pub fn guard_sorted_ascending(values: &[LiteralValue]) -> Result<(), ExcelError>
 
 /// Excel-style wildcard pattern matcher with escape (~) supporting *, ? and literal escaping of ~ * ?
 pub fn wildcard_pattern_match(pattern: &str, text: &str) -> bool {
-    #[derive(Clone, Copy, Debug)]
-    enum Token<'a> {
+    wildcard_pattern_match_folded(&pattern.to_lowercase(), &text.to_lowercase())
+}
+
+fn wildcard_pattern_match_folded(pattern: &str, text: &str) -> bool {
+    #[derive(Clone, Debug)]
+    enum Token {
         AnySeq,
         AnyChar,
-        Lit(&'a str),
+        Lit(Vec<char>),
     }
+
     let mut tokens: Vec<Token> = Vec::new();
-    let bytes = pattern.as_bytes();
-    let mut i = 0;
-    let mut lit_start = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'~' => {
-                if i + 1 < bytes.len() {
-                    if lit_start < i {
-                        tokens.push(Token::Lit(&pattern[lit_start..i]));
-                    }
-                    tokens.push(Token::Lit(&pattern[i + 1..i + 2]));
-                    i += 2;
-                    lit_start = i;
+    let mut lit = String::new();
+    let mut chars = pattern.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '~' => {
+                if let Some(next) = chars.next() {
+                    lit.push(next);
                 } else {
-                    i += 1;
+                    lit.push('~');
                 }
             }
-            b'*' => {
-                if lit_start < i {
-                    tokens.push(Token::Lit(&pattern[lit_start..i]));
+            '*' => {
+                if !lit.is_empty() {
+                    tokens.push(Token::Lit(lit.chars().collect()));
+                    lit.clear();
                 }
                 tokens.push(Token::AnySeq);
-                i += 1;
-                lit_start = i;
             }
-            b'?' => {
-                if lit_start < i {
-                    tokens.push(Token::Lit(&pattern[lit_start..i]));
+            '?' => {
+                if !lit.is_empty() {
+                    tokens.push(Token::Lit(lit.chars().collect()));
+                    lit.clear();
                 }
                 tokens.push(Token::AnyChar);
-                i += 1;
-                lit_start = i;
             }
-            _ => {
-                i += 1;
-            }
+            _ => lit.push(ch),
         }
     }
-    if lit_start < bytes.len() {
-        tokens.push(Token::Lit(&pattern[lit_start..]));
+    if !lit.is_empty() {
+        tokens.push(Token::Lit(lit.chars().collect()));
     }
-    // collapse consecutive *
+
     let mut compact: Vec<Token> = Vec::new();
     for t in tokens {
         match t {
@@ -209,34 +204,33 @@ pub fn wildcard_pattern_match(pattern: &str, text: &str) -> bool {
             _ => compact.push(t),
         }
     }
-    fn match_tokens(tokens: &[Token], text: &str) -> bool {
+
+    fn match_tokens(tokens: &[Token], text: &[char]) -> bool {
         let mut ti = 0usize;
         let mut si = 0usize;
         let mut bt: Vec<(usize, usize)> = Vec::new();
-        let tb = tokens;
-        let b = text.as_bytes();
         loop {
-            if ti == tb.len() {
-                if si == b.len() {
+            if ti == tokens.len() {
+                if si == text.len() {
                     return true;
                 }
             } else {
-                match tb[ti] {
+                match &tokens[ti] {
                     Token::AnySeq => {
                         ti += 1;
                         bt.push((ti - 1, si + 1));
                         continue;
                     }
                     Token::AnyChar => {
-                        if si < b.len() {
+                        if si < text.len() {
                             ti += 1;
                             si += 1;
                             continue;
                         }
                     }
-                    Token::Lit(l) => {
-                        let ll = l.len();
-                        if si + ll <= b.len() && text[si..si + ll].eq_ignore_ascii_case(l) {
+                    Token::Lit(lit) => {
+                        let ll = lit.len();
+                        if si + ll <= text.len() && &text[si..si + ll] == lit.as_slice() {
                             ti += 1;
                             si += ll;
                             continue;
@@ -245,7 +239,7 @@ pub fn wildcard_pattern_match(pattern: &str, text: &str) -> bool {
                 }
             }
             if let Some((star_tok, new_si)) = bt.pop()
-                && new_si <= b.len()
+                && new_si <= text.len()
             {
                 ti = star_tok + 1;
                 si = new_si;
@@ -254,7 +248,9 @@ pub fn wildcard_pattern_match(pattern: &str, text: &str) -> bool {
             return false;
         }
     }
-    match_tokens(&compact, text)
+
+    let text_chars: Vec<char> = text.chars().collect();
+    match_tokens(&compact, &text_chars)
 }
 
 /// Find index of exact (or wildcard) match in values; returns first match (Excel semantics).
@@ -344,7 +340,7 @@ fn find_exact_text_in_view(
     wildcard: bool,
     vertical: bool,
 ) -> Result<Option<usize>, ExcelError> {
-    let s_low = s.to_ascii_lowercase();
+    let s_low = s.to_lowercase();
     let has_wildcard = wildcard && (s.contains('*') || s.contains('?') || s.contains('~'));
 
     if vertical {
@@ -359,10 +355,11 @@ fn find_exact_text_in_view(
                     if !arr.is_null(i) {
                         let val = arr.value(i);
                         if has_wildcard {
-                            if wildcard_pattern_match(&s_low, &val.to_ascii_lowercase()) {
+                            let val_low = val.to_lowercase();
+                            if wildcard_pattern_match_folded(&s_low, &val_low) {
                                 return Ok(Some(row_start + i));
                             }
-                        } else if val.eq_ignore_ascii_case(s) {
+                        } else if text_equal_ci(val, s) {
                             return Ok(Some(row_start + i));
                         }
                     }
@@ -380,10 +377,11 @@ fn find_exact_text_in_view(
                 if !arr.is_null(0) {
                     let val = arr.value(0);
                     if has_wildcard {
-                        if wildcard_pattern_match(&s_low, &val.to_ascii_lowercase()) {
+                        let val_low = val.to_lowercase();
+                        if wildcard_pattern_match_folded(&s_low, &val_low) {
                             return Ok(Some(c));
                         }
-                    } else if val.eq_ignore_ascii_case(s) {
+                    } else if text_equal_ci(val, s) {
                         return Ok(Some(c));
                     }
                 }

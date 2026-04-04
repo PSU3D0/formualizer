@@ -1001,6 +1001,49 @@ mod tests {
     }
 
     #[test]
+    fn match_unicode_exact_and_wildcard_are_case_insensitive() {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(MatchFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("ИВАН".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("Петр".into()))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Text("Иванов".into()));
+        let ctx = wb.interpreter();
+        let range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A3".into(),
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1)),
+            },
+            None,
+        );
+        let f = ctx.context.get_function("", "MATCH").unwrap();
+        let zero = lit(LiteralValue::Int(0));
+
+        let exact = lit(LiteralValue::Text("иван".into()));
+        let exact_args = vec![
+            ArgumentHandle::new(&exact, &ctx),
+            ArgumentHandle::new(&range, &ctx),
+            ArgumentHandle::new(&zero, &ctx),
+        ];
+        let exact_v = f
+            .dispatch(&exact_args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(exact_v, LiteralValue::Int(1));
+
+        let pat = lit(LiteralValue::Text("ив?н*".into()));
+        let pat_args = vec![
+            ArgumentHandle::new(&pat, &ctx),
+            ArgumentHandle::new(&range, &ctx),
+            ArgumentHandle::new(&zero, &ctx),
+        ];
+        let pat_v = f
+            .dispatch(&pat_args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(pat_v, LiteralValue::Int(1));
+    }
+
+    #[test]
     fn match_exact_and_approx() {
         let wb = TestWorkbook::new().with_function(Arc::new(MatchFn));
         let wb = wb
