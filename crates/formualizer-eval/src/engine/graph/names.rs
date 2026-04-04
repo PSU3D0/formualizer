@@ -2,8 +2,8 @@ use super::*;
 use formualizer_common::parse_a1_1based;
 
 #[inline]
-fn normalize_ascii_key(name: &str) -> String {
-    name.to_ascii_lowercase()
+fn normalize_name_key(name: &str) -> String {
+    name.to_lowercase()
 }
 
 /// Validate that a name conforms to Excel naming rules.
@@ -93,7 +93,7 @@ impl DependencyGraph {
         if self.config.case_sensitive_names {
             name.to_string()
         } else {
-            normalize_ascii_key(name)
+            normalize_name_key(name)
         }
     }
 

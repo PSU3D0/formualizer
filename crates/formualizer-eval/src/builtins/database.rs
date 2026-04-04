@@ -52,10 +52,10 @@ fn resolve_field_index(
 ) -> Result<usize, ExcelError> {
     match field {
         LiteralValue::Text(name) => {
-            let name_lower = name.to_ascii_lowercase();
+            let name_lower = name.to_lowercase();
             for (i, h) in headers.iter().enumerate() {
                 if let LiteralValue::Text(hdr) = h
-                    && hdr.to_ascii_lowercase() == name_lower
+                    && hdr.to_lowercase() == name_lower
                 {
                     return Ok(i);
                 }
@@ -105,11 +105,11 @@ fn parse_criteria_range(
     for c in 0..crit_cols {
         let crit_header = criteria_view.get_cell(0, c);
         if let LiteralValue::Text(name) = &crit_header {
-            let name_lower = name.to_ascii_lowercase();
+            let name_lower = name.to_lowercase();
             let mut found = None;
             for (i, h) in db_headers.iter().enumerate() {
                 if let LiteralValue::Text(hdr) = h
-                    && hdr.to_ascii_lowercase() == name_lower
+                    && hdr.to_lowercase() == name_lower
                 {
                     found = Some(i);
                     break;
@@ -2511,6 +2511,38 @@ mod tests {
         ])
     }
 
+    fn make_unicode_database() -> LiteralValue {
+        LiteralValue::Array(vec![
+            vec![
+                LiteralValue::Text("Имя".into()),
+                LiteralValue::Text("Статус".into()),
+                LiteralValue::Text("Акт".into()),
+            ],
+            vec![
+                LiteralValue::Text("Анна".into()),
+                LiteralValue::Text("ГОТОВО".into()),
+                LiteralValue::Int(10),
+            ],
+            vec![
+                LiteralValue::Text("Борис".into()),
+                LiteralValue::Text("готово".into()),
+                LiteralValue::Int(20),
+            ],
+            vec![
+                LiteralValue::Text("Вера".into()),
+                LiteralValue::Text("Черновик".into()),
+                LiteralValue::Int(30),
+            ],
+        ])
+    }
+
+    fn make_unicode_criteria_ready() -> LiteralValue {
+        LiteralValue::Array(vec![
+            vec![LiteralValue::Text("статус".into())],
+            vec![LiteralValue::Text("готово".into())],
+        ])
+    }
+
     #[test]
     fn dsum_all_salaries() {
         let wb = TestWorkbook::new().with_function(Arc::new(DSumFn));
@@ -2663,5 +2695,26 @@ mod tests {
 
         // Sum of all salaries: 210000
         assert_eq!(result.into_literal(), LiteralValue::Number(210000.0));
+    }
+
+    #[test]
+    fn dsum_unicode_headers_are_case_insensitive() {
+        let wb = TestWorkbook::new().with_function(Arc::new(DSumFn));
+        let ctx = interp(&wb);
+
+        let db = lit(make_unicode_database());
+        let field = lit(LiteralValue::Text("акт".into()));
+        let criteria = lit(make_unicode_criteria_ready());
+
+        let args = vec![
+            crate::traits::ArgumentHandle::new(&db, &ctx),
+            crate::traits::ArgumentHandle::new(&field, &ctx),
+            crate::traits::ArgumentHandle::new(&criteria, &ctx),
+        ];
+
+        let f = ctx.context.get_function("", "DSUM").unwrap();
+        let result = f.dispatch(&args, &ctx.function_context(None)).unwrap();
+
+        assert_eq!(result.into_literal(), LiteralValue::Number(30.0));
     }
 }

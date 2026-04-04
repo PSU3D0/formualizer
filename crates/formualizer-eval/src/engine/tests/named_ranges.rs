@@ -731,6 +731,32 @@ fn named_range_resolution_is_case_insensitive_by_default() {
 }
 
 #[test]
+fn named_range_resolution_is_unicode_case_insensitive_by_default() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+
+    let sheet_id = engine.sheet_id_mut("Sheet1");
+    let input_ref = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+    engine
+        .define_name(
+            "Ввод",
+            NamedDefinition::Cell(input_ref),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let ast = parse("=ввод*2").unwrap();
+    engine.set_cell_formula("Sheet1", 2, 1, ast).unwrap();
+    let v = engine
+        .evaluate_cell("Sheet1", 2, 1)
+        .unwrap()
+        .expect("computed value");
+    assert_eq!(v, LiteralValue::Number(20.0));
+}
+
+#[test]
 fn named_range_definition_rejects_case_insensitive_collisions() {
     let mut graph = DependencyGraph::new();
     graph
@@ -744,6 +770,28 @@ fn named_range_definition_rejects_case_insensitive_collisions() {
     let err = graph
         .define_name(
             "sales",
+            NamedDefinition::Literal(LiteralValue::Number(2.0)),
+            NameScope::Workbook,
+        )
+        .expect_err("expected collision error");
+
+    assert_eq!(err.kind, ExcelErrorKind::Name);
+}
+
+#[test]
+fn named_range_definition_rejects_unicode_case_insensitive_collisions() {
+    let mut graph = DependencyGraph::new();
+    graph
+        .define_name(
+            "Ввод",
+            NamedDefinition::Literal(LiteralValue::Number(1.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    let err = graph
+        .define_name(
+            "ввод",
             NamedDefinition::Literal(LiteralValue::Number(2.0)),
             NameScope::Workbook,
         )
