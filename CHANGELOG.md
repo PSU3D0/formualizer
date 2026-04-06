@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-04-06
+
 ### Fixed
 
 - Fixed UTF-8-safe parsing for structured table specifiers so non-ASCII structured references no longer panic on invalid byte boundaries. (#40)
@@ -72,7 +74,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/PSU3D0/formualizer/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/PSU3D0/formualizer/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/PSU3D0/formualizer/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/PSU3D0/formualizer/compare/v0.4.4...v0.5.1

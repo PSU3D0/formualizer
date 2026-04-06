@@ -103,7 +103,7 @@ wheels = [
 
 [[package]]
 name = "formualizer"
-version = "0.5.3"
+version = "0.5.4"
 source = { editable = "." }
 
 [package.optional-dependencies]
