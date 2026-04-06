@@ -20,7 +20,7 @@
 //! - PERFORMANCE: streaming FILTER without full materialization; UNIQUE using smallvec for tiny sets.
 
 use super::super::utils::collapse_if_scalar;
-use super::lookup_utils::{cmp_for_lookup, equals_maybe_wildcard, value_to_f64_lenient};
+use super::lookup_utils::{PreparedLookupMatcher, cmp_for_lookup, value_to_f64_lenient};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::Function; // FnCaps imported via macro
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -276,6 +276,7 @@ impl Function for XLookupFn {
 
         let mut found: Option<usize> = None;
         let needle = lookup_value;
+        let prepared_matcher = PreparedLookupMatcher::new(&needle, wildcard);
         if match_mode == 0 || wildcard {
             if search_mode == 1 && lookup_rows > 0 && lookup_cols > 0 {
                 found =
@@ -287,7 +288,7 @@ impl Function for XLookupFn {
                     } else {
                         lookup_view.get_cell(0, i)
                     };
-                    if equals_maybe_wildcard(&needle, &cand, wildcard) {
+                    if prepared_matcher.matches(&cand) {
                         found = Some(i);
                         break;
                     }
@@ -301,7 +302,7 @@ impl Function for XLookupFn {
                     } else {
                         lookup_view.get_cell(0, i)
                     };
-                    if equals_maybe_wildcard(&needle, &cand, wildcard) {
+                    if prepared_matcher.matches(&cand) {
                         found = Some(i);
                         break;
                     }
@@ -595,6 +596,7 @@ impl Function for XMatchFn {
 
         let wildcard = match_mode == 2;
         let needle = lookup_value;
+        let prepared_matcher = PreparedLookupMatcher::new(&needle, wildcard);
 
         let mut found: Option<usize> = None;
 
@@ -617,7 +619,7 @@ impl Function for XMatchFn {
                     } else {
                         lookup_view.get_cell(0, i)
                     };
-                    if equals_maybe_wildcard(&needle, &cand, wildcard) {
+                    if prepared_matcher.matches(&cand) {
                         found = Some(i);
                         break;
                     }
@@ -630,7 +632,7 @@ impl Function for XMatchFn {
                     } else {
                         lookup_view.get_cell(0, i)
                     };
-                    if equals_maybe_wildcard(&needle, &cand, wildcard) {
+                    if prepared_matcher.matches(&cand) {
                         found = Some(i);
                         break;
                     }
@@ -3669,6 +3671,58 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(wildcard_v, LiteralValue::Number(100.0));
+    }
+
+    #[test]
+    fn xlookup_unicode_reverse_search_uses_prepared_matcher() {
+        let wb = TestWorkbook::new().with_function(Arc::new(XLookupFn));
+        let wb = wb
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("ИВАН".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("Петр".into()))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Text("Иванов".into()))
+            .with_cell_a1("Sheet1", "A4", LiteralValue::Text("ИВАН".into()))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(100))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(200))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(300))
+            .with_cell_a1("Sheet1", "B4", LiteralValue::Int(400));
+        let ctx = wb.interpreter();
+        let lookup_range = range("A1:A4", 1, 1, 4, 1);
+        let return_range = range("B1:B4", 1, 2, 4, 2);
+        let f = ctx.context.get_function("", "XLOOKUP").unwrap();
+        let nf = lit(LiteralValue::Text("NF".into()));
+        let reverse = lit(LiteralValue::Int(-1));
+        let exact_mode = lit(LiteralValue::Int(0));
+
+        let exact = lit(LiteralValue::Text("иван".into()));
+        let exact_args = vec![
+            ArgumentHandle::new(&exact, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+            ArgumentHandle::new(&nf, &ctx),
+            ArgumentHandle::new(&exact_mode, &ctx),
+            ArgumentHandle::new(&reverse, &ctx),
+        ];
+        let exact_v = f
+            .dispatch(&exact_args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(exact_v, LiteralValue::Number(400.0));
+
+        let wildcard = lit(LiteralValue::Text("ив?н*".into()));
+        let wildcard_mode = lit(LiteralValue::Int(2));
+        let wildcard_args = vec![
+            ArgumentHandle::new(&wildcard, &ctx),
+            ArgumentHandle::new(&lookup_range, &ctx),
+            ArgumentHandle::new(&return_range, &ctx),
+            ArgumentHandle::new(&nf, &ctx),
+            ArgumentHandle::new(&wildcard_mode, &ctx),
+            ArgumentHandle::new(&reverse, &ctx),
+        ];
+        let wildcard_v = f
+            .dispatch(&wildcard_args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(wildcard_v, LiteralValue::Number(400.0));
     }
 
     #[test]
