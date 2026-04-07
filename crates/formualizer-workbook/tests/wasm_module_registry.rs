@@ -22,8 +22,8 @@ use std::borrow::Cow;
 
 #[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
 use wasm_encoder::{
-    CodeSection, CustomSection, ExportKind, ExportSection, Function, FunctionSection, Instruction,
-    Module, TypeSection, ValType,
+    BlockType, CodeSection, CustomSection, ExportKind, ExportSection, Function, FunctionSection,
+    Instruction, MemorySection, MemoryType, Module, TypeSection, ValType,
 };
 
 const VALID_MANIFEST: &str = include_str!("fixtures/wasm_manifest/valid_v1.json");
@@ -59,7 +59,13 @@ fn workbook() -> Workbook {
 }
 
 #[cfg(all(feature = "wasm_plugins", not(target_arch = "wasm32")))]
-fn manifest_with_module(module_id: &str, export_name: &str) -> String {
+fn manifest_with_function(
+    module_id: &str,
+    function_name: &str,
+    export_name: &str,
+    min_args: usize,
+    max_args: usize,
+) -> String {
     format!(
         r#"{{
   "schema": "formualizer.udf.module/v1",
@@ -72,11 +78,11 @@ fn manifest_with_module(module_id: &str, export_name: &str) -> String {
   "functions": [
     {{
       "id": 1,
-      "name": "SAFE_DIV",
-      "aliases": ["DIV_SAFE"],
+      "name": "{function_name}",
+      "aliases": [],
       "export": "{export_name}",
-      "min_args": 2,
-      "max_args": 2,
+      "min_args": {min_args},
+      "max_args": {max_args},
       "volatile": false,
       "deterministic": true,
       "thread_safe": true
@@ -84,6 +90,11 @@ fn manifest_with_module(module_id: &str, export_name: &str) -> String {
   ]
 }}"#
     )
+}
+
+#[cfg(all(feature = "wasm_plugins", not(target_arch = "wasm32")))]
+fn manifest_with_module(module_id: &str, export_name: &str) -> String {
+    manifest_with_function(module_id, "SAFE_DIV", export_name, 2, 2)
 }
 
 #[cfg(feature = "wasm_plugins")]
@@ -204,6 +215,14 @@ fn wasm_module_with_manifest(manifest_json: &str) -> Vec<u8> {
 }
 
 #[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+fn append_manifest_section(module: &mut Module, manifest_json: &str) {
+    module.section(&CustomSection {
+        name: Cow::Borrowed(formualizer_workbook::WASM_MANIFEST_SECTION_V1),
+        data: Cow::Owned(manifest_json.as_bytes().to_vec()),
+    });
+}
+
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
 fn wasm_module_with_manifest_and_div_export(manifest_json: &str) -> Vec<u8> {
     let mut module = Module::new();
 
@@ -230,11 +249,135 @@ fn wasm_module_with_manifest_and_div_export(manifest_json: &str) -> Vec<u8> {
     code.function(&function);
     module.section(&code);
 
-    module.section(&CustomSection {
-        name: Cow::Borrowed(formualizer_workbook::WASM_MANIFEST_SECTION_V1),
-        data: Cow::Owned(manifest_json.as_bytes().to_vec()),
-    });
+    append_manifest_section(&mut module, manifest_json);
+    module.finish()
+}
 
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+fn wasm_module_with_infinite_loop_export(manifest_json: &str, export_name: &str) -> Vec<u8> {
+    let mut module = Module::new();
+
+    let mut types = TypeSection::new();
+    types.ty().function([], []);
+    module.section(&types);
+
+    let mut funcs = FunctionSection::new();
+    funcs.function(0);
+    module.section(&funcs);
+
+    let mut exports = ExportSection::new();
+    exports.export(export_name, ExportKind::Func, 0);
+    module.section(&exports);
+
+    let mut code = CodeSection::new();
+    let mut function = Function::new([]);
+    function.instruction(&Instruction::Loop(BlockType::Empty));
+    function.instruction(&Instruction::Br(0));
+    function.instruction(&Instruction::End);
+    function.instruction(&Instruction::End);
+    code.function(&function);
+    module.section(&code);
+
+    append_manifest_section(&mut module, manifest_json);
+    module.finish()
+}
+
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+fn wasm_module_with_memory_grow_export(manifest_json: &str, export_name: &str) -> Vec<u8> {
+    let mut module = Module::new();
+
+    let mut types = TypeSection::new();
+    types.ty().function([], [ValType::I32]);
+    module.section(&types);
+
+    let mut funcs = FunctionSection::new();
+    funcs.function(0);
+    module.section(&funcs);
+
+    let mut memories = MemorySection::new();
+    memories.memory(MemoryType {
+        minimum: 1,
+        maximum: None,
+        memory64: false,
+        shared: false,
+        page_size_log2: None,
+    });
+    module.section(&memories);
+
+    let mut exports = ExportSection::new();
+    exports.export(export_name, ExportKind::Func, 0);
+    module.section(&exports);
+
+    let mut code = CodeSection::new();
+    let mut function = Function::new([]);
+    function.instruction(&Instruction::I32Const(1));
+    function.instruction(&Instruction::MemoryGrow(0));
+    function.instruction(&Instruction::End);
+    code.function(&function);
+    module.section(&code);
+
+    append_manifest_section(&mut module, manifest_json);
+    module.finish()
+}
+
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+fn wasm_module_with_oversized_abi_response(
+    manifest_json: &str,
+    export_name: &str,
+    response_len: u32,
+) -> Vec<u8> {
+    let mut module = Module::new();
+
+    let mut types = TypeSection::new();
+    types.ty().function([ValType::I32], [ValType::I32]);
+    types.ty().function([ValType::I32, ValType::I32], []);
+    types
+        .ty()
+        .function([ValType::I32, ValType::I32], [ValType::I64]);
+    module.section(&types);
+
+    let mut funcs = FunctionSection::new();
+    funcs.function(0);
+    funcs.function(1);
+    funcs.function(2);
+    module.section(&funcs);
+
+    let mut memories = MemorySection::new();
+    memories.memory(MemoryType {
+        minimum: 1,
+        maximum: None,
+        memory64: false,
+        shared: false,
+        page_size_log2: None,
+    });
+    module.section(&memories);
+
+    let mut exports = ExportSection::new();
+    exports.export("memory", ExportKind::Memory, 0);
+    exports.export("fz_alloc", ExportKind::Func, 0);
+    exports.export("fz_free", ExportKind::Func, 1);
+    exports.export(export_name, ExportKind::Func, 2);
+    module.section(&exports);
+
+    let mut code = CodeSection::new();
+
+    let mut alloc = Function::new([]);
+    alloc.instruction(&Instruction::I32Const(0));
+    alloc.instruction(&Instruction::End);
+    code.function(&alloc);
+
+    let mut free = Function::new([]);
+    free.instruction(&Instruction::End);
+    code.function(&free);
+
+    let mut invoke = Function::new([]);
+    invoke.instruction(&Instruction::I64Const((i64::from(response_len)) << 32));
+    invoke.instruction(&Instruction::End);
+    code.function(&invoke);
+
+    module.section(&code);
+
+    append_manifest_section(&mut module, manifest_json);
     module.finish()
 }
 
@@ -618,4 +761,91 @@ fn wasmtime_runtime_can_bind_and_evaluate_numeric_export() {
         wb.evaluate_cell("Sheet1", 1, 1).unwrap(),
         LiteralValue::Number(5.0)
     );
+}
+
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+#[test]
+fn wasmtime_runtime_enforces_fuel_limit_for_untrusted_plugins() {
+    let mut wb = workbook();
+    wb.use_wasmtime_runtime();
+
+    let manifest = manifest_with_function("plugin://sandbox/spin", "SPIN", "fn_spin", 0, 0);
+    let bytes = wasm_module_with_infinite_loop_export(&manifest, "fn_spin");
+    wb.attach_wasm_module_bytes("plugin://sandbox/spin", &bytes)
+        .unwrap();
+
+    let mut spec = WasmFunctionSpec::new("plugin://sandbox/spin", "fn_spin", 1);
+    spec.runtime_hint = Some(WasmRuntimeHint {
+        fuel_limit: Some(50_000),
+        memory_limit_bytes: Some(64 * 1024),
+    });
+    wb.bind_wasm_function("WASM_SPIN", CustomFnOptions::default(), spec)
+        .unwrap();
+
+    wb.set_formula("Sheet1", 1, 1, "=WASM_SPIN()").unwrap();
+    let value = wb.evaluate_cell("Sheet1", 1, 1).unwrap();
+    let LiteralValue::Error(err) = value else {
+        panic!("expected trapped infinite loop to surface as spreadsheet error");
+    };
+    assert_eq!(err.kind, ExcelErrorKind::Value);
+}
+
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+#[test]
+fn wasmtime_runtime_enforces_memory_limit_for_untrusted_plugins() {
+    let mut wb = workbook();
+    wb.use_wasmtime_runtime();
+
+    let manifest = manifest_with_function("plugin://sandbox/grow", "GROW", "fn_grow", 0, 0);
+    let bytes = wasm_module_with_memory_grow_export(&manifest, "fn_grow");
+    wb.attach_wasm_module_bytes("plugin://sandbox/grow", &bytes)
+        .unwrap();
+
+    let mut spec = WasmFunctionSpec::new("plugin://sandbox/grow", "fn_grow", 1);
+    spec.runtime_hint = Some(WasmRuntimeHint {
+        fuel_limit: Some(100_000),
+        memory_limit_bytes: Some(64 * 1024),
+    });
+    wb.bind_wasm_function("WASM_GROW", CustomFnOptions::default(), spec)
+        .unwrap();
+
+    wb.set_formula("Sheet1", 1, 1, "=WASM_GROW()").unwrap();
+    let value = wb.evaluate_cell("Sheet1", 1, 1).unwrap();
+    let LiteralValue::Error(err) = value else {
+        panic!("expected memory growth trap to surface as spreadsheet error");
+    };
+    assert_eq!(err.kind, ExcelErrorKind::Value);
+}
+
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+#[test]
+fn wasmtime_runtime_rejects_oversized_abi_responses_before_host_allocation() {
+    let mut wb = workbook();
+    wb.use_wasmtime_runtime();
+
+    let manifest = manifest_with_function(
+        "plugin://sandbox/abi-oversized",
+        "OVERSIZED",
+        "fn_json",
+        0,
+        0,
+    );
+    let bytes = wasm_module_with_oversized_abi_response(&manifest, "fn_json", 16 * 1024 * 1024);
+    wb.attach_wasm_module_bytes("plugin://sandbox/abi-oversized", &bytes)
+        .unwrap();
+
+    let mut spec = WasmFunctionSpec::new("plugin://sandbox/abi-oversized", "fn_json", 1);
+    spec.runtime_hint = Some(WasmRuntimeHint {
+        fuel_limit: Some(100_000),
+        memory_limit_bytes: Some(32 * 1024 * 1024),
+    });
+    wb.bind_wasm_function("WASM_OVERSIZED", CustomFnOptions::default(), spec)
+        .unwrap();
+
+    wb.set_formula("Sheet1", 1, 1, "=WASM_OVERSIZED()").unwrap();
+    let value = wb.evaluate_cell("Sheet1", 1, 1).unwrap();
+    let LiteralValue::Error(err) = value else {
+        panic!("expected oversized ABI response to surface as spreadsheet error");
+    };
+    assert_eq!(err.kind, ExcelErrorKind::Value);
 }
