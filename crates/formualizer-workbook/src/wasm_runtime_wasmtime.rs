@@ -8,7 +8,13 @@ use formualizer_common::{
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use wasmtime::{Engine, ExternType, Module, Val, ValType};
+use wasmtime::{
+    Config, Engine, ExternType, Module, Store, StoreLimits, StoreLimitsBuilder, Val, ValType,
+};
+
+const DEFAULT_WASM_FUEL_LIMIT: u64 = 10_000_000;
+const DEFAULT_WASM_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_WASM_ABI_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Serialize)]
 struct WasmInvokeRequest {
@@ -31,10 +37,26 @@ struct WasmInvokeError {
     message: Option<String>,
 }
 
-#[derive(Default)]
+struct WasmtimeStoreState {
+    limits: StoreLimits,
+}
+
 pub(crate) struct WasmtimeWasmRuntime {
     engine: Engine,
     modules: RwLock<BTreeMap<String, Module>>,
+}
+
+impl Default for WasmtimeWasmRuntime {
+    fn default() -> Self {
+        let mut config = Config::new();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config)
+            .expect("failed to initialize wasmtime engine with fuel metering enabled");
+        Self {
+            engine,
+            modules: RwLock::new(BTreeMap::new()),
+        }
+    }
 }
 
 impl WasmtimeWasmRuntime {
@@ -44,6 +66,71 @@ impl WasmtimeWasmRuntime {
                 "WASM module {module_id} is not registered in runtime"
             ))
         })
+    }
+
+    fn memory_limit_bytes(runtime_hint: Option<&WasmRuntimeHint>) -> Result<usize, ExcelError> {
+        let raw = runtime_hint
+            .and_then(|hint| hint.memory_limit_bytes)
+            .unwrap_or(DEFAULT_WASM_MEMORY_LIMIT_BYTES as u64);
+        usize::try_from(raw).map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("WASM memory limit {raw} does not fit on this host"))
+        })
+    }
+
+    fn fuel_limit(runtime_hint: Option<&WasmRuntimeHint>) -> u64 {
+        runtime_hint
+            .and_then(|hint| hint.fuel_limit)
+            .unwrap_or(DEFAULT_WASM_FUEL_LIMIT)
+    }
+
+    fn abi_response_limit_bytes(
+        runtime_hint: Option<&WasmRuntimeHint>,
+    ) -> Result<usize, ExcelError> {
+        Ok(Self::memory_limit_bytes(runtime_hint)?.min(DEFAULT_WASM_ABI_RESPONSE_LIMIT_BYTES))
+    }
+
+    fn new_store(
+        &self,
+        runtime_hint: Option<&WasmRuntimeHint>,
+    ) -> Result<Store<WasmtimeStoreState>, ExcelError> {
+        let memory_limit = Self::memory_limit_bytes(runtime_hint)?;
+        let fuel_limit = Self::fuel_limit(runtime_hint);
+
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(memory_limit)
+            .trap_on_grow_failure(true)
+            .build();
+        let mut store = Store::new(&self.engine, WasmtimeStoreState { limits });
+        store.limiter(|state| &mut state.limits);
+        store.set_fuel(fuel_limit).map_err(|err| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("Failed to configure WASM fuel limit: {err}"))
+        })?;
+        Ok(store)
+    }
+
+    fn validate_guest_buffer<T>(
+        store: &Store<T>,
+        memory: &wasmtime::Memory,
+        ptr: u32,
+        len: usize,
+        label: &str,
+    ) -> Result<(), ExcelError> {
+        let start = usize::try_from(ptr).map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("{label} pointer does not fit on this host"))
+        })?;
+        let end = start.checked_add(len).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("{label} length overflows host address space"))
+        })?;
+        let memory_len = memory.data_size(store);
+        if end > memory_len {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("{label} points outside WASM guest memory")));
+        }
+        Ok(())
     }
 
     fn coerce_arg(value: &LiteralValue, ty: &ValType) -> Result<Val, ExcelError> {
@@ -117,9 +204,10 @@ impl WasmtimeWasmRuntime {
         export_name: &str,
         codec_version: u32,
         args: &[LiteralValue],
+        runtime_hint: Option<&WasmRuntimeHint>,
     ) -> Result<Option<LiteralValue>, ExcelError> {
         let module = self.get_module(module_id)?;
-        let mut store = wasmtime::Store::new(&self.engine, ());
+        let mut store = self.new_store(runtime_hint)?;
         let instance = wasmtime::Instance::new(&mut store, &module, &[]).map_err(|err| {
             ExcelError::new(ExcelErrorKind::Value)
                 .with_message(format!("WASM instantiation failed: {err}"))
@@ -165,16 +253,20 @@ impl WasmtimeWasmRuntime {
         let req_ptr = alloc.call(&mut store, req_len_i32).map_err(|err| {
             ExcelError::new(ExcelErrorKind::Value).with_message(format!("WASM alloc failed: {err}"))
         })?;
+        let req_ptr_u32 = u32::try_from(req_ptr).map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("WASM alloc returned negative pointer")
+        })?;
+        Self::validate_guest_buffer(
+            &store,
+            &memory,
+            req_ptr_u32,
+            request.len(),
+            "WASM request buffer",
+        )?;
 
         memory
-            .write(
-                &mut store,
-                usize::try_from(req_ptr).map_err(|_| {
-                    ExcelError::new(ExcelErrorKind::Value)
-                        .with_message("WASM alloc returned negative pointer")
-                })?,
-                &request,
-            )
+            .write(&mut store, req_ptr_u32 as usize, &request)
             .map_err(|err| {
                 ExcelError::new(ExcelErrorKind::Value)
                     .with_message(format!("Failed writing WASM request memory: {err}"))
@@ -189,8 +281,19 @@ impl WasmtimeWasmRuntime {
 
         let out_ptr = (out as u64 & 0xFFFF_FFFF) as u32;
         let out_len = ((out as u64 >> 32) & 0xFFFF_FFFF) as u32;
+        let out_len = usize::try_from(out_len).map_err(|_| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("WASM response length does not fit on this host")
+        })?;
+        let response_limit = Self::abi_response_limit_bytes(runtime_hint)?;
+        if out_len > response_limit {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "WASM response exceeds sandbox limit ({out_len} bytes > {response_limit} bytes)"
+            )));
+        }
+        Self::validate_guest_buffer(&store, &memory, out_ptr, out_len, "WASM response buffer")?;
 
-        let mut response_bytes = vec![0u8; out_len as usize];
+        let mut response_bytes = vec![0u8; out_len];
         memory
             .read(&store, out_ptr as usize, &mut response_bytes)
             .map_err(|err| {
@@ -270,10 +373,10 @@ impl WasmUdfRuntime for WasmtimeWasmRuntime {
         _function_name: &str,
         codec_version: u32,
         args: &[LiteralValue],
-        _runtime_hint: Option<&WasmRuntimeHint>,
+        runtime_hint: Option<&WasmRuntimeHint>,
     ) -> Result<LiteralValue, ExcelError> {
         // Prefer ABI-style invocation first if available in module.
-        match self.invoke_abi_json(module_id, export_name, codec_version, args) {
+        match self.invoke_abi_json(module_id, export_name, codec_version, args, runtime_hint) {
             Ok(Some(value)) => return Ok(value),
             Ok(None) => {}
             Err(err) if err.kind == ExcelErrorKind::NImpl => {}
@@ -281,7 +384,7 @@ impl WasmUdfRuntime for WasmtimeWasmRuntime {
         }
 
         let module = self.get_module(module_id)?;
-        let mut store = wasmtime::Store::new(&self.engine, ());
+        let mut store = self.new_store(runtime_hint)?;
         let instance = wasmtime::Instance::new(&mut store, &module, &[]).map_err(|err| {
             ExcelError::new(ExcelErrorKind::Value)
                 .with_message(format!("WASM instantiation failed: {err}"))
