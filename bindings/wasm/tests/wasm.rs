@@ -244,6 +244,46 @@ fn test_error_handling() {
 }
 
 #[wasm_bindgen_test]
+fn test_workbook_rejects_zero_based_coords() {
+    let wb = Workbook::new();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+
+    let err = wb
+        .set_value("Sheet1".to_string(), 0, 1, JsValue::from_f64(1.0))
+        .unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(error.message().as_string().unwrap().contains("1-based"));
+
+    let targets = js_sys::Array::new();
+    let target = js_sys::Array::new();
+    target.push(&JsValue::from_str("Sheet1"));
+    target.push(&JsValue::from_f64(0.0));
+    target.push(&JsValue::from_f64(1.0));
+    targets.push(&target);
+
+    let err = wb.evaluate_cells(targets).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(error.message().as_string().unwrap().contains("1-based"));
+}
+
+#[wasm_bindgen_test]
+fn test_sheet_rejects_zero_based_coords() {
+    let wb = Workbook::new();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+    let sheet = wb.sheet("Sheet1".to_string()).unwrap();
+
+    let err = sheet.set_formula(0, 1, "=1".to_string()).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(error.message().as_string().unwrap().contains("1-based"));
+
+    let err = sheet.get_value(1, 0).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(error.message().as_string().unwrap().contains("1-based"));
+
+    assert!(sheet.get_formula(0, 1).is_none());
+}
+
+#[wasm_bindgen_test]
 fn test_array_formula() {
     let formula = "={1,2;3,4}";
     let ast = parse(formula, None).unwrap();
