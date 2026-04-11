@@ -1,4 +1,8 @@
+use chrono::TimeZone;
 use formualizer_common::LiteralValue;
+use formualizer_eval::engine::DeterministicMode;
+use formualizer_eval::timezone::TimeZoneSpec;
+use formualizer_eval::traits::VolatileLevel;
 use formualizer_sheetport::{EvalOptions, InputUpdate, PortValue, SheetPort, SheetPortSession};
 use formualizer_workbook::Workbook;
 use sheetport_spec::Manifest;
@@ -107,6 +111,74 @@ ports:
         Some(PortValue::Scalar(LiteralValue::Number(n))) => assert_eq!(*n, 10.0),
         other => panic!("unexpected output value: {other:?}"),
     }
+}
+
+#[test]
+fn evaluate_once_invalid_deterministic_mode_does_not_leak_other_overrides() {
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: deterministic-leak-test
+  name: Deterministic Leak Test
+  workbook:
+    uri: memory://deterministic-leak.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: output_a
+    dir: out
+    shape: scalar
+    location:
+      a1: Sheet!A1
+    schema:
+      type: number
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    workbook
+        .set_value("Sheet", 1, 1, LiteralValue::Number(1.0))
+        .expect("set A1");
+    workbook.engine_mut().set_workbook_seed(7);
+    workbook
+        .engine_mut()
+        .set_volatile_level(VolatileLevel::Always);
+    let original_mode = workbook.engine().config.deterministic_mode.clone();
+
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).expect("sheetport binds");
+    let timestamp = chrono::Utc
+        .with_ymd_and_hms(2025, 1, 1, 0, 0, 0)
+        .single()
+        .expect("valid timestamp");
+
+    let err = sheetport
+        .evaluate_once(EvalOptions {
+            freeze_volatile: true,
+            rng_seed: Some(123),
+            deterministic_mode: Some(DeterministicMode::Enabled {
+                timestamp_utc: timestamp,
+                timezone: TimeZoneSpec::Local,
+            }),
+            ..Default::default()
+        })
+        .expect_err("local timezone should be rejected in deterministic mode");
+
+    match err {
+        formualizer_sheetport::SheetPortError::Engine { .. } => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    assert_eq!(sheetport.workbook().engine().config.workbook_seed, 7);
+    assert_eq!(
+        sheetport.workbook().engine().config.volatile_level,
+        VolatileLevel::Always
+    );
+    assert_eq!(
+        &sheetport.workbook().engine().config.deterministic_mode,
+        &original_mode
+    );
 }
 
 #[test]

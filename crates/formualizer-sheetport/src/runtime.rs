@@ -1012,6 +1012,19 @@ impl<'a> SheetPort<'a> {
         let mut volatile_overridden = false;
         let mut deterministic_overridden = false;
 
+        let deterministic_override = options
+            .deterministic_mode
+            .clone()
+            .filter(|mode| *mode != deterministic_mode);
+
+        if let Some(mode) = deterministic_override {
+            self.workbook
+                .engine_mut()
+                .set_deterministic_mode(mode)
+                .map_err(SheetPortError::from)?;
+            deterministic_overridden = true;
+        }
+
         if let Some(desired_seed) = options.rng_seed
             && desired_seed != seed
         {
@@ -1024,16 +1037,6 @@ impl<'a> SheetPort<'a> {
                 .engine_mut()
                 .set_volatile_level(VolatileLevel::OnOpen);
             volatile_overridden = true;
-        }
-
-        if let Some(mode) = options.deterministic_mode.clone()
-            && mode != deterministic_mode
-        {
-            self.workbook
-                .engine_mut()
-                .set_deterministic_mode(mode)
-                .map_err(SheetPortError::from)?;
-            deterministic_overridden = true;
         }
 
         Ok(EvalConfigRestore {
