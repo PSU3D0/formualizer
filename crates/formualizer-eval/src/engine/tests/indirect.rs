@@ -141,6 +141,47 @@ fn indirect_retarget_parity_across_full_recalc_entrypoints() {
 }
 
 #[test]
+fn indirect_whole_column_schedules_far_formula_rows() {
+    let cfg = EvalConfig {
+        enable_parallel: false,
+        ..Default::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 2, LiteralValue::Text("A:A".to_string()))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 5, LiteralValue::Number(2.0))
+        .unwrap();
+    // Create the dynamic reader before the far formula so stale ordering is exposed.
+    engine
+        .set_cell_formula("Sheet1", 1, 4, parse("=SUM(INDIRECT(B1))"))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 200, 1, parse("=E1"))
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 4),
+        Some(LiteralValue::Number(3.0))
+    );
+
+    engine
+        .set_cell_value("Sheet1", 1, 5, LiteralValue::Number(4.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 4),
+        Some(LiteralValue::Number(5.0))
+    );
+}
+
+#[test]
 fn indirect_supports_quoted_sheet_and_ranges() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
 

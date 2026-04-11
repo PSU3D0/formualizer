@@ -73,6 +73,75 @@ fn infinite_column_sparse_sum_and_count_correct() {
 }
 
 #[test]
+fn whole_column_includes_far_formula_rows_when_arrow_has_earlier_values() {
+    let wb = TestWorkbook::new();
+    let cfg = EvalConfig {
+        enable_parallel: false,
+        ..Default::default()
+    };
+    let mut engine = Engine::new(wb, cfg);
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(2))
+        .unwrap();
+    // Create the whole-column consumer before the far formula so scheduling must rely on
+    // virtual dependencies instead of vertex-id luck.
+    engine
+        .set_cell_formula("Sheet1", 1, 3, parse("=SUM(A:A)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 200, 1, parse("=B1").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3).unwrap(),
+        LiteralValue::Number(3.0)
+    );
+}
+
+#[test]
+fn whole_column_recalc_tracks_formula_cells_beyond_direct_dirty_propagation() {
+    let wb = TestWorkbook::new();
+    let cfg = EvalConfig {
+        enable_parallel: false,
+        ..Default::default()
+    };
+    let mut engine = Engine::new(wb, cfg);
+
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(2))
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 3, parse("=SUM(A:A)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 200, 1, parse("=B1").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3).unwrap(),
+        LiteralValue::Number(3.0)
+    );
+
+    engine
+        .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(5))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3).unwrap(),
+        LiteralValue::Number(6.0)
+    );
+}
+
+#[test]
 fn infinite_row_sum_and_count_correct() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, range_limit_config(16));
