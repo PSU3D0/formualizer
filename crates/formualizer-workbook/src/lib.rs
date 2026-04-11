@@ -1,6 +1,7 @@
 pub mod backends;
 pub mod builtins;
 pub mod error;
+#[cfg(any(feature = "calamine", feature = "json", feature = "umya"))]
 pub(crate) mod load_limits;
 #[cfg(feature = "umya")]
 pub mod recalculate;
