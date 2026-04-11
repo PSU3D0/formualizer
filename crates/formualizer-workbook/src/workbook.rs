@@ -270,6 +270,10 @@ pub trait WasmUdfRuntime: Send + Sync {
         Ok(())
     }
 
+    fn unregister_module(&self, _module_id: &str) -> Result<(), ExcelError> {
+        Ok(())
+    }
+
     fn invoke(
         &self,
         module_id: &str,
@@ -507,10 +511,16 @@ impl WasmPluginManager {
 
     #[cfg(feature = "wasm_plugins")]
     fn unregister_module(&mut self, module_id: &str) -> Result<(), ExcelError> {
-        if self.modules.remove(module_id).is_none() {
+        let Some(registered) = self.modules.remove(module_id) else {
             return Err(ExcelError::new(ExcelErrorKind::Name)
                 .with_message(format!("WASM module {module_id} is not registered")));
+        };
+
+        if let Err(err) = self.runtime.unregister_module(module_id) {
+            self.modules.insert(module_id.to_string(), registered);
+            return Err(err);
         }
+
         Ok(())
     }
 
