@@ -192,6 +192,33 @@ pub struct FormulaParseDiagnostic {
     pub policy: FormulaParsePolicy,
 }
 
+/// Workbook ingest limits applied by loader backends before they materialize large sheets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkbookLoadLimits {
+    /// Hard cap for declared/logical sheet rows.
+    pub max_sheet_rows: u32,
+    /// Hard cap for declared/logical sheet columns.
+    pub max_sheet_cols: u32,
+    /// Hard cap for the rectangular logical area a backend may materialize.
+    pub max_sheet_logical_cells: u64,
+    /// Sparse-sheet checks only trigger once a sheet reaches this many logical cells.
+    pub sparse_sheet_cell_threshold: u64,
+    /// Maximum allowed logical-to-populated-cell ratio once the sparse threshold is crossed.
+    pub max_sparse_cell_ratio: u64,
+}
+
+impl Default for WorkbookLoadLimits {
+    fn default() -> Self {
+        Self {
+            max_sheet_rows: 1_048_576,
+            max_sheet_cols: 16_384,
+            max_sheet_logical_cells: 8_000_000,
+            sparse_sheet_cell_threshold: 250_000,
+            max_sparse_cell_ratio: 1_024,
+        }
+    }
+}
+
 /// Configuration for the evaluation engine
 #[derive(Debug, Clone)]
 pub struct EvalConfig {

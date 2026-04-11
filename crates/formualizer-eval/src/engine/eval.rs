@@ -33,6 +33,7 @@ pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
     pub config: EvalConfig,
+    workbook_load_limits: crate::engine::WorkbookLoadLimits,
     clock: Arc<dyn crate::timezone::ClockProvider>,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
     pub recalc_epoch: u64,
@@ -889,6 +890,7 @@ where
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
+            workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock,
             thread_pool,
             recalc_epoch: 0,
@@ -948,6 +950,7 @@ where
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             config,
+            workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
             clock,
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
@@ -979,6 +982,14 @@ where
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
         engine
+    }
+
+    pub fn workbook_load_limits(&self) -> &crate::engine::WorkbookLoadLimits {
+        &self.workbook_load_limits
+    }
+
+    pub fn set_workbook_load_limits(&mut self, limits: crate::engine::WorkbookLoadLimits) {
+        self.workbook_load_limits = limits;
     }
 
     fn clear_source_cache(&self) {

@@ -1,6 +1,7 @@
 pub mod backends;
 pub mod builtins;
 pub mod error;
+pub(crate) mod load_limits;
 #[cfg(feature = "umya")]
 pub mod recalculate;
 pub mod resolver;
@@ -42,6 +43,7 @@ pub use transaction::{WriteOp, WriteTransaction};
 
 // Re-export for convenience
 pub use formualizer_common::{LiteralValue, RangeAddress};
+pub use formualizer_eval::engine::WorkbookLoadLimits;
 pub use workbook::{
     CustomFnHandler, CustomFnInfo, CustomFnOptions, WASM_ABI_VERSION_V1, WASM_CODEC_VERSION_V1,
     WASM_MANIFEST_SCHEMA_V1, WASM_MANIFEST_SECTION_V1, WasmFunctionSpec, WasmManifestFunction,
