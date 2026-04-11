@@ -25,6 +25,24 @@ struct GridWrite<'a> {
     grid: Vec<Vec<LiteralValue>>,
 }
 
+struct PreparedWrite {
+    sheet: String,
+    row: u32,
+    col: u32,
+    value: LiteralValue,
+}
+
+impl PreparedWrite {
+    fn new(sheet: String, row: u32, col: u32, value: LiteralValue) -> Self {
+        Self {
+            sheet,
+            row,
+            col,
+            value,
+        }
+    }
+}
+
 /// Runtime container that pairs a manifest with a concrete workbook.
 pub struct SheetPort<'a> {
     workbook: &'a mut Workbook,
@@ -132,6 +150,8 @@ impl<'a> SheetPort<'a> {
     }
 
     pub fn write_inputs(&mut self, update: InputUpdate) -> Result<(), SheetPortError> {
+        let mut writes = Vec::new();
+
         for (port_id, value) in update.into_inner() {
             let binding =
                 self.bindings
@@ -154,9 +174,17 @@ impl<'a> SheetPort<'a> {
                 return Err(SheetPortError::ConstraintViolation { violations });
             }
             let binding_clone = binding.clone();
-            self.write_port_value(&binding_clone, value)?;
+            self.write_port_value(&binding_clone, value, &mut writes)?;
         }
-        Ok(())
+
+        self.workbook
+            .action("sheetport.write_inputs", move |action| {
+                for write in writes {
+                    action.set_value(&write.sheet, write.row, write.col, write.value)?;
+                }
+                Ok(())
+            })
+            .map_err(SheetPortError::from)
     }
 
     pub fn evaluate_once(
@@ -609,19 +637,20 @@ impl<'a> SheetPort<'a> {
         &mut self,
         binding: &PortBinding,
         value: PortValue,
+        writes: &mut Vec<PreparedWrite>,
     ) -> Result<(), SheetPortError> {
         match (binding.kind.clone(), value) {
             (BoundPort::Scalar(scalar), PortValue::Scalar(val)) => {
-                self.write_scalar(binding, &scalar, val)
+                self.write_scalar(binding, &scalar, val, writes)
             }
             (BoundPort::Record(record), PortValue::Record(map)) => {
-                self.write_record(binding, &record, map)
+                self.write_record(binding, &record, map, writes)
             }
             (BoundPort::Range(range), PortValue::Range(grid)) => {
-                self.write_range(binding, &range, grid)
+                self.write_range(binding, &range, grid, writes)
             }
             (BoundPort::Table(table), PortValue::Table(rows)) => {
-                self.write_table(binding, &table, rows)
+                self.write_table(binding, &table, rows, writes)
             }
             (_, unexpected) => Err(SheetPortError::InvariantViolation {
                 port: binding.id.clone(),
@@ -638,12 +667,18 @@ impl<'a> SheetPort<'a> {
         binding: &PortBinding,
         scalar: &ScalarBinding,
         value: LiteralValue,
+        writes: &mut Vec<PreparedWrite>,
     ) -> Result<(), SheetPortError> {
         match &scalar.location {
-            crate::location::ScalarLocation::Cell(addr) => self
-                .workbook
-                .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
-                .map_err(SheetPortError::from),
+            crate::location::ScalarLocation::Cell(addr) => {
+                writes.push(PreparedWrite::new(
+                    addr.sheet.clone(),
+                    addr.start_row,
+                    addr.start_col,
+                    value,
+                ));
+                Ok(())
+            }
             crate::location::ScalarLocation::Name(name) => {
                 let addr = self.named_range_address(&binding.id, name)?;
                 if addr.height() != 1 || addr.width() != 1 {
@@ -654,9 +689,13 @@ impl<'a> SheetPort<'a> {
                         ),
                     });
                 }
-                self.workbook
-                    .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
-                    .map_err(SheetPortError::from)
+                writes.push(PreparedWrite::new(
+                    addr.sheet,
+                    addr.start_row,
+                    addr.start_col,
+                    value,
+                ));
+                Ok(())
             }
             _ => Err(SheetPortError::UnsupportedSelector {
                 port: binding.id.clone(),
@@ -670,6 +709,7 @@ impl<'a> SheetPort<'a> {
         binding: &PortBinding,
         record: &RecordBinding,
         update: BTreeMap<String, LiteralValue>,
+        writes: &mut Vec<PreparedWrite>,
     ) -> Result<(), SheetPortError> {
         for (field_name, value) in update {
             let field_binding = record.fields.get(&field_name).ok_or_else(|| {
@@ -680,9 +720,12 @@ impl<'a> SheetPort<'a> {
             })?;
             match &field_binding.location {
                 crate::location::FieldLocation::Cell(addr) => {
-                    self.workbook
-                        .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
-                        .map_err(SheetPortError::from)?;
+                    writes.push(PreparedWrite::new(
+                        addr.sheet.clone(),
+                        addr.start_row,
+                        addr.start_col,
+                        value,
+                    ));
                 }
                 crate::location::FieldLocation::Name(name) => {
                     let addr = self.named_range_address(&binding.id, name)?;
@@ -694,9 +737,12 @@ impl<'a> SheetPort<'a> {
                             ),
                         });
                     }
-                    self.workbook
-                        .set_value(&addr.sheet, addr.start_row, addr.start_col, value)
-                        .map_err(SheetPortError::from)?;
+                    writes.push(PreparedWrite::new(
+                        addr.sheet,
+                        addr.start_row,
+                        addr.start_col,
+                        value,
+                    ));
                 }
                 _ => {
                     return Err(SheetPortError::UnsupportedSelector {
@@ -714,17 +760,21 @@ impl<'a> SheetPort<'a> {
         binding: &PortBinding,
         range: &RangeBinding,
         grid: Vec<Vec<LiteralValue>>,
+        writes: &mut Vec<PreparedWrite>,
     ) -> Result<(), SheetPortError> {
         match &range.location {
-            crate::location::AreaLocation::Range(addr) => self.write_grid(GridWrite {
-                port_id: binding.id.as_str(),
-                sheet: &addr.sheet,
-                start_row: addr.start_row,
-                start_col: addr.start_col,
-                height: addr.height(),
-                width: addr.width(),
-                grid,
-            }),
+            crate::location::AreaLocation::Range(addr) => self.write_grid(
+                GridWrite {
+                    port_id: binding.id.as_str(),
+                    sheet: &addr.sheet,
+                    start_row: addr.start_row,
+                    start_col: addr.start_col,
+                    height: addr.height(),
+                    width: addr.width(),
+                    grid,
+                },
+                writes,
+            ),
             crate::location::AreaLocation::Layout(layout) => {
                 let bounds = resolve_range_layout(&binding.id, self.workbook, layout)?;
                 let expected_width = bounds.columns.len() as u32;
@@ -735,15 +785,18 @@ impl<'a> SheetPort<'a> {
                     });
                 }
                 let height = grid.len() as u32;
-                self.write_grid(GridWrite {
-                    port_id: binding.id.as_str(),
-                    sheet: &bounds.sheet,
-                    start_row: bounds.start_row,
-                    start_col: bounds.start_col,
-                    height,
-                    width: expected_width,
-                    grid,
-                })
+                self.write_grid(
+                    GridWrite {
+                        port_id: binding.id.as_str(),
+                        sheet: &bounds.sheet,
+                        start_row: bounds.start_row,
+                        start_col: bounds.start_col,
+                        height,
+                        width: expected_width,
+                        grid,
+                    },
+                    writes,
+                )
             }
             crate::location::AreaLocation::Name(name) => {
                 let addr = self.named_range_address(&binding.id, name)?;
@@ -765,15 +818,18 @@ impl<'a> SheetPort<'a> {
                         ),
                     });
                 }
-                self.write_grid(GridWrite {
-                    port_id: binding.id.as_str(),
-                    sheet: &addr.sheet,
-                    start_row: addr.start_row,
-                    start_col: addr.start_col,
-                    height,
-                    width: expected_width,
-                    grid,
-                })
+                self.write_grid(
+                    GridWrite {
+                        port_id: binding.id.as_str(),
+                        sheet: &addr.sheet,
+                        start_row: addr.start_row,
+                        start_col: addr.start_col,
+                        height,
+                        width: expected_width,
+                        grid,
+                    },
+                    writes,
+                )
             }
             other => Err(SheetPortError::UnsupportedSelector {
                 port: binding.id.clone(),
@@ -782,7 +838,11 @@ impl<'a> SheetPort<'a> {
         }
     }
 
-    fn write_grid(&mut self, params: GridWrite<'_>) -> Result<(), SheetPortError> {
+    fn write_grid(
+        &mut self,
+        params: GridWrite<'_>,
+        writes: &mut Vec<PreparedWrite>,
+    ) -> Result<(), SheetPortError> {
         let GridWrite {
             port_id,
             sheet,
@@ -808,9 +868,12 @@ impl<'a> SheetPort<'a> {
             let row_idx = start_row + row_offset as u32;
             for (col_offset, value) in row.into_iter().enumerate() {
                 let col_idx = start_col + col_offset as u32;
-                self.workbook
-                    .set_value(sheet, row_idx, col_idx, value)
-                    .map_err(SheetPortError::from)?;
+                writes.push(PreparedWrite::new(
+                    sheet.to_string(),
+                    row_idx,
+                    col_idx,
+                    value,
+                ));
             }
         }
         Ok(())
@@ -834,6 +897,7 @@ impl<'a> SheetPort<'a> {
         binding: &PortBinding,
         table: &TableBinding,
         value: TableValue,
+        writes: &mut Vec<PreparedWrite>,
     ) -> Result<(), SheetPortError> {
         match &table.location {
             crate::location::TableLocation::Layout(layout) => {
@@ -853,7 +917,7 @@ impl<'a> SheetPort<'a> {
                 let rows = value.rows;
                 let new_row_count = rows.len() as u32;
 
-                for (row_offset, row) in rows.iter().enumerate() {
+                for (row_offset, row) in rows.into_iter().enumerate() {
                     let row_idx = bounds.data_start_row + row_offset as u32;
                     for (col_binding, &col_index) in
                         table.columns.iter().zip(bounds.column_indices.iter())
@@ -863,18 +927,24 @@ impl<'a> SheetPort<'a> {
                             .get(&col_binding.name)
                             .cloned()
                             .unwrap_or(LiteralValue::Empty);
-                        self.workbook
-                            .set_value(&bounds.sheet, row_idx, col_index, cell_value)
-                            .map_err(SheetPortError::from)?;
+                        writes.push(PreparedWrite::new(
+                            bounds.sheet.clone(),
+                            row_idx,
+                            col_index,
+                            cell_value,
+                        ));
                     }
                 }
 
                 if new_row_count < existing_row_count {
                     for row in (bounds.data_start_row + new_row_count)..=bounds.data_end_row {
                         for &col_index in &bounds.column_indices {
-                            self.workbook
-                                .set_value(&bounds.sheet, row, col_index, LiteralValue::Empty)
-                                .map_err(SheetPortError::from)?;
+                            writes.push(PreparedWrite::new(
+                                bounds.sheet.clone(),
+                                row,
+                                col_index,
+                                LiteralValue::Empty,
+                            ));
                         }
                     }
                 }
@@ -884,9 +954,12 @@ impl<'a> SheetPort<'a> {
                     | sheetport_spec::LayoutTermination::UntilMarker => {
                         let blank_row = bounds.data_start_row + new_row_count;
                         for &col_index in &bounds.column_indices {
-                            self.workbook
-                                .set_value(&bounds.sheet, blank_row, col_index, LiteralValue::Empty)
-                                .map_err(SheetPortError::from)?;
+                            writes.push(PreparedWrite::new(
+                                bounds.sheet.clone(),
+                                blank_row,
+                                col_index,
+                                LiteralValue::Empty,
+                            ));
                         }
                     }
                     sheetport_spec::LayoutTermination::SheetEnd => {}
