@@ -74,7 +74,7 @@ version = "0.240"
 optional = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.wasmtime]
-version = "41.0.4"
+version = "42.0.2"
 optional = true
 
 [dev-dependencies]
