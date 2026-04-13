@@ -4,6 +4,24 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-04-13
+
+### Security and hardening
+
+- Hardened native Wasmtime-backed plugins by enforcing fuel and memory budgets, revoking cached modules on unregister, capping guest ABI payload sizing, and bumping `wasmtime` to `42.0.2` to clear the current security advisories. (#42, #44, #51)
+- Added workbook ingest guardrails for oversized logical sheets and extreme sparse-sheet ratios across JSON, Calamine, and Umya loaders. (#47)
+- Hardened workbook coordinate validation across Python and wasm bindings so zero-based or non-positive coordinates are rejected consistently. (#45)
+
+### Fixed
+
+- Fixed `SheetPort` evaluation overrides leaking after invalid deterministic-mode requests and made staged input writes atomic across multi-port and range updates. (#43, #46)
+- Restored whole/open-ended range dependency scheduling for far-formula rows and dynamic `INDIRECT` consumers, improving recalculation correctness for compressed and open-ended ranges. (#48)
+- Fixed `INDEX` over single-row references so two-argument calls like `INDEX(A1:C1, 2)` resolve horizontally and match Excel/Python SDK expectations. (#50)
+
+### Tooling and quality
+
+- Bumped `next` in the docs site to `16.2.3` to resolve the remaining product-track Dependabot alert. (#52)
+
 ## [0.5.4] - 2026-04-06
 
 ### Fixed
@@ -74,7 +92,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/PSU3D0/formualizer/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/PSU3D0/formualizer/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/PSU3D0/formualizer/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/PSU3D0/formualizer/compare/v0.5.1...v0.5.2
