@@ -765,6 +765,37 @@ fn wasmtime_runtime_can_bind_and_evaluate_numeric_export() {
 
 #[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
 #[test]
+fn unregister_wasm_module_revokes_existing_wasm_bindings() {
+    let mut wb = workbook();
+    wb.use_wasmtime_runtime();
+
+    let bytes = wasm_module_with_manifest_and_div_export(DIV_ONLY_MANIFEST);
+    wb.attach_wasm_module_bytes("plugin://math/div", &bytes)
+        .unwrap();
+
+    wb.bind_wasm_function(
+        "WASM_DIV",
+        CustomFnOptions {
+            min_args: 2,
+            max_args: Some(2),
+            ..Default::default()
+        },
+        WasmFunctionSpec::new("plugin://math/div", "fn_safe_div", 1),
+    )
+    .unwrap();
+
+    wb.unregister_wasm_module("plugin://math/div").unwrap();
+
+    wb.set_formula("Sheet1", 1, 1, "=WASM_DIV(20,4)").unwrap();
+    let value = wb.evaluate_cell("Sheet1", 1, 1).unwrap();
+    let LiteralValue::Error(err) = value else {
+        panic!("expected unregistered module to stop existing wasm bindings");
+    };
+    assert_eq!(err.kind, ExcelErrorKind::Name);
+}
+
+#[cfg(all(feature = "wasm_runtime_wasmtime", not(target_arch = "wasm32")))]
+#[test]
 fn wasmtime_runtime_enforces_fuel_limit_for_untrusted_plugins() {
     let mut wb = workbook();
     wb.use_wasmtime_runtime();

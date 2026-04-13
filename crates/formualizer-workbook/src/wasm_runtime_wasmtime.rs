@@ -16,10 +16,48 @@ const DEFAULT_WASM_FUEL_LIMIT: u64 = 10_000_000;
 const DEFAULT_WASM_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_WASM_ABI_RESPONSE_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 
+struct CappedBufferWriter {
+    buf: Vec<u8>,
+    limit: usize,
+}
+
+impl CappedBufferWriter {
+    fn with_limit(limit: usize) -> Self {
+        Self {
+            buf: Vec::new(),
+            limit,
+        }
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.buf
+    }
+}
+
+impl std::io::Write for CappedBufferWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let next_len = self.buf.len().checked_add(bytes.len()).ok_or_else(|| {
+            std::io::Error::other("WASM request length overflows host address space")
+        })?;
+        if next_len > self.limit {
+            return Err(std::io::Error::other(format!(
+                "WASM request exceeds sandbox limit ({next_len} bytes > {} bytes)",
+                self.limit
+            )));
+        }
+        self.buf.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Serialize)]
-struct WasmInvokeRequest {
+struct WasmInvokeRequest<'a> {
     codec_version: u32,
-    args: Vec<LiteralValue>,
+    args: &'a [LiteralValue],
 }
 
 #[derive(Deserialize)]
@@ -88,6 +126,27 @@ impl WasmtimeWasmRuntime {
         runtime_hint: Option<&WasmRuntimeHint>,
     ) -> Result<usize, ExcelError> {
         Ok(Self::memory_limit_bytes(runtime_hint)?.min(DEFAULT_WASM_ABI_RESPONSE_LIMIT_BYTES))
+    }
+
+    fn encode_request(
+        codec_version: u32,
+        args: &[LiteralValue],
+        runtime_hint: Option<&WasmRuntimeHint>,
+    ) -> Result<Vec<u8>, ExcelError> {
+        let request_limit = Self::memory_limit_bytes(runtime_hint)?;
+        let mut writer = CappedBufferWriter::with_limit(request_limit);
+        serde_json::to_writer(
+            &mut writer,
+            &WasmInvokeRequest {
+                codec_version,
+                args,
+            },
+        )
+        .map_err(|err| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("Failed to encode WASM invoke request: {err}"))
+        })?;
+        Ok(writer.into_inner())
     }
 
     fn new_store(
@@ -236,14 +295,7 @@ impl WasmtimeWasmRuntime {
                     .with_message(format!("Missing typed ABI export: {export_name}"))
             })?;
 
-        let request = serde_json::to_vec(&WasmInvokeRequest {
-            codec_version,
-            args: args.to_vec(),
-        })
-        .map_err(|err| {
-            ExcelError::new(ExcelErrorKind::Value)
-                .with_message(format!("Failed to encode WASM invoke request: {err}"))
-        })?;
+        let request = Self::encode_request(codec_version, args, runtime_hint)?;
 
         let req_len_i32 = i32::try_from(request.len()).map_err(|_| {
             ExcelError::new(ExcelErrorKind::Value)
@@ -366,6 +418,11 @@ impl WasmUdfRuntime for WasmtimeWasmRuntime {
         Ok(())
     }
 
+    fn unregister_module(&self, module_id: &str) -> Result<(), ExcelError> {
+        self.modules.write().remove(module_id);
+        Ok(())
+    }
+
     fn invoke(
         &self,
         module_id: &str,
@@ -440,4 +497,29 @@ impl WasmUdfRuntime for WasmtimeWasmRuntime {
 
 pub(crate) fn new_wasmtime_runtime() -> WasmtimeWasmRuntime {
     WasmtimeWasmRuntime::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WasmtimeWasmRuntime;
+    use crate::workbook::WasmRuntimeHint;
+    use formualizer_common::{LiteralValue, error::ExcelErrorKind};
+
+    #[test]
+    fn encode_request_rejects_payloads_larger_than_the_sandbox_limit() {
+        let args = [LiteralValue::Text("x".repeat(128 * 1024))];
+        let hint = WasmRuntimeHint {
+            fuel_limit: Some(100_000),
+            memory_limit_bytes: Some(64 * 1024),
+        };
+
+        let err = WasmtimeWasmRuntime::encode_request(1, &args, Some(&hint)).unwrap_err();
+
+        assert_eq!(err.kind, ExcelErrorKind::Value);
+        assert!(
+            err.message
+                .unwrap_or_default()
+                .contains("request exceeds sandbox limit")
+        );
+    }
 }
