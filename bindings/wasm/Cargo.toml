@@ -24,6 +24,7 @@ serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1", optional = true }
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["wasm-js", "json"] }
 serde_json = { workspace = true }
+chrono = { workspace = true }
 
 [dependencies.web-sys]
 workspace = true

@@ -291,6 +291,15 @@ export interface RegisteredFunctionInfo {
   allowOverrideBuiltin: boolean;
 }
 
+export type DeterministicTimezone = 'utc' | 'local' | number;
+
+export interface SheetPortEvaluateOptions {
+  freezeVolatile?: boolean;
+  rngSeed?: number;
+  deterministicTimestampUtc?: Date | string;
+  deterministicTimezone?: DeterministicTimezone;
+}
+
 export interface WorkbookApi extends wasm.Workbook {
   registerFunction(
     name: string,
@@ -307,8 +316,17 @@ export type WorkbookConstructor = {
   prototype: WorkbookApi;
 };
 
+export interface SheetPortSessionApi extends wasm.SheetPortSession {
+  evaluateOnce(options?: SheetPortEvaluateOptions): Record<string, unknown>;
+}
+
+export type SheetPortSessionConstructor = {
+  fromManifestYaml(yaml: string, workbook: WorkbookApi): SheetPortSessionApi;
+  prototype: SheetPortSessionApi;
+};
+
 export const Workbook = wasm.Workbook as unknown as WorkbookConstructor;
-export const SheetPortSession = wasm.SheetPortSession;
+export const SheetPortSession = wasm.SheetPortSession as unknown as SheetPortSessionConstructor;
 
 // Re-export the initialization function as default
 export default initializeWasm;

@@ -646,6 +646,33 @@ ports:
       type: number
 "#;
 
+const NOW_TODAY_MANIFEST: &str = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: wasm-deterministic-sheetport-tests
+  name: WASM Deterministic SheetPort Tests
+  workbook:
+    uri: memory://wasm-deterministic-sheetport.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: now_value
+    dir: out
+    shape: scalar
+    location:
+      a1: Outputs!A1
+    schema:
+      type: number
+  - id: today_value
+    dir: out
+    shape: scalar
+    location:
+      a1: Outputs!A2
+    schema:
+      type: number
+"#;
+
 fn build_sheetport_workbook() -> Workbook {
     let wb = Workbook::new();
     wb.add_sheet("Inputs".to_string()).unwrap();
@@ -658,6 +685,16 @@ fn build_sheetport_workbook() -> Workbook {
     wb.set_value("Inputs".to_string(), 1, 3, JsValue::from_str("seed"))
         .unwrap();
     wb.set_value("Outputs".to_string(), 1, 1, JsValue::from_f64(42.0))
+        .unwrap();
+    wb
+}
+
+fn build_now_today_workbook() -> Workbook {
+    let wb = Workbook::new();
+    wb.add_sheet("Outputs".to_string()).unwrap();
+    wb.set_formula("Outputs".to_string(), 1, 1, "NOW()".to_string())
+        .unwrap();
+    wb.set_formula("Outputs".to_string(), 2, 1, "TODAY()".to_string())
         .unwrap();
     wb
 }
@@ -788,4 +825,151 @@ fn test_sheetport_session_constraint_error() {
         .dyn_into::<js_sys::Array>()
         .unwrap();
     assert!(violations.length() > 0);
+}
+
+#[wasm_bindgen_test]
+fn test_sheetport_session_supports_deterministic_timestamp_and_timezone() {
+    let wb = build_now_today_workbook();
+    let mut session =
+        SheetPortSession::from_manifest_yaml(NOW_TODAY_MANIFEST.to_string(), &wb).unwrap();
+
+    let first_options = Object::new();
+    set_prop(
+        &first_options,
+        "deterministicTimestampUtc",
+        js_sys::Date::new(&JsValue::from_str("2025-01-15T10:00:00Z")).into(),
+    );
+    set_prop(
+        &first_options,
+        "deterministicTimezone",
+        JsValue::from_str("utc"),
+    );
+    let first: Object = session
+        .evaluate_once(first_options.into())
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+
+    let second_options = Object::new();
+    set_prop(
+        &second_options,
+        "deterministicTimestampUtc",
+        JsValue::from_str("2025-01-15T10:00:00Z"),
+    );
+    set_prop(
+        &second_options,
+        "deterministicTimezone",
+        JsValue::from_f64(0.0),
+    );
+    let second: Object = session
+        .evaluate_once(second_options.into())
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+
+    assert_eq!(
+        js_get_f64(&first, "now_value"),
+        js_get_f64(&second, "now_value")
+    );
+    assert_eq!(
+        js_get_f64(&first, "today_value"),
+        js_get_f64(&second, "today_value")
+    );
+
+    let different_options = Object::new();
+    set_prop(
+        &different_options,
+        "deterministicTimestampUtc",
+        JsValue::from_str("2025-01-16T10:00:00Z"),
+    );
+    set_prop(
+        &different_options,
+        "deterministicTimezone",
+        JsValue::from_str("utc"),
+    );
+    let different: Object = session
+        .evaluate_once(different_options.into())
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+
+    assert_ne!(
+        js_get_f64(&first, "now_value"),
+        js_get_f64(&different, "now_value")
+    );
+    assert_ne!(
+        js_get_f64(&first, "today_value"),
+        js_get_f64(&different, "today_value")
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_sheetport_session_rejects_timezone_without_timestamp() {
+    let wb = build_now_today_workbook();
+    let mut session =
+        SheetPortSession::from_manifest_yaml(NOW_TODAY_MANIFEST.to_string(), &wb).unwrap();
+
+    let options = Object::new();
+    set_prop(&options, "deterministicTimezone", JsValue::from_str("utc"));
+    let err = session.evaluate_once(options.into()).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("requires deterministicTimestampUtc")
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_sheetport_session_rejects_non_integer_rng_seed() {
+    let wb = build_sheetport_workbook();
+    let mut session =
+        SheetPortSession::from_manifest_yaml(SHEETPORT_MANIFEST.to_string(), &wb).unwrap();
+
+    let options = Object::new();
+    set_prop(&options, "rngSeed", JsValue::from_f64(1.5));
+    let err = session.evaluate_once(options.into()).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("non-negative safe integer")
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_sheetport_session_surfaces_local_timezone_determinism_error() {
+    let wb = build_now_today_workbook();
+    let mut session =
+        SheetPortSession::from_manifest_yaml(NOW_TODAY_MANIFEST.to_string(), &wb).unwrap();
+
+    let options = Object::new();
+    set_prop(
+        &options,
+        "deterministicTimestampUtc",
+        JsValue::from_str("2025-01-15T10:00:00Z"),
+    );
+    set_prop(
+        &options,
+        "deterministicTimezone",
+        JsValue::from_str("local"),
+    );
+    let err = session.evaluate_once(options.into()).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    let kind = js_sys::Reflect::get(error.as_ref(), &JsValue::from_str("kind"))
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert_eq!(kind, "Engine");
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("Deterministic mode forbids `Local` timezone")
+    );
 }

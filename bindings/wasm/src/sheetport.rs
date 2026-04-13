@@ -1,5 +1,8 @@
 use crate::utils::{js_error, js_error_with_cause};
 use crate::workbook::{Workbook, js_to_literal, literal_to_js};
+use chrono::{DateTime, Utc};
+use formualizer::eval::engine::DeterministicMode;
+use formualizer::eval::timezone::TimeZoneSpec;
 use formualizer::sheetport_spec::{Direction, Manifest, ManifestIssue};
 use formualizer::{
     BoundPort, ConstraintViolation, EvalOptions, ManifestBindings, PortBinding, PortValue,
@@ -467,6 +470,8 @@ fn range_address_to_js(addr: &RangeAddress) -> JsValue {
 }
 
 fn parse_eval_options(options: JsValue) -> Result<EvalOptions, JsValue> {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
     let mut eval = EvalOptions::default();
     if options.is_null() || options.is_undefined() {
         return Ok(eval);
@@ -479,36 +484,122 @@ fn parse_eval_options(options: JsValue) -> Result<EvalOptions, JsValue> {
         eval.freeze_volatile = value;
     }
     if let Some(value) = get_optional_number(&obj, "rngSeed")? {
-        if value < 0.0 {
-            return Err(js_error("rngSeed must be non-negative"));
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > MAX_SAFE_INTEGER {
+            return Err(js_error("rngSeed must be a non-negative safe integer"));
         }
         eval.rng_seed = Some(value as u64);
     }
+
+    let deterministic_timestamp_utc = get_optional_value(&obj, "deterministicTimestampUtc")?;
+    let deterministic_timezone = get_optional_value(&obj, "deterministicTimezone")?;
+    if let Some(value) = deterministic_timestamp_utc {
+        let timestamp_utc = parse_timestamp_utc(&value)?;
+        let timezone = if let Some(value) = deterministic_timezone {
+            parse_timezone_spec(&value)?
+        } else {
+            TimeZoneSpec::Utc
+        };
+        eval.deterministic_mode = Some(DeterministicMode::Enabled {
+            timestamp_utc,
+            timezone,
+        });
+    } else if deterministic_timezone.is_some() {
+        return Err(js_error(
+            "deterministicTimezone requires deterministicTimestampUtc",
+        ));
+    }
+
     Ok(eval)
 }
 
-fn get_optional_bool(obj: &js_sys::Object, key: &str) -> Result<Option<bool>, JsValue> {
+fn get_optional_value(obj: &js_sys::Object, key: &str) -> Result<Option<JsValue>, JsValue> {
     let value = js_sys::Reflect::get(obj, &JsValue::from_str(key))
         .map_err(|err| js_error(format!("failed to read `{key}`: {err:?}")))?;
     if value.is_undefined() || value.is_null() {
         Ok(None)
     } else {
-        Ok(Some(value.as_bool().ok_or_else(|| {
-            js_error(format!("`{key}` must be a boolean"))
-        })?))
+        Ok(Some(value))
     }
 }
 
+fn get_optional_bool(obj: &js_sys::Object, key: &str) -> Result<Option<bool>, JsValue> {
+    let Some(value) = get_optional_value(obj, key)? else {
+        return Ok(None);
+    };
+    Ok(Some(value.as_bool().ok_or_else(|| {
+        js_error(format!("`{key}` must be a boolean"))
+    })?))
+}
+
 fn get_optional_number(obj: &js_sys::Object, key: &str) -> Result<Option<f64>, JsValue> {
-    let value = js_sys::Reflect::get(obj, &JsValue::from_str(key))
-        .map_err(|err| js_error(format!("failed to read `{key}`: {err:?}")))?;
-    if value.is_undefined() || value.is_null() {
-        Ok(None)
-    } else {
-        Ok(Some(value.as_f64().ok_or_else(|| {
-            js_error(format!("`{key}` must be a number"))
-        })?))
+    let Some(value) = get_optional_value(obj, key)? else {
+        return Ok(None);
+    };
+    Ok(Some(value.as_f64().ok_or_else(|| {
+        js_error(format!("`{key}` must be a number"))
+    })?))
+}
+
+fn parse_timestamp_utc(value: &JsValue) -> Result<DateTime<Utc>, JsValue> {
+    if let Ok(date) = value.clone().dyn_into::<js_sys::Date>() {
+        let millis = date.get_time();
+        if !millis.is_finite() {
+            return Err(js_error(
+                "`deterministicTimestampUtc` must be a valid Date or RFC3339 timestamp string",
+            ));
+        }
+        if millis.fract() != 0.0 || millis < i64::MIN as f64 || millis > i64::MAX as f64 {
+            return Err(js_error(
+                "`deterministicTimestampUtc` is outside the supported timestamp range",
+            ));
+        }
+        return DateTime::<Utc>::from_timestamp_millis(millis as i64).ok_or_else(|| {
+            js_error("`deterministicTimestampUtc` is outside the supported timestamp range")
+        });
     }
+
+    if let Some(text) = value.as_string() {
+        return DateTime::parse_from_rfc3339(&text)
+            .map(|timestamp| timestamp.with_timezone(&Utc))
+            .map_err(|err| {
+                js_error(format!(
+                    "`deterministicTimestampUtc` must be a valid RFC3339 timestamp: {err}"
+                ))
+            });
+    }
+
+    Err(js_error(
+        "`deterministicTimestampUtc` must be a Date or RFC3339 timestamp string",
+    ))
+}
+
+fn parse_timezone_spec(value: &JsValue) -> Result<TimeZoneSpec, JsValue> {
+    if let Some(text) = value.as_string() {
+        return match text.to_ascii_lowercase().as_str() {
+            "utc" => Ok(TimeZoneSpec::Utc),
+            "local" => Ok(TimeZoneSpec::Local),
+            _ => Err(js_error(
+                "`deterministicTimezone` must be 'utc', 'local', or an integer offset in seconds",
+            )),
+        };
+    }
+
+    if let Some(secs) = value.as_f64() {
+        if !secs.is_finite()
+            || secs.fract() != 0.0
+            || secs < i32::MIN as f64
+            || secs > i32::MAX as f64
+        {
+            return Err(js_error(
+                "`deterministicTimezone` must be 'utc', 'local', or an integer offset in seconds",
+            ));
+        }
+        return Ok(TimeZoneSpec::FixedOffsetSeconds(secs as i32));
+    }
+
+    Err(js_error(
+        "`deterministicTimezone` must be 'utc', 'local', or an integer offset in seconds",
+    ))
 }
 
 fn set(target: &js_sys::Object, key: impl AsRef<str>, value: JsValue) -> Result<(), JsValue> {
