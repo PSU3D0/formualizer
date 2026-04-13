@@ -35,6 +35,13 @@ pub enum IoError {
         message: String,
     },
 
+    #[error("Workbook load budget exceeded in {backend} for sheet {sheet}: {message}")]
+    LoadBudgetExceeded {
+        backend: String,
+        sheet: String,
+        message: String,
+    },
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -52,6 +59,14 @@ impl IoError {
         IoError::Backend {
             backend: backend.to_string(),
             message: err.to_string(),
+        }
+    }
+
+    pub fn load_budget_exceeded(backend: &str, sheet: &str, message: String) -> Self {
+        IoError::LoadBudgetExceeded {
+            backend: backend.to_string(),
+            sheet: sheet.to_string(),
+            message,
         }
     }
 }

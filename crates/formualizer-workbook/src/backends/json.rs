@@ -1,4 +1,5 @@
 use crate::IoError;
+use crate::load_limits::enforce_sheet_load_limits;
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, MergedRange, NamedRange, SaveDestination, SheetData,
     SpreadsheetReader, SpreadsheetWriter, TableDefinition,
@@ -718,6 +719,14 @@ where
             });
             let rows = dims.0 as usize;
             let cols = dims.1 as usize;
+            enforce_sheet_load_limits(
+                "json",
+                name,
+                dims.0,
+                dims.1,
+                sheet.cells.len(),
+                engine.workbook_load_limits(),
+            )?;
 
             let mut aib = formualizer_eval::arrow_store::IngestBuilder::new(
                 name,

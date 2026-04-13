@@ -1,3 +1,4 @@
+use crate::load_limits::enforce_sheet_load_limits;
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, DefinedName, DefinedNameDefinition, DefinedNameScope,
     MergedRange, SheetData, SpreadsheetReader,
@@ -646,16 +647,37 @@ where
                 let r = wb.worksheet_range(n)?;
                 let f = wb.worksheet_formula(n).ok();
                 // Respect potential non-(1,1) starts in calamine ranges
-                let sr0 = r.start().unwrap_or_default().0; // 0-based
-                let sc0 = r.start().unwrap_or_default().1; // 0-based
-                // Total logical dimensions include top/left padding
-                dims = (r.height() as u32 + sr0, r.width() as u32 + sc0);
+                let value_sr0 = r.start().unwrap_or_default().0; // 0-based
+                let value_sc0 = r.start().unwrap_or_default().1; // 0-based
+                let mut max_rows = r.height() as u32 + value_sr0;
+                let mut max_cols = r.width() as u32 + value_sc0;
+                if let Some(frm_range) = f.as_ref() {
+                    let formula_sr0 = frm_range.start().unwrap_or_default().0;
+                    let formula_sc0 = frm_range.start().unwrap_or_default().1;
+                    max_rows = max_rows.max(frm_range.height() as u32 + formula_sr0);
+                    max_cols = max_cols.max(frm_range.width() as u32 + formula_sc0);
+                }
+                dims = (max_rows, max_cols);
                 range = r;
                 formulas_range = f;
             }
             if debug {
                 eprintln!("[fz][load]    dims={}x{}", dims.0, dims.1);
             }
+            let populated_cells = range.used_cells().count()
+                + formulas_range
+                    .as_ref()
+                    .map(|frm_range| frm_range.used_cells().count())
+                    .unwrap_or(0);
+            enforce_sheet_load_limits(
+                "calamine",
+                n,
+                dims.0,
+                dims.1,
+                populated_cells,
+                engine.workbook_load_limits(),
+            )
+            .map_err(|err| calamine::Error::Io(std::io::Error::other(err.to_string())))?;
             // Local Arrow ingest builder for this sheet
             // Compute absolute alignment from range start offsets.
             let sr0 = range.start().unwrap_or_default().0 as usize; // top padding (rows)

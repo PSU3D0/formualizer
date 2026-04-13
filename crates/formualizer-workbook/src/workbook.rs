@@ -986,6 +986,7 @@ pub enum WorkbookMode {
 pub struct WorkbookConfig {
     pub eval: formualizer_eval::engine::EvalConfig,
     pub enable_changelog: bool,
+    pub ingest_limits: formualizer_eval::engine::WorkbookLoadLimits,
 }
 
 impl WorkbookConfig {
@@ -993,6 +994,7 @@ impl WorkbookConfig {
         Self {
             eval: formualizer_eval::engine::EvalConfig::default(),
             enable_changelog: false,
+            ingest_limits: formualizer_eval::engine::WorkbookLoadLimits::default(),
         }
     }
 
@@ -1005,7 +1007,16 @@ impl WorkbookConfig {
         Self {
             eval,
             enable_changelog: true,
+            ingest_limits: formualizer_eval::engine::WorkbookLoadLimits::default(),
         }
+    }
+
+    pub fn with_ingest_limits(
+        mut self,
+        ingest_limits: formualizer_eval::engine::WorkbookLoadLimits,
+    ) -> Self {
+        self.ingest_limits = ingest_limits;
+        self
     }
 }
 
@@ -1021,9 +1032,11 @@ impl Workbook {
         config.eval.delta_overlay_enabled = true;
         config.eval.write_formula_overlay_enabled = true;
 
+        let ingest_limits = config.ingest_limits.clone();
         let custom_functions = Arc::new(RwLock::new(BTreeMap::new()));
         let resolver = WBResolver::new(custom_functions.clone());
-        let engine = formualizer_eval::engine::Engine::new(resolver, config.eval);
+        let mut engine = formualizer_eval::engine::Engine::new(resolver, config.eval);
+        engine.set_workbook_load_limits(ingest_limits);
 
         let mut log = formualizer_eval::engine::ChangeLog::new();
         log.set_enabled(config.enable_changelog);

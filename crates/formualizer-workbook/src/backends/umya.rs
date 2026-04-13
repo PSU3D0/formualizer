@@ -1,3 +1,4 @@
+use crate::load_limits::enforce_sheet_load_limits;
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, NamedRange, NamedRangeScope, SheetData,
     SpreadsheetReader, SpreadsheetWriter,
@@ -1121,6 +1122,14 @@ where
             });
             let rows = dims.0 as usize;
             let cols = dims.1 as usize;
+            enforce_sheet_load_limits(
+                "umya",
+                n,
+                dims.0,
+                dims.1,
+                sheet_data.cells.len(),
+                engine.workbook_load_limits(),
+            )?;
 
             let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
             for r in 1..=rows {
