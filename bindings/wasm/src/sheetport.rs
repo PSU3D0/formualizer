@@ -172,11 +172,11 @@ fn snapshot_to_js(map: &BTreeMap<String, PortValue>) -> Result<JsValue, JsValue>
 
 fn port_value_to_js(value: &PortValue) -> Result<JsValue, JsValue> {
     Ok(match value {
-        PortValue::Scalar(literal) => literal_to_js(literal.clone()),
+        PortValue::Scalar(literal) => literal_to_js(literal),
         PortValue::Record(fields) => {
             let obj = js_sys::Object::new();
             for (field, literal) in fields {
-                set(&obj, field, literal_to_js(literal.clone()))?;
+                set(&obj, field, literal_to_js(literal))?;
             }
             obj.into()
         }
@@ -185,7 +185,7 @@ fn port_value_to_js(value: &PortValue) -> Result<JsValue, JsValue> {
             for row in rows {
                 let arr = js_sys::Array::new();
                 for cell in row {
-                    arr.push(&literal_to_js(cell.clone()));
+                    arr.push(&literal_to_js(cell));
                 }
                 outer.push(&arr);
             }
@@ -200,7 +200,7 @@ fn table_value_to_js(table: &TableValue) -> Result<JsValue, JsValue> {
     for row in &table.rows {
         let obj = js_sys::Object::new();
         for (column, literal) in &row.values {
-            set(&obj, column, literal_to_js(literal.clone()))?;
+            set(&obj, column, literal_to_js(literal))?;
         }
         outer.push(&obj);
     }

@@ -68,7 +68,7 @@ impl formualizer::workbook::CustomFnHandler for JsCustomFnHandler {
     ) -> Result<formualizer::LiteralValue, ExcelError> {
         let js_args = js_sys::Array::new();
         for arg in args {
-            js_args.push(&literal_to_js(arg.clone()));
+            js_args.push(&literal_to_js(arg));
         }
 
         let value = JS_CALLBACK_REGISTRY
@@ -91,6 +91,30 @@ fn register_js_callback(callback: js_sys::Function) -> u64 {
 
 fn unregister_js_callback(callback_id: u64) {
     JS_CALLBACK_REGISTRY.with(|registry| registry.borrow_mut().remove(callback_id));
+}
+
+fn cell_coords_are_valid(row: u32, col: u32) -> bool {
+    row != 0 && col != 0
+}
+
+fn validate_cell_coords(row: u32, col: u32) -> Result<(), JsValue> {
+    if cell_coords_are_valid(row, col) {
+        Ok(())
+    } else {
+        Err(js_error(format!(
+            "row/col are 1-based (row={row}, col={col})"
+        )))
+    }
+}
+
+fn parse_target_coord(raw: Option<f64>, label: &str, index: u32) -> Result<u32, JsValue> {
+    let value = raw.ok_or_else(|| js_error(format!("invalid {label} at index {index}")))?;
+    if !value.is_finite() || value.fract() != 0.0 || value < 1.0 || value > u32::MAX as f64 {
+        return Err(js_error(format!(
+            "invalid {label} at index {index}: expected a 1-based integer coordinate"
+        )));
+    }
+    Ok(value as u32)
 }
 
 fn parse_custom_function_options(
@@ -228,13 +252,13 @@ pub(crate) fn js_to_literal(value: &JsValue) -> formualizer::LiteralValue {
     LiteralValue::Text(format!("{value:?}"))
 }
 
-pub(crate) fn literal_to_js(v: formualizer::LiteralValue) -> JsValue {
+pub(crate) fn literal_to_js(v: &formualizer::LiteralValue) -> JsValue {
     match v {
         formualizer::LiteralValue::Empty => JsValue::NULL,
-        formualizer::LiteralValue::Boolean(b) => JsValue::from_bool(b),
-        formualizer::LiteralValue::Int(i) => JsValue::from_f64(i as f64),
-        formualizer::LiteralValue::Number(n) => JsValue::from_f64(n),
-        formualizer::LiteralValue::Text(s) => JsValue::from_str(&s),
+        formualizer::LiteralValue::Boolean(b) => JsValue::from_bool(*b),
+        formualizer::LiteralValue::Int(i) => JsValue::from_f64(*i as f64),
+        formualizer::LiteralValue::Number(n) => JsValue::from_f64(*n),
+        formualizer::LiteralValue::Text(s) => JsValue::from_str(s),
         formualizer::LiteralValue::Date(d) => JsValue::from_str(&d.to_string()),
         formualizer::LiteralValue::DateTime(dt) => JsValue::from_str(&dt.to_string()),
         formualizer::LiteralValue::Time(t) => JsValue::from_str(&t.to_string()),
@@ -633,7 +657,7 @@ impl Workbook {
                 }
                 formualizer::eval::engine::named_range::NamedDefinition::Literal(value) => {
                     set(&obj, "kind", JsValue::from_str("literal"))?;
-                    set(&obj, "value", literal_to_js(value))?;
+                    set(&obj, "value", literal_to_js(&value))?;
                 }
                 formualizer::eval::engine::named_range::NamedDefinition::Formula { .. } => {
                     set(&obj, "kind", JsValue::from_str("formula"))?;
@@ -669,6 +693,8 @@ impl Workbook {
         col: u32,
         value: JsValue,
     ) -> Result<(), JsValue> {
+        validate_cell_coords(row, col)?;
+
         let lv = js_to_literal(&value);
         self.inner
             .write()
@@ -685,6 +711,8 @@ impl Workbook {
         col: u32,
         formula: String,
     ) -> Result<(), JsValue> {
+        validate_cell_coords(row, col)?;
+
         self.inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
@@ -694,6 +722,8 @@ impl Workbook {
 
     #[wasm_bindgen(js_name = "evaluateCell")]
     pub fn evaluate_cell(&self, sheet: String, row: u32, col: u32) -> Result<JsValue, JsValue> {
+        validate_cell_coords(row, col)?;
+
         let v = self
             .inner
             .write()
@@ -704,7 +734,7 @@ impl Workbook {
                     "evaluate_cell failed for {sheet}!R{row}C{col}: {e}"
                 ))
             })?;
-        Ok(literal_to_js(v))
+        Ok(literal_to_js(&v))
     }
 
     #[wasm_bindgen(js_name = "evaluateAll")]
@@ -723,7 +753,6 @@ impl Workbook {
     #[wasm_bindgen(js_name = "evaluateCells")]
     pub fn evaluate_cells(&self, targets: js_sys::Array) -> Result<js_sys::Array, JsValue> {
         let mut target_vec = Vec::with_capacity(targets.length() as usize);
-        let mut sheet_names = Vec::new(); // Keep strings alive
         for i in 0..targets.length() {
             let item = targets.get(i);
             let arr: js_sys::Array = item.into();
@@ -731,25 +760,16 @@ impl Workbook {
                 .get(0)
                 .as_string()
                 .ok_or_else(|| js_error(format!("invalid sheet name at index {i}")))?;
-            let _row = arr
-                .get(1)
-                .as_f64()
-                .ok_or_else(|| js_error(format!("invalid row at index {i}")))?
-                as u32;
-            let _col = arr
-                .get(2)
-                .as_f64()
-                .ok_or_else(|| js_error(format!("invalid col at index {i}")))?
-                as u32;
-            sheet_names.push(sheet);
+            let row = parse_target_coord(arr.get(1).as_f64(), "row", i)?;
+            let col = parse_target_coord(arr.get(2).as_f64(), "col", i)?;
+            validate_cell_coords(row, col)?;
+            target_vec.push((sheet, row, col));
         }
 
-        for (i, name) in sheet_names.iter().enumerate() {
-            let arr: js_sys::Array = targets.get(i as u32).into();
-            let row = arr.get(1).as_f64().unwrap() as u32;
-            let col = arr.get(2).as_f64().unwrap() as u32;
-            target_vec.push((name.as_str(), row, col));
-        }
+        let refs: Vec<(&str, u32, u32)> = target_vec
+            .iter()
+            .map(|(sheet, row, col)| (sheet.as_str(), *row, *col))
+            .collect();
 
         let mut wb = self
             .inner
@@ -759,12 +779,12 @@ impl Workbook {
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
         let results = wb
-            .evaluate_cells_cancellable(&target_vec, self.cancel_flag.clone())
+            .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
             .map_err(|e| js_error(format!("evaluate_cells failed: {e}")))?;
 
         let out = js_sys::Array::new();
         for v in results {
-            out.push(&literal_to_js(v));
+            out.push(&literal_to_js(&v));
         }
         Ok(out)
     }
@@ -779,17 +799,9 @@ impl Workbook {
                 .get(0)
                 .as_string()
                 .ok_or_else(|| js_error(format!("invalid sheet name at index {i}")))?;
-            let row = arr
-                .get(1)
-                .as_f64()
-                .ok_or_else(|| js_error(format!("invalid row at index {i}")))?
-                as u32;
-            let col = arr
-                .get(2)
-                .as_f64()
-                .ok_or_else(|| js_error(format!("invalid col at index {i}")))?
-                as u32;
-            if row == 0 || col == 0 {
+            let row = parse_target_coord(arr.get(1).as_f64(), "row", i)?;
+            let col = parse_target_coord(arr.get(2).as_f64(), "col", i)?;
+            if !cell_coords_are_valid(row, col) {
                 return Err(js_error(format!(
                     "row/col are 1-based at index {i} (row={row}, col={col})"
                 )));
@@ -888,6 +900,8 @@ pub struct Sheet {
 impl Sheet {
     #[wasm_bindgen(js_name = "setValue")]
     pub fn set_value(&self, row: u32, col: u32, value: JsValue) -> Result<(), JsValue> {
+        validate_cell_coords(row, col)?;
+
         let lv = js_to_literal(&value);
         self.wb
             .write()
@@ -903,6 +917,8 @@ impl Sheet {
 
     #[wasm_bindgen(js_name = "setFormula")]
     pub fn set_formula(&self, row: u32, col: u32, formula: String) -> Result<(), JsValue> {
+        validate_cell_coords(row, col)?;
+
         self.wb
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
@@ -917,17 +933,22 @@ impl Sheet {
 
     #[wasm_bindgen(js_name = "getValue")]
     pub fn get_value(&self, row: u32, col: u32) -> Result<JsValue, JsValue> {
+        validate_cell_coords(row, col)?;
+
         let v = self
             .wb
             .read()
             .map_err(|_| js_error("failed to lock workbook for read"))?
             .get_value(&self.name, row, col)
             .unwrap_or(formualizer::LiteralValue::Empty);
-        Ok(literal_to_js(v))
+        Ok(literal_to_js(&v))
     }
 
     #[wasm_bindgen(js_name = "getFormula")]
     pub fn get_formula(&self, row: u32, col: u32) -> Option<String> {
+        if !cell_coords_are_valid(row, col) {
+            return None;
+        }
         self.wb.read().ok()?.get_formula(&self.name, row, col)
     }
 
@@ -938,6 +959,8 @@ impl Sheet {
         start_col: u32,
         data: js_sys::Array,
     ) -> Result<(), JsValue> {
+        validate_cell_coords(start_row, start_col)?;
+
         // data: Array<Array<any>>
         let mut rows: Vec<Vec<formualizer::LiteralValue>> =
             Vec::with_capacity(data.length() as usize);
@@ -974,6 +997,8 @@ impl Sheet {
         start_col: u32,
         data: js_sys::Array,
     ) -> Result<(), JsValue> {
+        validate_cell_coords(start_row, start_col)?;
+
         // data: Array<Array<string>>
         let mut rows: Vec<Vec<String>> = Vec::with_capacity(data.length() as usize);
         for r in 0..data.length() {
@@ -1005,6 +1030,8 @@ impl Sheet {
 
     #[wasm_bindgen(js_name = "evaluateCell")]
     pub fn evaluate_cell(&self, row: u32, col: u32) -> Result<JsValue, JsValue> {
+        validate_cell_coords(row, col)?;
+
         let v = self
             .wb
             .write()
@@ -1016,7 +1043,7 @@ impl Sheet {
                     sheet = self.name
                 ))
             })?;
-        Ok(literal_to_js(v))
+        Ok(literal_to_js(&v))
     }
 
     /// Read a rectangular range of values as a 2D array (no evaluation)
@@ -1041,7 +1068,7 @@ impl Sheet {
         for row in vals {
             let arr = js_sys::Array::new();
             for v in row {
-                arr.push(&literal_to_js(v));
+                arr.push(&literal_to_js(&v));
             }
             outer.push(&arr);
         }

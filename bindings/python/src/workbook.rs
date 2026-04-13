@@ -15,6 +15,15 @@ type SheetCache = HashMap<String, SheetCellMap>;
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
+fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
+    if row == 0 || col == 0 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Row/col are 1-based",
+        ));
+    }
+    Ok(())
+}
+
 struct PyCustomFnHandler {
     callback: PyObject,
 }
@@ -523,6 +532,8 @@ impl PyWorkbook {
         col: u32,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<()> {
+        validate_cell_coords(row, col)?;
+
         let literal = py_to_literal(value)?;
         let mut wb = self
             .inner
@@ -560,6 +571,8 @@ impl PyWorkbook {
     ///     print(wb.evaluate_cell("Sheet1", 3, 1))
     /// ```
     pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
+        validate_cell_coords(row, col)?;
+
         let mut wb = self
             .inner
             .write()
@@ -606,6 +619,8 @@ impl PyWorkbook {
         row: u32,
         col: u32,
     ) -> PyResult<PyObject> {
+        validate_cell_coords(row, col)?;
+
         let mut wb = self
             .inner
             .write()
@@ -642,6 +657,7 @@ impl PyWorkbook {
             let sheet: String = tuple.get_item(0)?.extract()?;
             let row: u32 = tuple.get_item(1)?.extract()?;
             let col: u32 = tuple.get_item(2)?.extract()?;
+            validate_cell_coords(row, col)?;
             target_vec.push((sheet, row, col));
         }
 
@@ -681,11 +697,7 @@ impl PyWorkbook {
             let sheet: String = tuple.get_item(0)?.extract()?;
             let row: u32 = tuple.get_item(1)?.extract()?;
             let col: u32 = tuple.get_item(2)?.extract()?;
-            if row == 0 || col == 0 {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                    "Row/col are 1-based",
-                ));
-            }
+            validate_cell_coords(row, col)?;
             target_vec.push((sheet, row, col));
         }
 
@@ -721,6 +733,8 @@ impl PyWorkbook {
         row: u32,
         col: u32,
     ) -> PyResult<Option<PyObject>> {
+        validate_cell_coords(row, col)?;
+
         if let Some(cached) = {
             let sheets = self.sheets.read().unwrap();
             sheets.get(sheet).and_then(|m| m.get(&(row, col)).cloned())
@@ -739,6 +753,8 @@ impl PyWorkbook {
     }
 
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> PyResult<Option<String>> {
+        validate_cell_coords(row, col)?;
+
         let wb = self
             .inner
             .read()
@@ -854,6 +870,8 @@ impl PyWorkbook {
         start_col: u32,
         data: &Bound<'_, pyo3::types::PyList>,
     ) -> PyResult<()> {
+        validate_cell_coords(start_row, start_col)?;
+
         let mut rows_vec: Vec<Vec<LiteralValue>> = Vec::with_capacity(data.len());
         for row in data.iter() {
             let list: &Bound<'_, pyo3::types::PyList> = row.cast()?;
@@ -902,6 +920,8 @@ impl PyWorkbook {
         start_col: u32,
         formulas: &Bound<'_, pyo3::types::PyList>,
     ) -> PyResult<()> {
+        validate_cell_coords(start_row, start_col)?;
+
         let mut rows_vec: Vec<Vec<String>> = Vec::with_capacity(formulas.len());
         for row in formulas.iter() {
             let list: &Bound<'_, pyo3::types::PyList> = row.cast()?;
