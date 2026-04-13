@@ -145,6 +145,11 @@ pub enum ChangeEvent {
         anchor: VertexId,
         old: SpillSnapshot,
     },
+    /// Workbook-level staged formula snapshot used to keep deferred edits undoable.
+    StagedFormulaStateChanged {
+        before: Vec<(String, u32, u32, String)>,
+        after: Vec<(String, u32, u32, String)>,
+    },
 }
 
 /// Audit trail for tracking all changes to the dependency graph

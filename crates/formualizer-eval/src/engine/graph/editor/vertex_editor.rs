@@ -528,6 +528,9 @@ impl<'g> VertexEditor<'g> {
                     )
                     .map_err(EditorError::Excel)?;
             }
+            ChangeEvent::StagedFormulaStateChanged { .. } => {
+                // Workbook-level deferred state is replayed by Engine undo/redo wrappers.
+            }
             // Granular events for compound operations
             ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {
                 // These are markers, no inverse needed

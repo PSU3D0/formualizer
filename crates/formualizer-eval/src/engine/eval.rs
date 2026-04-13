@@ -1257,6 +1257,7 @@ where
         let name = self.graph.sheet_name(sheet_id).to_string();
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
+        self.staged_formulas.remove(&name);
         if self.row_visibility.remove(&sheet_id).is_some() {
             self.invalidate_row_visibility_mask_cache();
         }
@@ -1287,6 +1288,7 @@ where
         // Graph Update (Metadata + Rescue Logic)
         match self.graph.rename_sheet(sheet_id, new_name) {
             Ok(_) => {
+                self.rename_staged_formula_sheet(&old_name, new_name);
                 // Success! Invalidate cache for the moved sheet
                 let sheet_vertices: Vec<VertexId> =
                     self.graph.vertices_in_sheet(sheet_id).collect();
@@ -1786,6 +1788,7 @@ where
         let batch = undo.undo(&mut self.graph, log)?;
         for item in batch.iter().rev() {
             self.apply_inverse_row_visibility_event(&item.event);
+            self.apply_inverse_staged_formula_event(&item.event);
         }
         self.mirror_undo_batch_to_arrow(&batch);
         Ok(())
@@ -1799,6 +1802,7 @@ where
         let batch = undo.redo(&mut self.graph, log)?;
         for item in &batch {
             self.apply_forward_row_visibility_event(&item.event);
+            self.apply_forward_staged_formula_event(&item.event);
         }
         self.mirror_redo_batch_to_arrow(&batch);
         Ok(())
@@ -2026,18 +2030,78 @@ where
         &mut self.arrow_sheets
     }
 
+    pub fn staged_formula_state_snapshot(&self) -> Vec<(String, u32, u32, String)> {
+        let mut snapshot = Vec::new();
+        for (sheet, entries) in &self.staged_formulas {
+            for (row, col, text) in entries {
+                snapshot.push((sheet.clone(), *row, *col, text.clone()));
+            }
+        }
+        snapshot.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+                .then(a.3.cmp(&b.3))
+        });
+        snapshot
+    }
+
+    pub fn restore_staged_formula_state(&mut self, snapshot: &[(String, u32, u32, String)]) {
+        self.staged_formulas.clear();
+        for (sheet, row, col, text) in snapshot {
+            self.stage_formula_text(sheet, *row, *col, text.clone());
+        }
+    }
+
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
     pub fn stage_formula_text(&mut self, sheet: &str, row: u32, col: u32, text: String) {
-        self.staged_formulas
-            .entry(sheet.to_string())
-            .or_default()
-            .push((row, col, text));
+        let entries = self.staged_formulas.entry(sheet.to_string()).or_default();
+        if let Some((_, _, existing)) = entries
+            .iter_mut()
+            .find(|(existing_row, existing_col, _)| *existing_row == row && *existing_col == col)
+        {
+            *existing = text;
+        } else {
+            entries.push((row, col, text));
+        }
+    }
+
+    pub fn clear_staged_formula_text(&mut self, sheet: &str, row: u32, col: u32) -> Option<String> {
+        let mut removed = None;
+        let mut remove_sheet = false;
+        if let Some(entries) = self.staged_formulas.get_mut(sheet) {
+            if let Some(idx) = entries.iter().position(|(existing_row, existing_col, _)| {
+                *existing_row == row && *existing_col == col
+            }) {
+                let (_, _, text) = entries.remove(idx);
+                removed = Some(text);
+            }
+            remove_sheet = entries.is_empty();
+        }
+        if remove_sheet {
+            self.staged_formulas.remove(sheet);
+        }
+        removed
+    }
+
+    pub fn clear_staged_formulas_for_sheet(&mut self, sheet: &str) {
+        self.staged_formulas.remove(sheet);
+    }
+
+    pub fn rename_staged_formula_sheet(&mut self, old: &str, new: &str) {
+        let Some(entries) = self.staged_formulas.remove(old) else {
+            return;
+        };
+        for (row, col, text) in entries {
+            self.stage_formula_text(new, row, col, text);
+        }
     }
 
     /// Get a staged formula text for a given cell if present (cloned).
     pub fn get_staged_formula_text(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
         self.staged_formulas.get(sheet).and_then(|v| {
             v.iter()
+                .rev()
                 .find(|(r, c, _)| *r == row && *c == col)
                 .map(|(_, _, s)| s.clone())
         })
@@ -2407,6 +2471,18 @@ where
     fn apply_forward_row_visibility_events(&mut self, events: &[crate::engine::ChangeEvent]) {
         for event in events {
             self.apply_forward_row_visibility_event(event);
+        }
+    }
+
+    fn apply_inverse_staged_formula_event(&mut self, event: &crate::engine::ChangeEvent) {
+        if let crate::engine::ChangeEvent::StagedFormulaStateChanged { before, .. } = event {
+            self.restore_staged_formula_state(before);
+        }
+    }
+
+    fn apply_forward_staged_formula_event(&mut self, event: &crate::engine::ChangeEvent) {
+        if let crate::engine::ChangeEvent::StagedFormulaStateChanged { after, .. } = event {
+            self.restore_staged_formula_state(after);
         }
     }
 

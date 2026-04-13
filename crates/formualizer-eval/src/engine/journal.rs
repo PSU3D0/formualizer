@@ -289,7 +289,9 @@ fn apply_forward_change_event(
             let mut editor = VertexEditor::new(graph);
             let _ = editor.remove_edge(*from, *to);
         }
-        ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. } => {}
+        ChangeEvent::CompoundStart { .. }
+        | ChangeEvent::CompoundEnd { .. }
+        | ChangeEvent::StagedFormulaStateChanged { .. } => {}
     }
     Ok(())
 }
