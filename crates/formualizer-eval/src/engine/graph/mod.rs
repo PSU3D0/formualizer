@@ -1416,69 +1416,7 @@ impl DependencyGraph {
                 }
             }
 
-            // Check range dependencies
-            let view = self.store.view(vertex_id);
-            let row = view.row();
-            let col = view.col();
-            let dirty_sheet_id = view.sheet_id();
-
-            // New stripe-based dependents lookup
-            let mut potential_dependents = FxHashSet::default();
-
-            // 1. Column stripe lookup
-            let column_key = StripeKey {
-                sheet_id: dirty_sheet_id,
-                stripe_type: StripeType::Column,
-                index: col,
-            };
-            if let Some(dependents) = self.stripe_to_dependents.get(&column_key) {
-                potential_dependents.extend(dependents);
-            }
-
-            // 2. Row stripe lookup
-            let row_key = StripeKey {
-                sheet_id: dirty_sheet_id,
-                stripe_type: StripeType::Row,
-                index: row,
-            };
-            if let Some(dependents) = self.stripe_to_dependents.get(&row_key) {
-                potential_dependents.extend(dependents);
-            }
-
-            // 3. Block stripe lookup
-            if self.config.enable_block_stripes {
-                let block_key = StripeKey {
-                    sheet_id: dirty_sheet_id,
-                    stripe_type: StripeType::Block,
-                    index: block_index(row, col),
-                };
-                if let Some(dependents) = self.stripe_to_dependents.get(&block_key) {
-                    potential_dependents.extend(dependents);
-                }
-            }
-
-            // Precision check: ensure the dirtied cell is actually within the formula's range
-            for &dep_id in &potential_dependents {
-                if let Some(ranges) = self.formula_to_range_deps.get(&dep_id) {
-                    for range in ranges {
-                        let range_sheet_id = match range.sheet {
-                            SharedSheetLocator::Id(id) => id,
-                            _ => dirty_sheet_id,
-                        };
-                        if range_sheet_id != dirty_sheet_id {
-                            continue;
-                        }
-                        let sr0 = range.start_row.map(|b| b.index).unwrap_or(0);
-                        let er0 = range.end_row.map(|b| b.index).unwrap_or(u32::MAX);
-                        let sc0 = range.start_col.map(|b| b.index).unwrap_or(0);
-                        let ec0 = range.end_col.map(|b| b.index).unwrap_or(u32::MAX);
-                        if row >= sr0 && row <= er0 && col >= sc0 && col <= ec0 {
-                            to_visit.push(dep_id);
-                            break;
-                        }
-                    }
-                }
-            }
+            to_visit.extend(self.collect_range_dependents_for_vertex(vertex_id));
         }
 
         while let Some(id) = to_visit.pop() {
@@ -1497,6 +1435,7 @@ impl DependencyGraph {
                 let dependents = self.get_dependents(id);
                 to_visit.extend(dependents);
             }
+            to_visit.extend(self.collect_range_dependents_for_vertex(id));
         }
 
         // Add to dirty set
@@ -2376,10 +2315,30 @@ impl DependencyGraph {
             affected.insert(id);
             self.store.set_dirty(id, true);
             to_visit.extend(self.edges.in_edges(id));
+            to_visit.extend(self.collect_range_dependents_for_vertex(id));
         }
 
         self.dirty_vertices.extend(&affected);
         affected.into_iter().collect()
+    }
+
+    fn collect_range_dependents_for_vertex(&self, vertex_id: VertexId) -> Vec<VertexId> {
+        match self.store.kind(vertex_id) {
+            VertexKind::Cell
+            | VertexKind::Empty
+            | VertexKind::FormulaScalar
+            | VertexKind::FormulaArray => {
+                let view = self.store.view(vertex_id);
+                self.collect_range_dependents_for_rect(
+                    view.sheet_id(),
+                    view.row(),
+                    view.col(),
+                    view.row(),
+                    view.col(),
+                )
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn collect_range_dependents_for_rect(

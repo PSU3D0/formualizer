@@ -2931,6 +2931,115 @@ where
         }
     }
 
+    fn formula_row_bounds_for_columns(
+        &self,
+        sheet: &str,
+        start_col: u32,
+        end_col: u32,
+    ) -> Option<(u32, u32)> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        let sc0 = start_col.saturating_sub(1);
+        let ec0 = end_col.saturating_sub(1);
+        let mut min_r0: Option<u32> = None;
+        let mut max_r0: Option<u32> = None;
+
+        if let Some(index) = self.graph.sheet_index(sheet_id) {
+            for vid in index.vertices_in_col_range(sc0, ec0) {
+                if !matches!(
+                    self.graph.get_vertex_kind(vid),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                ) {
+                    continue;
+                }
+                let row0 = self.graph.vertex_coord(vid).row();
+                min_r0 = Some(min_r0.map(|m| m.min(row0)).unwrap_or(row0));
+                max_r0 = Some(max_r0.map(|m| m.max(row0)).unwrap_or(row0));
+            }
+        } else {
+            for vid in self.graph.vertices_in_sheet(sheet_id) {
+                if !matches!(
+                    self.graph.get_vertex_kind(vid),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                ) {
+                    continue;
+                }
+                let coord = self.graph.vertex_coord(vid);
+                let col0 = coord.col();
+                if col0 < sc0 || col0 > ec0 {
+                    continue;
+                }
+                let row0 = coord.row();
+                min_r0 = Some(min_r0.map(|m| m.min(row0)).unwrap_or(row0));
+                max_r0 = Some(max_r0.map(|m| m.max(row0)).unwrap_or(row0));
+            }
+        }
+
+        match (min_r0, max_r0) {
+            (Some(a0), Some(b0)) => Some((a0 + 1, b0 + 1)),
+            _ => None,
+        }
+    }
+
+    fn formula_col_bounds_for_rows(
+        &self,
+        sheet: &str,
+        start_row: u32,
+        end_row: u32,
+    ) -> Option<(u32, u32)> {
+        let sheet_id = self.graph.sheet_id(sheet)?;
+        let sr0 = start_row.saturating_sub(1);
+        let er0 = end_row.saturating_sub(1);
+        let mut min_c0: Option<u32> = None;
+        let mut max_c0: Option<u32> = None;
+
+        if let Some(index) = self.graph.sheet_index(sheet_id) {
+            for vid in index.vertices_in_row_range(sr0, er0) {
+                if !matches!(
+                    self.graph.get_vertex_kind(vid),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                ) {
+                    continue;
+                }
+                let col0 = self.graph.vertex_coord(vid).col();
+                min_c0 = Some(min_c0.map(|m| m.min(col0)).unwrap_or(col0));
+                max_c0 = Some(max_c0.map(|m| m.max(col0)).unwrap_or(col0));
+            }
+        } else {
+            for vid in self.graph.vertices_in_sheet(sheet_id) {
+                if !matches!(
+                    self.graph.get_vertex_kind(vid),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                ) {
+                    continue;
+                }
+                let coord = self.graph.vertex_coord(vid);
+                let row0 = coord.row();
+                if row0 < sr0 || row0 > er0 {
+                    continue;
+                }
+                let col0 = coord.col();
+                min_c0 = Some(min_c0.map(|m| m.min(col0)).unwrap_or(col0));
+                max_c0 = Some(max_c0.map(|m| m.max(col0)).unwrap_or(col0));
+            }
+        }
+
+        match (min_c0, max_c0) {
+            (Some(a0), Some(b0)) => Some((a0 + 1, b0 + 1)),
+            _ => None,
+        }
+    }
+
+    fn union_used_bounds(
+        first: Option<(u32, u32)>,
+        second: Option<(u32, u32)>,
+    ) -> Option<(u32, u32)> {
+        match (first, second) {
+            (Some((a0, b0)), Some((a1, b1))) => Some((a0.min(a1), b0.max(b1))),
+            (Some(bounds), None) | (None, Some(bounds)) => Some(bounds),
+            (None, None) => None,
+        }
+    }
+
     /// Mirror a single cell value into the Arrow overlay if enabled.
     /// Handles capacity growth, per-chunk overlay set, and heuristic compaction.
     fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
@@ -6980,10 +7089,14 @@ where
         start_col: u32,
         end_col: u32,
     ) -> Option<(u32, u32)> {
-        // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
+        // Union Arrow-backed used-region with formula rows that have not been materialized yet.
         let sheet_id = self.graph.sheet_id(sheet)?;
-        let arrow_ok = self.sheet_store().sheet(sheet).is_some();
-        if arrow_ok && let Some(bounds) = self.arrow_used_row_bounds(sheet, start_col, end_col) {
+        let arrow_bounds = self
+            .sheet_store()
+            .sheet(sheet)
+            .and_then(|_| self.arrow_used_row_bounds(sheet, start_col, end_col));
+        let formula_bounds = self.formula_row_bounds_for_columns(sheet, start_col, end_col);
+        if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
             return Some(bounds);
         }
         let sc0 = start_col.saturating_sub(1);
@@ -6994,10 +7107,14 @@ where
     }
 
     fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
-        // Prefer Arrow-backed used-region; fallback to graph if formulas intersect region
+        // Union Arrow-backed used-region with formula columns that have not been materialized yet.
         let sheet_id = self.graph.sheet_id(sheet)?;
-        let arrow_ok = self.sheet_store().sheet(sheet).is_some();
-        if arrow_ok && let Some(bounds) = self.arrow_used_col_bounds(sheet, start_row, end_row) {
+        let arrow_bounds = self
+            .sheet_store()
+            .sheet(sheet)
+            .and_then(|_| self.arrow_used_col_bounds(sheet, start_row, end_row));
+        let formula_bounds = self.formula_col_bounds_for_rows(sheet, start_row, end_row);
+        if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
             return Some(bounds);
         }
         let sr0 = start_row.saturating_sub(1);

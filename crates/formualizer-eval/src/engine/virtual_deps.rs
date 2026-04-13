@@ -63,6 +63,75 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
             }
         }
     }
+
+    fn collect_formula_vertices_for_range(
+        &self,
+        sheet_name: &str,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+    ) {
+        let mut sr = start_row;
+        let mut sc = start_col;
+        let mut er = end_row;
+        let mut ec = end_col;
+
+        if sr.is_none() && er.is_none() {
+            let scv = sc.unwrap_or(1u32);
+            let ecv = ec.unwrap_or(scv);
+            sr = Some(1);
+            if let Some((_, max_r)) = self.engine.used_rows_for_columns(sheet_name, scv, ecv) {
+                er = Some(max_r);
+            } else if self.engine.sheet_bounds(sheet_name).is_some() {
+                er = Some(self.engine.config.max_open_ended_rows);
+            }
+        }
+        if sc.is_none() && ec.is_none() {
+            let srv = sr.unwrap_or(1u32);
+            let erv = er.unwrap_or(srv);
+            sc = Some(1);
+            if let Some((_, max_c)) = self.engine.used_cols_for_rows(sheet_name, srv, erv) {
+                ec = Some(max_c);
+            } else if self.engine.sheet_bounds(sheet_name).is_some() {
+                ec = Some(self.engine.config.max_open_ended_cols);
+            }
+        }
+        if sr.is_some() && er.is_none() {
+            let scv = sc.unwrap_or(1u32);
+            let ecv = ec.unwrap_or(scv);
+            if let Some((_, max_r)) = self.engine.used_rows_for_columns(sheet_name, scv, ecv) {
+                er = Some(max_r);
+            } else if self.engine.sheet_bounds(sheet_name).is_some() {
+                er = Some(self.engine.config.max_open_ended_rows);
+            }
+        }
+        if er.is_some() && sr.is_none() {
+            sr = Some(1);
+        }
+        if sc.is_some() && ec.is_none() {
+            let srv = sr.unwrap_or(1u32);
+            let erv = er.unwrap_or(srv);
+            if let Some((_, max_c)) = self.engine.used_cols_for_rows(sheet_name, srv, erv) {
+                ec = Some(max_c);
+            } else if self.engine.sheet_bounds(sheet_name).is_some() {
+                ec = Some(self.engine.config.max_open_ended_cols);
+            }
+        }
+        if ec.is_some() && sc.is_none() {
+            sc = Some(1);
+        }
+
+        let sr = sr.unwrap_or(1);
+        let sc = sc.unwrap_or(1);
+        let er = er.unwrap_or(sr.saturating_sub(1));
+        let ec = ec.unwrap_or(sc.saturating_sub(1));
+        if er < sr || ec < sc {
+            return;
+        }
+
+        self.collect_formula_vertices_in_rect(sheet_name, sr, sc, er, ec);
+    }
 }
 
 impl<'a, R: EvaluationContext> ReferenceResolver for DynamicRefCollector<'a, R> {
@@ -94,13 +163,7 @@ impl<'a, R: EvaluationContext> RangeResolver for DynamicRefCollector<'a, R> {
         ec: Option<u32>,
     ) -> Result<Box<dyn Range>, ExcelError> {
         let sheet_name = sheet.unwrap_or(self.current_sheet);
-        let srv = sr.unwrap_or(1u32);
-        let scv = sc.unwrap_or(1u32);
-        let erv = er.unwrap_or(srv);
-        let ecv = ec.unwrap_or(scv);
-
-        self.collect_formula_vertices_in_rect(sheet_name, srv, scv, erv, ecv);
-
+        self.collect_formula_vertices_for_range(sheet_name, sr, sc, er, ec);
         self.engine.resolve_range_reference(sheet, sr, sc, er, ec)
     }
 }
@@ -170,13 +233,9 @@ impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> 
                 ..
             } => {
                 let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
-
-                let srv = start_row.unwrap_or(1u32);
-                let scv = start_col.unwrap_or(1u32);
-                let erv = end_row.unwrap_or(srv);
-                let ecv = end_col.unwrap_or(scv);
-
-                self.collect_formula_vertices_in_rect(sheet_name, srv, scv, erv, ecv);
+                self.collect_formula_vertices_for_range(
+                    sheet_name, *start_row, *start_col, *end_row, *end_col,
+                );
             }
             ReferenceType::NamedRange(name) => {
                 let sid = self.engine.sheet_id(current_sheet);
