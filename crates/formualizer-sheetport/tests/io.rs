@@ -146,6 +146,30 @@ ports:
       type: number
 "#;
 
+const LAYOUT_RANGE_MANIFEST: &str = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: layout-range-test
+  name: Layout Range Test Manifest
+  workbook:
+    uri: memory://layout-range.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: matrix
+    dir: in
+    shape: range
+    location:
+      layout:
+        sheet: Sheet
+        header_row: 1
+        anchor_col: A
+        terminate: first_blank_row
+    schema:
+      cell_type: string
+"#;
+
 fn build_workbook() -> Result<Workbook, SheetPortError> {
     let mut wb = Workbook::new();
     wb.add_sheet("Inputs").map_err(SheetPortError::from)?;
@@ -238,6 +262,18 @@ fn build_rng_workbook() -> Result<Workbook, SheetPortError> {
     let mut wb = Workbook::new();
     wb.add_sheet("Random").map_err(SheetPortError::from)?;
     set_formula(&mut wb, "Random", 1, 1, "RAND()")?;
+    Ok(wb)
+}
+
+fn build_layout_range_workbook() -> Result<Workbook, SheetPortError> {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Sheet").map_err(SheetPortError::from)?;
+    set_value(&mut wb, "Sheet", 1, 1, LiteralValue::Text("col_a".into()))?;
+    set_value(&mut wb, "Sheet", 1, 2, LiteralValue::Text("col_b".into()))?;
+    set_value(&mut wb, "Sheet", 2, 1, LiteralValue::Text("r1a".into()))?;
+    set_value(&mut wb, "Sheet", 2, 2, LiteralValue::Text("r1b".into()))?;
+    set_value(&mut wb, "Sheet", 3, 1, LiteralValue::Text("r2a".into()))?;
+    set_value(&mut wb, "Sheet", 3, 2, LiteralValue::Text("r2b".into()))?;
     Ok(wb)
 }
 
@@ -1114,6 +1150,125 @@ fn batch_executor_handles_empty_scenarios() -> Result<(), SheetPortError> {
     let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
     let after = sheetport.read_inputs()?;
     assert_eq!(after, baseline);
+    Ok(())
+}
+
+#[test]
+fn batch_restore_does_not_materialize_defaults_into_workbook() -> Result<(), SheetPortError> {
+    let mut workbook = build_workbook()?;
+    set_value(&mut workbook, "Inputs", 2, 2, LiteralValue::Empty)?;
+
+    {
+        let manifest = parse_manifest();
+        let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+        let inputs = sheetport.read_inputs()?;
+        assert_scalar(
+            &inputs,
+            "warehouse_code",
+            |value| matches!(value, LiteralValue::Text(code) if code == "WH-900"),
+        );
+        run_empty_batch(&mut sheetport)?;
+    }
+
+    assert_eq!(
+        workbook
+            .get_value("Inputs", 2, 2)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Empty
+    );
+    Ok(())
+}
+
+#[test]
+fn layout_range_updates_clear_trailing_rows_when_shrinking() -> Result<(), SheetPortError> {
+    let mut workbook = build_layout_range_workbook()?;
+    let manifest: Manifest =
+        Manifest::from_yaml_str(LAYOUT_RANGE_MANIFEST).expect("manifest parses");
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+
+    let mut expand = InputUpdate::new();
+    expand.insert(
+        "matrix",
+        PortValue::Range(vec![
+            vec![
+                LiteralValue::Text("col_a".into()),
+                LiteralValue::Text("col_b".into()),
+            ],
+            vec![
+                LiteralValue::Text("r1a".into()),
+                LiteralValue::Text("r1b".into()),
+            ],
+            vec![
+                LiteralValue::Text("r2a".into()),
+                LiteralValue::Text("r2b".into()),
+            ],
+            vec![
+                LiteralValue::Text("r3a".into()),
+                LiteralValue::Text("r3b".into()),
+            ],
+            vec![
+                LiteralValue::Text("r4a".into()),
+                LiteralValue::Text("r4b".into()),
+            ],
+        ]),
+    );
+    sheetport.write_inputs(expand)?;
+
+    let expanded = sheetport.read_inputs()?;
+    match expanded.get("matrix") {
+        Some(PortValue::Range(rows)) => assert_eq!(rows.len(), 5),
+        other => panic!("expected range after expand, got {other:?}"),
+    }
+
+    let mut shrink = InputUpdate::new();
+    shrink.insert(
+        "matrix",
+        PortValue::Range(vec![
+            vec![
+                LiteralValue::Text("col_a".into()),
+                LiteralValue::Text("col_b".into()),
+            ],
+            vec![
+                LiteralValue::Text("r1a".into()),
+                LiteralValue::Text("r1b".into()),
+            ],
+            vec![
+                LiteralValue::Text("r2a".into()),
+                LiteralValue::Text("r2b".into()),
+            ],
+        ]),
+    );
+    sheetport.write_inputs(shrink)?;
+
+    let after = sheetport.read_inputs()?;
+    match after.get("matrix") {
+        Some(PortValue::Range(rows)) => {
+            assert_eq!(rows.len(), 3);
+            assert_eq!(
+                rows[0],
+                vec![
+                    LiteralValue::Text("col_a".into()),
+                    LiteralValue::Text("col_b".into()),
+                ]
+            );
+        }
+        other => panic!("expected range after shrink, got {other:?}"),
+    }
+
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Sheet", 4, 1)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Empty
+    );
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Sheet", 5, 1)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Empty
+    );
     Ok(())
 }
 
