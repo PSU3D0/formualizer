@@ -95,7 +95,9 @@ pub struct IndexFn;
 ///
 /// # Remarks
 /// - Indexing is 1-based for both `row_num` and `column_num`.
-/// - If `column_num` is omitted for a 1D array, `row_num` selects the position in that vector.
+/// - If `column_num` is omitted for a single-row or single-column input, `row_num` selects the
+///   position along that 1D vector.
+/// - For rectangular 2D inputs, omitted `column_num` defaults to the first column.
 /// - `row_num <= 0`, `column_num <= 0`, or out-of-bounds indexes return `#REF!`.
 /// - Non-numeric index arguments return `#VALUE!`.
 ///
@@ -130,7 +132,7 @@ pub struct IndexFn;
 ///   - OFFSET
 /// faq:
 ///   - q: "How does INDEX behave when column_num is omitted?"
-///     a: "For 1D arrays, row_num selects the position along that vector; for 2D arrays, omitted column_num defaults to the first column."
+///     a: "For single-row or single-column inputs, row_num selects the position along that vector; for 2D inputs, omitted column_num defaults to the first column."
 ///   - q: "Which errors indicate bad indexes?"
 ///     a: "Non-numeric index arguments return #VALUE!, while 0/negative or out-of-bounds indexes return #REF!."
 /// ```
@@ -174,7 +176,7 @@ impl Function for IndexFn {
             Ok(r) => r,
             Err(_) => return None,
         };
-        let row = match args[1].value() {
+        let position = match args[1].value() {
             Ok(cv) => match cv.into_literal() {
                 LiteralValue::Number(n) => n as i64,
                 LiteralValue::Int(i) => i,
@@ -182,18 +184,17 @@ impl Function for IndexFn {
             },
             Err(e) => return Some(Err(e)),
         };
-        let col = if args.len() >= 3 {
-            match args[2].value() {
+        let explicit_col = if args.len() >= 3 {
+            Some(match args[2].value() {
                 Ok(cv) => match cv.into_literal() {
                     LiteralValue::Number(n) => n as i64,
                     LiteralValue::Int(i) => i,
                     _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
                 },
                 Err(e) => return Some(Err(e)),
-            }
+            })
         } else {
-            // TODO(phase6): Document INDEX 1D behavior when col omitted.
-            1
+            None
         };
 
         // Only Range supported for now
@@ -213,6 +214,19 @@ impl Function for IndexFn {
                 sheet, row, col, ..
             } => (sheet, row, col, row, col),
             _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
+        };
+
+        let (row, col) = match explicit_col {
+            Some(col) => (position, col),
+            None if sr == er => {
+                // Excel treats INDEX(single_row_range, n) as horizontal indexing.
+                (1, position)
+            }
+            None => {
+                // Excel treats INDEX(single_col_range, n) as vertical indexing and defaults
+                // 2-D ranges to the first column when column_num is omitted.
+                (position, 1)
+            }
         };
 
         // 1-based indexing per Excel
@@ -283,7 +297,6 @@ impl Function for IndexFn {
 
             // For 1D arrays with 2 args, index is position in the array
             if args.len() == 2 && (is_single_row || is_single_col) {
-                // TODO(phase6): Document INDEX 1D behavior when col omitted.
                 if index <= 0 {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                         ExcelError::new(ExcelErrorKind::Ref),
@@ -752,12 +765,24 @@ pub fn register_builtins() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::lookup::MatchFn;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    use formualizer_common::error::{ExcelError, ExcelErrorKind};
+    use formualizer_parse::Tokenizer;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, Parser};
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
+    }
+
+    fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> Result<LiteralValue, ExcelError> {
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        let mut parser = Parser::new(tokenizer.items, false);
+        let ast = parser
+            .parse()
+            .map_err(|e| ExcelError::new(ExcelErrorKind::Error).with_message(e.message.clone()))?;
+        Ok(interp(wb).evaluate_ast(&ast)?.into_literal())
     }
 
     #[test]
@@ -816,6 +841,138 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v, LiteralValue::Number(42.0));
+    }
+
+    #[test]
+    fn index_single_row_reference_uses_omitted_col_as_horizontal_position() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+        let ctx = interp(&wb);
+
+        let array_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:C1".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(1),
+                    end_col: Some(3),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
+                },
+            },
+            None,
+        );
+        let index = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let call = ASTNode::new(
+            ASTNodeType::Function {
+                name: "INDEX".into(),
+                args: vec![array_ref.clone(), index.clone()],
+            },
+            None,
+        );
+
+        let r = ctx.evaluate_ast_as_reference(&call).expect("ref ok");
+        match r {
+            ReferenceType::Cell { row, col, .. } => assert_eq!((row, col), (1, 2)),
+            _ => panic!(),
+        }
+
+        let args = vec![
+            ArgumentHandle::new(&array_ref, &ctx),
+            ArgumentHandle::new(&index, &ctx),
+        ];
+        let f = ctx.context.get_function("", "INDEX").unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_single_column_reference_keeps_omitted_col_as_vertical_position() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+        let ctx = interp(&wb);
+
+        let array_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A3".into(),
+                reference: ReferenceType::Range {
+                    sheet: None,
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(3),
+                    end_col: Some(1),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
+                },
+            },
+            None,
+        );
+        let index = ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(2)), None);
+        let args = vec![
+            ArgumentHandle::new(&array_ref, &ctx),
+            ArgumentHandle::new(&index, &ctx),
+        ];
+        let f = ctx.context.get_function("", "INDEX").unwrap();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert_eq!(v, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_rectangular_reference_defaults_omitted_col_to_first_column() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(200))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:B2,2)", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_single_row_reference_match_position_materializes_value() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn))
+            .with_function(std::sync::Arc::new(MatchFn));
+
+        let value = evaluate_formula("=INDEX(A1:C1,MATCH(20,A1:C1,0))", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_single_row_reference_out_of_bounds_is_ref() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:C1,4)", &wb).unwrap();
+        match value {
+            LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
+            other => panic!("expected #REF!, got {other:?}"),
+        }
     }
 
     #[test]
