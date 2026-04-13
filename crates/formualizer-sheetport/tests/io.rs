@@ -578,6 +578,130 @@ fn write_inputs_rejects_out_of_range_record_field() -> Result<(), SheetPortError
 }
 
 #[test]
+fn write_inputs_are_atomic_across_ports() -> Result<(), SheetPortError> {
+    let mut workbook = build_workbook()?;
+    let manifest = parse_manifest();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+
+    let mut planning_window = BTreeMap::new();
+    planning_window.insert("month".into(), LiteralValue::Number(11.0));
+
+    let mut update = InputUpdate::new();
+    update.insert("planning_window", PortValue::Record(planning_window));
+    update.insert(
+        "warehouse_code",
+        PortValue::Scalar(LiteralValue::Text("INVALID".into())),
+    );
+
+    let err = sheetport
+        .write_inputs(update)
+        .expect_err("expected later port validation failure");
+    let violations = expect_constraint(err);
+    assert!(violations.iter().any(|v| v.port == "warehouse_code"));
+
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Inputs", 1, 2)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Number(3.0)
+    );
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Inputs", 2, 2)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Text("WH-001".into())
+    );
+    Ok(())
+}
+
+#[test]
+fn write_inputs_are_atomic_within_range_ports() -> Result<(), SheetPortError> {
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: range-atomicity, name: Range Atomicity }
+ports:
+  - id: matrix
+    dir: in
+    shape: range
+    location:
+      a1: Sheet!A1:B2
+    schema:
+      cell_type: integer
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").map_err(SheetPortError::from)?;
+    workbook
+        .set_value("Sheet", 1, 1, LiteralValue::Number(1.0))
+        .map_err(SheetPortError::from)?;
+    workbook
+        .set_value("Sheet", 1, 2, LiteralValue::Number(2.0))
+        .map_err(SheetPortError::from)?;
+    workbook
+        .set_value("Sheet", 2, 1, LiteralValue::Number(3.0))
+        .map_err(SheetPortError::from)?;
+    workbook
+        .set_value("Sheet", 2, 2, LiteralValue::Number(4.0))
+        .map_err(SheetPortError::from)?;
+
+    let mut sheetport = SheetPort::new(&mut workbook, manifest)?;
+
+    let mut update = InputUpdate::new();
+    update.insert(
+        "matrix",
+        PortValue::Range(vec![
+            vec![LiteralValue::Number(10.0), LiteralValue::Number(20.0)],
+            vec![LiteralValue::Number(30.0)],
+        ]),
+    );
+
+    let err = sheetport
+        .write_inputs(update)
+        .expect_err("expected range row width mismatch");
+    match err {
+        SheetPortError::InvariantViolation { port, message } => {
+            assert_eq!(port, "matrix");
+            assert!(message.contains("range row width mismatch"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Sheet", 1, 1)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Number(1.0)
+    );
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Sheet", 1, 2)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Number(2.0)
+    );
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Sheet", 2, 1)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Number(3.0)
+    );
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Sheet", 2, 2)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Number(4.0)
+    );
+    Ok(())
+}
+
+#[test]
 fn read_inputs_reports_manifest_violation() -> Result<(), SheetPortError> {
     let mut workbook = build_workbook()?;
     let manifest = parse_manifest();
