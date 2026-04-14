@@ -93,8 +93,13 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 /// ```
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
-#[pyo3(signature = (path, strategy=None))]
-fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<workbook::PyWorkbook> {
+#[pyo3(signature = (path, strategy=None, *, config=None))]
+fn load_workbook(
+    py: Python,
+    path: &str,
+    strategy: Option<&str>,
+    config: Option<workbook::PyWorkbookConfig>,
+) -> PyResult<workbook::PyWorkbook> {
     // Backward-compat convenience
     let _ = strategy; // placeholder, backend currently fixed to calamine
     workbook::PyWorkbook::from_path(
@@ -102,7 +107,7 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
         path,
         Some("calamine"),
         None,
-        None,
+        config,
     )
 }
 
@@ -120,14 +125,26 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
 ///     `umya-spreadsheet` implementation.
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
-#[pyo3(signature = (path, output=None))]
-fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResult<Py<PyAny>> {
+#[pyo3(signature = (path, output=None, *, cell_budget=None))]
+fn recalculate_file(
+    py: Python<'_>,
+    path: &str,
+    output: Option<&str>,
+    cell_budget: Option<u64>,
+) -> PyResult<Py<PyAny>> {
     let input = std::path::Path::new(path);
     let output_path = output.map(std::path::Path::new);
 
-    let summary = formualizer::workbook::recalculate_file(input, output_path).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
-    })?;
+    let limits = cell_budget.map(|budget| {
+        let mut l = formualizer::eval::engine::WorkbookLoadLimits::default();
+        l.max_sheet_logical_cells = budget;
+        l
+    });
+
+    let summary = formualizer::workbook::recalculate_file_with_config(input, output_path, limits)
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+        })?;
 
     let out = pyo3::types::PyDict::new(py);
     out.set_item("status", summary.status.as_str())?;

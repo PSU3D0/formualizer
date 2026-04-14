@@ -31,7 +31,8 @@ pub use error::{IoError, with_cell_context};
 #[cfg(feature = "umya")]
 pub use recalculate::{
     DEFAULT_ERROR_LOCATION_LIMIT, RecalculateErrorSummary, RecalculateSheetSummary,
-    RecalculateStatus, RecalculateSummary, recalculate_file, recalculate_file_with_limit,
+    RecalculateStatus, RecalculateSummary, recalculate_file, recalculate_file_with_config,
+    recalculate_file_with_limit,
 };
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};

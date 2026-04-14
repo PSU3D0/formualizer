@@ -103,6 +103,64 @@ fn umya_loader_rejects_sparse_sheet_over_guardrail() {
     );
 }
 
+#[cfg(feature = "umya")]
+fn dense_xlsx_bytes(rows: u32, cols: u32) -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book
+        .get_sheet_by_name_mut("Sheet1")
+        .expect("default sheet exists");
+    for row in 1..=rows {
+        for col in 1..=cols {
+            sheet.get_cell_mut((col, row)).set_value_number(1.0);
+        }
+    }
+    let mut buf = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut buf).expect("write xlsx bytes");
+    buf
+}
+
+#[cfg(feature = "umya")]
+#[test]
+fn recalculate_file_with_config_rejects_over_budget() {
+    use std::io::Write;
+
+    let bytes = dense_xlsx_bytes(11, 10);
+    let mut tmp = tempfile::NamedTempFile::new().expect("create temp xlsx");
+    tmp.write_all(&bytes).expect("persist xlsx");
+
+    let mut limits = WorkbookLoadLimits::default();
+    limits.max_sheet_logical_cells = 50;
+
+    let err = match formualizer_workbook::recalculate_file_with_config(
+        tmp.path(),
+        None,
+        Some(limits),
+    ) {
+        Ok(_) => panic!("dense workbook should hit logical-cell budget"),
+        Err(err) => err,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("logical-cell budget"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[cfg(feature = "umya")]
+#[test]
+fn recalculate_file_with_config_none_matches_default() {
+    use std::io::Write;
+
+    let bytes = dense_xlsx_bytes(3, 3);
+    let mut tmp = tempfile::NamedTempFile::new().expect("create temp xlsx");
+    tmp.write_all(&bytes).expect("persist xlsx");
+
+    let summary =
+        formualizer_workbook::recalculate_file_with_config(tmp.path(), None, None)
+            .expect("default budget should succeed");
+    assert_eq!(summary.errors, 0);
+}
+
 #[cfg(all(feature = "calamine", feature = "umya"))]
 #[test]
 fn calamine_loader_rejects_sparse_sheet_over_guardrail() {

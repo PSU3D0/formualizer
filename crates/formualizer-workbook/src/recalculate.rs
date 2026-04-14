@@ -75,7 +75,17 @@ pub fn recalculate_file(
     input: &Path,
     output: Option<&Path>,
 ) -> Result<RecalculateSummary, IoError> {
-    recalculate_file_with_limit(input, output, DEFAULT_ERROR_LOCATION_LIMIT)
+    recalculate_file_with_config(input, output, None)
+}
+
+/// Like [`recalculate_file`] but accepts optional [`WorkbookLoadLimits`] to override the default
+/// cell budget.
+pub fn recalculate_file_with_config(
+    input: &Path,
+    output: Option<&Path>,
+    limits: Option<formualizer_eval::engine::WorkbookLoadLimits>,
+) -> Result<RecalculateSummary, IoError> {
+    recalculate_file_inner(input, output, DEFAULT_ERROR_LOCATION_LIMIT, limits)
 }
 
 pub fn recalculate_file_with_limit(
@@ -83,10 +93,22 @@ pub fn recalculate_file_with_limit(
     output: Option<&Path>,
     error_location_limit: usize,
 ) -> Result<RecalculateSummary, IoError> {
+    recalculate_file_inner(input, output, error_location_limit, None)
+}
+
+fn recalculate_file_inner(
+    input: &Path,
+    output: Option<&Path>,
+    error_location_limit: usize,
+    limits: Option<formualizer_eval::engine::WorkbookLoadLimits>,
+) -> Result<RecalculateSummary, IoError> {
     let mut adapter =
         UmyaAdapter::open_path(input).map_err(|e| IoError::from_backend("umya", e))?;
 
     let mut engine: Engine<WBResolver> = Engine::new(WBResolver::default(), EvalConfig::default());
+    if let Some(limits) = limits {
+        engine.set_workbook_load_limits(limits);
+    }
     adapter.stream_into_engine(&mut engine)?;
     let (_eval_result, delta) = engine.evaluate_all_with_delta().map_err(IoError::Engine)?;
 

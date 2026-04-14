@@ -104,22 +104,25 @@ pub struct PyWorkbookConfig {
     mode: PyWorkbookMode,
     eval: Option<formualizer::eval::engine::EvalConfig>,
     enable_changelog: Option<bool>,
+    cell_budget: Option<u64>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyWorkbookConfig {
     #[new]
-    #[pyo3(signature = (*, mode = PyWorkbookMode::Interactive, eval_config = None, enable_changelog = None))]
+    #[pyo3(signature = (*, mode = PyWorkbookMode::Interactive, eval_config = None, enable_changelog = None, cell_budget = None))]
     pub fn new(
         mode: PyWorkbookMode,
         eval_config: Option<PyEvaluationConfig>,
         enable_changelog: Option<bool>,
+        cell_budget: Option<u64>,
     ) -> Self {
         Self {
             mode,
             eval: eval_config.map(|c| c.inner),
             enable_changelog,
+            cell_budget,
         }
     }
 
@@ -1109,6 +1112,11 @@ fn resolve_workbook_config(
         }
         if let Some(enabled) = cfg.enable_changelog {
             base.enable_changelog = enabled;
+        }
+        if let Some(budget) = cfg.cell_budget {
+            let mut limits = base.ingest_limits.clone();
+            limits.max_sheet_logical_cells = budget;
+            base = base.with_ingest_limits(limits);
         }
         base
     } else {
