@@ -4,6 +4,12 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.6] - 2026-04-14
+
+### Fixed
+
+- Raised the default workbook logical-cell ingest budget from `8_000_000` to `128_000_000`, allowing much larger dense workbooks to load through the existing `load_workbook(...)`, `Workbook.load_path(...)`, and `recalculate_file(...)` paths while keeping row, column, and sparse-sheet guardrails in place. (#57)
+
 ## [0.5.5] - 2026-04-13
 
 ### Security and hardening
@@ -92,7 +98,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.6...HEAD
+[0.5.6]: https://github.com/PSU3D0/formualizer/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/PSU3D0/formualizer/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/PSU3D0/formualizer/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/PSU3D0/formualizer/compare/v0.5.2...v0.5.3
