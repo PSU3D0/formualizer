@@ -212,7 +212,7 @@ impl Default for WorkbookLoadLimits {
         Self {
             max_sheet_rows: 1_048_576,
             max_sheet_cols: 16_384,
-            max_sheet_logical_cells: 8_000_000,
+            max_sheet_logical_cells: 128_000_000,
             sparse_sheet_cell_threshold: 250_000,
             max_sparse_cell_ratio: 1_024,
         }
