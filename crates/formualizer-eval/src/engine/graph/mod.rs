@@ -300,49 +300,139 @@ impl DependencyGraph {
         &mut self,
         coords: &[(SheetId, AbsCoord)],
     ) -> Vec<(AbsCoord, u32)> {
+        self.ensure_vertices_batch_ordered(coords).1
+    }
+
+    /// Ensure vertices exist for given coords and return vertex ids aligned to the input order,
+    /// plus the newly allocated `(coord, raw_vid)` items suitable for edge/index population.
+    pub fn ensure_vertices_batch_ordered(
+        &mut self,
+        coords: &[(SheetId, AbsCoord)],
+    ) -> (Vec<VertexId>, Vec<(AbsCoord, u32)>) {
         use rustc_hash::FxHashMap;
-        let mut grouped: FxHashMap<SheetId, Vec<AbsCoord>> = FxHashMap::default();
-        for (sid, pc) in coords.iter().copied() {
-            let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
-            if self.cell_to_vertex.contains_key(&addr) {
-                continue;
-            }
-            grouped.entry(sid).or_default().push(pc);
+
+        let mut ordered: Vec<Option<VertexId>> = vec![None; coords.len()];
+
+        if coords.is_empty() {
+            return (Vec::new(), Vec::new());
         }
+
+        let first_sid = coords[0].0;
+        let single_sheet = coords.iter().all(|(sid, _)| *sid == first_sid);
+
         let mut add_batch: Vec<(AbsCoord, u32)> = Vec::new();
-        for (sid, pcs) in grouped {
-            if pcs.is_empty() {
-                continue;
-            }
-            // Mark sheet as touched by ensure to disable fast-path new allocations for its values
-            self.ensure_touched_sheets.insert(sid);
-            let vids = self.store.allocate_contiguous(sid, &pcs, 0x00);
-            for (i, pc) in pcs.iter().enumerate() {
-                let vid = vids[i];
-                add_batch.push((*pc, vid.0));
+
+        if single_sheet {
+            let sid = first_sid;
+            let mut missing_items: Vec<(usize, AbsCoord)> = Vec::new();
+            missing_items.reserve(coords.len());
+
+            for (idx, (_, pc)) in coords.iter().copied().enumerate() {
                 let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
-                self.cell_to_vertex.insert(addr, vid);
-                // Respect sheet index mode: skip index updates in Lazy mode during bulk ensure
+                if let Some(&existing) = self.cell_to_vertex.get(&addr) {
+                    ordered[idx] = Some(existing);
+                } else {
+                    missing_items.push((idx, pc));
+                }
+            }
+
+            if !missing_items.is_empty() {
+                self.ensure_touched_sheets.insert(sid);
+
+                let mut pcs: Vec<AbsCoord> = Vec::with_capacity(missing_items.len());
+                for (_, pc) in &missing_items {
+                    pcs.push(*pc);
+                }
+                let vids = self.store.allocate_contiguous(sid, &pcs, 0x00);
+                add_batch.reserve(missing_items.len());
+
                 match self.config.sheet_index_mode {
                     crate::engine::SheetIndexMode::Eager
                     | crate::engine::SheetIndexMode::FastBatch => {
-                        self.sheet_index_mut(sid).add_vertex(*pc, vid);
+                        for ((input_idx, pc), vid) in
+                            missing_items.into_iter().zip(vids.into_iter())
+                        {
+                            ordered[input_idx] = Some(vid);
+                            add_batch.push((pc, vid.0));
+                            let addr =
+                                CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                            self.cell_to_vertex.insert(addr, vid);
+                            self.sheet_index_mut(sid).add_vertex(pc, vid);
+                        }
                     }
                     crate::engine::SheetIndexMode::Lazy => {
-                        // defer index build
+                        for ((input_idx, pc), vid) in
+                            missing_items.into_iter().zip(vids.into_iter())
+                        {
+                            ordered[input_idx] = Some(vid);
+                            add_batch.push((pc, vid.0));
+                            let addr =
+                                CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                            self.cell_to_vertex.insert(addr, vid);
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut grouped: FxHashMap<SheetId, Vec<(usize, AbsCoord)>> = FxHashMap::default();
+
+            for (idx, (sid, pc)) in coords.iter().copied().enumerate() {
+                let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                if let Some(&existing) = self.cell_to_vertex.get(&addr) {
+                    ordered[idx] = Some(existing);
+                    continue;
+                }
+                grouped.entry(sid).or_default().push((idx, pc));
+            }
+
+            for (sid, items) in grouped {
+                if items.is_empty() {
+                    continue;
+                }
+                self.ensure_touched_sheets.insert(sid);
+
+                let mut pcs: Vec<AbsCoord> = Vec::with_capacity(items.len());
+                for (_, pc) in &items {
+                    pcs.push(*pc);
+                }
+                let vids = self.store.allocate_contiguous(sid, &pcs, 0x00);
+
+                for ((input_idx, pc), vid) in items.into_iter().zip(vids.into_iter()) {
+                    ordered[input_idx] = Some(vid);
+                    add_batch.push((pc, vid.0));
+                    let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                    self.cell_to_vertex.insert(addr, vid);
+                    match self.config.sheet_index_mode {
+                        crate::engine::SheetIndexMode::Eager
+                        | crate::engine::SheetIndexMode::FastBatch => {
+                            self.sheet_index_mut(sid).add_vertex(pc, vid);
+                        }
+                        crate::engine::SheetIndexMode::Lazy => {
+                            // defer index build
+                        }
                     }
                 }
             }
         }
+
         if !add_batch.is_empty() {
             self.edges.add_vertices_batch(&add_batch);
         }
-        add_batch
+
+        let ordered = ordered
+            .into_iter()
+            .map(|vid| vid.expect("ensure_vertices_batch_ordered must resolve every coord"))
+            .collect();
+        (ordered, add_batch)
     }
 
     /// Enable/disable the first-load fast path for value inserts.
     pub fn set_first_load_assume_new(&mut self, enabled: bool) {
         self.first_load_assume_new = enabled;
+    }
+
+    pub fn first_load_assume_new(&self) -> bool {
+        self.first_load_assume_new
     }
 
     /// Reset the per-sheet ensure touch tracking.
@@ -356,6 +446,13 @@ impl DependencyGraph {
         I: IntoIterator<Item = &'a formualizer_parse::parser::ASTNode>,
     {
         self.data_store.store_asts_batch(asts, &self.sheet_reg)
+    }
+
+    /// Reserve metadata structures for upcoming formula assignments during bulk load.
+    pub fn reserve_formula_metadata(&mut self, additional: usize) {
+        self.vertex_formulas.reserve(additional);
+        self.dirty_vertices.reserve(additional);
+        self.volatile_vertices.reserve(additional);
     }
 
     /// Lookup VertexId for a (SheetId, AbsCoord)
@@ -393,6 +490,27 @@ impl DependencyGraph {
 
         // schedule evaluation
         self.mark_vertex_dirty(vid);
+    }
+
+    /// Fast path for initial workbook load: assign a formula to a vertex that is known not to
+    /// already own dependency edges in the graph. Dirtiness is batched separately.
+    pub fn assign_formula_vertex_load_fast(
+        &mut self,
+        vid: VertexId,
+        ast_id: AstNodeId,
+        volatile: bool,
+        dynamic: bool,
+    ) {
+        debug_assert!(
+            !self.vertex_formulas.contains_key(&vid),
+            "load-fast formula assignment expects fresh/non-formula vertices"
+        );
+        self.store
+            .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
+        self.vertex_values.remove(&vid);
+        self.vertex_formulas.insert(vid, ast_id);
+        self.mark_volatile(vid, volatile);
+        self.store.set_dynamic(vid, dynamic);
     }
 
     /// Public wrapper for adding edges without beginning a batch (caller manages batch)
@@ -2904,6 +3022,15 @@ impl DependencyGraph {
     pub fn mark_vertex_dirty(&mut self, vertex_id: VertexId) {
         self.store.set_dirty(vertex_id, true);
         self.dirty_vertices.insert(vertex_id);
+    }
+
+    /// Batch-mark vertices dirty without propagation.
+    pub fn mark_vertices_dirty_batch(&mut self, vertices: &[VertexId]) {
+        self.dirty_vertices.reserve(vertices.len());
+        for &vertex_id in vertices {
+            self.store.set_dirty(vertex_id, true);
+        }
+        self.dirty_vertices.extend(vertices.iter().copied());
     }
 
     /// Update cell mapping for a vertex (for VertexEditor)

@@ -25,5 +25,5 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 zip = "0.6"
 formualizer-testkit = { path = "../formualizer-testkit", optional = true }
-formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya"] }
+formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya", "calamine"] }
 ironcalc = { version = "0.7.1", optional = true }
