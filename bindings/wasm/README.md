@@ -195,6 +195,12 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 | `writeInputs(updates)` | Write typed input values |
 | `evaluateOnce(options)` | Evaluate with deterministic options |
 
+`evaluateOnce(options)` accepts:
+- `freezeVolatile?: boolean`
+- `rngSeed?: number` - non-negative safe integer
+- `deterministicTimestampUtc?: Date | string` - fixed instant as a JS `Date` or RFC3339 timestamp
+- `deterministicTimezone?: "utc" | "local" | number` - timezone for `NOW()` / `TODAY()`; numeric offsets are seconds east of UTC and require `deterministicTimestampUtc`
+
 ### Reference
 
 | Method / Property | Description |
