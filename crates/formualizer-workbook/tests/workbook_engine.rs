@@ -469,3 +469,81 @@ fn workbook_action_is_atomic_on_error() {
     assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Number(2.0)));
     assert_emptyish(wb.get_value("S", 10, 1));
 }
+
+#[test]
+fn staged_formula_literal_overwrite_is_last_write_wins() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+
+    wb.set_formula("S", 1, 1, "1+1").unwrap();
+    assert_eq!(wb.get_formula("S", 1, 1), Some("1+1".to_string()));
+
+    wb.set_value("S", 1, 1, LiteralValue::Int(9)).unwrap();
+
+    assert_eq!(wb.get_formula("S", 1, 1), None);
+    assert_numeric_eq(wb.get_value("S", 1, 1), 9.0);
+    assert_numeric_eq(Some(wb.evaluate_cell("S", 1, 1).unwrap()), 9.0);
+}
+
+#[test]
+fn delete_sheet_drops_staged_formulas_before_rebuild() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_formula("S", 1, 1, "1+1").unwrap();
+
+    wb.delete_sheet("S").unwrap();
+    assert!(!wb.has_sheet("S"));
+
+    wb.evaluate_all().unwrap();
+
+    assert!(!wb.has_sheet("S"));
+    assert!(!wb.sheet_names().iter().any(|name| name == "S"));
+}
+
+#[test]
+fn rename_sheet_moves_staged_formulas_to_new_name() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Old").unwrap();
+    wb.set_value("Old", 1, 1, LiteralValue::Int(5)).unwrap();
+    wb.set_formula("Old", 1, 2, "A1*2").unwrap();
+
+    wb.rename_sheet("Old", "New").unwrap();
+
+    assert!(!wb.has_sheet("Old"));
+    assert!(wb.has_sheet("New"));
+    assert_eq!(wb.get_formula("Old", 1, 2), None);
+    assert_eq!(wb.get_formula("New", 1, 2), Some("A1*2".to_string()));
+    assert_eq!(
+        wb.evaluate_cell("New", 1, 2).unwrap(),
+        LiteralValue::Number(10.0)
+    );
+}
+
+#[test]
+fn undo_restores_staged_formula_after_literal_overwrite() {
+    let mut wb = Workbook::new();
+    wb.set_changelog_enabled(true);
+    wb.add_sheet("S").unwrap();
+
+    wb.begin_action("stage formula");
+    wb.set_formula("S", 1, 1, "1+1").unwrap();
+    wb.end_action();
+    assert_eq!(wb.get_formula("S", 1, 1), Some("1+1".to_string()));
+
+    wb.begin_action("overwrite staged formula");
+    wb.set_value("S", 1, 1, LiteralValue::Int(9)).unwrap();
+    wb.end_action();
+    assert_eq!(wb.get_formula("S", 1, 1), None);
+    assert_numeric_eq(wb.get_value("S", 1, 1), 9.0);
+
+    wb.undo().unwrap();
+    assert_eq!(wb.get_formula("S", 1, 1), Some("1+1".to_string()));
+    assert_eq!(
+        wb.evaluate_cell("S", 1, 1).unwrap(),
+        LiteralValue::Number(2.0)
+    );
+
+    wb.redo().unwrap();
+    assert_eq!(wb.get_formula("S", 1, 1), None);
+    assert_numeric_eq(wb.get_value("S", 1, 1), 9.0);
+}

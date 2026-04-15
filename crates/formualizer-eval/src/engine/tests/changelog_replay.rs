@@ -166,8 +166,11 @@ fn replay_events(graph: &mut DependencyGraph, events: &[ChangeEvent]) {
                 graph.clear_spill_region(anchor);
             }
 
-            // Not currently emitted by public editor mutations.
-            ChangeEvent::EdgeAdded { .. } | ChangeEvent::EdgeRemoved { .. } => {}
+            // Replay intentionally ignores editor-side bookkeeping that does not directly
+            // mutate the graph snapshot under test.
+            ChangeEvent::EdgeAdded { .. }
+            | ChangeEvent::EdgeRemoved { .. }
+            | ChangeEvent::StagedFormulaStateChanged { .. } => {}
         }
     }
 }

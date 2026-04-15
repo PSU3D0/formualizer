@@ -862,6 +862,8 @@ pub struct Workbook {
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
 }
 
+type StagedFormulaState = Vec<(String, u32, u32, String)>;
+
 trait WorkbookActionOps {
     fn set_value(
         &mut self,
@@ -1434,6 +1436,27 @@ impl Workbook {
     pub fn set_reason(&mut self, reason: Option<String>) {
         self.log.set_reason(reason);
     }
+
+    fn staged_formula_state_snapshot(&self) -> StagedFormulaState {
+        self.engine.staged_formula_state_snapshot()
+    }
+
+    fn record_staged_formula_state_change(&mut self, before: StagedFormulaState) {
+        if !self.enable_changelog {
+            return;
+        }
+        let after = self.staged_formula_state_snapshot();
+        if before == after {
+            return;
+        }
+        self.log.record(
+            formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaStateChanged {
+                before,
+                after,
+            },
+        );
+    }
+
     pub fn begin_action(&mut self, description: impl Into<String>) {
         if self.enable_changelog {
             self.log.begin_compound(description.into());
@@ -1892,6 +1915,7 @@ impl Workbook {
         if let Some(id) = self.engine.sheet_id(name) {
             self.engine.remove_sheet(id)?;
         }
+        self.engine.clear_staged_formulas_for_sheet(name);
         // Remove from Arrow store as well
         self.engine
             .sheet_store_mut()
@@ -1903,6 +1927,7 @@ impl Workbook {
         if let Some(id) = self.engine.sheet_id(old) {
             self.engine.rename_sheet(id, new)?;
         }
+        self.engine.rename_staged_formula_sheet(old, new);
         if let Some(asheet) = self.engine.sheet_store_mut().sheet_mut(old) {
             asheet.name = std::sync::Arc::<str>::from(new);
         }
@@ -1918,6 +1943,9 @@ impl Workbook {
         value: LiteralValue,
     ) -> Result<(), IoError> {
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
+        let staged_before = self
+            .enable_changelog
+            .then(|| self.staged_formula_state_snapshot());
         if self.enable_changelog {
             // Use VertexEditor with logging for graph, then mirror overlay and mark edited
             let sheet_id = self
@@ -1944,12 +1972,18 @@ impl Workbook {
             self.log
                 .patch_last_cell_event_old_state(cell, old_value, old_formula);
             self.mirror_value_to_overlay(sheet, row, col, &value);
+            self.engine.clear_staged_formula_text(sheet, row, col);
+            if let Some(before) = staged_before {
+                self.record_staged_formula_state_change(before);
+            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
             self.engine
                 .set_cell_value(sheet, row, col, value)
-                .map_err(IoError::Engine)
+                .map_err(IoError::Engine)?;
+            self.engine.clear_staged_formula_text(sheet, row, col);
+            Ok(())
         }
     }
 
@@ -1961,6 +1995,9 @@ impl Workbook {
         formula: &str,
     ) -> Result<(), IoError> {
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
+        let staged_before = self
+            .enable_changelog
+            .then(|| self.staged_formula_state_snapshot());
         if self.engine.config.defer_graph_building {
             if self.engine.get_cell(sheet, row, col).is_some() {
                 let with_eq = if formula.starts_with('=') {
@@ -1989,16 +2026,25 @@ impl Workbook {
 
                     self.log
                         .patch_last_cell_event_old_state(cell, old_value, old_formula);
+                    self.engine.clear_staged_formula_text(sheet, row, col);
+                    if let Some(before) = staged_before {
+                        self.record_staged_formula_state_change(before);
+                    }
                     self.engine.mark_data_edited();
                     Ok(())
                 } else {
                     self.engine
                         .set_cell_formula(sheet, row, col, ast)
-                        .map_err(IoError::Engine)
+                        .map_err(IoError::Engine)?;
+                    self.engine.clear_staged_formula_text(sheet, row, col);
+                    Ok(())
                 }
             } else {
                 self.engine
                     .stage_formula_text(sheet, row, col, formula.to_string());
+                if let Some(before) = staged_before {
+                    self.record_staged_formula_state_change(before);
+                }
                 Ok(())
             }
         } else {
@@ -2021,12 +2067,18 @@ impl Workbook {
                 self.engine.edit_with_logger(&mut self.log, |editor| {
                     editor.set_cell_formula(cell, ast);
                 });
+                self.engine.clear_staged_formula_text(sheet, row, col);
+                if let Some(before) = staged_before {
+                    self.record_staged_formula_state_change(before);
+                }
                 self.engine.mark_data_edited();
                 Ok(())
             } else {
                 self.engine
                     .set_cell_formula(sheet, row, col, ast)
-                    .map_err(IoError::Engine)
+                    .map_err(IoError::Engine)?;
+                self.engine.clear_staged_formula_text(sheet, row, col);
+                Ok(())
             }
         }
     }
@@ -2115,6 +2167,9 @@ impl Workbook {
         _start: (u32, u32),
         cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        let staged_before = self
+            .enable_changelog
+            .then(|| self.staged_formula_state_snapshot());
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2188,8 +2243,19 @@ impl Workbook {
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
             }
+            for (r, c, d, _cell, _old_value, _old_formula) in &items {
+                if d.formula.is_none() && d.value.is_some() {
+                    self.engine.clear_staged_formula_text(sheet, *r, *c);
+                }
+                if d.formula.is_some() && !defer_graph_building {
+                    self.engine.clear_staged_formula_text(sheet, *r, *c);
+                }
+            }
             for (r, c, f) in staged_forms {
                 self.engine.stage_formula_text(sheet, r, c, f);
+            }
+            if let Some(before) = staged_before {
+                self.record_staged_formula_state_change(before);
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -2214,7 +2280,10 @@ impl Workbook {
                         self.engine
                             .set_cell_formula(sheet, r, c, ast)
                             .map_err(IoError::Engine)?;
+                        self.engine.clear_staged_formula_text(sheet, r, c);
                     }
+                } else if d.value.is_some() {
+                    self.engine.clear_staged_formula_text(sheet, r, c);
                 }
             }
             Ok(())
@@ -2229,6 +2298,9 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
+        let staged_before = self
+            .enable_changelog
+            .then(|| self.staged_formula_state_snapshot());
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2275,6 +2347,10 @@ impl Workbook {
 
             for (r, c, v, _cell, _old_value, _old_formula) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
+                self.engine.clear_staged_formula_text(sheet, r, c);
+            }
+            if let Some(before) = staged_before {
+                self.record_staged_formula_state_change(before);
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -2286,6 +2362,7 @@ impl Workbook {
                     self.engine
                         .set_cell_value(sheet, r, c, v.clone())
                         .map_err(IoError::Engine)?;
+                    self.engine.clear_staged_formula_text(sheet, r, c);
                 }
             }
             Ok(())
@@ -2308,6 +2385,9 @@ impl Workbook {
         let end_row = start_row.saturating_add((height - 1) as u32);
         let end_col = start_col.saturating_add((width - 1) as u32);
         self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
+        let staged_before = self
+            .enable_changelog
+            .then(|| self.staged_formula_state_snapshot());
 
         if self.engine.config.defer_graph_building {
             for (ri, rforms) in rows.iter().enumerate() {
@@ -2316,6 +2396,9 @@ impl Workbook {
                     let c = start_col + ci as u32;
                     self.engine.stage_formula_text(sheet, r, c, f.clone());
                 }
+            }
+            if let Some(before) = staged_before {
+                self.record_staged_formula_state_change(before);
             }
             Ok(())
         } else if self.enable_changelog {
@@ -2347,6 +2430,16 @@ impl Workbook {
                     Ok(())
                 })?;
 
+            for (ri, rforms) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for (ci, _f) in rforms.iter().enumerate() {
+                    let c = start_col + ci as u32;
+                    self.engine.clear_staged_formula_text(sheet, r, c);
+                }
+            }
+            if let Some(before) = staged_before {
+                self.record_staged_formula_state_change(before);
+            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
@@ -2364,6 +2457,7 @@ impl Workbook {
                     self.engine
                         .set_cell_formula(sheet, r, c, ast)
                         .map_err(IoError::Engine)?;
+                    self.engine.clear_staged_formula_text(sheet, r, c);
                 }
             }
             Ok(())
