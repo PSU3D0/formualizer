@@ -2,6 +2,7 @@ use crate::SheetId;
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::Coord as AbsCoord;
 use formualizer_common::ExcelError;
+use formualizer_common::PackedSheetCell;
 use formualizer_parse::parser::{CollectPolicy, ReferenceType};
 use rustc_hash::FxHashMap;
 
@@ -41,6 +42,10 @@ pub const F_LIKELY_ARRAY: FormulaFlags = 0b0000_1000;
 pub struct DependencyPlan {
     pub formula_targets: Vec<(SheetId, AbsCoord)>,
     pub global_cells: Vec<(SheetId, AbsCoord)>,
+    pub vertex_pool: Vec<(SheetId, AbsCoord)>,
+    pub vertex_pool_packed: Vec<PackedSheetCell>,
+    pub formula_target_pool_indices: Vec<u32>,
+    pub global_cell_pool_indices: Vec<u32>,
     pub per_formula_cells: Vec<Vec<u32>>, // indices into global_cells
     pub per_formula_ranges: Vec<Vec<RangeKey>>,
     pub per_formula_names: Vec<Vec<String>>,
@@ -63,13 +68,33 @@ where
 {
     let mut plan = DependencyPlan::default();
 
-    // Global cell pool: (sheet, coord) -> index
-    let mut cell_index: FxHashMap<(SheetId, AbsCoord), u32> = FxHashMap::default();
+    // Global cell pool: packed absolute cell -> index
+    let mut cell_index: FxHashMap<PackedSheetCell, u32> = FxHashMap::default();
+    // Unified vertex pool for loader-specialized ensure.
+    let mut vertex_pool_index: FxHashMap<PackedSheetCell, u32> = FxHashMap::default();
+
+    let mut ensure_vertex_pool_index =
+        |plan: &mut DependencyPlan, key: (SheetId, AbsCoord)| -> u32 {
+            let packed = PackedSheetCell::try_new(key.0, key.1.row(), key.1.col())
+                .expect("plan vertex pool coordinate must fit PackedSheetCell");
+            match vertex_pool_index.get(&packed) {
+                Some(&idx) => idx,
+                None => {
+                    let new_idx = plan.vertex_pool.len() as u32;
+                    plan.vertex_pool.push(key);
+                    plan.vertex_pool_packed.push(packed);
+                    vertex_pool_index.insert(packed, new_idx);
+                    new_idx
+                }
+            }
+        };
 
     for (i, (sheet_name, row, col, ast)) in formulas.enumerate() {
         let sheet_id = sheet_reg.id_for(sheet_name);
         let target = (sheet_id, AbsCoord::from_excel(row, col));
         plan.formula_targets.push(target);
+        let target_pool_idx = ensure_vertex_pool_index(&mut plan, target);
+        plan.formula_target_pool_indices.push(target_pool_idx);
 
         let mut flags: FormulaFlags = 0;
         if let Some(v) = volatile_flags.and_then(|v| v.get(i)).copied()
@@ -95,12 +120,16 @@ where
                         .map(|name| sheet_reg.id_for(name))
                         .unwrap_or(sheet_id);
                     let key = (dep_sheet, AbsCoord::from_excel(row, col));
-                    let idx = match cell_index.get(&key) {
+                    let packed = PackedSheetCell::try_new(dep_sheet, key.1.row(), key.1.col())
+                        .expect("plan dependency coordinate must fit PackedSheetCell");
+                    let idx = match cell_index.get(&packed) {
                         Some(&idx) => idx,
                         None => {
                             let new_idx = plan.global_cells.len() as u32;
                             plan.global_cells.push(key);
-                            cell_index.insert(key, new_idx);
+                            cell_index.insert(packed, new_idx);
+                            let pool_idx = ensure_vertex_pool_index(&mut plan, key);
+                            plan.global_cell_pool_indices.push(pool_idx);
                             new_idx
                         }
                     };

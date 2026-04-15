@@ -13,6 +13,7 @@ publish = false
 default = []
 xlsx = ["dep:formualizer-testkit"]
 formualizer_runner = ["xlsx", "dep:formualizer-workbook"]
+perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]
 
 [dependencies]

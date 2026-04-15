@@ -27,7 +27,7 @@ fn main() {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let root = repo_root();
-    build_probe_binary(&root)?;
+    build_probe_binary(&root, &cli)?;
     let results = run_matrix(&root, &cli)?;
     let markdown = render_markdown(&results);
     println!("{markdown}");
@@ -78,6 +78,10 @@ struct Cli {
     /// Enable loader subphase timing/debug logs (`FZ_DEBUG_LOAD=1`).
     #[arg(long)]
     debug_load: bool,
+
+    /// Build the probe with `perf_instrumentation` enabled for fine-grained loader timings.
+    #[arg(long)]
+    perf_instrumentation: bool,
 
     /// Experimental Umya lazy-open mode (`FZ_UMYA_LAZY_READ=1`).
     #[arg(long)]
@@ -195,14 +199,18 @@ fn probe_binary_path(root: &Path) -> PathBuf {
 }
 
 #[cfg(feature = "formualizer_runner")]
-fn build_probe_binary(root: &Path) -> Result<()> {
+fn build_probe_binary(root: &Path, cli: &Cli) -> Result<()> {
+    let mut features = String::from("formualizer_runner");
+    if cli.perf_instrumentation {
+        features.push_str(",perf_instrumentation");
+    }
     let status = Command::new("cargo")
         .arg("build")
         .arg("--release")
         .arg("-p")
         .arg("formualizer-bench-core")
         .arg("--features")
-        .arg("formualizer_runner")
+        .arg(features)
         .arg("--bin")
         .arg("probe-load-envelope")
         .current_dir(root)
@@ -643,9 +651,10 @@ fn run_probe_subprocess(
     let elapsed = start.elapsed();
 
     let env_summary = format!(
-        "FZ_DEBUG_LOAD={} FZ_UMYA_LAZY_READ={}",
+        "FZ_DEBUG_LOAD={} FZ_UMYA_LAZY_READ={} PERF_INSTRUMENTATION={}",
         if cli.debug_load { "1" } else { "0" },
         if cli.umya_lazy_read { "1" } else { "0" },
+        if cli.perf_instrumentation { "1" } else { "0" },
     );
     let status_summary = status
         .map(|s| s.to_string())

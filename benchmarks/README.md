@@ -58,6 +58,15 @@ cargo run --release -p formualizer-bench-core --features formualizer_runner --bi
 
 Use `--preset envelope` for the broader sweep once the targeted set has been characterized.
 
+For fine-grained hot-path timing (compiled out of normal release builds), add the perf feature:
+
+```bash
+cargo run --release -p formualizer-bench-core --features formualizer_runner,perf_instrumentation --bin probe-load-envelope-matrix -- \
+  --preset iteration \
+  --debug-load \
+  --perf-instrumentation
+```
+
 The probe generates realistic-ish large XLSX workbooks for three scenario families:
 - `linear_rollup` — row-local formulas plus a wide/tall logical envelope
 - `sumifs_report` — fact-table + report-sheet `SUMIFS` workload

@@ -1,6 +1,5 @@
 use formualizer_workbook::{
-    CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, Workbook, WorkbookConfig,
-    WorkbookLoadLimits,
+    CellData, LoadStrategy, SpreadsheetWriter, Workbook, WorkbookConfig, WorkbookLoadLimits,
 };
 
 #[cfg(feature = "json")]

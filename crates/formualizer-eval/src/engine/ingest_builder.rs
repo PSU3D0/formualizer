@@ -187,44 +187,13 @@ impl<'g> BulkIngestBuilder<'g> {
                     n_globals += plan.global_cells.len();
 
                     // Reserve capacity hints before large ensure / hash-map growth.
-                    self.g
-                        .reserve_cells(plan.formula_targets.len() + plan.global_cells.len());
+                    self.g.reserve_cells(plan.vertex_pool.len());
 
                     // Ensure targets and referenced cells exist using batch allocation when missing.
                     let te0 = Instant::now();
-                    let mut coord_to_idx: rustc_hash::FxHashMap<(SheetId, AbsCoord), usize> =
-                        rustc_hash::FxHashMap::default();
-                    coord_to_idx.reserve(plan.formula_targets.len() + plan.global_cells.len());
-                    let mut all_coords: Vec<(SheetId, AbsCoord)> =
-                        Vec::with_capacity(plan.formula_targets.len() + plan.global_cells.len());
-                    let mut target_pos: Vec<usize> = Vec::with_capacity(plan.formula_targets.len());
-                    for coord in plan.formula_targets.iter().copied() {
-                        let pos = match coord_to_idx.get(&coord) {
-                            Some(&idx) => idx,
-                            None => {
-                                let idx = all_coords.len();
-                                all_coords.push(coord);
-                                coord_to_idx.insert(coord, idx);
-                                idx
-                            }
-                        };
-                        target_pos.push(pos);
-                    }
-                    let mut global_pos: Vec<usize> = Vec::with_capacity(plan.global_cells.len());
-                    for coord in plan.global_cells.iter().copied() {
-                        let pos = match coord_to_idx.get(&coord) {
-                            Some(&idx) => idx,
-                            None => {
-                                let idx = all_coords.len();
-                                all_coords.push(coord);
-                                coord_to_idx.insert(coord, idx);
-                                idx
-                            }
-                        };
-                        global_pos.push(pos);
-                    }
-
-                    let (all_vids, add_batch) = self.g.ensure_vertices_batch_ordered(&all_coords);
+                    let (all_vids, add_batch) = self
+                        .g
+                        .ensure_vertices_batch_packed_ordered(&plan.vertex_pool_packed);
                     total_vertices += add_batch.len();
                     if !add_batch.is_empty() {
                         for (pc, id) in &add_batch {
@@ -242,15 +211,15 @@ impl<'g> BulkIngestBuilder<'g> {
                         .store_asts_batch(chunk.iter().map(|(_, _, ast, _)| ast));
 
                     let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
-                    for &pos in &global_pos {
-                        dep_vids.push(all_vids[pos]);
+                    for &pos in &plan.global_cell_pool_indices {
+                        dep_vids.push(all_vids[pos as usize]);
                     }
 
                     let mut target_vids: Vec<VertexId> =
                         Vec::with_capacity(plan.formula_targets.len());
                     let load_fast = self.g.first_load_assume_new();
-                    for (i, &pos) in target_pos.iter().enumerate() {
-                        let vid = all_vids[pos];
+                    for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
+                        let vid = all_vids[pos as usize];
                         target_vids.push(vid);
                         let ast_ref = &chunk[i].2;
                         let dynamic = self.g.is_ast_dynamic(ast_ref);

@@ -13,6 +13,7 @@ mod evaluation;
 mod graph_basic;
 mod graph_internal_helpers;
 mod layer_evaluation;
+mod load_fast_mappings;
 //mod mark_dirty_benchmarks;
 mod parallel;
 mod range_dependencies;
