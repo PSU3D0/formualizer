@@ -2,7 +2,7 @@ use crate::SheetId;
 use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -134,6 +134,7 @@ pub struct DependencyGraph {
 
     // Address mappings using fast hashing
     cell_to_vertex: FxHashMap<CellRef, VertexId>,
+    load_packed_to_vertex: FxHashMap<PackedSheetCell, VertexId>,
 
     // Scheduling state - using HashSet for O(1) operations
     dirty_vertices: FxHashSet<VertexId>,
@@ -300,49 +301,381 @@ impl DependencyGraph {
         &mut self,
         coords: &[(SheetId, AbsCoord)],
     ) -> Vec<(AbsCoord, u32)> {
+        self.ensure_vertices_batch_ordered(coords).1
+    }
+
+    /// Ensure vertices exist for given packed absolute cells and return vertex ids aligned to the
+    /// input order, plus the newly allocated `(coord, raw_vid)` items suitable for edge/index
+    /// population.
+    pub fn ensure_vertices_batch_packed_ordered(
+        &mut self,
+        packed_cells: &[PackedSheetCell],
+    ) -> (Vec<VertexId>, Vec<(AbsCoord, u32)>) {
+        #[cfg(feature = "perf_instrumentation")]
+        use crate::instant::FzInstant as PerfInstant;
         use rustc_hash::FxHashMap;
-        let mut grouped: FxHashMap<SheetId, Vec<AbsCoord>> = FxHashMap::default();
-        for (sid, pc) in coords.iter().copied() {
-            let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
-            if self.cell_to_vertex.contains_key(&addr) {
-                continue;
-            }
-            grouped.entry(sid).or_default().push(pc);
+
+        #[cfg(feature = "perf_instrumentation")]
+        let debug = std::env::var("FZ_DEBUG_LOAD")
+            .ok()
+            .is_some_and(|v| v != "0");
+        #[cfg(feature = "perf_instrumentation")]
+        let t0 = PerfInstant::now();
+
+        let mut ordered: Vec<Option<VertexId>> = vec![None; packed_cells.len()];
+        if packed_cells.is_empty() {
+            return (Vec::new(), Vec::new());
         }
+
+        let first_sid = packed_cells[0].sheet_id();
+        let single_sheet = packed_cells.iter().all(|cell| cell.sheet_id() == first_sid);
         let mut add_batch: Vec<(AbsCoord, u32)> = Vec::new();
-        for (sid, pcs) in grouped {
-            if pcs.is_empty() {
-                continue;
-            }
-            // Mark sheet as touched by ensure to disable fast-path new allocations for its values
-            self.ensure_touched_sheets.insert(sid);
-            let vids = self.store.allocate_contiguous(sid, &pcs, 0x00);
-            for (i, pc) in pcs.iter().enumerate() {
-                let vid = vids[i];
-                add_batch.push((*pc, vid.0));
+
+        #[cfg(feature = "perf_instrumentation")]
+        let mut packed_hits = 0usize;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut generic_hits = 0usize;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut missing = 0usize;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut t_packed_lookup_us = 0u128;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut t_generic_lookup_us = 0u128;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut t_alloc_us = 0u128;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut t_map_insert_us = 0u128;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut t_index_insert_us = 0u128;
+        #[cfg(feature = "perf_instrumentation")]
+        let mut t_edge_register_us = 0u128;
+
+        if single_sheet {
+            let sid = first_sid;
+            let mut missing_items: Vec<(usize, PackedSheetCell)> =
+                Vec::with_capacity(packed_cells.len());
+
+            for (idx, packed) in packed_cells.iter().copied().enumerate() {
+                #[cfg(feature = "perf_instrumentation")]
+                let tl0 = PerfInstant::now();
+                if self.first_load_assume_new
+                    && let Some(&existing) = self.load_packed_to_vertex.get(&packed)
+                {
+                    ordered[idx] = Some(existing);
+                    #[cfg(feature = "perf_instrumentation")]
+                    {
+                        packed_hits += 1;
+                        t_packed_lookup_us += tl0.elapsed().as_micros();
+                    }
+                    continue;
+                }
+                #[cfg(feature = "perf_instrumentation")]
+                {
+                    t_packed_lookup_us += tl0.elapsed().as_micros();
+                }
+
+                let pc = AbsCoord::new(packed.row0(), packed.col0());
                 let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
-                self.cell_to_vertex.insert(addr, vid);
-                // Respect sheet index mode: skip index updates in Lazy mode during bulk ensure
+                #[cfg(feature = "perf_instrumentation")]
+                let tg0 = PerfInstant::now();
+                if let Some(&existing) = self.cell_to_vertex.get(&addr) {
+                    ordered[idx] = Some(existing);
+                    if self.first_load_assume_new {
+                        self.load_packed_to_vertex.insert(packed, existing);
+                    }
+                    #[cfg(feature = "perf_instrumentation")]
+                    {
+                        generic_hits += 1;
+                    }
+                } else {
+                    missing_items.push((idx, packed));
+                    #[cfg(feature = "perf_instrumentation")]
+                    {
+                        missing += 1;
+                    }
+                }
+                #[cfg(feature = "perf_instrumentation")]
+                {
+                    t_generic_lookup_us += tg0.elapsed().as_micros();
+                }
+            }
+
+            if !missing_items.is_empty() {
+                self.ensure_touched_sheets.insert(sid);
+
+                let mut pcs: Vec<AbsCoord> = Vec::with_capacity(missing_items.len());
+                for (_, packed) in &missing_items {
+                    pcs.push(AbsCoord::new(packed.row0(), packed.col0()));
+                }
+
+                #[cfg(feature = "perf_instrumentation")]
+                let ta0 = PerfInstant::now();
+                let vids = self.store.allocate_contiguous(sid, &pcs, 0x00);
+                #[cfg(feature = "perf_instrumentation")]
+                {
+                    t_alloc_us += ta0.elapsed().as_micros();
+                }
+                add_batch.reserve(missing_items.len());
+
                 match self.config.sheet_index_mode {
                     crate::engine::SheetIndexMode::Eager
                     | crate::engine::SheetIndexMode::FastBatch => {
-                        self.sheet_index_mut(sid).add_vertex(*pc, vid);
+                        for ((input_idx, packed), vid) in
+                            missing_items.into_iter().zip(vids.into_iter())
+                        {
+                            let pc = AbsCoord::new(packed.row0(), packed.col0());
+                            ordered[input_idx] = Some(vid);
+                            add_batch.push((pc, vid.0));
+
+                            #[cfg(feature = "perf_instrumentation")]
+                            let tm0 = PerfInstant::now();
+                            if self.first_load_assume_new {
+                                self.load_packed_to_vertex.insert(packed, vid);
+                            } else {
+                                let addr =
+                                    CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                                self.cell_to_vertex.insert(addr, vid);
+                            }
+                            #[cfg(feature = "perf_instrumentation")]
+                            {
+                                t_map_insert_us += tm0.elapsed().as_micros();
+                            }
+
+                            #[cfg(feature = "perf_instrumentation")]
+                            let ti0 = PerfInstant::now();
+                            self.sheet_index_mut(sid).add_vertex(pc, vid);
+                            #[cfg(feature = "perf_instrumentation")]
+                            {
+                                t_index_insert_us += ti0.elapsed().as_micros();
+                            }
+                        }
                     }
                     crate::engine::SheetIndexMode::Lazy => {
-                        // defer index build
+                        for ((input_idx, packed), vid) in
+                            missing_items.into_iter().zip(vids.into_iter())
+                        {
+                            let pc = AbsCoord::new(packed.row0(), packed.col0());
+                            ordered[input_idx] = Some(vid);
+                            add_batch.push((pc, vid.0));
+
+                            #[cfg(feature = "perf_instrumentation")]
+                            let tm0 = PerfInstant::now();
+                            if self.first_load_assume_new {
+                                self.load_packed_to_vertex.insert(packed, vid);
+                            } else {
+                                let addr =
+                                    CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                                self.cell_to_vertex.insert(addr, vid);
+                            }
+                            #[cfg(feature = "perf_instrumentation")]
+                            {
+                                t_map_insert_us += tm0.elapsed().as_micros();
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            let mut grouped: FxHashMap<SheetId, Vec<(usize, PackedSheetCell)>> =
+                FxHashMap::default();
+
+            for (idx, packed) in packed_cells.iter().copied().enumerate() {
+                #[cfg(feature = "perf_instrumentation")]
+                let tl0 = PerfInstant::now();
+                if self.first_load_assume_new
+                    && let Some(&existing) = self.load_packed_to_vertex.get(&packed)
+                {
+                    ordered[idx] = Some(existing);
+                    #[cfg(feature = "perf_instrumentation")]
+                    {
+                        packed_hits += 1;
+                        t_packed_lookup_us += tl0.elapsed().as_micros();
+                    }
+                    continue;
+                }
+                #[cfg(feature = "perf_instrumentation")]
+                {
+                    t_packed_lookup_us += tl0.elapsed().as_micros();
+                }
+
+                let sid = packed.sheet_id();
+                let pc = AbsCoord::new(packed.row0(), packed.col0());
+                let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                #[cfg(feature = "perf_instrumentation")]
+                let tg0 = PerfInstant::now();
+                if let Some(&existing) = self.cell_to_vertex.get(&addr) {
+                    ordered[idx] = Some(existing);
+                    if self.first_load_assume_new {
+                        self.load_packed_to_vertex.insert(packed, existing);
+                    }
+                    #[cfg(feature = "perf_instrumentation")]
+                    {
+                        generic_hits += 1;
+                    }
+                } else {
+                    grouped.entry(sid).or_default().push((idx, packed));
+                    #[cfg(feature = "perf_instrumentation")]
+                    {
+                        missing += 1;
+                    }
+                }
+                #[cfg(feature = "perf_instrumentation")]
+                {
+                    t_generic_lookup_us += tg0.elapsed().as_micros();
+                }
+            }
+
+            for (sid, items) in grouped {
+                if items.is_empty() {
+                    continue;
+                }
+                self.ensure_touched_sheets.insert(sid);
+
+                let mut pcs: Vec<AbsCoord> = Vec::with_capacity(items.len());
+                for (_, packed) in &items {
+                    pcs.push(AbsCoord::new(packed.row0(), packed.col0()));
+                }
+
+                #[cfg(feature = "perf_instrumentation")]
+                let ta0 = PerfInstant::now();
+                let vids = self.store.allocate_contiguous(sid, &pcs, 0x00);
+                #[cfg(feature = "perf_instrumentation")]
+                {
+                    t_alloc_us += ta0.elapsed().as_micros();
+                }
+
+                for ((input_idx, packed), vid) in items.into_iter().zip(vids.into_iter()) {
+                    let pc = AbsCoord::new(packed.row0(), packed.col0());
+                    ordered[input_idx] = Some(vid);
+                    add_batch.push((pc, vid.0));
+
+                    #[cfg(feature = "perf_instrumentation")]
+                    let tm0 = PerfInstant::now();
+                    if self.first_load_assume_new {
+                        self.load_packed_to_vertex.insert(packed, vid);
+                    } else {
+                        let addr = CellRef::new(sid, Coord::new(pc.row(), pc.col(), true, true));
+                        self.cell_to_vertex.insert(addr, vid);
+                    }
+                    #[cfg(feature = "perf_instrumentation")]
+                    {
+                        t_map_insert_us += tm0.elapsed().as_micros();
+                    }
+
+                    match self.config.sheet_index_mode {
+                        crate::engine::SheetIndexMode::Eager
+                        | crate::engine::SheetIndexMode::FastBatch => {
+                            #[cfg(feature = "perf_instrumentation")]
+                            let ti0 = PerfInstant::now();
+                            self.sheet_index_mut(sid).add_vertex(pc, vid);
+                            #[cfg(feature = "perf_instrumentation")]
+                            {
+                                t_index_insert_us += ti0.elapsed().as_micros();
+                            }
+                        }
+                        crate::engine::SheetIndexMode::Lazy => {
+                            // defer index build
+                        }
                     }
                 }
             }
         }
+
         if !add_batch.is_empty() {
+            #[cfg(feature = "perf_instrumentation")]
+            let te0 = PerfInstant::now();
             self.edges.add_vertices_batch(&add_batch);
+            #[cfg(feature = "perf_instrumentation")]
+            {
+                t_edge_register_us += te0.elapsed().as_micros();
+            }
         }
-        add_batch
+
+        #[cfg(feature = "perf_instrumentation")]
+        if debug {
+            eprintln!(
+                "[fz][ensure] cells={} single_sheet={} packed_hits={} generic_hits={} missing={} packed_lookup={}us generic_lookup={}us alloc={}us map_insert={}us index_insert={}us edge_register={}us total={}ms",
+                packed_cells.len(),
+                single_sheet,
+                packed_hits,
+                generic_hits,
+                missing,
+                t_packed_lookup_us,
+                t_generic_lookup_us,
+                t_alloc_us,
+                t_map_insert_us,
+                t_index_insert_us,
+                t_edge_register_us,
+                t0.elapsed().as_millis(),
+            );
+        }
+
+        let ordered = ordered
+            .into_iter()
+            .map(|vid| vid.expect("ensure_vertices_batch_packed_ordered must resolve every coord"))
+            .collect();
+        (ordered, add_batch)
+    }
+
+    /// Ensure vertices exist for given coords and return vertex ids aligned to the input order,
+    /// plus the newly allocated `(coord, raw_vid)` items suitable for edge/index population.
+    pub fn ensure_vertices_batch_ordered(
+        &mut self,
+        coords: &[(SheetId, AbsCoord)],
+    ) -> (Vec<VertexId>, Vec<(AbsCoord, u32)>) {
+        let mut packed: Vec<PackedSheetCell> = Vec::with_capacity(coords.len());
+        for &(sid, coord) in coords {
+            packed.push(Self::packed_cell_key(sid, coord));
+        }
+        self.ensure_vertices_batch_packed_ordered(&packed)
+    }
+
+    #[inline]
+    fn packed_cell_key(sheet_id: SheetId, coord: AbsCoord) -> PackedSheetCell {
+        PackedSheetCell::try_new(sheet_id, coord.row(), coord.col())
+            .expect("graph coordinate must fit PackedSheetCell")
+    }
+
+    fn flush_load_packed_mappings(&mut self) {
+        if self.load_packed_to_vertex.is_empty() {
+            return;
+        }
+        let debug = std::env::var("FZ_DEBUG_LOAD")
+            .ok()
+            .is_some_and(|v| v != "0");
+        let t0 = crate::instant::FzInstant::now();
+        let count = self.load_packed_to_vertex.len();
+        self.cell_to_vertex.reserve(count);
+        for (&packed, &vid) in &self.load_packed_to_vertex {
+            let coord = AbsCoord::new(packed.row0(), packed.col0());
+            let addr = CellRef::new(
+                packed.sheet_id(),
+                Coord::new(coord.row(), coord.col(), true, true),
+            );
+            self.cell_to_vertex.insert(addr, vid);
+        }
+        self.load_packed_to_vertex.clear();
+        if debug {
+            eprintln!(
+                "[fz][load] flush_load_packed_mappings: {} entries in {:.1} ms",
+                count,
+                t0.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
     }
 
     /// Enable/disable the first-load fast path for value inserts.
     pub fn set_first_load_assume_new(&mut self, enabled: bool) {
+        if self.first_load_assume_new && !enabled {
+            self.flush_load_packed_mappings();
+        } else if enabled {
+            self.load_packed_to_vertex.clear();
+        }
         self.first_load_assume_new = enabled;
+    }
+
+    pub fn first_load_assume_new(&self) -> bool {
+        self.first_load_assume_new
     }
 
     /// Reset the per-sheet ensure touch tracking.
@@ -356,6 +689,13 @@ impl DependencyGraph {
         I: IntoIterator<Item = &'a formualizer_parse::parser::ASTNode>,
     {
         self.data_store.store_asts_batch(asts, &self.sheet_reg)
+    }
+
+    /// Reserve metadata structures for upcoming formula assignments during bulk load.
+    pub fn reserve_formula_metadata(&mut self, additional: usize) {
+        self.vertex_formulas.reserve(additional);
+        self.dirty_vertices.reserve(additional);
+        self.volatile_vertices.reserve(additional);
     }
 
     /// Lookup VertexId for a (SheetId, AbsCoord)
@@ -393,6 +733,27 @@ impl DependencyGraph {
 
         // schedule evaluation
         self.mark_vertex_dirty(vid);
+    }
+
+    /// Fast path for initial workbook load: assign a formula to a vertex that is known not to
+    /// already own dependency edges in the graph. Dirtiness is batched separately.
+    pub fn assign_formula_vertex_load_fast(
+        &mut self,
+        vid: VertexId,
+        ast_id: AstNodeId,
+        volatile: bool,
+        dynamic: bool,
+    ) {
+        debug_assert!(
+            !self.vertex_formulas.contains_key(&vid),
+            "load-fast formula assignment expects fresh/non-formula vertices"
+        );
+        self.store
+            .set_kind(vid, crate::engine::vertex::VertexKind::FormulaScalar);
+        self.vertex_values.remove(&vid);
+        self.vertex_formulas.insert(vid, ast_id);
+        self.mark_volatile(vid, volatile);
+        self.store.set_dynamic(vid, dynamic);
     }
 
     /// Public wrapper for adding edges without beginning a batch (caller manages batch)
@@ -448,7 +809,7 @@ impl DependencyGraph {
                 _ => None,
             };
         }
-        // Fallback: scan cell map for bounds on the fly
+        // Fallback: scan cell maps on the fly
         let mut min_r: Option<u32> = None;
         let mut max_r: Option<u32> = None;
         for cref in self.cell_to_vertex.keys() {
@@ -456,6 +817,16 @@ impl DependencyGraph {
                 let c = cref.coord.col();
                 if c >= start_col && c <= end_col {
                     let r = cref.coord.row();
+                    min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
+                    max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
+                }
+            }
+        }
+        for packed in self.load_packed_to_vertex.keys() {
+            if packed.sheet_id() == sheet_id {
+                let c = packed.col0();
+                if c >= start_col && c <= end_col {
+                    let r = packed.row0();
                     min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
                     max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
                 }
@@ -480,11 +851,23 @@ impl DependencyGraph {
         }
         let mut idx = SheetIndex::new();
         // Collect coords for this sheet
-        let mut batch: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(self.cell_to_vertex.len());
+        let mut batch: Vec<(AbsCoord, VertexId)> =
+            Vec::with_capacity(self.cell_to_vertex.len() + self.load_packed_to_vertex.len());
         for (cref, vid) in &self.cell_to_vertex {
             if cref.sheet_id == sheet_id {
                 batch.push((AbsCoord::new(cref.coord.row(), cref.coord.col()), *vid));
             }
+        }
+        for (&packed, &vid) in &self.load_packed_to_vertex {
+            if packed.sheet_id() != sheet_id {
+                continue;
+            }
+            let coord = AbsCoord::new(packed.row0(), packed.col0());
+            let addr = CellRef::new(sheet_id, Coord::new(coord.row(), coord.col(), true, true));
+            if self.cell_to_vertex.contains_key(&addr) {
+                continue;
+            }
+            batch.push((coord, vid));
         }
         // Use batch builder
         idx.add_vertices_batch(&batch);
@@ -517,7 +900,7 @@ impl DependencyGraph {
                 _ => None,
             };
         }
-        // Fallback: scan cell map on the fly
+        // Fallback: scan cell maps on the fly
         let mut min_c: Option<u32> = None;
         let mut max_c: Option<u32> = None;
         for cref in self.cell_to_vertex.keys() {
@@ -525,6 +908,16 @@ impl DependencyGraph {
                 let r = cref.coord.row();
                 if r >= start_row && r <= end_row {
                     let c = cref.coord.col();
+                    min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
+                    max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
+                }
+            }
+        }
+        for packed in self.load_packed_to_vertex.keys() {
+            if packed.sheet_id() == sheet_id {
+                let r = packed.row0();
+                if r >= start_row && r <= end_row {
+                    let c = packed.col0();
                     min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
                     max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
                 }
@@ -566,6 +959,7 @@ impl DependencyGraph {
             #[cfg(debug_assertions)]
             graph_value_read_attempts: AtomicU64::new(0),
             cell_to_vertex: FxHashMap::default(),
+            load_packed_to_vertex: FxHashMap::default(),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
@@ -1369,12 +1763,13 @@ impl DependencyGraph {
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
-        self.cell_to_vertex.get(&addr).and_then(|&vertex_id| {
-            // Check values hashmap (stores both cell values and formula results)
-            self.vertex_values
-                .get(&vertex_id)
-                .map(|&value_ref| self.data_store.retrieve_value(value_ref))
-        })
+        self.get_vertex_id_for_address(&addr)
+            .and_then(|&vertex_id| {
+                // Check values hashmap (stores both cell values and formula results)
+                self.vertex_values
+                    .get(&vertex_id)
+                    .map(|&value_ref| self.data_store.retrieve_value(value_ref))
+            })
     }
 
     /// Mark vertex dirty and propagate to dependents
@@ -2904,6 +3299,15 @@ impl DependencyGraph {
     pub fn mark_vertex_dirty(&mut self, vertex_id: VertexId) {
         self.store.set_dirty(vertex_id, true);
         self.dirty_vertices.insert(vertex_id);
+    }
+
+    /// Batch-mark vertices dirty without propagation.
+    pub fn mark_vertices_dirty_batch(&mut self, vertices: &[VertexId]) {
+        self.dirty_vertices.reserve(vertices.len());
+        for &vertex_id in vertices {
+            self.store.set_dirty(vertex_id, true);
+        }
+        self.dirty_vertices.extend(vertices.iter().copied());
     }
 
     /// Update cell mapping for a vertex (for VertexEditor)

@@ -11,6 +11,8 @@ mod ingest_recalc;
 #[cfg(feature = "umya")]
 mod large;
 #[cfg(feature = "umya")]
+mod load_fast_batches;
+#[cfg(feature = "umya")]
 mod named_ranges;
 #[cfg(feature = "umya")]
 mod recalculate;

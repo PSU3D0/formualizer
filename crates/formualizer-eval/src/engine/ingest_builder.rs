@@ -144,149 +144,172 @@ impl<'g> BulkIngestBuilder<'g> {
             if dbg {
                 eprintln!("[fz][ingest] sheet '{}' begin", stage.name);
             }
-            // 1) Build plan for formulas on this sheet
+            // 1) Build plans for formulas on this sheet in chunks.
             if !stage.formulas.is_empty() {
-                // Rewrite context-dependent structured references (e.g., this-row selectors)
-                // into concrete references using the current graph's table metadata.
-                for (r, c, ast, _vol) in stage.formulas.iter_mut() {
-                    let coord = crate::reference::Coord::from_excel(*r, *c, true, true);
-                    let cell = crate::reference::CellRef::new(stage.id, coord);
-                    self.g.rewrite_structured_references_for_cell(ast, cell)?;
-                }
+                let formula_batch_size: usize = std::env::var("FZ_INGEST_FORMULA_BATCH")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .filter(|&n| n > 0)
+                    .unwrap_or(10_000);
+                let mut batch_count = 0usize;
 
-                let tp0 = Instant::now();
-                let refs = stage
-                    .formulas
-                    .iter()
-                    .map(|(r, c, ast, _)| (stage.name.as_str(), *r, *c, ast));
-                // Reuse volatility buffer
-                self.vols_buf.clear();
-                self.vols_buf.reserve(stage.formulas.len());
-                for &(_, _, _, v) in &stage.formulas {
-                    self.vols_buf.push(v);
-                }
-                let policy = CollectPolicy {
-                    expand_small_ranges: true,
-                    range_expansion_limit: self.g.range_expansion_limit(),
-                    include_names: true,
-                };
-                let plan = self
-                    .g
-                    .plan_dependencies(refs, &policy, Some(&self.vols_buf))?;
-                // Reserve adjacency rows capacity upfront for this sheet
-                edges_adj.reserve(plan.formula_targets.len());
-                t_plan_ms = tp0.elapsed().as_millis();
-                n_targets = plan.formula_targets.len();
-                n_globals = plan.global_cells.len();
+                for chunk in stage.formulas.chunks_mut(formula_batch_size) {
+                    batch_count += 1;
 
-                // 3) Ensure targets and referenced cells exist using batch allocation when missing
-                // Union of targets and global_cells (dedup to cut redundant lookups)
-                let mut all_coords: Vec<(SheetId, AbsCoord)> =
-                    Vec::with_capacity(plan.formula_targets.len() + plan.global_cells.len());
-                all_coords.extend(plan.formula_targets.iter().cloned());
-                all_coords.extend(plan.global_cells.iter().cloned());
-                // Deduplicate by (SheetId, AbsCoord)
-                let mut seen: rustc_hash::FxHashSet<(SheetId, AbsCoord)> =
-                    rustc_hash::FxHashSet::default();
-                all_coords.retain(|tpl| seen.insert(*tpl));
-
-                // Ensure vertices in batch and also track coords/ids for CSR rebuild
-                let te0 = Instant::now();
-                let add_batch = self.g.ensure_vertices_batch(&all_coords);
-                total_vertices += add_batch.len();
-                if !add_batch.is_empty() {
-                    for (pc, id) in &add_batch {
-                        coord_accum.push(*pc);
-                        id_accum.push(*id);
+                    // Rewrite context-dependent structured references (e.g., this-row selectors)
+                    // into concrete references using the current graph's table metadata.
+                    for (r, c, ast, _vol) in chunk.iter_mut() {
+                        let coord = crate::reference::Coord::from_excel(*r, *c, true, true);
+                        let cell = crate::reference::CellRef::new(stage.id, coord);
+                        self.g.rewrite_structured_references_for_cell(ast, cell)?;
                     }
-                }
-                t_ensure_ms = te0.elapsed().as_millis();
 
-                // 4) Store ASTs and set kinds/dirty/volatile; map targets to vids
-                let ta0 = Instant::now();
-                let ast_ids = self
-                    .g
-                    .store_asts_batch(stage.formulas.iter().map(|(_, _, ast, _)| ast));
+                    let tp0 = Instant::now();
+                    let refs = chunk
+                        .iter()
+                        .map(|(r, c, ast, _)| (stage.name.as_str(), *r, *c, ast));
+                    self.vols_buf.clear();
+                    self.vols_buf.reserve(chunk.len());
+                    for &(_, _, _, v) in chunk.iter() {
+                        self.vols_buf.push(v);
+                    }
+                    let policy = CollectPolicy {
+                        expand_small_ranges: true,
+                        range_expansion_limit: self.g.range_expansion_limit(),
+                        include_names: true,
+                    };
+                    let plan = self
+                        .g
+                        .plan_dependencies(refs, &policy, Some(&self.vols_buf))?;
+                    edges_adj.reserve(plan.formula_targets.len());
+                    t_plan_ms += tp0.elapsed().as_millis();
+                    n_targets += plan.formula_targets.len();
+                    n_globals += plan.global_cells.len();
 
-                let mut target_vids: Vec<VertexId> = Vec::with_capacity(plan.formula_targets.len());
-                for (i, (sid, pc)) in plan.formula_targets.iter().enumerate() {
-                    let vid = self.g.vid_for_sid_pc(*sid, *pc).expect("VID must exist");
-                    target_vids.push(vid); // Remove old edges if replacing a formula
-                    let ast_ref = &stage.formulas[i].2;
-                    let dynamic = self.g.is_ast_dynamic(ast_ref);
-                    self.g
-                        .assign_formula_vertex(vid, ast_ids[i], stage.formulas[i].3, dynamic);
-                }
-                total_formulas += target_vids.len();
-                t_assign_ms = ta0.elapsed().as_millis();
+                    // Reserve capacity hints before large ensure / hash-map growth.
+                    self.g.reserve_cells(plan.vertex_pool.len());
 
-                // 5) Collect edges into adjacency rows for a later one-shot CSR build
-                let ted0 = Instant::now();
-                for (fi, &tvid) in target_vids.iter().enumerate() {
-                    // Use SmallVec to avoid heap allocs for small dependency counts
-                    let mut row: smallvec::SmallVec<[u32; 8]> = smallvec::SmallVec::new();
-                    if let Some(indices) = plan.per_formula_cells.get(fi) {
-                        let mut dep_count = 0usize;
-                        row.reserve(indices.len());
-                        for &idx in indices {
-                            if let Some(dep_vid) = self.g.vid_for_plan_idx(&plan, idx) {
+                    // Ensure targets and referenced cells exist using batch allocation when missing.
+                    let te0 = Instant::now();
+                    let (all_vids, add_batch) = self
+                        .g
+                        .ensure_vertices_batch_packed_ordered(&plan.vertex_pool_packed);
+                    total_vertices += add_batch.len();
+                    if !add_batch.is_empty() {
+                        for (pc, id) in &add_batch {
+                            coord_accum.push(*pc);
+                            id_accum.push(*id);
+                        }
+                    }
+                    t_ensure_ms += te0.elapsed().as_millis();
+
+                    // Store ASTs and assign formula vertices.
+                    let ta0 = Instant::now();
+                    self.g.reserve_formula_metadata(plan.formula_targets.len());
+                    let ast_ids = self
+                        .g
+                        .store_asts_batch(chunk.iter().map(|(_, _, ast, _)| ast));
+
+                    let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
+                    for &pos in &plan.global_cell_pool_indices {
+                        dep_vids.push(all_vids[pos as usize]);
+                    }
+
+                    let mut target_vids: Vec<VertexId> =
+                        Vec::with_capacity(plan.formula_targets.len());
+                    let load_fast = self.g.first_load_assume_new();
+                    for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
+                        let vid = all_vids[pos as usize];
+                        target_vids.push(vid);
+                        let ast_ref = &chunk[i].2;
+                        let dynamic = self.g.is_ast_dynamic(ast_ref);
+                        if load_fast {
+                            self.g.assign_formula_vertex_load_fast(
+                                vid, ast_ids[i], chunk[i].3, dynamic,
+                            );
+                        } else {
+                            self.g
+                                .assign_formula_vertex(vid, ast_ids[i], chunk[i].3, dynamic);
+                        }
+                    }
+                    self.g.mark_vertices_dirty_batch(&target_vids);
+                    total_formulas += target_vids.len();
+                    t_assign_ms += ta0.elapsed().as_millis();
+
+                    // Collect edges into adjacency rows for a later one-shot CSR build.
+                    let ted0 = Instant::now();
+                    for (fi, &tvid) in target_vids.iter().enumerate() {
+                        let mut row: smallvec::SmallVec<[u32; 8]> = smallvec::SmallVec::new();
+                        if let Some(indices) = plan.per_formula_cells.get(fi) {
+                            let mut dep_count = 0usize;
+                            row.reserve(indices.len());
+                            for &idx in indices {
+                                let dep_vid = dep_vids[idx as usize];
                                 row.push(dep_vid.0);
                                 dep_count += 1;
                             }
+                            total_edges += dep_count;
+                            n_cell_deps += dep_count;
                         }
-                        total_edges += dep_count;
-                        n_cell_deps += dep_count;
-                    }
 
-                    // Range deps via direct RangeKey path
-                    let tr0 = Instant::now();
-                    if let Some(rks) = plan.per_formula_ranges.get(fi) {
-                        n_range_deps += rks.len();
-                        self.g.add_range_deps_from_keys(tvid, rks, stage.id);
-                    }
-                    t_ranges_ms += tr0.elapsed().as_millis();
-                    if let Some(names) = plan.per_formula_names.get(fi)
-                        && !names.is_empty()
-                    {
-                        let mut name_vertices = Vec::new();
-                        let (formula_sheet, _) = plan
-                            .formula_targets
-                            .get(fi)
-                            .copied()
-                            .unwrap_or((stage.id, AbsCoord::new(1, 1)));
-                        for name in names {
-                            if let Some(named) = self.g.resolve_name_entry(name, formula_sheet) {
-                                row.push(named.vertex.0);
-                                name_vertices.push(named.vertex);
-                            } else if let Some(source) = self.g.resolve_source_scalar_entry(name) {
-                                row.push(source.vertex.0);
-                            } else {
-                                self.g
-                                    .record_pending_name_reference(formula_sheet, name, tvid);
+                        let tr0 = Instant::now();
+                        if let Some(rks) = plan.per_formula_ranges.get(fi) {
+                            n_range_deps += rks.len();
+                            self.g.add_range_deps_from_keys(tvid, rks, stage.id);
+                        }
+                        t_ranges_ms += tr0.elapsed().as_millis();
+                        if let Some(names) = plan.per_formula_names.get(fi)
+                            && !names.is_empty()
+                        {
+                            let mut name_vertices = Vec::new();
+                            let (formula_sheet, _) = plan
+                                .formula_targets
+                                .get(fi)
+                                .copied()
+                                .unwrap_or((stage.id, AbsCoord::new(1, 1)));
+                            for name in names {
+                                if let Some(named) = self.g.resolve_name_entry(name, formula_sheet)
+                                {
+                                    row.push(named.vertex.0);
+                                    name_vertices.push(named.vertex);
+                                } else if let Some(source) =
+                                    self.g.resolve_source_scalar_entry(name)
+                                {
+                                    row.push(source.vertex.0);
+                                } else {
+                                    self.g
+                                        .record_pending_name_reference(formula_sheet, name, tvid);
+                                }
+                            }
+                            if !name_vertices.is_empty() {
+                                self.g.attach_vertex_to_names(tvid, &name_vertices);
                             }
                         }
-                        if !name_vertices.is_empty() {
-                            self.g.attach_vertex_to_names(tvid, &name_vertices);
-                        }
-                    }
 
-                    if let Some(tables) = plan.per_formula_tables.get(fi)
-                        && !tables.is_empty()
-                    {
-                        for table_name in tables {
-                            if let Some(table) = self.g.resolve_table_entry(table_name) {
-                                row.push(table.vertex.0);
-                            } else if let Some(source) =
-                                self.g.resolve_source_table_entry(table_name)
-                            {
-                                row.push(source.vertex.0);
+                        if let Some(tables) = plan.per_formula_tables.get(fi)
+                            && !tables.is_empty()
+                        {
+                            for table_name in tables {
+                                if let Some(table) = self.g.resolve_table_entry(table_name) {
+                                    row.push(table.vertex.0);
+                                } else if let Some(source) =
+                                    self.g.resolve_source_table_entry(table_name)
+                                {
+                                    row.push(source.vertex.0);
+                                }
                             }
                         }
+                        edges_adj.push((tvid.0, row.into_vec()));
                     }
-                    // Always add adjacency row for target (may be empty)
-                    edges_adj.push((tvid.0, row.into_vec()));
+                    t_edges_ms += ted0.elapsed().as_millis();
                 }
-                t_edges_ms = ted0.elapsed().as_millis();
+
+                if dbg && batch_count > 1 {
+                    eprintln!(
+                        "[fz][ingest] sheet '{}' processed in {} formula batches (batch_size={})",
+                        stage.name, batch_count, formula_batch_size
+                    );
+                }
             }
             if dbg {
                 eprintln!(

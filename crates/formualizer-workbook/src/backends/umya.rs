@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
+use std::time::Instant;
 use umya_spreadsheet::{
     CellRawValue, CellValue, Spreadsheet,
     reader::xlsx,
@@ -230,6 +231,12 @@ impl UmyaAdapter {
             CellRawValue::Error(_) => unreachable!(),
             CellRawValue::Empty => None,
         }
+    }
+
+    fn debug_load_enabled() -> bool {
+        std::env::var("FZ_DEBUG_LOAD")
+            .ok()
+            .is_some_and(|v| v != "0")
     }
 
     fn table_header_row_for(&self, table_name: &str) -> bool {
@@ -529,21 +536,41 @@ impl SpreadsheetReader for UmyaAdapter {
     where
         Self: Sized,
     {
-        // Prefer lazy read for large files; expose both later
-        // Use full read (not lazy) so that save operations don't hit deserialization assertions
-        let sheet = xlsx::read(path.as_ref())?;
+        let debug = Self::debug_load_enabled();
+        let path_ref = path.as_ref();
 
+        let t_read = Instant::now();
+        // Prefer lazy read for large files; expose both later.
+        // Use full read (not lazy) so that save operations don't hit deserialization assertions.
+        let sheet = xlsx::read(path_ref)?;
+        let read_ms = t_read.elapsed().as_secs_f64() * 1000.0;
+
+        let t_tables = Instant::now();
         // Umya doesn't currently expose header-row metadata, so we parse it from the XLSX zip.
         // If we fail, we keep the previous (Excel default) behavior by assuming `header_row=true`.
         let (table_header_rows, table_header_rows_available) =
-            match Self::read_table_header_rows_from_xlsx(path.as_ref()) {
+            match Self::read_table_header_rows_from_xlsx(path_ref) {
                 Ok(m) => (m, true),
                 Err(_) => (HashMap::new(), false),
             };
+        let table_ms = t_tables.elapsed().as_secs_f64() * 1000.0;
+
+        if debug {
+            eprintln!(
+                "[fz][load] umya: open_path path={} sheets={} eager_read_ms={:.1} table_header_scan_ms={:.1} table_headers={} available={}",
+                path_ref.display(),
+                sheet.get_sheet_count(),
+                read_ms,
+                table_ms,
+                table_header_rows.len(),
+                table_header_rows_available,
+            );
+        }
+
         Ok(Self {
             workbook: RwLock::new(sheet),
             lazy: false,
-            original_path: Some(path.as_ref().to_path_buf()),
+            original_path: Some(path_ref.to_path_buf()),
             table_header_rows,
             table_header_rows_available,
         })
@@ -564,12 +591,30 @@ impl SpreadsheetReader for UmyaAdapter {
     where
         Self: Sized,
     {
+        let debug = Self::debug_load_enabled();
+
+        let t_tables = Instant::now();
         let (table_header_rows, table_header_rows_available) =
             match Self::read_table_header_rows_from_reader(Cursor::new(data.as_slice())) {
                 Ok(m) => (m, true),
                 Err(_) => (HashMap::new(), false),
             };
+        let table_ms = t_tables.elapsed().as_secs_f64() * 1000.0;
+
+        let t_read = Instant::now();
         let sheet = xlsx::read_reader(Cursor::new(data), true)?;
+        let read_ms = t_read.elapsed().as_secs_f64() * 1000.0;
+
+        if debug {
+            eprintln!(
+                "[fz][load] umya: open_bytes sheets={} eager_read_ms={:.1} table_header_scan_ms={:.1} table_headers={} available={}",
+                sheet.get_sheet_count(),
+                read_ms,
+                table_ms,
+                table_header_rows.len(),
+                table_header_rows_available,
+            );
+        }
 
         Ok(Self {
             workbook: RwLock::new(sheet),
@@ -1083,9 +1128,19 @@ where
         use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
         use formualizer_eval::reference::{CellRef, Coord};
 
+        let debug = Self::debug_load_enabled();
+        let t0 = Instant::now();
+        let t_names = Instant::now();
         let names = self
             .sheet_names()
             .map_err(|e| IoError::from_backend("umya", e))?;
+        if debug {
+            eprintln!(
+                "[fz][load] umya: discovered {} sheets in {:.1} ms",
+                names.len(),
+                t_names.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         for n in &names {
             engine.add_sheet(n).map_err(IoError::Engine)?;
         }
@@ -1099,13 +1154,22 @@ where
         engine.reset_ensure_touched();
 
         let chunk_rows: usize = 32 * 1024;
-
+        let mut total_formula_cells = 0usize;
+        let mut total_value_slots = 0usize;
         let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
 
         for n in &names {
+            let t_sheet = Instant::now();
+            if debug {
+                eprintln!("[fz][load] >> umya sheet '{n}'");
+            }
+
+            let t_read_sheet = Instant::now();
             let sheet_data = self
                 .read_sheet(n)
                 .map_err(|e| IoError::from_backend("umya", e))?;
+            let read_sheet_ms = t_read_sheet.elapsed().as_secs_f64() * 1000.0;
+
             let dims = sheet_data.dimensions.unwrap_or_else(|| {
                 sheet_data
                     .cells
@@ -1130,7 +1194,20 @@ where
                 sheet_data.cells.len(),
                 engine.workbook_load_limits(),
             )?;
+            if debug {
+                eprintln!(
+                    "[fz][load]    read_sheet: dims={}x{} cells={} tables={} named_ranges={} row_hidden_manual={} in {:.1} ms",
+                    dims.0,
+                    dims.1,
+                    sheet_data.cells.len(),
+                    sheet_data.tables.len(),
+                    sheet_data.named_ranges.len(),
+                    sheet_data.row_hidden_manual.len(),
+                    read_sheet_ms,
+                );
+            }
 
+            let t_arrow = Instant::now();
             let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
             for r in 1..=rows {
                 let mut row_vals = vec![LiteralValue::Empty; cols];
@@ -1150,8 +1227,19 @@ where
             } else {
                 store.sheets.push(asheet);
             }
+            let arrow_ms = t_arrow.elapsed().as_secs_f64() * 1000.0;
+            total_value_slots += rows.saturating_mul(cols);
+            if debug {
+                eprintln!(
+                    "[fz][load]    arrow: rows={} cols={} value_slots={} in {:.1} ms",
+                    rows,
+                    cols,
+                    rows.saturating_mul(cols),
+                    arrow_ms,
+                );
+            }
 
-            // Register native tables before formula ingest.
+            let t_tables = Instant::now();
             if let Some(sheet_id) = engine.sheet_id(n) {
                 for table in &sheet_data.tables {
                     let (sr, sc, er, ec) = table.range;
@@ -1171,7 +1259,17 @@ where
                     )?;
                 }
             }
+            let table_ms = t_tables.elapsed().as_secs_f64() * 1000.0;
+            if debug {
+                eprintln!(
+                    "[fz][load]    tables: {} in {:.1} ms",
+                    sheet_data.tables.len(),
+                    table_ms,
+                );
+            }
 
+            let t_formulas = Instant::now();
+            let mut formula_cells = 0usize;
             if engine.config.defer_graph_building {
                 for ((row, col), cd) in &sheet_data.cells {
                     if let Some(f) = &cd.formula {
@@ -1179,6 +1277,7 @@ where
                             continue;
                         }
                         engine.stage_formula_text(n, *row, *col, f.clone());
+                        formula_cells += 1;
                     }
                 }
             } else {
@@ -1210,13 +1309,23 @@ where
                                 }
                             }
                         }
+                        formula_cells += 1;
                     }
                 }
                 if !formulas.is_empty() {
                     eager_formula_batches.push((n.clone(), formulas));
                 }
             }
+            let formula_ms = t_formulas.elapsed().as_secs_f64() * 1000.0;
+            total_formula_cells += formula_cells;
+            if debug {
+                eprintln!(
+                    "[fz][load]    formulas: {} in {:.1} ms",
+                    formula_cells, formula_ms,
+                );
+            }
 
+            let t_visibility = Instant::now();
             for row in &sheet_data.row_hidden_manual {
                 engine
                     .set_row_hidden(
@@ -1237,18 +1346,39 @@ where
                     )
                     .map_err(|e| IoError::from_backend("umya", e))?;
             }
+            let visibility_ms = t_visibility.elapsed().as_secs_f64() * 1000.0;
+            if debug {
+                eprintln!(
+                    "[fz][load]    row_visibility: manual={} filter={} in {:.1} ms",
+                    sheet_data.row_hidden_manual.len(),
+                    sheet_data.row_hidden_filter.len(),
+                    visibility_ms,
+                );
+                eprintln!(
+                    "[fz][load] << umya sheet '{}' total {:.1} ms",
+                    n,
+                    t_sheet.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
         }
 
         if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+            let t_bulk = Instant::now();
             let mut builder = engine.begin_bulk_ingest();
             for (sheet_name, formulas) in eager_formula_batches {
                 let sid = builder.add_sheet(&sheet_name);
                 builder.add_formulas(sid, formulas.into_iter());
             }
             builder.finish().map_err(IoError::Engine)?;
+            if debug {
+                eprintln!(
+                    "[fz][load] umya: bulk formula ingest finished in {:.1} ms",
+                    t_bulk.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
         }
 
-        // Register defined names into the dependency graph.
+        let t_defined = Instant::now();
         {
             use rustc_hash::FxHashSet;
 
@@ -1315,15 +1445,36 @@ where
                 engine.define_name(&dn.name, definition, scope)?;
             }
         }
+        if debug {
+            eprintln!(
+                "[fz][load] umya: defined names registered in {:.1} ms",
+                t_defined.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
 
+        let t_finalize = Instant::now();
         for n in &names {
             engine.finalize_sheet_index(n);
+        }
+        if debug {
+            eprintln!(
+                "[fz][load] umya: finalized sheet indexes in {:.1} ms",
+                t_finalize.elapsed().as_secs_f64() * 1000.0,
+            );
         }
 
         engine.set_first_load_assume_new(false);
         engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
+        if debug {
+            eprintln!(
+                "[fz][load] umya: done value_slots={} formula_cells={} total={:.1} ms",
+                total_value_slots,
+                total_formula_cells,
+                t0.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
         Ok(())
     }
 }
