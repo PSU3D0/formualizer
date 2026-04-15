@@ -114,6 +114,63 @@ ports:
 }
 
 #[test]
+fn evaluate_once_builds_all_staged_formulas_before_targeted_sheetport_eval() {
+    let manifest_yaml = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: staged-cross-sheet
+  name: Staged Cross Sheet
+  workbook:
+    uri: memory://staged-cross-sheet.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: output_a
+    dir: out
+    shape: scalar
+    location:
+      a1: Outputs!A1
+    schema:
+      type: number
+"#;
+    let manifest: Manifest = Manifest::from_yaml_str(manifest_yaml).expect("manifest parses");
+
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Inputs").unwrap();
+    workbook.add_sheet("Calc").unwrap();
+    workbook.add_sheet("Outputs").unwrap();
+    workbook
+        .set_value("Inputs", 1, 1, LiteralValue::Number(10.0))
+        .expect("set input");
+    workbook
+        .set_formula("Calc", 1, 1, "=Inputs!A1*2")
+        .expect("stage calc formula");
+    workbook
+        .set_formula("Outputs", 1, 1, "=Calc!A1+1")
+        .expect("stage output formula");
+    assert!(workbook.has_staged_formulas());
+
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).expect("sheetport binds");
+    let outputs = sheetport
+        .evaluate_once(EvalOptions::default())
+        .expect("evaluate once");
+
+    match outputs.get("output_a") {
+        Some(PortValue::Scalar(LiteralValue::Number(n))) => assert_eq!(*n, 21.0),
+        other => panic!("unexpected output value: {other:?}"),
+    }
+    assert_eq!(
+        sheetport
+            .workbook()
+            .get_value("Outputs", 1, 1)
+            .unwrap_or(LiteralValue::Empty),
+        LiteralValue::Number(21.0)
+    );
+    assert!(!sheetport.workbook().has_staged_formulas());
+}
+
+#[test]
 fn evaluate_once_invalid_deterministic_mode_does_not_leak_other_overrides() {
     let manifest_yaml = r#"
 spec: fio

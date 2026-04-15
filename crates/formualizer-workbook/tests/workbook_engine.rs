@@ -197,6 +197,31 @@ fn set_formulas_batch_deferred_then_eval() {
 }
 
 #[test]
+fn eval_plan_can_build_deferred_graph_by_default() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_value("S", 1, 1, LiteralValue::Int(5)).unwrap();
+    wb.set_formula("S", 1, 2, "A1*2").unwrap();
+
+    let plan = wb.get_eval_plan_with_options(&[("S", 1, 2)], true).unwrap();
+    assert!(plan.total_vertices_to_evaluate >= 1);
+    assert_eq!(plan.target_cells, vec!["S!B1"]);
+}
+
+#[test]
+fn eval_plan_can_disable_deferred_graph_build() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_value("S", 1, 1, LiteralValue::Int(5)).unwrap();
+    wb.set_formula("S", 1, 2, "A1*2").unwrap();
+
+    let err = wb
+        .get_eval_plan_with_options(&[("S", 1, 2)], false)
+        .unwrap_err();
+    assert!(err.to_string().contains("deferred graph"));
+}
+
+#[test]
 fn changelog_undo_redo_values() {
     // Use default deferred mode
     let mut wb = Workbook::new();

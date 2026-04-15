@@ -242,8 +242,16 @@ impl<'a> SheetPort<'a> {
                 for (sheet, _, _) in target_specs.iter() {
                     sheets.insert(sheet.as_str());
                 }
-                self.workbook
-                    .prepare_graph_for_sheets(sheets.iter().copied())?;
+                if self.workbook.has_staged_formulas() {
+                    // When deferred graph building is active, staged formulas on non-target sheets
+                    // may still be transitive dependencies of the requested outputs. Building only
+                    // the target sheets first can lock in incomplete dependency wiring for
+                    // cross-sheet formulas, so consume all staged formulas before targeted eval.
+                    self.workbook.prepare_graph_all()?;
+                } else {
+                    self.workbook
+                        .prepare_graph_for_sheets(sheets.iter().copied())?;
+                }
                 let borrowed: Vec<(&str, u32, u32)> = target_specs
                     .iter()
                     .map(|(sheet, row, col)| (sheet.as_str(), *row, *col))

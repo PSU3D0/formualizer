@@ -2030,6 +2030,10 @@ where
         &mut self.arrow_sheets
     }
 
+    pub fn has_staged_formulas(&self) -> bool {
+        !self.staged_formulas.is_empty()
+    }
+
     pub fn staged_formula_state_snapshot(&self) -> Vec<(String, u32, u32, String)> {
         let mut snapshot = Vec::new();
         for (sheet, entries) in &self.staged_formulas {
@@ -5356,7 +5360,7 @@ where
                 target_cells: Vec::new(),
             });
         }
-        if self.config.defer_graph_building {
+        if self.config.defer_graph_building && self.has_staged_formulas() {
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
                 "Evaluation plan requested with deferred graph; build first or call evaluate_*",
             ));

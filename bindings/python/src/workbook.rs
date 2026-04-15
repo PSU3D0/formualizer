@@ -687,9 +687,11 @@ impl PyWorkbook {
         Ok(py_results.into())
     }
 
+    #[pyo3(signature = (targets, *, build_graph_if_needed=true))]
     pub fn get_eval_plan(
         &self,
         targets: &Bound<'_, pyo3::types::PyList>,
+        build_graph_if_needed: bool,
     ) -> PyResult<crate::engine::PyEvaluationPlan> {
         let mut target_vec = Vec::with_capacity(targets.len());
         for item in targets.iter() {
@@ -706,12 +708,12 @@ impl PyWorkbook {
             .map(|(s, r, c)| (s.as_str(), *r, *c))
             .collect();
 
-        let wb = self
+        let mut wb = self
             .inner
-            .read()
+            .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         let plan = wb
-            .get_eval_plan(&refs)
+            .get_eval_plan_with_options(&refs, build_graph_if_needed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         Ok(eval_plan_to_py(plan))
     }
