@@ -76,7 +76,8 @@ impl<'a> BatchExecutor<'a> {
 
         for (idx, case) in cases.into_iter().enumerate() {
             let BatchInput { id, update } = case;
-            self.sheetport.write_inputs(self.baseline_update.clone())?;
+            self.sheetport
+                .write_inputs_raw(self.baseline_update.clone())?;
             if !update.is_empty() {
                 self.sheetport.write_inputs(update)?;
             }
@@ -94,7 +95,8 @@ impl<'a> BatchExecutor<'a> {
         }
 
         // Restore baseline after all scenarios.
-        self.sheetport.write_inputs(self.baseline_update.clone())?;
+        self.sheetport
+            .write_inputs_raw(self.baseline_update.clone())?;
 
         Ok(results)
     }

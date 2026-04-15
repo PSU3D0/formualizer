@@ -133,6 +133,22 @@ impl<'a> SheetPort<'a> {
         Ok(InputSnapshot::new(map))
     }
 
+    fn read_inputs_raw(&mut self) -> Result<InputSnapshot, SheetPortError> {
+        let bindings: Vec<PortBinding> = self
+            .bindings
+            .bindings()
+            .iter()
+            .filter(|binding| binding.direction == Direction::In)
+            .cloned()
+            .collect();
+        let mut map = BTreeMap::new();
+        for binding in bindings.iter() {
+            let value = self.read_port_value_raw(binding)?;
+            map.insert(binding.id.clone(), value);
+        }
+        Ok(InputSnapshot::new(map))
+    }
+
     pub fn read_outputs(&mut self) -> Result<OutputSnapshot, SheetPortError> {
         let bindings: Vec<PortBinding> = self
             .bindings
@@ -150,6 +166,18 @@ impl<'a> SheetPort<'a> {
     }
 
     pub fn write_inputs(&mut self, update: InputUpdate) -> Result<(), SheetPortError> {
+        self.write_inputs_inner(update, true)
+    }
+
+    pub(crate) fn write_inputs_raw(&mut self, update: InputUpdate) -> Result<(), SheetPortError> {
+        self.write_inputs_inner(update, false)
+    }
+
+    fn write_inputs_inner(
+        &mut self,
+        update: InputUpdate,
+        validate: bool,
+    ) -> Result<(), SheetPortError> {
         let mut writes = Vec::new();
 
         for (port_id, value) in update.into_inner() {
@@ -166,17 +194,23 @@ impl<'a> SheetPort<'a> {
                     message: "cannot write to output port".to_string(),
                 });
             }
-            let scope = match &binding.kind {
-                BoundPort::Record(_) => ValidationScope::Partial,
-                _ => ValidationScope::Full,
-            };
-            if let Err(violations) = validate_port_value(binding, &value, scope) {
-                return Err(SheetPortError::ConstraintViolation { violations });
+            if validate {
+                let scope = match &binding.kind {
+                    BoundPort::Record(_) => ValidationScope::Partial,
+                    _ => ValidationScope::Full,
+                };
+                if let Err(violations) = validate_port_value(binding, &value, scope) {
+                    return Err(SheetPortError::ConstraintViolation { violations });
+                }
             }
             let binding_clone = binding.clone();
             self.write_port_value(&binding_clone, value, &mut writes)?;
         }
 
+        self.apply_writes(writes)
+    }
+
+    fn apply_writes(&mut self, writes: Vec<PreparedWrite>) -> Result<(), SheetPortError> {
         self.workbook
             .action("sheetport.write_inputs", move |action| {
                 for write in writes {
@@ -451,24 +485,28 @@ impl<'a> SheetPort<'a> {
         &'a mut self,
         options: BatchOptions<'a>,
     ) -> Result<BatchExecutor<'a>, SheetPortError> {
-        let baseline = self.read_inputs()?;
-        let baseline_update = baseline.to_update();
+        self.read_inputs()?;
+        let baseline_update = self.read_inputs_raw()?.to_update();
         let plan = self.workbook().engine().build_recalc_plan()?;
         Ok(BatchExecutor::new(self, baseline_update, options, plan))
     }
 
     fn read_port_value(&mut self, binding: &PortBinding) -> Result<PortValue, SheetPortError> {
-        let mut value = match &binding.kind {
-            BoundPort::Scalar(scalar) => self.read_scalar(binding, scalar),
-            BoundPort::Record(record) => self.read_record(binding, record),
-            BoundPort::Range(range) => self.read_range(binding, range),
-            BoundPort::Table(table) => self.read_table(binding, table),
-        }?;
+        let mut value = self.read_port_value_raw(binding)?;
         value = apply_defaults(binding, value);
         if let Err(violations) = validate_port_value(binding, &value, ValidationScope::Full) {
             return Err(SheetPortError::ConstraintViolation { violations });
         }
         Ok(value)
+    }
+
+    fn read_port_value_raw(&mut self, binding: &PortBinding) -> Result<PortValue, SheetPortError> {
+        match &binding.kind {
+            BoundPort::Scalar(scalar) => self.read_scalar(binding, scalar),
+            BoundPort::Record(record) => self.read_record(binding, record),
+            BoundPort::Range(range) => self.read_range(binding, range),
+            BoundPort::Table(table) => self.read_table(binding, table),
+        }
     }
 
     fn read_scalar(
@@ -796,7 +834,38 @@ impl<'a> SheetPort<'a> {
                         grid,
                     },
                     writes,
-                )
+                )?;
+
+                let existing_height = bounds.end_row - bounds.start_row + 1;
+                if height < existing_height {
+                    for row in (bounds.start_row + height)..=bounds.end_row {
+                        for &col in &bounds.columns {
+                            writes.push(PreparedWrite::new(
+                                bounds.sheet.clone(),
+                                row,
+                                col,
+                                LiteralValue::Empty,
+                            ));
+                        }
+                    }
+                }
+
+                match layout.terminate {
+                    sheetport_spec::LayoutTermination::FirstBlankRow
+                    | sheetport_spec::LayoutTermination::UntilMarker => {
+                        let blank_row = bounds.start_row + height;
+                        for &col in &bounds.columns {
+                            writes.push(PreparedWrite::new(
+                                bounds.sheet.clone(),
+                                blank_row,
+                                col,
+                                LiteralValue::Empty,
+                            ));
+                        }
+                    }
+                    sheetport_spec::LayoutTermination::SheetEnd => {}
+                }
+                Ok(())
             }
             crate::location::AreaLocation::Name(name) => {
                 let addr = self.named_range_address(&binding.id, name)?;
