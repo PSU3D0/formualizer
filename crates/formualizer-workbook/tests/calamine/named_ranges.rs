@@ -64,6 +64,48 @@ fn calamine_defined_names_preserve_sheet_scope_and_base_sheet_resolution() {
 }
 
 #[test]
+fn calamine_defined_names_from_bytes_preserve_sheet_scope_and_base_sheet_resolution() {
+    let path = build_workbook(|book| {
+        let _ = book.new_sheet("Sheet2");
+
+        let sheet1 = book.get_sheet_by_name_mut("Sheet1").expect("Sheet1");
+        sheet1.get_cell_mut((1, 1)).set_value_number(9.0);
+        sheet1
+            .add_defined_name("LocalOnly", "$A$1")
+            .expect("add local defined name without sheet prefix");
+        let local = sheet1
+            .get_defined_names_mut()
+            .last_mut()
+            .expect("local defined name");
+        local.set_local_sheet_id(0);
+
+        let sheet2 = book.get_sheet_by_name_mut("Sheet2").expect("Sheet2");
+        sheet2.get_cell_mut((1, 1)).set_value_number(42.0);
+        sheet2
+            .add_defined_name("GlobalOnly", "Sheet2!$A$1")
+            .expect("add workbook defined name");
+    });
+    let bytes = std::fs::read(path).expect("read workbook bytes");
+
+    let mut backend = CalamineAdapter::open_bytes(bytes).expect("open workbook from bytes");
+    let names = backend.defined_names().unwrap();
+
+    let local = names
+        .iter()
+        .find(|dn| dn.name == "LocalOnly")
+        .expect("LocalOnly should be imported by calamine");
+    assert_eq!(local.scope, DefinedNameScope::Sheet);
+    assert_eq!(local.scope_sheet.as_deref(), Some("Sheet1"));
+
+    let global = names
+        .iter()
+        .find(|dn| dn.name == "GlobalOnly")
+        .expect("GlobalOnly should be imported by calamine");
+    assert_eq!(global.scope, DefinedNameScope::Workbook);
+    assert!(global.scope_sheet.is_none());
+}
+
+#[test]
 fn calamine_defined_names_include_open_ended_workbook_range() {
     let path = build_workbook(|book| {
         let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();

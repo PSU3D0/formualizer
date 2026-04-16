@@ -169,6 +169,7 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 | `unregisterFunction(name)` | Remove a previously registered custom function |
 | `listFunctions()` | List registered custom function metadata |
 | `static fromJson(json)` | Load workbook from JSON string |
+| `static fromXlsxBytes(bytes)` | Load workbook from XLSX bytes via the Calamine read path |
 
 ### Sheet
 

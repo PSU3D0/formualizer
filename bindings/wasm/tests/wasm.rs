@@ -4,8 +4,11 @@ use formualizer_wasm::{
     FormulaDialect, Parser, Reference, SheetPortSession, Tokenizer, Workbook, parse, tokenize,
 };
 use js_sys::{Function, Object, Reflect};
+use std::io::{Cursor, Write};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
+use zip::write::FileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 fn js_get(obj: &js_sys::Object, key: &str) -> JsValue {
     js_sys::Reflect::get(obj, &JsValue::from_str(key)).unwrap()
@@ -25,6 +28,71 @@ fn js_get_bool(obj: &js_sys::Object, key: &str) -> bool {
 
 fn set_prop(obj: &Object, key: &str, value: JsValue) {
     Reflect::set(obj, &JsValue::from_str(key), &value).unwrap();
+}
+
+fn build_fixture_xlsx_bytes() -> Vec<u8> {
+    let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+
+    for (path, contents) in [
+        (
+            "[Content_Types].xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>
+"#,
+        ),
+        (
+            "_rels/.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>
+"#,
+        ),
+        (
+            "xl/workbook.xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Sheet1" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>
+"#,
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>
+"#,
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:C1"/>
+  <sheetData>
+    <row r="1">
+      <c r="A1"><v>1</v></c>
+      <c r="B1"><v>2</v></c>
+      <c r="C1"><f>A1+B1</f><v>3</v></c>
+    </row>
+  </sheetData>
+</worksheet>
+"#,
+        ),
+    ] {
+        zip.start_file(path, options).unwrap();
+        zip.write_all(contents.as_bytes()).unwrap();
+    }
+
+    zip.finish().unwrap().into_inner()
 }
 
 fn make_custom_fn_options(
@@ -372,6 +440,25 @@ fn test_workbook_sheet_eval() {
 
     let v2 = sheet.evaluate_cell(1, 2).unwrap();
     assert_eq!(v2.as_f64().unwrap(), 30.0);
+}
+
+#[wasm_bindgen_test]
+fn test_workbook_from_xlsx_bytes_evaluates_formula() {
+    let bytes = build_fixture_xlsx_bytes();
+    let wb = Workbook::from_xlsx_bytes(bytes).unwrap();
+
+    let sheet_names = wb.sheet_names();
+    assert_eq!(sheet_names.length(), 1);
+    assert_eq!(sheet_names.get(0).as_string().unwrap(), "Sheet1");
+
+    let value = wb.evaluate_cell("Sheet1".to_string(), 1, 3).unwrap();
+    assert_eq!(value.as_f64().unwrap(), 3.0);
+
+    let sheet = wb.sheet("Sheet1".to_string()).unwrap();
+    let formula = sheet
+        .get_formula(1, 3)
+        .expect("formula preserved from XLSX");
+    assert_eq!(formula.replace(' ', ""), "=A1+B1");
 }
 
 #[wasm_bindgen_test]

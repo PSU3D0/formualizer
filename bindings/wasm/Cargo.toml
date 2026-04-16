@@ -22,7 +22,7 @@ js-sys = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1", optional = true }
-formualizer = { path = "../../crates/formualizer", default-features = false, features = ["wasm-js", "json"] }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["wasm-js"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 
@@ -34,12 +34,14 @@ features = [
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 [features]
-default = ["console_panic", "json"]
+default = ["console_panic", "json", "calamine"]
 console_panic = ["console_error_panic_hook"]
-# Expose a local `json` feature and forward it to the workbook dependency
+# Expose local feature toggles and forward them to the workbook dependency
 json = ["formualizer/json"]
+calamine = ["formualizer/calamine"]
 
 # JS runtime (web-time + JS-backed getrandom) is activated transitively via
 # formualizer/wasm-js → formualizer-eval/js-runtime. No explicit getrandom

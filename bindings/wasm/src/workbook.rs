@@ -446,6 +446,35 @@ impl Workbook {
         }
     }
 
+    /// Construct from XLSX bytes via the Calamine reader path (feature: calamine)
+    #[wasm_bindgen(js_name = "fromXlsxBytes")]
+    pub fn from_xlsx_bytes(bytes: Vec<u8>) -> Result<Workbook, JsValue> {
+        #[cfg(feature = "calamine")]
+        {
+            use formualizer::workbook::backends::CalamineAdapter;
+            use formualizer::workbook::traits::SpreadsheetReader;
+            let adapter = <CalamineAdapter as SpreadsheetReader>::open_bytes(bytes)
+                .map_err(|e| js_error(format!("open failed: {e}")))?;
+            let cfg = formualizer::workbook::WorkbookConfig::interactive();
+            let wb = formualizer::workbook::Workbook::from_reader(
+                adapter,
+                formualizer::workbook::LoadStrategy::EagerAll,
+                cfg,
+            )
+            .map_err(|e| js_error(format!("load failed: {e}")))?;
+            Ok(Workbook {
+                inner: Arc::new(RwLock::new(wb)),
+                cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
+            })
+        }
+        #[cfg(not(feature = "calamine"))]
+        {
+            let _ = bytes;
+            Err(js_error("calamine feature not enabled"))
+        }
+    }
+
     #[wasm_bindgen(js_name = "addSheet")]
     pub fn add_sheet(&self, name: String) -> Result<(), JsValue> {
         self.inner
