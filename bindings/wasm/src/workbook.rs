@@ -117,6 +117,12 @@ fn parse_target_coord(raw: Option<f64>, label: &str, index: u32) -> Result<u32, 
     Ok(value as u32)
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct JsEvalPlanOptions {
+    build_graph_if_needed: Option<bool>,
+}
+
 fn parse_custom_function_options(
     raw: Option<JsValue>,
 ) -> Result<formualizer::workbook::CustomFnOptions, JsValue> {
@@ -283,6 +289,19 @@ fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
     js_sys::Reflect::set(obj, &JsValue::from_str(key), &value)
         .map(|_| ())
         .map_err(|err| js_error_with_cause(format!("failed to set `{key}`"), err))
+}
+
+fn parse_eval_plan_options(raw: Option<JsValue>) -> Result<JsEvalPlanOptions, JsValue> {
+    if let Some(value) = raw {
+        if value.is_null() || value.is_undefined() {
+            Ok(JsEvalPlanOptions::default())
+        } else {
+            serde_wasm_bindgen::from_value::<JsEvalPlanOptions>(value)
+                .map_err(|err| js_error(format!("invalid eval plan options: {err}")))
+        }
+    } else {
+        Ok(JsEvalPlanOptions::default())
+    }
 }
 
 fn eval_plan_to_js(plan: &formualizer::EvalPlan) -> Result<JsValue, JsValue> {
@@ -790,7 +809,11 @@ impl Workbook {
     }
 
     #[wasm_bindgen(js_name = "getEvalPlan")]
-    pub fn get_eval_plan(&self, targets: js_sys::Array) -> Result<JsValue, JsValue> {
+    pub fn get_eval_plan(
+        &self,
+        targets: js_sys::Array,
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
         let mut target_vec = Vec::with_capacity(targets.length() as usize);
         for i in 0..targets.length() {
             let item = targets.get(i);
@@ -813,13 +836,15 @@ impl Workbook {
             .iter()
             .map(|(s, r, c)| (s.as_str(), *r, *c))
             .collect();
+        let options = parse_eval_plan_options(options)?;
+        let build_graph_if_needed = options.build_graph_if_needed.unwrap_or(true);
 
-        let wb = self
+        let mut wb = self
             .inner
-            .read()
-            .map_err(|_| js_error("failed to lock workbook for read"))?;
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
         let plan = wb
-            .get_eval_plan(&refs)
+            .get_eval_plan_with_options(&refs, build_graph_if_needed)
             .map_err(|e| js_error(format!("get_eval_plan failed: {e}")))?;
         eval_plan_to_js(&plan)
     }

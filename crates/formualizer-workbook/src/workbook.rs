@@ -1405,6 +1405,10 @@ impl Workbook {
         &self.engine.config
     }
 
+    pub fn has_staged_formulas(&self) -> bool {
+        self.engine.has_staged_formulas()
+    }
+
     pub fn deterministic_mode(&self) -> &formualizer_eval::engine::DeterministicMode {
         &self.engine.config.deterministic_mode
     }
@@ -2546,6 +2550,17 @@ impl Workbook {
     }
 
     pub fn get_eval_plan(&self, targets: &[(&str, u32, u32)]) -> Result<EvalPlan, IoError> {
+        self.engine.get_eval_plan(targets).map_err(IoError::Engine)
+    }
+
+    pub fn get_eval_plan_with_options(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+        build_graph_if_needed: bool,
+    ) -> Result<EvalPlan, IoError> {
+        if build_graph_if_needed && self.engine.config.defer_graph_building {
+            self.prepare_graph_all()?;
+        }
         self.engine.get_eval_plan(targets).map_err(IoError::Engine)
     }
 

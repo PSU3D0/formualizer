@@ -292,6 +292,60 @@ fn test_array_formula() {
 }
 
 #[wasm_bindgen_test]
+fn test_get_eval_plan_builds_graph_by_default_for_deferred_workbooks() {
+    let wb = Workbook::new();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+    wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(123.0))
+        .unwrap();
+    wb.set_formula("Sheet1".to_string(), 1, 2, "=A1".to_string())
+        .unwrap();
+
+    let targets = js_sys::Array::new();
+    let target = js_sys::Array::new();
+    target.push(&JsValue::from_str("Sheet1"));
+    target.push(&JsValue::from_f64(1.0));
+    target.push(&JsValue::from_f64(2.0));
+    targets.push(&target);
+
+    let plan = wb.get_eval_plan(targets.clone(), None).unwrap();
+    let plan_obj: Object = plan.into();
+    assert!(js_get_f64(&plan_obj, "total_vertices_to_evaluate") >= 1.0);
+
+    let target_cells: js_sys::Array = js_get(&plan_obj, "target_cells").into();
+    assert_eq!(target_cells.length(), 1);
+    assert_eq!(target_cells.get(0).as_string().unwrap(), "Sheet1!B1");
+}
+
+#[wasm_bindgen_test]
+fn test_get_eval_plan_can_disable_implicit_graph_build() {
+    let wb = Workbook::new();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+    wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(123.0))
+        .unwrap();
+    wb.set_formula("Sheet1".to_string(), 1, 2, "=A1".to_string())
+        .unwrap();
+
+    let targets = js_sys::Array::new();
+    let target = js_sys::Array::new();
+    target.push(&JsValue::from_str("Sheet1"));
+    target.push(&JsValue::from_f64(1.0));
+    target.push(&JsValue::from_f64(2.0));
+    targets.push(&target);
+
+    let options = Object::new();
+    set_prop(&options, "buildGraphIfNeeded", JsValue::from_bool(false));
+    let err = wb.get_eval_plan(targets, Some(options.into())).unwrap_err();
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("deferred graph")
+    );
+}
+
+#[wasm_bindgen_test]
 fn test_workbook_sheet_eval() {
     let wb = Workbook::new();
     wb.add_sheet("Data".to_string()).unwrap();

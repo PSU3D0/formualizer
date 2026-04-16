@@ -207,6 +207,10 @@ print(f"Vertices to evaluate: {plan.total_vertices_to_evaluate}")
 print(f"Parallel layers: {plan.estimated_parallel_layers}")
 for layer in plan.layers:
     print(f"  Layer: {layer.vertex_count} vertices, parallel={layer.parallel_eligible}")
+
+# By default this will build deferred workbook graphs if needed.
+# Disable that behavior if you want planning to fail instead of mutating workbook state.
+wb.get_eval_plan([("Sheet1", 1, 2)], build_graph_if_needed=False)
 ```
 
 ## SheetPort: spreadsheets as typed APIs
