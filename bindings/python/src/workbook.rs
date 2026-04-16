@@ -1,11 +1,13 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use formualizer::common::LiteralValue;
 use formualizer::common::error::{ExcelError, ExcelErrorKind};
 
-use crate::engine::{PyEvaluationConfig, eval_plan_to_py};
+use crate::engine::{
+    PyEvaluationConfig, apply_binding_eval_defaults, eval_plan_to_py, merge_python_eval_config,
+};
 use crate::enums::PyWorkbookMode;
 use crate::value::{literal_to_py, py_to_literal};
 use std::collections::HashMap;
@@ -173,13 +175,9 @@ impl PyWorkbook {
     #[pyo3(signature = (*, mode=None, config=None))]
     pub fn new(mode: Option<PyWorkbookMode>, config: Option<PyWorkbookConfig>) -> PyResult<Self> {
         let cfg = resolve_workbook_config(mode, config)?;
-        Ok(Self {
-            inner: std::sync::Arc::new(std::sync::RwLock::new(
-                formualizer::workbook::Workbook::new_with_config(cfg),
-            )),
-            sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
-            cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        })
+        Ok(Self::from_inner_workbook(
+            formualizer::workbook::Workbook::new_with_config(cfg),
+        ))
     }
 
     /// Class method: load an XLSX workbook from a file path.
@@ -275,11 +273,7 @@ impl PyWorkbook {
                 .map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
                 })?;
-                Ok(Self {
-                    inner: std::sync::Arc::new(std::sync::RwLock::new(wb)),
-                    sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
-                    cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                })
+                Ok(Self::from_inner_workbook(wb))
             }
             "umya" => {
                 use formualizer::workbook::backends::UmyaAdapter;
@@ -299,14 +293,63 @@ impl PyWorkbook {
                 .map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
                 })?;
-                Ok(Self {
-                    inner: std::sync::Arc::new(std::sync::RwLock::new(wb)),
-                    sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
-                    cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                })
+                Ok(Self::from_inner_workbook(wb))
             }
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported backend: {backend}"
+            ))),
+        }
+    }
+
+    /// Class method: load an XLSX workbook from in-memory bytes.
+    ///
+    /// This is the Pyodide-friendly counterpart to `Workbook.from_path(...)`.
+    ///
+    /// Args:
+    ///     data: XLSX payload as `bytes`.
+    ///     backend: Backend name. Defaults to `umya` because `calamine` byte-open
+    ///         is not currently supported in this repository.
+    ///     mode/config: Optional workbook configuration.
+    #[classmethod]
+    #[pyo3(signature = (data, backend=None, *, mode=None, config=None))]
+    pub fn from_bytes<'py>(
+        _cls: &Bound<'py, pyo3::types::PyType>,
+        data: &Bound<'py, PyBytes>,
+        backend: Option<&str>,
+        mode: Option<PyWorkbookMode>,
+        config: Option<PyWorkbookConfig>,
+    ) -> PyResult<Self> {
+        let cfg = resolve_workbook_config(mode, config)?;
+        Self::from_bytes_impl(data.as_bytes().to_vec(), backend.unwrap_or("umya"), cfg)
+    }
+
+    /// Serialize the current workbook contents into XLSX bytes.
+    ///
+    /// Notes:
+    /// - This currently uses the `umya` backend.
+    /// - Output is generated from the in-memory workbook model; original XLSX styling
+    ///   and package metadata are not preserved by the Python binding.
+    #[pyo3(signature = (backend=None))]
+    pub fn to_xlsx_bytes<'py>(
+        &self,
+        py: Python<'py>,
+        backend: Option<&str>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        match backend.unwrap_or("umya") {
+            "umya" => {
+                let wb = self.inner.read().map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
+                })?;
+                let bytes = wb.to_xlsx_bytes().map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("save failed: {e}"))
+                })?;
+                Ok(PyBytes::new(py, &bytes))
+            }
+            "calamine" => Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                "backend='calamine' does not currently support XLSX byte export; use backend='umya'",
+            )),
+            other => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Unsupported backend: {other}"
             ))),
         }
     }
@@ -740,9 +783,10 @@ impl PyWorkbook {
         if let Some(cached) = {
             let sheets = self.sheets.read().unwrap();
             sheets.get(sheet).and_then(|m| m.get(&(row, col)).cloned())
-        } && let Some(value) = cached.value
-        {
-            return Ok(Some(literal_to_py(py, &value)?));
+        } {
+            if let Some(value) = cached.value {
+                return Ok(Some(literal_to_py(py, &value)?));
+            }
         }
         let wb = self
             .inner
@@ -1074,6 +1118,47 @@ impl PyRangeAddress {
 
 // Non-Python methods for internal use
 impl PyWorkbook {
+    fn from_inner_workbook(inner: formualizer::workbook::Workbook) -> Self {
+        Self {
+            inner: std::sync::Arc::new(std::sync::RwLock::new(inner)),
+            sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
+            cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn from_bytes_impl(
+        data: Vec<u8>,
+        backend: &str,
+        cfg: formualizer::workbook::WorkbookConfig,
+    ) -> PyResult<Self> {
+        match backend {
+            "umya" => {
+                use formualizer::workbook::backends::UmyaAdapter;
+                use formualizer::workbook::traits::SpreadsheetReader;
+
+                let adapter =
+                    <UmyaAdapter as SpreadsheetReader>::open_bytes(data).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
+                    })?;
+                let wb = formualizer::workbook::Workbook::from_reader(
+                    adapter,
+                    formualizer::workbook::LoadStrategy::EagerAll,
+                    cfg,
+                )
+                .map_err(|e| {
+                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
+                })?;
+                Ok(Self::from_inner_workbook(wb))
+            }
+            "calamine" => Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                "backend='calamine' does not currently support XLSX byte open; use backend='umya'",
+            )),
+            other => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                "Unsupported backend: {other}"
+            ))),
+        }
+    }
+
     pub(crate) fn with_workbook_mut<T, F>(&self, f: F) -> PyResult<T>
     where
         F: FnOnce(&mut formualizer::workbook::Workbook) -> PyResult<T>,
@@ -1095,30 +1180,70 @@ fn resolve_workbook_config(
     config: Option<PyWorkbookConfig>,
 ) -> PyResult<formualizer::workbook::WorkbookConfig> {
     let resolved = if let Some(cfg) = config {
-        if let Some(requested) = mode
-            && requested != cfg.mode
-        {
-            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-                "mode conflicts with WorkbookConfig.mode",
-            ));
+        if let Some(requested) = mode {
+            if requested != cfg.mode {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "mode conflicts with WorkbookConfig.mode",
+                ));
+            }
         }
         let mut base = match cfg.mode {
             PyWorkbookMode::Ephemeral => formualizer::workbook::WorkbookConfig::ephemeral(),
             PyWorkbookMode::Interactive => formualizer::workbook::WorkbookConfig::interactive(),
         };
         if let Some(eval) = cfg.eval {
-            base.eval = eval;
+            merge_python_eval_config(&mut base.eval, &eval);
+        } else {
+            apply_binding_eval_defaults(&mut base.eval);
         }
         if let Some(enabled) = cfg.enable_changelog {
             base.enable_changelog = enabled;
         }
         base
     } else {
-        match mode.unwrap_or(PyWorkbookMode::Interactive) {
+        let mut base = match mode.unwrap_or(PyWorkbookMode::Interactive) {
             PyWorkbookMode::Ephemeral => formualizer::workbook::WorkbookConfig::ephemeral(),
             PyWorkbookMode::Interactive => formualizer::workbook::WorkbookConfig::interactive(),
-        }
+        };
+        apply_binding_eval_defaults(&mut base.eval);
+        base
     };
 
     Ok(resolved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PyWorkbookConfig, resolve_workbook_config};
+    use crate::enums::PyWorkbookMode;
+    use formualizer::eval::engine::EvalConfig;
+
+    #[test]
+    fn resolve_workbook_config_applies_host_default_without_explicit_eval_config() {
+        let resolved = resolve_workbook_config(None, None).expect("resolve workbook config");
+        assert_eq!(
+            resolved.eval.enable_parallel,
+            !cfg!(target_os = "emscripten")
+        );
+        assert!(resolved.enable_changelog);
+        assert!(resolved.eval.defer_graph_building);
+    }
+
+    #[test]
+    fn resolve_workbook_config_preserves_explicit_eval_override() {
+        let explicit = EvalConfig {
+            enable_parallel: true,
+            ..EvalConfig::default()
+        };
+        let cfg = PyWorkbookConfig::new(PyWorkbookMode::Interactive, None, Some(false));
+        let cfg = PyWorkbookConfig {
+            eval: Some(explicit.clone()),
+            ..cfg
+        };
+
+        let resolved = resolve_workbook_config(None, Some(cfg)).expect("resolve workbook config");
+        assert_eq!(resolved.eval.enable_parallel, explicit.enable_parallel);
+        assert!(!resolved.enable_changelog);
+        assert!(resolved.eval.defer_graph_building);
+    }
 }

@@ -242,6 +242,7 @@ Formal benchmarks are in progress.
 |--------|---------|------|
 | Rust | `cargo add formualizer` | [docs.rs](https://docs.rs/formualizer) · [guide](https://www.formualizer.dev/docs/quickstarts/rust-quickstart) |
 | Python | `pip install formualizer` | [README](bindings/python/README.md) · [guide](https://www.formualizer.dev/docs/quickstarts/python-quickstart) |
+| Python (Pyodide) | `await micropip.install("formualizer")` | [README](bindings/python/README.md#using-in-pyodide-browser--webassembly) · [guide](https://www.formualizer.dev/docs/quickstarts/pyodide-quickstart) |
 | WASM | `npm install formualizer` | [README](bindings/wasm/README.md) · [guide](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart) |
 
 Both Python and WASM bindings expose the same core API surface: tokenization, parsing, workbook operations, evaluation, undo/redo, and SheetPort.

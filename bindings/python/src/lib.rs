@@ -1,4 +1,10 @@
+// See crates/formualizer-common/src/lib.rs for rationale. The nested-if form
+// is kept so the Pyodide-matched Rust nightly (pre let-chain stabilization)
+// still builds this crate.
+#![allow(clippy::collapsible_if)]
+
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::gen_stub_pyfunction;
@@ -106,6 +112,29 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
     )
 }
 
+/// Load an XLSX workbook from in-memory bytes.
+///
+/// This is the byte-oriented counterpart to `load_workbook(...)` and defaults to
+/// the `umya` backend because `calamine` byte-open is not yet supported here.
+#[gen_stub_pyfunction(module = "formualizer")]
+#[pyfunction]
+#[pyo3(signature = (data, strategy=None, backend=None))]
+fn load_workbook_bytes<'py>(
+    py: Python<'py>,
+    data: &Bound<'py, PyBytes>,
+    strategy: Option<&str>,
+    backend: Option<&str>,
+) -> PyResult<workbook::PyWorkbook> {
+    let _ = strategy; // placeholder, backend currently fixed to eager load
+    workbook::PyWorkbook::from_bytes(
+        &py.get_type::<workbook::PyWorkbook>(),
+        data,
+        Some(backend.unwrap_or("umya")),
+        None,
+        None,
+    )
+}
+
 /// Recalculate an XLSX workbook and write formula cached values back to file.
 ///
 /// Args:
@@ -182,6 +211,7 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(tokenize, m)?)?;
     m.add_function(wrap_pyfunction!(parse, m)?)?;
     m.add_function(wrap_pyfunction!(load_workbook, m)?)?;
+    m.add_function(wrap_pyfunction!(load_workbook_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(recalculate_file, m)?)?;
 
     // Backward-compatible aliases for older names which started with `Py...`.

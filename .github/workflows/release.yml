@@ -503,9 +503,46 @@ jobs:
           name: wheels-sdist
           path: dist
 
+  build-wheels-pyodide:
+    if: startsWith(github.ref_name, 'v')
+    needs: verify-product
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # Host Python must match xbuildenv CPython major.minor (3.13 for Pyodide
+      # 0.29.x). See bindings/python/scripts/build-pyodide-wheel.sh.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Set up Rust (rustup shim for custom nightly)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+      - name: Build Pyodide wheel
+        working-directory: bindings/python
+        run: ./scripts/build-pyodide-wheel.sh
+      - name: Smoke-test Pyodide wheel
+        working-directory: bindings/python
+        run: |
+          wheel="$(ls dist/pyodide/*-pyodide_*_wasm32.whl | head -1)"
+          if [[ -z "$wheel" ]]; then
+            echo "No retagged pyodide wheel found in dist/pyodide" >&2
+            exit 1
+          fi
+          ./scripts/smoke-pyodide-wheel.sh "$wheel"
+      - name: Upload Pyodide wheel
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-pyodide
+          path: bindings/python/dist/pyodide/*-pyodide_*_wasm32.whl
+          if-no-files-found: error
+
   publish-pypi:
     if: startsWith(github.ref_name, 'v')
-    needs: [publish-product-crates, build-wheels-linux, build-wheels-musllinux, build-wheels-windows, build-wheels-macos, build-sdist]
+    needs: [publish-product-crates, build-wheels-linux, build-wheels-musllinux, build-wheels-windows, build-wheels-macos, build-sdist, build-wheels-pyodide]
     runs-on: ubuntu-latest
     permissions:
       id-token: write

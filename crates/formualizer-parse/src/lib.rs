@@ -1,3 +1,9 @@
+#![cfg_attr(target_os = "emscripten", feature(let_chains))]
+// See formualizer-common/lib.rs for rationale: the Pyodide nightly predates
+// let-chain stabilization, so nested `if let ... { if cond { ... } }` is
+// deliberate here; silence clippy's collapse suggestion crate-wide.
+#![allow(clippy::collapsible_if)]
+
 mod hasher;
 pub mod parser;
 pub mod pretty;

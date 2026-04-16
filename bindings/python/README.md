@@ -62,6 +62,20 @@ wb = fz.load_workbook("financial_model.xlsx", strategy="eager_all")
 print(wb.evaluate_cell("Summary", 1, 2))
 ```
 
+### Load and save XLSX bytes
+
+```python
+import formualizer as fz
+
+payload = open("financial_model.xlsx", "rb").read()
+wb = fz.load_workbook_bytes(payload, backend="umya")
+print(wb.evaluate_cell("Summary", 1, 2))
+
+out = wb.to_xlsx_bytes()
+```
+
+`backend="umya"` is currently the byte-oriented XLSX path. Path-based loading still defaults to `calamine`.
+
 ### Recalculate XLSX cached values (writeback)
 
 ```python
@@ -264,12 +278,13 @@ print(result["final_price"])  # 120.0
 tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
 load_workbook(path: str, strategy: str = None) -> Workbook
+load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
 ```
 
 ### Core classes
 
-- **`Workbook`** — create, load, evaluate, undo/redo. Supports `from_path()` and `load_path()` class methods.
+- **`Workbook`** — create, load, evaluate, undo/redo. Supports `from_path()`, `from_bytes()`, `load_path()`, and `to_xlsx_bytes()`.
 - **`Sheet`** — per-sheet facade for `set_value`, `set_formula`, `get_cell`, batch operations.
 - **`LiteralValue`** — typed values: `.int()`, `.number()`, `.text()`, `.boolean()`, `.date()`, `.empty()`, `.error()`, `.array()`.
 - **`Tokenizer`** — iterable token sequence with `.render()` and `.tokens`.
@@ -298,9 +313,44 @@ Requires Rust >= 1.70 and [maturin](https://github.com/PyO3/maturin):
 ```bash
 pip install maturin
 cd bindings/python
-maturin develop          # debug build
+maturin develop            # debug build
 maturin develop --release  # optimized build
 ```
+
+## Using in Pyodide (browser / WebAssembly)
+
+`formualizer` ships a Pyodide-tagged wheel (`*-pyodide_<abi>_wasm32.whl`) alongside the native wheels on PyPI. Inside a Pyodide runtime:
+
+```python
+import micropip
+await micropip.install("formualizer")
+
+import formualizer as fz
+wb = fz.Workbook()
+wb.add_sheet("Sheet1")
+wb.set_value("Sheet1", 1, 1, 20)
+wb.set_value("Sheet1", 2, 1, 22)
+wb.set_formula("Sheet1", 1, 2, "=SUM(A1:A2)")
+wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
+```
+
+**Supported Pyodide versions:** 0.29.x (ABI `pyodide_2025_0`). Later minors may require a new wheel — check the PyPI release matrix for your target Pyodide version.
+
+**Pyodide-specific behavior:**
+- `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
+- XLSX byte I/O (`Workbook.to_xlsx_bytes`, `Workbook.from_bytes`, `load_workbook_bytes`) uses the `umya` backend on all platforms.
+- Python UDFs registered via `Workbook.register_function` work identically to native; single-cell refs arrive as scalars (Excel-native semantics).
+
+### Building a Pyodide wheel from source
+
+For local development or targeting a Pyodide version that isn't on PyPI:
+
+```bash
+./scripts/build-pyodide-wheel.sh
+./scripts/smoke-pyodide-wheel.sh dist/pyodide/*-pyodide_*_wasm32.whl
+```
+
+The build script derives Python, ABI, Emscripten, and Rust toolchain from `pyodide config` (no hardcoded versions), installs Pyodide's custom wasm-EH Rust sysroot over the stock rustup target, and retags the output wheel to the platform tag Pyodide's `micropip` expects.
 
 ## Testing
 

@@ -56,6 +56,16 @@ impl UmyaAdapter {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
     const EXCEL_MAX_COLS: u32 = 16_384;
 
+    pub fn new_empty() -> Self {
+        Self {
+            workbook: RwLock::new(umya_spreadsheet::new_file()),
+            lazy: false,
+            original_path: None,
+            table_header_rows: HashMap::new(),
+            table_header_rows_available: false,
+        }
+    }
+
     fn extract_attr(tag: &str, key: &str) -> Option<String> {
         let needle_dq = format!("{key}=\"");
         if let Some(pos) = tag.find(&needle_dq) {

@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "emscripten", feature(let_chains, unsigned_is_multiple_of))]
+
 pub mod backends;
 pub mod builtins;
 pub mod error;
