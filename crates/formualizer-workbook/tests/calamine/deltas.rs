@@ -49,26 +49,51 @@ fn calamine_read_range_filters() {
     assert!(!subset.contains_key(&(1, 1)));
 }
 
-// 3. Unsupported constructors produce errors
+// 3. Byte-backed constructors load the same workbook content as the path flow
 #[test]
-fn calamine_open_bytes_unsupported() {
-    match CalamineAdapter::open_bytes(vec![]) {
-        Ok(_) => panic!("open_bytes unexpectedly succeeded"),
-        Err(err) => {
-            let msg = err.to_string();
-            assert!(msg.contains("open_bytes"));
-        }
-    }
+fn calamine_open_bytes_reads_workbook() {
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_value_number(4);
+        sh.get_cell_mut((2, 1)).set_value_number(5);
+        sh.get_cell_mut((3, 1)).set_formula("=A1+B1");
+    });
+    let bytes = std::fs::read(path).expect("read workbook bytes");
+
+    let mut backend = CalamineAdapter::open_bytes(bytes).expect("open workbook from bytes");
+    let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+    backend.stream_into_engine(&mut engine).unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(9.0))
+    );
 }
 
 #[test]
-fn calamine_open_reader_unsupported() {
+fn calamine_open_reader_reads_workbook() {
     use std::io::Cursor;
-    let reader: Box<dyn std::io::Read + Send + Sync> = Box::new(Cursor::new(vec![]));
-    match CalamineAdapter::open_reader(reader) {
-        Ok(_) => panic!("open_reader unexpectedly succeeded"),
-        Err(err) => assert!(err.to_string().contains("open_reader")),
-    }
+
+    let path = build_workbook(|book| {
+        let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        sh.get_cell_mut((1, 1)).set_value_number(7);
+        sh.get_cell_mut((2, 1)).set_formula("=A1*2");
+    });
+    let bytes = std::fs::read(path).expect("read workbook bytes");
+    let reader: Box<dyn std::io::Read + Send + Sync> = Box::new(Cursor::new(bytes));
+
+    let mut backend = CalamineAdapter::open_reader(reader).expect("open workbook from reader");
+    let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
+    let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
+    backend.stream_into_engine(&mut engine).unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(14.0))
+    );
 }
 
 // 4. Values-only fast path: ensure formulas_loaded == 0 and cells_loaded == N

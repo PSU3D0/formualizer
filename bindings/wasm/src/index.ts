@@ -310,9 +310,12 @@ export interface WorkbookApi extends wasm.Workbook {
   listFunctions(): RegisteredFunctionInfo[];
 }
 
+export type XlsxBytesSource = Uint8Array | ArrayBufferLike;
+
 export type WorkbookConstructor = {
   new (): WorkbookApi;
   fromJson(json: string): WorkbookApi;
+  fromXlsxBytes(bytes: XlsxBytesSource): WorkbookApi;
   prototype: WorkbookApi;
 };
 
@@ -325,7 +328,21 @@ export type SheetPortSessionConstructor = {
   prototype: SheetPortSessionApi;
 };
 
-export const Workbook = wasm.Workbook as unknown as WorkbookConstructor;
+const rawWorkbookCtor = wasm.Workbook as unknown as {
+  new (): WorkbookApi;
+  fromJson(json: string): WorkbookApi;
+  fromXlsxBytes(bytes: Uint8Array): WorkbookApi;
+  prototype: WorkbookApi;
+};
+const rawWorkbookFromXlsxBytes = rawWorkbookCtor.fromXlsxBytes.bind(rawWorkbookCtor);
+
+export const Workbook = Object.assign(rawWorkbookCtor, {
+  fromXlsxBytes(bytes: XlsxBytesSource): WorkbookApi {
+    return rawWorkbookFromXlsxBytes(
+      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
+    );
+  },
+}) as WorkbookConstructor;
 export const SheetPortSession = wasm.SheetPortSession as unknown as SheetPortSessionConstructor;
 
 // Re-export the initialization function as default

@@ -7,10 +7,10 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Cursor, Read, Seek};
 use std::path::Path;
 
-use calamine::{Data, Range, Reader, Xlsx, open_workbook};
+use calamine::{Data, Range, Reader, Xlsx, open_workbook, open_workbook_from_rs};
 use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{CellIngest, IngestBuilder, map_error_code};
 use formualizer_eval::engine::Engine as EvalEngine;
@@ -24,8 +24,54 @@ use zip::ZipArchive;
 
 type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
 
+enum CalamineWorkbook {
+    File(Xlsx<BufReader<File>>),
+    Bytes(Xlsx<Cursor<Vec<u8>>>),
+}
+
+impl CalamineWorkbook {
+    fn worksheet_range(&mut self, sheet: &str) -> Result<Range<Data>, calamine::Error> {
+        match self {
+            Self::File(workbook) => workbook.worksheet_range(sheet).map_err(Into::into),
+            Self::Bytes(workbook) => workbook.worksheet_range(sheet).map_err(Into::into),
+        }
+    }
+
+    fn worksheet_formula(&mut self, sheet: &str) -> Result<Range<String>, calamine::Error> {
+        match self {
+            Self::File(workbook) => workbook.worksheet_formula(sheet).map_err(Into::into),
+            Self::Bytes(workbook) => workbook.worksheet_formula(sheet).map_err(Into::into),
+        }
+    }
+}
+
+struct DebugTimer {
+    #[cfg(not(target_arch = "wasm32"))]
+    started: std::time::Instant,
+}
+
+impl DebugTimer {
+    fn start() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            started: std::time::Instant::now(),
+        }
+    }
+
+    fn elapsed_millis(&self) -> u128 {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.started.elapsed().as_millis()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0
+        }
+    }
+}
+
 pub struct CalamineAdapter {
-    workbook: RwLock<Xlsx<BufReader<File>>>,
+    workbook: RwLock<CalamineWorkbook>,
     loaded_sheets: HashSet<String>,
     cached_names: Option<Vec<String>>,
     defined_names: Vec<DefinedName>,
@@ -185,10 +231,13 @@ impl CalamineAdapter {
         Ok(())
     }
 
-    fn fallback_defined_names_from_workbook(
-        workbook: &Xlsx<BufReader<File>>,
+    fn fallback_defined_names_from_workbook<R>(
+        workbook: &Xlsx<R>,
         sheet_names: &[String],
-    ) -> Vec<DefinedName> {
+    ) -> Vec<DefinedName>
+    where
+        R: Read + Seek,
+    {
         let mut out = Vec::new();
         let mut seen: HashSet<(DefinedNameScope, Option<String>, String)> = HashSet::new();
 
@@ -208,12 +257,10 @@ impl CalamineAdapter {
         out
     }
 
-    fn scan_defined_names(path: &Path, sheet_names: &[String]) -> Vec<DefinedName> {
-        let file = match File::open(path) {
-            Ok(f) => f,
-            Err(_) => return Vec::new(),
-        };
-        let reader = BufReader::new(file);
+    fn scan_defined_names_from_reader<R>(reader: R, sheet_names: &[String]) -> Vec<DefinedName>
+    where
+        R: Read + Seek,
+    {
         let mut archive = match ZipArchive::new(reader) {
             Ok(a) => a,
             Err(_) => return Vec::new(),
@@ -295,12 +342,10 @@ impl CalamineAdapter {
         out
     }
 
-    fn scan_external_link_targets(path: &Path) -> BTreeMap<u32, String> {
-        let file = match File::open(path) {
-            Ok(f) => f,
-            Err(_) => return BTreeMap::new(),
-        };
-        let reader = BufReader::new(file);
+    fn scan_external_link_targets_from_reader<R>(reader: R) -> BTreeMap<u32, String>
+    where
+        R: Read + Seek,
+    {
         let mut archive = match ZipArchive::new(reader) {
             Ok(a) => a,
             Err(_) => return BTreeMap::new(),
@@ -460,7 +505,7 @@ impl SpreadsheetReader for CalamineAdapter {
             lazy_loading: false,
             random_access: false,
             styles: false,
-            bytes_input: false,
+            bytes_input: true,
             // conservative defaults
             date_system_1904: false,
             merged_cells: false,
@@ -473,11 +518,7 @@ impl SpreadsheetReader for CalamineAdapter {
     }
 
     fn sheet_names(&self) -> Result<Vec<String>, Self::Error> {
-        if let Some(names) = &self.cached_names {
-            return Ok(names.clone());
-        }
-        let names = self.workbook.read().sheet_names().to_vec();
-        Ok(names)
+        Ok(self.cached_names.clone().unwrap_or_default())
     }
 
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
@@ -489,13 +530,21 @@ impl SpreadsheetReader for CalamineAdapter {
         Self: Sized,
     {
         let path = path.as_ref();
-        let external_link_targets = Self::scan_external_link_targets(path);
+        let external_link_targets = match File::open(path) {
+            Ok(file) => Self::scan_external_link_targets_from_reader(BufReader::new(file)),
+            Err(_) => BTreeMap::new(),
+        };
         let workbook: Xlsx<BufReader<File>> = open_workbook(path)?;
         let sheet_names = workbook.sheet_names().to_vec();
         let defined_names = if workbook.defined_names().is_empty() {
             Vec::new()
         } else {
-            let parsed = Self::scan_defined_names(path, &sheet_names);
+            let parsed = match File::open(path) {
+                Ok(file) => {
+                    Self::scan_defined_names_from_reader(BufReader::new(file), &sheet_names)
+                }
+                Err(_) => Vec::new(),
+            };
             if parsed.is_empty() {
                 Self::fallback_defined_names_from_workbook(&workbook, &sheet_names)
             } else {
@@ -503,7 +552,7 @@ impl SpreadsheetReader for CalamineAdapter {
             }
         };
         Ok(Self {
-            workbook: RwLock::new(workbook),
+            workbook: RwLock::new(CalamineWorkbook::File(workbook)),
             loaded_sheets: HashSet::new(),
             cached_names: Some(sheet_names),
             defined_names,
@@ -511,25 +560,42 @@ impl SpreadsheetReader for CalamineAdapter {
         })
     }
 
-    fn open_reader(_reader: Box<dyn Read + Send + Sync>) -> Result<Self, Self::Error>
+    fn open_reader(mut reader: Box<dyn Read + Send + Sync>) -> Result<Self, Self::Error>
     where
         Self: Sized,
     {
-        // calamine expects concrete Read + Seek; not easily supported via trait object
-        Err(calamine::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "open_reader not supported for CalamineAdapter",
-        )))
+        let mut data = Vec::new();
+        reader.read_to_end(&mut data).map_err(calamine::Error::Io)?;
+        Self::open_bytes(data)
     }
 
-    fn open_bytes(_data: Vec<u8>) -> Result<Self, Self::Error>
+    fn open_bytes(data: Vec<u8>) -> Result<Self, Self::Error>
     where
         Self: Sized,
     {
-        Err(calamine::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "open_bytes not supported for CalamineAdapter",
-        )))
+        let external_link_targets =
+            Self::scan_external_link_targets_from_reader(Cursor::new(data.as_slice()));
+        let workbook: Xlsx<Cursor<Vec<u8>>> = open_workbook_from_rs(Cursor::new(data.clone()))?;
+        let sheet_names = workbook.sheet_names().to_vec();
+        let defined_names = if workbook.defined_names().is_empty() {
+            Vec::new()
+        } else {
+            let parsed =
+                Self::scan_defined_names_from_reader(Cursor::new(data.as_slice()), &sheet_names);
+            if parsed.is_empty() {
+                Self::fallback_defined_names_from_workbook(&workbook, &sheet_names)
+            } else {
+                parsed
+            }
+        };
+
+        Ok(Self {
+            workbook: RwLock::new(CalamineWorkbook::Bytes(workbook)),
+            loaded_sheets: HashSet::new(),
+            cached_names: Some(sheet_names),
+            defined_names,
+            external_link_targets,
+        })
     }
 
     fn read_range(
@@ -603,7 +669,7 @@ where
         let debug = std::env::var("FZ_DEBUG_LOAD")
             .ok()
             .is_some_and(|v| v != "0");
-        let t0 = std::time::Instant::now();
+        let t0 = DebugTimer::start();
         let names = self.sheet_names()?;
         if debug {
             eprintln!("[fz][load] calamine: {} sheets", names.len());
@@ -633,7 +699,7 @@ where
         // Default Arrow chunk rows
         let chunk_rows: usize = 32 * 1024;
         for n in &names {
-            let t_sheet = std::time::Instant::now();
+            let t_sheet = DebugTimer::start();
             if debug {
                 eprintln!("[fz][load] >> sheet '{n}'");
             }
@@ -816,7 +882,7 @@ where
             }
 
             // Values: iterate rows and append to Arrow builder with absolute row/col alignment
-            let tv0 = std::time::Instant::now();
+            let tv0 = DebugTimer::start();
             let mut row_count = 0usize;
             // Prepend top padding rows (absolute alignment)
             for _ in 0..sr0 {
@@ -861,12 +927,12 @@ where
                 eprintln!(
                     "[fz][load]    rows={} → arrow in {} ms",
                     row_count,
-                    tv0.elapsed().as_millis()
+                    tv0.elapsed_millis()
                 );
             }
 
             // Formulas: iterate formulas_range and either stage or parse with caching
-            let tf0 = std::time::Instant::now();
+            let tf0 = DebugTimer::start();
             let mut parsed_n = 0usize;
             if let Some(frm_range) = &formulas_range {
                 let start_row = frm_range.start().unwrap_or_default().0 as usize;
@@ -945,12 +1011,12 @@ where
                 eprintln!(
                     "[fz][load]    formulas={} in {} ms",
                     parsed_n,
-                    tf0.elapsed().as_millis()
+                    tf0.elapsed_millis()
                 );
                 eprintln!(
                     "[fz][load] << sheet '{}' staged in {} ms",
                     n,
-                    t_sheet.elapsed().as_millis()
+                    t_sheet.elapsed_millis()
                 );
             }
             // Mark as loaded for API parity
@@ -1061,23 +1127,23 @@ where
             }
         }
 
-        let tend0 = std::time::Instant::now();
+        let tend0 = DebugTimer::start();
         // Finish builder and finalize ingestion
-        let tcommit0 = std::time::Instant::now();
+        let tcommit0 = DebugTimer::start();
         // (graph ingest finished per-sheet above)
         // Finish Arrow ingest after formulas are staged (stores ArrowSheets into engine)
         // (Arrow sheets are installed per-sheet above)
         if debug {
             eprintln!(
                 "[fz][load] commit: builder finish in {} ms",
-                tcommit0.elapsed().as_millis()
+                tcommit0.elapsed_millis()
             );
             eprintln!(
                 "[fz][load] done: values={}, formulas={}, batch_close={} ms, total={} ms",
                 total_values,
                 total_formulas,
-                tend0.elapsed().as_millis(),
-                t0.elapsed().as_millis(),
+                tend0.elapsed_millis(),
+                t0.elapsed_millis(),
             );
         }
         // Build sheet indexes after load to accelerate used-region queries
@@ -1094,8 +1160,8 @@ where
                 "[fz][load] done: values={}, formulas={}, batch_close={} ms, total={} ms",
                 total_values,
                 total_formulas,
-                tend0.elapsed().as_millis(),
-                t0.elapsed().as_millis(),
+                tend0.elapsed_millis(),
+                t0.elapsed_millis(),
             );
         }
         Ok(())
