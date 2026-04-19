@@ -9,6 +9,24 @@ use pyo3::wrap_pyfunction;
 use pyo3_stub_gen::define_stub_info_gatherer;
 use pyo3_stub_gen::derive::gen_stub_pyfunction;
 
+// Swap the wheel's global allocator to jemalloc to avoid glibc per-thread
+// arena fragmentation that causes the cross-call RSS staircase observed in
+// issue #63. This only affects allocations inside this cdylib; CPython and
+// other extension modules continue to use their own allocators.
+//
+// The cfg-gate mirrors `tikv-jemallocator`'s supported platforms:
+//   * not target_env = "msvc"  (Windows MSVC is incompatible)
+//   * not target_arch = "wasm32" (jemalloc cannot build for wasm)
+// On unsupported platforms the feature is a no-op and the system allocator
+// is used.
+#[cfg(all(
+    feature = "allocator-jemalloc",
+    not(target_env = "msvc"),
+    not(target_arch = "wasm32")
+))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod ast;
 mod engine;
 mod enums;
