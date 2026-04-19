@@ -100,3 +100,7 @@ js-runtime = ["dep:web-time", "dep:getrandom", "dep:getrandom02"]
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
 tracing_chrome = ["tracing", "dep:tracing-chrome"]
 perf_instrumentation = []
+
+[[example]]
+name = "recalc_quadratic"
+path = "examples/recalc_quadratic.rs"
