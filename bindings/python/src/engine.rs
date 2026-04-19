@@ -28,6 +28,29 @@ impl Default for PyEvaluationConfig {
     }
 }
 
+pub(crate) fn apply_binding_eval_defaults(config: &mut EvalConfig) {
+    if cfg!(target_os = "emscripten") {
+        config.enable_parallel = false;
+    }
+}
+
+pub(crate) fn binding_default_eval_config() -> EvalConfig {
+    let mut config = EvalConfig::default();
+    apply_binding_eval_defaults(&mut config);
+    config
+}
+
+pub(crate) fn merge_python_eval_config(base: &mut EvalConfig, python_config: &EvalConfig) {
+    base.enable_parallel = python_config.enable_parallel;
+    base.max_threads = python_config.max_threads;
+    base.range_expansion_limit = python_config.range_expansion_limit;
+    base.workbook_seed = python_config.workbook_seed;
+    base.case_sensitive_names = python_config.case_sensitive_names;
+    base.case_sensitive_tables = python_config.case_sensitive_tables;
+    base.warmup = python_config.warmup.clone();
+    base.date_system = python_config.date_system;
+}
+
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyEvaluationConfig {
@@ -35,7 +58,7 @@ impl PyEvaluationConfig {
     #[new]
     pub fn new() -> Self {
         PyEvaluationConfig {
-            inner: EvalConfig::default(),
+            inner: binding_default_eval_config(),
         }
     }
 

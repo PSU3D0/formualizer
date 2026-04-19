@@ -101,11 +101,11 @@ impl Manifest {
             tags.dedup();
         }
 
-        if let Some(capabilities) = &mut self.capabilities
-            && let Some(features) = &mut capabilities.features
-        {
-            features.sort();
-            features.dedup();
+        if let Some(capabilities) = &mut self.capabilities {
+            if let Some(features) = &mut capabilities.features {
+                features.sort();
+                features.dedup();
+            }
         }
 
         self.ports.sort_by(|a, b| a.id.cmp(&b.id));
@@ -217,20 +217,22 @@ impl Manifest {
                 ));
             }
 
-            if let Selector::Layout(layout) = &port.location
-                && matches!(layout.layout.terminate, LayoutTermination::UntilMarker)
-                && layout
-                    .layout
-                    .marker_text
-                    .as_deref()
-                    .map(str::trim)
-                    .unwrap_or_default()
-                    .is_empty()
-            {
-                issues.push(ManifestIssue::new(
-                    format!("ports[{}].location.layout.marker_text", idx),
-                    "marker_text must be provided when terminate == \"until_marker\"".to_string(),
-                ));
+            if let Selector::Layout(layout) = &port.location {
+                if matches!(layout.layout.terminate, LayoutTermination::UntilMarker)
+                    && layout
+                        .layout
+                        .marker_text
+                        .as_deref()
+                        .map(str::trim)
+                        .unwrap_or_default()
+                        .is_empty()
+                {
+                    issues.push(ManifestIssue::new(
+                        format!("ports[{}].location.layout.marker_text", idx),
+                        "marker_text must be provided when terminate == \"until_marker\""
+                            .to_string(),
+                    ));
+                }
             }
 
             if let Some(constraints) = &port.constraints {
@@ -847,13 +849,13 @@ fn validate_constraints(
     base_path: String,
     issues: &mut Vec<ManifestIssue>,
 ) {
-    if let (Some(min), Some(max)) = (constraints.min, constraints.max)
-        && min > max
-    {
-        issues.push(ManifestIssue::new(
-            format!("{}.min", base_path),
-            format!("`min` value {min} exceeds `max` value {max}"),
-        ));
+    if let (Some(min), Some(max)) = (constraints.min, constraints.max) {
+        if min > max {
+            issues.push(ManifestIssue::new(
+                format!("{}.min", base_path),
+                format!("`min` value {min} exceeds `max` value {max}"),
+            ));
+        }
     }
 
     if let Some(vt) = value_type {
@@ -889,13 +891,13 @@ fn validate_constraints(
         }
     }
 
-    if let Some(pattern) = &constraints.pattern
-        && let Err(err) = Regex::new(pattern)
-    {
-        issues.push(ManifestIssue::new(
-            format!("{}.pattern", base_path),
-            format!("invalid regex pattern `{pattern}`: {err}"),
-        ));
+    if let Some(pattern) = &constraints.pattern {
+        if let Err(err) = Regex::new(pattern) {
+            issues.push(ManifestIssue::new(
+                format!("{}.pattern", base_path),
+                format!("invalid regex pattern `{pattern}`: {err}"),
+            ));
+        }
     }
 }
 

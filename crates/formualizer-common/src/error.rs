@@ -254,13 +254,13 @@ impl fmt::Display for ExcelError {
             }
 
             // Show origin if different from the evaluation location
-            if let (Some(or), Some(oc)) = (ctx.origin_row, ctx.origin_col)
-                && (ctx.row != Some(or) || ctx.col != Some(oc))
-            {
-                if let Some(ref sheet) = ctx.origin_sheet {
-                    write!(f, " [origin: {sheet}!R{or}C{oc}]")?;
-                } else {
-                    write!(f, " [origin: R{or}C{oc}]")?;
+            if let (Some(or), Some(oc)) = (ctx.origin_row, ctx.origin_col) {
+                if ctx.row != Some(or) || ctx.col != Some(oc) {
+                    if let Some(ref sheet) = ctx.origin_sheet {
+                        write!(f, " [origin: {sheet}!R{or}C{oc}]")?;
+                    } else {
+                        write!(f, " [origin: R{or}C{oc}]")?;
+                    }
                 }
             }
         }

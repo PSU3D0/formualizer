@@ -1,3 +1,7 @@
+#![cfg_attr(target_os = "emscripten", feature(let_chains))]
+// See formualizer-common/lib.rs for rationale.
+#![allow(clippy::collapsible_if)]
+
 //! SheetPort manifest specification types and helpers.
 //!
 //! This crate defines the canonical data model for Formualizer I/O (FIO) manifests,

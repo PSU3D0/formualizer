@@ -631,9 +631,9 @@ impl WorkbookCustomFunction {
     ) -> Result<LiteralValue, ExcelError> {
         match arg.value_or_range()? {
             formualizer_eval::traits::EvaluatedArg::LiteralValue(v) => Ok(v.into_owned()),
-            formualizer_eval::traits::EvaluatedArg::Range(r) => {
-                Ok(LiteralValue::Array(r.materialise().into_owned()))
-            }
+            formualizer_eval::traits::EvaluatedArg::Range(r) => Ok(unwrap_scalar_array(
+                LiteralValue::Array(r.materialise().into_owned()),
+            )),
         }
     }
 }
@@ -674,11 +674,29 @@ impl formualizer_eval::function::Function for WorkbookCustomFunction {
         }));
 
         match callback_result {
-            Ok(Ok(value)) => Ok(formualizer_eval::traits::CalcValue::Scalar(value)),
+            Ok(Ok(value)) => Ok(formualizer_eval::traits::CalcValue::Scalar(
+                unwrap_scalar_array(value),
+            )),
             Ok(Err(err)) => Err(err),
             Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
                 .with_message("Custom function callback panicked")),
         }
+    }
+}
+
+// Excel treats single-cell references and 1x1 ranges as scalars. Unwrap
+// any 1x1 LiteralValue::Array so custom-function arg and return paths
+// match that convention; multi-cell arrays pass through unchanged.
+fn unwrap_scalar_array(value: LiteralValue) -> LiteralValue {
+    match value {
+        LiteralValue::Array(ref rows) if rows.len() == 1 && rows[0].len() == 1 => {
+            if let LiteralValue::Array(mut rows) = value {
+                rows.remove(0).remove(0)
+            } else {
+                unreachable!()
+            }
+        }
+        other => other,
     }
 }
 
@@ -758,7 +776,9 @@ impl formualizer_eval::function::Function for WorkbookWasmFunction {
         }));
 
         match runtime_result {
-            Ok(Ok(value)) => Ok(formualizer_eval::traits::CalcValue::Scalar(value)),
+            Ok(Ok(value)) => Ok(formualizer_eval::traits::CalcValue::Scalar(
+                unwrap_scalar_array(value),
+            )),
             Ok(Err(err)) => Err(err),
             Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
                 .with_message("WASM function runtime panicked")),
@@ -1060,6 +1080,62 @@ impl Workbook {
     }
     pub fn new() -> Self {
         Self::new_with_mode(WorkbookMode::Interactive)
+    }
+
+    #[cfg(feature = "umya")]
+    pub fn to_xlsx_bytes(&self) -> Result<Vec<u8>, IoError> {
+        use crate::backends::UmyaAdapter;
+
+        let mut adapter = UmyaAdapter::new_empty();
+        let sheet_names = self.sheet_names();
+
+        if let Some((first_sheet, remaining_sheets)) = sheet_names.split_first() {
+            if first_sheet != "Sheet1" {
+                adapter
+                    .rename_sheet("Sheet1", first_sheet)
+                    .map_err(|e| IoError::from_backend("umya", e))?;
+            }
+
+            for sheet_name in remaining_sheets {
+                adapter
+                    .create_sheet(sheet_name)
+                    .map_err(|e| IoError::from_backend("umya", e))?;
+            }
+
+            for sheet_name in &sheet_names {
+                let Some((max_row, max_col)) = self.sheet_dimensions(sheet_name) else {
+                    continue;
+                };
+
+                for row in 1..=max_row {
+                    for col in 1..=max_col {
+                        let value = self.get_value(sheet_name, row, col);
+                        let formula = self.get_formula(sheet_name, row, col);
+
+                        if value.is_none() && formula.is_none() {
+                            continue;
+                        }
+
+                        adapter
+                            .write_cell(
+                                sheet_name,
+                                row,
+                                col,
+                                crate::traits::CellData {
+                                    value,
+                                    formula,
+                                    style: None,
+                                },
+                            )
+                            .map_err(|e| IoError::from_backend("umya", e))?;
+                    }
+                }
+            }
+        }
+
+        adapter
+            .save_to_bytes()
+            .map_err(|e| IoError::from_backend("umya", e))
     }
 
     pub fn register_custom_function(

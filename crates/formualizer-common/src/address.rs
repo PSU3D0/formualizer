@@ -393,15 +393,15 @@ impl<'a> SheetRangeRef<'a> {
         end_row: Option<AxisBound>,
         end_col: Option<AxisBound>,
     ) -> Result<Self, SheetAddressError> {
-        if let (Some(sr), Some(er)) = (start_row, end_row)
-            && sr.index > er.index
-        {
-            return Err(SheetAddressError::RangeOrder);
+        if let (Some(sr), Some(er)) = (start_row, end_row) {
+            if sr.index > er.index {
+                return Err(SheetAddressError::RangeOrder);
+            }
         }
-        if let (Some(sc), Some(ec)) = (start_col, end_col)
-            && sc.index > ec.index
-        {
-            return Err(SheetAddressError::RangeOrder);
+        if let (Some(sc), Some(ec)) = (start_col, end_col) {
+            if sc.index > ec.index {
+                return Err(SheetAddressError::RangeOrder);
+            }
         }
         Ok(SheetRangeRef::new(
             sheet, start_row, start_col, end_row, end_col,

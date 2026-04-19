@@ -4,6 +4,7 @@
     "index",
     "rust-quickstart",
     "python-quickstart",
+    "pyodide-quickstart",
     "js-wasm-quickstart",
     "first-workbook-in-5-minutes"
   ]

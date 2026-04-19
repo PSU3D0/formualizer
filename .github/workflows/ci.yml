@@ -168,6 +168,68 @@ jobs:
         name: wheels-${{ matrix.os }}
         path: bindings/python/dist
 
+  build-pyodide-wheel:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    # Host Python major.minor must match the xbuildenv's CPython (3.13 for
+    # Pyodide 0.29.x) so maturin's sysconfig introspection can find the
+    # emscripten sysconfigdata module. Don't downgrade this without also
+    # changing bindings/python/scripts/build-pyodide-wheel.sh's pin.
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-pyodide-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: '3.13'
+        working-directory: bindings/python
+
+    - name: Build Pyodide wheel
+      working-directory: bindings/python
+      run: ./scripts/build-pyodide-wheel.sh
+
+    - name: Smoke-test Pyodide wheel
+      working-directory: bindings/python
+      run: |
+        wheel="$(ls dist/pyodide/*-pyodide_*_wasm32.whl | head -1)"
+        if [[ -z "$wheel" ]]; then
+          echo "No retagged pyodide wheel found in dist/pyodide" >&2
+          exit 1
+        fi
+        ./scripts/smoke-pyodide-wheel.sh "$wheel"
+
+    - name: Upload Pyodide wheel artifact
+      if: ${{ !env.ACT }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: wheels-pyodide
+        path: bindings/python/dist/pyodide
+        if-no-files-found: error
+
   coverage-badge:
     needs: [test-python, test-rust]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

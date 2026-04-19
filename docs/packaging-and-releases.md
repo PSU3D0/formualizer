@@ -26,6 +26,8 @@ This repo publishes multiple artifacts (crates.io, PyPI, npm) from one monorepo.
 ### Python (PyPI)
 
 - `formualizer` (maturin / pyo3 extension): the product surface for Python.
+  - Published wheels: manylinux (x86_64, aarch64), musllinux (x86_64, aarch64), macOS (x86_64, arm64), Windows (x64), and **Pyodide** (`pyodide_<abi>_wasm32`) — all under the same PyPI project and version.
+  - End users install identically on every target: `pip install formualizer` on native, `await micropip.install("formualizer")` in a Pyodide runtime.
 
 ### JS/WASM (npm)
 
@@ -124,6 +126,18 @@ Release workflows should:
 - Publish without masking failures (no `|| true`).
 
 For npm builds, ensure the wasm-pack target matches what we publish (bundler vs web target) and that the generated `pkg/` content matches what `package.json` expects.
+
+## Pyodide wheel pipeline
+
+The Pyodide wheel is built by `bindings/python/scripts/build-pyodide-wheel.sh` on every PR (`ci.yml :: build-pyodide-wheel`) and on every product release tag (`release.yml :: build-wheels-pyodide`), then uploaded to PyPI by `publish-pypi` alongside the platform wheels.
+
+Key pipeline specifics worth knowing before touching this path:
+
+- **Pyodide version target is derived, not hardcoded.** The build script reads `pyodide xbuildenv version`, `python_version`, `emscripten_version`, `rust_toolchain`, `rustflags`, `cflags`, `cxxflags`, `ldflags`, and `rust_emscripten_target_url` from `pyodide config`. Bumping `pyodide-build` changes the target; everything else follows.
+- **Custom Rust sysroot is mandatory.** Stock `rustup target add wasm32-unknown-emscripten` ships a `std` built with JS-trampoline exceptions (`invoke_*`), which Pyodide 0.29+ rejects with a dynamic-linking error at import time. The build script downloads Pyodide's prebuilt wasm-EH sysroot (`rust-emscripten-wasm-eh-sysroot` on GitHub) and extracts it over rustup's stock target. A sentinel file in the target dir makes this idempotent across runs.
+- **Wheel is retagged after build.** `pyodide-build 0.34` repacks wheels with `pyemscripten_2025_0_wasm32`, which the `micropip` shipped in Pyodide 0.29.x misparses as an Emscripten version string and rejects. The build script retags to `pyodide_2025_0_wasm32` (the tag Pyodide's own package lockfile uses), so `micropip.install` accepts the wheel without falling back to zip extraction.
+- **Smoke gate is mandatory.** Both CI and release jobs run `smoke-pyodide-wheel.sh`, which loads the wheel into a real Pyodide runtime and exercises parse, evaluate, byte I/O, and Python UDF paths. A broken wheel never reaches PyPI.
+- **Supported-Pyodide range is implicit in `pyodide-build` pin.** `pyodide-build 0.34.x` targets Pyodide 0.29.x (ABI `pyodide_2025_0`). When Pyodide cuts a new ABI, bump `pyodide-build` (and re-verify the sysroot URL in `pyodide config get rust_emscripten_target_url` still resolves), then cut a formualizer release. Document the supported Pyodide range in `bindings/python/README.md`.
 
 ## Version Bump Script
 

@@ -670,14 +670,15 @@ impl<'a> SpanTokenizer<'a> {
     }
 
     fn check_scientific_notation(&mut self) -> bool {
-        if let Some(curr_byte) = self.current_byte()
-            && (curr_byte == b'+' || curr_byte == b'-')
-            && self.has_token()
-            && self.is_scientific_notation_base()
-        {
-            self.offset += 1;
-            self.extend_token();
-            return true;
+        if let Some(curr_byte) = self.current_byte() {
+            if (curr_byte == b'+' || curr_byte == b'-')
+                && self.has_token()
+                && self.is_scientific_notation_base()
+            {
+                self.offset += 1;
+                self.extend_token();
+                return true;
+            }
         }
         false
     }
@@ -1426,14 +1427,15 @@ impl Tokenizer {
     /// If the current token looks like a number in scientific notation,
     /// consume the '+' or '-' as part of the number.
     fn check_scientific_notation(&mut self) -> Result<bool, TokenizerError> {
-        if let Some(curr_byte) = self.current_byte()
-            && (curr_byte == b'+' || curr_byte == b'-')
-            && self.has_token()
-            && self.is_scientific_notation_base()
-        {
-            self.offset += 1;
-            self.extend_token();
-            return Ok(true);
+        if let Some(curr_byte) = self.current_byte() {
+            if (curr_byte == b'+' || curr_byte == b'-')
+                && self.has_token()
+                && self.is_scientific_notation_base()
+            {
+                self.offset += 1;
+                self.extend_token();
+                return Ok(true);
+            }
         }
         Ok(false)
     }

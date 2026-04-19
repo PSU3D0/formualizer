@@ -1,7 +1,10 @@
 // Integration test for Umya backend; run with `--features umya`.
 use crate::common::build_workbook;
 use formualizer_workbook::LiteralValue;
-use formualizer_workbook::{CellData, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter};
+use formualizer_workbook::{
+    CellData, LoadStrategy, SpreadsheetReader, SpreadsheetWriter, UmyaAdapter, Workbook,
+    WorkbookConfig,
+};
 use std::io::Cursor;
 
 #[test]
@@ -95,5 +98,32 @@ fn umya_open_bytes_returns_parse_error_for_invalid_payload() {
     assert!(
         !err.to_string().to_ascii_lowercase().contains("unsupported"),
         "open_bytes should attempt parsing, got unsupported error: {err}"
+    );
+}
+
+#[test]
+fn workbook_to_xlsx_bytes_roundtrips_with_umya_reader() {
+    let mut wb = Workbook::new_with_config(WorkbookConfig::interactive());
+    wb.add_sheet("Data").unwrap();
+    wb.set_value("Data", 1, 1, LiteralValue::Number(20.0))
+        .unwrap();
+    wb.set_value("Data", 2, 1, LiteralValue::Number(22.0))
+        .unwrap();
+    wb.set_formula("Data", 1, 2, "=SUM(A1:A2)").unwrap();
+    wb.evaluate_all().unwrap();
+
+    let bytes = wb.to_xlsx_bytes().unwrap();
+    assert!(bytes.len() > 100, "Expected non-trivial XLSX byte output");
+
+    let adapter = UmyaAdapter::open_bytes(bytes).unwrap();
+    let mut reopened = Workbook::from_reader(
+        adapter,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::interactive(),
+    )
+    .unwrap();
+    assert_eq!(
+        reopened.evaluate_cell("Data", 1, 2).unwrap(),
+        LiteralValue::Number(42.0)
     );
 }

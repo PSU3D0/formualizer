@@ -33,6 +33,7 @@ __all__ = [
     "WorkbookConfig",
     "WorkbookMode",
     "load_workbook",
+    "load_workbook_bytes",
     "parse",
     "parse_formula",
     "recalculate_file",
@@ -995,6 +996,28 @@ class Workbook:
         """
     @classmethod
     def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None) -> Workbook: ...
+    @classmethod
+    def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None) -> Workbook:
+        r"""
+        Class method: load an XLSX workbook from in-memory bytes.
+        
+        This is the Pyodide-friendly counterpart to `Workbook.from_path(...)`.
+        
+        Args:
+            data: XLSX payload as `bytes`.
+            backend: Backend name. Defaults to `umya` because `calamine` byte-open
+                is not currently supported in this repository.
+            mode/config: Optional workbook configuration.
+        """
+    def to_xlsx_bytes(self, backend: typing.Optional[builtins.str] = None) -> bytes:
+        r"""
+        Serialize the current workbook contents into XLSX bytes.
+        
+        Notes:
+        - This currently uses the `umya` backend.
+        - Output is generated from the in-memory workbook model; original XLSX styling
+          and package metadata are not preserved by the Python binding.
+        """
     def add_sheet(self, name: builtins.str) -> None:
         r"""
         Add a sheet to the workbook.
@@ -1255,6 +1278,14 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
         wb = fz.load_workbook("financial_model.xlsx")
         print(wb.evaluate_cell("Summary", 1, 2))
     ```
+    """
+
+def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None) -> Workbook:
+    r"""
+    Load an XLSX workbook from in-memory bytes.
+    
+    This is the byte-oriented counterpart to `load_workbook(...)` and defaults to
+    the `umya` backend because `calamine` byte-open is not yet supported here.
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:

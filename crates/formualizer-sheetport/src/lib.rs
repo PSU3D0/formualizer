@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "emscripten", feature(let_chains))]
+
 //! SheetPort runtime bindings.
 //!
 //! This crate links [`sheetport_spec::Manifest`] definitions to concrete workbook

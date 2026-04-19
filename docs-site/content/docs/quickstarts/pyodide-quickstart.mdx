@@ -1,0 +1,74 @@
+---
+title: Pyodide Quickstart
+description: Run formualizer in the browser via Pyodide — install with micropip and evaluate workbook formulas client-side.
+---
+
+Formualizer publishes a Pyodide-tagged wheel (`*-pyodide_<abi>_wasm32.whl`) alongside the native CPython wheels. Any Python code that works against formualizer on CPython works the same inside a Pyodide runtime — with a few platform-specific defaults noted below.
+
+## 1) Install in a Pyodide runtime
+
+```python
+import micropip
+await micropip.install("formualizer")
+```
+
+This resolves the Pyodide-tagged wheel from PyPI — no extra index URL, no manual wheel download.
+
+## 2) Evaluate a formula
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook()
+wb.add_sheet("Sheet1")
+
+wb.set_value("Sheet1", 1, 1, 100)
+wb.set_value("Sheet1", 2, 1, 20)
+wb.set_formula("Sheet1", 1, 2, "=A1-A2")
+
+result = wb.evaluate_cell("Sheet1", 1, 2)
+print(result)  # 80.0
+```
+
+## 3) Register a Python UDF
+
+```python
+wb.register_function(
+    "py_add",
+    lambda a, b: a + b,
+    min_args=2,
+    max_args=2,
+)
+wb.set_value("Sheet1", 1, 1, 20)
+wb.set_value("Sheet1", 2, 1, 22)
+wb.set_formula("Sheet1", 1, 2, "=PY_ADD(A1, A2)")
+wb.evaluate_cell("Sheet1", 1, 2)  # 42
+```
+
+Single-cell references arrive as scalars in the callback, matching Excel semantics.
+
+## 4) Round-trip an XLSX file
+
+```python
+xlsx_bytes = wb.to_xlsx_bytes()
+# ... send to browser download, IndexedDB, fetch upload, etc.
+
+restored = fz.load_workbook_bytes(xlsx_bytes)
+restored.evaluate_cell("Sheet1", 1, 2)
+```
+
+## Supported Pyodide versions
+
+The published wheel targets **Pyodide 0.29.x** (ABI `pyodide_2025_0`). Check the formualizer release that matches your Pyodide runtime — when Pyodide ships a new ABI, a new formualizer release is cut against it.
+
+## Pyodide-specific behavior
+
+- `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"`. Pyodide has no threads; the flag remains available but falls back to single-threaded execution.
+- XLSX byte I/O (`to_xlsx_bytes`, `from_bytes`, `load_workbook_bytes`) uses the `umya` backend on all platforms.
+- Everything else — parse, evaluate, spill, custom functions, undo/redo, SheetPort — behaves identically to native CPython.
+
+## Next
+
+- [Python Quickstart](/docs/quickstarts/python-quickstart) — the same API on native CPython
+- [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
+- [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)

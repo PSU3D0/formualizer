@@ -31,9 +31,14 @@ print(result)  # 80.0
 python bindings/python/examples/custom_function_registration.py
 ```
 
+## Running in the browser (Pyodide)
+
+Formualizer also ships a Pyodide-tagged wheel — `await micropip.install("formualizer")` works inside a Pyodide runtime with the same API shown above. See the [Pyodide Quickstart](/docs/quickstarts/pyodide-quickstart) for install, UDF, and XLSX-byte examples, plus the handful of platform-specific defaults.
+
 ## Next
 
 - [Formula Parser](/formula-parser)
 - [First Workbook in 5 Minutes](/docs/quickstarts/first-workbook-in-5-minutes)
+- [Pyodide Quickstart](/docs/quickstarts/pyodide-quickstart)
 - [Custom Functions (Rust, Python, JS)](/docs/guides/custom-functions-rust-python-js)
 - [Deterministic Testing](/docs/guides/deterministic-testing)
