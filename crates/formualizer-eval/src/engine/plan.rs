@@ -1,10 +1,11 @@
 use crate::SheetId;
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::Coord as AbsCoord;
+use formualizer_common::CoordBuildHasher;
 use formualizer_common::ExcelError;
 use formualizer_common::PackedSheetCell;
 use formualizer_parse::parser::{CollectPolicy, ReferenceType};
-use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 
 /// Compact range descriptor used during planning (engine-only)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -68,10 +69,17 @@ where
 {
     let mut plan = DependencyPlan::default();
 
-    // Global cell pool: packed absolute cell -> index
-    let mut cell_index: FxHashMap<PackedSheetCell, u32> = FxHashMap::default();
+    // Global cell pool: packed absolute cell -> index.
+    //
+    // Uses CoordBuildHasher because FxHasher's weak avalanche collides badly
+    // on structured packed keys (PackedSheetCell reserves bits 50..64 and has
+    // narrow dynamic range on row-major workloads), turning this O(N) loop
+    // into O(N^2). See formualizer_common::coord_hash.
+    let mut cell_index: HashMap<PackedSheetCell, u32, CoordBuildHasher> =
+        HashMap::with_hasher(CoordBuildHasher);
     // Unified vertex pool for loader-specialized ensure.
-    let mut vertex_pool_index: FxHashMap<PackedSheetCell, u32> = FxHashMap::default();
+    let mut vertex_pool_index: HashMap<PackedSheetCell, u32, CoordBuildHasher> =
+        HashMap::with_hasher(CoordBuildHasher);
 
     let mut ensure_vertex_pool_index =
         |plan: &mut DependencyPlan, key: (SheetId, AbsCoord)| -> u32 {

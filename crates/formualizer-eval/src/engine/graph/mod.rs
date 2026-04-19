@@ -2,7 +2,7 @@ use crate::SheetId;
 use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell};
+use formualizer_common::{CoordBuildHasher, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -132,9 +132,12 @@ pub struct DependencyGraph {
     #[cfg(debug_assertions)]
     graph_value_read_attempts: AtomicU64,
 
-    // Address mappings using fast hashing
-    cell_to_vertex: FxHashMap<CellRef, VertexId>,
-    load_packed_to_vertex: FxHashMap<PackedSheetCell, VertexId>,
+    // Address mappings using a hasher tuned for packed Coord / PackedSheetCell
+    // keys. FxHasher's weak avalanche produces O(N^2) collision cascades on
+    // row-major bulk ingest; CoordBuildHasher keeps these strictly O(N).
+    cell_to_vertex: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
+    load_packed_to_vertex:
+        std::collections::HashMap<PackedSheetCell, VertexId, CoordBuildHasher>,
 
     // Scheduling state - using HashSet for O(1) operations
     dirty_vertices: FxHashSet<VertexId>,
@@ -226,9 +229,12 @@ pub struct DependencyGraph {
     // Dynamic topology orderer (Pearce–Kelly) maintained alongside edges when enabled
     pk_order: Option<DynamicTopo<VertexId>>,
 
-    // Spill registry: anchor -> cells, and reverse mapping for blockers
+    // Spill registry: anchor -> cells, and reverse mapping for blockers.
+    // `spill_cell_to_anchor` is keyed by `CellRef` and uses the tuned hasher
+    // for the same reason as `cell_to_vertex`.
     spill_anchor_to_cells: FxHashMap<VertexId, Vec<CellRef>>,
-    spill_cell_to_anchor: FxHashMap<CellRef, VertexId>,
+    spill_cell_to_anchor:
+        std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
 
     // Hint: during initial bulk load, many cells are guaranteed new; allow skipping existence checks per-sheet
     first_load_assume_new: bool,
@@ -958,8 +964,8 @@ impl DependencyGraph {
             value_cache_enabled: false,
             #[cfg(debug_assertions)]
             graph_value_read_attempts: AtomicU64::new(0),
-            cell_to_vertex: FxHashMap::default(),
-            load_packed_to_vertex: FxHashMap::default(),
+            cell_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
+            load_packed_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
             dirty_vertices: FxHashSet::default(),
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
@@ -989,7 +995,7 @@ impl DependencyGraph {
             config: config.clone(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
-            spill_cell_to_anchor: FxHashMap::default(),
+            spill_cell_to_anchor: std::collections::HashMap::with_hasher(CoordBuildHasher),
             first_load_assume_new: false,
             ensure_touched_sheets: FxHashSet::default(),
             tombstone_registry: TombstoneRegistry::default(),
@@ -2440,8 +2446,6 @@ impl DependencyGraph {
         values: Vec<Vec<LiteralValue>>,
         fault_after_ops: Option<usize>,
     ) -> Result<(), ExcelError> {
-        use rustc_hash::FxHashSet;
-
         // Anchor cell coordinates (0-based) for special-casing writes.
         // We must never overwrite the anchor via set_cell_value(), because that would
         // strip the formula and break incremental recalculation.
@@ -2458,8 +2462,12 @@ impl DependencyGraph {
             .get(&anchor)
             .cloned()
             .unwrap_or_default();
-        let new_set: FxHashSet<CellRef> = target_cells.iter().copied().collect();
-        let prev_set: FxHashSet<CellRef> = prev_cells.iter().copied().collect();
+        // Use CoordBuildHasher on CellRef keys to avoid FxHasher clustering on
+        // packed Coord values.
+        let new_set: std::collections::HashSet<CellRef, CoordBuildHasher> =
+            target_cells.iter().copied().collect();
+        let prev_set: std::collections::HashSet<CellRef, CoordBuildHasher> =
+            prev_cells.iter().copied().collect();
 
         // Compose operation list: clears first (prev - new), then writes for new rectangle
         #[derive(Clone)]
@@ -2939,7 +2947,9 @@ impl DependencyGraph {
     }
 
     #[cfg(test)]
-    pub fn cell_to_vertex(&self) -> &FxHashMap<CellRef, VertexId> {
+    pub fn cell_to_vertex(
+        &self,
+    ) -> &std::collections::HashMap<CellRef, VertexId, CoordBuildHasher> {
         &self.cell_to_vertex
     }
 
