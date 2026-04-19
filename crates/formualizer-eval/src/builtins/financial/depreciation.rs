@@ -339,9 +339,9 @@ impl Function for DbFn {
 ///
 /// # Remarks
 /// - Parameters: `cost`, `salvage`, `life`, `period`, and optional `factor` (default `2`).
-/// - Input constraints: `cost >= 0`, `salvage >= 0`, `life > 0`, `period > 0`, `factor > 0`, and `period <= life`; violations return `#NUM!`.
+/// - Input constraints: `cost >= 0`, `salvage >= 0`, `life > 0`, `factor > 0`, and `1 <= trunc(period) <= life`; violations return `#NUM!`.
 /// - Per-period rate is `factor / life`.
-/// - This implementation processes the integer part of `period` and then blends with the next period for a fractional remainder.
+/// - `period` is truncated to an integer before calculation, matching Excel behavior.
 /// - Result is the period depreciation amount; with valid inputs above it is non-negative.
 ///
 /// # Examples
@@ -357,6 +357,12 @@ impl Function for DbFn {
 /// formula: "=DDB(10000, 1000, 5, 1, 1.5)"
 /// expected: 3000
 /// ```
+///
+/// ```yaml,sandbox
+/// title: "Fractional period is truncated to integer"
+/// formula: "=DDB(10000, 1000, 5, 1.9)"
+/// expected: 4000
+/// ```
 /// ```yaml,docs
 /// related:
 ///   - DB
@@ -367,6 +373,8 @@ impl Function for DbFn {
 ///     a: "It sets the per-period declining rate as `factor / life`; `2` gives double-declining balance."
 ///   - q: "When does `DDB` return `#NUM!`?"
 ///     a: "Invalid non-positive inputs (`life`, `period`, `factor`), negative `cost`/`salvage`, or `period > life`."
+///   - q: "What happens with a fractional `period`?"
+///     a: "`period` is truncated to an integer before calculation (e.g. `1.9` is treated as `1`), matching Excel and DB behavior."
 /// ```
 #[derive(Debug)]
 pub struct DdbFn;
@@ -425,7 +433,10 @@ impl Function for DdbFn {
             ));
         }
 
-        if period > life {
+        // Truncate period to integer, matching Excel and the sibling DB function.
+        let period_int = period.trunc() as i32;
+
+        if period_int < 1 || period_int as f64 > life {
             return Ok(CalcValue::Scalar(
                 LiteralValue::Error(ExcelError::new_num()),
             ));
@@ -435,27 +446,13 @@ impl Function for DdbFn {
         let mut value = cost;
         let mut depreciation = 0.0;
 
-        for p in 1..=(period.trunc() as i32) {
+        for _p in 1..=period_int {
             depreciation = value * rate;
             // Don't depreciate below salvage value
             if value - depreciation < salvage {
                 depreciation = (value - salvage).max(0.0);
             }
             value -= depreciation;
-        }
-
-        // TODO: Handle fractional period - this logic is incorrect and doesn't match Excel
-        // Excel returns an error for non-integer periods. This weighted average approach
-        // should be removed or replaced with proper error handling.
-        let frac = period.fract();
-        if frac > 0.0 {
-            let next_depreciation = value * rate;
-            let next_depreciation = if value - next_depreciation < salvage {
-                (value - salvage).max(0.0)
-            } else {
-                next_depreciation
-            };
-            depreciation = depreciation * (1.0 - frac) + next_depreciation * frac;
         }
 
         Ok(CalcValue::Scalar(LiteralValue::Number(depreciation)))
