@@ -2055,21 +2055,21 @@ mod semantics_regressions {
     }
 
     #[test]
-    fn unary_minus_binds_less_tightly_than_exponent() {
+    fn unary_minus_binds_tighter_than_exponent() {
         let t = Tokenizer::new("=-2^2").unwrap();
         let mut p = Parser::new(t.items, false);
         let ast = p.parse().unwrap();
 
-        // Expected: -(2^2)
+        // Excel: =-2^2 means (-2)^2 = 4
         match ast.node_type {
-            ASTNodeType::UnaryOp { op, expr } => {
-                assert_eq!(op, "-");
-                match expr.node_type {
-                    ASTNodeType::BinaryOp { op: op2, .. } => assert_eq!(op2, "^"),
-                    other => panic!("expected exponent under unary, got {other:?}"),
+            ASTNodeType::BinaryOp { op, left, .. } => {
+                assert_eq!(op, "^");
+                match left.node_type {
+                    ASTNodeType::UnaryOp { op: op2, .. } => assert_eq!(op2, "-"),
+                    other => panic!("expected unary under exponent, got {other:?}"),
                 }
             }
-            other => panic!("expected UnaryOp, got {other:?}"),
+            other => panic!("expected BinaryOp, got {other:?}"),
         }
     }
 
