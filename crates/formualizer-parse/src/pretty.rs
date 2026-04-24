@@ -33,11 +33,7 @@ fn infix_info(op: &str) -> (u8, Associativity) {
 }
 
 fn unary_precedence(op: &str) -> u8 {
-    if op == "%" {
-        7
-    } else {
-        6
-    }
+    if op == "%" { 7 } else { 6 }
 }
 
 fn node_precedence(ast: &ASTNode) -> u8 {
