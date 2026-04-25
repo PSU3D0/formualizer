@@ -875,6 +875,96 @@ mod tests {
         } else {
             panic!("Expected Boolean literal");
         }
+
+        // Lowercase/mixed-case forms must also parse as boolean literals (Excel
+        // is case-insensitive for TRUE/FALSE).
+        for (formula, expected) in [
+            ("=true", true),
+            ("=false", false),
+            ("=True", true),
+            ("=TrUe", true),
+            ("=fAlSe", false),
+        ] {
+            let ast = parse_formula(formula).unwrap();
+            match ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(v)) => {
+                    assert_eq!(v, expected, "classic parser: {formula}");
+                }
+                other => {
+                    panic!("classic parser: expected Boolean literal for {formula}, got {other:?}")
+                }
+            }
+
+            let ast = crate::parser::parse(formula).unwrap();
+            match ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(v)) => {
+                    assert_eq!(v, expected, "span parser: {formula}");
+                }
+                other => {
+                    panic!("span parser: expected Boolean literal for {formula}, got {other:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lowercase_boolean_in_function_call() {
+        type ParseFn = fn(&str) -> Result<ASTNode, ParserError>;
+        let parsers: [ParseFn; 2] = [parse_formula, |s| crate::parser::parse(s)];
+        for parse in parsers {
+            let ast = parse("=IF(true,1,2)").unwrap();
+            let ASTNodeType::Function { name, args } = ast.node_type else {
+                panic!("expected Function node");
+            };
+            assert_eq!(name, "IF");
+            assert_eq!(args.len(), 3);
+            match &args[0].node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(true)) => {}
+                other => panic!("expected Boolean(true) as first arg, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_lowercase_boolean_in_binary_op() {
+        type ParseFn = fn(&str) -> Result<ASTNode, ParserError>;
+        let parsers: [ParseFn; 2] = [parse_formula, |s| crate::parser::parse(s)];
+        for parse in parsers {
+            let ast = parse("=a1+true").unwrap();
+            let ASTNodeType::BinaryOp { op, left, right } = ast.node_type else {
+                panic!("expected BinaryOp node");
+            };
+            assert_eq!(op, "+");
+            match &left.node_type {
+                ASTNodeType::Reference { .. } => {}
+                other => panic!("expected Reference on lhs, got {other:?}"),
+            }
+            match &right.node_type {
+                ASTNodeType::Literal(LiteralValue::Boolean(true)) => {}
+                other => panic!("expected Boolean(true) on rhs, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_named_ranges_containing_bool_substrings_are_not_booleans() {
+        type ParseFn = fn(&str) -> Result<ASTNode, ParserError>;
+        let parsers: [ParseFn; 2] = [parse_formula, |s| crate::parser::parse(s)];
+        for parse in parsers {
+            for name in ["TRUENAME", "trueish", "NOT_TRUE", "false_positive"] {
+                let formula = format!("={name}");
+                let ast = parse(&formula).unwrap();
+                match &ast.node_type {
+                    ASTNodeType::Reference {
+                        reference: ReferenceType::NamedRange(actual),
+                        ..
+                    } => {
+                        assert_eq!(actual, name, "formula {formula}");
+                    }
+                    other => panic!("expected NamedRange({name}), got {other:?}"),
+                }
+            }
+        }
     }
 
     #[test]

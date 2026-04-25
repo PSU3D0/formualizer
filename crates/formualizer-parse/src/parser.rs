@@ -2244,7 +2244,7 @@ impl Parser {
                 ))
             }
             TokenSubType::Logical => {
-                let value = token.value.to_uppercase() == "TRUE";
+                let value = token.value.eq_ignore_ascii_case("TRUE");
                 Ok(ASTNode::new(
                     ASTNodeType::Literal(LiteralValue::Boolean(value)),
                     Some(token),
@@ -2749,7 +2749,7 @@ impl<'a> SpanParser<'a> {
                 ))
             }
             TokenSubType::Logical => {
-                let v = value.to_uppercase() == "TRUE";
+                let v = value.eq_ignore_ascii_case("TRUE");
                 Ok(ASTNode::new(
                     ASTNodeType::Literal(LiteralValue::Boolean(v)),
                     Some(token),

@@ -1489,4 +1489,41 @@ mod tests {
         assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
         assert_eq!(tokenizer.items[0].value, "source!#ref!");
     }
+
+    #[test]
+    fn lowercase_true_is_logical_subtype() {
+        let tokenizer = Tokenizer::new("=true").expect("tokenize lowercase true");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Logical);
+        assert_eq!(tokenizer.items[0].value, "true");
+
+        let stream = TokenStream::new("=true").expect("span tokenize lowercase true");
+        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(stream.spans[0].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[0].subtype, TokenSubType::Logical);
+    }
+
+    #[test]
+    fn mixed_case_false_is_logical_subtype() {
+        let tokenizer = Tokenizer::new("=fAlSe").expect("tokenize mixed-case false");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Logical);
+        assert_eq!(tokenizer.items[0].value, "fAlSe");
+
+        let stream = TokenStream::new("=fAlSe").expect("span tokenize mixed-case false");
+        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(stream.spans[0].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[0].subtype, TokenSubType::Logical);
+    }
+
+    #[test]
+    fn truename_is_not_logical_subtype() {
+        let tokenizer = Tokenizer::new("=TRUENAME").expect("tokenize TRUENAME");
+        assert_eq!(tokenizer.items.len(), 1);
+        assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        assert_eq!(tokenizer.items[0].value, "TRUENAME");
+    }
 }
