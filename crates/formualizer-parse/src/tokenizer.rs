@@ -27,15 +27,33 @@ fn is_token_ender(c: u8) -> bool {
     TOKEN_ENDERS_TABLE[c as usize]
 }
 
+// Recognised Excel error literals. The lookup matches an exact-length slice
+// using `eq_ignore_ascii_case`, so ordering only matters when one entry is a
+// prefix of another (none currently are). We keep entries grouped by era and
+// sorted longest-first defensively so future additions don't introduce
+// prefix-collision ambiguity.
+//
+// Modern (Excel 2018+) literals currently recognised here are limited to the
+// ones whose `ExcelErrorKind` already exists in `formualizer-common`:
+//   - `#SPILL!` (dynamic-array spill blocked)
+//   - `#CALC!`  (generic calc-engine error)
+// Other modern literals (`#FIELD!`, `#BLOCKED!`, `#CONNECT!`, `#UNKNOWN!`,
+// `#EXTERNAL!`, `#BUSY!`, `#PYTHON!`) are intentionally not recognised yet;
+// adding them requires a coordinated change in `ExcelErrorKind` and all
+// downstream exhaustive matches/bindings/serde/display.
+//
+// `#GETTING_DATA` is kept for OOXML/legacy compatibility.
 static ERROR_CODES: &[&str] = &[
-    "#NULL!",
+    "#GETTING_DATA",
     "#DIV/0!",
     "#VALUE!",
-    "#REF!",
+    "#SPILL!",
     "#NAME?",
+    "#NULL!",
+    "#CALC!",
     "#NUM!",
+    "#REF!",
     "#N/A",
-    "#GETTING_DATA",
 ];
 
 /// Represents operator associativity.

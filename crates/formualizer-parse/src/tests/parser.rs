@@ -899,6 +899,106 @@ mod tests {
             panic!("Expected a Function node");
         }
     }
+
+    mod modern_error_literals {
+        use super::*;
+        use formualizer_common::ExcelErrorKind;
+
+        fn expect_error_kind(ast: &ASTNode, expected: ExcelErrorKind) {
+            match &ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                    assert_eq!(e.kind, expected);
+                }
+                other => panic!("expected error literal, got {other:?}"),
+            }
+        }
+
+        fn parse_both(formula: &str) -> ASTNode {
+            let token_ast =
+                parse_formula(formula).unwrap_or_else(|e| panic!("token parse {formula}: {e:?}"));
+            let span_ast = crate::parser::parse(formula)
+                .unwrap_or_else(|e| panic!("span parse {formula}: {e:?}"));
+            assert_eq!(
+                token_ast.node_type, span_ast.node_type,
+                "token and span parsers diverged for {formula}"
+            );
+            token_ast
+        }
+
+        #[test]
+        fn spill_literal_parses() {
+            let ast = parse_both("=#SPILL!");
+            expect_error_kind(&ast, ExcelErrorKind::Spill);
+        }
+
+        #[test]
+        fn spill_literal_lowercase_parses() {
+            let ast = parse_both("=#spill!");
+            expect_error_kind(&ast, ExcelErrorKind::Spill);
+        }
+
+        #[test]
+        fn calc_literal_parses() {
+            let ast = parse_both("=#CALC!");
+            expect_error_kind(&ast, ExcelErrorKind::Calc);
+        }
+
+        #[test]
+        fn calc_literal_lowercase_parses() {
+            let ast = parse_both("=#calc!");
+            expect_error_kind(&ast, ExcelErrorKind::Calc);
+        }
+
+        #[test]
+        fn spill_in_iferror_function_argument() {
+            let ast = parse_both("=IFERROR(A1, #SPILL!)");
+            match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name, "IFERROR");
+                    assert_eq!(args.len(), 2);
+                    expect_error_kind(&args[1], ExcelErrorKind::Spill);
+                }
+                other => panic!("expected IFERROR call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn calc_in_arithmetic_expression() {
+            // Nonsensical semantically, but must parse syntactically.
+            let ast = parse_both("=#CALC! + 1");
+            match ast.node_type {
+                ASTNodeType::BinaryOp { op, left, right } => {
+                    assert_eq!(op, "+");
+                    expect_error_kind(&left, ExcelErrorKind::Calc);
+                    match right.node_type {
+                        ASTNodeType::Literal(LiteralValue::Int(n)) => assert_eq!(n, 1),
+                        ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(n, 1.0),
+                        ref other => panic!("expected numeric 1, got {other:?}"),
+                    }
+                }
+                other => panic!("expected binary op, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn bogus_modern_error_is_rejected_by_parser() {
+            assert!(parse_formula("=#BOGUS!").is_err());
+            assert!(crate::parser::parse("=#BOGUS!").is_err());
+        }
+
+        #[test]
+        fn typo_spil_rejected_by_parser() {
+            assert!(parse_formula("=#SPIL!").is_err());
+            assert!(crate::parser::parse("=#SPIL!").is_err());
+        }
+
+        #[test]
+        fn spill_display_roundtrips_to_excel_literal() {
+            // Display of the kind matches the canonical Excel literal.
+            assert_eq!(format!("{}", ExcelErrorKind::Spill), "#SPILL!");
+            assert_eq!(format!("{}", ExcelErrorKind::Calc), "#CALC!");
+        }
+    }
 }
 
 #[cfg(test)]
