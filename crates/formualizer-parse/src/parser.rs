@@ -708,6 +708,16 @@ impl ReferenceType {
         // Table references live in the ref_part (e.g., "Table1[Column]").
         // Sheet names can contain '[' for external workbook refs (e.g., "[1]Sheet1!A1").
         if ref_part.contains('[') {
+            // Issue #76: R1C1-shaped operands like `R[1]C[2]`, `R1C[2]`, `RC[1]`
+            // contain `[` but are not table references. Without this gate they
+            // either misclassify as `Table { name: "R1C", specifier: Column("2") }`
+            // or get rejected by the structured-references trailing-garbage check.
+            // We don't add an R1C1 dialect; we just refuse to fabricate a table
+            // and fall back to the same `NamedRange` outcome that bracket-free
+            // R1C1 strings (e.g. `R1C1`, `RC`) already produce.
+            if Self::is_r1c1_shape(&ref_part) {
+                return Ok(ReferenceType::NamedRange(reference.to_string()));
+            }
             return Self::parse_table_reference(&ref_part);
         }
 
@@ -1029,6 +1039,82 @@ impl ReferenceType {
         }
 
         (None, reference.to_string())
+    }
+
+    /// Detect R1C1-shaped operands so they aren't routed through the table-
+    /// reference parser (issue #76).
+    ///
+    /// Matches `^R\d*(\[-?\d+\])?C\d*(\[-?\d+\])?$` and additionally requires
+    /// the operand to contain at least one digit or bracket so that bare `R`,
+    /// `C`, and `RC` (which already classify cleanly as `NamedRange` via the
+    /// non-bracket path) are not pulled in here. Plain A1 cells like `R1`,
+    /// `C5`, and `RC1` never reach this function because they don't contain
+    /// `[` and are handled by the cell-reference path.
+    fn is_r1c1_shape(s: &str) -> bool {
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+        let mut i = 0usize;
+        let mut anchored = false;
+
+        if i >= len || bytes[i] != b'R' {
+            return false;
+        }
+        i += 1;
+
+        let row_digits_start = i;
+        while i < len && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i > row_digits_start {
+            anchored = true;
+        }
+
+        if i < len && bytes[i] == b'[' {
+            i += 1;
+            if i < len && bytes[i] == b'-' {
+                i += 1;
+            }
+            let n_start = i;
+            while i < len && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i == n_start || i >= len || bytes[i] != b']' {
+                return false;
+            }
+            i += 1;
+            anchored = true;
+        }
+
+        if i >= len || bytes[i] != b'C' {
+            return false;
+        }
+        i += 1;
+
+        let col_digits_start = i;
+        while i < len && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i > col_digits_start {
+            anchored = true;
+        }
+
+        if i < len && bytes[i] == b'[' {
+            i += 1;
+            if i < len && bytes[i] == b'-' {
+                i += 1;
+            }
+            let n_start = i;
+            while i < len && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i == n_start || i >= len || bytes[i] != b']' {
+                return false;
+            }
+            i += 1;
+            anchored = true;
+        }
+
+        i == len && anchored
     }
 
     /// Parse a table reference like "Table1[Column1]" or more complex ones
