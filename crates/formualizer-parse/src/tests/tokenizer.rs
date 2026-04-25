@@ -1489,4 +1489,170 @@ mod tests {
         assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
         assert_eq!(tokenizer.items[0].value, "source!#ref!");
     }
+
+    mod spill_operator {
+        use crate::tokenizer::{TokenStream, TokenSubType, TokenType, Tokenizer};
+
+        fn classic_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let t = Tokenizer::new(formula).expect("tokenize");
+            t.items
+                .iter()
+                .filter(|tok| tok.token_type != TokenType::Whitespace)
+                .map(|tok| (tok.token_type, tok.subtype, tok.value.clone()))
+                .collect()
+        }
+
+        fn span_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            stream
+                .spans
+                .iter()
+                .filter(|span| span.token_type != TokenType::Whitespace)
+                .map(|span| {
+                    (
+                        span.token_type,
+                        span.subtype,
+                        formula[span.start..span.end].to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn spill_postfix_after_cell() {
+            let expected = vec![
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=A1#"), expected);
+            assert_eq!(span_non_ws("=A1#"), expected);
+        }
+
+        #[test]
+        fn spill_postfix_then_operator() {
+            let expected = vec![
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, "+".to_string()),
+                (TokenType::Operand, TokenSubType::Number, "1".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=A1#+1"), expected);
+            assert_eq!(span_non_ws("=A1#+1"), expected);
+        }
+
+        #[test]
+        fn hash_at_start_still_error_literal() {
+            let expected = vec![(TokenType::Operand, TokenSubType::Error, "#REF!".to_string())];
+            assert_eq!(classic_non_ws("=#REF!"), expected);
+            assert_eq!(span_non_ws("=#REF!"), expected);
+        }
+
+        #[test]
+        fn hash_after_operator_is_error_literal() {
+            let classic = classic_non_ws("=1+#DIV/0!");
+            assert_eq!(classic.last().unwrap().0, TokenType::Operand);
+            assert_eq!(classic.last().unwrap().1, TokenSubType::Error);
+            assert_eq!(classic.last().unwrap().2, "#DIV/0!");
+            let span = span_non_ws("=1+#DIV/0!");
+            assert_eq!(span.last().unwrap().0, TokenType::Operand);
+            assert_eq!(span.last().unwrap().1, TokenSubType::Error);
+            assert_eq!(span.last().unwrap().2, "#DIV/0!");
+        }
+
+        #[test]
+        fn hash_after_sheet_qualified_cell() {
+            let expected = vec![
+                (
+                    TokenType::Operand,
+                    TokenSubType::Range,
+                    "Sheet1!A1".to_string(),
+                ),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=Sheet1!A1#"), expected);
+            assert_eq!(span_non_ws("=Sheet1!A1#"), expected);
+        }
+
+        #[test]
+        fn sheet_qualified_error_literal_unchanged() {
+            // The key invariant: `Sheet1!#REF!` must remain a single Operand
+            // token and NOT be split into `Sheet1!` + `#` postfix. The exact
+            // operand subtype for sheet-qualified error literals is a
+            // pre-existing path divergence (classic=Range, span=Error) and is
+            // out of scope for #71.
+            let classic = classic_non_ws("=Sheet1!#REF!");
+            assert_eq!(classic.len(), 1);
+            assert_eq!(classic[0].0, TokenType::Operand);
+            assert_eq!(classic[0].2, "Sheet1!#REF!");
+            assert_ne!(classic[0].1, TokenSubType::None);
+            let span = span_non_ws("=Sheet1!#REF!");
+            assert_eq!(span.len(), 1);
+            assert_eq!(span[0].0, TokenType::Operand);
+            assert_eq!(span[0].2, "Sheet1!#REF!");
+            assert_ne!(span[0].1, TokenSubType::None);
+        }
+
+        #[test]
+        fn spill_after_external_ref() {
+            let expected = vec![
+                (
+                    TokenType::Operand,
+                    TokenSubType::Range,
+                    "[1]Sheet1!A1".to_string(),
+                ),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=[1]Sheet1!A1#"), expected);
+            assert_eq!(span_non_ws("=[1]Sheet1!A1#"), expected);
+        }
+
+        #[test]
+        fn spill_after_paren_close() {
+            let expected = vec![
+                (TokenType::Paren, TokenSubType::Open, "(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::Paren, TokenSubType::Close, ")".to_string()),
+                (TokenType::OpPostfix, TokenSubType::None, "#".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=(A1)#"), expected);
+            assert_eq!(span_non_ws("=(A1)#"), expected);
+        }
+
+        #[test]
+        fn double_spill_emits_two_postfix() {
+            let classic = classic_non_ws("=A1##");
+            assert_eq!(
+                classic
+                    .iter()
+                    .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                    .count(),
+                2
+            );
+            let span = span_non_ws("=A1##");
+            assert_eq!(
+                span.iter()
+                    .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                    .count(),
+                2
+            );
+        }
+
+        #[test]
+        fn spill_with_whitespace_between_two_refs() {
+            // Two spilled ranges separated by whitespace; tokenizer-only check (parser
+            // intersection handling is tracked separately).
+            let classic = classic_non_ws("=A1# B1#");
+            let posts: Vec<_> = classic
+                .iter()
+                .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                .collect();
+            assert_eq!(posts.len(), 2);
+            let span = span_non_ws("=A1# B1#");
+            let posts_span: Vec<_> = span
+                .iter()
+                .filter(|t| t.0 == TokenType::OpPostfix && t.2 == "#")
+                .collect();
+            assert_eq!(posts_span.len(), 2);
+        }
+    }
 }

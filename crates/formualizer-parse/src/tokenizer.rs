@@ -255,6 +255,7 @@ impl Token {
         //   &
         //   comparisons
         match op {
+            "#" => Some((9, Associativity::Left)),
             ":" | " " | "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "u" => Some((6, Associativity::Right)),
@@ -756,7 +757,14 @@ impl<'a> SpanTokenizer<'a> {
             let parse_result = match curr_byte {
                 b'"' | b'\'' => self.parse_string(),
                 b'[' => self.parse_brackets(),
-                b'#' => self.parse_error(),
+                b'#' => {
+                    if self.should_emit_hash_postfix() {
+                        self.emit_hash_postfix();
+                        Ok(())
+                    } else {
+                        self.parse_error()
+                    }
+                }
                 b' ' | b'\n' => self.parse_whitespace(),
                 b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@' => {
                     self.parse_operator()
@@ -1092,6 +1100,49 @@ impl<'a> SpanTokenizer<'a> {
             .find(|t| t.token_type != TokenType::Whitespace)
     }
 
+    /// Decide whether a `#` at `self.offset` should be emitted as a spill
+    /// postfix operator (`OpPostfix`) instead of routed to the error-literal
+    /// parser. The rule mirrors the space-operator gating: `#` is postfix when
+    /// it follows a reference-producing token.
+    fn should_emit_hash_postfix(&self) -> bool {
+        if self.has_token() {
+            // An accumulated token whose last byte is `!` is a sheet/file
+            // qualifier (e.g. `Sheet1!`). Defer to `parse_error` so it can
+            // merge `Sheet1!` + `#REF!` into a single qualified-error operand.
+            if self.formula.as_bytes()[self.token_end - 1] == b'!' {
+                return false;
+            }
+            let value = &self.formula[self.token_start..self.token_end];
+            return operand_subtype(value) == TokenSubType::Range;
+        }
+        match self.prev_non_whitespace() {
+            Some(prev) => match prev.token_type {
+                TokenType::OpPostfix => true,
+                TokenType::Paren | TokenType::Func | TokenType::Array
+                    if prev.subtype == TokenSubType::Close =>
+                {
+                    true
+                }
+                TokenType::Operand if prev.subtype == TokenSubType::Range => true,
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    fn emit_hash_postfix(&mut self) {
+        self.save_token();
+        self.start_token();
+        self.push_span(
+            TokenType::OpPostfix,
+            TokenSubType::None,
+            self.offset,
+            self.offset + 1,
+        );
+        self.offset += 1;
+        self.start_token();
+    }
+
     fn parse_operator(&mut self) -> Result<(), SpanTokenizerError> {
         self.save_token();
 
@@ -1388,7 +1439,13 @@ impl Tokenizer {
             match curr_byte {
                 b'"' | b'\'' => self.parse_string()?,
                 b'[' => self.parse_brackets()?,
-                b'#' => self.parse_error()?,
+                b'#' => {
+                    if self.should_emit_hash_postfix() {
+                        self.emit_hash_postfix();
+                    } else {
+                        self.parse_error()?
+                    }
+                }
                 b' ' | b'\n' => self.parse_whitespace()?,
                 // operator characters
                 b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@' => {
@@ -1574,6 +1631,57 @@ impl Tokenizer {
             message: "Encountered unmatched '['".to_string(),
             pos: self.offset,
         })
+    }
+
+    /// See `SpanTokenizer::should_emit_hash_postfix` for rationale.
+    fn should_emit_hash_postfix(&self) -> bool {
+        if self.has_token() {
+            if self.formula.as_bytes()[self.token_end - 1] == b'!' {
+                return false;
+            }
+            let value = &self.formula[self.token_start..self.token_end];
+            // Mirror `make_operand_from_slice` subtype detection: the
+            // accumulated token forms a Range operand iff it isn't a quoted
+            // string, error literal, boolean, or number.
+            let is_range = !value.starts_with('"')
+                && !value.starts_with('#')
+                && value != "TRUE"
+                && value != "FALSE"
+                && value.parse::<f64>().is_err();
+            return is_range;
+        }
+        let prev = self
+            .items
+            .iter()
+            .rev()
+            .find(|t| t.token_type != TokenType::Whitespace);
+        match prev {
+            Some(p) => match p.token_type {
+                TokenType::OpPostfix => true,
+                TokenType::Paren | TokenType::Func | TokenType::Array
+                    if p.subtype == TokenSubType::Close =>
+                {
+                    true
+                }
+                TokenType::Operand if p.subtype == TokenSubType::Range => true,
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    fn emit_hash_postfix(&mut self) {
+        self.save_token();
+        self.start_token();
+        self.items.push(Token::from_slice(
+            &self.formula,
+            TokenType::OpPostfix,
+            TokenSubType::None,
+            self.offset,
+            self.offset + 1,
+        ));
+        self.offset += 1;
+        self.start_token();
     }
 
     /// Parse an error literal that starts with '#'.
