@@ -982,6 +982,20 @@ impl<'a> SpanTokenizer<'a> {
 
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
+                // OOXML structured-reference escape: a single apostrophe makes
+                // the next byte literal (used to embed `[`, `]`, `'`, or `#`
+                // inside a column name). Skip the following byte without
+                // updating nesting depth.
+                b'\'' => {
+                    if self.offset + 1 < self.formula.len() {
+                        self.offset += 2;
+                        continue;
+                    }
+                    // Trailing apostrophe inside brackets is malformed; fall
+                    // through so the loop ends with an UnmatchedBracket error.
+                    self.offset += 1;
+                    continue;
+                }
                 b'[' => open_count += 1,
                 b']' => {
                     open_count -= 1;
@@ -1556,6 +1570,18 @@ impl Tokenizer {
 
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
+                // OOXML structured-reference escape: a single apostrophe makes
+                // the next byte literal (used to embed `[`, `]`, `'`, or `#`
+                // inside a column name). Skip the following byte without
+                // updating nesting depth.
+                b'\'' => {
+                    if self.offset + 1 < self.formula.len() {
+                        self.offset += 2;
+                        continue;
+                    }
+                    self.offset += 1;
+                    continue;
+                }
                 b'[' => open_count += 1,
                 b']' => {
                     open_count -= 1;

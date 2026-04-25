@@ -1607,36 +1607,36 @@ mod reference_tests {
 
     #[test]
     fn test_dual_bracket_structured_reference_parsing() {
+        use crate::parser::{SpecialItem, TableSpecifier};
         let formula = "=EffortDB[[#All],[NPI]:[JMG Group]]";
         let tokenizer = Tokenizer::new(formula).unwrap();
-        println!("tokenizer: {:?}", tokenizer.items);
         let mut parser = Parser::new(tokenizer.items, false);
         let ast = parser.parse().unwrap();
-        println!("ast: {ast:?}");
 
-        // When the formula is tokenized and parsed, the equals sign is removed,
-        // so we compare against the formula without the equals sign
-        if let ASTNodeType::Reference {
+        let ASTNodeType::Reference {
             original,
             reference,
         } = &ast.node_type
-        {
-            assert_eq!(original, &"EffortDB[[#All],[NPI]:[JMG Group]]".to_string());
-
-            // Check that reference is a Table type with the correct name
-            if let ReferenceType::Table(table_ref) = reference {
-                assert_eq!(table_ref.name, "EffortDB");
-
-                // Check that the specifier is correctly parsed
-                // (in this case, it should be a Column since we're not fully
-                // parsing the complex specifier yet)
-                assert!(table_ref.specifier.is_some());
-            } else {
-                panic!("Expected Table reference");
-            }
-        } else {
+        else {
             panic!("Expected Reference node");
-        }
+        };
+        assert_eq!(original, &"EffortDB[[#All],[NPI]:[JMG Group]]".to_string());
+
+        let ReferenceType::Table(table_ref) = reference else {
+            panic!("Expected Table reference");
+        };
+        assert_eq!(table_ref.name, "EffortDB");
+        let Some(TableSpecifier::Combination(parts)) = &table_ref.specifier else {
+            panic!("Expected Combination, got {:?}", table_ref.specifier);
+        };
+        let parts: Vec<TableSpecifier> = parts.iter().map(|p| (**p).clone()).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::All),
+                TableSpecifier::ColumnRange("NPI".to_string(), "JMG Group".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1763,42 +1763,50 @@ mod reference_tests {
 
     #[test]
     fn test_table_item_with_column_reference() {
+        use crate::parser::SpecialItem;
         // Test a table reference with an item specifier and column
         let reference = "Table1[[#Data],[Column1]]";
         let ref_type = ReferenceType::from_string(reference).unwrap();
 
-        if let ReferenceType::Table(table_ref) = ref_type {
-            assert_eq!(table_ref.name, "Table1");
-
-            // Currently our implementation doesn't fully parse complex specifiers,
-            // but we should at least verify it's parsed as a table reference
-            assert!(table_ref.specifier.is_some());
-
-            // Note: In the future, we should enhance this to properly parse
-            // complex structured references and verify the exact specifier
-        } else {
+        let ReferenceType::Table(table_ref) = ref_type else {
             panic!("Expected Table reference");
-        }
+        };
+        assert_eq!(table_ref.name, "Table1");
+        let Some(TableSpecifier::Combination(parts)) = table_ref.specifier else {
+            panic!("Expected Combination specifier");
+        };
+        let parts: Vec<TableSpecifier> = parts.into_iter().map(|p| *p).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
     }
 
     #[test]
     fn test_table_this_row_with_column_reference() {
+        use crate::parser::SpecialItem;
         // Test a table reference with this row specifier and column
         let reference = "Table1[[@],[Column1]]";
         let ref_type = ReferenceType::from_string(reference).unwrap();
 
-        if let ReferenceType::Table(table_ref) = ref_type {
-            assert_eq!(table_ref.name, "Table1");
-
-            // Currently our implementation doesn't fully parse complex specifiers,
-            // but we should at least verify it's parsed as a table reference
-            assert!(table_ref.specifier.is_some());
-
-            // Note: In the future, we should enhance this to properly parse
-            // complex structured references and verify the exact specifier
-        } else {
+        let ReferenceType::Table(table_ref) = ref_type else {
             panic!("Expected Table reference");
-        }
+        };
+        assert_eq!(table_ref.name, "Table1");
+        let Some(TableSpecifier::Combination(parts)) = table_ref.specifier else {
+            panic!("Expected Combination specifier");
+        };
+        let parts: Vec<TableSpecifier> = parts.into_iter().map(|p| *p).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1884,31 +1892,436 @@ mod reference_tests {
     }
 
     #[test]
-    fn structured_combination_dedupes_duplicate_specials() {
+    fn structured_combination_preserves_duplicate_specials_in_order() {
         use crate::parser::{ReferenceType, SpecialItem, TableReference, TableSpecifier};
-        // Input with duplicates of specials
+        // The OOXML grammar (`combination := item ("," item)*`) permits repeats.
+        // After the issue #73 rewrite, the parser preserves them in source order
+        // instead of silently de-duplicating.
         let s = "Table1[[#Data],[#Data],[#Totals],[#Totals]]";
         let r = ReferenceType::from_string(s).expect("parse ok");
-        // Our Display prints each special once when building Combination
-        // Note: order may follow detection order (#Data, then #Totals)
-        assert_eq!(r.to_string(), "Table1[[#Data],[#Totals]]");
-        if let ReferenceType::Table(TableReference {
+        assert_eq!(r.to_string(), s);
+        let ReferenceType::Table(TableReference {
             specifier: Some(TableSpecifier::Combination(parts)),
             ..
         }) = r
-        {
-            let has_data = parts
-                .iter()
-                .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Data)));
-            let has_totals = parts
-                .iter()
-                .any(|p| matches!(**p, TableSpecifier::SpecialItem(SpecialItem::Totals)));
-            assert!(has_data && has_totals);
-            // Ensure duplicates were not kept
-            assert_eq!(parts.len(), 2);
-        } else {
+        else {
             panic!("expected table combination");
+        };
+        let parts: Vec<TableSpecifier> = parts.into_iter().map(|p| *p).collect();
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::SpecialItem(SpecialItem::Totals),
+                TableSpecifier::SpecialItem(SpecialItem::Totals),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod structured_references {
+    //! Coverage for issue #73: real parser for structured (table) references.
+    //!
+    //! Each test runs across both the classic [`Parser`] and the span-based
+    //! [`crate::parse`] entrypoint to catch any divergence between paths.
+    use crate::parser::{
+        ASTNodeType, Parser, ReferenceType, SpecialItem, TableReference, TableRowSpecifier,
+        TableSpecifier,
+    };
+    use crate::tokenizer::Tokenizer;
+
+    fn parse_via_classic(formula: &str) -> Result<ReferenceType, String> {
+        let tokenizer = Tokenizer::new(formula).map_err(|e| e.to_string())?;
+        let mut parser = Parser::new(tokenizer.items, false);
+        let ast = parser.parse().map_err(|e| e.to_string())?;
+        match ast.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference),
+            other => Err(format!("expected reference node, got {other:?}")),
         }
+    }
+
+    fn parse_via_span(formula: &str) -> Result<ReferenceType, String> {
+        let ast = crate::parse(formula).map_err(|e| e.to_string())?;
+        match ast.node_type {
+            ASTNodeType::Reference { reference, .. } => Ok(reference),
+            other => Err(format!("expected reference node, got {other:?}")),
+        }
+    }
+
+    /// Parse via both paths and require they agree.
+    fn parse_both(formula: &str) -> Result<ReferenceType, String> {
+        let classic = parse_via_classic(formula)?;
+        let span = parse_via_span(formula)?;
+        assert_eq!(
+            classic, span,
+            "classic vs span parser disagree for {formula}"
+        );
+        Ok(classic)
+    }
+
+    fn expect_table(formula: &str) -> TableReference {
+        let r = parse_both(formula).expect("parse ok");
+        match r {
+            ReferenceType::Table(t) => t,
+            other => panic!("expected Table, got {other:?}"),
+        }
+    }
+
+    fn expect_parse_err(formula: &str) {
+        let classic = parse_via_classic(formula);
+        let span = parse_via_span(formula);
+        assert!(
+            classic.is_err(),
+            "classic parser unexpectedly accepted {formula}: {classic:?}"
+        );
+        assert!(
+            span.is_err(),
+            "span parser unexpectedly accepted {formula}: {span:?}"
+        );
+    }
+
+    fn expect_combination(spec: Option<TableSpecifier>) -> Vec<TableSpecifier> {
+        match spec {
+            Some(TableSpecifier::Combination(parts)) => parts.into_iter().map(|b| *b).collect(),
+            other => panic!("expected Combination, got {other:?}"),
+        }
+    }
+
+    // ----------- positive: simple regression -----------
+
+    #[test]
+    fn simple_column() {
+        let t = expect_table("=Table1[Column1]");
+        assert_eq!(t.name, "Table1");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("Column1".to_string()))
+        );
+    }
+
+    #[test]
+    fn simple_column_range() {
+        let t = expect_table("=Table1[Column1:Column2]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::ColumnRange(
+                "Column1".to_string(),
+                "Column2".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn simple_specials() {
+        for (s, expected) in [
+            ("=Table1[#All]", SpecialItem::All),
+            ("=Table1[#Headers]", SpecialItem::Headers),
+            ("=Table1[#Data]", SpecialItem::Data),
+            ("=Table1[#Totals]", SpecialItem::Totals),
+        ] {
+            let t = expect_table(s);
+            assert_eq!(t.specifier, Some(TableSpecifier::SpecialItem(expected)));
+        }
+    }
+
+    #[test]
+    fn this_row_at_only() {
+        let t = expect_table("=Table1[@]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Row(TableRowSpecifier::Current))
+        );
+    }
+
+    // ----------- positive: combinations preserving column parts -----------
+
+    #[test]
+    fn all_with_column_range_preserves_both_parts() {
+        let t = expect_table("=Table1[[#All],[A]:[B]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::All),
+                TableSpecifier::ColumnRange("A".to_string(), "B".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn headers_with_column() {
+        let t = expect_table("=Table1[[#Headers],[Column1]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Headers),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn data_with_column_range() {
+        let t = expect_table("=Table1[[#Data],[Column1]:[Column2]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Data),
+                TableSpecifier::ColumnRange("Column1".to_string(), "Column2".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn totals_with_column() {
+        let t = expect_table("=Table1[[#Totals],[Column1]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Totals),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn effort_db_full_range_preserves_columns() {
+        let t = expect_table("=EffortDB[[#All],[NPI]:[JMG Group]]");
+        assert_eq!(t.name, "EffortDB");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::All),
+                TableSpecifier::ColumnRange("NPI".to_string(), "JMG Group".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn column_range_with_spaces_in_names() {
+        let t = expect_table("=Table1[[Col A]:[Col B]]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::ColumnRange(
+                "Col A".to_string(),
+                "Col B".to_string()
+            ))
+        );
+    }
+
+    // ----------- positive: this-row variants -----------
+
+    #[test]
+    fn this_row_with_column_combination() {
+        let t = expect_table("=Table1[[@],[Column1]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn this_row_at_column_shorthand() {
+        let t = expect_table("=Table1[@Column1]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Column1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn this_row_legacy_form() {
+        let t = expect_table("=Table1[[#This Row],[Col]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("Col".to_string()),
+            ]
+        );
+    }
+
+    // ----------- positive: case-insensitivity -----------
+
+    #[test]
+    fn specials_are_case_insensitive() {
+        let t = expect_table("=Table1[#headers]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::SpecialItem(SpecialItem::Headers))
+        );
+        let t = expect_table("=Table1[#ALL]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::SpecialItem(SpecialItem::All))
+        );
+        let t = expect_table("=Table1[[#this row],[col]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::ThisRow),
+                TableSpecifier::Column("col".to_string()),
+            ]
+        );
+    }
+
+    // ----------- positive: ' escape inside column names -----------
+    //
+    // OOXML / MS-XLSX uses a per-character escape: `'X` represents a literal
+    // `X` (where X is one of `[`, `]`, `'`). Excel itself serializes a
+    // column named `Col ]` as `[Col ']]` (single apostrophe before the
+    // escaped `]`). We follow that canonical encoding here.
+
+    #[test]
+    fn column_name_with_escaped_close_bracket() {
+        let t = expect_table("=Table1[Col ']]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("Col ]".to_string()))
+        );
+    }
+
+    #[test]
+    fn column_name_with_escaped_open_bracket() {
+        let t = expect_table("=Table1[Col '[end]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("Col [end".to_string()))
+        );
+    }
+
+    #[test]
+    fn column_name_with_escaped_apostrophe() {
+        // `''` -> literal `'`
+        let t = expect_table("=Table1[O''Brien]");
+        assert_eq!(
+            t.specifier,
+            Some(TableSpecifier::Column("O'Brien".to_string()))
+        );
+    }
+
+    #[test]
+    fn combination_with_escaped_close_bracket() {
+        let t = expect_table("=Table1[[#Headers],[Col ']]]");
+        let parts = expect_combination(t.specifier);
+        assert_eq!(
+            parts,
+            vec![
+                TableSpecifier::SpecialItem(SpecialItem::Headers),
+                TableSpecifier::Column("Col ]".to_string()),
+            ]
+        );
+    }
+
+    // ----------- positive: non-ASCII column names -----------
+
+    #[test]
+    fn unicode_column_names() {
+        for (formula, table, col) in [
+            ("=Sales[Акт]", "Sales", "Акт"),
+            ("=Café[Crème brûlée]", "Café", "Crème brûlée"),
+            ("=分析[数量]", "分析", "数量"),
+        ] {
+            let t = expect_table(formula);
+            assert_eq!(t.name, table);
+            assert_eq!(t.specifier, Some(TableSpecifier::Column(col.to_string())));
+        }
+    }
+
+    // ----------- positive: roundtrip via Display -----------
+
+    #[test]
+    fn display_roundtrips() {
+        for input in [
+            "Table1[Column1]",
+            "Table1[Column1:Column2]",
+            "Table1[#Headers]",
+            "Table1[#Data]",
+            "Table1[#Totals]",
+            "Table1[#All]",
+            "Table1[@]",
+            "Table1[[#All],[A]:[B]]",
+            "Table1[[#Headers],[Column1]]",
+            "Table1[[#Data],[Column1]:[Column2]]",
+            "Table1[[#Totals],[Column1]]",
+            "Table1[[@],[Column1]]",
+        ] {
+            let r = ReferenceType::from_string(input).expect("parse ok");
+            let printed = r.to_string();
+            let r2 = ReferenceType::from_string(&printed).expect("reparse ok");
+            assert_eq!(r, r2, "roundtrip changed AST for {input}: {printed}");
+        }
+    }
+
+    // ----------- positive: sheet-scoped -----------
+
+    #[test]
+    fn sheet_scoped_table_ref_still_drops_sheet() {
+        let r = ReferenceType::from_string("Sheet1!Table1[Column1]").unwrap();
+        assert_eq!(
+            r,
+            ReferenceType::Table(TableReference {
+                name: "Table1".to_string(),
+                specifier: Some(TableSpecifier::Column("Column1".to_string())),
+            })
+        );
+    }
+
+    // ----------- negative -----------
+
+    #[test]
+    fn rejects_trailing_garbage_after_column() {
+        expect_parse_err("=Table1[Col]junk");
+    }
+
+    #[test]
+    fn rejects_trailing_garbage_after_empty_specifier() {
+        // Tokenizer may already split; verify the full formula still errors.
+        let classic = parse_via_classic("=Table1[]abc");
+        let span = parse_via_span("=Table1[]abc");
+        assert!(classic.is_err(), "classic accepted: {classic:?}");
+        assert!(span.is_err(), "span accepted: {span:?}");
+    }
+
+    #[test]
+    fn rejects_unknown_special_item() {
+        expect_parse_err("=Table1[#unknown]");
+    }
+
+    #[test]
+    fn rejects_garbage_inside_combination() {
+        expect_parse_err("=Table1[[#Data],junk]");
+    }
+
+    #[test]
+    fn rejects_unterminated_bracket() {
+        // Tokenizer error.
+        assert!(Tokenizer::new("=Table1[Col").is_err());
+        assert!(crate::parse("=Table1[Col").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_escape() {
+        // [Col '] — the ' is supposed to escape the next char; here it escapes ']'
+        // which means the bracket never terminates.
+        assert!(Tokenizer::new("=Table1[[Col ']]").is_err());
+        assert!(crate::parse("=Table1[[Col ']]").is_err());
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::structured_ref;
 use crate::tokenizer::{Associativity, Token, TokenSubType, TokenType, Tokenizer, TokenizerError};
 use crate::types::{FormulaDialect, ParsingError};
 use crate::{ExcelError, LiteralValue};
@@ -274,9 +275,24 @@ impl Display for TableSpecifier {
             TableSpecifier::SpecialItem(item) => write!(f, "{item}"),
             TableSpecifier::Combination(specs) => {
                 // Emit nested bracketed parts so the surrounding Table formatter prints
-                // canonical structured refs like Table[[#Headers],[Column1]:[Column2]]
-                let parts: Vec<String> = specs.iter().map(|s| format!("[{s}]")).collect();
-                write!(f, "{}", parts.join(","))
+                // canonical structured refs like Table[[#Headers],[Column1]:[Column2]].
+                // ColumnRange children must split their bracket boundary across
+                // both endpoints (`[A]:[B]`) rather than wrapping the whole
+                // range in one bracket pair.
+                let mut first = true;
+                for spec in specs {
+                    if !first {
+                        write!(f, ",")?;
+                    }
+                    first = false;
+                    match spec.as_ref() {
+                        TableSpecifier::ColumnRange(start, end) => {
+                            write!(f, "[{start}]:[{end}]")?;
+                        }
+                        other => write!(f, "[{other}]")?,
+                    }
+                }
+                Ok(())
             }
         }
     }
@@ -1015,128 +1031,49 @@ impl ReferenceType {
         (None, reference.to_string())
     }
 
-    /// Parse a table reference like "Table1[Column1]" or more complex ones like "Table1[[#All],[Column1]:[Column2]]".
+    /// Parse a table reference like "Table1[Column1]" or more complex ones
+    /// like "Table1[[#All],[Column1]:[Column2]]".
+    ///
+    /// The specifier syntax is parsed by a real recursive-descent parser
+    /// (`structured_ref::SpecifierParser`) following MS-XLSX §18.17.6.2.
     fn parse_table_reference(reference: &str) -> Result<Self, ParsingError> {
-        // Find the first '[' to separate table name from specifier
-        if let Some(bracket_pos) = reference.find('[') {
-            let table_name = reference[..bracket_pos].trim();
-            if table_name.is_empty() {
-                return Err(ParsingError::InvalidReference(reference.to_string()));
-            }
-
-            let specifier_str = &reference[bracket_pos..];
-            let specifier = Self::parse_table_specifier(specifier_str)?;
-
-            Ok(ReferenceType::Table(TableReference {
-                name: table_name.to_string(),
-                specifier,
-            }))
-        } else {
-            Err(ParsingError::InvalidReference(reference.to_string()))
-        }
-    }
-
-    fn parse_bracketed_structured_reference(reference: &str) -> Result<Self, ParsingError> {
-        debug_assert!(reference.starts_with('[') && reference.ends_with(']'));
-        let inner = reference[1..reference.len().saturating_sub(1)].trim();
-        if inner.is_empty() {
+        let bracket_pos = reference.find('[').ok_or_else(|| {
+            ParsingError::InvalidReference(format!("Missing '[' in table reference: {reference}"))
+        })?;
+        let table_name = reference[..bracket_pos].trim();
+        if table_name.is_empty() {
             return Err(ParsingError::InvalidReference(reference.to_string()));
         }
 
-        // This-row column selector: [@Column] or [@[Column Name]]
-        if let Some(rest) = inner.strip_prefix('@') {
-            let mut col = rest.trim();
-            if col.starts_with('[') && col.ends_with(']') && col.len() >= 2 {
-                col = col[1..col.len() - 1].trim();
-            }
-            if col.is_empty() {
-                return Err(ParsingError::InvalidReference(format!(
-                    "This-row structured reference missing column: {reference}"
-                )));
-            }
+        let specifier_str = &reference[bracket_pos..];
+        let specifier = structured_ref::parse_full_specifier(specifier_str)?;
 
-            let spec = TableSpecifier::Combination(vec![
-                Box::new(TableSpecifier::SpecialItem(SpecialItem::ThisRow)),
-                Box::new(TableSpecifier::Column(col.to_string())),
-            ]);
-            return Ok(ReferenceType::Table(TableReference {
-                name: String::new(),
-                specifier: Some(spec),
-            }));
-        }
-
-        // Table shorthand: [TableName] means data body.
         Ok(ReferenceType::Table(TableReference {
-            name: inner.to_string(),
-            specifier: Some(TableSpecifier::SpecialItem(SpecialItem::Data)),
+            name: table_name.to_string(),
+            specifier,
         }))
     }
 
-    /// Parse a table specifier like "[Column1]" or "[[#All],[Column1]:[Column2]]"
-    fn parse_table_specifier(specifier_str: &str) -> Result<Option<TableSpecifier>, ParsingError> {
-        if specifier_str.is_empty() || !specifier_str.starts_with('[') {
-            return Ok(None);
+    /// Handle the `[...]` shorthand that appears without a table name. The
+    /// resolver/evaluator binds the implicit table from cell context.
+    ///
+    /// `[TableName]` is the data-body shorthand and is materialised as
+    /// `Table { name = "TableName", specifier = #Data }`; everything else
+    /// produces an unnamed `Table` carrying the parsed specifier verbatim.
+    fn parse_bracketed_structured_reference(reference: &str) -> Result<Self, ParsingError> {
+        debug_assert!(reference.starts_with('[') && reference.ends_with(']'));
+        let specifier = structured_ref::parse_full_specifier(reference)?;
+
+        match specifier {
+            Some(TableSpecifier::Column(name)) => Ok(ReferenceType::Table(TableReference {
+                name,
+                specifier: Some(TableSpecifier::SpecialItem(SpecialItem::Data)),
+            })),
+            other => Ok(ReferenceType::Table(TableReference {
+                name: String::new(),
+                specifier: other,
+            })),
         }
-
-        // Find balanced closing bracket
-        let mut depth = 0;
-        let mut end_pos = 0;
-
-        for (i, c) in specifier_str.char_indices() {
-            if c == '[' {
-                depth += 1;
-            } else if c == ']' {
-                depth -= 1;
-                if depth == 0 {
-                    end_pos = i;
-                    break;
-                }
-            }
-        }
-
-        if depth != 0 || end_pos == 0 {
-            return Err(ParsingError::InvalidReference(format!(
-                "Unbalanced brackets in table specifier: {specifier_str}"
-            )));
-        }
-
-        // Extract content between outermost brackets
-        let content = &specifier_str[1..end_pos];
-
-        // Handle different types of specifiers
-        if content.is_empty() {
-            // Empty brackets means the whole table
-            return Ok(Some(TableSpecifier::All));
-        }
-
-        // Handle special items
-        if content.starts_with("#") {
-            return Self::parse_special_item(content);
-        }
-
-        // Handle column references
-        if !content.contains('[') && !content.contains('#') {
-            // Check for column range using iterator instead of split().collect()
-            if let Some(colon_pos) = content.find(':') {
-                let start = content[..colon_pos].trim();
-                let end = content[colon_pos + 1..].trim();
-                return Ok(Some(TableSpecifier::ColumnRange(
-                    start.to_string(),
-                    end.to_string(),
-                )));
-            } else {
-                // Single column
-                return Ok(Some(TableSpecifier::Column(content.trim().to_string())));
-            }
-        }
-
-        // Handle complex structured references with nested brackets
-        if content.contains('[') {
-            return Self::parse_complex_table_specifier(content);
-        }
-
-        // If we can't determine the type, just use the raw specifier
-        Ok(Some(TableSpecifier::Column(content.trim().to_string())))
     }
 
     fn parse_openformula_reference(reference: &str) -> Result<Self, ParsingError> {
@@ -1289,60 +1226,10 @@ impl ReferenceType {
         None
     }
 
-    /// Parse a special item specifier like "#Headers", "#Data", etc.
-    fn parse_special_item(content: &str) -> Result<Option<TableSpecifier>, ParsingError> {
-        match content {
-            "#All" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::All))),
-            "#Headers" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::Headers))),
-            "#Data" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::Data))),
-            "#Totals" => Ok(Some(TableSpecifier::SpecialItem(SpecialItem::Totals))),
-            "@" => Ok(Some(TableSpecifier::Row(TableRowSpecifier::Current))),
-            _ => Err(ParsingError::InvalidReference(format!(
-                "Unknown special item: {content}"
-            ))),
-        }
-    }
-
-    /// Parse complex table specifiers with nested brackets
-    fn parse_complex_table_specifier(
-        content: &str,
-    ) -> Result<Option<TableSpecifier>, ParsingError> {
-        // This is a more complex case like [[#Headers],[Column1]:[Column2]]
-        // For now, we'll just store the raw specifier and enhance this in the future
-
-        // Try to identify common patterns
-        if content.contains("[#Headers]")
-            || content.contains("[#All]")
-            || content.contains("[#Data]")
-            || content.contains("[#Totals]")
-            || content.contains("[@]")
-        {
-            // This is a combination of specifiers
-            // Parse them into a vector
-            let mut specifiers = Vec::new();
-
-            // Simple parsing - this would need enhancement for full support
-            if content.contains("[#Headers]") {
-                specifiers.push(Box::new(TableSpecifier::SpecialItem(SpecialItem::Headers)));
-            }
-            if content.contains("[#Data]") {
-                specifiers.push(Box::new(TableSpecifier::SpecialItem(SpecialItem::Data)));
-            }
-            if content.contains("[#Totals]") {
-                specifiers.push(Box::new(TableSpecifier::SpecialItem(SpecialItem::Totals)));
-            }
-            if content.contains("[#All]") {
-                specifiers.push(Box::new(TableSpecifier::SpecialItem(SpecialItem::All)));
-            }
-
-            if !specifiers.is_empty() {
-                return Ok(Some(TableSpecifier::Combination(specifiers)));
-            }
-        }
-
-        // Fallback to storing as a column specifier
-        Ok(Some(TableSpecifier::Column(content.trim().to_string())))
-    }
+    // The structured-reference grammar lives in the `structured_ref`
+    // submodule below; legacy `parse_special_item` /
+    // `parse_complex_table_specifier` helpers were removed when the real
+    // recursive-descent parser landed for issue #73.
 
     /// Get the Excel-style string representation of this reference
     pub fn to_excel_string(&self) -> String {
