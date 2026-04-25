@@ -69,6 +69,12 @@ impl PyASTNode {
             ASTNodeType::Function { args, .. } => {
                 args.iter().map(|arg| PyASTNode::new(arg.clone())).collect()
             }
+            ASTNodeType::Call { callee, args } => {
+                let mut out = Vec::with_capacity(args.len() + 1);
+                out.push(PyASTNode::new((**callee).clone()));
+                out.extend(args.iter().map(|arg| PyASTNode::new(arg.clone())));
+                out
+            }
             ASTNodeType::Array(rows) => rows
                 .iter()
                 .flat_map(|row| row.iter())
@@ -97,6 +103,7 @@ impl PyASTNode {
             ASTNodeType::UnaryOp { .. } => "UnaryOp".to_string(),
             ASTNodeType::BinaryOp { .. } => "BinaryOp".to_string(),
             ASTNodeType::Function { .. } => "Function".to_string(),
+            ASTNodeType::Call { .. } => "Call".to_string(),
             ASTNodeType::Array(_) => "Array".to_string(),
         }
     }
@@ -200,6 +207,18 @@ impl PyASTNode {
                 }
                 result
             }
+            ASTNodeType::Call { callee, args } => {
+                let mut result = format!("{indent_str}Call");
+                result.push('\n');
+                result.push_str(&format!("{}callee:", "  ".repeat(indent + 1)));
+                result.push('\n');
+                result.push_str(&PyASTNode::new((**callee).clone()).format_node(indent + 2));
+                for arg in args {
+                    result.push('\n');
+                    result.push_str(&PyASTNode::new(arg.clone()).format_node(indent + 1));
+                }
+                result
+            }
             ASTNodeType::Array(rows) => {
                 let mut result = format!("{indent_str}Array");
                 for (row_idx, row) in rows.iter().enumerate() {
@@ -257,6 +276,12 @@ impl PyASTNode {
                     PyASTNode::new(arg.clone()).collect_refs_recursive(refs);
                 }
             }
+            ASTNodeType::Call { callee, args } => {
+                PyASTNode::new((**callee).clone()).collect_refs_recursive(refs);
+                for arg in args {
+                    PyASTNode::new(arg.clone()).collect_refs_recursive(refs);
+                }
+            }
             ASTNodeType::Array(rows) => {
                 for row in rows {
                     for cell in row {
@@ -294,6 +319,15 @@ impl PyASTNode {
             }
             ASTNodeType::Function { name, args } => {
                 dict.set_item("name", name).unwrap();
+                let py_args: Vec<PyObject> = args
+                    .iter()
+                    .map(|arg| PyASTNode::new(arg.clone()).to_dict(py))
+                    .collect();
+                dict.set_item("args", py_args).unwrap();
+            }
+            ASTNodeType::Call { callee, args } => {
+                dict.set_item("callee", PyASTNode::new((**callee).clone()).to_dict(py))
+                    .unwrap();
                 let py_args: Vec<PyObject> = args
                     .iter()
                     .map(|arg| PyASTNode::new(arg.clone()).to_dict(py))

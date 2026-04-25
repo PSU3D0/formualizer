@@ -248,6 +248,31 @@ impl<'a> Planner<'a> {
                     0,
                 )
             }
+            Call { callee, args } => {
+                let callee_annot = self.annotate(callee);
+                let child_annots: Vec<NodeAnnot> = args.iter().map(|a| self.annotate(a)).collect();
+                let children_cost: u64 = callee_annot.cost.est_nanos
+                    + child_annots.iter().map(|a| a.cost.est_nanos).sum::<u64>();
+                let cells: u64 = callee_annot.cost.cells
+                    + child_annots.iter().map(|a| a.cost.cells).sum::<u64>();
+                let has_range =
+                    callee_annot.hints.has_range || child_annots.iter().any(|a| a.hints.has_range);
+                let dims = callee_annot
+                    .hints
+                    .dims
+                    .or_else(|| child_annots.iter().find_map(|a| a.hints.dims));
+                let fanout = (args.len() + 1) as u16;
+                (
+                    NodeCost {
+                        est_nanos: 5_000 + children_cost,
+                        cells,
+                        fanout,
+                    },
+                    has_range,
+                    dims,
+                    fanout,
+                )
+            }
         };
 
         // Sibling repeat detection (simple count of identical fingerprints among children)
@@ -311,6 +336,16 @@ impl<'a> Planner<'a> {
             }
             ASTNodeType::Function { args, .. } => {
                 let mut v = Vec::with_capacity(args.len());
+                for a in args {
+                    let an = self.annotate(a);
+                    v.push(self.select(a, &an));
+                }
+                v
+            }
+            ASTNodeType::Call { callee, args } => {
+                let mut v = Vec::with_capacity(args.len() + 1);
+                let callee_annot = self.annotate(callee);
+                v.push(self.select(callee, &callee_annot));
                 for a in args {
                     let an = self.annotate(a);
                     v.push(self.select(a, &an));

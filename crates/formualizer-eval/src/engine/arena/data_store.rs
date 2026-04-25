@@ -378,6 +378,20 @@ impl DataStore {
 
                 self.asts.insert_array(rows_count, cols_count, elements)
             }
+
+            // Postfix call (e.g. LAMBDA immediate-invocation). The arena does
+            // not yet have a dedicated node kind for this, and full evaluator
+            // semantics are out of scope for the parser-side change. Store an
+            // unsupported-formula error literal so that downstream evaluation
+            // surfaces a clear #N/A!-style error instead of silently producing
+            // a wrong result.
+            ASTNodeType::Call { .. } => {
+                let value_ref = self.store_value(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("Immediate-invocation calls are not yet supported"),
+                ));
+                self.asts.insert_literal(value_ref)
+            }
         }
     }
 

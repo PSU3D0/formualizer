@@ -166,6 +166,22 @@ fn pretty_print_node(ast: &ASTNode) -> String {
 
             format!("{}({})", name.to_uppercase(), args_str)
         }
+        ASTNodeType::Call { callee, args } => {
+            let callee_str = pretty_print_node(callee);
+            // Wrap the callee in parentheses if it isn't already a callable-looking
+            // primary (function call or another call expression). This keeps things
+            // like `(1 + 2)(3)` unambiguous when round-tripping unusual ASTs.
+            let callee_rendered = match &callee.node_type {
+                ASTNodeType::Function { .. } | ASTNodeType::Call { .. } => callee_str,
+                _ => format!("({callee_str})"),
+            };
+            let args_str = args
+                .iter()
+                .map(pretty_print_node)
+                .collect::<Vec<String>>()
+                .join(", ");
+            format!("{callee_rendered}({args_str})")
+        }
         ASTNodeType::Array(rows) => {
             let rows_str = rows
                 .iter()

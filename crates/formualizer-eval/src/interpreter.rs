@@ -187,6 +187,7 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::Array(_)
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
+            | ASTNodeType::Call { .. }
             | ASTNodeType::Literal(_) => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Expression cannot be used as a reference")),
         }
@@ -641,6 +642,8 @@ impl<'a> Interpreter<'a> {
                 }
                 self.eval_function_to_calc(name, args)
             }
+            ASTNodeType::Call { .. } => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("Immediate-invocation calls are not yet supported")),
             ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
         }
     }

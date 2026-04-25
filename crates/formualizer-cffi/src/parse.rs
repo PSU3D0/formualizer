@@ -61,6 +61,12 @@ pub enum CffiASTNode {
         #[serde(skip_serializing_if = "Option::is_none")]
         span: Option<[usize; 2]>,
     },
+    Call {
+        callee: Box<CffiASTNode>,
+        args: Vec<CffiASTNode>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        span: Option<[usize; 2]>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -156,6 +162,14 @@ impl CffiASTNode {
                             .map(|a| Self::from_core(a, include_spans))
                             .collect()
                     })
+                    .collect(),
+                span,
+            },
+            ASTNodeType::Call { callee, args } => CffiASTNode::Call {
+                callee: Box::new(Self::from_core(callee, include_spans)),
+                args: args
+                    .iter()
+                    .map(|a| Self::from_core(a, include_spans))
                     .collect(),
                 span,
             },

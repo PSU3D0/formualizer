@@ -2073,6 +2073,256 @@ mod semantics_regressions {
         }
     }
 
+    mod lambda_iife {
+        use crate::parser::parse as span_parse;
+        use crate::parser::{ASTNode, ASTNodeType, Parser};
+        use crate::pretty::canonical_formula;
+        use crate::tokenizer::Tokenizer;
+        use formualizer_common::LiteralValue;
+
+        fn parse_classic(formula: &str) -> ASTNode {
+            let tokenizer = Tokenizer::new(formula).expect("tokenize");
+            let mut parser = Parser::new(tokenizer.items, false);
+            parser.parse().expect("classic parser")
+        }
+
+        fn parse_both(formula: &str) -> ASTNode {
+            let classic = parse_classic(formula);
+            let span = span_parse(formula).expect("span parser");
+            assert_eq!(
+                classic.fingerprint(),
+                span.fingerprint(),
+                "classic vs span parser produced different ASTs for {formula:?}"
+            );
+            classic
+        }
+
+        #[test]
+        fn test_lambda_immediate_invocation_unary() {
+            let ast = parse_both("=LAMBDA(x,x+1)(5)");
+            let (callee, args) = match ast.node_type {
+                ASTNodeType::Call { callee, args } => (callee, args),
+                other => panic!("expected Call, got {other:?}"),
+            };
+            assert_eq!(args.len(), 1);
+            match &args[0].node_type {
+                ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(*n, 5.0),
+                other => panic!("expected literal 5, got {other:?}"),
+            }
+            match callee.node_type {
+                ASTNodeType::Function {
+                    name,
+                    args: fn_args,
+                } => {
+                    assert_eq!(name.to_uppercase(), "LAMBDA");
+                    assert_eq!(fn_args.len(), 2);
+                    // First arg is the parameter name 'x' (parsed as a NamedRange ref).
+                    match &fn_args[1].node_type {
+                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op, "+"),
+                        other => panic!("expected binary op body, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Function callee, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_immediate_invocation_binary() {
+            let ast = parse_both("=LAMBDA(a,b,a+b)(1,2)");
+            let (callee, args) = match ast.node_type {
+                ASTNodeType::Call { callee, args } => (callee, args),
+                other => panic!("expected Call, got {other:?}"),
+            };
+            assert_eq!(args.len(), 2);
+            match callee.node_type {
+                ASTNodeType::Function {
+                    name,
+                    args: fn_args,
+                } => {
+                    assert_eq!(name.to_uppercase(), "LAMBDA");
+                    assert_eq!(fn_args.len(), 3);
+                }
+                other => panic!("expected Function callee, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_parenthesized_lambda_invocation() {
+            let ast = parse_both("=(LAMBDA(x,x))(5)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match callee.node_type {
+                        ASTNodeType::Function { name, .. } => {
+                            assert_eq!(name.to_uppercase(), "LAMBDA")
+                        }
+                        other => panic!("expected Function callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_double_call_via_grouping() {
+            // (f())() => Call(Function(f, []), [])
+            // Note: tokenizer sees `f(` as Func/Open, so the first call binds
+            // to Function. The trailing `()` is the postfix Call.
+            let ast = parse_both("=f()()");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert!(args.is_empty(), "outer call should have no args");
+                    match callee.node_type {
+                        ASTNodeType::Function {
+                            name,
+                            args: inner_args,
+                        } => {
+                            assert_eq!(name, "f");
+                            assert!(inner_args.is_empty());
+                        }
+                        other => panic!("expected Function f callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_double_postfix_call() {
+            // (LAMBDA(x,x))(5)(6) => two postfix Call nodes stacked.
+            let ast = parse_both("=(LAMBDA(x,x))(5)(6)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match &args[0].node_type {
+                        ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(*n, 6.0),
+                        other => panic!("expected literal 6, got {other:?}"),
+                    }
+                    match callee.node_type {
+                        ASTNodeType::Call {
+                            callee: inner_callee,
+                            args: inner_args,
+                        } => {
+                            assert_eq!(inner_args.len(), 1);
+                            match inner_callee.node_type {
+                                ASTNodeType::Function { name, .. } => {
+                                    assert_eq!(name.to_uppercase(), "LAMBDA")
+                                }
+                                other => panic!("expected Function callee, got {other:?}"),
+                            }
+                        }
+                        other => panic!("expected nested Call, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_nested_in_let_uses_plain_function_call() {
+            // LET body's `f(3)` is a regular Function(f, [3]), not a Call node.
+            let ast = parse_both("=LET(f,LAMBDA(x,x*2),f(3))");
+            let args = match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name.to_uppercase(), "LET");
+                    args
+                }
+                other => panic!("expected LET function, got {other:?}"),
+            };
+            assert_eq!(args.len(), 3);
+            match &args[2].node_type {
+                ASTNodeType::Function { name, args: inner } => {
+                    assert_eq!(name, "f");
+                    assert_eq!(inner.len(), 1);
+                }
+                other => panic!("expected Function f(3), got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_call_on_number_literal() {
+            // Permissive parse: `(1+2)(3)` parses as Call(BinaryOp, [3]).
+            let ast = parse_both("=(1+2)(3)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match callee.node_type {
+                        ASTNodeType::BinaryOp { op, .. } => assert_eq!(op, "+"),
+                        other => panic!("expected BinaryOp callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_call_on_grouped_reference() {
+            // `(A1)(3)` — parens force the LHS to be parsed as a primary, so the
+            // trailing `(3)` becomes a postfix Call. (`A1(3)` itself tokenizes
+            // as a function token `A1(` and so parses as Function("A1", [3]).)
+            let ast = parse_both("=(A1)(3)");
+            match ast.node_type {
+                ASTNodeType::Call { callee, args } => {
+                    assert_eq!(args.len(), 1);
+                    match callee.node_type {
+                        ASTNodeType::Reference { .. } => {}
+                        other => panic!("expected Reference callee, got {other:?}"),
+                    }
+                }
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_empty_body_call_parses() {
+            // `LAMBDA()(1)` parses; evaluator may complain. Parser should accept.
+            let ast = parse_both("=LAMBDA()(1)");
+            match ast.node_type {
+                ASTNodeType::Call { args, .. } => assert_eq!(args.len(), 1),
+                other => panic!("expected Call, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_bare_lambda_still_parses_as_function() {
+            let ast = parse_both("=LAMBDA(x, x+1)");
+            match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name.to_uppercase(), "LAMBDA");
+                    assert_eq!(args.len(), 2);
+                }
+                other => panic!("expected Function, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_lambda_as_argument_unchanged() {
+            let ast = parse_both("=SUM(LAMBDA(x,x),1,2,3)");
+            match ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name.to_uppercase(), "SUM");
+                    assert_eq!(args.len(), 4);
+                    matches!(args[0].node_type, ASTNodeType::Function { .. });
+                }
+                other => panic!("expected Function, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_pretty_print_call_round_trips() {
+            let ast = parse_both("=LAMBDA(x,x+1)(5)");
+            let printed = canonical_formula(&ast);
+            // Pretty printer should keep the call shape.
+            assert!(
+                printed.contains("LAMBDA(") && printed.ends_with("(5)"),
+                "unexpected pretty output: {printed}"
+            );
+            // Re-parsing the pretty form yields an equivalent fingerprint.
+            let reparsed = span_parse(&printed).expect("reparse pretty output");
+            assert_eq!(reparsed.fingerprint(), ast.fingerprint());
+        }
+    }
+
     #[test]
     fn quoted_sheet_name_allows_escaped_single_quote() {
         let r = ReferenceType::from_string("'Bob''s Sheet'!A1").unwrap();

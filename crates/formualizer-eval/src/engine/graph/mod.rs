@@ -1534,6 +1534,13 @@ impl DependencyGraph {
                 }
                 Ok(())
             }
+            ASTNodeType::Call { callee, args } => {
+                self.rewrite_structured_references_node(callee, cell)?;
+                for a in args.iter_mut() {
+                    self.rewrite_structured_references_node(a, cell)?;
+                }
+                Ok(())
+            }
             ASTNodeType::Array(rows) => {
                 for r in rows.iter_mut() {
                     for item in r.iter_mut() {
