@@ -2082,3 +2082,78 @@ mod semantics_regressions {
         );
     }
 }
+
+#[cfg(test)]
+mod string_colon_interaction {
+    //! Regression coverage for issue #79: `parse_string` previously discarded
+    //! the pending `A1:` prefix when followed by a double-quoted string.
+
+    use crate::parser::{ASTNodeType, Parser, ReferenceType};
+    use crate::tokenizer::Tokenizer;
+
+    fn extract_reference(ast: &crate::parser::ASTNode) -> ReferenceType {
+        match &ast.node_type {
+            ASTNodeType::Reference { reference, .. } => reference.clone(),
+            other => panic!("expected Reference AST, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_cross_sheet_range_still_parses() {
+        // Single-quoted sheet continuation must still produce a single Range
+        // reference. Use a single-sheet form that exercises the `:`-glue path
+        // currently supported end-to-end by both parsers.
+        let formula = "='Sheet 1:Sheet 3'!A1:C10";
+
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        let mut parser = Parser::new(tokenizer.items, false);
+        let ast = parser
+            .parse()
+            .expect("classic parser should accept formula");
+        let reference = extract_reference(&ast);
+        assert!(
+            matches!(reference, ReferenceType::Range { .. }),
+            "expected Range reference, got {reference:?}"
+        );
+
+        let span_ast = crate::parser::parse(formula).expect("span parser should accept formula");
+        let span_reference = extract_reference(&span_ast);
+        assert_eq!(reference, span_reference);
+    }
+
+    #[test]
+    fn test_colon_string_raises() {
+        let formula = "=A1:\"text\"";
+
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        let mut parser = Parser::new(tokenizer.items, false);
+        let err = parser.parse().expect_err(
+            "classic parser must reject `=A1:\"text\"` rather than silently discard the prefix",
+        );
+        assert!(
+            !err.message.is_empty(),
+            "parser error message should be non-empty"
+        );
+
+        let span_err =
+            crate::parser::parse(formula).expect_err("span parser must reject `=A1:\"text\"`");
+        assert!(!span_err.message.is_empty());
+    }
+
+    #[test]
+    fn test_colon_string_in_function() {
+        let formula = "=SUM(A1:\"text\")";
+
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        let mut parser = Parser::new(tokenizer.items, false);
+        assert!(
+            parser.parse().is_err(),
+            "classic parser must reject `=SUM(A1:\"text\")`"
+        );
+
+        assert!(
+            crate::parser::parse(formula).is_err(),
+            "span parser must reject `=SUM(A1:\"text\")`"
+        );
+    }
+}
