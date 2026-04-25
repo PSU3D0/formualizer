@@ -368,6 +368,12 @@ pub fn reference_type_to_py(ref_type: &ReferenceType, _original: &str) -> Refere
         ReferenceType::NamedRange(name) => {
             ReferenceLike::NamedRange(NamedRangeRef::new(name.clone()))
         }
+        // 3D refs aren't yet exposed to Python; surface them as opaque
+        // unknown references so the binding stays exhaustive without
+        // crashing.
+        ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {
+            ReferenceLike::Unknown(UnknownRef::new(format!("{ref_type}")))
+        }
     }
 }
 

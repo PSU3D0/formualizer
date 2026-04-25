@@ -295,6 +295,9 @@ impl ASTNodeData {
             ReferenceType::External(_) => Err("external references are not supported".to_string()),
             ReferenceType::Table(_) => Err("table references are not supported".to_string()),
             ReferenceType::NamedRange(_) => Err("named ranges are not supported".to_string()),
+            ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {
+                Err("3D references are not supported".to_string())
+            }
         }
     }
 }

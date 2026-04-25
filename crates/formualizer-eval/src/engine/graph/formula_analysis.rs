@@ -252,6 +252,11 @@ impl DependencyGraph {
                             .with_message(format!("Undefined table: {}", tref.name)));
                     }
                 }
+                // 3D references parse correctly but aren't yet wired through
+                // the dependency graph; treat them as no-op dependencies for
+                // now so formulas containing them still load. Evaluation will
+                // surface #N/IMPL! via the Resolver path.
+                ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {}
             },
             ASTNodeType::BinaryOp { left, right, .. } => {
                 self.extract_dependencies_recursive(

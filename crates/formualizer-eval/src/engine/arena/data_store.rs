@@ -471,6 +471,54 @@ impl DataStore {
                     specifier_id,
                 }
             }
+
+            ReferenceType::Cell3D {
+                sheet_first,
+                sheet_last,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => {
+                let sheet_first = self.asts.strings_mut().intern(sheet_first);
+                let sheet_last = self.asts.strings_mut().intern(sheet_last);
+                CompactRefType::Cell3D {
+                    sheet_first,
+                    sheet_last,
+                    row: *row,
+                    col: *col,
+                    row_abs: *row_abs,
+                    col_abs: *col_abs,
+                }
+            }
+
+            ReferenceType::Range3D {
+                sheet_first,
+                sheet_last,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            } => {
+                let sheet_first = self.asts.strings_mut().intern(sheet_first);
+                let sheet_last = self.asts.strings_mut().intern(sheet_last);
+                CompactRefType::Range3D {
+                    sheet_first,
+                    sheet_last,
+                    start_row: start_row.unwrap_or(0),
+                    start_col: start_col.unwrap_or(0),
+                    end_row: end_row.unwrap_or(u32::MAX),
+                    end_col: end_col.unwrap_or(u32::MAX),
+                    start_row_abs: *start_row_abs,
+                    start_col_abs: *start_col_abs,
+                    end_row_abs: *end_row_abs,
+                    end_col_abs: *end_col_abs,
+                }
+            }
         }
     }
 
@@ -667,6 +715,62 @@ impl DataStore {
                     .cloned();
                 ReferenceType::Table(TableReference { name, specifier })
             }
+
+            CompactRefType::Cell3D {
+                sheet_first,
+                sheet_last,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => ReferenceType::Cell3D {
+                sheet_first: self.asts.resolve_string(*sheet_first).to_string(),
+                sheet_last: self.asts.resolve_string(*sheet_last).to_string(),
+                row: *row,
+                col: *col,
+                row_abs: *row_abs,
+                col_abs: *col_abs,
+            },
+
+            CompactRefType::Range3D {
+                sheet_first,
+                sheet_last,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            } => ReferenceType::Range3D {
+                sheet_first: self.asts.resolve_string(*sheet_first).to_string(),
+                sheet_last: self.asts.resolve_string(*sheet_last).to_string(),
+                start_row: if *start_row == 0 {
+                    None
+                } else {
+                    Some(*start_row)
+                },
+                start_col: if *start_col == 0 {
+                    None
+                } else {
+                    Some(*start_col)
+                },
+                end_row: if *end_row == u32::MAX {
+                    None
+                } else {
+                    Some(*end_row)
+                },
+                end_col: if *end_col == u32::MAX {
+                    None
+                } else {
+                    Some(*end_col)
+                },
+                start_row_abs: *start_row_abs,
+                start_col_abs: *start_col_abs,
+                end_row_abs: *end_row_abs,
+                end_col_abs: *end_col_abs,
+            },
         }
     }
 

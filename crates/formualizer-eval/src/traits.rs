@@ -1125,6 +1125,10 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
                 let v = self.resolve_cell_reference(sheet.as_deref(), *row, *col)?;
                 Ok(Box::new(InMemoryRange::new(vec![vec![v]])))
             }
+            ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {
+                Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("3D references are not yet supported".to_string()))
+            }
         }
     }
 }
