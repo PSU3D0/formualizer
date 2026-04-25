@@ -1006,19 +1006,35 @@ impl<'a> SpanTokenizer<'a> {
     }
 
     fn parse_error(&mut self) -> Result<(), SpanTokenizerError> {
-        if self.has_token()
+        // OOXML serializes broken sheet-qualified references as `Sheet1!#REF!`.
+        // When an accumulated token ends with `!`, treat the prefix as a sheet
+        // qualifier and discard it: the resulting AST is identical to the bare
+        // error literal `=#REF!`, preserving the error kind via the matched
+        // `ERROR_CODES` entry below.
+        let has_sheet_prefix = self.has_token()
             && self.token_end > 0
-            && self.formula.as_bytes()[self.token_end - 1] != b'!'
-        {
+            && self.formula.as_bytes()[self.token_end - 1] == b'!';
+        if has_sheet_prefix {
+            if self.token_end - self.token_start <= 1 {
+                return Err(SpanTokenizerError {
+                    kind: SpanTokenizerErrorKind::InvalidErrorLiteral,
+                    pos: self.offset,
+                    message: format!(
+                        "Empty sheet qualifier before error literal at position {}",
+                        self.offset
+                    ),
+                    span_start: Some(self.token_start),
+                    span_end: Some(self.offset),
+                });
+            }
+            // Discard the sheet prefix; the error kind is what matters.
+            self.start_token();
+        } else if self.has_token() {
             self.save_token();
             self.start_token();
         }
 
-        let error_start = if self.has_token() {
-            self.token_start
-        } else {
-            self.offset
-        };
+        let error_start = self.offset;
 
         for &err_code in ERROR_CODES {
             let err_bytes = err_code.as_bytes();
@@ -1578,20 +1594,31 @@ impl Tokenizer {
 
     /// Parse an error literal that starts with '#'.
     fn parse_error(&mut self) -> Result<(), TokenizerError> {
-        // Check if we have a partial token ending with '!'
-        if self.has_token()
+        // OOXML serializes broken sheet-qualified references as `Sheet1!#REF!`.
+        // When an accumulated token ends with `!`, treat the prefix as a sheet
+        // qualifier and discard it: the resulting AST is identical to the bare
+        // error literal `=#REF!`, preserving the error kind via `ERROR_CODES`.
+        let has_sheet_prefix = self.has_token()
             && self.token_end > 0
-            && self.formula.as_bytes()[self.token_end - 1] != b'!'
-        {
+            && self.formula.as_bytes()[self.token_end - 1] == b'!';
+        if has_sheet_prefix {
+            if self.token_end - self.token_start <= 1 {
+                return Err(TokenizerError {
+                    message: format!(
+                        "Empty sheet qualifier before error literal at position {}",
+                        self.offset
+                    ),
+                    pos: self.offset,
+                });
+            }
+            // Discard the sheet prefix; the error kind is what matters.
+            self.start_token();
+        } else if self.has_token() {
             self.save_token();
             self.start_token();
         }
 
-        let error_start = if self.has_token() {
-            self.token_start
-        } else {
-            self.offset
-        };
+        let error_start = self.offset;
 
         // Try to match error codes
         for &err_code in ERROR_CODES {

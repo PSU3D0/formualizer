@@ -50,10 +50,167 @@ mod tests {
 
     #[test]
     fn parser_accepts_sheet_prefixed_lowercase_error_literal() {
+        // Sheet-qualified error literals collapse to the bare error literal,
+        // preserving the error kind (here `#ref!` -> ExcelError::Ref).
         let ast = parse_formula("=source!#ref!").expect("parse sheet-prefixed lowercase");
         match ast.node_type {
-            ASTNodeType::Reference { .. } => {}
-            other => panic!("expected reference node, got {other:?}"),
+            ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                assert_eq!(e.kind, ExcelError::new_ref().kind);
+            }
+            other => panic!("expected error literal, got {other:?}"),
+        }
+    }
+
+    mod sheet_qualified_errors {
+        use super::parse_formula;
+        use crate::parser::{ASTNode, ASTNodeType, Parser};
+        use crate::tokenizer::Tokenizer;
+        use formualizer_common::{ExcelErrorKind, LiteralValue};
+
+        fn parse_span(formula: &str) -> Result<ASTNode, crate::parser::ParserError> {
+            crate::parser::parse(formula)
+        }
+
+        fn assert_error_kind(formula: &str, expected: ExcelErrorKind) {
+            for (label, ast) in [
+                ("classic", parse_formula(formula).expect("classic parse")),
+                ("span", parse_span(formula).expect("span parse")),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::Literal(LiteralValue::Error(e)) => {
+                        assert_eq!(e.kind, expected, "{label} parser kind for {formula:?}");
+                    }
+                    other => panic!(
+                        "{label} parser: expected error literal for {formula:?}, got {other:?}"
+                    ),
+                }
+            }
+        }
+
+        #[test]
+        fn test_sheet_qualified_ref_error() {
+            assert_error_kind("=Sheet1!#REF!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn test_quoted_sheet_qualified_ref_error() {
+            assert_error_kind("='My Sheet'!#REF!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn test_sheet_qualified_div_error() {
+            assert_error_kind("=Sheet1!#DIV/0!", ExcelErrorKind::Div);
+        }
+
+        #[test]
+        fn test_sheet_qualified_value_error() {
+            assert_error_kind("=Sheet1!#VALUE!", ExcelErrorKind::Value);
+        }
+
+        #[test]
+        fn test_sheet_qualified_name_error() {
+            assert_error_kind("=Sheet1!#NAME?", ExcelErrorKind::Name);
+        }
+
+        #[test]
+        fn test_sheet_qualified_lowercase() {
+            assert_error_kind("=sheet1!#ref!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn test_external_sheet_qualified_error() {
+            assert_error_kind("=[1]Sheet1!#REF!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn negative_unknown_error_code_with_sheet_prefix() {
+            // Classic and span parsers must both reject unknown error codes.
+            assert!(
+                parse_formula("=Sheet1!#BOGUS!").is_err(),
+                "classic parser should reject unknown error code"
+            );
+            assert!(
+                parse_span("=Sheet1!#BOGUS!").is_err(),
+                "span parser should reject unknown error code"
+            );
+        }
+
+        #[test]
+        fn negative_empty_sheet_prefix() {
+            assert!(
+                parse_formula("=!#REF!").is_err(),
+                "classic parser should reject empty sheet prefix"
+            );
+            assert!(
+                parse_span("=!#REF!").is_err(),
+                "span parser should reject empty sheet prefix"
+            );
+        }
+
+        #[test]
+        fn negative_trailing_garbage_after_error() {
+            assert!(
+                parse_formula("=#REF!Sheet1").is_err(),
+                "classic parser should reject trailing garbage after error literal"
+            );
+            assert!(
+                parse_span("=#REF!Sheet1").is_err(),
+                "span parser should reject trailing garbage after error literal"
+            );
+        }
+
+        #[test]
+        fn regression_ordinary_sheet_reference_unchanged() {
+            // Plain sheet-qualified cell references must not be affected.
+            let ast = parse_formula("=Sheet1!A1").expect("classic parse");
+            match ast.node_type {
+                ASTNodeType::Reference { .. } => {}
+                other => panic!("expected reference node, got {other:?}"),
+            }
+            let ast = parse_span("=Sheet1!A1").expect("span parse");
+            match ast.node_type {
+                ASTNodeType::Reference { .. } => {}
+                other => panic!("expected reference node, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn regression_bare_error_literal_unchanged() {
+            assert_error_kind("=#REF!", ExcelErrorKind::Ref);
+            assert_error_kind("=#DIV/0!", ExcelErrorKind::Div);
+            assert_error_kind("=#VALUE!", ExcelErrorKind::Value);
+            assert_error_kind("=#N/A", ExcelErrorKind::Na);
+            assert_error_kind("=#ref!", ExcelErrorKind::Ref);
+        }
+
+        #[test]
+        fn cross_parser_differential() {
+            // The classic and span parsers must produce identical ASTs for
+            // sheet-qualified error literals across all supported forms.
+            for formula in [
+                "=#REF!",
+                "=Sheet1!#REF!",
+                "='My Sheet'!#REF!",
+                "=Sheet1!#DIV/0!",
+                "=[1]Sheet1!#REF!",
+                "=sheet1!#ref!",
+            ] {
+                let classic = {
+                    let tok = Tokenizer::new(formula).expect("tokenize");
+                    let mut parser = Parser::new(tok.items, false);
+                    parser.parse().expect("classic parse")
+                };
+                let span = parse_span(formula).expect("span parse");
+                let classic_kind = match &classic.node_type {
+                    ASTNodeType::Literal(LiteralValue::Error(e)) => e.kind,
+                    other => panic!("classic non-error for {formula:?}: {other:?}"),
+                };
+                let span_kind = match &span.node_type {
+                    ASTNodeType::Literal(LiteralValue::Error(e)) => e.kind,
+                    other => panic!("span non-error for {formula:?}: {other:?}"),
+                };
+                assert_eq!(classic_kind, span_kind, "kind mismatch for {formula:?}");
+            }
         }
     }
 
