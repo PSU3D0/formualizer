@@ -248,8 +248,8 @@ impl Token {
         // Excel precedence (high to low, simplified):
         //   reference ops (:
         //   postfix %
+        //   prefix unary +/- (binds tighter than ^)
         //   exponent ^ (right-assoc)
-        //   prefix unary +/-(...) (binds looser than ^)
         //   */
         //   +-
         //   &
@@ -257,8 +257,8 @@ impl Token {
         match op {
             ":" | " " | "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
-            "^" => Some((6, Associativity::Right)),
-            "u" => Some((5, Associativity::Right)),
+            "u" => Some((6, Associativity::Right)),
+            "^" => Some((5, Associativity::Right)),
             "*" | "/" => Some((4, Associativity::Left)),
             "+" | "-" => Some((3, Associativity::Left)),
             "&" => Some((2, Associativity::Left)),

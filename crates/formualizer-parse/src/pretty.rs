@@ -23,7 +23,7 @@ enum Side {
 fn infix_info(op: &str) -> (u8, Associativity) {
     match op {
         ":" | " " | "," => (8, Associativity::Left),
-        "^" => (6, Associativity::Right),
+        "^" => (5, Associativity::Right),
         "*" | "/" => (4, Associativity::Left),
         "+" | "-" => (3, Associativity::Left),
         "&" => (2, Associativity::Left),
@@ -33,12 +33,7 @@ fn infix_info(op: &str) -> (u8, Associativity) {
 }
 
 fn unary_precedence(op: &str) -> u8 {
-    if op == "%" {
-        7
-    } else {
-        // Prefix unary.
-        5
-    }
+    if op == "%" { 7 } else { 6 }
 }
 
 fn node_precedence(ast: &ASTNode) -> u8 {

@@ -34,7 +34,6 @@
       "result_type": "int",
       "description": "exponentiation"
     },
-
     {
       "formula": "=-5",
       "result": -5,
@@ -58,6 +57,12 @@
       "result": 7,
       "result_type": "int",
       "description": "operator precedence"
+    },
+    {
+      "formula": "=-2^2",
+      "result": 4,
+      "result_type": "int",
+      "description": "unary minus binds tighter than exponent (Excel semantics)"
     }
   ]
 }

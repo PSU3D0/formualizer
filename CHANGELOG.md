@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed unary minus precedence to bind tighter than exponentiation, matching Excel semantics (`=-2^2` now evaluates to `4` instead of `-4`).
+
 ## [0.5.6] - 2026-04-14
 
 ### Fixed

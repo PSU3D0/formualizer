@@ -2150,8 +2150,8 @@ impl Parser {
             let op_token = self.tokens[self.position].clone();
             self.position += 1;
 
-            // Prefix unary binds looser than exponent, so parse the RHS with
-            // min_precedence equal to unary's precedence.
+            // Prefix unary binds tighter than exponent (Excel semantics),
+            // so parse the RHS with min_precedence equal to unary's precedence.
             let (precedence, _) = op_token
                 .get_precedence()
                 .unwrap_or((0, Associativity::Right));
@@ -2511,8 +2511,8 @@ impl<'a> SpanParser<'a> {
         match op {
             ":" | " " | "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
-            "^" => Some((6, Associativity::Right)),
-            "u" => Some((5, Associativity::Right)),
+            "u" => Some((6, Associativity::Right)),
+            "^" => Some((5, Associativity::Right)),
             "*" | "/" => Some((4, Associativity::Left)),
             "+" | "-" => Some((3, Associativity::Left)),
             "&" => Some((2, Associativity::Left)),
