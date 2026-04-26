@@ -1107,6 +1107,284 @@ mod tests {
             assert_eq!(pretty, again);
         }
     }
+
+    mod reference_operators {
+        use super::parse_formula;
+        use crate::parser::{ASTNode, ASTNodeType, ReferenceType};
+        use crate::pretty::pretty_parse_render;
+
+        fn parse_both(formula: &str) -> [ASTNode; 2] {
+            let classic = parse_formula(formula)
+                .unwrap_or_else(|e| panic!("classic parser failed for {formula:?}: {e:?}"));
+            let span = crate::parser::parse(formula)
+                .unwrap_or_else(|e| panic!("span parser failed for {formula:?}: {e:?}"));
+            [classic, span]
+        }
+
+        fn assert_both_err(formula: &str) {
+            assert!(
+                parse_formula(formula).is_err(),
+                "classic parser unexpectedly accepted {formula:?}"
+            );
+            assert!(
+                crate::parser::parse(formula).is_err(),
+                "span parser unexpectedly accepted {formula:?}"
+            );
+        }
+
+        fn assert_range_ref(node: &ASTNode, expected_str: &str) {
+            match &node.node_type {
+                ASTNodeType::Reference {
+                    reference,
+                    original,
+                } => {
+                    assert!(
+                        matches!(reference, ReferenceType::Range { .. }),
+                        "expected Range ref for {expected_str:?}, got {reference:?}"
+                    );
+                    assert_eq!(original, expected_str);
+                }
+                other => panic!("expected Reference({expected_str:?}), got {other:?}"),
+            }
+        }
+
+        fn assert_cell_ref(node: &ASTNode, expected_str: &str) {
+            match &node.node_type {
+                ASTNodeType::Reference {
+                    reference,
+                    original,
+                } => {
+                    assert!(
+                        matches!(reference, ReferenceType::Cell { .. }),
+                        "expected Cell ref for {expected_str:?}, got {reference:?}"
+                    );
+                    assert_eq!(original, expected_str);
+                }
+                other => panic!("expected Reference({expected_str:?}), got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn space_intersection_basic() {
+            for ast in parse_both("=A1:A3 B1:B3") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, " ");
+                        assert_range_ref(&left, "A1:A3");
+                        assert_range_ref(&right, "B1:B3");
+                    }
+                    other => panic!("expected BinaryOp(\" \", ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn space_intersection_inside_function() {
+            for ast in parse_both("=SUM(A1:A3 A2:C2)") {
+                match ast.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert_eq!(name, "SUM");
+                        assert_eq!(args.len(), 1);
+                        match &args[0].node_type {
+                            ASTNodeType::BinaryOp { op, left, right } => {
+                                assert_eq!(op, " ");
+                                assert_range_ref(left, "A1:A3");
+                                assert_range_ref(right, "A2:C2");
+                            }
+                            other => panic!("expected BinaryOp arg, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected Function, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn colon_composed_with_function() {
+            for ast in parse_both("=OFFSET(A1,1,1):B10") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::Function { name, .. } => {
+                                assert_eq!(name, "OFFSET");
+                            }
+                            other => panic!("expected OFFSET function on left, got {other:?}"),
+                        }
+                        assert_cell_ref(&right, "B10");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn colon_composed_with_index() {
+            for ast in parse_both("=INDEX(A:A,1):B10") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::Function { name, .. } => {
+                                assert_eq!(name, "INDEX");
+                            }
+                            other => panic!("expected INDEX function on left, got {other:?}"),
+                        }
+                        assert_cell_ref(&right, "B10");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn colon_composed_with_paren() {
+            for ast in parse_both("=(A1:A3):A5") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        assert_range_ref(&left, "A1:A3");
+                        assert_cell_ref(&right, "A5");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn cross_sheet_range() {
+            // 'Sheet1'!A1:'Sheet2'!B1 must compose as BinaryOp(:, A1, B1) with
+            // distinct sheets on each side.
+            for ast in parse_both("='Sheet1'!A1:'Sheet2'!B1") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::Reference { reference, .. } => match reference {
+                                ReferenceType::Cell { sheet, .. } => {
+                                    assert_eq!(sheet.as_deref(), Some("Sheet1"));
+                                }
+                                other => panic!("expected Sheet1 cell, got {other:?}"),
+                            },
+                            other => panic!("expected Reference on left, got {other:?}"),
+                        }
+                        match &right.node_type {
+                            ASTNodeType::Reference { reference, .. } => match reference {
+                                ReferenceType::Cell { sheet, .. } => {
+                                    assert_eq!(sheet.as_deref(), Some("Sheet2"));
+                                }
+                                other => panic!("expected Sheet2 cell, got {other:?}"),
+                            },
+                            other => panic!("expected Reference on right, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn chained_colon() {
+            // =A1:A3:A5 — the first simple range remains on the fast path, then
+            // the second colon is parsed as a composed reference operator.
+            for ast in parse_both("=A1:A3:A5") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, ":");
+                        assert_range_ref(&left, "A1:A3");
+                        assert_cell_ref(&right, "A5");
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn intersection_precedence_below_colon() {
+            // =A1:B2 C1:D2 → BinaryOp(" ", Range(A1:B2), Range(C1:D2)).
+            // Both sides must be ranges (the simple-range fast path is preserved).
+            for ast in parse_both("=A1:B2 C1:D2") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, " ");
+                        assert_range_ref(&left, "A1:B2");
+                        assert_range_ref(&right, "C1:D2");
+                    }
+                    other => panic!("expected BinaryOp(\" \", ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn implicit_intersection_binds_tighter_than_colon() {
+            // =(@A1):A3 must produce BinaryOp(:, UnaryOp(@, A1), A3) — i.e. '@'
+            // attaches to A1 first because it is a prefix unary. The parentheses
+            // force a composed colon instead of the simple-range fast path.
+            for ast in parse_both("=(@A1):A3") {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right: _ } => {
+                        assert_eq!(op, ":");
+                        match &left.node_type {
+                            ASTNodeType::UnaryOp { op, .. } => assert_eq!(op, "@"),
+                            other => panic!("expected UnaryOp(@, ...) on left, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected BinaryOp(:, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn trailing_space_after_ref_is_not_intersection() {
+            // =A1 — trailing whitespace must not turn A1 into a binary op.
+            for ast in parse_both("=A1 ") {
+                assert!(matches!(ast.node_type, ASTNodeType::Reference { .. }));
+            }
+        }
+
+        #[test]
+        fn colon_with_no_rhs_is_error() {
+            assert_both_err("=A1: ");
+            assert_both_err("=A1:");
+        }
+
+        #[test]
+        fn leading_colon_is_error() {
+            assert_both_err("= :A1");
+        }
+
+        #[test]
+        fn space_between_function_name_and_paren_is_error() {
+            assert_both_err("=SUM A1");
+        }
+
+        #[test]
+        fn simple_range_remains_single_operand() {
+            // Regression guard: =A1:B2 still tokenizes as one Operand:Range.
+            use crate::tokenizer::{TokenStream, TokenType, Tokenizer};
+            let classic = Tokenizer::new("=A1:B2").unwrap();
+            assert_eq!(classic.items.len(), 1);
+            assert_eq!(classic.items[0].token_type, TokenType::Operand);
+            assert_eq!(classic.items[0].value, "A1:B2");
+            let span = TokenStream::new("=A1:B2").unwrap();
+            assert_eq!(span.spans.len(), 1);
+            assert_eq!(span.spans[0].token_type, TokenType::Operand);
+        }
+
+        #[test]
+        fn pretty_print_intersection_and_colon() {
+            // Intersection space prints with single-space gap; colon prints tight.
+            let pretty = pretty_parse_render("=A1:A3 B1:B3").unwrap();
+            assert_eq!(pretty, "=A1:A3 B1:B3");
+            let again = pretty_parse_render(&pretty).unwrap();
+            assert_eq!(pretty, again);
+
+            let pretty = pretty_parse_render("=OFFSET(A1,1,1):B10").unwrap();
+            assert_eq!(pretty, "=OFFSET(A1, 1, 1):B10");
+            let again = pretty_parse_render(&pretty).unwrap();
+            assert_eq!(pretty, again);
+        }
+    }
 }
 
 #[cfg(test)]

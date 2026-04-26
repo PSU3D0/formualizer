@@ -255,8 +255,10 @@ impl Token {
         //   &
         //   comparisons
         match op {
-            "#" => Some((9, Associativity::Left)),
-            ":" | " " | "," => Some((8, Associativity::Left)),
+            "#" => Some((11, Associativity::Left)),
+            ":" => Some((10, Associativity::Left)),
+            " " => Some((9, Associativity::Left)),
+            "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "u" => Some((6, Associativity::Right)),
             "^" => Some((5, Associativity::Right)),
@@ -596,6 +598,93 @@ fn operand_subtype(value_str: &str) -> TokenSubType {
     }
 }
 
+fn is_cell_reference_like(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let mut i = 0;
+
+    if i < bytes.len() && bytes[i] == b'$' {
+        i += 1;
+    }
+
+    let col_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+        i += 1;
+    }
+    if i == col_start {
+        return false;
+    }
+
+    if i < bytes.len() && bytes[i] == b'$' {
+        i += 1;
+    }
+
+    let row_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+
+    i == bytes.len() && i > row_start
+}
+
+fn reference_value_contains_range_colon(value: &str) -> bool {
+    let value_part = value
+        .rsplit_once('!')
+        .map_or(value, |(_, value_part)| value_part);
+    value_part.contains(':')
+}
+
+fn is_reference_operand_value(value: &str) -> bool {
+    operand_subtype(value) == TokenSubType::Range
+        && (reference_value_contains_range_colon(value)
+            || value.contains('!')
+            || value.contains('[')
+            || is_cell_reference_like(value))
+}
+
+fn next_starts_reference_expression(formula: &str, mut offset: usize) -> bool {
+    let bytes = formula.as_bytes();
+    while offset < bytes.len() && matches!(bytes[offset], b' ' | b'\n') {
+        offset += 1;
+    }
+    if offset >= bytes.len() {
+        return false;
+    }
+
+    matches!(bytes[offset], b'(' | b'[' | b'\'' | b'$') || bytes[offset].is_ascii_alphabetic()
+}
+
+fn next_reference_has_sheet_qualifier(formula: &str, mut offset: usize) -> bool {
+    let bytes = formula.as_bytes();
+    while offset < bytes.len() && matches!(bytes[offset], b' ' | b'\n') {
+        offset += 1;
+    }
+
+    let mut in_quote = false;
+    while offset < bytes.len() {
+        match bytes[offset] {
+            b'\'' => {
+                if in_quote && offset + 1 < bytes.len() && bytes[offset + 1] == b'\'' {
+                    offset += 2;
+                    continue;
+                }
+                in_quote = !in_quote;
+            }
+            b'!' => return true,
+            b':' if !in_quote => return false,
+            b',' | b';' | b'}' | b')' | b' ' | b'\n' | b'+' | b'-' | b'*' | b'/' | b'^' | b'&'
+            | b'=' | b'>' | b'<' | b'%' | b'@'
+                if !in_quote =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+        offset += 1;
+    }
+
+    false
+}
+
 struct SpanTokenizer<'a> {
     formula: &'a str,
     spans: Vec<TokenSpan>,
@@ -766,6 +855,19 @@ impl<'a> SpanTokenizer<'a> {
                     }
                 }
                 b' ' | b'\n' => self.parse_whitespace(),
+                b':' => {
+                    if self.should_emit_colon_infix() {
+                        self.emit_infix_operator(self.offset, self.offset + 1);
+                        Ok(())
+                    } else {
+                        if !self.has_token() {
+                            self.start_token();
+                        }
+                        self.offset += 1;
+                        self.extend_token();
+                        Ok(())
+                    }
+                }
                 b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@' => {
                     self.parse_operator()
                 }
@@ -1083,14 +1185,57 @@ impl<'a> SpanTokenizer<'a> {
             }
         }
 
-        self.push_span(
-            TokenType::Whitespace,
-            TokenSubType::None,
-            ws_start,
-            self.offset,
-        );
+        let token_type = if self.prev_is_reference_producing()
+            && next_starts_reference_expression(self.formula, self.offset)
+        {
+            TokenType::OpInfix
+        } else {
+            TokenType::Whitespace
+        };
+        self.push_span(token_type, TokenSubType::None, ws_start, self.offset);
         self.start_token();
         Ok(())
+    }
+
+    fn prev_is_reference_producing(&self) -> bool {
+        match self.prev_non_whitespace() {
+            Some(prev) => match prev.token_type {
+                TokenType::OpPostfix => true,
+                TokenType::Paren | TokenType::Func | TokenType::Array
+                    if prev.subtype == TokenSubType::Close =>
+                {
+                    true
+                }
+                TokenType::Operand if prev.subtype == TokenSubType::Range => self
+                    .formula
+                    .get(prev.start..prev.end)
+                    .is_some_and(is_reference_operand_value),
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    fn should_emit_colon_infix(&self) -> bool {
+        if self.has_token() {
+            let value = &self.formula[self.token_start..self.token_end];
+            if value.ends_with('!') {
+                return false;
+            }
+            return reference_value_contains_range_colon(value)
+                || value.contains('[')
+                || (value.contains('!')
+                    && next_reference_has_sheet_qualifier(self.formula, self.offset + 1));
+        }
+        self.prev_is_reference_producing()
+    }
+
+    fn emit_infix_operator(&mut self, start: usize, end: usize) {
+        self.save_token();
+        self.start_token();
+        self.push_span(TokenType::OpInfix, TokenSubType::None, start, end);
+        self.offset = end;
+        self.start_token();
     }
 
     fn prev_non_whitespace(&self) -> Option<&TokenSpan> {
@@ -1447,6 +1592,17 @@ impl Tokenizer {
                     }
                 }
                 b' ' | b'\n' => self.parse_whitespace()?,
+                b':' => {
+                    if self.should_emit_colon_infix() {
+                        self.emit_infix_operator(self.offset, self.offset + 1);
+                    } else {
+                        if !self.has_token() {
+                            self.start_token();
+                        }
+                        self.offset += 1;
+                        self.extend_token();
+                    }
+                }
                 // operator characters
                 b'+' | b'-' | b'*' | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@' => {
                     self.parse_operator()?
@@ -1738,15 +1894,76 @@ impl Tokenizer {
             }
         }
 
+        let token_type = if self.prev_is_reference_producing()
+            && next_starts_reference_expression(&self.formula, self.offset)
+        {
+            TokenType::OpInfix
+        } else {
+            TokenType::Whitespace
+        };
+
         self.items.push(Token::from_slice(
             &self.formula,
-            TokenType::Whitespace,
+            token_type,
             TokenSubType::None,
             ws_start,
             self.offset,
         ));
         self.start_token();
         Ok(())
+    }
+
+    fn prev_non_whitespace(&self) -> Option<&Token> {
+        self.items
+            .iter()
+            .rev()
+            .find(|t| t.token_type != TokenType::Whitespace)
+    }
+
+    fn prev_is_reference_producing(&self) -> bool {
+        match self.prev_non_whitespace() {
+            Some(prev) => match prev.token_type {
+                TokenType::OpPostfix => true,
+                TokenType::Paren | TokenType::Func | TokenType::Array
+                    if prev.subtype == TokenSubType::Close =>
+                {
+                    true
+                }
+                TokenType::Operand if prev.subtype == TokenSubType::Range => {
+                    is_reference_operand_value(&prev.value)
+                }
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    fn should_emit_colon_infix(&self) -> bool {
+        if self.has_token() {
+            let value = &self.formula[self.token_start..self.token_end];
+            if value.ends_with('!') {
+                return false;
+            }
+            return reference_value_contains_range_colon(value)
+                || value.contains('[')
+                || (value.contains('!')
+                    && next_reference_has_sheet_qualifier(&self.formula, self.offset + 1));
+        }
+        self.prev_is_reference_producing()
+    }
+
+    fn emit_infix_operator(&mut self, start: usize, end: usize) {
+        self.save_token();
+        self.start_token();
+        self.items.push(Token::from_slice(
+            &self.formula,
+            TokenType::OpInfix,
+            TokenSubType::None,
+            start,
+            end,
+        ));
+        self.offset = end;
+        self.start_token();
     }
 
     /// Parse an operator token.

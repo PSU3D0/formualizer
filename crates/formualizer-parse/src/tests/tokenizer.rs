@@ -1655,4 +1655,176 @@ mod tests {
             assert_eq!(posts_span.len(), 2);
         }
     }
+
+    mod reference_operators {
+        use crate::tokenizer::{TokenStream, TokenSubType, TokenType, Tokenizer};
+
+        fn classic_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let t = Tokenizer::new(formula).expect("tokenize");
+            t.items
+                .iter()
+                .filter(|tok| tok.token_type != TokenType::Whitespace)
+                .map(|tok| (tok.token_type, tok.subtype, tok.value.clone()))
+                .collect()
+        }
+
+        fn classic_all(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let t = Tokenizer::new(formula).expect("tokenize");
+            t.items
+                .iter()
+                .map(|tok| (tok.token_type, tok.subtype, tok.value.clone()))
+                .collect()
+        }
+
+        fn span_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            stream
+                .spans
+                .iter()
+                .filter(|span| span.token_type != TokenType::Whitespace)
+                .map(|span| {
+                    (
+                        span.token_type,
+                        span.subtype,
+                        formula[span.start..span.end].to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        fn span_all(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            stream
+                .spans
+                .iter()
+                .map(|span| {
+                    (
+                        span.token_type,
+                        span.subtype,
+                        formula[span.start..span.end].to_string(),
+                    )
+                })
+                .collect()
+        }
+
+        #[test]
+        fn space_between_ranges_is_intersection_op() {
+            // =A1:A3 B1:B3 → Range, OpInfix(" "), Range
+            let expected = vec![
+                (TokenType::Operand, TokenSubType::Range, "A1:A3".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, " ".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "B1:B3".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=A1:A3 B1:B3"), expected);
+            assert_eq!(span_non_ws("=A1:A3 B1:B3"), expected);
+        }
+
+        #[test]
+        fn space_not_between_refs_is_whitespace() {
+            // = 1 + 2 → all whitespace stays Whitespace.
+            let classic = classic_all("= 1 + 2 ");
+            // After leading '=' there is a leading Whitespace before 1.
+            assert_eq!(classic[0].0, TokenType::Whitespace);
+            // No OpInfix " " anywhere.
+            assert!(
+                classic
+                    .iter()
+                    .all(|t| !(t.0 == TokenType::OpInfix && t.2 == " ")),
+                "unexpected space-intersection in {classic:?}"
+            );
+            let span = span_all("= 1 + 2 ");
+            assert!(
+                span.iter()
+                    .all(|t| !(t.0 == TokenType::OpInfix && t.2 == " ")),
+                "unexpected space-intersection in {span:?}"
+            );
+        }
+
+        #[test]
+        fn colon_after_close_paren_is_op() {
+            // =SUM(A1):B2 → Func, Range(A1), FuncClose, OpInfix(:), Range(B2)
+            let expected = vec![
+                (TokenType::Func, TokenSubType::Open, "SUM(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "A1".to_string()),
+                (TokenType::Func, TokenSubType::Close, ")".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, ":".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "B2".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=SUM(A1):B2"), expected);
+            assert_eq!(span_non_ws("=SUM(A1):B2"), expected);
+        }
+
+        #[test]
+        fn colon_inside_simple_range_is_not_op() {
+            // =A1:B2 still tokenizes as a single Operand:Range.
+            let expected = vec![(TokenType::Operand, TokenSubType::Range, "A1:B2".to_string())];
+            assert_eq!(classic_non_ws("=A1:B2"), expected);
+            assert_eq!(span_non_ws("=A1:B2"), expected);
+        }
+
+        #[test]
+        fn nested_space_and_colon() {
+            // =(A1:A3) (B1:B3)
+            let expected = vec![
+                (TokenType::Paren, TokenSubType::Open, "(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "A1:A3".to_string()),
+                (TokenType::Paren, TokenSubType::Close, ")".to_string()),
+                (TokenType::OpInfix, TokenSubType::None, " ".to_string()),
+                (TokenType::Paren, TokenSubType::Open, "(".to_string()),
+                (TokenType::Operand, TokenSubType::Range, "B1:B3".to_string()),
+                (TokenType::Paren, TokenSubType::Close, ")".to_string()),
+            ];
+            assert_eq!(classic_non_ws("=(A1:A3) (B1:B3)"), expected);
+            assert_eq!(span_non_ws("=(A1:A3) (B1:B3)"), expected);
+        }
+
+        #[test]
+        fn colon_after_close_bracket_is_op() {
+            // =Table1[Col]:B10 → table reference followed by colon op.
+            let classic = classic_non_ws("=Table1[Col]:B10");
+            assert_eq!(classic.len(), 3);
+            assert_eq!(classic[0].0, TokenType::Operand);
+            assert_eq!(classic[0].2, "Table1[Col]");
+            assert_eq!(
+                (classic[1].0, classic[1].1, classic[1].2.as_str()),
+                (TokenType::OpInfix, TokenSubType::None, ":")
+            );
+            assert_eq!(classic[2].2, "B10");
+            let span = span_non_ws("=Table1[Col]:B10");
+            assert_eq!(
+                (span[1].0, span[1].1, span[1].2.as_str()),
+                (TokenType::OpInfix, TokenSubType::None, ":")
+            );
+        }
+
+        #[test]
+        fn colon_after_postfix_hash_is_op() {
+            // =A1#:B10
+            let classic = classic_non_ws("=A1#:B10");
+            assert_eq!(
+                classic
+                    .iter()
+                    .find(|t| t.2 == ":" && t.0 == TokenType::OpInfix)
+                    .map(|t| t.0),
+                Some(TokenType::OpInfix)
+            );
+            let span = span_non_ws("=A1#:B10");
+            assert!(span.iter().any(|t| t.2 == ":" && t.0 == TokenType::OpInfix));
+        }
+
+        #[test]
+        fn space_with_newline_between_refs_is_intersection_op() {
+            // Whitespace runs (including \n) collapse to OpInfix(" ") when both
+            // sides are reference-producing.
+            let classic = classic_non_ws("=A1:A3\n B1:B3");
+            assert!(
+                classic
+                    .iter()
+                    .any(|t| t.0 == TokenType::OpInfix && t.2.contains(' '))
+                    || classic
+                        .iter()
+                        .any(|t| t.0 == TokenType::OpInfix && t.2 == " ")
+            );
+        }
+    }
 }
