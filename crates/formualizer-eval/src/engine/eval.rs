@@ -15,7 +15,7 @@ use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
-use formualizer_common::{col_letters_from_1based, parse_a1_1based};
+use formualizer_common::{CoordBuildHasher, col_letters_from_1based, parse_a1_1based};
 use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
@@ -7790,7 +7790,8 @@ where
         if let Some(delta) = delta
             && delta.mode != DeltaMode::Off
         {
-            let target_set: FxHashSet<CellRef> = targets.iter().copied().collect();
+            let target_set: std::collections::HashSet<CellRef, CoordBuildHasher> =
+                targets.iter().copied().collect();
             let empty = LiteralValue::Empty;
 
             // Clears (prev - targets)
@@ -7868,7 +7869,8 @@ where
             && self.config.write_formula_overlay_enabled
         {
             if !prev_spill_cells.is_empty() {
-                let target_set: FxHashSet<CellRef> = targets.iter().copied().collect();
+                let target_set: std::collections::HashSet<CellRef, CoordBuildHasher> =
+                    targets.iter().copied().collect();
                 let empty = LiteralValue::Empty;
                 for cell in prev_spill_cells.iter() {
                     if !target_set.contains(cell) {
