@@ -42,5 +42,5 @@ chrono = { workspace = true }
 chrono = { workspace = true }
 formualizer-testkit = { path = "../formualizer-testkit" }
 tempfile = { workspace = true }
-formualizer-workbook = { path = "../formualizer-workbook", version = "0.5.2", features = ["umya_integration"] }
+formualizer-workbook = { path = "../formualizer-workbook", version = "0.5.7", features = ["umya_integration"] }
 umya-spreadsheet = "=2.3.2"
