@@ -554,6 +554,24 @@ jobs:
           pattern: wheels-*
           path: dist
           merge-multiple: true
+      - name: Exclude Pyodide wheels from PyPI upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p pyodide-dist
+          shopt -s nullglob
+
+          pyodide_wheels=(dist/*pyodide*_wasm*.whl dist/*pyemscripten*_wasm*.whl)
+          if (( ${#pyodide_wheels[@]} )); then
+            mv "${pyodide_wheels[@]}" pyodide-dist/
+            echo "Excluded Pyodide/Emscripten wheels from PyPI upload:"
+            ls -lh pyodide-dist
+          else
+            echo "No Pyodide/Emscripten wheels found in dist."
+          fi
+
+          echo "PyPI upload candidates:"
+          ls -lh dist
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
