@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-workbook"
-version = "0.5.6"
+version = "0.5.7"
 edition = "2024"
 description = "Ergonomic workbook API over the Formualizer engine (sheets, loaders, staging, undo/redo)"
 homepage.workspace = true
@@ -14,7 +14,7 @@ categories = ["data-structures", "mathematics"]
 [dependencies]
 formualizer-parse = { workspace = true }
 formualizer-common = { workspace = true }
-formualizer-eval = { path = "../formualizer-eval", version = "0.5.2", default-features = false }
+formualizer-eval = { path = "../formualizer-eval", version = "0.5.7", default-features = false }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
