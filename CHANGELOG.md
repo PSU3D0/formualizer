@@ -4,9 +4,15 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.7] - 2026-04-26
+
 ### Fixed
 
-- Fixed unary minus precedence to bind tighter than exponentiation, matching Excel semantics (`=-2^2` now evaluates to `4` instead of `-4`).
+- Fixed unary minus precedence to bind tighter than exponentiation, matching Excel semantics (`=-2^2` now evaluates to `4` instead of `-4`). (#65)
+
+### Performance
+
+- Fixed O(N²) bulk-ingest scaling for row-major formulas by introducing `CoordBuildHasher` for packed coordinate keys and applying it to the hot dependency-graph and spill-commit maps. (#67)
 
 ## [0.5.6] - 2026-04-14
 
@@ -102,7 +108,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.7...HEAD
+[0.5.7]: https://github.com/PSU3D0/formualizer/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/PSU3D0/formualizer/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/PSU3D0/formualizer/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/PSU3D0/formualizer/compare/v0.5.3...v0.5.4
