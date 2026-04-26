@@ -2,7 +2,9 @@ use crate::SheetId;
 use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
-use formualizer_common::{CoordBuildHasher, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell};
+use formualizer_common::{
+    CoordBuildHasher, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell,
+};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -136,8 +138,7 @@ pub struct DependencyGraph {
     // keys. FxHasher's weak avalanche produces O(N^2) collision cascades on
     // row-major bulk ingest; CoordBuildHasher keeps these strictly O(N).
     cell_to_vertex: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
-    load_packed_to_vertex:
-        std::collections::HashMap<PackedSheetCell, VertexId, CoordBuildHasher>,
+    load_packed_to_vertex: std::collections::HashMap<PackedSheetCell, VertexId, CoordBuildHasher>,
 
     // Scheduling state - using HashSet for O(1) operations
     dirty_vertices: FxHashSet<VertexId>,
@@ -233,8 +234,7 @@ pub struct DependencyGraph {
     // `spill_cell_to_anchor` is keyed by `CellRef` and uses the tuned hasher
     // for the same reason as `cell_to_vertex`.
     spill_anchor_to_cells: FxHashMap<VertexId, Vec<CellRef>>,
-    spill_cell_to_anchor:
-        std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
+    spill_cell_to_anchor: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
 
     // Hint: during initial bulk load, many cells are guaranteed new; allow skipping existence checks per-sheet
     first_load_assume_new: bool,

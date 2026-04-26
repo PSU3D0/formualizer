@@ -108,11 +108,7 @@ fn main() {
 
         println!(
             "{:>8} {:>12.1} {:>14.1} {:>14.2} {:>14}",
-            k,
-            build_ms,
-            eval_ms,
-            us_per_formula,
-            res.computed_vertices,
+            k, build_ms, eval_ms, us_per_formula, res.computed_vertices,
         );
     }
 }

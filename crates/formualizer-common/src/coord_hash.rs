@@ -130,11 +130,8 @@ mod tests {
 
     #[test]
     fn distinct_coords_produce_distinct_hashes() {
-        use core::hash::Hash;
         fn h(c: Coord) -> u64 {
-            let mut hasher = CoordBuildHasher.build_hasher();
-            c.hash(&mut hasher);
-            hasher.finish()
+            CoordBuildHasher.hash_one(c)
         }
         // Adjacent row-major coords must not collide (this is exactly the
         // degenerate pattern FxHasher stumbles on).
