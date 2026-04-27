@@ -2163,6 +2163,139 @@ mod semantics_regressions {
         }
     }
 
+    mod scientific_notation {
+        use crate::parser::{ASTNode, ASTNodeType, Parser, ParserError, ReferenceType, parse};
+        use crate::tokenizer::Tokenizer;
+        use formualizer_common::LiteralValue;
+
+        fn parse_formula(formula: &str) -> Result<ASTNode, ParserError> {
+            let tokenizer = Tokenizer::new(formula).map_err(|e| ParserError {
+                message: e.to_string(),
+                position: Some(e.pos),
+            })?;
+            let mut parser = Parser::new(tokenizer.items, false);
+            parser.parse()
+        }
+
+        fn assert_parsers_agree(formula: &str) {
+            let token_ast = parse_formula(formula);
+            let span_ast = parse(formula);
+            match (&token_ast, &span_ast) {
+                (Ok(a), Ok(b)) => assert_eq!(
+                    a.node_type, b.node_type,
+                    "token vs span parser disagree on {formula:?}"
+                ),
+                (Err(_), Err(_)) => {}
+                other => panic!("token vs span parser disagree on {formula:?}: {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_sci_number_basic() {
+            let ast = parse_formula("=1.5E+3").unwrap();
+            match ast.node_type {
+                ASTNodeType::Literal(LiteralValue::Number(n)) => assert_eq!(n, 1500.0),
+                other => panic!("expected Literal Number, got {other:?}"),
+            }
+            assert_parsers_agree("=1.5E+3");
+        }
+
+        #[test]
+        fn test_sci_minus_cell_ref() {
+            // `=1E-A1` should parse as `1E - A1`, not as a single named range.
+            let ast = parse_formula("=1E-A1").unwrap();
+            match ast.node_type {
+                ASTNodeType::BinaryOp { op, left, right } => {
+                    assert_eq!(op, "-");
+                    match left.node_type {
+                        ASTNodeType::Reference { reference, .. } => match reference {
+                            ReferenceType::NamedRange(name) => assert_eq!(name, "1E"),
+                            other => panic!("expected NamedRange(\"1E\"), got {other:?}"),
+                        },
+                        other => panic!("expected reference on lhs, got {other:?}"),
+                    }
+                    match right.node_type {
+                        ASTNodeType::Reference { reference, .. } => {
+                            assert_eq!(reference, ReferenceType::cell(None, 1, 1))
+                        }
+                        other => panic!("expected A1 reference on rhs, got {other:?}"),
+                    }
+                }
+                other => panic!("expected BinaryOp, got {other:?}"),
+            }
+            assert_parsers_agree("=1E-A1");
+        }
+
+        #[test]
+        fn test_sci_plus_cell_ref() {
+            let ast = parse_formula("=1E+A1").unwrap();
+            match ast.node_type {
+                ASTNodeType::BinaryOp { op, left, right } => {
+                    assert_eq!(op, "+");
+                    match left.node_type {
+                        ASTNodeType::Reference { reference, .. } => match reference {
+                            ReferenceType::NamedRange(name) => assert_eq!(name, "1E"),
+                            other => panic!("expected NamedRange(\"1E\"), got {other:?}"),
+                        },
+                        other => panic!("expected reference on lhs, got {other:?}"),
+                    }
+                    match right.node_type {
+                        ASTNodeType::Reference { reference, .. } => {
+                            assert_eq!(reference, ReferenceType::cell(None, 1, 1))
+                        }
+                        other => panic!("expected A1 reference on rhs, got {other:?}"),
+                    }
+                }
+                other => panic!("expected BinaryOp, got {other:?}"),
+            }
+            assert_parsers_agree("=1E+A1");
+        }
+
+        #[test]
+        fn test_sci_dangling_lower_e_plus_errors() {
+            // `=1e+` no longer becomes a silent NamedRange. The `+` is left
+            // dangling, which the parser must reject.
+            assert!(parse_formula("=1e+").is_err());
+            assert!(parse("=1e+").is_err());
+        }
+
+        #[test]
+        fn test_sci_dangling_decimal_minus_errors() {
+            assert!(parse_formula("=1.5e-").is_err());
+            assert!(parse("=1.5e-").is_err());
+        }
+
+        #[test]
+        fn test_sci_dangling_upper_e_plus_errors() {
+            assert!(parse_formula("=1E+").is_err());
+            assert!(parse("=1E+").is_err());
+        }
+
+        #[test]
+        fn test_sci_existing_numeric_literals_still_parse() {
+            for (formula, expected) in [
+                ("=1.5e-3", 0.0015),
+                ("=5e10", 5e10),
+                ("=1e2", 100.0),
+                ("=1.", 1.0),
+                ("=.5", 0.5),
+            ] {
+                let ast = parse_formula(formula)
+                    .unwrap_or_else(|e| panic!("failed to parse {formula:?}: {}", e.message));
+                match ast.node_type {
+                    ASTNodeType::Literal(LiteralValue::Number(n)) => {
+                        assert!(
+                            (n - expected).abs() < 1e-9,
+                            "{formula} -> {n}, expected {expected}"
+                        );
+                    }
+                    other => panic!("expected Number for {formula}, got {other:?}"),
+                }
+                assert_parsers_agree(formula);
+            }
+        }
+    }
+
     #[test]
     fn quoted_sheet_name_allows_escaped_single_quote() {
         let r = ReferenceType::from_string("'Bob''s Sheet'!A1").unwrap();

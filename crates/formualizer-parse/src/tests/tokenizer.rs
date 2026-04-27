@@ -1472,6 +1472,116 @@ mod tests {
         }
     }
 
+    mod scientific_notation {
+        use crate::tokenizer::{TokenSubType, TokenType, Tokenizer};
+
+        #[test]
+        fn test_sci_extends_for_digit() {
+            let formula = "=1e+2";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Number);
+            assert_eq!(tokenizer.items[0].value, "1e+2");
+        }
+
+        #[test]
+        fn test_sci_does_not_extend_for_letter() {
+            // `=1E-A1` must not slurp `-A1` into the numeric token.
+            let formula = "=1E-A1";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 3);
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].value, "1E");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+            assert_eq!(tokenizer.items[1].token_type, TokenType::OpInfix);
+            assert_eq!(tokenizer.items[1].value, "-");
+            assert_eq!(tokenizer.items[2].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[2].value, "A1");
+            assert_eq!(tokenizer.items[2].subtype, TokenSubType::Range);
+        }
+
+        #[test]
+        fn test_sci_does_not_extend_for_eof() {
+            // `=1e+` must flush `1e` and emit a trailing operator instead of
+            // consuming the dangling `+` as part of the number.
+            let formula = "=1e+";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 2);
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].value, "1e");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+            assert_eq!(tokenizer.items[1].value, "+");
+            // The trailing operator may classify as either prefix or infix;
+            // the important property is that the number did not absorb it.
+            assert!(matches!(
+                tokenizer.items[1].token_type,
+                TokenType::OpInfix | TokenType::OpPrefix
+            ));
+        }
+
+        #[test]
+        fn test_sci_dot_after_exponent_documented_shape() {
+            // `=1e+2.5` is ambiguous (#78). Today the tokenizer keeps it as a
+            // single (non-numeric) operand because `parse::<f64>` rejects a
+            // dot after the exponent. The important property is that the
+            // text is preserved verbatim, so this test just pins the
+            // current shape so a future intentional change is visible.
+            let formula = "=1e+2.5";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.render(), formula);
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "1e+2.5");
+        }
+
+        #[test]
+        fn test_sci_with_decimal_base() {
+            let formula = "=1.5e-3";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "1.5e-3");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Number);
+        }
+
+        #[test]
+        fn test_sci_without_sign() {
+            let formula = "=5e10";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "5e10");
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Number);
+        }
+
+        #[test]
+        fn test_bare_1e() {
+            let formula = "=1e";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.items.len(), 1);
+            assert_eq!(tokenizer.items[0].value, "1e");
+            // `1e` is not a valid float, so it falls through to a range/named
+            // range subtype.
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
+        }
+
+        #[test]
+        fn test_sci_chain_after_valid_number() {
+            // `=1.5E+3E+2` is documented as ambiguous in #78. Today the
+            // tokenizer accumulates `1.5E+3E` as a single operand (the
+            // trailing `E` disqualifies the scientific-notation base check
+            // when the next `+` is processed), then emits `+ 2` separately.
+            // Pin that shape; the formula must render back losslessly.
+            let formula = "=1.5E+3E+2";
+            let tokenizer = Tokenizer::new(formula).unwrap();
+            assert_eq!(tokenizer.render(), formula);
+            assert_eq!(tokenizer.items.len(), 3);
+            assert_eq!(tokenizer.items[0].value, "1.5E+3E");
+            assert_eq!(tokenizer.items[1].token_type, TokenType::OpInfix);
+            assert_eq!(tokenizer.items[1].value, "+");
+            assert_eq!(tokenizer.items[2].value, "2");
+            assert_eq!(tokenizer.items[2].subtype, TokenSubType::Number);
+        }
+    }
+
     #[test]
     fn test_error_literals_are_case_insensitive() {
         let tokenizer = Tokenizer::new("=#ref!").expect("tokenize lowercase ref error");

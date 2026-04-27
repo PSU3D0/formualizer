@@ -675,6 +675,11 @@ impl<'a> SpanTokenizer<'a> {
             if (curr_byte == b'+' || curr_byte == b'-')
                 && self.has_token()
                 && self.is_scientific_notation_base()
+                && self
+                    .formula
+                    .as_bytes()
+                    .get(self.offset + 1)
+                    .is_some_and(|b| b.is_ascii_digit())
             {
                 self.offset += 1;
                 self.extend_token();
@@ -1432,11 +1437,21 @@ impl Tokenizer {
 
     /// If the current token looks like a number in scientific notation,
     /// consume the '+' or '-' as part of the number.
+    ///
+    /// The `+`/`-` is only consumed when the next byte is an ASCII digit.
+    /// Without that one-byte lookahead, inputs like `=1e+` and `=1E-A1`
+    /// would be silently absorbed into a single (invalid) numeric token
+    /// and surface later as a `NamedRange`. See issue #78.
     fn check_scientific_notation(&mut self) -> Result<bool, TokenizerError> {
         if let Some(curr_byte) = self.current_byte() {
             if (curr_byte == b'+' || curr_byte == b'-')
                 && self.has_token()
                 && self.is_scientific_notation_base()
+                && self
+                    .formula
+                    .as_bytes()
+                    .get(self.offset + 1)
+                    .is_some_and(|b| b.is_ascii_digit())
             {
                 self.offset += 1;
                 self.extend_token();
