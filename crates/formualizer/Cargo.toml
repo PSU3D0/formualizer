@@ -1,6 +1,6 @@
 [package]
 name = "formualizer"
-version = "0.5.7"
+version = "0.5.8"
 edition = "2024"
 description = "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks from Rust"
 homepage.workspace = true
@@ -57,9 +57,9 @@ portable-wasm = ["eval", "workbook", "sheetport", "parse", "common"]
 wasm-js = ["portable-wasm", "system-clock", "js-runtime"]
 
 [dependencies]
-formualizer-common = { path = "../formualizer-common", version = "1.1.3", optional = true }
-formualizer-parse = { path = "../formualizer-parse", version = "1.1.3", optional = true }
-formualizer-eval = { path = "../formualizer-eval", version = "0.5.7", optional = true, default-features = false }
-formualizer-workbook = { path = "../formualizer-workbook", version = "0.5.7", optional = true, default-features = false }
-formualizer-sheetport = { path = "../formualizer-sheetport", version = "0.5.7", optional = true, default-features = false }
+formualizer-common = { path = "../formualizer-common", version = "2.0.0", optional = true }
+formualizer-parse = { path = "../formualizer-parse", version = "2.0.0", optional = true }
+formualizer-eval = { path = "../formualizer-eval", version = "0.5.8", optional = true, default-features = false }
+formualizer-workbook = { path = "../formualizer-workbook", version = "0.5.8", optional = true, default-features = false }
+formualizer-sheetport = { path = "../formualizer-sheetport", version = "0.5.8", optional = true, default-features = false }
 sheetport-spec = { path = "../sheetport-spec", version = "0.3.0", optional = true }

@@ -196,13 +196,15 @@ def update_workspace_dep_version(content: str, dep_name: str, new_version: str) 
 
 
 def update_internal_dep_version(content: str, dep_name: str, new_version: str) -> str:
-    """Update an internal dependency with path + version."""
+    """Update all internal dependency entries with path + version."""
     # Match: dep_name = { path = "...", version = "X.Y.Z", ... }
     # or: dep_name = { version = "X.Y.Z", path = "...", ... }
-    # The version field can appear before or after path
+    # The version field can appear before or after path. A manifest can contain
+    # the same internal crate in multiple sections (for example dependencies and
+    # dev-dependencies), so update every matching inline-table occurrence.
     pattern = rf'({re.escape(dep_name)}\s*=\s*\{{[^}}]*?version\s*=\s*)"[^"]*"'
     replacement = rf'\1"{new_version}"'
-    new_content, count = re.subn(pattern, replacement, content, count=1)
+    new_content, count = re.subn(pattern, replacement, content)
     if count == 0:
         # Dependency might not have explicit version (workspace = true)
         return content

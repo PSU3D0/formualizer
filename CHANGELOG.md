@@ -4,6 +4,34 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-04-27
+
+### Breaking changes
+
+- Bumped the parser SDK track to `2.0.0` because parser AST enums now expose additional variants for new Excel syntax, including LAMBDA immediate-invocation calls and 3D sheet references. Consumers that exhaustively match parser AST enums may need to handle the new cases.
+
+### Added
+
+- Added parser support for Excel reference operators, including `:` range composition and space intersection, with precedence coverage and pretty-printer round-trips. (#69)
+- Added parser support for 3D sheet-range references such as `Sheet1:Sheet3!A1` and `Sheet1:Sheet3!A1:B2`. (#70)
+- Added parser support for dynamic-array spill postfix references such as `A1#`. (#71)
+- Added parser support for real structured/table reference parsing, including special items, column ranges, escapes, Unicode column names, and display round-trips. (#73)
+- Added parser support for LAMBDA immediate invocation syntax such as `LAMBDA(x, x + 1)(2)`. (#68)
+- Added a differential harness that compares the classic token parser and canonical span parser and documents remaining parser-front-end divergence. (#77)
+
+### Fixed
+
+- Accepted lowercase and mixed-case boolean literals such as `true` and `fAlSe` without misclassifying longer named ranges. (#72)
+- Tightened scientific-notation tokenization so incomplete exponent forms no longer consume following operators or references. (#78)
+- Preserved pending `A1:` prefixes before double-quoted strings instead of silently discarding them. (#79)
+- Preserved error kind for sheet-qualified error literals and accepted lowercase sheet-qualified error literals. (#74)
+- Recognized modern Excel `#SPILL!` and `#CALC!` error literals. (#75)
+- Prevented R1C1-shaped inputs from being misclassified as structured table references while preserving valid A1 references such as `R1`. (#76)
+
+### Tooling and quality
+
+- Excluded Pyodide/Emscripten wheels from PyPI uploads while continuing to build and smoke-test them in release workflows.
+
 ## [0.5.7] - 2026-04-26
 
 ### Fixed
@@ -108,7 +136,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.7...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.8...HEAD
+[0.5.8]: https://github.com/PSU3D0/formualizer/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/PSU3D0/formualizer/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/PSU3D0/formualizer/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/PSU3D0/formualizer/compare/v0.5.4...v0.5.5
