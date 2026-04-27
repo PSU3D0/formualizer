@@ -1526,4 +1526,99 @@ mod tests {
         assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
         assert_eq!(tokenizer.items[0].value, "TRUENAME");
     }
+
+    // Issue #79: `parse_string` silently discarded pending `A1:` prefix when
+    // the next character was a double quote. Single-quoted continuations must
+    // remain glued to the prior token; double-quoted strings must always flush.
+
+    #[test]
+    fn test_cross_sheet_range_single_quote_preserved() {
+        let formula = "=Sheet1!A1:'Other Sheet'!B2";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(
+                &TokenType::Operand,
+                "Sheet1!A1:'Other Sheet'!B2",
+                &TokenSubType::Range,
+            )]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        let stream = TokenStream::new(formula).unwrap();
+        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(stream.spans[0].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[0].subtype, TokenSubType::Range);
+        assert_eq!(
+            &formula[stream.spans[0].start..stream.spans[0].end],
+            "Sheet1!A1:'Other Sheet'!B2"
+        );
+    }
+
+    #[test]
+    fn test_string_after_colon_flushes_token() {
+        // Classic tokenizer must flush the pending `A1:` before emitting the
+        // double-quoted string. The exact token classification of the leading
+        // fragment is left to downstream parsing, but the prefix must not be
+        // silently discarded and the text operand must follow it.
+        let formula = "=A1:\"text\"";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert!(
+            tokenizer.items.len() >= 2,
+            "expected at least two tokens, got {:?}",
+            tokenizer.items
+        );
+        let first = &tokenizer.items[0];
+        assert_eq!(first.token_type, TokenType::Operand);
+        assert!(
+            first.value.ends_with("A1:"),
+            "expected first token to retain `A1:` prefix, got {:?}",
+            first.value
+        );
+        let last = tokenizer.items.last().unwrap();
+        assert_eq!(last.token_type, TokenType::Operand);
+        assert_eq!(last.subtype, TokenSubType::Text);
+        assert_eq!(last.value, "\"text\"");
+        assert_eq!(tokenizer.render(), formula);
+
+        // Span tokenizer parity: same flush behavior, full coverage preserved.
+        let stream = TokenStream::new(formula).unwrap();
+        assert!(
+            stream.spans.len() >= 2,
+            "expected at least two spans, got {:?}",
+            stream.spans
+        );
+        let first_span = &stream.spans[0];
+        assert_eq!(first_span.token_type, TokenType::Operand);
+        assert!(
+            formula[first_span.start..first_span.end].ends_with("A1:"),
+            "expected first span to retain `A1:` prefix"
+        );
+        let last_span = stream.spans.last().unwrap();
+        assert_eq!(last_span.token_type, TokenType::Operand);
+        assert_eq!(last_span.subtype, TokenSubType::Text);
+        assert_eq!(&formula[last_span.start..last_span.end], "\"text\"");
+        assert_full_span_coverage(formula, &stream.spans);
+    }
+
+    #[test]
+    fn test_dollar_single_quote_preserved() {
+        // The `$'sheet'!A1` dollar-ref special case must continue to glue the
+        // single-quoted sheet name onto the leading `$`.
+        let formula = "=$'sheet'!A1";
+        let tokenizer = Tokenizer::new(formula).unwrap();
+        assert_token_types!(
+            tokenizer.items,
+            vec![(&TokenType::Operand, "$'sheet'!A1", &TokenSubType::Range)]
+        );
+        assert_eq!(tokenizer.render(), formula);
+
+        let stream = TokenStream::new(formula).unwrap();
+        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(
+            &formula[stream.spans[0].start..stream.spans[0].end],
+            "$'sheet'!A1"
+        );
+    }
+    }
 }

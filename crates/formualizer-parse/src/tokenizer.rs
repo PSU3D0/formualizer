@@ -923,11 +923,16 @@ impl<'a> SpanTokenizer<'a> {
             && self.token_end - self.token_start == 1
             && self.formula.as_bytes()[self.token_start] == b'$';
 
-        if !is_dollar_ref
+        // Issue #79: only single-quoted strings (cross-sheet references like
+        // `A1:'Other Sheet'!B2`) should glue onto a pending `:`-terminated
+        // token. Double-quoted string literals must always flush so the
+        // pending `A1:` prefix is not silently discarded.
+        let glue_to_token = delim == b'\''
             && self.has_token()
             && self.token_end > 0
-            && self.formula.as_bytes()[self.token_end - 1] != b':'
-        {
+            && self.formula.as_bytes()[self.token_end - 1] == b':';
+
+        if !is_dollar_ref && !glue_to_token && self.has_token() {
             self.save_token();
             self.start_token();
         }
@@ -1495,12 +1500,18 @@ impl Tokenizer {
             && self.token_end - self.token_start == 1
             && self.formula.as_bytes()[self.token_start] == b'$';
 
-        if !is_dollar_ref && self.has_token() {
-            // Check if last char is ':'
-            if self.token_end > 0 && self.formula.as_bytes()[self.token_end - 1] != b':' {
-                self.save_token();
-                self.start_token();
-            }
+        // Issue #79: only the single-quote path should keep accumulating
+        // onto a `:`-terminated token (e.g. `A1:'Other Sheet'!B2`). For
+        // double-quoted string literals, always flush the pending token so
+        // that the prefix (e.g. `A1:`) is not silently discarded.
+        let glue_to_token = delim == b'\''
+            && self.has_token()
+            && self.token_end > 0
+            && self.formula.as_bytes()[self.token_end - 1] == b':';
+
+        if !is_dollar_ref && !glue_to_token && self.has_token() {
+            self.save_token();
+            self.start_token();
         }
 
         let string_start = if is_dollar_ref {
