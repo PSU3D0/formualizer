@@ -273,7 +273,7 @@ impl Token {
             TokenSubType::Text
         } else if value.starts_with('#') {
             TokenSubType::Error
-        } else if value == "TRUE" || value == "FALSE" {
+        } else if value.eq_ignore_ascii_case("TRUE") || value.eq_ignore_ascii_case("FALSE") {
             TokenSubType::Logical
         } else if value.parse::<f64>().is_ok() {
             TokenSubType::Number
@@ -289,7 +289,7 @@ impl Token {
             TokenSubType::Text
         } else if value.starts_with('#') {
             TokenSubType::Error
-        } else if value == "TRUE" || value == "FALSE" {
+        } else if value.eq_ignore_ascii_case("TRUE") || value.eq_ignore_ascii_case("FALSE") {
             TokenSubType::Logical
         } else if value.parse::<f64>().is_ok() {
             TokenSubType::Number
@@ -305,7 +305,8 @@ impl Token {
             TokenSubType::Text
         } else if value_str.starts_with('#') {
             TokenSubType::Error
-        } else if value_str == "TRUE" || value_str == "FALSE" {
+        } else if value_str.eq_ignore_ascii_case("TRUE") || value_str.eq_ignore_ascii_case("FALSE")
+        {
             TokenSubType::Logical
         } else if value_str.parse::<f64>().is_ok() {
             TokenSubType::Number
@@ -586,7 +587,7 @@ fn operand_subtype(value_str: &str) -> TokenSubType {
         TokenSubType::Text
     } else if value_str.starts_with('#') {
         TokenSubType::Error
-    } else if value_str == "TRUE" || value_str == "FALSE" {
+    } else if value_str.eq_ignore_ascii_case("TRUE") || value_str.eq_ignore_ascii_case("FALSE") {
         TokenSubType::Logical
     } else if value_str.parse::<f64>().is_ok() {
         TokenSubType::Number
