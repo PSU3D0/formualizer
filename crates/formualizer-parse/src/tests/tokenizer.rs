@@ -1733,4 +1733,60 @@ mod tests {
         );
     }
     }
+
+    mod modern_error_literals {
+        use super::*;
+
+        fn assert_error_token(formula: &str, expected_value: &str) {
+            let tokenizer = Tokenizer::new(formula)
+                .unwrap_or_else(|e| panic!("failed to tokenize {formula}: {e}"));
+            assert_eq!(tokenizer.items.len(), 1, "formula {formula}");
+            assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
+            assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+            assert_eq!(tokenizer.items[0].value, expected_value);
+        }
+
+        #[test]
+        fn spill_uppercase() {
+            assert_error_token("=#SPILL!", "#SPILL!");
+        }
+
+        #[test]
+        fn spill_lowercase() {
+            assert_error_token("=#spill!", "#spill!");
+        }
+
+        #[test]
+        fn calc_uppercase() {
+            assert_error_token("=#CALC!", "#CALC!");
+        }
+
+        #[test]
+        fn calc_lowercase() {
+            assert_error_token("=#calc!", "#calc!");
+        }
+
+        #[test]
+        fn bogus_modern_error_is_rejected() {
+            assert!(Tokenizer::new("=#BOGUS!").is_err());
+        }
+
+        #[test]
+        fn typo_spil_is_rejected() {
+            assert!(Tokenizer::new("=#SPIL!").is_err());
+        }
+
+        #[test]
+        fn missing_bang_spill_is_rejected() {
+            // Without the trailing '!' this is not a complete error literal.
+            assert!(Tokenizer::new("=#SPILL").is_err());
+        }
+
+        #[test]
+        fn legacy_error_literals_still_tokenize() {
+            assert_error_token("=#REF!", "#REF!");
+            assert_error_token("=#DIV/0!", "#DIV/0!");
+            assert_error_token("=#N/A", "#N/A");
+        }
+    }
 }
