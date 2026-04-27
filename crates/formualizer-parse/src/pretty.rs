@@ -33,7 +33,11 @@ fn infix_info(op: &str) -> (u8, Associativity) {
 }
 
 fn unary_precedence(op: &str) -> u8 {
-    if op == "%" { 7 } else { 6 }
+    match op {
+        "#" => 9,
+        "%" => 7,
+        _ => 6,
+    }
 }
 
 fn node_precedence(ast: &ASTNode) -> u8 {
@@ -41,7 +45,7 @@ fn node_precedence(ast: &ASTNode) -> u8 {
         ASTNodeType::BinaryOp { op, .. } => infix_info(op).0,
         ASTNodeType::UnaryOp { op, .. } => unary_precedence(op),
         // Treat everything else as an atom.
-        _ => 9,
+        _ => 10,
     }
 }
 
@@ -96,7 +100,7 @@ fn child_needs_parens(
 
 fn unary_operand_needs_parens(unary_op: &str, operand: &ASTNode) -> bool {
     match unary_op {
-        "%" => matches!(operand.node_type, ASTNodeType::BinaryOp { .. }),
+        "%" | "#" => matches!(operand.node_type, ASTNodeType::BinaryOp { .. }),
         _ => {
             let operand_prec = node_precedence(operand);
             operand_prec < unary_precedence(unary_op)
@@ -139,8 +143,8 @@ fn pretty_print_node(ast: &ASTNode) -> String {
                 inner
             };
 
-            if op == "%" {
-                format!("{inner}%")
+            if op == "%" || op == "#" {
+                format!("{inner}{op}")
             } else {
                 format!("{op}{inner}")
             }

@@ -1246,6 +1246,214 @@ mod tests {
             assert_eq!(format!("{}", ExcelErrorKind::Calc), "#CALC!");
         }
     }
+
+    mod spill_operator {
+        use super::parse_formula;
+        use crate::parser::{ASTNodeType, ReferenceType};
+        use crate::pretty::pretty_parse_render;
+
+        fn assert_unary_ref(ast: crate::parser::ASTNode, op: &str, expected: ReferenceType) {
+            match ast.node_type {
+                ASTNodeType::UnaryOp { op: o, expr } => {
+                    assert_eq!(o, op);
+                    match expr.node_type {
+                        ASTNodeType::Reference { reference, .. } => {
+                            assert_eq!(reference, expected);
+                        }
+                        other => panic!("expected Reference under UnaryOp, got {other:?}"),
+                    }
+                }
+                other => panic!("expected UnaryOp({op}, ...), got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_spill_basic() {
+            // Classic Parser path
+            let ast = parse_formula("=A1#").expect("parse =A1#");
+            assert_unary_ref(ast, "#", ReferenceType::cell(None, 1, 1));
+
+            // Span parse path
+            let ast = crate::parser::parse("=A1#").expect("span parse =A1#");
+            assert_unary_ref(ast, "#", ReferenceType::cell(None, 1, 1));
+        }
+
+        #[test]
+        fn test_spill_in_arithmetic() {
+            for ast in [
+                parse_formula("=B2#+1").expect("classic"),
+                crate::parser::parse("=B2#+1").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::BinaryOp { op, left, right } => {
+                        assert_eq!(op, "+");
+                        match left.node_type {
+                            ASTNodeType::UnaryOp { op: o, expr } => {
+                                assert_eq!(o, "#");
+                                assert!(matches!(expr.node_type, ASTNodeType::Reference { .. }));
+                            }
+                            other => panic!("expected UnaryOp on left, got {other:?}"),
+                        }
+                        match right.node_type {
+                            ASTNodeType::Literal(_) => {}
+                            other => panic!("expected literal on right, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected BinaryOp, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_spill_in_function() {
+            for ast in [
+                parse_formula("=SUM(A1#)").expect("classic"),
+                crate::parser::parse("=SUM(A1#)").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert_eq!(name, "SUM");
+                        assert_eq!(args.len(), 1);
+                        match &args[0].node_type {
+                            ASTNodeType::UnaryOp { op, expr } => {
+                                assert_eq!(op, "#");
+                                assert!(matches!(expr.node_type, ASTNodeType::Reference { .. }));
+                            }
+                            other => panic!("expected UnaryOp arg, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected Function, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_spill_with_implicit_intersection() {
+            // =@A1# → @ wraps the spill ref.
+            for ast in [
+                parse_formula("=@A1#").expect("classic"),
+                crate::parser::parse("=@A1#").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::UnaryOp { op, expr } => {
+                        assert_eq!(op, "@");
+                        match expr.node_type {
+                            ASTNodeType::UnaryOp {
+                                op: inner_op,
+                                expr: inner,
+                            } => {
+                                assert_eq!(inner_op, "#");
+                                assert!(matches!(inner.node_type, ASTNodeType::Reference { .. }));
+                            }
+                            other => panic!("expected UnaryOp(#) under @, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected UnaryOp(@, ...), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_spill_sheet_qualified() {
+            for ast in [
+                parse_formula("=Sheet1!A1#").expect("classic"),
+                crate::parser::parse("=Sheet1!A1#").expect("span"),
+            ] {
+                assert_unary_ref(
+                    ast,
+                    "#",
+                    ReferenceType::cell(Some("Sheet1".to_string()), 1, 1),
+                );
+            }
+        }
+
+        #[test]
+        fn test_anchorarray_xlfn_still_function() {
+            // Legacy serialization should still be a function call.
+            for ast in [
+                parse_formula("=_xlfn.ANCHORARRAY(A1)").expect("classic"),
+                crate::parser::parse("=_xlfn.ANCHORARRAY(A1)").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        assert!(name.eq_ignore_ascii_case("_xlfn.ANCHORARRAY"));
+                        assert_eq!(args.len(), 1);
+                    }
+                    other => panic!("expected Function, got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_error_literal_still_parses() {
+            // Negative regression — error literals must remain literals.
+            let ast = parse_formula("=#REF!").expect("=#REF!");
+            assert!(matches!(ast.node_type, ASTNodeType::Literal(_)));
+            let ast = crate::parser::parse("=#REF!").expect("span =#REF!");
+            assert!(matches!(ast.node_type, ASTNodeType::Literal(_)));
+        }
+
+        #[test]
+        fn test_sheet_prefixed_error_literal_still_parses() {
+            // The key invariant for #71: `Sheet1!#REF!` must NOT be split
+            // into `Sheet1!` + spill `#`. The classic Parser path produces a
+            // Reference node (sheet-qualified error) and the span path
+            // produces a Literal(Error) — both pre-existing behaviors that we
+            // simply must not regress.
+            let classic = parse_formula("=Sheet1!#REF!").expect("classic");
+            assert!(matches!(
+                classic.node_type,
+                ASTNodeType::Reference { .. } | ASTNodeType::Literal(_)
+            ));
+            let span = crate::parser::parse("=Sheet1!#REF!").expect("span");
+            assert!(matches!(
+                span.node_type,
+                ASTNodeType::Reference { .. } | ASTNodeType::Literal(_)
+            ));
+        }
+
+        #[test]
+        fn test_double_spill_parses() {
+            // =A1## — accept and produce nested UnaryOp(#, UnaryOp(#, A1)).
+            for ast in [
+                parse_formula("=A1##").expect("classic"),
+                crate::parser::parse("=A1##").expect("span"),
+            ] {
+                match ast.node_type {
+                    ASTNodeType::UnaryOp { op, expr } => {
+                        assert_eq!(op, "#");
+                        match expr.node_type {
+                            ASTNodeType::UnaryOp { op: inner_op, .. } => {
+                                assert_eq!(inner_op, "#");
+                            }
+                            other => panic!("expected nested UnaryOp(#), got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected outer UnaryOp(#), got {other:?}"),
+                }
+            }
+        }
+
+        #[test]
+        fn test_bare_hash_is_error() {
+            assert!(parse_formula("=#").is_err());
+            assert!(crate::parser::parse("=#").is_err());
+        }
+
+        #[test]
+        fn test_spill_display_roundtrip() {
+            // parse → pretty → parse must yield the same AST shape.
+            let pretty = pretty_parse_render("=A1#").expect("pretty");
+            assert_eq!(pretty, "=A1#");
+            let again = pretty_parse_render(&pretty).expect("pretty round");
+            assert_eq!(pretty, again);
+
+            let pretty = pretty_parse_render("=SUM(B2#)+1").expect("pretty");
+            assert_eq!(pretty, "=SUM(B2#) + 1");
+            let again = pretty_parse_render(&pretty).expect("pretty round");
+            assert_eq!(pretty, again);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1473,7 +1681,7 @@ mod normalise_tests {
 mod reference_tests {
     use crate::parser::ReferenceType;
     use crate::parser::*;
-    use crate::tokenizer::Tokenizer;
+    use crate::tokenizer::{TokenType, Tokenizer};
 
     #[test]
     fn test_cell_reference_parsing() {
@@ -2173,17 +2381,18 @@ mod reference_tests {
 
     #[test]
     fn test_table_reference_with_spill() {
-        // Test a table reference with spill operator
-        // Currently our implementation doesn't support spill operators (#),
-        // which is why we're seeing an error. This test confirms the current behavior.
+        // Spill operator (#) postfix on a table reference (issue #71).
         let formula = "=Table1[#Data]#";
-        let tokenizer_result = Tokenizer::new(formula);
-
-        // Verify that the current implementation rejects the spill operator
-        assert!(tokenizer_result.is_err());
-
-        // Note: In the future, we should enhance parsing to support spill operators
-        // for dynamic array formulas and structured references
+        let tokenizer = Tokenizer::new(formula).expect("tokenize spill on table ref");
+        // Last non-whitespace token is the spill postfix `#`.
+        let last = tokenizer
+            .items
+            .iter()
+            .rev()
+            .find(|t| t.token_type != TokenType::Whitespace)
+            .expect("non-empty");
+        assert_eq!(last.token_type, TokenType::OpPostfix);
+        assert_eq!(last.value, "#");
     }
 
     #[test]
