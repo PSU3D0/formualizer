@@ -1649,21 +1649,34 @@ mod tests {
         let tokenizer = Tokenizer::new(formula).unwrap();
         assert_token_types!(
             tokenizer.items,
-            vec![(
-                &TokenType::Operand,
-                "Sheet1!A1:'Other Sheet'!B2",
-                &TokenSubType::Range,
-            )]
+            vec![
+                (&TokenType::Operand, "Sheet1!A1", &TokenSubType::Range),
+                (&TokenType::OpInfix, ":", &TokenSubType::Range),
+                (
+                    &TokenType::Operand,
+                    "'Other Sheet'!B2",
+                    &TokenSubType::Range
+                ),
+            ]
         );
         assert_eq!(tokenizer.render(), formula);
 
         let stream = TokenStream::new(formula).unwrap();
-        assert_eq!(stream.spans.len(), 1);
+        assert_eq!(stream.spans.len(), 3);
         assert_eq!(stream.spans[0].token_type, TokenType::Operand);
         assert_eq!(stream.spans[0].subtype, TokenSubType::Range);
         assert_eq!(
             &formula[stream.spans[0].start..stream.spans[0].end],
-            "Sheet1!A1:'Other Sheet'!B2"
+            "Sheet1!A1"
+        );
+        assert_eq!(stream.spans[1].token_type, TokenType::OpInfix);
+        assert_eq!(stream.spans[1].subtype, TokenSubType::Range);
+        assert_eq!(&formula[stream.spans[1].start..stream.spans[1].end], ":");
+        assert_eq!(stream.spans[2].token_type, TokenType::Operand);
+        assert_eq!(stream.spans[2].subtype, TokenSubType::Range);
+        assert_eq!(
+            &formula[stream.spans[2].start..stream.spans[2].end],
+            "'Other Sheet'!B2"
         );
     }
 
@@ -1882,12 +1895,12 @@ mod tests {
             let classic = classic_non_ws("=Sheet1!#REF!");
             assert_eq!(classic.len(), 1);
             assert_eq!(classic[0].0, TokenType::Operand);
-            assert_eq!(classic[0].2, "Sheet1!#REF!");
+            assert_eq!(classic[0].2, "#REF!");
             assert_ne!(classic[0].1, TokenSubType::None);
             let span = span_non_ws("=Sheet1!#REF!");
             assert_eq!(span.len(), 1);
             assert_eq!(span[0].0, TokenType::Operand);
-            assert_eq!(span[0].2, "Sheet1!#REF!");
+            assert_eq!(span[0].2, "#REF!");
             assert_ne!(span[0].1, TokenSubType::None);
         }
 
