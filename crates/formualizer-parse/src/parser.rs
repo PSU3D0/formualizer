@@ -257,6 +257,31 @@ pub enum ReferenceType {
         end_row_abs: bool,
         end_col_abs: bool,
     },
+    /// 3D cell reference (`Sheet1:Sheet3!A1`).
+    ///
+    /// Excel evaluates aggregating functions across each sheet between
+    /// `sheet_first` and `sheet_last` (inclusive) at the same cell address.
+    Cell3D {
+        sheet_first: String,
+        sheet_last: String,
+        row: u32,
+        col: u32,
+        row_abs: bool,
+        col_abs: bool,
+    },
+    /// 3D range reference (`Sheet1:Sheet3!A1:B2`).
+    Range3D {
+        sheet_first: String,
+        sheet_last: String,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
+    },
     External(ExternalReference),
     Table(TableReference),
     NamedRange(String),
@@ -363,6 +388,17 @@ struct OpenFormulaRefPart {
 
 type AxisPartWithAbs = Option<(u32, bool)>;
 type RangePartWithAbs = (AxisPartWithAbs, AxisPartWithAbs);
+
+/// Result of extracting the sheet portion of a reference string.
+#[derive(Debug, Clone)]
+enum SheetSpec {
+    /// No sheet segment was present (e.g. plain `A1`).
+    None,
+    /// Standard single-sheet reference (`Sheet1!A1`, `'Sheet 1'!A1`).
+    Single(String),
+    /// Excel 3D sheet range (`Sheet1:Sheet3!A1`, `'Sheet 1':'Sheet 3'!A1`).
+    Range { first: String, last: String },
+}
 
 impl ReferenceType {
     /// Build a cell reference with relative anchors.
@@ -541,7 +577,17 @@ impl ReferenceType {
     }
 
     fn parse_excel_sheet_ref(reference: &str) -> Result<SheetRef<'static>, ParsingError> {
-        let (sheet, ref_part) = Self::extract_sheet_name(reference);
+        let (spec, ref_part) = Self::extract_sheet_spec(reference);
+        if matches!(spec, SheetSpec::Range { .. }) {
+            return Err(ParsingError::InvalidReference(
+                "3D references are not supported for SheetRef".to_string(),
+            ));
+        }
+        let sheet = match spec {
+            SheetSpec::None => None,
+            SheetSpec::Single(name) => Some(name),
+            SheetSpec::Range { .. } => unreachable!(),
+        };
 
         if ref_part.contains('[') {
             return Err(ParsingError::InvalidReference(
@@ -691,6 +737,72 @@ impl ReferenceType {
         Ok((None, Some((row1, row_abs))))
     }
 
+    fn parse_3d_reference(first: &str, last: &str, ref_part: &str) -> Result<Self, ParsingError> {
+        if first.is_empty() || last.is_empty() {
+            return Err(ParsingError::InvalidReference(format!(
+                "3D reference requires two sheet names: {first}:{last}!{ref_part}"
+            )));
+        }
+        if ref_part.is_empty() {
+            return Err(ParsingError::InvalidReference(format!(
+                "3D reference {first}:{last}! is missing a cell or range"
+            )));
+        }
+        // 3D refs cannot point at structured table tokens.
+        if ref_part.contains('[') {
+            return Err(ParsingError::InvalidReference(format!(
+                "3D reference {first}:{last}!{ref_part} cannot target a table"
+            )));
+        }
+
+        if ref_part.contains(':') {
+            let mut parts = ref_part.splitn(2, ':');
+            let start = parts.next().unwrap();
+            let end = parts.next().ok_or_else(|| {
+                ParsingError::InvalidReference(format!("Invalid range: {ref_part}"))
+            })?;
+            let (start_col, start_row) = Self::parse_range_part_with_abs(start)?;
+            let (end_col, end_row) = Self::parse_range_part_with_abs(end)?;
+
+            let split = |bound: Option<(u32, bool)>| match bound {
+                Some((index, abs)) => (Some(index), abs),
+                None => (None, false),
+            };
+            let (start_col, start_col_abs) = split(start_col);
+            let (start_row, start_row_abs) = split(start_row);
+            let (end_col, end_col_abs) = split(end_col);
+            let (end_row, end_row_abs) = split(end_row);
+
+            Ok(ReferenceType::Range3D {
+                sheet_first: first.to_string(),
+                sheet_last: last.to_string(),
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            })
+        } else {
+            let (col, row, col_abs, row_abs) =
+                Self::parse_cell_reference(ref_part).map_err(|_| {
+                    ParsingError::InvalidReference(format!(
+                        "Invalid 3D reference target: {ref_part}"
+                    ))
+                })?;
+            Ok(ReferenceType::Cell3D {
+                sheet_first: first.to_string(),
+                sheet_last: last.to_string(),
+                row,
+                col,
+                row_abs,
+                col_abs,
+            })
+        }
+    }
+
     fn parse_excel_reference(reference: &str) -> Result<Self, ParsingError> {
         // Excel structured reference shorthands that appear as a single bracketed token.
         //
@@ -702,8 +814,21 @@ impl ReferenceType {
             return Self::parse_bracketed_structured_reference(reference);
         }
 
-        // Extract sheet name if present
-        let (sheet, ref_part) = Self::extract_sheet_name(reference);
+        // Extract sheet specification (none / single / 3D range) if present.
+        let (sheet_spec, ref_part) = Self::extract_sheet_spec(reference);
+
+        // 3D references (`Sheet1:Sheet3!A1` / `Sheet1:Sheet3!A1:B2`) take a
+        // dedicated path because they cannot reuse the 2D Cell/Range carriers.
+        if let SheetSpec::Range { first, last, .. } = &sheet_spec {
+            return Self::parse_3d_reference(first, last, &ref_part);
+        }
+
+        let sheet = match sheet_spec {
+            SheetSpec::None => None,
+            SheetSpec::Single(name) => Some(name),
+            // Already handled above.
+            SheetSpec::Range { .. } => unreachable!(),
+        };
 
         // Table references live in the ref_part (e.g., "Table1[Column]").
         // Sheet names can contain '[' for external workbook refs (e.g., "[1]Sheet1!A1").
@@ -935,6 +1060,55 @@ impl Display for ReferenceType {
                         range_part
                     }
                 }
+                ReferenceType::Cell3D {
+                    sheet_first,
+                    sheet_last,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } => {
+                    let col_str = Self::format_col(*col, *col_abs);
+                    let row_str = Self::format_row(*row, *row_abs);
+                    let prefix = format_3d_sheet_prefix(sheet_first, sheet_last);
+                    format!("{prefix}!{col_str}{row_str}")
+                }
+                ReferenceType::Range3D {
+                    sheet_first,
+                    sheet_last,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
+                } => {
+                    let start_ref = match (start_col, start_row) {
+                        (Some(col), Some(row)) => format!(
+                            "{}{}",
+                            Self::format_col(*col, *start_col_abs),
+                            Self::format_row(*row, *start_row_abs)
+                        ),
+                        (Some(col), None) => Self::format_col(*col, *start_col_abs),
+                        (None, Some(row)) => Self::format_row(*row, *start_row_abs),
+                        (None, None) => "".to_string(),
+                    };
+                    let end_ref = match (end_col, end_row) {
+                        (Some(col), Some(row)) => format!(
+                            "{}{}",
+                            Self::format_col(*col, *end_col_abs),
+                            Self::format_row(*row, *end_row_abs)
+                        ),
+                        (Some(col), None) => Self::format_col(*col, *end_col_abs),
+                        (None, Some(row)) => Self::format_row(*row, *end_row_abs),
+                        (None, None) => "".to_string(),
+                    };
+                    let range_part = format!("{start_ref}:{end_ref}");
+                    let prefix = format_3d_sheet_prefix(sheet_first, sheet_last);
+                    format!("{prefix}!{range_part}")
+                }
                 ReferenceType::External(ext) => ext.raw.clone(),
                 ReferenceType::Table(table_ref) => {
                     if let Some(specifier) = &table_ref.specifier {
@@ -962,6 +1136,21 @@ impl Display for ReferenceType {
     }
 }
 
+/// Render the `Sheet1:SheetN` portion of a 3D reference. Either side may
+/// require quoting independently; quoting one side does not force the other
+/// to be quoted, matching Excel's behaviour.
+fn format_3d_sheet_prefix(first: &str, last: &str) -> String {
+    let format_one = |name: &str| -> String {
+        if sheet_name_needs_quoting(name) {
+            let escaped = name.replace('\'', "''");
+            format!("'{escaped}'")
+        } else {
+            name.to_string()
+        }
+    };
+    format!("{}:{}", format_one(first), format_one(last))
+}
+
 impl TryFrom<&str> for ReferenceType {
     type Error = ParsingError;
 
@@ -984,51 +1173,130 @@ impl ReferenceType {
         format!("{self}")
     }
 
-    /// Extract a sheet name from a reference using byte operations.
-    fn extract_sheet_name(reference: &str) -> (Option<String>, String) {
+    /// Read one sheet-name segment starting at `start`. Returns the parsed
+    /// (unescaped) name, the byte offset directly after the closing quote
+    /// (when quoted) or the last alphanumeric byte (when bare), and a flag
+    /// indicating whether the segment was quoted.
+    fn read_sheet_segment(reference: &str, start: usize) -> Option<(String, usize, bool)> {
         let bytes = reference.as_bytes();
-        let mut i = 0;
+        if start >= bytes.len() {
+            return None;
+        }
 
-        // Handle quoted sheet names.
-        // Excel escapes a single quote inside a quoted sheet name by doubling it.
-        // Example: 'Bob''s Sheet'!A1
-        if i < bytes.len() && bytes[i] == b'\'' {
-            i += 1;
-            let start = i;
-
+        if bytes[start] == b'\'' {
+            // Quoted segment. Excel doubles a literal `'` inside the name.
+            let mut i = start + 1;
+            let body_start = i;
             while i < bytes.len() {
                 if bytes[i] == b'\'' {
-                    // Escaped quote inside sheet name: ''
                     if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
                         i += 2;
                         continue;
                     }
-
-                    // Closing quote followed by '!'
-                    if i + 1 < bytes.len() && bytes[i + 1] == b'!' {
-                        let raw = &reference[start..i];
-                        let sheet = raw.replace("''", "'");
-                        let ref_part = String::from(&reference[i + 2..]);
-                        return (Some(sheet), ref_part);
-                    }
+                    let raw = &reference[body_start..i];
+                    let name = raw.replace("''", "'");
+                    return Some((name, i + 1, true));
                 }
-
                 i += 1;
+            }
+            None
+        } else {
+            // Bare segment. Sheet names cannot contain ':', '!', '\'', or any
+            // ASCII-whitespace/operator characters in unquoted form.
+            let mut i = start;
+            while i < bytes.len() {
+                let b = bytes[i];
+                match b {
+                    b':' | b'!' | b'\'' | b' ' | b'\t' | b'\n' | b'\r' => break,
+                    _ => i += 1,
+                }
+            }
+            if i == start {
+                None
+            } else {
+                Some((reference[start..i].to_string(), i, false))
+            }
+        }
+    }
+
+    /// Extract sheet specification (none, single sheet, or 3D sheet range)
+    /// from a reference string.
+    fn extract_sheet_spec(reference: &str) -> (SheetSpec, String) {
+        let Some((first_name, after_first, first_quoted)) = Self::read_sheet_segment(reference, 0)
+        else {
+            // No sheet segment recognised – fall back to looking for a bare
+            // `!` separator (e.g. external book tokens such as `[1]Sheet!A1`).
+            return Self::extract_sheet_spec_fallback(reference);
+        };
+        let _ = first_quoted;
+
+        let bytes = reference.as_bytes();
+
+        // 3D form: Name1:Name2!...
+        if after_first < bytes.len() && bytes[after_first] == b':' {
+            let second_start = after_first + 1;
+            if let Some((second_name, after_second, _)) =
+                Self::read_sheet_segment(reference, second_start)
+                && after_second < bytes.len()
+                && bytes[after_second] == b'!'
+            {
+                let ref_part = reference[after_second + 1..].to_string();
+                return (
+                    SheetSpec::Range {
+                        first: first_name,
+                        last: second_name,
+                    },
+                    ref_part,
+                );
+            }
+
+            // The reference looks like the start of a 3D ref but the second
+            // segment is malformed (e.g. `Sheet1:!A1`). Surface the broken
+            // form as a 3D range with an empty `last` so the parser layer
+            // can report a precise error rather than silently treating it as
+            // a sheet name containing `:`.
+            if second_start < bytes.len() {
+                if let Some(bang) = reference[second_start..].find('!') {
+                    let ref_part = reference[second_start + bang + 1..].to_string();
+                    return (
+                        SheetSpec::Range {
+                            first: first_name,
+                            last: String::new(),
+                        },
+                        ref_part,
+                    );
+                }
             }
         }
 
-        // Handle unquoted sheet names
-        i = 0;
+        // Single-sheet form: Name!...
+        if after_first < bytes.len() && bytes[after_first] == b'!' {
+            let ref_part = reference[after_first + 1..].to_string();
+            return (SheetSpec::Single(first_name), ref_part);
+        }
+
+        // The leading segment did not terminate in `!`; treat the whole input
+        // as if no sheet were present and fall through to the legacy logic.
+        Self::extract_sheet_spec_fallback(reference)
+    }
+
+    fn extract_sheet_spec_fallback(reference: &str) -> (SheetSpec, String) {
+        let bytes = reference.as_bytes();
+        // Handle unquoted sheet names containing characters our segment
+        // reader rejects (such as bracketed external workbook tokens, e.g.
+        // `[1]Sheet1!A1`). The original implementation scanned for the first
+        // `!` after byte 0; preserve that behaviour for compatibility.
+        let mut i = 0;
         while i < bytes.len() {
             if bytes[i] == b'!' && i > 0 {
-                let sheet = String::from(&reference[0..i]);
-                let ref_part = String::from(&reference[i + 1..]);
-                return (Some(sheet), ref_part);
+                let sheet = reference[..i].to_string();
+                let ref_part = reference[i + 1..].to_string();
+                return (SheetSpec::Single(sheet), ref_part);
             }
             i += 1;
         }
 
-        (None, reference.to_string())
+        (SheetSpec::None, reference.to_string())
     }
 
     /// Parse a table reference like "Table1[Column1]" or more complex ones
@@ -1302,6 +1570,7 @@ impl ReferenceType {
                     range_part
                 }
             }
+            ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => format!("{self}"),
             ReferenceType::External(ext) => ext.raw.clone(),
             ReferenceType::Table(table_ref) => {
                 if let Some(specifier) = &table_ref.specifier {
@@ -1622,6 +1891,44 @@ impl ASTNode {
                     end_col_abs,
                 });
             }
+            RefView::Cell3D {
+                sheet_first,
+                sheet_last,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => out.push(ReferenceType::Cell3D {
+                sheet_first: sheet_first.to_string(),
+                sheet_last: sheet_last.to_string(),
+                row,
+                col,
+                row_abs,
+                col_abs,
+            }),
+            RefView::Range3D {
+                sheet_first,
+                sheet_last,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            } => out.push(ReferenceType::Range3D {
+                sheet_first: sheet_first.to_string(),
+                sheet_last: sheet_last.to_string(),
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            }),
             RefView::External {
                 raw,
                 book,
@@ -1660,6 +1967,27 @@ impl ASTNode {
                     && (target_name.is_none() || target_name == Some(current_sheet.as_str()))
                 {
                     *sheet = Some(new_name.to_string());
+                }
+            }
+            ASTNodeType::Reference {
+                reference:
+                    ReferenceType::Cell3D {
+                        sheet_first,
+                        sheet_last,
+                        ..
+                    }
+                    | ReferenceType::Range3D {
+                        sheet_first,
+                        sheet_last,
+                        ..
+                    },
+                ..
+            } => {
+                if target_name.is_none() || target_name == Some(sheet_first.as_str()) {
+                    *sheet_first = new_name.to_string();
+                }
+                if target_name.is_none() || target_name == Some(sheet_last.as_str()) {
+                    *sheet_last = new_name.to_string();
                 }
             }
             ASTNodeType::UnaryOp { expr, .. } => {
@@ -1713,6 +2041,28 @@ pub enum RefView<'a> {
         end_row_abs: bool,
         end_col_abs: bool,
     },
+    /// 3D cell view (`Sheet1:Sheet3!A1`).
+    Cell3D {
+        sheet_first: &'a str,
+        sheet_last: &'a str,
+        row: u32,
+        col: u32,
+        row_abs: bool,
+        col_abs: bool,
+    },
+    /// 3D range view (`Sheet1:Sheet3!A1:B2`).
+    Range3D {
+        sheet_first: &'a str,
+        sheet_last: &'a str,
+        start_row: Option<u32>,
+        start_col: Option<u32>,
+        end_row: Option<u32>,
+        end_col: Option<u32>,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
+    },
     External {
         raw: &'a str,
         book: &'a str,
@@ -1756,6 +2106,44 @@ impl<'a> From<&'a ReferenceType> for RefView<'a> {
                 end_col_abs,
             } => RefView::Range {
                 sheet: sheet.as_deref(),
+                start_row: *start_row,
+                start_col: *start_col,
+                end_row: *end_row,
+                end_col: *end_col,
+                start_row_abs: *start_row_abs,
+                start_col_abs: *start_col_abs,
+                end_row_abs: *end_row_abs,
+                end_col_abs: *end_col_abs,
+            },
+            ReferenceType::Cell3D {
+                sheet_first,
+                sheet_last,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => RefView::Cell3D {
+                sheet_first: sheet_first.as_str(),
+                sheet_last: sheet_last.as_str(),
+                row: *row,
+                col: *col,
+                row_abs: *row_abs,
+                col_abs: *col_abs,
+            },
+            ReferenceType::Range3D {
+                sheet_first,
+                sheet_last,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            } => RefView::Range3D {
+                sheet_first: sheet_first.as_str(),
+                sheet_last: sheet_last.as_str(),
                 start_row: *start_row,
                 start_col: *start_col,
                 end_row: *end_row,

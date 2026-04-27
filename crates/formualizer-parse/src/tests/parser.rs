@@ -3433,6 +3433,203 @@ mod semantics_regressions {
             ReferenceType::cell(Some("Bob's Sheet".to_string()), 1, 1)
         );
     }
+
+    mod sheet_3d_references {
+        use crate::parser::{
+            ASTNode, ASTNodeType, Parser, ParserError, ReferenceType, parse as parse_span,
+        };
+        use crate::tokenizer::Tokenizer;
+
+        fn parse_classic(formula: &str) -> Result<ASTNode, ParserError> {
+            let tokenizer = Tokenizer::new(formula).map_err(|e| ParserError {
+                message: e.to_string(),
+                position: Some(e.pos),
+            })?;
+            let mut parser = Parser::new(tokenizer.items, false);
+            parser.parse()
+        }
+
+        fn parse_both(formula: &str) -> ASTNode {
+            let classic = parse_classic(formula).expect("classic parser");
+            let span = parse_span(formula).expect("span parser");
+            // Both paths should agree on the parsed reference shape.
+            assert_eq!(classic.node_type, span.node_type);
+            classic
+        }
+
+        fn extract_reference(ast: &ASTNode) -> &ReferenceType {
+            match &ast.node_type {
+                ASTNodeType::Reference { reference, .. } => reference,
+                other => panic!("expected reference, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn test_3d_cell_bare() {
+            let ast = parse_both("=Sheet1:Sheet3!A1");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_cell_quoted() {
+            let ast = parse_both("='Sheet 1':'Sheet 3'!A1");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Sheet 1".to_string(),
+                    sheet_last: "Sheet 3".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_range() {
+            let ast = parse_both("=Sheet1:Sheet3!A1:B2");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Range3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(2),
+                    end_col: Some(2),
+                    start_row_abs: false,
+                    start_col_abs: false,
+                    end_row_abs: false,
+                    end_col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_range_absolute() {
+            let ast = parse_both("=Sheet1:Sheet3!$A$1:$B$2");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Range3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    start_row: Some(1),
+                    start_col: Some(1),
+                    end_row: Some(2),
+                    end_col: Some(2),
+                    start_row_abs: true,
+                    start_col_abs: true,
+                    end_row_abs: true,
+                    end_col_abs: true,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_inside_sum() {
+            let ast = parse_both("=SUM(Sheet1:Sheet3!A1)");
+            let args = match &ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    assert_eq!(name, "SUM");
+                    args
+                }
+                other => panic!("expected function, got {other:?}"),
+            };
+            assert_eq!(args.len(), 1);
+            assert_eq!(
+                extract_reference(&args[0]),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Sheet1".to_string(),
+                    sheet_last: "Sheet3".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_3d_quoted_escape() {
+            let ast = parse_both("='Bob''s Sheet':'End Sheet'!A1");
+            assert_eq!(
+                extract_reference(&ast),
+                &ReferenceType::Cell3D {
+                    sheet_first: "Bob's Sheet".to_string(),
+                    sheet_last: "End Sheet".to_string(),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_sheet_named_with_embedded_colon() {
+            // Excel forbids ':' in sheet names, so a quoted sheet whose name
+            // contains ':' must still parse as a single-sheet reference.
+            let r = ReferenceType::from_string("'Weird:Name'!A1").unwrap();
+            assert_eq!(
+                r,
+                ReferenceType::Cell {
+                    sheet: Some("Weird:Name".to_string()),
+                    row: 1,
+                    col: 1,
+                    row_abs: false,
+                    col_abs: false,
+                }
+            );
+        }
+
+        #[test]
+        fn test_incomplete_3d_reference() {
+            // Sheet1: with empty second sheet name should be a parse error.
+            assert!(parse_classic("=Sheet1:!A1").is_err());
+            assert!(parse_span("=Sheet1:!A1").is_err());
+        }
+
+        #[test]
+        fn test_3d_without_cell_part() {
+            // Sheet range without any cell reference is invalid.
+            assert!(parse_classic("=Sheet1:Sheet3!").is_err());
+            assert!(parse_span("=Sheet1:Sheet3!").is_err());
+        }
+
+        #[test]
+        fn test_3d_display_roundtrip() {
+            let cases = [
+                "=Sheet1:Sheet3!A1",
+                "=Sheet1:Sheet3!A1:B2",
+                "=Sheet1:Sheet3!$A$1:$B$2",
+                "='Sheet 1':'Sheet 3'!A1",
+                "='Bob''s Sheet':'End Sheet'!A1",
+            ];
+            for input in cases {
+                let ast = parse_both(input);
+                let r = extract_reference(&ast);
+                let rendered = format!("={r}");
+                assert_eq!(rendered, input, "display roundtrip mismatch for {input}");
+                let reparsed_ast = parse_both(&rendered);
+                assert_eq!(
+                    extract_reference(&reparsed_ast),
+                    r,
+                    "reparse mismatch for {input}"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

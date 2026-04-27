@@ -205,6 +205,10 @@ where
                     flags |= F_HAS_TABLES;
                     per_tables.push(tref.name);
                 }
+                // 3D refs are parsed but not yet planned. They neither create
+                // dependencies nor participate in the cell/range plan; the
+                // evaluator will surface #N/IMPL! when one is encountered.
+                ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {}
             }
         }
 

@@ -109,6 +109,28 @@ pub enum CompactRefType {
         name_id: StringId,
         specifier_id: Option<TableSpecId>,
     },
+    /// 3D cell reference (`Sheet1:Sheet3!A1`).
+    Cell3D {
+        sheet_first: StringId,
+        sheet_last: StringId,
+        row: u32,
+        col: u32,
+        row_abs: bool,
+        col_abs: bool,
+    },
+    /// 3D range reference (`Sheet1:Sheet3!A1:B2`).
+    Range3D {
+        sheet_first: StringId,
+        sheet_last: StringId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+        start_row_abs: bool,
+        start_col_abs: bool,
+        end_row_abs: bool,
+        end_col_abs: bool,
+    },
 }
 
 /// Arena for storing AST nodes with deduplication

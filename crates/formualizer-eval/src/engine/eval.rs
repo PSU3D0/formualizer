@@ -7674,6 +7674,10 @@ where
                 let owned = boxed.materialise().into_owned();
                 Ok(RangeView::from_owned_rows(owned, self.config.date_system))
             }
+            ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {
+                Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("3D references are not yet supported".to_string()))
+            }
         }
     }
 
