@@ -123,7 +123,8 @@ const AGREEING_CORPUS: &[&str] = &[
     "=#NUM!",
     "=#N/A",
     "=#GETTING_DATA",
-    "=#ref!", // lowercase error literal (PR #65 region)
+    "=#ref!",        // lowercase error literal (PR #65 region)
+    "=source!#ref!", // sheet-qualified lowercase error literal
     // Simple references
     "=A1",
     "=$A$1",
@@ -363,42 +364,6 @@ mod divergence {
     /// `classic_with_whitespace_tokens_agrees_with_span_on_corpus` and
     /// pinned by the divergence tests below.
     pub(super) const WS_BREAKS_CLASSIC_WITH_WS_TOKENS: &[&str] = &[];
-
-    #[test]
-    fn divergence_sheet_qualified_lowercase_error_literal() {
-        // `=source!#ref!` — the classic parser treats this as a NamedRange
-        // (carrying the literal `source!#ref!`), while the span parser
-        // produces a generic `Literal(Error)` with a placeholder kind.
-        // Both are wrong; they are wrong differently.
-        // This test pins current behaviour so the sheet-qualified-error
-        // work can flip it to an equality assertion when it lands.
-        let c = classic("=source!#ref!", false).expect("classic should parse");
-        let s = span("=source!#ref!").expect("span should parse");
-
-        match &c.node_type {
-            ASTNodeType::Reference { original, .. } => {
-                assert_eq!(original, "source!#ref!");
-            }
-            other => panic!(
-                "classic divergence shape changed for =source!#ref!: {other:?} \
-                 — update divergence pin or move to agreeing corpus"
-            ),
-        }
-
-        match &s.node_type {
-            ASTNodeType::Literal(formualizer_parse::LiteralValue::Error(_)) => {}
-            other => panic!(
-                "span divergence shape changed for =source!#ref!: {other:?} \
-                 — update divergence pin or move to agreeing corpus"
-            ),
-        }
-
-        assert!(
-            !ast_eq(&c, &s),
-            "=source!#ref! now agrees across parsers; \
-             move to agreeing corpus and delete this pin"
-        );
-    }
 
     /// Cases where classic with `include_whitespace=true` currently
     /// errors but the span parser succeeds. Each of these has been

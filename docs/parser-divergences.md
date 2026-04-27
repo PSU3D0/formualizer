@@ -28,18 +28,7 @@ authoritative *runnable* version lives in
 
 ## Pinned divergences
 
-### 1. `=source!#ref!` — sheet-qualified lowercase error literal
-
-| Parser | Result |
-|--------|--------|
-| Classic | `Reference { original: "source!#ref!", reference: NamedRange("source!#ref!") }` |
-| Span | `Literal(Error(<placeholder>))` with `kind: Error` and message `"Unknown error code: source!#ref!"` |
-
-Both are wrong; they are wrong differently. Resolution is owned by the
-"sheet-qualified-error" parity work, not by the unification PR. Pinned
-by `divergence::divergence_sheet_qualified_lowercase_error_literal`.
-
-### 2. Whitespace before `)` in classic `Parser` with `include_whitespace=true`
+### 1. Whitespace before `)` in classic `Parser` with `include_whitespace=true`
 
 When the classic parser is constructed with `include_whitespace=true`,
 its argument-list productions do **not** call `skip_whitespace` before
@@ -65,8 +54,9 @@ Pinned by
 The differential harness asserts equality across ~80 formulas spanning
 literals, references, arithmetic and comparison precedence, function
 calls (including `IF`, `IFS`, `LET`, `LAMBDA`), arrays, sheet-qualified
-references, the spilled-range `#` operator, unary precedence (post-PR
-\#81), and whitespace handling such as `=SUM( A1 , B1 )` and
+references (including lowercase sheet-qualified error literals), the
+spilled-range `#` operator, unary precedence (post-PR \#81), and
+whitespace handling such as `=SUM( A1 , B1 )` and
 `= ( A1 + B1 ) ` (when classic is used with `include_whitespace=false`,
 which is what `Parser::try_from(&str)` chooses by default).
 
