@@ -1732,7 +1732,6 @@ mod tests {
             "$'sheet'!A1"
         );
     }
-    }
 
     mod modern_error_literals {
         use super::*;
