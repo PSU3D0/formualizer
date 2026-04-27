@@ -3984,3 +3984,181 @@ mod string_colon_interaction {
         );
     }
 }
+
+#[cfg(test)]
+mod r1c1_disambiguation {
+    //! Regression tests for issue #76: R1C1-shaped operands must never be
+    //! misclassified as table references in the A1 (Excel) dialect.
+    //!
+    //! This issue does NOT add R1C1 dialect support. Acceptable outcomes for
+    //! R1C1-shaped input are: existing `NamedRange` behaviour, or a clean
+    //! `ParserError`. The forbidden outcome is `ReferenceType::Table(...)`.
+    use crate::parser::{ASTNode, ASTNodeType, Parser, ReferenceType, TableReference, parse};
+    use crate::tokenizer::Tokenizer;
+
+    fn parse_classic(formula: &str) -> ASTNode {
+        let tokenizer = Tokenizer::new(formula).expect("tokenize");
+        let mut parser = Parser::new(tokenizer.items, false);
+        parser.parse().expect("classic parse")
+    }
+
+    fn parse_span(formula: &str) -> ASTNode {
+        parse(formula).expect("span parse")
+    }
+
+    fn assert_not_table(formula: &str, ast: &ASTNode) {
+        if let ASTNodeType::Reference {
+            reference: ReferenceType::Table(TableReference { name, specifier }),
+            ..
+        } = &ast.node_type
+        {
+            panic!(
+                "R1C1-shaped input {formula:?} produced a Table reference: \
+                 name={name:?}, specifier={specifier:?}"
+            );
+        }
+    }
+
+    /// `=R[1]C[2]` must NOT classify as a Table. With the structured-references
+    /// strict trailing-garbage rejection in place, the table path errors out;
+    /// the R1C1 pre-check then reroutes it as a NamedRange.
+    #[test]
+    fn test_r1c1_bracketed_offsets_not_table() {
+        let ref_type = ReferenceType::from_string("R[1]C[2]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table outcome for R[1]C[2], got Table({t:?})")
+        }
+
+        let classic = parse_classic("=R[1]C[2]");
+        assert_not_table("=R[1]C[2]", &classic);
+        let spanned = parse_span("=R[1]C[2]");
+        assert_not_table("=R[1]C[2]", &spanned);
+    }
+
+    /// `=R1C1` must NOT classify as a Table. Existing behaviour is `NamedRange`.
+    #[test]
+    fn test_r1c1_absolute() {
+        let ref_type = ReferenceType::from_string("R1C1").expect("R1C1 should parse");
+        assert!(
+            !matches!(ref_type, ReferenceType::Table(_)),
+            "R1C1 must not be a Table reference, got {ref_type:?}"
+        );
+        assert_not_table("=R1C1", &parse_classic("=R1C1"));
+        assert_not_table("=R1C1", &parse_span("=R1C1"));
+    }
+
+    /// `=R1C[2]` must NOT classify as a Table. Pre-fix it produced
+    /// `Table { name: "R1C", specifier: Column("2") }`.
+    #[test]
+    fn test_r1c1_mixed() {
+        let ref_type = ReferenceType::from_string("R1C[2]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for R1C[2], got {t:?}")
+        }
+        assert_not_table("=R1C[2]", &parse_classic("=R1C[2]"));
+        assert_not_table("=R1C[2]", &parse_span("=R1C[2]"));
+    }
+
+    /// `=R[-1]C` must NOT classify as a Table.
+    #[test]
+    fn test_r1c1_negative_offset() {
+        let ref_type = ReferenceType::from_string("R[-1]C");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for R[-1]C, got {t:?}")
+        }
+        assert_not_table("=R[-1]C", &parse_classic("=R[-1]C"));
+        assert_not_table("=R[-1]C", &parse_span("=R[-1]C"));
+    }
+
+    /// `=RC[1]` must NOT classify as a Table. Pre-fix it produced
+    /// `Table { name: "RC", specifier: Column("1") }`.
+    #[test]
+    fn test_r1c1_rc_with_bracket_only_col() {
+        let ref_type = ReferenceType::from_string("RC[1]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for RC[1], got {t:?}")
+        }
+        assert_not_table("=RC[1]", &parse_classic("=RC[1]"));
+        assert_not_table("=RC[1]", &parse_span("=RC[1]"));
+    }
+
+    /// `=R5C[1]` must NOT classify as a Table.
+    #[test]
+    fn test_r1c1_row_digit_col_bracket() {
+        let ref_type = ReferenceType::from_string("R5C[1]");
+        if let Ok(ReferenceType::Table(t)) = ref_type {
+            panic!("expected non-Table for R5C[1], got {t:?}")
+        }
+        assert_not_table("=R5C[1]", &parse_classic("=R5C[1]"));
+        assert_not_table("=R5C[1]", &parse_span("=R5C[1]"));
+    }
+
+    /// `=R1` must remain a normal A1 cell reference (column R, row 1).
+    /// Critical: do not over-broaden the heuristic.
+    #[test]
+    fn test_a1_r1_still_cell() {
+        let r = ReferenceType::from_string("R1").expect("R1 should parse");
+        match r {
+            ReferenceType::Cell {
+                row, col, sheet, ..
+            } => {
+                assert_eq!(row, 1);
+                assert_eq!(col, 18); // 'R'
+                assert!(sheet.is_none());
+            }
+            other => panic!("=R1 must remain an A1 cell, got {other:?}"),
+        }
+    }
+
+    /// `=C5` must remain a normal A1 cell reference (column C, row 5).
+    #[test]
+    fn test_a1_c5_still_cell() {
+        let r = ReferenceType::from_string("C5").expect("C5 should parse");
+        assert!(
+            matches!(r, ReferenceType::Cell { row: 5, col: 3, .. }),
+            "=C5 must remain an A1 cell, got {r:?}"
+        );
+    }
+
+    /// Regression: real Table references must keep working.
+    #[test]
+    fn test_table_reference_unchanged() {
+        let r = ReferenceType::from_string("Table1[Col]").expect("Table1[Col] should parse");
+        match r {
+            ReferenceType::Table(t) => {
+                assert_eq!(t.name, "Table1");
+            }
+            other => panic!("expected Table reference, got {other:?}"),
+        }
+    }
+
+    /// Regression: external workbook refs are unaffected.
+    #[test]
+    fn test_external_workbook_ref_unchanged() {
+        let r = ReferenceType::from_string("[1]Sheet1!A1").expect("external ref should parse");
+        assert!(
+            matches!(r, ReferenceType::External(_)),
+            "=[1]Sheet1!A1 must remain External, got {r:?}"
+        );
+    }
+
+    /// Cross-parser differential: classic and span-based parsers must agree on
+    /// the high-level outcome (table vs not-table) for R1C1-shaped input.
+    #[test]
+    fn test_cross_parser_agreement_r1c1() {
+        for formula in [
+            "=R[1]C[2]",
+            "=R1C1",
+            "=RC",
+            "=R[-1]C",
+            "=R1C[2]",
+            "=RC[1]",
+            "=R5C[1]",
+        ] {
+            let classic = parse_classic(formula);
+            let spanned = parse_span(formula);
+            assert_not_table(formula, &classic);
+            assert_not_table(formula, &spanned);
+        }
+    }
+}
