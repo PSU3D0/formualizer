@@ -2911,8 +2911,10 @@ impl<'a> SpanParser<'a> {
         };
 
         match op {
-            "#" => Some((9, Associativity::Left)),
-            ":" | " " | "," => Some((8, Associativity::Left)),
+            "#" => Some((11, Associativity::Left)),
+            ":" => Some((10, Associativity::Left)),
+            " " => Some((9, Associativity::Left)),
+            "," => Some((8, Associativity::Left)),
             "%" => Some((7, Associativity::Left)),
             "u" => Some((6, Associativity::Right)),
             "^" => Some((5, Associativity::Right)),

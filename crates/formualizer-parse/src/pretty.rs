@@ -22,7 +22,9 @@ enum Side {
 
 fn infix_info(op: &str) -> (u8, Associativity) {
     match op {
-        ":" | " " | "," => (8, Associativity::Left),
+        ":" => (10, Associativity::Left),
+        " " => (9, Associativity::Left),
+        "," => (8, Associativity::Left),
         "^" => (5, Associativity::Right),
         "*" | "/" => (4, Associativity::Left),
         "+" | "-" => (3, Associativity::Left),
@@ -34,7 +36,7 @@ fn infix_info(op: &str) -> (u8, Associativity) {
 
 fn unary_precedence(op: &str) -> u8 {
     match op {
-        "#" => 9,
+        "#" => 11,
         "%" => 7,
         _ => 6,
     }
@@ -154,11 +156,13 @@ fn pretty_print_node(ast: &ASTNode) -> String {
             let left_s = pretty_child(left, op, prec, assoc, Side::Left);
             let right_s = pretty_child(right, op, prec, assoc, Side::Right);
 
-            // Special handling for range operator ':'
-            if op == ":" {
-                format!("{left_s}:{right_s}")
-            } else {
-                format!("{left_s} {op} {right_s}")
+            match op.as_str() {
+                // Reference range operator prints tight; intersection is a
+                // single space rather than the generic three-space infix form.
+                ":" => format!("{left_s}:{right_s}"),
+                " " => format!("{left_s} {right_s}"),
+                "," => format!("{left_s}, {right_s}"),
+                _ => format!("{left_s} {op} {right_s}"),
             }
         }
         ASTNodeType::Function { name, args } => {
