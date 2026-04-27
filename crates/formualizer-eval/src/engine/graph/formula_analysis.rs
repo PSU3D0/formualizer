@@ -405,6 +405,36 @@ impl DependencyGraph {
                     }
                 }
             }
+            ASTNodeType::Call { callee, args } => {
+                // Walk both the callee and the call arguments so any references
+                // they contain are tracked. Full evaluator semantics for
+                // immediate-invocation calls are not yet implemented, but
+                // dependency collection must still cover them.
+                self.extract_dependencies_recursive(
+                    callee,
+                    current_sheet_id,
+                    dependencies,
+                    range_dependencies,
+                    created_placeholders,
+                    named_dependencies,
+                    unresolved_names,
+                    local_scopes,
+                    unresolved_name_policy,
+                )?;
+                for arg in args {
+                    self.extract_dependencies_recursive(
+                        arg,
+                        current_sheet_id,
+                        dependencies,
+                        range_dependencies,
+                        created_placeholders,
+                        named_dependencies,
+                        unresolved_names,
+                        local_scopes,
+                        unresolved_name_policy,
+                    )?;
+                }
+            }
             ASTNodeType::Literal(_) => {}
         }
         Ok(())
@@ -458,6 +488,9 @@ impl DependencyGraph {
             ASTNodeType::Array(rows) => rows
                 .iter()
                 .any(|row| row.iter().any(|cell| self.is_ast_volatile(cell))),
+            ASTNodeType::Call { callee, args } => {
+                self.is_ast_volatile(callee) || args.iter().any(|a| self.is_ast_volatile(a))
+            }
             _ => false,
         }
     }
@@ -483,6 +516,9 @@ impl DependencyGraph {
             ASTNodeType::Array(rows) => rows
                 .iter()
                 .any(|row| row.iter().any(|cell| self.is_ast_dynamic(cell))),
+            ASTNodeType::Call { callee, args } => {
+                self.is_ast_dynamic(callee) || args.iter().any(|a| self.is_ast_dynamic(a))
+            }
             _ => false,
         }
     }

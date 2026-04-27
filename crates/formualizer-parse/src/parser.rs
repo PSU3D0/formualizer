@@ -1337,6 +1337,12 @@ pub enum ASTNodeType {
         name: String,
         args: Vec<ASTNode>, // Most functions have <= 4 args
     },
+    /// Generic call where the callee is itself an expression that produces
+    /// a callable value (e.g. LAMBDA immediate-invocation `LAMBDA(x, x+1)(5)`).
+    Call {
+        callee: Box<ASTNode>,
+        args: Vec<ASTNode>,
+    },
     Array(Vec<Vec<ASTNode>>), // Most arrays are small
 }
 
@@ -1350,6 +1356,7 @@ impl Display for ASTNodeType {
                 write!(f, "BinaryOp({op}, {left}, {right})")
             }
             ASTNodeType::Function { name, args } => write!(f, "Function({name}, {args:?})"),
+            ASTNodeType::Call { callee, args } => write!(f, "Call({callee}, {args:?})"),
             ASTNodeType::Array(rows) => write!(f, "Array({rows:?})"),
         }
     }
@@ -1437,6 +1444,14 @@ impl ASTNode {
                     arg.hash_node(hasher);
                 }
             }
+            ASTNodeType::Call { callee, args } => {
+                hasher.write(&[7]); // Discriminant for Call
+                callee.hash_node(hasher);
+                hasher.write_usize(args.len());
+                for arg in args {
+                    arg.hash_node(hasher);
+                }
+            }
             ASTNodeType::Array(rows) => {
                 hasher.write(&[6]); // Discriminant for Array
                 hasher.write_usize(rows.len());
@@ -1480,6 +1495,12 @@ impl ASTNode {
                     arg.collect_dependencies(dependencies);
                 }
             }
+            ASTNodeType::Call { callee, args } => {
+                callee.collect_dependencies(dependencies);
+                for arg in args {
+                    arg.collect_dependencies(dependencies);
+                }
+            }
             ASTNodeType::Array(rows) => {
                 for row in rows {
                     for item in row {
@@ -1516,6 +1537,12 @@ impl ASTNode {
                     for a in args.iter().rev() {
                         stack.push(a);
                     }
+                }
+                ASTNodeType::Call { callee, args } => {
+                    for a in args.iter().rev() {
+                        stack.push(a);
+                    }
+                    stack.push(callee);
                 }
                 ASTNodeType::Array(rows) => {
                     for r in rows.iter().rev() {
@@ -1647,6 +1674,12 @@ impl ASTNode {
                     arg.update_sheet_references(target_name, new_name);
                 }
             }
+            ASTNodeType::Call { callee, args } => {
+                callee.update_sheet_references(target_name, new_name);
+                for arg in args {
+                    arg.update_sheet_references(target_name, new_name);
+                }
+            }
             ASTNodeType::Array(rows) => {
                 for row in rows {
                     for cell in row {
@@ -1768,6 +1801,12 @@ impl<'a> Iterator for RefIter<'a> {
                         self.stack.push(a);
                     }
                 }
+                ASTNodeType::Call { callee, args } => {
+                    for a in args.iter().rev() {
+                        self.stack.push(a);
+                    }
+                    self.stack.push(callee);
+                }
                 ASTNodeType::Array(rows) => {
                     for r in rows.iter().rev() {
                         for item in r.iter().rev() {
@@ -1820,6 +1859,9 @@ pub struct Parser {
     /// Optional classifier to determine whether a function name is volatile.
     volatility_classifier: Option<VolatilityClassifierBox>,
     dialect: FormulaDialect,
+    /// When > 0, treat a top-level `OpInfix(",")` as a terminator (call-arg
+    /// separator) instead of the union/list operator. Used by `parse_call_arguments`.
+    in_call_args_depth: usize,
 }
 
 impl TryFrom<&str> for Parser {
@@ -1858,6 +1900,7 @@ impl Parser {
             position: 0,
             volatility_classifier: None,
             dialect,
+            in_call_args_depth: 0,
         }
     }
 
@@ -1970,6 +2013,26 @@ impl Parser {
                 break;
             }
 
+            // Postfix call: a `(` directly following a closed expression denotes
+            // immediate invocation of a callable result (e.g. LAMBDA IIFE).
+            if self.tokens[self.position].token_type == TokenType::Paren
+                && self.tokens[self.position].subtype == TokenSubType::Open
+            {
+                self.position += 1;
+                let args = self.parse_call_arguments()?;
+                let call_volatile =
+                    left.contains_volatile || args.iter().any(|a| a.contains_volatile);
+                left = ASTNode::new_with_volatile(
+                    ASTNodeType::Call {
+                        callee: Box::new(left),
+                        args,
+                    },
+                    None,
+                    call_volatile,
+                );
+                continue;
+            }
+
             // Postfix operators (e.g. percent).
             if self.tokens[self.position].token_type == TokenType::OpPostfix {
                 let (precedence, _) = self.tokens[self.position]
@@ -1995,6 +2058,12 @@ impl Parser {
 
             let token = &self.tokens[self.position];
             if token.token_type != TokenType::OpInfix {
+                break;
+            }
+
+            // Inside a postfix call's argument list, treat top-level `,` as
+            // an argument separator, not as the union operator.
+            if self.in_call_args_depth > 0 && token.value == "," {
                 break;
             }
 
@@ -2183,6 +2252,61 @@ impl Parser {
         ))
     }
 
+    /// Parse arguments for a postfix call (immediate invocation), where the
+    /// opening `(` is a `Paren:Open` and the matching `)` is a `Paren:Close`.
+    /// Caller has already consumed the opening paren.
+    ///
+    /// Inside this region the tokenizer emits a top-level `,` as `OpInfix`
+    /// (Excel's union operator). For call arguments we want it to behave as a
+    /// separator, so we bump `in_call_args_depth` while parsing each argument.
+    fn parse_call_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
+        let mut args: Vec<ASTNode> = Vec::new();
+
+        self.skip_whitespace();
+        // Empty argument list: `f()`
+        if self.position < self.tokens.len()
+            && self.tokens[self.position].token_type == TokenType::Paren
+            && self.tokens[self.position].subtype == TokenSubType::Close
+        {
+            self.position += 1;
+            return Ok(args);
+        }
+
+        self.in_call_args_depth += 1;
+        let result = (|| -> Result<Vec<ASTNode>, ParserError> {
+            args.push(self.parse_expression()?);
+            loop {
+                self.skip_whitespace();
+                if self.position >= self.tokens.len() {
+                    return Err(ParserError {
+                        message: "Unterminated call argument list".to_string(),
+                        position: Some(self.position),
+                    });
+                }
+                let token = &self.tokens[self.position];
+                let is_separator = (token.token_type == TokenType::Sep
+                    && token.subtype == TokenSubType::Arg)
+                    || (token.token_type == TokenType::OpInfix && token.value == ",");
+                if is_separator {
+                    self.position += 1;
+                    args.push(self.parse_expression()?);
+                } else if token.token_type == TokenType::Paren
+                    && token.subtype == TokenSubType::Close
+                {
+                    self.position += 1;
+                    return Ok(std::mem::take(&mut args));
+                } else {
+                    return Err(ParserError {
+                        message: format!("Expected ',' or ')' in call arguments, got {token:?}"),
+                        position: Some(self.position),
+                    });
+                }
+            }
+        })();
+        self.in_call_args_depth -= 1;
+        result
+    }
+
     /// Parse function arguments.
     fn parse_function_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
         let mut args = Vec::new();
@@ -2334,6 +2458,8 @@ struct SpanParser<'a> {
     position: usize,
     volatility_classifier: Option<VolatilityClassifierBox>,
     dialect: FormulaDialect,
+    /// See `Parser::in_call_args_depth`.
+    in_call_args_depth: usize,
 }
 
 impl<'a> SpanParser<'a> {
@@ -2348,6 +2474,7 @@ impl<'a> SpanParser<'a> {
             position: 0,
             volatility_classifier: None,
             dialect,
+            in_call_args_depth: 0,
         }
     }
 
@@ -2473,6 +2600,26 @@ impl<'a> SpanParser<'a> {
                 break;
             }
 
+            // Postfix call: a `(` directly following a closed expression denotes
+            // immediate invocation of a callable result (e.g. LAMBDA IIFE).
+            if self.tokens[self.position].token_type == TokenType::Paren
+                && self.tokens[self.position].subtype == TokenSubType::Open
+            {
+                self.position += 1;
+                let args = self.parse_call_arguments()?;
+                let call_volatile =
+                    left.contains_volatile || args.iter().any(|a| a.contains_volatile);
+                left = ASTNode::new_with_volatile(
+                    ASTNodeType::Call {
+                        callee: Box::new(left),
+                        args,
+                    },
+                    None,
+                    call_volatile,
+                );
+                continue;
+            }
+
             if self.tokens[self.position].token_type == TokenType::OpPostfix {
                 let (precedence, _) = self
                     .span_precedence(&self.tokens[self.position])
@@ -2498,6 +2645,12 @@ impl<'a> SpanParser<'a> {
 
             let token = &self.tokens[self.position];
             if token.token_type != TokenType::OpInfix {
+                break;
+            }
+
+            // Inside a postfix call's argument list, treat top-level `,` as
+            // an argument separator, not as the union operator.
+            if self.in_call_args_depth > 0 && self.span_value(token) == "," {
                 break;
             }
 
@@ -2698,6 +2851,57 @@ impl<'a> SpanParser<'a> {
             Some(func_token),
             this_is_volatile || args_volatile,
         ))
+    }
+
+    /// Parse arguments for a postfix call (immediate invocation), where the
+    /// opening `(` is a `Paren:Open` and the matching `)` is a `Paren:Close`.
+    /// Caller has already consumed the opening paren. See the classic parser
+    /// version for details on how top-level `,` is handled.
+    fn parse_call_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
+        let mut args: Vec<ASTNode> = Vec::new();
+
+        self.skip_whitespace();
+        if self.position < self.tokens.len()
+            && self.tokens[self.position].token_type == TokenType::Paren
+            && self.tokens[self.position].subtype == TokenSubType::Close
+        {
+            self.position += 1;
+            return Ok(args);
+        }
+
+        self.in_call_args_depth += 1;
+        let result = (|| -> Result<Vec<ASTNode>, ParserError> {
+            args.push(self.parse_expression()?);
+            loop {
+                self.skip_whitespace();
+                if self.position >= self.tokens.len() {
+                    return Err(ParserError {
+                        message: "Unterminated call argument list".to_string(),
+                        position: Some(self.position),
+                    });
+                }
+                let token = &self.tokens[self.position];
+                let is_separator = (token.token_type == TokenType::Sep
+                    && token.subtype == TokenSubType::Arg)
+                    || (token.token_type == TokenType::OpInfix && self.span_value(token) == ",");
+                if is_separator {
+                    self.position += 1;
+                    args.push(self.parse_expression()?);
+                } else if token.token_type == TokenType::Paren
+                    && token.subtype == TokenSubType::Close
+                {
+                    self.position += 1;
+                    return Ok(std::mem::take(&mut args));
+                } else {
+                    return Err(ParserError {
+                        message: format!("Expected ',' or ')' in call arguments, got {token:?}"),
+                        position: Some(self.position),
+                    });
+                }
+            }
+        })();
+        self.in_call_args_depth -= 1;
+        result
     }
 
     fn parse_function_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {

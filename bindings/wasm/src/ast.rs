@@ -64,6 +64,12 @@ pub enum ASTNodeData {
         #[serde(flatten)]
         source: NodeSourceData,
     },
+    Call {
+        callee: Box<ASTNodeData>,
+        args: Vec<ASTNodeData>,
+        #[serde(flatten)]
+        source: NodeSourceData,
+    },
     Error {
         message: String,
         #[serde(flatten)]
@@ -238,6 +244,11 @@ impl ASTNodeData {
                     .collect(),
                 source,
             },
+            ASTNodeType::Call { callee, args } => ASTNodeData::Call {
+                callee: Box::new(Self::from_core(callee)),
+                args: args.iter().map(Self::from_core).collect(),
+                source,
+            },
         }
     }
 
@@ -336,6 +347,7 @@ impl ASTNode {
             ASTNodeData::BinaryOp { .. } => "binaryOp".to_string(),
             ASTNodeData::UnaryOp { .. } => "unaryOp".to_string(),
             ASTNodeData::Array { .. } => "array".to_string(),
+            ASTNodeData::Call { .. } => "call".to_string(),
             ASTNodeData::Error { .. } => "error".to_string(),
         }
     }
