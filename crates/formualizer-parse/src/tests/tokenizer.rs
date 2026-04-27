@@ -1651,7 +1651,7 @@ mod tests {
             tokenizer.items,
             vec![
                 (&TokenType::Operand, "Sheet1!A1", &TokenSubType::Range),
-                (&TokenType::OpInfix, ":", &TokenSubType::Range),
+                (&TokenType::OpInfix, ":", &TokenSubType::None),
                 (
                     &TokenType::Operand,
                     "'Other Sheet'!B2",
@@ -1670,7 +1670,7 @@ mod tests {
             "Sheet1!A1"
         );
         assert_eq!(stream.spans[1].token_type, TokenType::OpInfix);
-        assert_eq!(stream.spans[1].subtype, TokenSubType::Range);
+        assert_eq!(stream.spans[1].subtype, TokenSubType::None);
         assert_eq!(&formula[stream.spans[1].start..stream.spans[1].end], ":");
         assert_eq!(stream.spans[2].token_type, TokenType::Operand);
         assert_eq!(stream.spans[2].subtype, TokenSubType::Range);
