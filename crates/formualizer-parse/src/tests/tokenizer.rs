@@ -1593,11 +1593,13 @@ mod tests {
 
     #[test]
     fn test_sheet_prefixed_lowercase_error_literal_tokenizes() {
+        // Sheet-qualified error literals discard the sheet prefix at tokenize
+        // time and emit a single Error operand identical to the bare literal.
         let tokenizer = Tokenizer::new("=source!#ref!").expect("tokenize sheet-prefixed lowercase");
         assert_eq!(tokenizer.items.len(), 1);
         assert_eq!(tokenizer.items[0].token_type, TokenType::Operand);
-        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Range);
-        assert_eq!(tokenizer.items[0].value, "source!#ref!");
+        assert_eq!(tokenizer.items[0].subtype, TokenSubType::Error);
+        assert_eq!(tokenizer.items[0].value, "#ref!");
     }
 
     #[test]
