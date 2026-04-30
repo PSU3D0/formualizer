@@ -81,6 +81,21 @@ mod tests {
     }
 
     #[test]
+    fn test_mutable_edges_exact_edge_count_includes_delta() {
+        let mut edges = CsrMutableEdges::with_coords(vec![
+            AbsCoord::new(0, 0),
+            AbsCoord::new(0, 1),
+            AbsCoord::new(0, 2),
+        ]);
+        edges.add_edge(VertexId(0), VertexId(1));
+        edges.add_edge(VertexId(0), VertexId(2));
+        assert_eq!(edges.num_edges_exact(), 2);
+
+        edges.remove_edge(VertexId(0), VertexId(1));
+        assert_eq!(edges.num_edges_exact(), 1);
+    }
+
+    #[test]
     fn test_delta_slab_empty_base() {
         let csr = CsrEdges::empty();
         let mut delta = DeltaEdgeSlab::new();
@@ -507,6 +522,23 @@ impl CsrMutableEdges {
     /// Get the current delta size
     pub fn delta_size(&self) -> usize {
         self.delta.op_count()
+    }
+
+    /// Return the exact number of logical outgoing dependency edges, including pending delta
+    /// mutations.
+    ///
+    /// This is intended for read-only observability. When the delta slab is non-empty, the
+    /// implementation walks the known vertex ids and merges each outgoing edge list, so callers
+    /// should avoid putting it on hot evaluation paths.
+    pub fn num_edges_exact(&self) -> usize {
+        if self.delta.op_count() == 0 {
+            return self.base.num_edges();
+        }
+
+        self.vertex_ids
+            .iter()
+            .map(|&id| self.out_edges(VertexId(id)).len())
+            .sum()
     }
 
     /// Force a rebuild of the CSR structure

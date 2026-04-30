@@ -38,14 +38,16 @@ pub mod tuning;
 #[cfg(test)]
 mod tests;
 
-pub use eval::{Engine, EngineAction, EvalResult, RecalcPlan, VirtualDepTelemetry};
+pub use eval::{
+    Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan, VirtualDepTelemetry,
+};
 pub use eval_delta::{DeltaMode, EvalDelta};
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
-    ChangeEvent, DependencyGraph, DependencyRef, OperationSummary, StripeKey, StripeType,
-    block_index,
+    ChangeEvent, DependencyGraph, DependencyRef, GraphBaselineStats, OperationSummary, StripeKey,
+    StripeType, block_index,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, Scheduler};

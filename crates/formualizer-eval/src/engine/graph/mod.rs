@@ -109,6 +109,21 @@ pub struct OperationSummary {
     pub created_placeholders: Vec<CellRef>,
 }
 
+/// Read-only dependency graph counters used by benchmark/instrumentation tooling.
+///
+/// These counters are deliberately observational: collecting them must not mutate graph state or
+/// alter formula evaluation semantics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphBaselineStats {
+    pub graph_vertex_count: usize,
+    pub graph_formula_vertex_count: usize,
+    pub graph_edge_count: usize,
+    pub dirty_vertex_count: usize,
+    pub evaluation_vertex_count: usize,
+    pub formula_ast_root_count: usize,
+    pub formula_ast_node_count: usize,
+}
+
 /// SoA-based dependency graph implementation
 #[derive(Debug)]
 pub struct DependencyGraph {
@@ -261,6 +276,20 @@ impl DependencyGraph {
 
     pub fn get_config(&self) -> &super::EvalConfig {
         &self.config
+    }
+
+    /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
+    pub fn baseline_stats(&self) -> GraphBaselineStats {
+        let data_stats = self.data_store.memory_usage();
+        GraphBaselineStats {
+            graph_vertex_count: self.store.len(),
+            graph_formula_vertex_count: self.vertex_formulas.len(),
+            graph_edge_count: self.edges.num_edges_exact(),
+            dirty_vertex_count: self.dirty_vertices.len(),
+            evaluation_vertex_count: self.get_evaluation_vertices().len(),
+            formula_ast_root_count: self.vertex_formulas.len(),
+            formula_ast_node_count: data_stats.total_ast_nodes,
+        }
     }
 
     #[inline]

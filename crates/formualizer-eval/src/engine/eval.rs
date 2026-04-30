@@ -516,6 +516,22 @@ pub struct EvalResult {
     pub elapsed: std::time::Duration,
 }
 
+/// Read-only engine counters used by benchmark/instrumentation tooling.
+///
+/// These counters are deliberately observational: collecting them must not mutate engine state or
+/// alter formula evaluation semantics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EngineBaselineStats {
+    pub graph_vertex_count: usize,
+    pub graph_formula_vertex_count: usize,
+    pub graph_edge_count: usize,
+    pub dirty_vertex_count: usize,
+    pub evaluation_vertex_count: usize,
+    pub formula_ast_root_count: usize,
+    pub formula_ast_node_count: usize,
+    pub staged_formula_count: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VirtualDepTelemetry {
     pub candidate_vertices_total: usize,
@@ -1471,6 +1487,21 @@ where
         self.graph.get_evaluation_vertices()
     }
 
+    /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
+    pub fn baseline_stats(&self) -> EngineBaselineStats {
+        let graph = self.graph.baseline_stats();
+        EngineBaselineStats {
+            graph_vertex_count: graph.graph_vertex_count,
+            graph_formula_vertex_count: graph.graph_formula_vertex_count,
+            graph_edge_count: graph.graph_edge_count,
+            dirty_vertex_count: graph.dirty_vertex_count,
+            evaluation_vertex_count: graph.evaluation_vertex_count,
+            formula_ast_root_count: graph.formula_ast_root_count,
+            formula_ast_node_count: graph.formula_ast_node_count,
+            staged_formula_count: self.staged_formula_count(),
+        }
+    }
+
     pub fn set_first_load_assume_new(&mut self, enabled: bool) {
         self.graph.set_first_load_assume_new(enabled);
     }
@@ -2032,6 +2063,10 @@ where
 
     pub fn has_staged_formulas(&self) -> bool {
         !self.staged_formulas.is_empty()
+    }
+
+    pub fn staged_formula_count(&self) -> usize {
+        self.staged_formulas.values().map(Vec::len).sum()
     }
 
     pub fn staged_formula_state_snapshot(&self) -> Vec<(String, u32, u32, String)> {
