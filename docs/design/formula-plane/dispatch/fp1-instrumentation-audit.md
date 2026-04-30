@@ -86,12 +86,12 @@ FP1.B raw artifacts: `target/fp1b-baseline/6322615`
 3. **Template scanner is conservative.** It is parser-backed and stable enough for baseline reports, but structured/external/3D references and parse failures are labeled rather than normalized into production FormulaPlane template IDs.
 4. **Calamine open/read timing is lazy-open shaped.** `open_read_ms` is near zero for current Calamine XLSX open; sheet IO/materialization is attributed to `workbook_ingest_ms`.
 5. **Dense value handoff remains coarse.** `adapter_value_slots_handed_to_engine` measures current dense Arrow sheet materialization slots, not a future sparse/span representation.
-6. **No production FormulaPlane partition/span counters yet.** FP1/FP1.B intentionally avoid implementing span scheduler behavior; they establish comparison counters before FP2.
+6. **No production FormulaPlane partition/span authority yet.** FP2.A adds scanner-only candidate span and row-block partition counters, but they are passive diagnostics and do not route dirty propagation, scheduler behavior, dependency graph construction, or evaluation.
 
 ## Next patch plan
 
 Recommended next step for FP2:
 
-1. Implement FormulaPlane partition/span counters behind read-only stats first, then compare them against FP1.B template/run and adapter handoff baselines before changing scheduling behavior.
+1. Implement the first in-memory passive span-store builder from the FP2.A candidate cells/runs, with deterministic placement IDs and no evaluator integration.
 2. Thread raw/shared formula metadata into loader observability if FP2 loader work needs to distinguish preserved shared formulas from expanded formula cells.
 3. Keep `open_read_ms`, `workbook_ingest_ms`, backend mode, adapter counters, and scanner JSON in all FP2 reports so regressions can be attributed to IO, ingest, graph build, or evaluation separately.

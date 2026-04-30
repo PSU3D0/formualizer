@@ -103,6 +103,8 @@ Measured outputs:
 - exceptions/holes estimate;
 - unsupported/dynamic/volatile counts.
 
+FP2.A starts this phase by adding scanner-only FormulaPlane candidate span and row-block partition counters. These counters are diagnostic only: formula runs are dependent formula placements, fixed row-block partitions are estimates, and no dirty propagation, scheduler routing, dependency graph construction, or formula evaluation authority changes. The vocabulary remains `precedent region -> dependent formula placement -> result region`; FP2.A observes only the dependent placement shape.
+
 Success claim: repeated formula structure can be quantified without accuracy risk.
 
 ### FP3 — Passive FormulaRunStore / placement model
