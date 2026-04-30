@@ -63,21 +63,35 @@ timeout 15m cargo test -p formualizer-eval --quiet
 
 Result: passed (`formualizer-common`: 26 tests; `formualizer-eval`: 1169 passed, 4 ignored, doctest pass).
 
+## FP1.B additions
+
+FP1.B implemented the recommended bounded follow-up without changing default workbook behavior or formula evaluation semantics.
+
+| Metric requested by FP1.B | FP1.B action | Current status |
+|---|---|---|
+| Load/open/read split | Added `open_read_ms` and `workbook_ingest_ms` under `metrics.extra`; retained existing `metrics.load_ms` | Available in governed runner for Umya and Calamine |
+| Backend mode | Added `run-formualizer-native --backend umya|calamine`; output includes backend in `metrics.extra.backend` and `meta.backend` | Available for full eval, incremental op, scenario metadata, and correctness checks |
+| Adapter formula counters | Added read-only `AdapterLoadStats` and workbook loader path that returns stats after ingest | Formula cells observed and handed to engine available for Umya/Calamine |
+| Adapter value counters | Counted backend-observed non-empty values and dense value slots handed to Arrow ingest | Available for Umya/Calamine; value slots are intentionally dense materialization slots |
+| Parser-backed template scan | Added bench-only `scan-formula-templates` binary reading OOXML formulas and parsing through `formualizer_parse` | Emits stable template IDs, canonical AST text, labels, run counts, holes, exceptions, and raw shared formula visibility |
+| Raw OOXML shared formulas | Scanner counts `<f t="shared" ...>`, anchor refs, and shared indices | Available in scan JSON; generated six-scenario corpus has zero shared tags |
+
+FP1.B report: `docs/design/formula-plane/dispatch/fp1b-baseline-report.md`  
+FP1.B raw artifacts: `target/fp1b-baseline/6322615`
+
 ## Remaining instrumentation gaps
 
-1. **Open/read vs engine ingest/build split.** `run-formualizer-native` measures a single `load_ms` around `UmyaAdapter::open_path` plus `Workbook::from_reader`. This is enough for a baseline but not enough to attribute loader vs graph ingest.
-2. **Runner remains Umya-only.** Calamine data comes from `probe-load-envelope-matrix` smoke, which is not governed by the same scenario operation/correctness contract and does not run incremental recalc.
-3. **Dependency edge meaning is graph-edge count, not source dependency rows.** It counts logical outgoing edges in `CsrMutableEdges`, including pending delta mutations. It does not expose decomposed dependency records or compressed range-dependency rows.
-4. **Template/run metrics are heuristic sidecar data.** They are based on raw OOXML formula text and simple relative-reference normalization, not parser-backed canonical templates.
-5. **No adapter/materialization counters.** Calamine/Umya adapter materialization counts, formula text handoff counts, and range materialization counts are not yet exposed.
-6. **Shared formulas are only raw XML visibility.** The baseline records `<f t="shared" ...>` tags, anchors, and shared-index count, but not how an adapter expands or preserves shared formulas.
-7. **No production FormulaPlane partition/span counters yet.** FP1 intentionally avoids implementing span scheduler behavior; it only establishes baseline counters for comparison.
+1. **Shared-formula adapter counters.** The bench scanner reports raw OOXML shared tags, but Umya/Calamine runner stats still leave `adapter_shared_formula_tags_observed` absent because that metadata is not currently carried through adapter ingest.
+2. **Dependency edge taxonomy.** `graph_edge_count` is a logical outgoing graph-edge count, not a dependency-row taxonomy split by scalar cell, range, stripe, virtual, name, or sheet dependency.
+3. **Template scanner is conservative.** It is parser-backed and stable enough for baseline reports, but structured/external/3D references and parse failures are labeled rather than normalized into production FormulaPlane template IDs.
+4. **Calamine open/read timing is lazy-open shaped.** `open_read_ms` is near zero for current Calamine XLSX open; sheet IO/materialization is attributed to `workbook_ingest_ms`.
+5. **Dense value handoff remains coarse.** `adapter_value_slots_handed_to_engine` measures current dense Arrow sheet materialization slots, not a future sparse/span representation.
+6. **No production FormulaPlane partition/span counters yet.** FP1/FP1.B intentionally avoid implementing span scheduler behavior; they establish comparison counters before FP2.
 
-## Minimal next patch plan
+## Next patch plan
 
-Recommended FP1.B before FP2 implementation:
+Recommended next step for FP2:
 
-1. Add a tiny bench-facing load-phase timing split in `formualizer-workbook` or the runner: `open_read_ms`, `workbook_ingest_ms`, and current combined `load_ms`. Keep existing `load_ms` for compatibility.
-2. Add parser-backed, read-only formula template scan in bench tooling (not engine evaluation): parse formula text, canonicalize references relative to anchor, and emit stable template IDs plus unsupported/volatile/dynamic labels.
-3. Add optional adapter metadata counters for Umya/Calamine workbook readers: formula cells observed, shared formula tags observed, formula cells handed to engine, values handed to engine.
-4. Extend `probe-load-envelope-matrix` or add a parallel governed runner mode for Calamine so backend comparisons include scenario metadata and incremental recalc.
+1. Implement FormulaPlane partition/span counters behind read-only stats first, then compare them against FP1.B template/run and adapter handoff baselines before changing scheduling behavior.
+2. Thread raw/shared formula metadata into loader observability if FP2 loader work needs to distinguish preserved shared formulas from expanded formula cells.
+3. Keep `open_read_ms`, `workbook_ingest_ms`, backend mode, adapter counters, and scanner JSON in all FP2 reports so regressions can be attributed to IO, ingest, graph build, or evaluation separately.
