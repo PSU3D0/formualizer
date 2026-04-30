@@ -7,9 +7,11 @@
 pub mod grid;
 pub mod ids;
 pub mod partition;
+pub mod span_counters;
 pub mod virtual_ref;
 
 pub use grid::*;
 pub use ids::*;
 pub use partition::*;
+pub use span_counters::*;
 pub use virtual_ref::*;

@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use formualizer_bench_core::BenchmarkSuite;
+use formualizer_eval::formula_plane::{
+    CandidateRunOrientation, FormulaPlaneCandidateCell, SpanPartitionCounterOptions,
+    SpanPartitionCounters, compute_span_partition_counters,
+};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
 use serde::Serialize;
 
@@ -77,10 +81,134 @@ struct ScanTotals {
 }
 
 #[derive(Debug, Serialize)]
+struct FormulaPlaneCandidateTemplateCounters {
+    template_id: String,
+    formula_cells: u64,
+    row_run_count: u64,
+    column_run_count: u64,
+    max_run_length: u64,
+    formula_cells_represented_by_runs: u64,
+    singleton_formula_count: u64,
+    hole_count: u64,
+    exception_count: u64,
+    candidate_partition_count: u64,
+    candidate_formula_run_to_partition_edge_estimate: u64,
+    max_partitions_touched_by_run: u64,
+    dense_run_coverage_percent: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaPlaneCandidateRunSummary {
+    template_id: String,
+    sheet: String,
+    orientation: &'static str,
+    fixed_index: u32,
+    start_index: u32,
+    end_index: u32,
+    len: u64,
+    partitions_touched: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaPlaneCandidateCounters {
+    row_block_size: u32,
+    template_count: u64,
+    repeated_template_count: u64,
+    formula_cell_count: u64,
+    parse_error_formula_count: u64,
+    volatile_formula_count: u64,
+    dynamic_formula_count: u64,
+    unsupported_formula_count: u64,
+    row_run_count: u64,
+    column_run_count: u64,
+    candidate_formula_run_count: u64,
+    max_run_length: u64,
+    formula_cells_represented_by_runs: u64,
+    singleton_formula_count: u64,
+    hole_count: u64,
+    exception_count: u64,
+    estimated_materialization_avoidable_cell_count: u64,
+    candidate_row_block_partition_count: u64,
+    candidate_formula_run_to_partition_edge_estimate: u64,
+    max_partitions_touched_by_run: u64,
+    dense_run_coverage_percent: f64,
+    template_counters: Vec<FormulaPlaneCandidateTemplateCounters>,
+    candidate_runs: Vec<FormulaPlaneCandidateRunSummary>,
+}
+
+#[derive(Debug, Serialize)]
 struct ScanOutput {
     workbook: String,
     totals: ScanTotals,
+    formula_plane_candidates: FormulaPlaneCandidateCounters,
     templates: Vec<TemplateSummary>,
+}
+
+impl From<SpanPartitionCounters> for FormulaPlaneCandidateCounters {
+    fn from(counters: SpanPartitionCounters) -> Self {
+        Self {
+            row_block_size: counters.row_block_size,
+            template_count: counters.template_count,
+            repeated_template_count: counters.repeated_template_count,
+            formula_cell_count: counters.formula_cell_count,
+            parse_error_formula_count: counters.parse_error_formula_count,
+            volatile_formula_count: counters.volatile_formula_count,
+            dynamic_formula_count: counters.dynamic_formula_count,
+            unsupported_formula_count: counters.unsupported_formula_count,
+            row_run_count: counters.row_run_count,
+            column_run_count: counters.column_run_count,
+            candidate_formula_run_count: counters.candidate_formula_run_count,
+            max_run_length: counters.max_run_length,
+            formula_cells_represented_by_runs: counters.formula_cells_represented_by_runs,
+            singleton_formula_count: counters.singleton_formula_count,
+            hole_count: counters.hole_count,
+            exception_count: counters.exception_count,
+            estimated_materialization_avoidable_cell_count: counters
+                .estimated_materialization_avoidable_cell_count,
+            candidate_row_block_partition_count: counters.candidate_row_block_partition_count,
+            candidate_formula_run_to_partition_edge_estimate: counters
+                .candidate_formula_run_to_partition_edge_estimate,
+            max_partitions_touched_by_run: counters.max_partitions_touched_by_run,
+            dense_run_coverage_percent: counters.dense_run_coverage_percent,
+            template_counters: counters
+                .template_counters
+                .into_iter()
+                .map(|counter| FormulaPlaneCandidateTemplateCounters {
+                    template_id: counter.template_id,
+                    formula_cells: counter.formula_cells,
+                    row_run_count: counter.row_run_count,
+                    column_run_count: counter.column_run_count,
+                    max_run_length: counter.max_run_length,
+                    formula_cells_represented_by_runs: counter.formula_cells_represented_by_runs,
+                    singleton_formula_count: counter.singleton_formula_count,
+                    hole_count: counter.hole_count,
+                    exception_count: counter.exception_count,
+                    candidate_partition_count: counter.candidate_partition_count,
+                    candidate_formula_run_to_partition_edge_estimate: counter
+                        .candidate_formula_run_to_partition_edge_estimate,
+                    max_partitions_touched_by_run: counter.max_partitions_touched_by_run,
+                    dense_run_coverage_percent: counter.dense_run_coverage_percent,
+                })
+                .collect(),
+            candidate_runs: counters
+                .candidate_runs
+                .into_iter()
+                .map(|run| FormulaPlaneCandidateRunSummary {
+                    template_id: run.template_id,
+                    sheet: run.sheet,
+                    orientation: match run.orientation {
+                        CandidateRunOrientation::Row => "row",
+                        CandidateRunOrientation::Column => "column",
+                    },
+                    fixed_index: run.fixed_index,
+                    start_index: run.start_index,
+                    end_index: run.end_index,
+                    len: run.len,
+                    partitions_touched: run.partitions_touched,
+                })
+                .collect(),
+        }
+    }
 }
 
 fn main() -> Result<()> {
@@ -507,16 +635,36 @@ fn stable_id(canonical: &str, labels: &BTreeSet<String>) -> String {
 fn summarize(workbook: PathBuf, scanned: Vec<ScannedFormula>) -> ScanOutput {
     let mut by_template: BTreeMap<String, Vec<ScannedFormula>> = BTreeMap::new();
     let mut cell_to_template = BTreeMap::new();
+    let mut candidate_cells = Vec::new();
     for formula in scanned {
         cell_to_template.insert(
             (formula.raw.sheet.clone(), formula.raw.row, formula.raw.col),
             formula.template_id.clone(),
         );
+        candidate_cells.push(FormulaPlaneCandidateCell {
+            sheet: formula.raw.sheet.clone(),
+            row: formula.raw.row,
+            col: formula.raw.col,
+            template_id: formula.template_id.clone(),
+            parse_ok: formula.parse_ok,
+            volatile: formula.labels.contains("volatile"),
+            dynamic: formula
+                .labels
+                .iter()
+                .any(|label| label.starts_with("dynamic_")),
+            unsupported: formula
+                .labels
+                .iter()
+                .any(|label| label.starts_with("unsupported_")),
+        });
         by_template
             .entry(formula.template_id.clone())
             .or_default()
             .push(formula);
     }
+    let formula_plane_candidates =
+        compute_span_partition_counters(&candidate_cells, SpanPartitionCounterOptions::default())
+            .into();
 
     let mut templates = Vec::new();
     let mut totals = ScanTotals {
@@ -622,6 +770,7 @@ fn summarize(workbook: PathBuf, scanned: Vec<ScannedFormula>) -> ScanOutput {
     ScanOutput {
         workbook: workbook.display().to_string(),
         totals,
+        formula_plane_candidates,
         templates,
     }
 }

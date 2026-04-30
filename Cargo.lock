@@ -1360,6 +1360,7 @@ dependencies = [
  "chrono",
  "clap",
  "formualizer-common",
+ "formualizer-eval",
  "formualizer-parse",
  "formualizer-testkit",
  "formualizer-workbook",
