@@ -30,7 +30,7 @@ Inputs:
 Outputs:
 
 - `FormulaTemplateArena`: deterministic template table keyed by internal `FormulaTemplateId`, carrying source parser template identity and aggregate counts.
-- `FormulaRunStore`: deterministic workbook-level run/placement table, carrying shape, placement span, template reference, row-block partition summary, holes, exceptions, and singleton/unsupported records.
+- `FormulaRunStore`: deterministic workbook-level run table, carrying shape, span, template reference, row-block partition summary, holes, exceptions, and singleton/unsupported records. FP2.B is runs-only; separate placement identity is reserved for FP3 if later reporting or dependency summaries need it.
 - Optional validation/report struct, for example `FormulaRunStoreBuildReport`, with FP2.A-compatible counters and explicit delta explanations.
 - Unit-test-only/debug accessors that let tests inspect IDs, ordering, shape classes, holes, exceptions, and rejected formulas without exposing public API.
 
@@ -58,9 +58,6 @@ pub struct FormulaTemplateId(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FormulaRunId(pub u32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FormulaPlacementId(pub u32);
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FormulaTemplateDescriptor {
     pub id: FormulaTemplateId,
@@ -76,6 +73,9 @@ pub enum TemplateSupportStatus {
     Unsupported,
     Dynamic,
     Volatile,
+    /// The same source template appears in both supported and rejected cells.
+    /// This is reachable when scanner labels differ across cells that share
+    /// `source_template_id`; run construction still uses only supported cells.
     Mixed,
 }
 
@@ -84,25 +84,11 @@ pub enum FormulaRunShape {
     Row,
     Column,
     Singleton,
-    RectangleDeferred,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FormulaPlacement {
-    pub id: FormulaPlacementId,
-    pub template_id: FormulaTemplateId,
-    pub sheet: String,
-    pub row_start: u32,
-    pub row_end: u32,
-    pub col_start: u32,
-    pub col_end: u32,
-    pub shape: FormulaRunShape,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FormulaRunDescriptor {
     pub id: FormulaRunId,
-    pub placement_id: FormulaPlacementId,
     pub template_id: FormulaTemplateId,
     pub shape: FormulaRunShape,
     pub len: u64,
@@ -182,7 +168,6 @@ pub struct Fp2aCounterDelta {
 pub struct FormulaRunStore {
     pub row_block_size: u32,
     pub arena: FormulaTemplateArena,
-    pub placements: Vec<FormulaPlacement>,
     pub runs: Vec<FormulaRunDescriptor>,
     pub gaps: Vec<SpanGapDescriptor>,
     pub rejected_cells: Vec<FormulaRejectedCell>,
@@ -190,7 +175,7 @@ pub struct FormulaRunStore {
 }
 ```
 
-The final implementation may reduce field visibility or use getters if that matches local style, but tests need deterministic introspection. `FormulaPlacementId` can be omitted if the first implementation has a one-to-one run/placement model; if kept, IDs must still be deterministic.
+The final implementation may reduce field visibility or use getters if that matches local style, but tests need deterministic introspection. FP2.B is explicitly runs-only: do not add `FormulaPlacementId` or a separate placement table in this phase. Reserve placement identity for FP3 reporting or FP5 dependency summaries if a many-run/one-placement distinction becomes necessary.
 
 ## 4. Deterministic ID policy
 
@@ -200,24 +185,24 @@ Template IDs:
 - Assign `FormulaTemplateId(0..n-1)` after sorting, independent of input order.
 - Preserve the source parser template string in every template descriptor for scanner/report correlation.
 - Include rejected-only templates in the arena so unsupported/dynamic/volatile accounting is stable and explainable.
+- Template ID stability is owned by the parser/scanner-provided `source_template_id`; if parser formatting changes, deterministic FP2.B IDs may shift even when formula semantics are unchanged. FP2.B records that identity, it does not define a stable public hash contract.
 
 Run IDs:
 
 - Build candidate row/column/singleton runs from normalized sorted cells, never from input order.
 - Sort run descriptors by `(template_id, sheet, shape_order, row_start, col_start, row_end, col_end)`.
-- Use shape order `Row`, `Column`, `Singleton`, `RectangleDeferred` or another explicitly documented total order; keep it fixed in tests.
+- Use shape order `Row`, `Column`, `Singleton`; keep it fixed in tests. Smaller shape-order index wins overlap ties, so `Row` beats `Column` when candidate run lengths and sorted keys are otherwise equal.
 - Assign `FormulaRunId(0..n-1)` after final sorting.
 
 Placement IDs:
 
-- If placements are separate from runs, sort placements by `(template_id, sheet, shape_order, row_start, col_start, row_end, col_end)` and assign `FormulaPlacementId(0..n-1)` after sorting.
-- A `FormulaRunDescriptor` references the placement produced from the same sorted key, not a position discovered during scanning.
-- If omitted for FP2.B, document that placement identity is temporarily equal to run identity and reserve separate IDs for FP3 reporting.
+- FP2.B does not create separate placement IDs. A run is the only stored placement-like unit.
+- Future phases may add `FormulaPlacementId` if scanner reporting or dependency summaries require grouping multiple physical runs under one logical placement.
 
 Shuffled-input determinism:
 
 - All builder tests must run the same candidate set in original order, reversed order, and a fixed shuffled order.
-- The produced arena, runs, placements, gaps, rejected cells, and report must compare equal byte-for-byte through `PartialEq` or stable debug snapshots.
+- The produced arena, runs, gaps, rejected cells, and report must compare equal byte-for-byte through `PartialEq` or stable debug snapshots.
 - Avoid hash maps unless they are only transient and followed by explicit total sorting; prefer `BTreeMap` and `BTreeSet`.
 
 ## 5. Shape policy
@@ -244,25 +229,27 @@ Holes:
 
 - A hole is an empty cell inside the min/max span of a same-template axis group.
 - Store holes as `SpanGapDescriptor { kind: Hole }` with the template and exact coordinate.
+- Deduplicate holes by `(template_id, sheet, row, col, kind)` after scanning row and column axes, so a cross-shaped template cannot report the same missing coordinate twice.
 - Holes do not create placements and must not extend a run across the missing cell.
 
 Exceptions:
 
 - An exception is a formula cell with a different template inside the min/max span of a same-template axis group.
 - Store exceptions as `SpanGapDescriptor { kind: Exception { other_template_id } }` with both template identities resolved to deterministic arena IDs.
+- Deduplicate exceptions by `(template_id, sheet, row, col, kind)` after scanning row and column axes, so a cross-shaped template cannot report the same foreign coordinate twice.
 - Exceptions do not create merged runs; each side of the exception remains a separate run or singleton.
 
 Rectangles:
 
 - Defer first-class rectangle runs in FP2.B.
 - Rationale: FP2.A currently reports row and column runs, the synthetic corpus is dominated by vertical fill-down families, and rectangle orientation can double-count cells unless a precedence rule is designed carefully.
-- FP2.B should detect dense same-template rectangles only enough to classify/report them as `RectangleDeferred` candidates or a `rectangle_deferred_count` in the build report; it should not store rectangle runs as executable placements.
+- FP2.B should detect dense same-template rectangles only enough to increment `rectangle_deferred_count`; it should not emit `RectangleDeferred` placements or any rectangle run shape. The stored representation remains the deterministic row/column decomposition selected by the overlap policy.
 - Rectangle acceptance belongs in a later phase after FP3 reporting shows real corpus prevalence and after FP5 dependency summaries define safe region semantics.
 
 Overlap policy:
 
 - A supported formula cell may be eligible for both a row run and a column run. FP2.B must avoid double representation in `FormulaRunStore` coverage.
-- Use a deterministic precedence: prefer the longer run; break ties by shape order; then by sorted run key.
+- Use a deterministic precedence: prefer the longer run; break ties by smaller shape-order index (`Row` before `Column` before `Singleton`); then by sorted run key.
 - Record any dropped alternative as a report-only overlap count if useful, but do not store two authoritative placements for the same cell.
 
 ## 6. Unsupported, dynamic, and volatile handling
@@ -284,13 +271,14 @@ Expected matches:
 
 - `template_count` and `formula_cell_count` match exactly.
 - Parse-error, unsupported, dynamic, and volatile counts match exactly.
-- Hole and exception counts match unless FP2.B documents a deliberate supported-only filtering delta.
+- Hole and exception counts match unless FP2.B documents a deliberate supported-only filtering delta or the named per-axis/per-coordinate gap-counting delta below.
 - Row-block partition counts and run-to-partition edge estimates match for accepted non-overlapping row/column runs.
 
 Expected deltas to explain:
 
 - `candidate_formula_run_count`, row-run count, column-run count, and represented-cell count can differ if FP2.B applies overlap de-duplication while FP2.A counted both axes diagnostically.
 - Singleton count can differ if FP2.B excludes rejected cells from singleton runs while FP2.A treated all unrepresented formula cells as singleton formula count.
+- FP2.A counts holes/exceptions per axis, while FP2.B stores gaps per coordinate after cross-axis de-duplication. This intentional delta must use a named reason such as `fp2a_axis_gaps_vs_fp2b_coordinate_gaps`.
 - Future `rectangle_deferred_count` has no FP2.A equivalent and must be reported separately.
 
 The build report should include a compact `Fp2aReconciliation` section with `matched: bool` and per-field deltas. For FP2.B unit tests, every delta must be either zero or named in an allow-list with a short reason string.
@@ -312,8 +300,11 @@ Minimum tests in `span_store.rs`:
 | rejected_unsupported_dynamic_volatile_order | Cells with multiple flags | Reason precedence is parse-error, unsupported, dynamic, volatile |
 | rejected_inside_supported_span | Supported A rows 1 and 3, rejected B row 2 | Rejection retained and A records an exception, not a hole |
 | overlap_dedup_longer_run_wins | Cross shape where center belongs to row and column candidates | One representation per cell, deterministic dropped-overlap count |
-| rectangle_deferred | Dense 2x3 same-template block | No rectangle execution run; report records rectangle-deferred candidate or deterministic row/column decomposition |
+| rectangle_deferred | Dense 2x3 same-template block | No rectangle execution run; deterministic row/column decomposition is stored and `rectangle_deferred_count` increments |
 | fp2a_reconciliation_dense_vertical | FP2.A-style 10-row vertical run with row block size 4 | Store report matches FP2.A run/partition counts |
+| multi_sheet_determinism | Two sheets share one template plus sheet-local runs | Stable template IDs, run IDs, gaps, and rejected ordering under shuffled input |
+| empty_input | No candidate cells | Empty arena/store, all counters zero, reconciliation matched |
+| single_unsupported_template_only | One rejected-only template | Arena includes the template, no runs, one rejected cell, support status reflects the rejection |
 | row_block_size_normalization | Row block size 0 | Normalized to 1 and deterministic partitions |
 
 Tests should avoid file IO and should run as ordinary `cargo test -p formualizer-eval` unit tests.
@@ -342,8 +333,8 @@ Do not run benchmarks for FP2.B acceptance.
 
 - `span_store.rs` exists under `crates/formualizer-eval/src/formula_plane/` and is re-exported by the local module tree only.
 - Builder accepts FP2.A candidate cells and returns an in-memory store without side effects.
-- Deterministic template, placement, and run IDs are proven by shuffled-input tests.
-- Supported column runs, row runs, singletons, holes, exceptions, and rejection reasons are represented with exact coordinates.
+- Deterministic template and run IDs are proven by shuffled-input tests; no separate placement IDs exist in FP2.B.
+- Supported column runs, row runs, singletons, cross-axis-deduplicated holes, cross-axis-deduplicated exceptions, and rejection reasons are represented with exact coordinates.
 - Rectangles are explicitly deferred or report-only; they are not silently promoted into executable run authority.
 - FP2.A reconciliation report exists and either matches counters or explains every intentional delta.
 - No loader, scheduler, evaluator, dependency graph, public API, or Core+Overlay code path changes.
@@ -369,7 +360,7 @@ Eval and recalc wins arrive only with FP7 or later, when a narrow executor and s
 
 Risks:
 
-- Axis overlap can double-count cells or produce unstable IDs if precedence is underspecified.
+- Axis overlap can double-count cells or produce unstable IDs if precedence or cross-axis gap de-duplication is underspecified.
 - Rectangle eagerness can create accidental execution semantics before dependency summaries exist.
 - Rejected cells can disappear from accounting if support status is mixed into run construction too early.
 - FP2.A counter drift can hide semantic changes unless every delta is named.
@@ -378,7 +369,7 @@ Risks:
 Circuit breakers:
 
 - Keep all FP2.B code passive and unreachable from production load/eval paths except unit tests and later scanner-only reporting.
-- Add a builder option or hard cap for gap enumeration in pathological sparse spans; when exceeded, record a conservative `gap_scan_truncated_count` and avoid huge allocations.
+- Add a builder option or hard cap for gap enumeration in pathological sparse spans; default `gap_scan_max_per_axis_group` is `1_000_000`. When exceeded, record a conservative `gap_scan_truncated_count` and avoid huge allocations.
 - Require deterministic sort keys before assigning IDs; tests fail if shuffled inputs differ.
 - Reject unsupported/dynamic/volatile/parse-error cells from run construction by default.
 - Preserve a simple fallback: if store build fails or truncates, scanner/reporting can emit FP2.A counters only and production behavior remains unchanged.
