@@ -4,6 +4,7 @@ pub mod args;
 pub mod broadcast;
 pub mod coercion;
 pub mod error_policy;
+pub mod formula_plane;
 pub mod function;
 pub mod function_registry;
 pub mod instant;
