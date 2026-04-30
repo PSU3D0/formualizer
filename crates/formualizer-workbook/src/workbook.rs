@@ -1,5 +1,5 @@
 use crate::error::IoError;
-use crate::traits::{LoadStrategy, SpreadsheetReader, SpreadsheetWriter};
+use crate::traits::{AdapterLoadStats, LoadStrategy, SpreadsheetReader, SpreadsheetWriter};
 use chrono::Timelike;
 use formualizer_common::{
     LiteralValue, RangeAddress,
@@ -2834,10 +2834,23 @@ impl Workbook {
 
     // Loading via streaming ingest (Arrow base + graph formulas)
     pub fn from_reader<B>(
+        backend: B,
+        strategy: LoadStrategy,
+        config: WorkbookConfig,
+    ) -> Result<Self, IoError>
+    where
+        B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
+        IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
+    {
+        let (wb, _) = Self::from_reader_with_adapter_stats(backend, strategy, config)?;
+        Ok(wb)
+    }
+
+    pub fn from_reader_with_adapter_stats<B>(
         mut backend: B,
         _strategy: LoadStrategy,
         config: WorkbookConfig,
-    ) -> Result<Self, IoError>
+    ) -> Result<(Self, Option<AdapterLoadStats>), IoError>
     where
         B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
         IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
@@ -2846,7 +2859,8 @@ impl Workbook {
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;
-        Ok(wb)
+        let stats = backend.load_stats();
+        Ok((wb, stats))
     }
 
     pub fn from_reader_with_config<B>(

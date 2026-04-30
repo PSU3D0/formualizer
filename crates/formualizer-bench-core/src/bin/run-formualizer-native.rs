@@ -11,7 +11,7 @@ use serde_json::json;
 #[cfg(feature = "formualizer_runner")]
 use anyhow::{Context, Result, bail};
 #[cfg(feature = "formualizer_runner")]
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 #[cfg(feature = "formualizer_runner")]
 use formualizer_bench_core::{BenchmarkResult, BenchmarkSuite, CorrectnessResult, MetricsResult};
 
@@ -41,12 +41,31 @@ struct Cli {
     mode: String,
     #[arg(long)]
     reuse_recalc_plan: bool,
+    #[arg(long, value_enum, default_value_t = BackendMode::Umya)]
+    backend: BackendMode,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum BackendMode {
+    Umya,
+    Calamine,
+}
+
+#[cfg(feature = "formualizer_runner")]
+impl BackendMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Umya => "umya",
+            Self::Calamine => "calamine",
+        }
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]
 fn run() -> Result<()> {
     use formualizer_workbook::{
-        LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+        CalamineAdapter, LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
     };
 
     let cli = Cli::parse();
@@ -66,11 +85,38 @@ fn run() -> Result<()> {
     }
 
     let load_start = Instant::now();
-    let backend = UmyaAdapter::open_path(&workbook_path)
-        .map_err(|e| anyhow::anyhow!("open workbook via umya: {e}"))?;
-    let mut wb =
-        Workbook::from_reader(backend, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
-            .map_err(|e| anyhow::anyhow!("load workbook into engine: {e}"))?;
+    let (mut wb, open_read_ms, workbook_ingest_ms, adapter_load_stats) = match cli.backend {
+        BackendMode::Umya => {
+            let open_start = Instant::now();
+            let backend = UmyaAdapter::open_path(&workbook_path)
+                .map_err(|e| anyhow::anyhow!("open workbook via umya: {e}"))?;
+            let open_read_ms = open_start.elapsed().as_secs_f64() * 1000.0;
+            let ingest_start = Instant::now();
+            let (wb, stats) = Workbook::from_reader_with_adapter_stats(
+                backend,
+                LoadStrategy::EagerAll,
+                WorkbookConfig::ephemeral(),
+            )
+            .map_err(|e| anyhow::anyhow!("load workbook into engine via umya: {e}"))?;
+            let workbook_ingest_ms = ingest_start.elapsed().as_secs_f64() * 1000.0;
+            (wb, open_read_ms, workbook_ingest_ms, stats)
+        }
+        BackendMode::Calamine => {
+            let open_start = Instant::now();
+            let backend = CalamineAdapter::open_path(&workbook_path)
+                .map_err(|e| anyhow::anyhow!("open workbook via calamine: {e}"))?;
+            let open_read_ms = open_start.elapsed().as_secs_f64() * 1000.0;
+            let ingest_start = Instant::now();
+            let (wb, stats) = Workbook::from_reader_with_adapter_stats(
+                backend,
+                LoadStrategy::EagerAll,
+                WorkbookConfig::ephemeral(),
+            )
+            .map_err(|e| anyhow::anyhow!("load workbook into engine via calamine: {e}"))?;
+            let workbook_ingest_ms = ingest_start.elapsed().as_secs_f64() * 1000.0;
+            (wb, open_read_ms, workbook_ingest_ms, stats)
+        }
+    };
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
     let load_engine_stats = wb.engine().baseline_stats();
 
@@ -312,6 +358,10 @@ fn run() -> Result<()> {
             );
         }};
     }
+    metrics_extra.insert("backend".to_string(), json!(cli.backend.as_str()));
+    metrics_extra.insert("open_read_ms".to_string(), json!(open_read_ms));
+    metrics_extra.insert("workbook_ingest_ms".to_string(), json!(workbook_ingest_ms));
+    insert_adapter_load_stats(&mut metrics_extra, adapter_load_stats.as_ref());
     insert_engine_stats!("load", load_engine_stats);
     insert_engine_stats!("final", final_engine_stats);
     if let Some(stats) = incremental_pending_engine_stats {
@@ -363,7 +413,7 @@ fn run() -> Result<()> {
         correctness,
         notes,
         timestamp: chrono::Utc::now().to_rfc3339(),
-        meta: BTreeMap::new(),
+        meta: BTreeMap::from([("backend".to_string(), json!(cli.backend.as_str()))]),
     };
 
     println!("{}", serde_json::to_string(&result)?);
@@ -374,6 +424,40 @@ fn run() -> Result<()> {
 fn resolve_output_path(root: &Path, workbook_path: &str) -> PathBuf {
     let p = PathBuf::from(workbook_path);
     if p.is_absolute() { p } else { root.join(p) }
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn insert_adapter_load_stats(
+    metrics_extra: &mut BTreeMap<String, serde_json::Value>,
+    stats: Option<&formualizer_workbook::AdapterLoadStats>,
+) {
+    let Some(stats) = stats else {
+        return;
+    };
+    if let Some(value) = stats.formula_cells_observed {
+        metrics_extra.insert("adapter_formula_cells_observed".to_string(), json!(value));
+    }
+    if let Some(value) = stats.value_cells_observed {
+        metrics_extra.insert("adapter_value_cells_observed".to_string(), json!(value));
+    }
+    if let Some(value) = stats.value_slots_handed_to_engine {
+        metrics_extra.insert(
+            "adapter_value_slots_handed_to_engine".to_string(),
+            json!(value),
+        );
+    }
+    if let Some(value) = stats.formula_cells_handed_to_engine {
+        metrics_extra.insert(
+            "adapter_formula_cells_handed_to_engine".to_string(),
+            json!(value),
+        );
+    }
+    if let Some(value) = stats.shared_formula_tags_observed {
+        metrics_extra.insert(
+            "adapter_shared_formula_tags_observed".to_string(),
+            json!(value),
+        );
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]

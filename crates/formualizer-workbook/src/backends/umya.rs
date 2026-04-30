@@ -1,7 +1,7 @@
 use crate::load_limits::enforce_sheet_load_limits;
 use crate::traits::{
-    AccessGranularity, BackendCaps, CellData, NamedRange, NamedRangeScope, SheetData,
-    SpreadsheetReader, SpreadsheetWriter,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CellData, NamedRange, NamedRangeScope,
+    SheetData, SpreadsheetReader, SpreadsheetWriter,
 };
 use chrono::Timelike;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
@@ -45,6 +45,7 @@ pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
     lazy: bool,
     original_path: Option<std::path::PathBuf>,
+    load_stats: AdapterLoadStats,
 
     // Best-effort: parse `headerRowCount` from xl/tables/*.xml.
     // Key: table name (as stored in XLSX); Value: header_row bool.
@@ -61,6 +62,7 @@ impl UmyaAdapter {
             workbook: RwLock::new(umya_spreadsheet::new_file()),
             lazy: false,
             original_path: None,
+            load_stats: AdapterLoadStats::default(),
             table_header_rows: HashMap::new(),
             table_header_rows_available: false,
         }
@@ -486,6 +488,10 @@ impl SpreadsheetReader for UmyaAdapter {
         Ok(names)
     }
 
+    fn load_stats(&self) -> Option<AdapterLoadStats> {
+        Some(self.load_stats.clone())
+    }
+
     fn defined_names(&mut self) -> Result<Vec<WorkbookDefinedName>, Self::Error> {
         let mut wb = self.workbook.write();
         let count = wb.get_sheet_count();
@@ -581,6 +587,7 @@ impl SpreadsheetReader for UmyaAdapter {
             workbook: RwLock::new(sheet),
             lazy: false,
             original_path: Some(path_ref.to_path_buf()),
+            load_stats: AdapterLoadStats::default(),
             table_header_rows,
             table_header_rows_available,
         })
@@ -630,6 +637,7 @@ impl SpreadsheetReader for UmyaAdapter {
             workbook: RwLock::new(sheet),
             lazy: false,
             original_path: None,
+            load_stats: AdapterLoadStats::default(),
             table_header_rows,
             table_header_rows_available,
         })
@@ -1165,6 +1173,8 @@ where
 
         let chunk_rows: usize = 32 * 1024;
         let mut total_formula_cells = 0usize;
+        let mut total_formula_handed_to_engine = 0usize;
+        let mut total_value_cells_observed = 0usize;
         let mut total_value_slots = 0usize;
         let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
 
@@ -1216,6 +1226,12 @@ where
                     read_sheet_ms,
                 );
             }
+
+            total_value_cells_observed += sheet_data
+                .cells
+                .values()
+                .filter(|cd| cd.value.is_some())
+                .count();
 
             let t_arrow = Instant::now();
             let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
@@ -1280,6 +1296,7 @@ where
 
             let t_formulas = Instant::now();
             let mut formula_cells = 0usize;
+            let mut formula_handed_to_engine = 0usize;
             if engine.config.defer_graph_building {
                 for ((row, col), cd) in &sheet_data.cells {
                     if let Some(f) = &cd.formula {
@@ -1288,6 +1305,7 @@ where
                         }
                         engine.stage_formula_text(n, *row, *col, f.clone());
                         formula_cells += 1;
+                        formula_handed_to_engine += 1;
                     }
                 }
             } else {
@@ -1322,12 +1340,14 @@ where
                         formula_cells += 1;
                     }
                 }
+                formula_handed_to_engine += formulas.len();
                 if !formulas.is_empty() {
                     eager_formula_batches.push((n.clone(), formulas));
                 }
             }
             let formula_ms = t_formulas.elapsed().as_secs_f64() * 1000.0;
             total_formula_cells += formula_cells;
+            total_formula_handed_to_engine += formula_handed_to_engine;
             if debug {
                 eprintln!(
                     "[fz][load]    formulas: {} in {:.1} ms",
@@ -1477,11 +1497,20 @@ where
         engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
+        self.load_stats = AdapterLoadStats {
+            formula_cells_observed: Some(total_formula_cells as u64),
+            value_cells_observed: Some(total_value_cells_observed as u64),
+            value_slots_handed_to_engine: Some(total_value_slots as u64),
+            formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
+            shared_formula_tags_observed: None,
+        };
         if debug {
             eprintln!(
-                "[fz][load] umya: done value_slots={} formula_cells={} total={:.1} ms",
+                "[fz][load] umya: done value_slots={} value_cells={} formula_cells={} formula_handed={} total={:.1} ms",
                 total_value_slots,
+                total_value_cells_observed,
                 total_formula_cells,
+                total_formula_handed_to_engine,
                 t0.elapsed().as_secs_f64() * 1000.0,
             );
         }

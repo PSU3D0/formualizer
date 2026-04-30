@@ -1359,6 +1359,8 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "formualizer-common",
+ "formualizer-parse",
  "formualizer-testkit",
  "formualizer-workbook",
  "ironcalc",

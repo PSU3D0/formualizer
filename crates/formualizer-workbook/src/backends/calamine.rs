@@ -1,7 +1,7 @@
 use crate::load_limits::enforce_sheet_load_limits;
 use crate::traits::{
-    AccessGranularity, BackendCaps, CellData, DefinedName, DefinedNameDefinition, DefinedNameScope,
-    MergedRange, SheetData, SpreadsheetReader,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CellData, DefinedName, DefinedNameDefinition,
+    DefinedNameScope, MergedRange, SheetData, SpreadsheetReader,
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
@@ -76,6 +76,7 @@ pub struct CalamineAdapter {
     cached_names: Option<Vec<String>>,
     defined_names: Vec<DefinedName>,
     external_link_targets: BTreeMap<u32, String>,
+    load_stats: AdapterLoadStats,
 }
 
 impl CalamineAdapter {
@@ -521,6 +522,10 @@ impl SpreadsheetReader for CalamineAdapter {
         Ok(self.cached_names.clone().unwrap_or_default())
     }
 
+    fn load_stats(&self) -> Option<AdapterLoadStats> {
+        Some(self.load_stats.clone())
+    }
+
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
         Ok(self.defined_names.clone())
     }
@@ -557,6 +562,7 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            load_stats: AdapterLoadStats::default(),
         })
     }
 
@@ -595,6 +601,7 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            load_stats: AdapterLoadStats::default(),
         })
     }
 
@@ -692,7 +699,9 @@ where
         engine.set_first_load_assume_new(true);
         engine.reset_ensure_touched();
         let mut total_values = 0usize;
+        let mut total_value_cells_observed = 0usize;
         let mut total_formulas = 0usize;
+        let mut total_formula_handed_to_engine = 0usize;
         let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
         // Route formula ingest through the engine's bulk ingest builder for optimal edge construction
         // Arrow bulk ingest for base values (Phase A) is built per-sheet without borrowing the engine
@@ -730,7 +739,15 @@ where
             if debug {
                 eprintln!("[fz][load]    dims={}x{}", dims.0, dims.1);
             }
-            let populated_cells = range.used_cells().count()
+            let value_cells_observed = range
+                .used_cells()
+                .filter(|(_, _, data)| {
+                    !matches!(*data, Data::Empty)
+                        && !matches!(*data, Data::String(s) if s.is_empty())
+                })
+                .count();
+            total_value_cells_observed += value_cells_observed;
+            let populated_cells = value_cells_observed
                 + formulas_range
                     .as_ref()
                     .map(|frm_range| frm_range.used_cells().count())
@@ -934,6 +951,7 @@ where
             // Formulas: iterate formulas_range and either stage or parse with caching
             let tf0 = DebugTimer::start();
             let mut parsed_n = 0usize;
+            let mut formula_handed_to_engine = 0usize;
             if let Some(frm_range) = &formulas_range {
                 let start_row = frm_range.start().unwrap_or_default().0 as usize;
                 let start_col = frm_range.start().unwrap_or_default().1 as usize;
@@ -950,6 +968,7 @@ where
                         }
                         engine.stage_formula_text(n, excel_row, excel_col, formula.clone());
                         parsed_n += 1;
+                        formula_handed_to_engine += 1;
                     }
                 } else {
                     let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
@@ -1001,12 +1020,14 @@ where
                             eprintln!("[fz][load]    parsed formulas: {parsed_n}");
                         }
                     }
+                    formula_handed_to_engine += formulas.len();
                     if !formulas.is_empty() {
                         eager_formula_batches.push((n.clone(), formulas));
                     }
                 }
             }
             total_formulas += parsed_n;
+            total_formula_handed_to_engine += formula_handed_to_engine;
             if debug {
                 eprintln!(
                     "[fz][load]    formulas={} in {} ms",
@@ -1155,11 +1176,20 @@ where
         engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
+        self.load_stats = AdapterLoadStats {
+            formula_cells_observed: Some(total_formulas as u64),
+            value_cells_observed: Some(total_value_cells_observed as u64),
+            value_slots_handed_to_engine: Some(total_values as u64),
+            formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
+            shared_formula_tags_observed: None,
+        };
         if debug {
             eprintln!(
-                "[fz][load] done: values={}, formulas={}, batch_close={} ms, total={} ms",
+                "[fz][load] done: values={} value_cells={} formulas={} formula_handed={} batch_close={} ms, total={} ms",
                 total_values,
+                total_value_cells_observed,
                 total_formulas,
+                total_formula_handed_to_engine,
                 tend0.elapsed_millis(),
                 t0.elapsed_millis(),
             );

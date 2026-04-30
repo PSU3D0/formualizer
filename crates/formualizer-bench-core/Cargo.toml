@@ -27,4 +27,6 @@ serde_yaml = { workspace = true }
 zip = "0.6"
 formualizer-testkit = { path = "../formualizer-testkit", optional = true }
 formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya", "calamine"] }
+formualizer-parse = { workspace = true }
+formualizer-common = { workspace = true }
 ironcalc = { version = "0.7.1", optional = true }
