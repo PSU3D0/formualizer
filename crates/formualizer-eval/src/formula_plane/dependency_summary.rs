@@ -7,7 +7,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use formualizer_parse::parser::ASTNode;
+use crate::engine::graph::DependencyGraph;
+use crate::engine::plan::{
+    DependencyPlan, F_HAS_NAMES, F_HAS_TABLES, F_LIKELY_ARRAY, F_VOLATILE, RangeKey,
+};
+use formualizer_common::{Coord as AbsCoord, ExcelError};
+use formualizer_parse::parser::{ASTNode, CollectPolicy};
 
 use super::ids::{FormulaRunId, FormulaTemplateId};
 use super::span_store::{
@@ -80,6 +85,424 @@ pub(crate) enum DependencyRejectReason {
     ImplicitIntersectionUnsupported,
     FunctionUnsupported { name: String },
     UnsupportedAstNode { node: String },
+}
+
+pub(crate) const FP4A_FIXED_COLLECT_POLICY_NAME: &str =
+    "fp4a_fixed_collect_v1_expand_small_ranges_false_limit_0_include_names_true";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct DependencyCollectPolicyFingerprint {
+    pub(crate) expand_small_ranges: bool,
+    pub(crate) range_expansion_limit: usize,
+    pub(crate) include_names: bool,
+}
+
+impl DependencyCollectPolicyFingerprint {
+    fn from_policy(policy: &CollectPolicy) -> Self {
+        Self {
+            expand_small_ranges: policy.expand_small_ranges,
+            range_expansion_limit: policy.range_expansion_limit,
+            include_names: policy.include_names,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DependencySummaryComparisonInput<'a> {
+    pub(crate) sheet: &'a str,
+    pub(crate) row: u32,
+    pub(crate) col: u32,
+    pub(crate) ast: &'a ASTNode,
+    pub(crate) summary: &'a FormulaDependencySummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DependencySummaryComparisonReport {
+    pub(crate) oracle_policy_name: &'static str,
+    pub(crate) oracle_policy: DependencyCollectPolicyFingerprint,
+    pub(crate) requested_policy: DependencyCollectPolicyFingerprint,
+    pub(crate) exact_match_count: u64,
+    pub(crate) over_approximation_count: u64,
+    pub(crate) under_approximation_count: u64,
+    pub(crate) rejection_count: u64,
+    pub(crate) policy_drift_count: u64,
+    pub(crate) fallback_reason_histogram: BTreeMap<String, u64>,
+}
+
+impl DependencySummaryComparisonReport {
+    fn new(requested_policy: &CollectPolicy) -> Self {
+        let oracle_policy = fp4a_fixed_collect_policy();
+        Self {
+            oracle_policy_name: FP4A_FIXED_COLLECT_POLICY_NAME,
+            oracle_policy: DependencyCollectPolicyFingerprint::from_policy(&oracle_policy),
+            requested_policy: DependencyCollectPolicyFingerprint::from_policy(requested_policy),
+            exact_match_count: 0,
+            over_approximation_count: 0,
+            under_approximation_count: 0,
+            rejection_count: 0,
+            policy_drift_count: 0,
+            fallback_reason_histogram: BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn has_no_under_approximations(&self) -> bool {
+        self.under_approximation_count == 0
+    }
+
+    fn record_fallback(&mut self, reason: impl Into<String>) {
+        self.record_fallback_count(reason, 1);
+    }
+
+    fn record_fallback_count(&mut self, reason: impl Into<String>, count: u64) {
+        if count == 0 {
+            return;
+        }
+        *self
+            .fallback_reason_histogram
+            .entry(reason.into())
+            .or_default() += count;
+    }
+}
+
+pub(crate) fn fp4a_fixed_collect_policy() -> CollectPolicy {
+    CollectPolicy {
+        expand_small_ranges: false,
+        range_expansion_limit: 0,
+        include_names: true,
+    }
+}
+
+pub(crate) fn compare_dependency_summaries_to_fixed_planner<'a, I>(
+    graph: &mut DependencyGraph,
+    inputs: I,
+) -> Result<DependencySummaryComparisonReport, ExcelError>
+where
+    I: IntoIterator<Item = DependencySummaryComparisonInput<'a>>,
+{
+    let policy = fp4a_fixed_collect_policy();
+    compare_dependency_summaries_to_planner_with_policy(graph, inputs, &policy)
+}
+
+pub(crate) fn compare_dependency_summaries_to_planner_with_policy<'a, I>(
+    graph: &mut DependencyGraph,
+    inputs: I,
+    requested_policy: &CollectPolicy,
+) -> Result<DependencySummaryComparisonReport, ExcelError>
+where
+    I: IntoIterator<Item = DependencySummaryComparisonInput<'a>>,
+{
+    let inputs = inputs.into_iter().collect::<Vec<_>>();
+    let mut report = DependencySummaryComparisonReport::new(requested_policy);
+
+    if report.requested_policy != report.oracle_policy {
+        let drift_count = inputs.len() as u64;
+        report.policy_drift_count = drift_count;
+        report.record_fallback_count("collect_policy_drift", drift_count);
+        return Ok(report);
+    }
+
+    let plan = graph.plan_dependencies(
+        inputs
+            .iter()
+            .map(|input| (input.sheet, input.row, input.col, input.ast)),
+        requested_policy,
+        None,
+    )?;
+
+    compare_dependency_summaries_to_plan(graph, &inputs, &plan, &mut report);
+    Ok(report)
+}
+
+fn compare_dependency_summaries_to_plan(
+    graph: &DependencyGraph,
+    inputs: &[DependencySummaryComparisonInput<'_>],
+    plan: &DependencyPlan,
+    report: &mut DependencySummaryComparisonReport,
+) {
+    for (index, input) in inputs.iter().enumerate() {
+        if input.summary.formula_class != FormulaClass::StaticPointwise
+            || !input.summary.reject_reasons.is_empty()
+        {
+            record_summary_rejection(report, input.summary);
+            continue;
+        }
+
+        let planner_universe = normalize_planner_dependencies(graph, plan, index);
+        let planner_fallbacks = planner_universe.fallback_reasons();
+        if !planner_fallbacks.is_empty() {
+            report.rejection_count += 1;
+            for reason in planner_fallbacks {
+                report.record_fallback(reason);
+            }
+            continue;
+        }
+
+        let summary_cells = match instantiate_summary_cells(input) {
+            Ok(cells) => cells,
+            Err(reason) => {
+                report.rejection_count += 1;
+                report.record_fallback(reason);
+                continue;
+            }
+        };
+
+        if summary_cells == planner_universe.cells {
+            report.exact_match_count += 1;
+        } else if planner_universe.cells.is_subset(&summary_cells) {
+            report.over_approximation_count += 1;
+        } else {
+            report.under_approximation_count += 1;
+        }
+    }
+}
+
+fn record_summary_rejection(
+    report: &mut DependencySummaryComparisonReport,
+    summary: &FormulaDependencySummary,
+) {
+    report.rejection_count += 1;
+    if summary.reject_reasons.is_empty() {
+        report.record_fallback("summary_rejected_without_reason");
+        return;
+    }
+
+    for reason in &summary.reject_reasons {
+        report.record_fallback(dependency_reject_reason_key(reason));
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct NormalizedDependencyUniverse {
+    cells: BTreeSet<FiniteCell>,
+    ranges: BTreeSet<NormalizedRangeDependency>,
+    names: BTreeSet<String>,
+    tables: BTreeSet<String>,
+    unsupported: BTreeSet<&'static str>,
+}
+
+impl NormalizedDependencyUniverse {
+    fn fallback_reasons(&self) -> Vec<&'static str> {
+        let mut reasons = BTreeSet::new();
+        for range in &self.ranges {
+            reasons.insert(match range {
+                NormalizedRangeDependency::Finite(_) => "planner_finite_range_dependency",
+                NormalizedRangeDependency::WholeRow { .. }
+                | NormalizedRangeDependency::WholeCol { .. } => "planner_whole_axis_dependency",
+                NormalizedRangeDependency::OpenRect { .. } => "planner_open_range_dependency",
+            });
+        }
+        if !self.names.is_empty() {
+            reasons.insert("planner_name_dependency");
+        }
+        if !self.tables.is_empty() {
+            reasons.insert("planner_table_dependency");
+        }
+        reasons.extend(self.unsupported.iter().copied());
+        reasons.into_iter().collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum NormalizedRangeDependency {
+    Finite(FiniteRegion),
+    WholeRow {
+        sheet: String,
+        row: u32,
+    },
+    WholeCol {
+        sheet: String,
+        col: u32,
+    },
+    OpenRect {
+        sheet: String,
+        start: Option<(u32, u32)>,
+        end: Option<(u32, u32)>,
+    },
+}
+
+fn normalize_planner_dependencies(
+    graph: &DependencyGraph,
+    plan: &DependencyPlan,
+    index: usize,
+) -> NormalizedDependencyUniverse {
+    let mut universe = NormalizedDependencyUniverse::default();
+
+    let Some(per_formula_cells) = plan.per_formula_cells.get(index) else {
+        universe.unsupported.insert("planner_formula_index_missing");
+        return universe;
+    };
+    for cell_index in per_formula_cells {
+        let Some(&(sheet_id, coord)) = plan.global_cells.get(*cell_index as usize) else {
+            universe.unsupported.insert("planner_cell_index_missing");
+            continue;
+        };
+        let (row, col) = planner_coord_to_vc(coord);
+        universe
+            .cells
+            .insert(FiniteCell::new(graph.sheet_name(sheet_id), row, col));
+    }
+
+    let Some(per_formula_ranges) = plan.per_formula_ranges.get(index) else {
+        universe.unsupported.insert("planner_formula_index_missing");
+        return universe;
+    };
+    for range in per_formula_ranges {
+        universe
+            .ranges
+            .insert(normalize_planner_range(graph, range));
+    }
+
+    let Some(per_formula_names) = plan.per_formula_names.get(index) else {
+        universe.unsupported.insert("planner_formula_index_missing");
+        return universe;
+    };
+    universe.names.extend(per_formula_names.iter().cloned());
+
+    let Some(per_formula_tables) = plan.per_formula_tables.get(index) else {
+        universe.unsupported.insert("planner_formula_index_missing");
+        return universe;
+    };
+    universe.tables.extend(per_formula_tables.iter().cloned());
+
+    let flags = plan.per_formula_flags.get(index).copied().unwrap_or(0);
+    if flags & F_VOLATILE != 0 {
+        universe.unsupported.insert("planner_volatile_dependency");
+    }
+    if flags & F_HAS_NAMES != 0 && universe.names.is_empty() {
+        universe.unsupported.insert("planner_name_dependency");
+    }
+    if flags & F_HAS_TABLES != 0 && universe.tables.is_empty() {
+        universe.unsupported.insert("planner_table_dependency");
+    }
+    if flags & F_LIKELY_ARRAY != 0 {
+        universe.unsupported.insert("planner_array_dependency");
+    }
+
+    universe
+}
+
+fn normalize_planner_range(graph: &DependencyGraph, range: &RangeKey) -> NormalizedRangeDependency {
+    match range {
+        RangeKey::Rect { sheet, start, end } => {
+            let (row_start, col_start) = planner_coord_to_vc(*start);
+            let (row_end, col_end) = planner_coord_to_vc(*end);
+            NormalizedRangeDependency::Finite(FiniteRegion::new(
+                graph.sheet_name(*sheet),
+                row_start,
+                col_start,
+                row_end,
+                col_end,
+            ))
+        }
+        RangeKey::WholeRow { sheet, row } => NormalizedRangeDependency::WholeRow {
+            sheet: graph.sheet_name(*sheet).to_string(),
+            row: *row,
+        },
+        RangeKey::WholeCol { sheet, col } => NormalizedRangeDependency::WholeCol {
+            sheet: graph.sheet_name(*sheet).to_string(),
+            col: *col,
+        },
+        RangeKey::OpenRect { sheet, start, end } => NormalizedRangeDependency::OpenRect {
+            sheet: graph.sheet_name(*sheet).to_string(),
+            start: start.map(planner_coord_to_vc),
+            end: end.map(planner_coord_to_vc),
+        },
+    }
+}
+
+fn planner_coord_to_vc(coord: AbsCoord) -> (u32, u32) {
+    (coord.row().saturating_add(1), coord.col().saturating_add(1))
+}
+
+fn instantiate_summary_cells(
+    input: &DependencySummaryComparisonInput<'_>,
+) -> Result<BTreeSet<FiniteCell>, &'static str> {
+    let mut cells = BTreeSet::new();
+    for (pattern_index, pattern) in input.summary.precedent_patterns.iter().enumerate() {
+        match pattern {
+            PrecedentPattern::Cell(cell_pattern) => {
+                let sheet = instantiate_sheet(&cell_pattern.sheet, input.sheet);
+                let row = instantiate_axis_cell(
+                    &cell_pattern.row,
+                    input.row,
+                    pattern_index,
+                    PatternAxis::Row,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                let col = instantiate_axis_cell(
+                    &cell_pattern.col,
+                    input.col,
+                    pattern_index,
+                    PatternAxis::Col,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                cells.insert(FiniteCell::new(sheet, row, col));
+            }
+        }
+    }
+    Ok(cells)
+}
+
+fn summary_instantiation_fallback(reason: &RunSummaryRejectionReason) -> &'static str {
+    match reason {
+        RunSummaryRejectionReason::NonFiniteAxis { .. } => "summary_non_finite_axis",
+        RunSummaryRejectionReason::InvalidAxisCoordinate { .. } => {
+            "summary_invalid_axis_coordinate"
+        }
+        _ => "summary_pattern_instantiation_unsupported",
+    }
+}
+
+fn dependency_reject_reason_key(reason: &DependencyRejectReason) -> String {
+    match reason {
+        DependencyRejectReason::OpenRangeUnsupported { .. } => "open_range_unsupported".to_string(),
+        DependencyRejectReason::WholeAxisUnsupported { .. } => "whole_axis_unsupported".to_string(),
+        DependencyRejectReason::FiniteRangeUnsupported { .. } => {
+            "finite_range_unsupported".to_string()
+        }
+        DependencyRejectReason::NamedRangeUnsupported { .. } => {
+            "named_range_unsupported".to_string()
+        }
+        DependencyRejectReason::StructuredReferenceUnsupported { .. } => {
+            "structured_reference_unsupported".to_string()
+        }
+        DependencyRejectReason::ThreeDReferenceUnsupported { .. } => {
+            "three_d_reference_unsupported".to_string()
+        }
+        DependencyRejectReason::ExternalReferenceUnsupported { .. } => {
+            "external_reference_unsupported".to_string()
+        }
+        DependencyRejectReason::DynamicDependency { function } => {
+            optional_function_key("dynamic_dependency", function)
+        }
+        DependencyRejectReason::VolatileUnsupported { function } => {
+            optional_function_key("volatile_unsupported", function)
+        }
+        DependencyRejectReason::ReferenceReturningUnsupported { function } => {
+            optional_function_key("reference_returning_unsupported", function)
+        }
+        DependencyRejectReason::UnknownFunction { name } => format!("unknown_function:{name}"),
+        DependencyRejectReason::LocalEnvUnsupported { function } => {
+            optional_function_key("local_env_unsupported", function)
+        }
+        DependencyRejectReason::SpillUnsupported => "spill_unsupported".to_string(),
+        DependencyRejectReason::ImplicitIntersectionUnsupported => {
+            "implicit_intersection_unsupported".to_string()
+        }
+        DependencyRejectReason::FunctionUnsupported { name } => {
+            format!("function_unsupported:{name}")
+        }
+        DependencyRejectReason::UnsupportedAstNode { node } => {
+            format!("unsupported_ast_node:{node}")
+        }
+    }
+}
+
+fn optional_function_key(prefix: &str, function: &Option<String>) -> String {
+    match function {
+        Some(function) => format!("{prefix}:{function}"),
+        None => prefix.to_string(),
+    }
 }
 
 pub(crate) fn summarize_dependencies(
@@ -1486,12 +1909,18 @@ mod tests {
 
     use super::*;
     use formualizer_parse::parse;
+    use formualizer_parse::parser::{ASTNode, CollectPolicy};
 
     use super::super::span_counters::FormulaPlaneCandidateCell;
     use super::super::span_store::{FormulaRunStore, FormulaRunStoreBuildOptions};
+    use crate::engine::graph::DependencyGraph;
+
+    fn ast(formula: &str) -> ASTNode {
+        parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"))
+    }
 
     fn summary(formula: &str, row: u32, col: u32) -> FormulaDependencySummary {
-        let ast = parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"));
+        let ast = ast(formula);
         summarize_dependencies(&ast, row, col)
     }
 
@@ -1540,6 +1969,37 @@ mod tests {
             .into_iter()
             .map(|(source_template_id, summary)| (source_template_id.to_string(), summary))
             .collect()
+    }
+
+    fn compare_one(
+        sheet: &str,
+        row: u32,
+        col: u32,
+        ast: &ASTNode,
+        summary: &FormulaDependencySummary,
+    ) -> DependencySummaryComparisonReport {
+        let mut graph = DependencyGraph::new();
+        compare_dependency_summaries_to_fixed_planner(
+            &mut graph,
+            [DependencySummaryComparisonInput {
+                sheet,
+                row,
+                col,
+                ast,
+                summary,
+            }],
+        )
+        .expect("fixed planner comparison should build")
+    }
+
+    fn assert_single_exact_report(report: &DependencySummaryComparisonReport) {
+        assert_eq!(report.exact_match_count, 1);
+        assert_eq!(report.over_approximation_count, 0);
+        assert_eq!(report.under_approximation_count, 0);
+        assert_eq!(report.rejection_count, 0);
+        assert_eq!(report.policy_drift_count, 0);
+        assert!(report.fallback_reason_histogram.is_empty());
+        assert!(report.has_no_under_approximations());
     }
 
     fn shuffled_candidates(
@@ -1629,6 +2089,58 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_comparison_exact_match_addition() {
+        let formula_ast = ast("=A1+B1");
+        let summary = summarize_dependencies(&formula_ast, 1, 3);
+
+        let report = compare_one("Sheet1", 1, 3, &formula_ast, &summary);
+
+        assert_eq!(report.oracle_policy_name, FP4A_FIXED_COLLECT_POLICY_NAME);
+        assert_eq!(
+            report.oracle_policy,
+            DependencyCollectPolicyFingerprint {
+                expand_small_ranges: false,
+                range_expansion_limit: 0,
+                include_names: true,
+            }
+        );
+        assert_eq!(report.requested_policy, report.oracle_policy);
+        assert_single_exact_report(&report);
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_comparison_instantiates_copied_relative_formula() {
+        let template_ast = ast("=A1+B1");
+        let copied_ast = ast("=A20+B20");
+        let summary = summarize_dependencies(&template_ast, 1, 3);
+
+        let report = compare_one("Sheet1", 20, 3, &copied_ast, &summary);
+
+        assert_single_exact_report(&report);
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_comparison_handles_mixed_anchors_without_under_approx() {
+        let template_ast = ast("=$A1+B$1");
+        let copied_ast = ast("=$A20+B$1");
+        let summary = summarize_dependencies(&template_ast, 1, 3);
+
+        let report = compare_one("Sheet1", 20, 3, &copied_ast, &summary);
+
+        assert_single_exact_report(&report);
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_comparison_matches_cross_sheet_static_cells() {
+        let formula_ast = ast("=Sheet2!A1+B1");
+        let summary = summarize_dependencies(&formula_ast, 1, 3);
+
+        let report = compare_one("Sheet1", 1, 3, &formula_ast, &summary);
+
+        assert_single_exact_report(&report);
     }
 
     #[test]
@@ -1903,6 +2415,121 @@ mod tests {
             &implicit,
             &DependencyRejectReason::ImplicitIntersectionUnsupported
         ));
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_comparison_rejects_unsupported_without_mismatch() {
+        let range_ast = ast("=SUM(A1:A10)");
+        let range_summary = summarize_dependencies(&range_ast, 1, 2);
+        let named_ast = ast("=MyName");
+        let named_summary = summarize_dependencies(&named_ast, 1, 1);
+        let mut graph = DependencyGraph::new();
+
+        let report = compare_dependency_summaries_to_fixed_planner(
+            &mut graph,
+            [
+                DependencySummaryComparisonInput {
+                    sheet: "Sheet1",
+                    row: 1,
+                    col: 2,
+                    ast: &range_ast,
+                    summary: &range_summary,
+                },
+                DependencySummaryComparisonInput {
+                    sheet: "Sheet1",
+                    row: 1,
+                    col: 1,
+                    ast: &named_ast,
+                    summary: &named_summary,
+                },
+            ],
+        )
+        .expect("fixed planner comparison should build");
+
+        assert_eq!(report.exact_match_count, 0);
+        assert_eq!(report.over_approximation_count, 0);
+        assert_eq!(report.under_approximation_count, 0);
+        assert_eq!(report.rejection_count, 2);
+        assert_eq!(report.policy_drift_count, 0);
+        assert_eq!(
+            report
+                .fallback_reason_histogram
+                .get("finite_range_unsupported"),
+            Some(&1)
+        );
+        assert_eq!(
+            report
+                .fallback_reason_histogram
+                .get("function_unsupported:SUM"),
+            Some(&1)
+        );
+        assert_eq!(
+            report
+                .fallback_reason_histogram
+                .get("named_range_unsupported"),
+            Some(&1)
+        );
+        assert!(report.has_no_under_approximations());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_comparison_reports_policy_drift() {
+        let formula_ast = ast("=A1+B1");
+        let summary = summarize_dependencies(&formula_ast, 1, 3);
+        let drift_policy = CollectPolicy {
+            expand_small_ranges: true,
+            range_expansion_limit: 4,
+            include_names: true,
+        };
+        let mut graph = DependencyGraph::new();
+
+        let report = compare_dependency_summaries_to_planner_with_policy(
+            &mut graph,
+            [DependencySummaryComparisonInput {
+                sheet: "Sheet1",
+                row: 1,
+                col: 3,
+                ast: &formula_ast,
+                summary: &summary,
+            }],
+            &drift_policy,
+        )
+        .expect("policy drift should be reported without planning");
+
+        assert_eq!(report.exact_match_count, 0);
+        assert_eq!(report.over_approximation_count, 0);
+        assert_eq!(report.under_approximation_count, 0);
+        assert_eq!(report.rejection_count, 0);
+        assert_eq!(report.policy_drift_count, 1);
+        assert_ne!(report.requested_policy, report.oracle_policy);
+        assert_eq!(
+            report.fallback_reason_histogram.get("collect_policy_drift"),
+            Some(&1)
+        );
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_comparison_detects_under_approximation() {
+        let formula_ast = ast("=A1+B1");
+        let incomplete_summary = FormulaDependencySummary {
+            formula_class: FormulaClass::StaticPointwise,
+            precedent_patterns: vec![cell(
+                SheetBinding::CurrentSheet,
+                AxisRef::RelativeToPlacement { offset: 0 },
+                AxisRef::RelativeToPlacement { offset: -2 },
+            )],
+            reject_reasons: Vec::new(),
+        };
+
+        let report = compare_one("Sheet1", 1, 3, &formula_ast, &incomplete_summary);
+
+        assert_eq!(report.exact_match_count, 0);
+        assert_eq!(report.over_approximation_count, 0);
+        assert_eq!(report.under_approximation_count, 1);
+        assert_eq!(report.rejection_count, 0);
+        assert_eq!(report.policy_drift_count, 0);
+        assert!(report.fallback_reason_histogram.is_empty());
+        assert!(!report.has_no_under_approximations());
     }
 
     #[test]
