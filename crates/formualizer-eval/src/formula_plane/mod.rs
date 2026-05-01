@@ -9,6 +9,7 @@ pub mod ids;
 pub mod partition;
 pub mod span_counters;
 pub mod span_store;
+pub(crate) mod template_canonical;
 pub mod virtual_ref;
 
 pub use grid::*;
