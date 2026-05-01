@@ -461,12 +461,12 @@ fn axis_is_finite_cell(axis: &AxisRef) -> bool {
 fn is_supported_pointwise_binary_operator(op: &str) -> bool {
     matches!(
         op,
-        "+" | "-" | "*" | "/" | "^" | "=" | "<>" | "<" | "<=" | ">" | ">="
+        "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
     )
 }
 
 fn is_reference_returning_binary_operator(op: &str) -> bool {
-    matches!(op, ":" | ",")
+    matches!(op, ":" | "," | " ")
 }
 
 fn is_array_or_spill_function(name: &str) -> bool {
@@ -571,6 +571,161 @@ mod tests {
     }
 
     #[test]
+    fn formula_plane_dependency_summary_static_literals_and_unary_collects_cells() {
+        let literal = summary("=42", 1, 1);
+        let unary = summary("=-A1%", 1, 2);
+
+        assert_eq!(literal.formula_class, FormulaClass::StaticPointwise);
+        assert!(literal.precedent_patterns.is_empty());
+        assert!(literal.reject_reasons.is_empty());
+        assert_eq!(unary.formula_class, FormulaClass::StaticPointwise);
+        assert_eq!(
+            unary.precedent_patterns,
+            vec![cell(
+                SheetBinding::CurrentSheet,
+                AxisRef::RelativeToPlacement { offset: 0 },
+                AxisRef::RelativeToPlacement { offset: -1 }
+            )]
+        );
+        assert!(unary.reject_reasons.is_empty());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_static_pointwise_concatenation_collects_cells() {
+        let summary = summary("=A1&\"x\"", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert_eq!(
+            summary.precedent_patterns,
+            vec![cell(
+                SheetBinding::CurrentSheet,
+                AxisRef::RelativeToPlacement { offset: 0 },
+                AxisRef::RelativeToPlacement { offset: -1 }
+            )]
+        );
+        assert!(summary.reject_reasons.is_empty());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_rejects_direct_finite_range_value() {
+        let summary = summary("=A1:A10", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &summary,
+            &DependencyRejectReason::FiniteRangeUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+        assert!(!has_reason_kind(&summary, |reason| matches!(
+            reason,
+            DependencyRejectReason::FunctionUnsupported { .. }
+        )));
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_rejects_open_ended_and_open_axis_ranges() {
+        // The parser accepts partially specified endpoints such as `A1:A`,
+        // `A:A10`, `A1:10`, and `1:A10`, but not a fully omitted side.
+        assert!(parse("=A1:").is_err());
+        assert!(parse("=:A10").is_err());
+
+        for formula in ["=A1:A", "=A:A10", "=A1:10", "=1:A10"] {
+            let summary = summary(formula, 1, 2);
+
+            assert_eq!(summary.formula_class, FormulaClass::Rejected);
+            assert!(
+                has_reason(
+                    &summary,
+                    &DependencyRejectReason::OpenRangeUnsupported {
+                        context: AnalyzerContext::Value
+                    }
+                ),
+                "expected open-range rejection for {formula}: {summary:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_rejects_named_structured_3d_and_external_references() {
+        let named = summary("=MyName", 1, 1);
+        let structured = summary("=Table1[Amount]", 1, 1);
+        let three_d = summary("=Sheet1:Sheet3!A1", 1, 1);
+        let external = summary("=[1]Sheet1!A1", 1, 1);
+
+        assert_eq!(named.formula_class, FormulaClass::Rejected);
+        assert_eq!(structured.formula_class, FormulaClass::Rejected);
+        assert_eq!(three_d.formula_class, FormulaClass::Rejected);
+        assert_eq!(external.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &named,
+            &DependencyRejectReason::NamedRangeUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+        assert!(has_reason(
+            &structured,
+            &DependencyRejectReason::StructuredReferenceUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+        assert!(has_reason(
+            &three_d,
+            &DependencyRejectReason::ThreeDReferenceUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+        assert!(has_reason(
+            &external,
+            &DependencyRejectReason::ExternalReferenceUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_rejects_reference_returning_operators() {
+        let colon = summary("=(A1):(B1)", 1, 1);
+        let union = summary("=(A1),(B1)", 1, 1);
+        let intersection = summary("=A1:A3 B1:B3", 1, 1);
+
+        for summary in [&colon, &union, &intersection] {
+            assert_eq!(summary.formula_class, FormulaClass::Rejected);
+            assert!(has_reason(
+                summary,
+                &DependencyRejectReason::ReferenceReturningUnsupported { function: None }
+            ));
+        }
+        assert!(has_reason(
+            &intersection,
+            &DependencyRejectReason::FiniteRangeUnsupported {
+                context: AnalyzerContext::Reference
+            }
+        ));
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_rejects_reference_returning_functions() {
+        let index = summary("=INDEX(A1:A3,1)", 1, 1);
+        let choose = summary("=CHOOSE(1,A1,B1)", 1, 1);
+
+        assert_eq!(index.formula_class, FormulaClass::Rejected);
+        assert_eq!(choose.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &index,
+            &DependencyRejectReason::ReferenceReturningUnsupported {
+                function: Some("INDEX".to_string())
+            }
+        ));
+        assert!(has_reason(
+            &choose,
+            &DependencyRejectReason::ReferenceReturningUnsupported {
+                function: Some("CHOOSE".to_string())
+            }
+        ));
+    }
+
+    #[test]
     fn formula_plane_dependency_summary_rejects_sum_range_not_pointwise_authority() {
         let summary = summary("=SUM(A1:A10)", 1, 2);
 
@@ -591,12 +746,18 @@ mod tests {
 
     #[test]
     fn formula_plane_dependency_summary_rejects_whole_axis_references() {
-        let direct = summary("=A:A", 1, 2);
+        let direct_column = summary("=A:A", 1, 2);
+        let direct_row = summary("=1:10", 1, 2);
         let function_arg = summary("=SUM(A:A)", 1, 2);
 
-        assert_eq!(direct.formula_class, FormulaClass::Rejected);
+        assert_eq!(direct_column.formula_class, FormulaClass::Rejected);
+        assert_eq!(direct_row.formula_class, FormulaClass::Rejected);
         assert_eq!(function_arg.formula_class, FormulaClass::Rejected);
-        assert!(has_reason_kind(&direct, |reason| matches!(
+        assert!(has_reason_kind(&direct_column, |reason| matches!(
+            reason,
+            DependencyRejectReason::WholeAxisUnsupported { .. }
+        )));
+        assert!(has_reason_kind(&direct_row, |reason| matches!(
             reason,
             DependencyRejectReason::WholeAxisUnsupported { .. }
         )));
