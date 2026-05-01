@@ -1,14 +1,18 @@
-//! Passive FormulaPlane dependency summaries for FP4.A.3.
+//! Passive FormulaPlane dependency summaries for FP4.A.3 and FP4.A.4.
 //!
 //! This module is crate-internal and read-only. It classifies a narrow initial
 //! scalar template subset and records explicit rejection reasons for everything
 //! outside that subset; it does not change graph, scheduler, dirty, loader, or
 //! evaluation behavior.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use formualizer_parse::parser::ASTNode;
 
+use super::ids::{FormulaRunId, FormulaTemplateId};
+use super::span_store::{
+    FormulaRejectReason, FormulaRunDescriptor, FormulaRunShape, FormulaRunStore, SpanGapKind,
+};
 use super::template_canonical::{
     AxisRef, CanonicalExpr, CanonicalReference, CanonicalReferenceContext, CanonicalRejectReason,
     CanonicalTemplate, SheetBinding, UnsupportedReferenceKind, canonicalize_template,
@@ -476,10 +480,1015 @@ fn is_array_or_spill_function(name: &str) -> bool {
     )
 }
 
+const DEFAULT_MAX_EXPLICIT_EXCLUDED_CELLS: usize = 4096;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FormulaRunDependencySummaryOptions {
+    pub(crate) max_explicit_excluded_cells: usize,
+}
+
+impl Default for FormulaRunDependencySummaryOptions {
+    fn default() -> Self {
+        Self {
+            max_explicit_excluded_cells: DEFAULT_MAX_EXPLICIT_EXCLUDED_CELLS,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FormulaRunDependencySummaryArena {
+    pub(crate) row_block_size: u32,
+    pub(crate) run_summaries: Vec<InstantiatedFormulaRunSummary>,
+    pub(crate) rejected_runs: Vec<RunSummaryRejection>,
+    pub(crate) counters: RunDependencySummaryCounters,
+    pub(crate) reverse_counters: ReverseDependencyCounters,
+    reverse_overage_samples: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RunDependencySummaryCounters {
+    pub(crate) accepted_run_count: u64,
+    pub(crate) supported_run_summary_count: u64,
+    pub(crate) rejected_run_summary_count: u64,
+    pub(crate) missing_template_summary_run_count: u64,
+    pub(crate) rejected_template_summary_run_count: u64,
+    pub(crate) demoted_run_summary_count: u64,
+    pub(crate) result_region_count: u64,
+    pub(crate) precedent_region_count: u64,
+    pub(crate) row_block_partition_count: u64,
+    pub(crate) result_excluded_cell_count: u64,
+    pub(crate) precedent_excluded_cell_count: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ReverseDependencyCounters {
+    pub(crate) reverse_query_count: u64,
+    pub(crate) reverse_exact_partition_count: u64,
+    pub(crate) reverse_conservative_partition_count: u64,
+    pub(crate) reverse_max_overage: u64,
+    pub(crate) reverse_median_overage: u64,
+    pub(crate) global_dirty_fallback_count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstantiatedFormulaRunSummary {
+    pub(crate) run_id: FormulaRunId,
+    pub(crate) template_id: FormulaTemplateId,
+    pub(crate) source_template_id: String,
+    pub(crate) shape: FormulaRunShape,
+    pub(crate) result_region: RegionSummary,
+    pub(crate) precedent_regions: Vec<InstantiatedPrecedentSummary>,
+    pub(crate) partitions: Vec<RowBlockPartitionSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstantiatedPrecedentSummary {
+    pub(crate) pattern_index: usize,
+    pub(crate) pattern: AffineCellPattern,
+    pub(crate) region: RegionSummary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FormulaRunPartitionId {
+    pub(crate) run_id: FormulaRunId,
+    pub(crate) row_block_index: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RowBlockPartitionSummary {
+    pub(crate) id: FormulaRunPartitionId,
+    pub(crate) result_region: RegionSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RunSummaryRejection {
+    pub(crate) run_id: FormulaRunId,
+    pub(crate) source_template_id: String,
+    pub(crate) reason: RunSummaryRejectionReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RunSummaryRejectionReason {
+    MissingTemplateSummary,
+    TemplateRejected {
+        formula_class: FormulaClass,
+        reject_reasons: Vec<DependencyRejectReason>,
+    },
+    InvalidRunRegion,
+    NonFiniteAxis {
+        pattern_index: usize,
+        axis: PatternAxis,
+    },
+    InvalidAxisCoordinate {
+        pattern_index: usize,
+        axis: PatternAxis,
+    },
+    TooManyExcludedCells {
+        count: usize,
+        limit: usize,
+    },
+    EmptyResultAfterExclusions,
+    ReverseGlobalFallbackRequired,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PatternAxis {
+    Row,
+    Col,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum RegionShape {
+    Singleton,
+    Row,
+    Column,
+    Rectangle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FiniteCell {
+    pub(crate) sheet: String,
+    pub(crate) row: u32,
+    pub(crate) col: u32,
+}
+
+impl FiniteCell {
+    pub(crate) fn new(sheet: impl Into<String>, row: u32, col: u32) -> Self {
+        Self {
+            sheet: sheet.into(),
+            row,
+            col,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FiniteRegion {
+    pub(crate) sheet: String,
+    pub(crate) row_start: u32,
+    pub(crate) col_start: u32,
+    pub(crate) row_end: u32,
+    pub(crate) col_end: u32,
+}
+
+impl FiniteRegion {
+    pub(crate) fn new(
+        sheet: impl Into<String>,
+        row_start: u32,
+        col_start: u32,
+        row_end: u32,
+        col_end: u32,
+    ) -> Self {
+        Self {
+            sheet: sheet.into(),
+            row_start: row_start.min(row_end),
+            col_start: col_start.min(col_end),
+            row_end: row_start.max(row_end),
+            col_end: col_start.max(col_end),
+        }
+    }
+
+    pub(crate) fn cell(sheet: impl Into<String>, row: u32, col: u32) -> Self {
+        Self::new(sheet, row, col, row, col)
+    }
+
+    pub(crate) fn contains_cell(&self, cell: &FiniteCell) -> bool {
+        self.sheet == cell.sheet
+            && self.row_start <= cell.row
+            && cell.row <= self.row_end
+            && self.col_start <= cell.col
+            && cell.col <= self.col_end
+    }
+
+    pub(crate) fn contains_coord(&self, sheet: &str, row: u32, col: u32) -> bool {
+        self.sheet == sheet
+            && self.row_start <= row
+            && row <= self.row_end
+            && self.col_start <= col
+            && col <= self.col_end
+    }
+
+    pub(crate) fn intersects(&self, other: &FiniteRegion) -> bool {
+        self.sheet == other.sheet
+            && ranges_intersect(self.row_start, self.row_end, other.row_start, other.row_end)
+            && ranges_intersect(self.col_start, self.col_end, other.col_start, other.col_end)
+    }
+
+    pub(crate) fn intersection(&self, other: &FiniteRegion) -> Option<FiniteRegion> {
+        if !self.intersects(other) {
+            return None;
+        }
+        Some(FiniteRegion::new(
+            self.sheet.clone(),
+            self.row_start.max(other.row_start),
+            self.col_start.max(other.col_start),
+            self.row_end.min(other.row_end),
+            self.col_end.min(other.col_end),
+        ))
+    }
+
+    pub(crate) fn cell_count(&self) -> u64 {
+        let rows = u64::from(self.row_end - self.row_start + 1);
+        let cols = u64::from(self.col_end - self.col_start + 1);
+        rows.saturating_mul(cols)
+    }
+
+    pub(crate) fn shape(&self) -> RegionShape {
+        match (
+            self.row_start == self.row_end,
+            self.col_start == self.col_end,
+        ) {
+            (true, true) => RegionShape::Singleton,
+            (true, false) => RegionShape::Row,
+            (false, true) => RegionShape::Column,
+            (false, false) => RegionShape::Rectangle,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct ExcludedCellSummary {
+    pub(crate) cell: FiniteCell,
+    pub(crate) kind: ExcludedCellKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum ExcludedCellKind {
+    Hole,
+    Exception {
+        other_template_id: FormulaTemplateId,
+    },
+    Rejected {
+        reason: FormulaRejectReason,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RegionSummary {
+    pub(crate) region: FiniteRegion,
+    pub(crate) shape: RegionShape,
+    pub(crate) rectangle_cell_count: u64,
+    pub(crate) excluded_cells: Vec<ExcludedCellSummary>,
+    pub(crate) excluded_cell_count: u64,
+    pub(crate) included_cell_count: u64,
+}
+
+impl RegionSummary {
+    fn new(region: FiniteRegion, excluded_cells: Vec<ExcludedCellSummary>) -> Self {
+        let mut excluded_by_cell = BTreeMap::<FiniteCell, ExcludedCellKind>::new();
+        for excluded in excluded_cells {
+            if region.contains_cell(&excluded.cell) {
+                excluded_by_cell
+                    .entry(excluded.cell)
+                    .or_insert(excluded.kind);
+            }
+        }
+        let excluded_cells = excluded_by_cell
+            .into_iter()
+            .map(|(cell, kind)| ExcludedCellSummary { cell, kind })
+            .collect::<Vec<_>>();
+        let rectangle_cell_count = region.cell_count();
+        let excluded_cell_count = excluded_cells.len() as u64;
+        let included_cell_count = rectangle_cell_count.saturating_sub(excluded_cell_count);
+        let shape = region.shape();
+        Self {
+            region,
+            shape,
+            rectangle_cell_count,
+            excluded_cells,
+            excluded_cell_count,
+            included_cell_count,
+        }
+    }
+
+    pub(crate) fn contains_included_cell(&self, sheet: &str, row: u32, col: u32) -> bool {
+        self.region.contains_coord(sheet, row, col)
+            && !self.excluded_cells.iter().any(|excluded| {
+                excluded.cell.sheet == sheet && excluded.cell.row == row && excluded.cell.col == col
+            })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReverseQueryResult {
+    pub(crate) changed_region: FiniteRegion,
+    pub(crate) dependent_partitions: Vec<ReverseDependentPartitionSummary>,
+    pub(crate) global_dirty_fallback: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ReverseDependentPartitionSummary {
+    pub(crate) partition_id: FormulaRunPartitionId,
+    pub(crate) source_template_id: String,
+    pub(crate) partition_result_region: RegionSummary,
+    pub(crate) matched_result_regions: Vec<FiniteRegion>,
+    pub(crate) exact_dependent_cell_count: u64,
+    pub(crate) partition_cell_count: u64,
+    pub(crate) overage_cell_count: u64,
+    pub(crate) is_exact: bool,
+}
+
+pub(crate) fn instantiate_run_dependency_summaries(
+    run_store: &FormulaRunStore,
+    template_summaries: &BTreeMap<String, FormulaDependencySummary>,
+) -> FormulaRunDependencySummaryArena {
+    instantiate_run_dependency_summaries_with_options(
+        run_store,
+        template_summaries,
+        FormulaRunDependencySummaryOptions::default(),
+    )
+}
+
+pub(crate) fn instantiate_run_dependency_summaries_with_options(
+    run_store: &FormulaRunStore,
+    template_summaries: &BTreeMap<String, FormulaDependencySummary>,
+    options: FormulaRunDependencySummaryOptions,
+) -> FormulaRunDependencySummaryArena {
+    let mut counters = RunDependencySummaryCounters {
+        accepted_run_count: run_store.runs.len() as u64,
+        ..RunDependencySummaryCounters::default()
+    };
+    let mut run_summaries = Vec::new();
+    let mut rejected_runs = Vec::new();
+
+    let mut runs = run_store.runs.iter().collect::<Vec<_>>();
+    runs.sort_by(|a, b| a.id.cmp(&b.id));
+
+    for run in runs {
+        let Some(template_summary) = template_summaries.get(&run.source_template_id) else {
+            counters.missing_template_summary_run_count += 1;
+            rejected_runs.push(run_rejection(
+                run,
+                RunSummaryRejectionReason::MissingTemplateSummary,
+            ));
+            continue;
+        };
+
+        if template_summary.formula_class != FormulaClass::StaticPointwise
+            || !template_summary.reject_reasons.is_empty()
+        {
+            counters.rejected_template_summary_run_count += 1;
+            rejected_runs.push(run_rejection(
+                run,
+                RunSummaryRejectionReason::TemplateRejected {
+                    formula_class: template_summary.formula_class,
+                    reject_reasons: template_summary.reject_reasons.clone(),
+                },
+            ));
+            continue;
+        }
+
+        match instantiate_one_run_summary(run, template_summary, run_store, options) {
+            Ok(summary) => {
+                counters.supported_run_summary_count += 1;
+                counters.result_region_count += 1;
+                counters.precedent_region_count += summary.precedent_regions.len() as u64;
+                counters.row_block_partition_count += summary.partitions.len() as u64;
+                counters.result_excluded_cell_count += summary.result_region.excluded_cell_count;
+                counters.precedent_excluded_cell_count += summary
+                    .precedent_regions
+                    .iter()
+                    .map(|precedent| precedent.region.excluded_cell_count)
+                    .sum::<u64>();
+                run_summaries.push(summary);
+            }
+            Err(reason) => {
+                counters.demoted_run_summary_count += 1;
+                rejected_runs.push(run_rejection(run, reason));
+            }
+        }
+    }
+
+    run_summaries.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+    rejected_runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+    counters.rejected_run_summary_count = rejected_runs.len() as u64;
+
+    FormulaRunDependencySummaryArena {
+        row_block_size: run_store.row_block_size.max(1),
+        run_summaries,
+        rejected_runs,
+        counters,
+        reverse_counters: ReverseDependencyCounters::default(),
+        reverse_overage_samples: Vec::new(),
+    }
+}
+
+impl FormulaRunDependencySummaryArena {
+    pub(crate) fn query_changed_cell(
+        &mut self,
+        sheet: impl Into<String>,
+        row: u32,
+        col: u32,
+    ) -> ReverseQueryResult {
+        self.query_changed_region(&FiniteRegion::cell(sheet, row, col))
+    }
+
+    pub(crate) fn query_changed_region(
+        &mut self,
+        changed_region: &FiniteRegion,
+    ) -> ReverseQueryResult {
+        self.reverse_counters.reverse_query_count += 1;
+
+        let mut pending = BTreeMap::<FormulaRunPartitionId, PendingReversePartition>::new();
+        for run_summary in &self.run_summaries {
+            for precedent in &run_summary.precedent_regions {
+                if !precedent.region.region.intersects(changed_region) {
+                    continue;
+                }
+                let Some(matched_result_region) =
+                    inverse_changed_region_for_run(run_summary, precedent, changed_region)
+                else {
+                    continue;
+                };
+                for partition in &run_summary.partitions {
+                    let Some(overlap) =
+                        matched_result_region.intersection(&partition.result_region.region)
+                    else {
+                        continue;
+                    };
+                    let segment = segment_for_region(&overlap, run_summary.shape);
+                    pending
+                        .entry(partition.id)
+                        .or_insert_with(|| PendingReversePartition {
+                            partition: partition.clone(),
+                            source_template_id: run_summary.source_template_id.clone(),
+                            run_shape: run_summary.shape,
+                            segments: Vec::new(),
+                        })
+                        .segments
+                        .push(segment);
+                }
+            }
+        }
+
+        let mut dependent_partitions = pending
+            .into_values()
+            .filter_map(PendingReversePartition::finish)
+            .collect::<Vec<_>>();
+        dependent_partitions.sort_by(|a, b| a.partition_id.cmp(&b.partition_id));
+
+        for partition in &dependent_partitions {
+            if partition.is_exact {
+                self.reverse_counters.reverse_exact_partition_count += 1;
+            } else {
+                self.reverse_counters.reverse_conservative_partition_count += 1;
+            }
+            self.reverse_counters.reverse_max_overage = self
+                .reverse_counters
+                .reverse_max_overage
+                .max(partition.overage_cell_count);
+            self.reverse_overage_samples
+                .push(partition.overage_cell_count);
+        }
+        self.reverse_counters.reverse_median_overage = median_u64(&self.reverse_overage_samples);
+
+        ReverseQueryResult {
+            changed_region: changed_region.clone(),
+            dependent_partitions,
+            global_dirty_fallback: false,
+        }
+    }
+}
+
+fn instantiate_one_run_summary(
+    run: &FormulaRunDescriptor,
+    template_summary: &FormulaDependencySummary,
+    run_store: &FormulaRunStore,
+    options: FormulaRunDependencySummaryOptions,
+) -> Result<InstantiatedFormulaRunSummary, RunSummaryRejectionReason> {
+    let result_region = result_region_for_run(run)?;
+    let result_exclusions = collect_result_exclusions(run, run_store, options)?;
+    let result_summary = RegionSummary::new(result_region, result_exclusions);
+    if result_summary.included_cell_count == 0 {
+        return Err(RunSummaryRejectionReason::EmptyResultAfterExclusions);
+    }
+
+    let partitions = build_row_block_partitions(run.id, &result_summary, run_store.row_block_size);
+    if partitions.is_empty() {
+        return Err(RunSummaryRejectionReason::ReverseGlobalFallbackRequired);
+    }
+
+    let mut precedent_regions = Vec::new();
+    for (pattern_index, pattern) in template_summary.precedent_patterns.iter().enumerate() {
+        match pattern {
+            PrecedentPattern::Cell(cell_pattern) => {
+                let region = instantiate_precedent_region(
+                    run,
+                    cell_pattern,
+                    &result_summary,
+                    pattern_index,
+                )?;
+                precedent_regions.push(InstantiatedPrecedentSummary {
+                    pattern_index,
+                    pattern: cell_pattern.clone(),
+                    region,
+                });
+            }
+        }
+    }
+
+    Ok(InstantiatedFormulaRunSummary {
+        run_id: run.id,
+        template_id: run.template_id,
+        source_template_id: run.source_template_id.clone(),
+        shape: run.shape,
+        result_region: result_summary,
+        precedent_regions,
+        partitions,
+    })
+}
+
+fn result_region_for_run(
+    run: &FormulaRunDescriptor,
+) -> Result<FiniteRegion, RunSummaryRejectionReason> {
+    if run.row_start == 0
+        || run.col_start == 0
+        || run.row_end == 0
+        || run.col_end == 0
+        || run.row_start > run.row_end
+        || run.col_start > run.col_end
+    {
+        return Err(RunSummaryRejectionReason::InvalidRunRegion);
+    }
+    Ok(FiniteRegion::new(
+        run.sheet.clone(),
+        run.row_start,
+        run.col_start,
+        run.row_end,
+        run.col_end,
+    ))
+}
+
+fn collect_result_exclusions(
+    run: &FormulaRunDescriptor,
+    run_store: &FormulaRunStore,
+    options: FormulaRunDependencySummaryOptions,
+) -> Result<Vec<ExcludedCellSummary>, RunSummaryRejectionReason> {
+    let region = result_region_for_run(run)?;
+    let mut excluded = BTreeMap::<FiniteCell, ExcludedCellKind>::new();
+
+    for gap in &run_store.gaps {
+        if gap.template_id != run.template_id
+            || !region.contains_coord(&gap.sheet, gap.row, gap.col)
+        {
+            continue;
+        }
+        let kind = match gap.kind {
+            SpanGapKind::Hole => ExcludedCellKind::Hole,
+            SpanGapKind::Exception { other_template_id } => {
+                ExcludedCellKind::Exception { other_template_id }
+            }
+        };
+        excluded
+            .entry(FiniteCell::new(gap.sheet.clone(), gap.row, gap.col))
+            .or_insert(kind);
+    }
+
+    for rejected in &run_store.rejected_cells {
+        if !region.contains_coord(&rejected.sheet, rejected.row, rejected.col) {
+            continue;
+        }
+        excluded
+            .entry(FiniteCell::new(
+                rejected.sheet.clone(),
+                rejected.row,
+                rejected.col,
+            ))
+            .or_insert(ExcludedCellKind::Rejected {
+                reason: rejected.reason,
+            });
+    }
+
+    if excluded.len() > options.max_explicit_excluded_cells {
+        return Err(RunSummaryRejectionReason::TooManyExcludedCells {
+            count: excluded.len(),
+            limit: options.max_explicit_excluded_cells,
+        });
+    }
+
+    Ok(excluded
+        .into_iter()
+        .map(|(cell, kind)| ExcludedCellSummary { cell, kind })
+        .collect())
+}
+
+fn instantiate_precedent_region(
+    run: &FormulaRunDescriptor,
+    pattern: &AffineCellPattern,
+    result_summary: &RegionSummary,
+    pattern_index: usize,
+) -> Result<RegionSummary, RunSummaryRejectionReason> {
+    let sheet = instantiate_sheet(&pattern.sheet, &run.sheet);
+    let (row_start, row_end) = instantiate_axis_range(
+        &pattern.row,
+        result_summary.region.row_start,
+        result_summary.region.row_end,
+        pattern_index,
+        PatternAxis::Row,
+    )?;
+    let (col_start, col_end) = instantiate_axis_range(
+        &pattern.col,
+        result_summary.region.col_start,
+        result_summary.region.col_end,
+        pattern_index,
+        PatternAxis::Col,
+    )?;
+    let precedent_region = FiniteRegion::new(sheet, row_start, col_start, row_end, col_end);
+    let exclusions =
+        instantiate_precedent_exclusions(run.shape, pattern, result_summary, pattern_index)?;
+    Ok(RegionSummary::new(precedent_region, exclusions))
+}
+
+fn instantiate_precedent_exclusions(
+    run_shape: FormulaRunShape,
+    pattern: &AffineCellPattern,
+    result_summary: &RegionSummary,
+    pattern_index: usize,
+) -> Result<Vec<ExcludedCellSummary>, RunSummaryRejectionReason> {
+    if !pattern_is_injective_for_run_shape(run_shape, pattern) {
+        return Ok(Vec::new());
+    }
+
+    let mut excluded = BTreeMap::<FiniteCell, ExcludedCellKind>::new();
+    let sheet = instantiate_sheet(&pattern.sheet, &result_summary.region.sheet);
+    for result_exclusion in &result_summary.excluded_cells {
+        let row = instantiate_axis_cell(
+            &pattern.row,
+            result_exclusion.cell.row,
+            pattern_index,
+            PatternAxis::Row,
+        )?;
+        let col = instantiate_axis_cell(
+            &pattern.col,
+            result_exclusion.cell.col,
+            pattern_index,
+            PatternAxis::Col,
+        )?;
+        excluded
+            .entry(FiniteCell::new(sheet.clone(), row, col))
+            .or_insert(result_exclusion.kind.clone());
+    }
+
+    Ok(excluded
+        .into_iter()
+        .map(|(cell, kind)| ExcludedCellSummary { cell, kind })
+        .collect())
+}
+
+fn pattern_is_injective_for_run_shape(
+    run_shape: FormulaRunShape,
+    pattern: &AffineCellPattern,
+) -> bool {
+    match run_shape {
+        FormulaRunShape::Row => matches!(pattern.col, AxisRef::RelativeToPlacement { .. }),
+        FormulaRunShape::Column => matches!(pattern.row, AxisRef::RelativeToPlacement { .. }),
+        FormulaRunShape::Singleton => true,
+    }
+}
+
+fn instantiate_sheet(sheet: &SheetBinding, formula_sheet: &str) -> String {
+    match sheet {
+        SheetBinding::CurrentSheet => formula_sheet.to_string(),
+        SheetBinding::ExplicitName { name } => name.clone(),
+    }
+}
+
+fn instantiate_axis_range(
+    axis: &AxisRef,
+    placement_start: u32,
+    placement_end: u32,
+    pattern_index: usize,
+    pattern_axis: PatternAxis,
+) -> Result<(u32, u32), RunSummaryRejectionReason> {
+    match axis {
+        AxisRef::RelativeToPlacement { offset } => {
+            let start = coordinate_with_offset(placement_start, *offset).ok_or(
+                RunSummaryRejectionReason::InvalidAxisCoordinate {
+                    pattern_index,
+                    axis: pattern_axis,
+                },
+            )?;
+            let end = coordinate_with_offset(placement_end, *offset).ok_or(
+                RunSummaryRejectionReason::InvalidAxisCoordinate {
+                    pattern_index,
+                    axis: pattern_axis,
+                },
+            )?;
+            Ok((start.min(end), start.max(end)))
+        }
+        AxisRef::AbsoluteVc { index } if *index > 0 => Ok((*index, *index)),
+        AxisRef::AbsoluteVc { .. } => Err(RunSummaryRejectionReason::InvalidAxisCoordinate {
+            pattern_index,
+            axis: pattern_axis,
+        }),
+        AxisRef::OpenStart | AxisRef::OpenEnd | AxisRef::WholeAxis | AxisRef::Unsupported => {
+            Err(RunSummaryRejectionReason::NonFiniteAxis {
+                pattern_index,
+                axis: pattern_axis,
+            })
+        }
+    }
+}
+
+fn instantiate_axis_cell(
+    axis: &AxisRef,
+    placement: u32,
+    pattern_index: usize,
+    pattern_axis: PatternAxis,
+) -> Result<u32, RunSummaryRejectionReason> {
+    match axis {
+        AxisRef::RelativeToPlacement { offset } => coordinate_with_offset(placement, *offset)
+            .ok_or(RunSummaryRejectionReason::InvalidAxisCoordinate {
+                pattern_index,
+                axis: pattern_axis,
+            }),
+        AxisRef::AbsoluteVc { index } if *index > 0 => Ok(*index),
+        AxisRef::AbsoluteVc { .. } => Err(RunSummaryRejectionReason::InvalidAxisCoordinate {
+            pattern_index,
+            axis: pattern_axis,
+        }),
+        AxisRef::OpenStart | AxisRef::OpenEnd | AxisRef::WholeAxis | AxisRef::Unsupported => {
+            Err(RunSummaryRejectionReason::NonFiniteAxis {
+                pattern_index,
+                axis: pattern_axis,
+            })
+        }
+    }
+}
+
+fn coordinate_with_offset(coordinate: u32, offset: i64) -> Option<u32> {
+    let value = i128::from(coordinate) + i128::from(offset);
+    if (1..=i128::from(u32::MAX)).contains(&value) {
+        Some(value as u32)
+    } else {
+        None
+    }
+}
+
+fn build_row_block_partitions(
+    run_id: FormulaRunId,
+    result_summary: &RegionSummary,
+    row_block_size: u32,
+) -> Vec<RowBlockPartitionSummary> {
+    let row_block_size = row_block_size.max(1);
+    let start_block = row_block_index(result_summary.region.row_start, row_block_size);
+    let end_block = row_block_index(result_summary.region.row_end, row_block_size);
+    let mut partitions = Vec::new();
+
+    for block in start_block..=end_block {
+        let (block_row_start, block_row_end) = row_block_bounds(block, row_block_size);
+        let block_region = FiniteRegion::new(
+            result_summary.region.sheet.clone(),
+            block_row_start,
+            result_summary.region.col_start,
+            block_row_end,
+            result_summary.region.col_end,
+        );
+        let Some(partition_region) = result_summary.region.intersection(&block_region) else {
+            continue;
+        };
+        let partition_exclusions = result_summary
+            .excluded_cells
+            .iter()
+            .filter(|excluded| partition_region.contains_cell(&excluded.cell))
+            .cloned()
+            .collect::<Vec<_>>();
+        let partition_summary = RegionSummary::new(partition_region, partition_exclusions);
+        if partition_summary.included_cell_count == 0 {
+            continue;
+        }
+        partitions.push(RowBlockPartitionSummary {
+            id: FormulaRunPartitionId {
+                run_id,
+                row_block_index: block,
+            },
+            result_region: partition_summary,
+        });
+    }
+
+    partitions
+}
+
+fn row_block_bounds(block: u32, row_block_size: u32) -> (u32, u32) {
+    let row_block_size = row_block_size.max(1);
+    let start = block.saturating_mul(row_block_size).saturating_add(1);
+    let end = block.saturating_add(1).saturating_mul(row_block_size);
+    (start, end.max(start))
+}
+
+fn row_block_index(row: u32, row_block_size: u32) -> u32 {
+    row.saturating_sub(1) / row_block_size.max(1)
+}
+
+fn inverse_changed_region_for_run(
+    run_summary: &InstantiatedFormulaRunSummary,
+    precedent: &InstantiatedPrecedentSummary,
+    changed_region: &FiniteRegion,
+) -> Option<FiniteRegion> {
+    if changed_region.sheet != precedent.region.region.sheet {
+        return None;
+    }
+    let (row_start, row_end) = inverse_axis_changed_range(
+        &precedent.pattern.row,
+        changed_region.row_start,
+        changed_region.row_end,
+    )?;
+    let (col_start, col_end) = inverse_axis_changed_range(
+        &precedent.pattern.col,
+        changed_region.col_start,
+        changed_region.col_end,
+    )?;
+    let candidate = FiniteRegion::new(
+        run_summary.result_region.region.sheet.clone(),
+        row_start,
+        col_start,
+        row_end,
+        col_end,
+    );
+    run_summary.result_region.region.intersection(&candidate)
+}
+
+fn inverse_axis_changed_range(
+    axis: &AxisRef,
+    changed_start: u32,
+    changed_end: u32,
+) -> Option<(u32, u32)> {
+    match axis {
+        AxisRef::RelativeToPlacement { offset } => {
+            let start = coordinate_with_offset(changed_start, -*offset)?;
+            let end = coordinate_with_offset(changed_end, -*offset)?;
+            Some((start.min(end), start.max(end)))
+        }
+        AxisRef::AbsoluteVc { index }
+            if *index > 0 && changed_start <= *index && *index <= changed_end =>
+        {
+            Some((1, u32::MAX))
+        }
+        AxisRef::AbsoluteVc { .. } => None,
+        AxisRef::OpenStart | AxisRef::OpenEnd | AxisRef::WholeAxis | AxisRef::Unsupported => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LineSegment {
+    start: u32,
+    end: u32,
+}
+
+struct PendingReversePartition {
+    partition: RowBlockPartitionSummary,
+    source_template_id: String,
+    run_shape: FormulaRunShape,
+    segments: Vec<LineSegment>,
+}
+
+impl PendingReversePartition {
+    fn finish(mut self) -> Option<ReverseDependentPartitionSummary> {
+        let merged_segments = merge_segments(&mut self.segments);
+        let mut exact_dependent_cell_count = merged_segments
+            .iter()
+            .map(|segment| u64::from(segment.end - segment.start + 1))
+            .sum::<u64>();
+
+        for excluded in &self.partition.result_region.excluded_cells {
+            let value = cell_axis_value(&excluded.cell, self.run_shape);
+            if merged_segments
+                .iter()
+                .any(|segment| segment.contains(value))
+            {
+                exact_dependent_cell_count = exact_dependent_cell_count.saturating_sub(1);
+            }
+        }
+
+        if exact_dependent_cell_count == 0 {
+            return None;
+        }
+
+        let matched_result_regions = merged_segments
+            .iter()
+            .map(|segment| {
+                segment_to_region(
+                    segment,
+                    &self.partition.result_region.region,
+                    self.run_shape,
+                )
+            })
+            .collect::<Vec<_>>();
+        let partition_cell_count = self.partition.result_region.included_cell_count;
+        let overage_cell_count = partition_cell_count.saturating_sub(exact_dependent_cell_count);
+
+        Some(ReverseDependentPartitionSummary {
+            partition_id: self.partition.id,
+            source_template_id: self.source_template_id,
+            partition_result_region: self.partition.result_region,
+            matched_result_regions,
+            exact_dependent_cell_count,
+            partition_cell_count,
+            overage_cell_count,
+            is_exact: overage_cell_count == 0,
+        })
+    }
+}
+
+impl LineSegment {
+    fn contains(&self, value: u32) -> bool {
+        self.start <= value && value <= self.end
+    }
+}
+
+fn segment_for_region(region: &FiniteRegion, run_shape: FormulaRunShape) -> LineSegment {
+    match run_shape {
+        FormulaRunShape::Row => LineSegment {
+            start: region.col_start,
+            end: region.col_end,
+        },
+        FormulaRunShape::Column => LineSegment {
+            start: region.row_start,
+            end: region.row_end,
+        },
+        FormulaRunShape::Singleton => LineSegment { start: 0, end: 0 },
+    }
+}
+
+fn cell_axis_value(cell: &FiniteCell, run_shape: FormulaRunShape) -> u32 {
+    match run_shape {
+        FormulaRunShape::Row => cell.col,
+        FormulaRunShape::Column => cell.row,
+        FormulaRunShape::Singleton => 0,
+    }
+}
+
+fn segment_to_region(
+    segment: &LineSegment,
+    partition_region: &FiniteRegion,
+    run_shape: FormulaRunShape,
+) -> FiniteRegion {
+    match run_shape {
+        FormulaRunShape::Row => FiniteRegion::new(
+            partition_region.sheet.clone(),
+            partition_region.row_start,
+            segment.start,
+            partition_region.row_end,
+            segment.end,
+        ),
+        FormulaRunShape::Column => FiniteRegion::new(
+            partition_region.sheet.clone(),
+            segment.start,
+            partition_region.col_start,
+            segment.end,
+            partition_region.col_end,
+        ),
+        FormulaRunShape::Singleton => partition_region.clone(),
+    }
+}
+
+fn merge_segments(segments: &mut [LineSegment]) -> Vec<LineSegment> {
+    segments.sort_by(|a, b| (a.start, a.end).cmp(&(b.start, b.end)));
+    let mut merged = Vec::<LineSegment>::new();
+    for segment in segments.iter().copied() {
+        match merged.last_mut() {
+            Some(last) if segment.start <= last.end.saturating_add(1) => {
+                last.end = last.end.max(segment.end);
+            }
+            _ => merged.push(segment),
+        }
+    }
+    merged
+}
+
+fn median_u64(values: &[u64]) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted[sorted.len() / 2]
+}
+
+fn ranges_intersect(a_start: u32, a_end: u32, b_start: u32, b_end: u32) -> bool {
+    a_start <= b_end && b_start <= a_end
+}
+
+fn run_rejection(
+    run: &FormulaRunDescriptor,
+    reason: RunSummaryRejectionReason,
+) -> RunSummaryRejection {
+    RunSummaryRejection {
+        run_id: run.id,
+        source_template_id: run.source_template_id.clone(),
+        reason,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use formualizer_parse::parse;
+
+    use super::super::span_counters::FormulaPlaneCandidateCell;
+    use super::super::span_store::{FormulaRunStore, FormulaRunStoreBuildOptions};
 
     fn summary(formula: &str, row: u32, col: u32) -> FormulaDependencySummary {
         let ast = parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"));
@@ -499,6 +1508,58 @@ mod tests {
         matches: impl Fn(&DependencyRejectReason) -> bool,
     ) -> bool {
         summary.reject_reasons.iter().any(matches)
+    }
+
+    fn candidate_cell(row: u32, col: u32, template_id: &str) -> FormulaPlaneCandidateCell {
+        FormulaPlaneCandidateCell {
+            sheet: "Sheet1".to_string(),
+            row,
+            col,
+            template_id: template_id.to_string(),
+            parse_ok: true,
+            volatile: false,
+            dynamic: false,
+            unsupported: false,
+        }
+    }
+
+    fn run_store(cells: Vec<FormulaPlaneCandidateCell>, row_block_size: u32) -> FormulaRunStore {
+        FormulaRunStore::build_with_options(
+            &cells,
+            FormulaRunStoreBuildOptions {
+                row_block_size,
+                ..FormulaRunStoreBuildOptions::default()
+            },
+        )
+    }
+
+    fn template_summary_map(
+        entries: Vec<(&str, FormulaDependencySummary)>,
+    ) -> BTreeMap<String, FormulaDependencySummary> {
+        entries
+            .into_iter()
+            .map(|(source_template_id, summary)| (source_template_id.to_string(), summary))
+            .collect()
+    }
+
+    fn shuffled_candidates(
+        mut cells: Vec<FormulaPlaneCandidateCell>,
+    ) -> Vec<FormulaPlaneCandidateCell> {
+        let len = cells.len();
+        if len <= 1 {
+            return cells;
+        }
+        let mut out = Vec::with_capacity(len);
+        for index in (1..len).step_by(2) {
+            out.push(cells[index].clone());
+        }
+        for index in (0..len).rev() {
+            if index % 2 == 0 {
+                out.push(cells[index].clone());
+            }
+        }
+        cells.clear();
+        out
     }
 
     #[test]
@@ -842,5 +1903,225 @@ mod tests {
             &implicit,
             &DependencyRejectReason::ImplicitIntersectionUnsupported
         ));
+    }
+
+    #[test]
+    fn formula_plane_run_dependency_summary_instantiates_vertical_pointwise_regions() {
+        let cells = (1..=100)
+            .map(|row| candidate_cell(row, 3, "tpl_c_depends_a"))
+            .collect::<Vec<_>>();
+        let store = run_store(cells, 25);
+        let summaries = template_summary_map(vec![("tpl_c_depends_a", summary("=A1", 1, 3))]);
+
+        let arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        assert_eq!(arena.counters.supported_run_summary_count, 1);
+        assert_eq!(arena.counters.precedent_region_count, 1);
+        assert_eq!(arena.counters.row_block_partition_count, 4);
+        assert_eq!(arena.counters.result_excluded_cell_count, 0);
+        assert_eq!(arena.run_summaries.len(), 1);
+
+        let run_summary = &arena.run_summaries[0];
+        assert_eq!(run_summary.shape, FormulaRunShape::Column);
+        assert_eq!(
+            run_summary.result_region.region,
+            FiniteRegion::new("Sheet1", 1, 3, 100, 3)
+        );
+        assert_eq!(run_summary.result_region.shape, RegionShape::Column);
+        assert_eq!(run_summary.result_region.included_cell_count, 100);
+        assert_eq!(
+            run_summary.precedent_regions[0].region.region,
+            FiniteRegion::new("Sheet1", 1, 1, 100, 1)
+        );
+        assert_eq!(
+            run_summary
+                .partitions
+                .iter()
+                .map(|partition| partition.id.row_block_index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(
+            run_summary
+                .partitions
+                .iter()
+                .map(|partition| partition.result_region.region.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                FiniteRegion::new("Sheet1", 1, 3, 25, 3),
+                FiniteRegion::new("Sheet1", 26, 3, 50, 3),
+                FiniteRegion::new("Sheet1", 51, 3, 75, 3),
+                FiniteRegion::new("Sheet1", 76, 3, 100, 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn formula_plane_reverse_query_maps_changed_cell_to_dependent_partition() {
+        let cells = (1..=100)
+            .map(|row| candidate_cell(row, 3, "tpl_c_depends_a"))
+            .collect::<Vec<_>>();
+        let store = run_store(cells, 25);
+        let summaries = template_summary_map(vec![("tpl_c_depends_a", summary("=A1", 1, 3))]);
+        let mut arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        let query = arena.query_changed_cell("Sheet1", 50, 1);
+
+        assert!(!query.global_dirty_fallback);
+        assert_eq!(query.dependent_partitions.len(), 1);
+        let dependent = &query.dependent_partitions[0];
+        assert_eq!(dependent.partition_id.row_block_index, 1);
+        assert!(
+            dependent
+                .partition_result_region
+                .contains_included_cell("Sheet1", 50, 3),
+            "partition should contain C50"
+        );
+        assert_eq!(
+            dependent.matched_result_regions,
+            vec![FiniteRegion::cell("Sheet1", 50, 3)]
+        );
+        assert_eq!(dependent.exact_dependent_cell_count, 1);
+        assert_eq!(dependent.partition_cell_count, 25);
+        assert_eq!(dependent.overage_cell_count, 24);
+        assert!(!dependent.is_exact);
+        assert_eq!(arena.reverse_counters.reverse_query_count, 1);
+        assert_eq!(arena.reverse_counters.reverse_exact_partition_count, 0);
+        assert_eq!(
+            arena.reverse_counters.reverse_conservative_partition_count,
+            1
+        );
+        assert_eq!(arena.reverse_counters.reverse_max_overage, 24);
+        assert_eq!(arena.reverse_counters.reverse_median_overage, 24);
+        assert_eq!(arena.reverse_counters.global_dirty_fallback_count, 0);
+    }
+
+    #[test]
+    fn formula_plane_run_dependency_summary_does_not_inherit_hole_cells() {
+        let cells = vec![
+            candidate_cell(1, 3, "tpl"),
+            candidate_cell(2, 3, "tpl"),
+            candidate_cell(4, 3, "tpl"),
+            candidate_cell(5, 3, "tpl"),
+        ];
+        let store = run_store(cells, 10);
+        let summaries = template_summary_map(vec![("tpl", summary("=A1", 1, 3))]);
+
+        let arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        assert_eq!(store.report.hole_count, 1);
+        assert_eq!(arena.counters.supported_run_summary_count, 2);
+        assert_eq!(arena.counters.result_excluded_cell_count, 0);
+        assert_eq!(
+            arena
+                .run_summaries
+                .iter()
+                .map(|summary| summary.result_region.included_cell_count)
+                .sum::<u64>(),
+            4
+        );
+        assert!(
+            arena
+                .run_summaries
+                .iter()
+                .all(|summary| { !summary.result_region.contains_included_cell("Sheet1", 3, 3) })
+        );
+    }
+
+    #[test]
+    fn formula_plane_run_dependency_summary_does_not_inherit_exception_cells() {
+        let cells = vec![
+            candidate_cell(1, 3, "tpl"),
+            candidate_cell(2, 3, "tpl"),
+            candidate_cell(3, 3, "other"),
+            candidate_cell(4, 3, "tpl"),
+            candidate_cell(5, 3, "tpl"),
+        ];
+        let store = run_store(cells, 10);
+        let summaries = template_summary_map(vec![("tpl", summary("=A1", 1, 3))]);
+
+        let arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        assert_eq!(store.report.exception_count, 1);
+        assert_eq!(arena.counters.supported_run_summary_count, 2);
+        assert_eq!(arena.counters.missing_template_summary_run_count, 1);
+        assert_eq!(arena.rejected_runs.len(), 1);
+        assert!(arena.run_summaries.iter().all(|summary| {
+            summary.source_template_id != "tpl"
+                || !summary.result_region.contains_included_cell("Sheet1", 3, 3)
+        }));
+    }
+
+    #[test]
+    fn formula_plane_run_dependency_summary_rejected_template_has_no_authority() {
+        let cells = (1..=10)
+            .map(|row| candidate_cell(row, 3, "bad_tpl"))
+            .collect::<Vec<_>>();
+        let store = run_store(cells, 10);
+        let rejected_summary = summary("=SUM(A1:A10)", 1, 3);
+        let summaries = template_summary_map(vec![("bad_tpl", rejected_summary)]);
+
+        let arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        assert!(arena.run_summaries.is_empty());
+        assert_eq!(arena.counters.rejected_template_summary_run_count, 1);
+        assert_eq!(arena.counters.rejected_run_summary_count, 1);
+        assert!(matches!(
+            arena.rejected_runs[0].reason,
+            RunSummaryRejectionReason::TemplateRejected { .. }
+        ));
+    }
+
+    #[test]
+    fn formula_plane_run_dependency_summary_normalizes_row_block_partition_ids() {
+        let cells = (1..=3)
+            .map(|row| candidate_cell(row, 3, "tpl"))
+            .collect::<Vec<_>>();
+        let store = run_store(cells, 0);
+        let summaries = template_summary_map(vec![("tpl", summary("=A1", 1, 3))]);
+
+        let arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        assert_eq!(store.row_block_size, 1);
+        assert_eq!(arena.row_block_size, 1);
+        let run_summary = &arena.run_summaries[0];
+        assert_eq!(
+            run_summary
+                .partitions
+                .iter()
+                .map(|partition| (partition.id.run_id.0, partition.id.row_block_index))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (0, 1), (0, 2)]
+        );
+        let mut query_arena = arena.clone();
+        let query = query_arena.query_changed_cell("Sheet1", 2, 1);
+        assert_eq!(query.dependent_partitions.len(), 1);
+        assert!(query.dependent_partitions[0].is_exact);
+        assert_eq!(
+            query_arena.reverse_counters.reverse_exact_partition_count,
+            1
+        );
+    }
+
+    #[test]
+    fn formula_plane_run_dependency_summary_is_deterministic_for_shuffled_input() {
+        let cells = (1..=20)
+            .map(|row| candidate_cell(row, 3, "tpl"))
+            .collect::<Vec<_>>();
+        let summaries = template_summary_map(vec![("tpl", summary("=A1", 1, 3))]);
+
+        let expected =
+            instantiate_run_dependency_summaries(&run_store(cells.clone(), 7), &summaries);
+        let reversed = instantiate_run_dependency_summaries(
+            &run_store(cells.iter().cloned().rev().collect(), 7),
+            &summaries,
+        );
+        let shuffled = instantiate_run_dependency_summaries(
+            &run_store(shuffled_candidates(cells), 7),
+            &summaries,
+        );
+
+        assert_eq!(expected, reversed);
+        assert_eq!(expected, shuffled);
     }
 }
