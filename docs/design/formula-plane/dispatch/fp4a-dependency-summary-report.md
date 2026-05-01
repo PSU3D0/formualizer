@@ -57,8 +57,10 @@ Notable files:
 | `scenario-summary.tsv` | Extracted scenario counters used by this report. |
 | `*.dependency-summary.json` | Raw scanner JSON for each FP3 scenario. |
 | `*.stderr` | Per-scenario scanner stderr; all six were empty. |
-| `validation-status.tsv` | Bounded validation command status and log paths. |
-| `validation.*.stdout` / `validation.*.stderr` | Validation command logs. |
+| `validation-status.tsv` | Initial bounded validation command status and log paths before docs-only closeout edits. |
+| `validation-postdocs-status.tsv` | Post-docs validation command status and log paths after the report and `REPHASE_PLAN.md` edits. |
+| `validation.*.stdout` / `validation.*.stderr` | Initial validation command logs. |
+| `validation.postdocs.*.stdout` / `validation.postdocs.*.stderr` | Post-docs validation command logs. |
 
 ## 4. Scanner command summary
 
@@ -101,7 +103,7 @@ from `dependency_summaries.comparison`.
 | `fanout_100k` | 100000 | 100000 | 100000 / 0 | 0 | 0 / 0 / 0 | 0 / 0 / 0 / 0 | template: `diagnostic_source_template_collision=1`, `missing_template_summary=1`; comparison: none |
 | `inc_cross_sheet_mesh_3x25k` | 50000 | 2 | 2 / 0 | 2 | 4 / 2 / 14 | 50000 / 0 / 0 / 0 | none |
 | `agg_countifs_multi_criteria_100k` | 1000 | 1 | 0 / 1 | 0 | 0 / 0 / 0 | 0 / 0 / 0 / 1000 | template: `finite_range_unsupported=2`, `function_unsupported:COUNTIFS=2`; comparison: `finite_range_unsupported=1000`, `function_unsupported:COUNTIFS=1000` |
-| `agg_mixed_rollup_grid_2k_reports` | 12000 | 5 | 1 / 4 | 1 | 2 / 1 / 3 | 10000 / 0 / 0 / 2000 | template: `finite_range_unsupported=12`, `function_unsupported:SUMIFS=4`, `function_unsupported:COUNTIFS=2`; comparison: `finite_range_unsupported=3000`, `function_unsupported:SUMIFS=1000`, `function_unsupported:COUNTIFS=500` |
+| `agg_mixed_rollup_grid_2k_reports` | 12000 | 5 | 1 / 4 | 1 | 2 / 1 / 3 | 10000 / 0 / 0 / 2000 | template: `finite_range_unsupported=12`, `function_unsupported:SUMIFS=4`, `function_unsupported:COUNTIFS=2`, `unknown_function:AVERAGEIFS=2`; comparison: `finite_range_unsupported=3000`, `function_unsupported:SUMIFS=1000`, `function_unsupported:COUNTIFS=500`, `unknown_function:AVERAGEIFS=500` |
 
 ## 6. Under-approximation status
 
@@ -119,9 +121,10 @@ performance tradeoff.
 
 ## 7. Validation commands and results
 
-Validation was run after generating the raw artifacts and after the docs-only
-closeout edits. The `git log` result still points at scanner code HEAD `6b527c9`
-because this report had not been committed yet.
+Validation was run after generating the raw artifacts and again after the
+docs-only closeout edits. The initial `git log` result points at scanner code
+HEAD `6b527c9` because this report had not been committed yet; the post-docs
+validation logs point at the docs-only closeout commit.
 
 | Command | Result |
 |---|---|
