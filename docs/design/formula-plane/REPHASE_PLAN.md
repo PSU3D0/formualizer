@@ -168,11 +168,12 @@ Gate:
 
 ### FP4.A — Passive dependency-template summaries
 
-Status: **planned; next implementation target**.
+Status: **complete**.
 
-Plan:
+Plan/report:
 
 - `docs/design/formula-plane/dispatch/fp4a-implementation-plan.md`.
+- `docs/design/formula-plane/dispatch/fp4a-dependency-summary-report.md`.
 
 Deliverables:
 
