@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use formualizer_bench_core::BenchmarkSuite;
+use formualizer_eval::formula_plane::diagnostics::{
+    FormulaPlaneTemplateDiagnostic, canonical_template_diagnostic,
+};
 use formualizer_eval::formula_plane::{
     CandidateRunOrientation, FormulaPlaneCandidateCell, FormulaRejectReason, FormulaRunShape,
     FormulaRunStore, FormulaRunStoreBuildReport, SpanGapKind, SpanPartitionCounterOptions,
@@ -47,6 +50,71 @@ struct ScannedFormula {
     canonical: String,
     labels: BTreeSet<String>,
     parse_ok: bool,
+    authority: Option<FormulaPlaneTemplateDiagnostic>,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthorityTemplateSummary {
+    authority_template_key: String,
+    authority_template_diagnostic_id: String,
+    stable_hash_hex: String,
+    formula_cell_count: u64,
+    diagnostic_source_template_count: u64,
+    representative_source_template_id: String,
+    representative_cell: String,
+    representative_formula: String,
+    authority_supported: bool,
+    flags: Vec<String>,
+    reject_kinds: Vec<String>,
+    reject_reasons: Vec<String>,
+    representative_expression_debug: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthoritySourceTemplateMappingSummary {
+    source_template_id: String,
+    formula_cell_count: u64,
+    unmapped_formula_cell_count: u64,
+    authority_template_count: u64,
+    authority_template_keys: Vec<String>,
+    authority_template_diagnostic_ids: Vec<String>,
+    ambiguous: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthorityRunMappingSummary {
+    run_id: u32,
+    template_id: u32,
+    source_template_id: String,
+    authority_template_key: String,
+    authority_template_diagnostic_id: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthorityRunUnmappedSummary {
+    run_id: u32,
+    template_id: u32,
+    source_template_id: String,
+    reason: &'static str,
+    authority_template_keys: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AuthorityTemplatesReport {
+    authority_template_count: u64,
+    diagnostic_source_template_count: u64,
+    diagnostic_collision_count: u64,
+    authority_supported_template_count: u64,
+    authority_rejected_template_count: u64,
+    parsed_formula_cell_count: u64,
+    unmapped_formula_cell_count: u64,
+    mapped_run_count: u64,
+    ambiguous_run_count: u64,
+    unmapped_run_count: u64,
+    templates: Vec<AuthorityTemplateSummary>,
+    source_template_mappings: Vec<AuthoritySourceTemplateMappingSummary>,
+    run_mappings: Vec<AuthorityRunMappingSummary>,
+    unmapped_runs_sample: Vec<AuthorityRunUnmappedSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -271,6 +339,7 @@ struct ScanOutput {
     totals: ScanTotals,
     formula_plane_candidates: FormulaPlaneCandidateCounters,
     formula_run_store: FormulaRunStoreReportSummary,
+    authority_templates: AuthorityTemplatesReport,
     materialization_accounting: MaterializationAccounting,
     templates: Vec<TemplateSummary>,
 }
@@ -607,6 +676,7 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                     if ast.contains_volatile() {
                         labels.insert("volatile".to_string());
                     }
+                    let authority = canonical_template_diagnostic(&ast, raw.row, raw.col);
                     let canonical = canonical_ast(&ast, raw.row, raw.col, &mut labels);
                     let template_id = stable_id(&canonical, &labels);
                     ScannedFormula {
@@ -615,6 +685,7 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: true,
+                        authority: Some(authority),
                     }
                 }
                 Err(err) => {
@@ -627,6 +698,7 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: false,
+                        authority: None,
                     }
                 }
             }
@@ -846,6 +918,7 @@ fn summarize(
             .into();
     let formula_run_store_raw = FormulaRunStore::build(&candidate_cells);
     let formula_run_store = summarize_formula_run_store(&formula_run_store_raw);
+    let authority_templates = summarize_authority_templates(&by_template, &formula_run_store_raw);
     let materialization_accounting =
         summarize_materialization_accounting(&formula_run_store_raw, graph_stats.as_ref());
 
@@ -955,9 +1028,232 @@ fn summarize(
         totals,
         formula_plane_candidates,
         formula_run_store,
+        authority_templates,
         materialization_accounting,
         templates,
     }
+}
+
+#[derive(Debug, Clone)]
+struct AuthorityTemplateAggregate {
+    diagnostic: FormulaPlaneTemplateDiagnostic,
+    formula_cell_count: u64,
+    source_template_ids: BTreeSet<String>,
+    representative_source_template_id: String,
+    representative_cell: String,
+    representative_formula: String,
+}
+
+fn summarize_authority_templates(
+    by_template: &BTreeMap<String, Vec<ScannedFormula>>,
+    store: &FormulaRunStore,
+) -> AuthorityTemplatesReport {
+    let mut by_authority_key = BTreeMap::<String, AuthorityTemplateAggregate>::new();
+    let mut source_template_formula_counts = BTreeMap::<String, u64>::new();
+    let mut source_template_unmapped_counts = BTreeMap::<String, u64>::new();
+    let mut source_to_authority_keys = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut parsed_formula_cell_count = 0u64;
+    let mut unmapped_formula_cell_count = 0u64;
+
+    for (source_template_id, formulas) in by_template {
+        let mut formulas = formulas.iter().collect::<Vec<_>>();
+        formulas.sort_by(|a, b| compare_scanned_formula_cell(a, b));
+        source_template_formula_counts.insert(source_template_id.clone(), formulas.len() as u64);
+
+        for formula in formulas {
+            let Some(authority) = &formula.authority else {
+                unmapped_formula_cell_count += 1;
+                *source_template_unmapped_counts
+                    .entry(source_template_id.clone())
+                    .or_default() += 1;
+                continue;
+            };
+
+            parsed_formula_cell_count += 1;
+            source_to_authority_keys
+                .entry(source_template_id.clone())
+                .or_default()
+                .insert(authority.key_payload.clone());
+
+            by_authority_key
+                .entry(authority.key_payload.clone())
+                .and_modify(|aggregate| {
+                    aggregate.formula_cell_count += 1;
+                    aggregate
+                        .source_template_ids
+                        .insert(source_template_id.clone());
+                })
+                .or_insert_with(|| {
+                    let mut source_template_ids = BTreeSet::new();
+                    source_template_ids.insert(source_template_id.clone());
+                    AuthorityTemplateAggregate {
+                        diagnostic: authority.clone(),
+                        formula_cell_count: 1,
+                        source_template_ids,
+                        representative_source_template_id: source_template_id.clone(),
+                        representative_cell: format!("{}!{}", formula.raw.sheet, formula.raw.cell),
+                        representative_formula: formula.raw.formula.clone(),
+                    }
+                });
+        }
+    }
+
+    let mut source_template_mappings = Vec::new();
+    for (source_template_id, formula_cell_count) in source_template_formula_counts {
+        let authority_template_keys = source_to_authority_keys
+            .get(&source_template_id)
+            .map(|keys| keys.iter().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let authority_template_diagnostic_ids = authority_template_keys
+            .iter()
+            .filter_map(|key| by_authority_key.get(key))
+            .map(|aggregate| aggregate.diagnostic.diagnostic_id.clone())
+            .collect::<Vec<_>>();
+        let authority_template_count = authority_template_keys.len() as u64;
+        source_template_mappings.push(AuthoritySourceTemplateMappingSummary {
+            source_template_id: source_template_id.clone(),
+            formula_cell_count,
+            unmapped_formula_cell_count: source_template_unmapped_counts
+                .get(&source_template_id)
+                .copied()
+                .unwrap_or(0),
+            authority_template_count,
+            authority_template_keys,
+            authority_template_diagnostic_ids,
+            ambiguous: authority_template_count > 1,
+        });
+    }
+
+    let diagnostic_collision_count = source_template_mappings
+        .iter()
+        .filter(|mapping| mapping.ambiguous)
+        .count() as u64;
+    let authority_supported_template_count = by_authority_key
+        .values()
+        .filter(|aggregate| aggregate.diagnostic.authority_supported)
+        .count() as u64;
+    let authority_rejected_template_count = by_authority_key
+        .len()
+        .saturating_sub(authority_supported_template_count as usize)
+        as u64;
+
+    let templates = by_authority_key
+        .iter()
+        .map(|(key, aggregate)| AuthorityTemplateSummary {
+            authority_template_key: key.clone(),
+            authority_template_diagnostic_id: aggregate.diagnostic.diagnostic_id.clone(),
+            stable_hash_hex: stable_hash_hex(aggregate.diagnostic.stable_hash),
+            formula_cell_count: aggregate.formula_cell_count,
+            diagnostic_source_template_count: aggregate.source_template_ids.len() as u64,
+            representative_source_template_id: aggregate.representative_source_template_id.clone(),
+            representative_cell: aggregate.representative_cell.clone(),
+            representative_formula: aggregate.representative_formula.clone(),
+            authority_supported: aggregate.diagnostic.authority_supported,
+            flags: aggregate.diagnostic.flags.clone(),
+            reject_kinds: aggregate.diagnostic.reject_kinds.clone(),
+            reject_reasons: aggregate.diagnostic.reject_reasons.clone(),
+            representative_expression_debug: aggregate.diagnostic.expression_debug.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    let mut run_mappings = Vec::new();
+    let mut ambiguous_run_count = 0u64;
+    let mut unmapped_run_count = 0u64;
+    let mut unmapped_runs_sample = Vec::new();
+
+    for run in &store.runs {
+        match source_to_authority_keys.get(&run.source_template_id) {
+            Some(keys) if keys.len() == 1 => {
+                let key = keys.iter().next().expect("one key present");
+                if let Some(aggregate) = by_authority_key.get(key) {
+                    run_mappings.push(AuthorityRunMappingSummary {
+                        run_id: run.id.0,
+                        template_id: run.template_id.0,
+                        source_template_id: run.source_template_id.clone(),
+                        authority_template_key: key.clone(),
+                        authority_template_diagnostic_id: aggregate
+                            .diagnostic
+                            .diagnostic_id
+                            .clone(),
+                    });
+                } else {
+                    unmapped_run_count += 1;
+                    push_unmapped_authority_run_sample(
+                        &mut unmapped_runs_sample,
+                        run,
+                        "authority_template_missing",
+                        Vec::new(),
+                    );
+                }
+            }
+            Some(keys) if keys.len() > 1 => {
+                ambiguous_run_count += 1;
+                push_unmapped_authority_run_sample(
+                    &mut unmapped_runs_sample,
+                    run,
+                    "diagnostic_source_template_collision",
+                    keys.iter().cloned().collect(),
+                );
+            }
+            _ => {
+                unmapped_run_count += 1;
+                push_unmapped_authority_run_sample(
+                    &mut unmapped_runs_sample,
+                    run,
+                    "no_authority_template_for_source",
+                    Vec::new(),
+                );
+            }
+        }
+    }
+
+    AuthorityTemplatesReport {
+        authority_template_count: templates.len() as u64,
+        diagnostic_source_template_count: by_template.len() as u64,
+        diagnostic_collision_count,
+        authority_supported_template_count,
+        authority_rejected_template_count,
+        parsed_formula_cell_count,
+        unmapped_formula_cell_count,
+        mapped_run_count: run_mappings.len() as u64,
+        ambiguous_run_count,
+        unmapped_run_count,
+        templates,
+        source_template_mappings,
+        run_mappings,
+        unmapped_runs_sample,
+    }
+}
+
+fn compare_scanned_formula_cell(a: &ScannedFormula, b: &ScannedFormula) -> std::cmp::Ordering {
+    (&a.raw.sheet, a.raw.row, a.raw.col, &a.raw.formula).cmp(&(
+        &b.raw.sheet,
+        b.raw.row,
+        b.raw.col,
+        &b.raw.formula,
+    ))
+}
+
+fn push_unmapped_authority_run_sample(
+    samples: &mut Vec<AuthorityRunUnmappedSummary>,
+    run: &formualizer_eval::formula_plane::FormulaRunDescriptor,
+    reason: &'static str,
+    authority_template_keys: Vec<String>,
+) {
+    if samples.len() >= 20 {
+        return;
+    }
+    samples.push(AuthorityRunUnmappedSummary {
+        run_id: run.id.0,
+        template_id: run.template_id.0,
+        source_template_id: run.source_template_id.clone(),
+        reason,
+        authority_template_keys,
+    });
+}
+
+fn stable_hash_hex(hash: u64) -> String {
+    format!("{hash:016x}")
 }
 
 fn summarize_formula_run_store(store: &FormulaRunStore) -> FormulaRunStoreReportSummary {
@@ -1279,4 +1575,93 @@ fn count_runs(
         }
     }
     (runs, holes, exceptions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw_formula(cell: &str, row: u32, col: u32, formula: &str) -> RawFormula {
+        RawFormula {
+            sheet: "Sheet1".to_string(),
+            cell: cell.to_string(),
+            row,
+            col,
+            formula: formula.to_string(),
+            shared: false,
+            shared_index: None,
+            shared_ref: None,
+        }
+    }
+
+    #[test]
+    fn authority_sidecar_reports_diagnostic_source_collision() {
+        let scanned = classify_formulas(vec![
+            raw_formula("B1", 1, 2, "A1+1"),
+            raw_formula("C1", 1, 3, "B1+2"),
+        ]);
+        assert_eq!(scanned[0].template_id, scanned[1].template_id);
+
+        let output = summarize(PathBuf::from("collision.xlsx"), scanned, None);
+
+        assert_eq!(output.authority_templates.authority_template_count, 2);
+        assert_eq!(
+            output.authority_templates.diagnostic_source_template_count,
+            1
+        );
+        assert_eq!(output.authority_templates.diagnostic_collision_count, 1);
+        assert_eq!(output.authority_templates.source_template_mappings.len(), 1);
+        assert_eq!(
+            output.authority_templates.source_template_mappings[0].authority_template_count,
+            2
+        );
+        assert!(output.authority_templates.source_template_mappings[0].ambiguous);
+        assert_eq!(output.authority_templates.mapped_run_count, 0);
+        assert_eq!(output.authority_templates.ambiguous_run_count, 1);
+        assert_eq!(output.authority_templates.unmapped_run_count, 0);
+        assert!(output.authority_templates.run_mappings.is_empty());
+    }
+
+    #[test]
+    fn authority_sidecar_maps_runs_when_source_is_unambiguous() {
+        let scanned = classify_formulas(vec![
+            raw_formula("B1", 1, 2, "A1+1"),
+            raw_formula("C1", 1, 3, "B1+1"),
+        ]);
+        assert_eq!(scanned[0].template_id, scanned[1].template_id);
+
+        let output = summarize(PathBuf::from("unambiguous.xlsx"), scanned, None);
+
+        assert_eq!(output.authority_templates.authority_template_count, 1);
+        assert_eq!(output.authority_templates.diagnostic_collision_count, 0);
+        assert_eq!(output.authority_templates.mapped_run_count, 1);
+        assert_eq!(output.authority_templates.ambiguous_run_count, 0);
+        assert_eq!(output.authority_templates.unmapped_run_count, 0);
+        let run_mapping = &output.authority_templates.run_mappings[0];
+        let source_mapping = &output.authority_templates.source_template_mappings[0];
+        assert_eq!(run_mapping.run_id, 0);
+        assert_eq!(source_mapping.authority_template_keys.len(), 1);
+        assert_eq!(
+            run_mapping.authority_template_key,
+            source_mapping.authority_template_keys[0]
+        );
+    }
+
+    #[test]
+    fn scanner_json_keeps_fp1_fp3_sections_and_adds_authority_sidecar() {
+        let scanned = classify_formulas(vec![raw_formula("B1", 1, 2, "A1+1")]);
+        let output = summarize(PathBuf::from("sections.xlsx"), scanned, None);
+        let value = serde_json::to_value(output).expect("serialize scan output");
+
+        for section in [
+            "totals",
+            "formula_plane_candidates",
+            "formula_run_store",
+            "materialization_accounting",
+            "templates",
+            "authority_templates",
+        ] {
+            assert!(value.get(section).is_some(), "missing {section}");
+        }
+    }
 }

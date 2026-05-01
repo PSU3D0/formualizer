@@ -4,6 +4,9 @@
 //! FormulaPlane bridge is experimental. They are runtime/planning concepts, not
 //! stable cross-crate common types yet.
 
+#[cfg(feature = "formula_plane_diagnostics")]
+#[doc(hidden)]
+pub mod diagnostics;
 pub mod grid;
 pub mod ids;
 pub mod partition;
