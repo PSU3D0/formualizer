@@ -7,13 +7,13 @@ use serde::{Deserialize, Serialize};
 
 /// Opaque identifier for a future Formula Plane V2 template.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FormulaTemplateId(pub u32);
 
 /// Opaque identifier for a future Formula Plane V2 placement or run.
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct FormulaRunId(pub u32);
 
