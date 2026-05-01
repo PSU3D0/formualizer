@@ -99,9 +99,9 @@ The FP2.A scanner preserves the FP1.B template view for the bounded synthetic co
 
 | Gap | Impact | Recommended owner |
 |---|---|---|
-| Counters consume scanner cells, not loader-preserved shared-formula metadata | Cannot yet compare backend shared-formula preservation against candidate run detection | FP2.B / FP4 loader hint bridge |
+| Counters consume scanner cells, not loader-preserved shared-formula metadata | Cannot yet compare backend shared-formula preservation against candidate run detection | FP4.D loader/shared-formula metadata bridge |
 | Candidate runs are diagnostic row/column spans, not a stored FormulaRunStore | No reusable span store or placement ID exists yet | FP2.B first safe span-store implementation |
-| Candidate row-block partitions are placement partitions only | No precedent summary or result-region summary is represented | FP5 dependency summary work |
+| Candidate row-block partitions are placement partitions only | No precedent summary or result-region summary is represented | FP4.A passive dependency-template summaries |
 | Dense rectangles are represented as row and column run observations where present | Future run-store builder still needs deterministic orientation/rectangle policy | FP2.B/FP3 run model tests |
 | No runner `metrics.extra` integration yet | FP2.A artifacts live in scanner JSON/report only | Optional future runner low-risk metrics thread-through |
 

@@ -101,15 +101,17 @@ FP4.0  Runtime contract and review
 FP4.A  Passive dependency-template summaries
 FP4.B  Passive function dependency taxonomy
 FP4.C  Small-workbook overhead gates
+FP4.D  Loader/shared-formula metadata bridge
 FP5    Graph-build hint integration, no authority change
 FP6    First materialization reduction
 FP7    First span executor
 ```
 
 The loader/shared-formula bridge remains necessary, but it should not block the
-runtime contract and dependency-summary work. When the rephase plan is next
-updated, the historical loader bridge should be renamed or slotted as a parallel
-metadata-input phase so FP4 naming is not ambiguous.
+runtime contract and dependency-summary work. It is now tracked as FP4.D, a
+parallel metadata-input phase: loader/shared-formula hints can improve reporting
+and future materialization decisions, but they do not create runtime authority by
+themselves.
 
 ## 6. Core vocabulary
 
@@ -1059,6 +1061,13 @@ FormulaPlane reject reasons.
 Add bounded small-workbook cases and instrumentation to prove Tier-0 metadata
 overhead is negligible and deeper planning is local/lazy.
 
+### FP4.D — Loader/shared-formula metadata bridge
+
+Audit loader/backend shared-formula metadata preservation and surface optional
+shared-formula hints for reporting and future materialization decisions. This is
+a passive metadata-input phase, not a loader behavior change or runtime authority
+phase.
+
 ### FP5 — Graph-build hint integration
 
 Feed run/dependency summary metadata into ingest/graph build as hint-only data.
@@ -1101,5 +1110,7 @@ aggregation. Fallback remains explicit.
 ## 19. Status
 
 This revision folds the dual architecture-review feedback into the FP4.0 runtime
-contract. It makes no runtime-win claim. The next action should be FP4.A planning
-or implementation against the narrowed passive dependency-summary contract.
+contract. It makes no runtime-win claim. The FP4.A implementation plan now lives
+at `docs/design/formula-plane/dispatch/fp4a-implementation-plan.md`; the next
+action is implementation against that narrowed passive dependency-summary
+contract.

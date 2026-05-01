@@ -171,14 +171,15 @@ Documentation/report deliverables:
 docs/design/formula-plane/dispatch/fp4a-dependency-summary-report.md
 ```
 
-Optional doc cleanup:
+Related doc consistency:
 
 ```text
 docs/design/formula-plane/REPHASE_PLAN.md
 ```
 
-The rephase plan should be updated soon to reconcile old FP4/FP5 naming, but it
-can be a separate docs commit if keeping FP4.A implementation smaller is useful.
+`REPHASE_PLAN.md` should use the same FP4.0/FP4.A/FP4.B/FP4.C/FP4.D/FP5/FP6/FP7
+phase map as the runtime contract. Historical dispatch reports may retain their
+original wording, but forward-looking docs should use the updated map.
 
 ## 7. Phased implementation plan
 
@@ -189,10 +190,10 @@ Goal: make implementation scope unambiguous before code.
 Tasks:
 
 1. Commit this implementation plan.
-2. Optionally update `REPHASE_PLAN.md` to point to the revised FP4.0/FP4.A
-   sequence.
-3. If not updating `REPHASE_PLAN.md` immediately, record it as a deferred doc
-   cleanup in the FP4.A report.
+2. Confirm `REPHASE_PLAN.md` points to the revised FP4.0/FP4.A sequence before
+   FP4.A code begins.
+3. If any later report uses old FP4/FP5 wording, update the forward-looking owner
+   references or add an explicit historical-note qualifier.
 
 Tests/gates:
 

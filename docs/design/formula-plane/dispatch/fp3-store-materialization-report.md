@@ -96,10 +96,10 @@ The FP2.B store stores supported singleton formulas as singleton runs. That is w
 
 | Gap | Impact | Recommended owner |
 |---|---|---|
-| The passive store is not consumed by graph build | Current runtime still materializes per-formula graph vertices, AST roots, and edges | FP4/FP5 graph-build optimization design |
-| Graph-edge opportunity estimate lacks dependency summaries | Edge savings are rough and cannot distinguish shared precedent regions from dense dependent placement | FP5 dependency summary work |
+| The passive store is not consumed by graph build | Current runtime still materializes per-formula graph vertices, AST roots, and edges | FP5 graph-build hint integration, after FP4.A summaries |
+| Graph-edge opportunity estimate lacks dependency summaries | Edge savings are rough and cannot distinguish shared precedent regions from dense dependent placement | FP4.A passive dependency-template summaries |
 | Runner graph stats are joined via scanner `--runner-json` | Scanner artifacts need a matching runner artifact for live graph comparison | Future harness-level join or runner-side passive scan hook |
-| Shared-formula OOXML preservation is still not loader-integrated | Scanner cannot yet compare compact spans against backend-preserved shared formula groups | FP4 loader hint bridge |
+| Shared-formula OOXML preservation is still not loader-integrated | Scanner cannot yet compare compact spans against backend-preserved shared formula groups | FP4.D loader/shared-formula metadata bridge |
 
 ## Status
 

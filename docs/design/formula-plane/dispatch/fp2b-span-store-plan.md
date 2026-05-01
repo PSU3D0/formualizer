@@ -244,7 +244,7 @@ Rectangles:
 - Defer first-class rectangle runs in FP2.B.
 - Rationale: FP2.A currently reports row and column runs, the synthetic corpus is dominated by vertical fill-down families, and rectangle orientation can double-count cells unless a precedence rule is designed carefully.
 - FP2.B should detect dense same-template rectangles only enough to increment `rectangle_deferred_count`; it should not emit `RectangleDeferred` placements or any rectangle run shape. The stored representation remains the deterministic row/column decomposition selected by the overlap policy.
-- Rectangle acceptance belongs in a later phase after FP3 reporting shows real corpus prevalence and after FP5 dependency summaries define safe region semantics.
+- Rectangle acceptance belongs in a later phase after FP3 reporting shows real corpus prevalence and after FP4.A dependency summaries plus FP5 graph-build hints define safe region semantics.
 
 Overlap policy:
 
@@ -342,17 +342,24 @@ Do not run benchmarks for FP2.B acceptance.
 
 ## 11. Future phase mapping
 
+Forward-looking phase names were refined by the FP4.0 runtime contract. Use this
+map for new work:
+
 - FP3 passive store reporting / scanner integration: expose `FormulaRunStoreBuildReport` in scanner JSON next to `formula_plane_candidates`, with no runtime behavior change.
-- FP4 loader/shared-formula hints: compare loader-preserved shared-formula metadata to parser-derived template/run IDs and report preservation gaps; still passive.
-- FP5 dependency summaries: add precedent/result summary descriptors per run for compatibility checks, not scheduling authority.
-- FP6 compatibility/materialization gates: introduce opt-in gates that decide when materialization avoidance is safe, with fallback/circuit breakers.
+- FP4.0 runtime contract/review: define dependency-summary, materialization, small-workbook, and span-evaluation contracts before authority changes.
+- FP4.A passive dependency-template summaries: add precedent/result summary descriptors per run for compatibility checks, not scheduling authority.
+- FP4.B passive function dependency taxonomy: classify builtins/functions by dependency contract and fallback reason without span eval kernels.
+- FP4.C small-workbook overhead gates: prove local/lazy planning does not penalize small mostly-unique workbooks.
+- FP4.D loader/shared-formula metadata bridge: compare loader-preserved shared-formula metadata to parser-derived template/run IDs and report preservation gaps; still passive.
+- FP5 graph-build hint integration: feed summaries into ingest/graph build as hints while graph still materializes normally.
+- FP6 first materialization reduction: introduce opt-in gates that decide when materialization avoidance is safe, with fallback/circuit breakers.
 - FP7 first narrow span executor: only then route a small supported subset through span execution and scheduler logic behind explicit gates.
 
 ## 12. When real wins arrive
 
 FP2.B and FP3 can produce representation wins: fewer descriptors for dense formula families, deterministic IDs, better scanner reports, and clearer accounting of holes/exceptions/rejections. These are not user-visible performance wins by themselves.
 
-Load and memory wins arrive later, after FP4-FP6 preserve or infer shared-formula/span hints early enough to avoid per-cell materialization and after compatibility gates prove safe fallback behavior.
+Load and memory wins arrive later, after FP4.A/FP4.D/FP5 establish safe dependency and metadata hints and after FP6 compatibility/materialization gates prove safe fallback behavior.
 
 Eval and recalc wins arrive only with FP7 or later, when a narrow executor and scheduler can use run/dependency summaries to avoid per-cell graph/evaluation work. FP2.B must not claim those wins.
 

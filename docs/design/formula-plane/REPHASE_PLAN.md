@@ -1,6 +1,6 @@
 # FormulaPlane Bridge Rephase Plan
 
-Status: initial plan for `formula-plane/bridge`.
+Status: updated plan for `formula-plane/bridge` after FP4.0 runtime-contract review and FP4.A implementation planning.
 
 ## Decision
 
@@ -47,13 +47,20 @@ These are seed primitives/docs. They are not yet runtime authority and are not p
 
 ## Incremental phases
 
+This phase map supersedes the initial coarse FP4/FP5 naming. Historical reports
+may refer to the older labels; forward-looking work should use this map.
+
 ### FP0 — Seed branch and reusable primitives
+
+Status: **complete**.
 
 Deliverables:
 
 - Fresh worktree from `origin/main`.
-- Dependency-light FormulaPlane bridge primitives compiled under `formualizer-eval`.
-- FormulaPlane/partition/virtual-reference docs copied to the new design namespace.
+- Dependency-light FormulaPlane bridge primitives compiled under
+  `formualizer-eval`.
+- FormulaPlane/partition/virtual-reference docs copied to the new design
+  namespace.
 - Rephase plan recorded.
 
 Gate:
@@ -63,35 +70,44 @@ cargo test -p formualizer-eval --quiet
 cargo test --workspace --quiet
 ```
 
-Success claim: only that reusable primitives compile and current behavior is unchanged.
+Success claim: only that reusable primitives compile and current behavior is
+unchanged.
 
 ### FP1 — Baseline and measurement closure
 
+Status: **complete through FP1.B**.
+
 Deliverables:
 
-- Baseline report under `docs/design/formula-plane/dispatch/`.
-- Run or add bounded harnesses that record:
+- Baseline reports under `docs/design/formula-plane/dispatch/`.
+- Bounded harnesses and reports for:
   - `load_ms`, `full_eval_ms`, `incremental_us`, RSS where available;
   - formula cell count;
   - formula AST/root count;
   - graph formula vertex count;
   - graph edge/dependency row count;
   - repeated-template/fill-down candidate counts;
-  - shared-formula metadata visibility where available;
-  - adapter/backend mode (`umya`, `calamine`, current native mode).
-- Explicitly separate workbook open/read, engine ingest/build, full eval, and post-edit recalc where feasible.
+  - raw shared-formula metadata visibility where available;
+  - adapter/backend mode (`umya`, `calamine`, current native mode);
+  - load split (`open_read_ms`, `workbook_ingest_ms`, retained `load_ms`);
+  - adapter load counters for formula/value handoff.
 
 Gate:
 
 - No performance win required.
-- Report must make uncertainty explicit and avoid broad claims.
+- Reports must make uncertainty explicit and avoid broad claims.
 
-### FP2 — Passive formula-template normalization metrics
+### FP2 — Passive formula-template/run representation
+
+Status: **complete through FP2.B**.
 
 Deliverables:
 
-- Relative-semantic formula fingerprinting prototype for safe formula classes.
-- Passive metrics over synthetic and at least one real/anchor corpus.
+- FP2.A scanner-only FormulaPlane candidate span and row-block partition
+  counters.
+- FP2.B passive in-memory `FormulaTemplateArena` / `FormulaRunStore` builder.
+- Deterministic template/run IDs, row/column/singleton runs, holes, exceptions,
+  rejected cells, and FP2.A reconciliation.
 - No evaluation semantics change.
 
 Measured outputs:
@@ -101,88 +117,197 @@ Measured outputs:
 - largest template families;
 - contiguous row/column run candidates;
 - exceptions/holes estimate;
-- unsupported/dynamic/volatile counts.
+- unsupported/dynamic/volatile counts;
+- row-block partition fanout estimates;
+- passive store counters and reconciliation deltas.
 
-FP2.A starts this phase by adding scanner-only FormulaPlane candidate span and row-block partition counters. These counters are diagnostic only: formula runs are dependent formula placements, fixed row-block partitions are estimates, and no dirty propagation, scheduler routing, dependency graph construction, or formula evaluation authority changes. The vocabulary remains `precedent region -> dependent formula placement -> result region`; FP2.A observes only the dependent placement shape.
+Success claim: repeated formula structure can be quantified and represented
+without accuracy risk.
 
-Success claim: repeated formula structure can be quantified without accuracy risk.
+### FP3 — Passive store reporting and materialization accounting
 
-### FP3 — Passive FormulaRunStore / placement model
+Status: **complete**.
 
 Deliverables:
 
-- Internal run/placement structures for row runs, column runs, rectangles, and holes.
-- Builder that consumes formula snapshots or loader hints and emits passive runs.
-- Diagnostics showing dense runs avoid duplicate representation in the passive model.
+- `scan-formula-templates` emits `formula_run_store` from the passive
+  `FormulaRunStore`.
+- Scanner JSON emits `materialization_accounting` by joining optional runner
+  graph materialization stats.
+- Bounded report quantifies compact representation opportunity vs current graph
+  formula vertices, AST roots/nodes, and graph edges.
 
 No runtime authority yet.
 
 Gate:
 
 - Existing eval/workbook tests unchanged.
-- Shape tests prove stable run detection and hole splitting.
+- Scanner/reporting integration remains read-only.
+- Avoidable counts are labeled representation/materialization opportunity
+  estimates, not runtime wins.
 
-### FP4 — Shared-formula / loader capability bridge
+### FP4.0 — Runtime contract and architecture review
+
+Status: **complete**.
 
 Deliverables:
 
-- Audit and document what Umya and Calamine expose for XLSX shared formulas and shared strings.
-- Preserve shared-formula group hints where possible.
-- If backend metadata is insufficient, add a scoped XML-reader experiment only as a metadata bridge, not a full loader rewrite.
+- `docs/design/formula-plane/FORMULA_PLANE_RUNTIME_CONTRACT.md`.
+- Independent architecture reviews from `openai-codex/gpt-5.5` and
+  `anthropic/claude-opus-4-7`.
+- Review feedback folded into the runtime contract.
+- Re-review verdicts `PASS-WITH-NITS`.
+
+Gate:
+
+- Contract distinguishes formula family vs formula class.
+- Contract includes bidirectional dependency-summary invariants.
+- Contract separates dependency-only function contracts from future span kernels.
+- Contract preserves small-workbook overhead discipline and no global
+  workbook-size enable/disable heuristic.
+
+### FP4.A — Passive dependency-template summaries
+
+Status: **planned; next implementation target**.
+
+Plan:
+
+- `docs/design/formula-plane/dispatch/fp4a-implementation-plan.md`.
+
+Deliverables:
+
+- Authority-grade `template_canonical.rs` under
+  `crates/formualizer-eval/src/formula_plane/`.
+- Passive `dependency_summary.rs` under
+  `crates/formualizer-eval/src/formula_plane/`.
+- Initial supported class: `StaticPointwise` only.
+- Affine finite cell/range precedent pattern surface.
+- Run-instantiated summaries over accepted `FormulaRunStore` runs.
+- Passive reverse mapping counters for edit invalidation feasibility.
+- Fixed-`CollectPolicy` comparison harness against current dependency planning.
+- Scanner JSON section `dependency_summaries`.
+
+Gate:
+
+- No graph/runtime/materialization authority change.
+- Any supported summary under-approximation is a correctness failure.
+- Unsupported/dynamic/volatile/open/whole-axis/name/table/3D/external/spill/local
+  constructs are explicit fallback/reject reasons.
+
+### FP4.B — Passive function dependency taxonomy
+
+Status: **future**.
+
+Deliverables:
+
+- Builtin/function dependency classification audit.
+- Dependency-only function contract registry or equivalent local sidecar.
+- Classification tied to existing `FnCaps`, `ArgSchema`, registry identity, and
+  explicit FormulaPlane reject reasons.
+- No span eval kernels yet.
+
+Gate:
+
+- Function classification is passive and report-only.
+- Unknown/custom/reference-returning/dynamic functions have explicit fallback
+  reasons.
+
+### FP4.C — Small-workbook overhead gates
+
+Status: **future**.
+
+Deliverables:
+
+- Bounded small-workbook corpus: 10, 100, 1k, and 5k formula shapes; mostly
+  unique formulas; small dense copied blocks; mixed unsupported formulas.
+- Tier-0 overhead measurements for template fingerprint/count bookkeeping.
+- Local/lazy promotion policy validation.
+
+Gate:
+
+- No production full `FormulaRunStore` build for mostly unique small workbooks.
+- No global workbook-size heuristic as the primary enable/disable mechanism.
+
+### FP4.D — Loader/shared-formula metadata bridge
+
+Status: **future parallel metadata-input phase**.
+
+Deliverables:
+
+- Audit and document what Umya and Calamine expose for XLSX shared formulas and
+  shared strings.
+- Preserve or surface shared-formula group hints where possible.
+- If backend metadata is insufficient, add a scoped XML-reader experiment only as
+  a metadata bridge, not a full loader rewrite.
 
 Gate:
 
 - Same workbook results as current loader.
 - New hints are optional/passive; absence must not change semantics.
+- Loader hints can inform FormulaPlane reporting/planning but do not create
+  runtime authority by themselves.
 
-### FP5 — Dependency summaries and partition bridge
+### FP5 — Graph-build hint integration, no authority change
+
+Status: **future**.
 
 Deliverables:
 
-- Formula-run dependency summaries using explicit vocabulary:
-
-```text
-precedent region -> dependent formula placement -> result region
-```
-
-- Partition summaries independent of Core+Overlay `Session` authority.
-- Diagnostics for edge density, partition fanout, and dirty breadth.
+- Feed run/dependency summary metadata into ingest/graph build as hint-only data.
+- Graph still materializes normally.
+- Report what could have been skipped and why runs did or did not promote.
+- Diagnostics for edge density, partition fanout, dirty breadth, and fallback
+  reasons.
 
 Gate:
 
-- No hidden legacy fallback in optimized diagnostics: compatibility use must be counted.
+- No hidden legacy fallback in optimized diagnostics: compatibility use must be
+  counted.
 - Conservative summaries are allowed only with bounded/reportable breadth.
+- No graph bypass or dirty authority yet.
 
-### FP6 — Compatibility adapter with allocation gates
+### FP6 — First materialization reduction
+
+Status: **future**.
 
 Deliverables:
 
-- Lazy graph/session compatibility adapter for legacy APIs that require cell materialization.
+- First low-risk materialization reduction, preferably shared-template IR or
+  summary-edge sidecar with reverse dirty semantics before broad compact graph
+  authority.
 - Counters:
-  - adapter materialized-cell count;
+  - adapter/materialized-cell count;
   - graph formula vertex count;
   - graph edge row count;
   - AST root count;
   - formula snapshot entry count;
   - run count;
   - template count;
-  - exception count.
+  - exception count;
+  - fallback/demotion reason counts.
 
-Success claim: any optimized path must prove it is not silently allocating one graph/AST/edge set per dense formula cell.
+Success claim: any optimized path must prove it is not silently allocating one
+graph/AST/edge set per dense formula cell.
 
-### FP7 — Narrow span scheduler MVP
+### FP7 — First span executor
+
+Status: **future**.
 
 Deliverables:
 
-- One safe span execution path, initially for a simple dense formula family such as row-local arithmetic or scalar broadcast.
+- One narrow, contract-driven span execution path with oracle coverage.
+- Candidate first kernels: pointwise arithmetic/comparison, mask-aware `IF`, and
+  criteria aggregation.
 - Accuracy comparison against existing engine on bounded fixtures.
-- Quantified wall-time/allocation result.
+- Quantified wall-time/allocation result only after materialization/execution
+  authority is actually changed.
 
 Gate:
 
 - Accuracy-preserving against current engine outputs.
 - Fallback for unsupported functions/dynamic refs is explicit and counted.
-- Win must be tied to reduced materialization or batch execution, not hidden semantics changes.
+- Win must be tied to reduced materialization or batch execution, not hidden
+  semantics changes.
 
 ## Landing policy
 
