@@ -453,7 +453,7 @@ fn summary_instantiation_fallback(reason: &RunSummaryRejectionReason) -> &'stati
     }
 }
 
-fn dependency_reject_reason_key(reason: &DependencyRejectReason) -> String {
+pub(crate) fn dependency_reject_reason_key(reason: &DependencyRejectReason) -> String {
     match reason {
         DependencyRejectReason::OpenRangeUnsupported { .. } => "open_range_unsupported".to_string(),
         DependencyRejectReason::WholeAxisUnsupported { .. } => "whole_axis_unsupported".to_string(),

@@ -7,7 +7,10 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use formualizer_bench_core::BenchmarkSuite;
 use formualizer_eval::formula_plane::diagnostics::{
-    FormulaPlaneTemplateDiagnostic, canonical_template_diagnostic,
+    FormulaPlaneDependencyCollectPolicyFingerprintDiagnostic,
+    FormulaPlaneDependencyComparisonDiagnostic, FormulaPlaneDependencyScanInput,
+    FormulaPlaneDependencySummariesDiagnostic, FormulaPlaneTemplateDiagnostic,
+    canonical_template_diagnostic, dependency_summaries_diagnostic,
 };
 use formualizer_eval::formula_plane::{
     CandidateRunOrientation, FormulaPlaneCandidateCell, FormulaRejectReason, FormulaRunShape,
@@ -50,6 +53,7 @@ struct ScannedFormula {
     canonical: String,
     labels: BTreeSet<String>,
     parse_ok: bool,
+    ast: Option<ASTNode>,
     authority: Option<FormulaPlaneTemplateDiagnostic>,
 }
 
@@ -334,12 +338,46 @@ struct MaterializationAccounting {
 }
 
 #[derive(Debug, Serialize)]
+struct DependencyCollectPolicyFingerprintSummary {
+    expand_small_ranges: bool,
+    range_expansion_limit: usize,
+    include_names: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DependencySummaryComparisonSummary {
+    oracle_policy_name: &'static str,
+    oracle_policy_fingerprint: DependencyCollectPolicyFingerprintSummary,
+    requested_policy_fingerprint: DependencyCollectPolicyFingerprintSummary,
+    exact_match_count: u64,
+    over_approximation_count: u64,
+    under_approximation_count: u64,
+    rejection_count: u64,
+    policy_drift_count: u64,
+    fallback_reason_histogram: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct DependencySummariesReport {
+    authority_template_count: u64,
+    supported_template_count: u64,
+    rejected_template_count: u64,
+    run_summary_count: u64,
+    precedent_region_count: u64,
+    result_region_count: u64,
+    reverse_summary_count: u64,
+    comparison: DependencySummaryComparisonSummary,
+    fallback_reasons: BTreeMap<String, u64>,
+}
+
+#[derive(Debug, Serialize)]
 struct ScanOutput {
     workbook: String,
     totals: ScanTotals,
     formula_plane_candidates: FormulaPlaneCandidateCounters,
     formula_run_store: FormulaRunStoreReportSummary,
     authority_templates: AuthorityTemplatesReport,
+    dependency_summaries: DependencySummariesReport,
     materialization_accounting: MaterializationAccounting,
     templates: Vec<TemplateSummary>,
 }
@@ -411,6 +449,50 @@ impl From<SpanPartitionCounters> for FormulaPlaneCandidateCounters {
     }
 }
 
+impl From<FormulaPlaneDependencySummariesDiagnostic> for DependencySummariesReport {
+    fn from(diagnostic: FormulaPlaneDependencySummariesDiagnostic) -> Self {
+        Self {
+            authority_template_count: diagnostic.authority_template_count,
+            supported_template_count: diagnostic.supported_template_count,
+            rejected_template_count: diagnostic.rejected_template_count,
+            run_summary_count: diagnostic.run_summary_count,
+            precedent_region_count: diagnostic.precedent_region_count,
+            result_region_count: diagnostic.result_region_count,
+            reverse_summary_count: diagnostic.reverse_summary_count,
+            comparison: diagnostic.comparison.into(),
+            fallback_reasons: diagnostic.fallback_reasons,
+        }
+    }
+}
+
+impl From<FormulaPlaneDependencyComparisonDiagnostic> for DependencySummaryComparisonSummary {
+    fn from(diagnostic: FormulaPlaneDependencyComparisonDiagnostic) -> Self {
+        Self {
+            oracle_policy_name: diagnostic.oracle_policy_name,
+            oracle_policy_fingerprint: diagnostic.oracle_policy_fingerprint.into(),
+            requested_policy_fingerprint: diagnostic.requested_policy_fingerprint.into(),
+            exact_match_count: diagnostic.exact_match_count,
+            over_approximation_count: diagnostic.over_approximation_count,
+            under_approximation_count: diagnostic.under_approximation_count,
+            rejection_count: diagnostic.rejection_count,
+            policy_drift_count: diagnostic.policy_drift_count,
+            fallback_reason_histogram: diagnostic.fallback_reason_histogram,
+        }
+    }
+}
+
+impl From<FormulaPlaneDependencyCollectPolicyFingerprintDiagnostic>
+    for DependencyCollectPolicyFingerprintSummary
+{
+    fn from(diagnostic: FormulaPlaneDependencyCollectPolicyFingerprintDiagnostic) -> Self {
+        Self {
+            expand_small_ranges: diagnostic.expand_small_ranges,
+            range_expansion_limit: diagnostic.range_expansion_limit,
+            include_names: diagnostic.include_names,
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let workbook = resolve_workbook(&cli)?;
@@ -420,7 +502,7 @@ fn main() -> Result<()> {
         Some(path) => Some(read_graph_materialization_stats(path)?),
         None => None,
     };
-    let output = summarize(workbook, scanned, graph_stats);
+    let output = summarize(workbook, scanned, graph_stats)?;
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
 }
@@ -685,6 +767,7 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: true,
+                        ast: Some(ast),
                         authority: Some(authority),
                     }
                 }
@@ -698,6 +781,7 @@ fn classify_formulas(raw: Vec<RawFormula>) -> Vec<ScannedFormula> {
                         canonical,
                         labels,
                         parse_ok: false,
+                        ast: None,
                         authority: None,
                     }
                 }
@@ -883,7 +967,7 @@ fn summarize(
     workbook: PathBuf,
     scanned: Vec<ScannedFormula>,
     graph_stats: Option<GraphMaterializationStats>,
-) -> ScanOutput {
+) -> Result<ScanOutput> {
     let mut by_template: BTreeMap<String, Vec<ScannedFormula>> = BTreeMap::new();
     let mut cell_to_template = BTreeMap::new();
     let mut candidate_cells = Vec::new();
@@ -919,6 +1003,8 @@ fn summarize(
     let formula_run_store_raw = FormulaRunStore::build(&candidate_cells);
     let formula_run_store = summarize_formula_run_store(&formula_run_store_raw);
     let authority_templates = summarize_authority_templates(&by_template, &formula_run_store_raw);
+    let dependency_summaries =
+        summarize_dependency_summaries(&by_template, &formula_run_store_raw)?;
     let materialization_accounting =
         summarize_materialization_accounting(&formula_run_store_raw, graph_stats.as_ref());
 
@@ -1023,15 +1109,40 @@ fn summarize(
     }
     totals.shared_formula_indices = shared_indices.len() as u64;
 
-    ScanOutput {
+    Ok(ScanOutput {
         workbook: workbook.display().to_string(),
         totals,
         formula_plane_candidates,
         formula_run_store,
         authority_templates,
+        dependency_summaries,
         materialization_accounting,
         templates,
+    })
+}
+
+fn summarize_dependency_summaries(
+    by_template: &BTreeMap<String, Vec<ScannedFormula>>,
+    store: &FormulaRunStore,
+) -> Result<DependencySummariesReport> {
+    let mut inputs = Vec::new();
+    for (source_template_id, formulas) in by_template {
+        for formula in formulas {
+            let (Some(ast), Some(authority)) = (&formula.ast, &formula.authority) else {
+                continue;
+            };
+            inputs.push(FormulaPlaneDependencyScanInput {
+                source_template_id,
+                authority_template_key: &authority.key_payload,
+                sheet: &formula.raw.sheet,
+                row: formula.raw.row,
+                col: formula.raw.col,
+                ast,
+            });
+        }
     }
+
+    Ok(dependency_summaries_diagnostic(store, inputs)?.into())
 }
 
 #[derive(Debug, Clone)]
@@ -1602,7 +1713,8 @@ mod tests {
         ]);
         assert_eq!(scanned[0].template_id, scanned[1].template_id);
 
-        let output = summarize(PathBuf::from("collision.xlsx"), scanned, None);
+        let output = summarize(PathBuf::from("collision.xlsx"), scanned, None)
+            .expect("summarize collision workbook");
 
         assert_eq!(output.authority_templates.authority_template_count, 2);
         assert_eq!(
@@ -1620,6 +1732,15 @@ mod tests {
         assert_eq!(output.authority_templates.ambiguous_run_count, 1);
         assert_eq!(output.authority_templates.unmapped_run_count, 0);
         assert!(output.authority_templates.run_mappings.is_empty());
+        assert_eq!(output.dependency_summaries.authority_template_count, 2);
+        assert_eq!(output.dependency_summaries.supported_template_count, 2);
+        assert_eq!(output.dependency_summaries.run_summary_count, 0);
+        assert!(
+            output
+                .dependency_summaries
+                .fallback_reasons
+                .contains_key("diagnostic_source_template_collision")
+        );
     }
 
     #[test]
@@ -1630,7 +1751,8 @@ mod tests {
         ]);
         assert_eq!(scanned[0].template_id, scanned[1].template_id);
 
-        let output = summarize(PathBuf::from("unambiguous.xlsx"), scanned, None);
+        let output = summarize(PathBuf::from("unambiguous.xlsx"), scanned, None)
+            .expect("summarize unambiguous workbook");
 
         assert_eq!(output.authority_templates.authority_template_count, 1);
         assert_eq!(output.authority_templates.diagnostic_collision_count, 0);
@@ -1645,12 +1767,47 @@ mod tests {
             run_mapping.authority_template_key,
             source_mapping.authority_template_keys[0]
         );
+        assert_eq!(output.dependency_summaries.authority_template_count, 1);
+        assert_eq!(output.dependency_summaries.supported_template_count, 1);
+        assert_eq!(output.dependency_summaries.rejected_template_count, 0);
+        assert_eq!(output.dependency_summaries.run_summary_count, 1);
+        assert_eq!(output.dependency_summaries.result_region_count, 1);
+        assert_eq!(output.dependency_summaries.precedent_region_count, 1);
+        assert_eq!(output.dependency_summaries.reverse_summary_count, 1);
+        assert_eq!(output.dependency_summaries.comparison.exact_match_count, 2);
+        assert_eq!(
+            output
+                .dependency_summaries
+                .comparison
+                .under_approximation_count,
+            0
+        );
+    }
+
+    #[test]
+    fn dependency_summaries_reject_unsupported_templates_without_mapping() {
+        let scanned = classify_formulas(vec![raw_formula("B1", 1, 2, "SUM(A1:A10)")]);
+        let output = summarize(PathBuf::from("unsupported.xlsx"), scanned, None)
+            .expect("summarize unsupported workbook");
+
+        assert_eq!(output.dependency_summaries.authority_template_count, 1);
+        assert_eq!(output.dependency_summaries.supported_template_count, 0);
+        assert_eq!(output.dependency_summaries.rejected_template_count, 1);
+        assert_eq!(output.dependency_summaries.run_summary_count, 0);
+        assert_eq!(output.dependency_summaries.comparison.rejection_count, 1);
+        assert!(
+            output
+                .dependency_summaries
+                .fallback_reasons
+                .contains_key("finite_range_unsupported")
+        );
     }
 
     #[test]
     fn scanner_json_keeps_fp1_fp3_sections_and_adds_authority_sidecar() {
         let scanned = classify_formulas(vec![raw_formula("B1", 1, 2, "A1+1")]);
-        let output = summarize(PathBuf::from("sections.xlsx"), scanned, None);
+        let output = summarize(PathBuf::from("sections.xlsx"), scanned, None)
+            .expect("summarize section workbook");
         let value = serde_json::to_value(output).expect("serialize scan output");
 
         for section in [
@@ -1660,6 +1817,7 @@ mod tests {
             "materialization_accounting",
             "templates",
             "authority_templates",
+            "dependency_summaries",
         ] {
             assert!(value.get(section).is_some(), "missing {section}");
         }
