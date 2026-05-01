@@ -7,8 +7,9 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use formualizer_bench_core::BenchmarkSuite;
 use formualizer_eval::formula_plane::{
-    CandidateRunOrientation, FormulaPlaneCandidateCell, SpanPartitionCounterOptions,
-    SpanPartitionCounters, compute_span_partition_counters,
+    CandidateRunOrientation, FormulaPlaneCandidateCell, FormulaRejectReason, FormulaRunShape,
+    FormulaRunStore, FormulaRunStoreBuildReport, SpanGapKind, SpanPartitionCounterOptions,
+    SpanPartitionCounters, TemplateSupportStatus, compute_span_partition_counters,
 };
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
 use serde::Serialize;
@@ -23,6 +24,8 @@ struct Cli {
     scenario: Option<String>,
     #[arg(long, default_value = ".")]
     root: PathBuf,
+    #[arg(long, value_name = "PATH")]
+    runner_json: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,10 +140,138 @@ struct FormulaPlaneCandidateCounters {
 }
 
 #[derive(Debug, Serialize)]
+struct FormulaRunStoreTemplateSummary {
+    template_id: u32,
+    source_template_id: String,
+    formula_cell_count: u64,
+    status: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaRunStoreRunSummary {
+    run_id: u32,
+    template_id: u32,
+    source_template_id: String,
+    sheet: String,
+    shape: &'static str,
+    row_start: u32,
+    col_start: u32,
+    row_end: u32,
+    col_end: u32,
+    len: u64,
+    row_block_start: u32,
+    row_block_end: u32,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaRunStoreGapSummary {
+    template_id: u32,
+    sheet: String,
+    row: u32,
+    col: u32,
+    kind: &'static str,
+    other_template_id: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaRunStoreRejectedCellSummary {
+    sheet: String,
+    row: u32,
+    col: u32,
+    source_template_id: String,
+    reason: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaRunStoreReconciliationDeltaSummary {
+    field: &'static str,
+    fp2a_value: i64,
+    span_store_value: i64,
+    reason: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaRunStoreReconciliationSummary {
+    matched: bool,
+    deltas: Vec<FormulaRunStoreReconciliationDeltaSummary>,
+}
+
+#[derive(Debug, Serialize)]
+struct FormulaRunStoreReportSummary {
+    row_block_size: u32,
+    template_count: u64,
+    formula_cell_count: u64,
+    supported_formula_cell_count: u64,
+    rejected_formula_cell_count: u64,
+    parse_error_formula_count: u64,
+    unsupported_formula_count: u64,
+    dynamic_formula_count: u64,
+    volatile_formula_count: u64,
+    run_count: u64,
+    row_run_count: u64,
+    column_run_count: u64,
+    singleton_run_count: u64,
+    formula_cells_represented_by_runs: u64,
+    candidate_row_block_partition_count: u64,
+    candidate_formula_run_to_partition_edge_estimate: u64,
+    max_partitions_touched_by_run: u64,
+    hole_count: u64,
+    exception_count: u64,
+    overlap_dropped_count: u64,
+    rectangle_deferred_count: u64,
+    gap_scan_truncated_count: u64,
+    dense_run_coverage_percent: f64,
+    compact_representation_denominator: u64,
+    compact_representation_ratio: f64,
+    reconciliation: FormulaRunStoreReconciliationSummary,
+    templates: Vec<FormulaRunStoreTemplateSummary>,
+    runs_sample: Vec<FormulaRunStoreRunSummary>,
+    gaps_sample: Vec<FormulaRunStoreGapSummary>,
+    rejected_cells_sample: Vec<FormulaRunStoreRejectedCellSummary>,
+}
+
+#[derive(Debug, Clone)]
+struct GraphMaterializationStats {
+    source: String,
+    graph_formula_vertices: Option<u64>,
+    formula_ast_roots: Option<u64>,
+    formula_ast_nodes: Option<u64>,
+    graph_edges: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct MaterializationAccounting {
+    graph_stats_source: String,
+    formula_cells: u64,
+    graph_formula_vertices: Option<u64>,
+    formula_ast_roots: Option<u64>,
+    formula_ast_nodes: Option<u64>,
+    graph_edges: Option<u64>,
+    template_count: u64,
+    run_count: u64,
+    rejected_cell_count: u64,
+    hole_count: u64,
+    exception_count: u64,
+    hole_exception_count: u64,
+    dense_run_coverage_percent: f64,
+    compact_representation_denominator: u64,
+    compact_representation_ratio: f64,
+    estimated_avoidable_formula_vertices: u64,
+    estimated_avoidable_formula_vertices_basis: &'static str,
+    estimated_avoidable_ast_roots: u64,
+    estimated_avoidable_ast_roots_basis: &'static str,
+    estimated_avoidable_graph_edges: Option<u64>,
+    estimated_avoidable_graph_edges_basis: &'static str,
+    runtime_win_claimed: bool,
+}
+
+#[derive(Debug, Serialize)]
 struct ScanOutput {
     workbook: String,
     totals: ScanTotals,
     formula_plane_candidates: FormulaPlaneCandidateCounters,
+    formula_run_store: FormulaRunStoreReportSummary,
+    materialization_accounting: MaterializationAccounting,
     templates: Vec<TemplateSummary>,
 }
 
@@ -216,9 +347,53 @@ fn main() -> Result<()> {
     let workbook = resolve_workbook(&cli)?;
     let raw = scan_ooxml_formulas(&workbook)?;
     let scanned = classify_formulas(raw);
-    let output = summarize(workbook, scanned);
+    let graph_stats = match &cli.runner_json {
+        Some(path) => Some(read_graph_materialization_stats(path)?),
+        None => None,
+    };
+    let output = summarize(workbook, scanned, graph_stats);
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+fn read_graph_materialization_stats(path: &Path) -> Result<GraphMaterializationStats> {
+    let file = File::open(path).with_context(|| format!("open runner JSON {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_reader(file)
+        .with_context(|| format!("parse runner JSON {}", path.display()))?;
+    let extra = value
+        .get("metrics")
+        .and_then(|metrics| metrics.get("extra"))
+        .unwrap_or(&serde_json::Value::Null);
+    Ok(GraphMaterializationStats {
+        source: path.display().to_string(),
+        graph_formula_vertices: first_u64(
+            extra,
+            &[
+                "load_graph_formula_vertex_count",
+                "final_graph_formula_vertex_count",
+            ],
+        ),
+        formula_ast_roots: first_u64(
+            extra,
+            &[
+                "load_formula_ast_root_count",
+                "final_formula_ast_root_count",
+            ],
+        ),
+        formula_ast_nodes: first_u64(
+            extra,
+            &[
+                "load_formula_ast_node_count",
+                "final_formula_ast_node_count",
+            ],
+        ),
+        graph_edges: first_u64(extra, &["load_graph_edge_count", "final_graph_edge_count"]),
+    })
+}
+
+fn first_u64(value: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(serde_json::Value::as_u64))
 }
 
 fn resolve_workbook(cli: &Cli) -> Result<PathBuf> {
@@ -632,7 +807,11 @@ fn stable_id(canonical: &str, labels: &BTreeSet<String>) -> String {
     format!("tpl_{hash:016x}")
 }
 
-fn summarize(workbook: PathBuf, scanned: Vec<ScannedFormula>) -> ScanOutput {
+fn summarize(
+    workbook: PathBuf,
+    scanned: Vec<ScannedFormula>,
+    graph_stats: Option<GraphMaterializationStats>,
+) -> ScanOutput {
     let mut by_template: BTreeMap<String, Vec<ScannedFormula>> = BTreeMap::new();
     let mut cell_to_template = BTreeMap::new();
     let mut candidate_cells = Vec::new();
@@ -665,6 +844,10 @@ fn summarize(workbook: PathBuf, scanned: Vec<ScannedFormula>) -> ScanOutput {
     let formula_plane_candidates =
         compute_span_partition_counters(&candidate_cells, SpanPartitionCounterOptions::default())
             .into();
+    let formula_run_store_raw = FormulaRunStore::build(&candidate_cells);
+    let formula_run_store = summarize_formula_run_store(&formula_run_store_raw);
+    let materialization_accounting =
+        summarize_materialization_accounting(&formula_run_store_raw, graph_stats.as_ref());
 
     let mut templates = Vec::new();
     let mut totals = ScanTotals {
@@ -771,7 +954,247 @@ fn summarize(workbook: PathBuf, scanned: Vec<ScannedFormula>) -> ScanOutput {
         workbook: workbook.display().to_string(),
         totals,
         formula_plane_candidates,
+        formula_run_store,
+        materialization_accounting,
         templates,
+    }
+}
+
+fn summarize_formula_run_store(store: &FormulaRunStore) -> FormulaRunStoreReportSummary {
+    let report = &store.report;
+    FormulaRunStoreReportSummary {
+        row_block_size: store.row_block_size,
+        template_count: report.template_count,
+        formula_cell_count: report.formula_cell_count,
+        supported_formula_cell_count: report.supported_formula_cell_count,
+        rejected_formula_cell_count: report.rejected_formula_cell_count,
+        parse_error_formula_count: report.parse_error_formula_count,
+        unsupported_formula_count: report.unsupported_formula_count,
+        dynamic_formula_count: report.dynamic_formula_count,
+        volatile_formula_count: report.volatile_formula_count,
+        run_count: store.runs.len() as u64,
+        row_run_count: report.row_run_count,
+        column_run_count: report.column_run_count,
+        singleton_run_count: report.singleton_run_count,
+        formula_cells_represented_by_runs: report.formula_cells_represented_by_runs,
+        candidate_row_block_partition_count: report.candidate_row_block_partition_count,
+        candidate_formula_run_to_partition_edge_estimate: report
+            .candidate_formula_run_to_partition_edge_estimate,
+        max_partitions_touched_by_run: report.max_partitions_touched_by_run,
+        hole_count: report.hole_count,
+        exception_count: report.exception_count,
+        overlap_dropped_count: report.overlap_dropped_count,
+        rectangle_deferred_count: report.rectangle_deferred_count,
+        gap_scan_truncated_count: report.gap_scan_truncated_count,
+        dense_run_coverage_percent: dense_run_coverage_percent(report),
+        compact_representation_denominator: compact_representation_denominator(
+            report,
+            store.runs.len() as u64,
+        ),
+        compact_representation_ratio: compact_representation_ratio(report, store.runs.len() as u64),
+        reconciliation: FormulaRunStoreReconciliationSummary {
+            matched: report.reconciliation.matched,
+            deltas: report
+                .reconciliation
+                .deltas
+                .iter()
+                .map(|delta| FormulaRunStoreReconciliationDeltaSummary {
+                    field: delta.field,
+                    fp2a_value: delta.fp2a_value,
+                    span_store_value: delta.span_store_value,
+                    reason: delta.reason,
+                })
+                .collect(),
+        },
+        templates: store
+            .arena
+            .templates
+            .iter()
+            .map(|template| FormulaRunStoreTemplateSummary {
+                template_id: template.id.0,
+                source_template_id: template.source_template_id.clone(),
+                formula_cell_count: template.formula_cell_count,
+                status: template_status_label(template.status),
+            })
+            .collect(),
+        runs_sample: store
+            .runs
+            .iter()
+            .take(20)
+            .map(|run| FormulaRunStoreRunSummary {
+                run_id: run.id.0,
+                template_id: run.template_id.0,
+                source_template_id: run.source_template_id.clone(),
+                sheet: run.sheet.clone(),
+                shape: run_shape_label(run.shape),
+                row_start: run.row_start,
+                col_start: run.col_start,
+                row_end: run.row_end,
+                col_end: run.col_end,
+                len: run.len,
+                row_block_start: run.row_block_start,
+                row_block_end: run.row_block_end,
+            })
+            .collect(),
+        gaps_sample: store
+            .gaps
+            .iter()
+            .take(20)
+            .map(|gap| match gap.kind {
+                SpanGapKind::Hole => FormulaRunStoreGapSummary {
+                    template_id: gap.template_id.0,
+                    sheet: gap.sheet.clone(),
+                    row: gap.row,
+                    col: gap.col,
+                    kind: "hole",
+                    other_template_id: None,
+                },
+                SpanGapKind::Exception { other_template_id } => FormulaRunStoreGapSummary {
+                    template_id: gap.template_id.0,
+                    sheet: gap.sheet.clone(),
+                    row: gap.row,
+                    col: gap.col,
+                    kind: "exception",
+                    other_template_id: Some(other_template_id.0),
+                },
+            })
+            .collect(),
+        rejected_cells_sample: store
+            .rejected_cells
+            .iter()
+            .take(20)
+            .map(|cell| FormulaRunStoreRejectedCellSummary {
+                sheet: cell.sheet.clone(),
+                row: cell.row,
+                col: cell.col,
+                source_template_id: cell.source_template_id.clone(),
+                reason: reject_reason_label(cell.reason),
+            })
+            .collect(),
+    }
+}
+
+fn summarize_materialization_accounting(
+    store: &FormulaRunStore,
+    graph_stats: Option<&GraphMaterializationStats>,
+) -> MaterializationAccounting {
+    let report = &store.report;
+    let run_count = store.runs.len() as u64;
+    let compact_denominator = compact_representation_denominator(report, run_count);
+    let compact_formula_vertex_proxy = run_count
+        .saturating_add(report.exception_count)
+        .saturating_add(report.rejected_formula_cell_count);
+    let graph_formula_vertices = graph_stats.and_then(|stats| stats.graph_formula_vertices);
+    let formula_ast_roots = graph_stats.and_then(|stats| stats.formula_ast_roots);
+    let formula_ast_nodes = graph_stats.and_then(|stats| stats.formula_ast_nodes);
+    let graph_edges = graph_stats.and_then(|stats| stats.graph_edges);
+    let estimated_avoidable_formula_vertices = graph_formula_vertices
+        .unwrap_or(report.formula_cell_count)
+        .saturating_sub(compact_formula_vertex_proxy);
+    let estimated_avoidable_ast_roots = formula_ast_roots
+        .unwrap_or(report.formula_cell_count)
+        .saturating_sub(
+            report
+                .template_count
+                .saturating_add(report.rejected_formula_cell_count),
+        );
+    let estimated_avoidable_graph_edges = graph_edges.map(|edges| {
+        edges.min(
+            report
+                .formula_cells_represented_by_runs
+                .saturating_sub(run_count),
+        )
+    });
+
+    MaterializationAccounting {
+        graph_stats_source: graph_stats
+            .map(|stats| stats.source.clone())
+            .unwrap_or_else(|| "not_provided_by_scanner".to_string()),
+        formula_cells: report.formula_cell_count,
+        graph_formula_vertices,
+        formula_ast_roots,
+        formula_ast_nodes,
+        graph_edges,
+        template_count: report.template_count,
+        run_count,
+        rejected_cell_count: report.rejected_formula_cell_count,
+        hole_count: report.hole_count,
+        exception_count: report.exception_count,
+        hole_exception_count: report.hole_count + report.exception_count,
+        dense_run_coverage_percent: dense_run_coverage_percent(report),
+        compact_representation_denominator: compact_denominator,
+        compact_representation_ratio: compact_representation_ratio(report, run_count),
+        estimated_avoidable_formula_vertices,
+        estimated_avoidable_formula_vertices_basis: if graph_formula_vertices.is_some() {
+            "runner_graph_formula_vertices_minus_compact_run_exception_rejected_proxy"
+        } else {
+            "scanner_formula_cells_minus_compact_run_exception_rejected_proxy"
+        },
+        estimated_avoidable_ast_roots,
+        estimated_avoidable_ast_roots_basis: if formula_ast_roots.is_some() {
+            "runner_ast_roots_minus_template_and_rejected_roots_proxy"
+        } else {
+            "scanner_formula_cells_minus_template_and_rejected_roots_proxy"
+        },
+        estimated_avoidable_graph_edges,
+        estimated_avoidable_graph_edges_basis: if graph_edges.is_some() {
+            "rough_min_runner_graph_edges_and_dense_run_cell_savings"
+        } else {
+            "not_estimated_without_runner_graph_edges"
+        },
+        runtime_win_claimed: false,
+    }
+}
+
+fn dense_run_coverage_percent(report: &FormulaRunStoreBuildReport) -> f64 {
+    if report.formula_cell_count == 0 {
+        0.0
+    } else {
+        report
+            .formula_cells_represented_by_runs
+            .saturating_sub(report.singleton_run_count) as f64
+            / report.formula_cell_count as f64
+            * 100.0
+    }
+}
+
+fn compact_representation_denominator(report: &FormulaRunStoreBuildReport, run_count: u64) -> u64 {
+    run_count
+        .saturating_add(report.template_count)
+        .saturating_add(report.exception_count)
+        .saturating_add(report.rejected_formula_cell_count)
+        .max(1)
+}
+
+fn compact_representation_ratio(report: &FormulaRunStoreBuildReport, run_count: u64) -> f64 {
+    report.formula_cell_count as f64 / compact_representation_denominator(report, run_count) as f64
+}
+
+fn template_status_label(status: TemplateSupportStatus) -> &'static str {
+    match status {
+        TemplateSupportStatus::Supported => "supported",
+        TemplateSupportStatus::ParseError => "parse_error",
+        TemplateSupportStatus::Unsupported => "unsupported",
+        TemplateSupportStatus::Dynamic => "dynamic",
+        TemplateSupportStatus::Volatile => "volatile",
+        TemplateSupportStatus::Mixed => "mixed",
+    }
+}
+
+fn run_shape_label(shape: FormulaRunShape) -> &'static str {
+    match shape {
+        FormulaRunShape::Row => "row",
+        FormulaRunShape::Column => "column",
+        FormulaRunShape::Singleton => "singleton",
+    }
+}
+
+fn reject_reason_label(reason: FormulaRejectReason) -> &'static str {
+    match reason {
+        FormulaRejectReason::ParseError => "parse_error",
+        FormulaRejectReason::Unsupported => "unsupported",
+        FormulaRejectReason::Dynamic => "dynamic",
+        FormulaRejectReason::Volatile => "volatile",
     }
 }
 
