@@ -217,6 +217,7 @@ pub(crate) enum CanonicalRejectKind {
     ArrayOrSpill,
     ArrayLiteral,
     SpillReference,
+    ImplicitIntersection,
     CallExpression,
     NamedReference,
     StructuredReference,
@@ -240,6 +241,8 @@ pub(crate) enum CanonicalRejectReason {
     ArrayOrSpillFunction { name: String },
     ArrayLiteral,
     SpillReference { original: String },
+    SpillResultRegionOperator,
+    ImplicitIntersectionOperator,
     CallExpression,
     NamedReference { name: String },
     StructuredReference { diagnostic: String },
@@ -275,7 +278,13 @@ impl CanonicalRejectReason {
             }
             CanonicalRejectReason::ArrayOrSpillFunction { .. } => CanonicalRejectKind::ArrayOrSpill,
             CanonicalRejectReason::ArrayLiteral => CanonicalRejectKind::ArrayLiteral,
-            CanonicalRejectReason::SpillReference { .. } => CanonicalRejectKind::SpillReference,
+            CanonicalRejectReason::SpillReference { .. }
+            | CanonicalRejectReason::SpillResultRegionOperator => {
+                CanonicalRejectKind::SpillReference
+            }
+            CanonicalRejectReason::ImplicitIntersectionOperator => {
+                CanonicalRejectKind::ImplicitIntersection
+            }
             CanonicalRejectReason::CallExpression => CanonicalRejectKind::CallExpression,
             CanonicalRejectReason::NamedReference { .. } => CanonicalRejectKind::NamedReference,
             CanonicalRejectReason::StructuredReference { .. } => {
@@ -386,10 +395,13 @@ impl Canonicalizer {
                 context,
                 reference: self.canonicalize_reference(original, reference),
             },
-            ASTNodeType::UnaryOp { op, expr } => CanonicalExpr::Unary {
-                op: op.clone(),
-                expr: Box::new(self.canonicalize_expr(expr, CanonicalReferenceContext::Value)),
-            },
+            ASTNodeType::UnaryOp { op, expr } => {
+                self.classify_unary_operator(op);
+                CanonicalExpr::Unary {
+                    op: op.clone(),
+                    expr: Box::new(self.canonicalize_expr(expr, CanonicalReferenceContext::Value)),
+                }
+            }
             ASTNodeType::BinaryOp { op, left, right } => {
                 let child_context = if op == ":" {
                     CanonicalReferenceContext::Reference
@@ -626,6 +638,18 @@ impl Canonicalizer {
                     diagnostic: name.to_ascii_uppercase(),
                 }
             }
+        }
+    }
+
+    fn classify_unary_operator(&mut self, op: &str) {
+        match op {
+            "#" => self
+                .labels
+                .reject(CanonicalRejectReason::SpillResultRegionOperator),
+            "@" => self
+                .labels
+                .reject(CanonicalRejectReason::ImplicitIntersectionOperator),
+            _ => {}
         }
     }
 
@@ -1178,6 +1202,12 @@ fn write_reject_reason_key(reason: &CanonicalRejectReason, out: &mut String) {
             out.push_str("spill_ref:");
             write_string_key(original, out);
         }
+        CanonicalRejectReason::SpillResultRegionOperator => {
+            out.push_str("spill_result_region_operator")
+        }
+        CanonicalRejectReason::ImplicitIntersectionOperator => {
+            out.push_str("implicit_intersection_operator")
+        }
         CanonicalRejectReason::CallExpression => out.push_str("call_expression"),
         CanonicalRejectReason::NamedReference { name } => {
             out.push_str("name_ref:");
@@ -1395,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_let_lambda_local_environment_is_rejected_explicitly() {
+    fn formula_plane_let_local_environment_is_rejected_explicitly() {
         let template = canonical("=LET(x,A1,x+1)", 1, 2);
 
         assert!(
@@ -1404,6 +1434,117 @@ mod tests {
                 .contains_reject_kind(CanonicalRejectKind::LocalEnvironment)
         );
         assert!(!template.labels.is_authority_supported());
+    }
+
+    #[test]
+    fn formula_plane_spill_unary_operator_is_rejected_explicitly() {
+        let template = canonical("=A1#", 1, 1);
+
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::SpillReference)
+        );
+        assert!(!template.labels.is_authority_supported());
+        match &template.expr {
+            CanonicalExpr::Unary { op, expr } => {
+                assert_eq!(op, "#");
+                assert!(matches!(expr.as_ref(), CanonicalExpr::Reference { .. }));
+            }
+            other => panic!("expected spill unary expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formula_plane_implicit_intersection_unary_operator_is_rejected_explicitly() {
+        let template = canonical("=@A1", 1, 1);
+
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::ImplicitIntersection)
+        );
+        assert!(!template.labels.is_authority_supported());
+        match &template.expr {
+            CanonicalExpr::Unary { op, expr } => {
+                assert_eq!(op, "@");
+                assert!(matches!(expr.as_ref(), CanonicalExpr::Reference { .. }));
+            }
+            other => panic!("expected implicit-intersection unary expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formula_plane_implicit_intersection_over_spill_keeps_both_reject_labels() {
+        let template = canonical("=@A1#", 1, 1);
+
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::ImplicitIntersection)
+        );
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::SpillReference)
+        );
+        assert!(!template.labels.is_authority_supported());
+        match &template.expr {
+            CanonicalExpr::Unary { op, expr } => {
+                assert_eq!(op, "@");
+                match expr.as_ref() {
+                    CanonicalExpr::Unary { op, expr } => {
+                        assert_eq!(op, "#");
+                        assert!(matches!(expr.as_ref(), CanonicalExpr::Reference { .. }));
+                    }
+                    other => {
+                        panic!("expected spill unary under implicit intersection, got {other:?}")
+                    }
+                }
+            }
+            other => panic!("expected implicit-intersection unary expression, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formula_plane_lambda_local_environment_is_rejected_explicitly() {
+        let template = canonical("=LAMBDA(x,x+1)", 1, 1);
+
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::LocalEnvironment)
+        );
+        assert!(!template.labels.is_authority_supported());
+    }
+
+    #[test]
+    fn formula_plane_lambda_postfix_call_rejects_local_environment_and_call() {
+        let template = canonical("=LAMBDA(x,x+1)(1)", 1, 1);
+
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::LocalEnvironment)
+        );
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::CallExpression)
+        );
+        assert!(!template.labels.is_authority_supported());
+        match &template.expr {
+            CanonicalExpr::CallUnsupported { callee, args } => {
+                assert_eq!(args.len(), 1);
+                match callee.as_ref() {
+                    CanonicalExpr::Function { id, .. } => {
+                        assert_eq!(id.canonical_name, "LAMBDA");
+                    }
+                    other => panic!("expected lambda function callee, got {other:?}"),
+                }
+            }
+            other => panic!("expected lambda postfix call expression, got {other:?}"),
+        }
     }
 
     #[test]
