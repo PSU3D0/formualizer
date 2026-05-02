@@ -8,6 +8,7 @@ pub(crate) mod dependency_summary;
 #[cfg(feature = "formula_plane_diagnostics")]
 #[doc(hidden)]
 pub mod diagnostics;
+pub(crate) mod function_dependency;
 pub mod grid;
 pub mod ids;
 pub mod partition;
