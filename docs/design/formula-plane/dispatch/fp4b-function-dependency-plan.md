@@ -51,8 +51,11 @@ Rationale:
 - Existing `ArgSchema` is useful validation/evaluation metadata but is not a full
   dependency contract.
 
-FP4.B should consume `FnCaps`, `ArgSchema`, and registry identity as **inputs and
-optional drift diagnostics**, not as the only source of dependency truth.
+FP4.B should consume `FnCaps`, `ArgSchema`, `RETURNS_REFERENCE` /
+`eval_reference` capability, aliases, and registry identity as **inputs to
+required report-only drift diagnostics**, not as the only source of dependency
+truth. Drift diagnostics must never decide runtime behavior or silently change
+whether a summary is supported.
 
 The implementation should centralize normalized function-name matching in one
 FormulaPlane module. Scattered ad-hoc `if name == ...` checks across canonicalizer,
@@ -86,6 +89,12 @@ FP4.B has two levels of recognition:
    but may still reject/fallback for this phase.
 2. **Supported summary**: the function emits a dependency summary and participates
    in no-under-approximation comparison.
+
+`FunctionSupportStatus::Supported` is a **contract-level possibility** for a
+name/arity, not unconditional summary authority. The summary pass must still
+reject unsupported argument shapes such as whole/open ranges, names, tables,
+spills, arrays, dynamic references, unsupported nested functions, and malformed
+criteria pairings.
 
 ### 4.1 Supported summary classes for FP4.B
 
@@ -187,6 +196,16 @@ Shape constraints:
 - `AVERAGEIF(criteria_range, criteria, [average_range])`;
 - `AVERAGEIFS(average_range, criteria_range1, criteria1, ...)`.
 
+`SUMIF` / `AVERAGEIF` target-range policy:
+
+- omitted target range means the criteria range is also the value/average range;
+- provided target ranges are supported only when they are finite and either have
+  the same finite shape as the criteria range or can be represented by an
+  explicitly documented Excel-style top-left expansion to the criteria-range
+  dimensions;
+- if that expansion is not implemented in the first FP4.B build slice, mismatched
+  target shapes must reject explicitly rather than risk under-approximation.
+
 Invalid arity/pairing should reject with explicit fallback reasons.
 
 ### 4.2 Classified but not supported in FP4.B
@@ -196,14 +215,15 @@ later plan expands support:
 
 | Class | Examples | FP4.B status |
 |---|---|---|
-| `MaskConditional` | `IF`, `IFERROR`, `IFNA`, `IFS`, `SWITCH` | classified, rejected/deferred |
-| `LookupStaticRange` | `VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `MATCH` | classified, rejected/deferred |
-| `ReferenceReturning` | `INDEX`, `CHOOSE` | rejected unless a later context-specific contract is approved |
-| `DynamicDependency` | `INDIRECT`, `OFFSET` | rejected |
-| `Volatile` | `NOW`, `TODAY`, `RAND`, `RANDBETWEEN` | rejected or volatility pseudo-precedent deferred |
-| `LocalEnvironment` | `LET`, `LAMBDA` | rejected |
-| `ArrayOrSpill` | `FILTER`, `SEQUENCE`, `SORT`, `SORTBY`, `UNIQUE`, `RANDARRAY`, `TEXTSPLIT` | rejected |
-| `OpaqueScalar` | unknown/custom functions | rejected |
+| `MaskConditional` | `IF`, `IFERROR`, `IFNA`, `IFS`, `SWITCH` | `ClassifiedOnly` + `UnsupportedFunctionClass` |
+| `LookupStaticRange` | `VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `MATCH` | `ClassifiedOnly` + `UnsupportedFunctionClass` |
+| `ReferenceReturning` | `INDEX`, `CHOOSE` | `Rejected` + `ReferenceReturningFunction` unless a later context-specific contract is approved |
+| `DynamicDependency` | `INDIRECT`, `OFFSET` | `Rejected` + `DynamicDependency` |
+| `Volatile` | `NOW`, `TODAY`, `RAND`, `RANDBETWEEN` | `Rejected` + `VolatileFunction`; volatility pseudo-precedent deferred |
+| `LocalEnvironment` | `LET`, `LAMBDA` | `Rejected` + `LocalEnvironmentFunction` |
+| `ArrayOrSpill` | `FILTER`, `SEQUENCE`, `SORT`, `SORTBY`, `UNIQUE`, `RANDARRAY`, `TEXTSPLIT` | `Rejected` + `ArrayOrSpillFunction` |
+| `UnsupportedKnownBuiltin` | any registered/known builtin not in supported or deferred lists | `Rejected` + `UnsupportedFunctionClass` |
+| `OpaqueScalar` | unknown/custom functions and registry misses | `Rejected` + `UnknownFunction` |
 
 ## 5. Proposed module and type shape
 
@@ -238,8 +258,13 @@ pub(crate) enum FunctionDependencyClass {
 }
 
 pub(crate) enum FunctionSupportStatus {
+    /// The name/arity can produce a supported summary if all argument shapes are
+    /// supported by the summary analyzer.
     Supported,
+    /// The function is recognized for taxonomy/reporting but does not emit a
+    /// supported dependency summary in FP4.B.
     ClassifiedOnly,
+    /// The function is recognized as an explicit fallback/reject case.
     Rejected,
 }
 
@@ -282,7 +307,18 @@ pub(crate) struct FunctionDependencyContract {
     pub(crate) arg_roles: FunctionArgContract,
     pub(crate) reject_reasons: Vec<FunctionDependencyRejectReason>,
 }
+
+pub(crate) enum FunctionArgContract {
+    AllArgs(ArgumentDependencyRole),
+    VariadicReduction,
+    Fixed(&'static [ArgumentDependencyRole]),
+    CriteriaPairs { value_range: Option<usize>, first_pair: usize },
+    Unsupported,
+}
 ```
+
+`FunctionArgContract` variants are intentionally code-shaped so implementation
+agents do not infer argument roles ad hoc from raw names later.
 
 The central classifier should be the only place that maps normalized function
 names to FormulaPlane dependency contracts:
@@ -294,17 +330,25 @@ pub(crate) fn dependency_contract_for_function(
 ) -> FunctionDependencyContract;
 ```
 
-A later helper may optionally consult existing registry metadata:
+FP4.B must include a report-only drift diagnostic helper that can compare local
+contracts with existing registry metadata when safely available:
 
 ```rust
 pub(crate) fn dependency_contract_drift(
     contract: &FunctionDependencyContract,
-    caps: FnCaps,
-    schema: &[ArgSchema],
+    registry: FunctionRegistryDiagnosticInput,
 ) -> Vec<FunctionContractDrift>;
 ```
 
-Drift checks are report-only and must not change runtime behavior.
+Drift checks should inspect, when available: registry identity/aliases,
+`FnCaps::VOLATILE`, `FnCaps::DYNAMIC_DEPENDENCY`, `FnCaps::RETURNS_REFERENCE`,
+`FnCaps::REDUCTION`, `FnCaps::LOOKUP`, `FnCaps::SHORT_CIRCUIT`, `ArgSchema::by_ref`,
+`ShapeKind`, and arity.
+
+Drift checks are report-only and must not change summary support or runtime
+behavior. They must also be safe when builtins are not loaded and must not call
+`Function::arg_schema()` blindly: the default implementation can panic for
+functions with `min_args() > 0` and no schema override.
 
 ## 6. Dependency-summary model changes
 
@@ -318,7 +362,8 @@ pub(crate) enum PrecedentPattern {
 }
 ```
 
-If `AffineRectPattern` already exists but is unused, FP4.B should activate it
+`AffineRectPattern` exists today, but `PrecedentPattern::Rect(AffineRectPattern)`
+still needs to be added/activated. FP4.B should activate that existing concept
 instead of introducing a parallel rectangle type.
 
 Supported finite range summaries must preserve:
@@ -329,6 +374,16 @@ Supported finite range summaries must preserve:
 - absolute/relative anchors per endpoint;
 - value/reference/criteria context labels where relevant;
 - fallback reasons for non-finite axes.
+
+Run/reverse rule for rectangle precedents:
+
+- If finite rectangle precedents can be conservatively mapped from changed
+  precedent regions back to dependent run partitions, emit reverse counters with
+  explicit overage.
+- If they cannot be represented without misleading precision, demote the affected
+  run summary with an explicit fallback reason such as
+  `rect_reverse_mapping_unsupported`.
+- Do not silently reuse cell-only inverse mapping for rectangle precedents.
 
 ## 7. Planner comparison extension
 
@@ -348,11 +403,17 @@ CollectPolicy {
 Comparison rules:
 
 ```text
-planner finite cell dependency must be covered by summary cells or ranges
-planner finite range dependency must be covered by summary finite ranges
+planner finite cell dependency must be covered by summary cells or finite rects
+planner finite range dependency must be covered by summary finite rects
+matching requires the same resolved/display sheet binding
+summary finite rect containment is inclusive over one-based row/col coordinates
 summary may over-approximate only when explicitly counted
 summary must never under-approximate
 ```
+
+Do not expand large finite ranges into scalar cells for comparison. Compare
+finite rectangles by containment and only use cell expansion in tiny unit tests
+where it is explicitly bounded.
 
 Whole-axis/open/names/tables/external/3D/dynamic/volatile categories remain
 fallback/reject unless explicitly supported by a later plan.
@@ -391,9 +452,7 @@ materialization_accounting
 templates
 ```
 
-Add one of the following, with reviewers deciding preferred placement:
-
-Option A, nested under `dependency_summaries`:
+Use the nested placement under `dependency_summaries`:
 
 ```json
 "dependency_summaries": {
@@ -401,17 +460,15 @@ Option A, nested under `dependency_summaries`:
 }
 ```
 
-Option B, top-level:
-
-```json
-"function_dependency_taxonomy": { ... }
-```
+This preserves the FP4.A top-level scanner surface and keeps function taxonomy
+coupled to passive dependency-summary reporting.
 
 Minimum taxonomy fields:
 
 ```json
 {
   "contract_version": "fp4b_function_dependency_v1",
+  "counter_unit": "authority_template",
   "classified_template_count": 0,
   "supported_function_template_count": 0,
   "rejected_function_template_count": 0,
@@ -427,6 +484,11 @@ Minimum taxonomy fields:
 }
 ```
 
+Default counter denominator is authority templates. If a template contains
+multiple function calls, the most severe outcome dominates template-level counts:
+`Rejected` > `ClassifiedOnly` > `Supported`. Optional per-function-occurrence
+counters may be added, but they must be named separately.
+
 ## 9. Phased implementation plan
 
 ### FP4.B.0 — Plan and review
@@ -438,6 +500,8 @@ Tasks:
 1. Commit this plan.
 2. Dispatch two read-only or docs-writing reviewers.
 3. Fold blocking review feedback before code.
+4. Fold pass-with-nits review feedback that affects code-shape decisions before
+   dispatching FP4.B.1 implementation.
 
 Gate:
 
@@ -460,7 +524,11 @@ Deliverables:
 
 - `crates/formualizer-eval/src/formula_plane/function_dependency.rs`
 - crate-internal module wire-up
-- tests for classification and arity/pairing decisions
+- concrete `FunctionArgContract` variants for all-args, variadic reductions,
+  fixed argument roles, and criteria pairs
+- report-only registry drift diagnostic DTO/helper that is safe when the registry
+  is empty or schemas would panic
+- tests for classification, exact status/reason, and arity/pairing decisions
 
 Required tests:
 
@@ -469,14 +537,15 @@ Required tests:
 | `ABS` | `StaticScalarAllArgs` / supported |
 | `SUM` | `StaticReduction` / supported for finite args |
 | `COUNTIFS` | `CriteriaAggregation` / supported for valid finite pairs |
-| `IF` | `MaskConditional` / classified-only or rejected |
-| `VLOOKUP` | `LookupStaticRange` / classified-only or rejected |
-| `INDIRECT` | `DynamicDependency` / rejected |
-| `INDEX` | `ReferenceReturning` / rejected |
-| `RAND` | `Volatile` / rejected |
-| `LET` | `LocalEnvironment` / rejected |
-| `FILTER` | `ArrayOrSpill` / rejected |
-| `CUSTOMFN` | `OpaqueScalar` / rejected |
+| `IF` | `MaskConditional` / `ClassifiedOnly` + `UnsupportedFunctionClass` |
+| `VLOOKUP` | `LookupStaticRange` / `ClassifiedOnly` + `UnsupportedFunctionClass` |
+| `INDIRECT` | `DynamicDependency` / `Rejected` + `DynamicDependency` |
+| `INDEX` | `ReferenceReturning` / `Rejected` + `ReferenceReturningFunction` |
+| `RAND` | `Volatile` / `Rejected` + `VolatileFunction` |
+| `LET` | `LocalEnvironment` / `Rejected` + `LocalEnvironmentFunction` |
+| `FILTER` | `ArrayOrSpill` / `Rejected` + `ArrayOrSpillFunction` |
+| known registered unsupported builtin | `Unsupported` / `Rejected` + `UnsupportedFunctionClass` |
+| `CUSTOMFN` | `OpaqueScalar` / `Rejected` + `UnknownFunction` |
 
 Gate:
 
@@ -547,7 +616,9 @@ Tasks:
 - Activate `PrecedentPattern::Rect(AffineRectPattern)`.
 - Add finite-range dependency summaries.
 - Extend run instantiation for finite rect patterns where feasible.
-- Extend fixed-policy planner comparison to match planner finite ranges.
+- Add the finite-rect reverse mapping/demotion rule from §6.
+- Extend fixed-policy planner comparison to match planner finite ranges by
+  region containment, not large scalar expansion.
 - Keep open/whole-axis ranges rejected.
 
 Tests:
@@ -555,6 +626,11 @@ Tests:
 - `=SUM(A1:A10)` exact range match;
 - copied `=SUM(A1:A10)` down/up with relative endpoints preserves affine ranges;
 - `=$A$1:A10` mixed endpoints preserved;
+- planner cells covered by summary rects;
+- planner rects covered by summary rects;
+- over-approximation counted for larger summary rects;
+- finite rect reverse mapping either conservative with overage counters or demoted
+  with explicit fallback;
 - `=SUM(A:A)` whole-axis fallback;
 - `=SUM(A1:A)` open-range fallback;
 - under-approximation detection for missing range.
@@ -574,15 +650,21 @@ Tasks:
 - Encode arity/pairing rules in `FunctionDependencyContract`.
 - Include finite criteria ranges and value ranges as range dependencies.
 - Include criteria expression cell dependencies when criteria args reference cells.
+- Implement or explicitly reject `SUMIF` / `AVERAGEIF` provided target-range
+  top-left expansion; omitted target range uses the criteria range.
 - Reject malformed pairings and unsupported shapes explicitly.
 
 Tests:
 
 - `=COUNTIF(A1:A10,">0")` exact range match;
 - `=COUNTIFS(A1:A10,">0",B1:B10,C1)` includes both ranges and criteria cell;
+- `=COUNTIFS(A1:A10,">"&C1)` includes criteria-expression cell dependency;
+- `=SUMIF(A1:A10,">0")` uses criteria range as value range;
+- `=SUMIF(A1:A10,">0",B1:B10)` includes provided target range;
+- `=AVERAGEIF(A1:A10,">0")` and `=AVERAGEIFS(C1:C10,A1:A10,">0")` are classified/supported;
 - `=SUMIFS(C1:C10,A1:A10,B1)` includes sum range, criteria range, criteria cell;
-- `=AVERAGEIFS(C1:C10,A1:A10,">0")` classified/supported;
-- invalid arity rejects;
+- invalid arity rejects with `InvalidArity`;
+- malformed criteria pairing rejects with `InvalidCriteriaPairing`;
 - whole/open-axis ranges reject;
 - no under-approximation against planner.
 
@@ -594,9 +676,11 @@ Tasks:
 
 - Extend the existing `formula_plane_diagnostics` bridge narrowly.
 - Preserve FP4.A `dependency_summaries` fields.
-- Emit taxonomy counters and fallback histogram.
+- Emit nested `dependency_summaries.function_dependency_taxonomy` counters and
+  fallback histogram using authority-template counters by default.
 - Ensure ambiguous diagnostic-source template mappings remain fallback, not silent
   authority mappings.
+- Add serialization coverage for taxonomy version, counters, and fallback keys.
 
 Gate:
 
@@ -657,13 +741,15 @@ Stop and report instead of broadening if:
   behavior changes;
 - criteria aggregation shape semantics become ambiguous enough to risk
   under-approximation;
-- function registry metadata conflicts with FormulaPlane contracts and no clear
-  report-only drift policy exists;
+- function registry metadata conflicts with FormulaPlane contracts and cannot be
+  represented as a report-only drift diagnostic;
 - support for a function would require eval semantics, span kernels, loader
   changes, or public API changes;
 - whole/open-axis ranges require used-region tracking not available in this phase;
 - `under_approximation_count` becomes nonzero for any supported fixture;
-- scanner JSON integration would break FP1-FP4.A sections.
+- scanner JSON integration would break FP1-FP4.A sections;
+- registry initialization or `arg_schema()` access would make diagnostics panic
+  or depend on runtime initialization order.
 
 ## 11. Expected FP4.B status statement
 
