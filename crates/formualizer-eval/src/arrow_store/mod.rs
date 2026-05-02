@@ -844,6 +844,84 @@ impl OverlayValue {
             OverlayValue::Text(s) => s.len(),
         }
     }
+
+    #[inline]
+    pub(crate) fn type_tag(&self) -> TypeTag {
+        match self {
+            OverlayValue::Empty => TypeTag::Empty,
+            OverlayValue::Number(_) => TypeTag::Number,
+            OverlayValue::DateTime(_) => TypeTag::DateTime,
+            OverlayValue::Duration(_) => TypeTag::Duration,
+            OverlayValue::Boolean(_) => TypeTag::Boolean,
+            OverlayValue::Text(_) => TypeTag::Text,
+            OverlayValue::Error(_) => TypeTag::Error,
+            OverlayValue::Pending => TypeTag::Pending,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn numeric_lane_value(&self) -> Option<f64> {
+        match self {
+            OverlayValue::Number(n) | OverlayValue::DateTime(n) | OverlayValue::Duration(n) => {
+                Some(*n)
+            }
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn boolean_lane_value(&self) -> Option<bool> {
+        match self {
+            OverlayValue::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn text_lane_value(&self) -> Option<&str> {
+        match self {
+            OverlayValue::Text(s) => Some(s.as_ref()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn error_lane_value(&self) -> Option<u8> {
+        match self {
+            OverlayValue::Error(code) => Some(*code),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn lowered_text_value(&self) -> Option<String> {
+        match self {
+            OverlayValue::Text(s) => Some(s.to_lowercase()),
+            OverlayValue::Number(n) | OverlayValue::DateTime(n) | OverlayValue::Duration(n) => {
+                Some(n.to_string())
+            }
+            OverlayValue::Boolean(b) => Some(if *b { "true" } else { "false" }.to_string()),
+            OverlayValue::Empty | OverlayValue::Error(_) | OverlayValue::Pending => None,
+        }
+    }
+
+    pub(crate) fn to_literal(&self) -> LiteralValue {
+        match self {
+            OverlayValue::Empty => LiteralValue::Empty,
+            OverlayValue::Number(n) => LiteralValue::Number(*n),
+            OverlayValue::DateTime(serial) => LiteralValue::from_serial_number(*serial),
+            OverlayValue::Duration(serial) => {
+                let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
+                let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
+                LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
+            }
+            OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
+            OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
+            OverlayValue::Error(code) => {
+                LiteralValue::Error(ExcelError::new(unmap_error_code(*code)))
+            }
+            OverlayValue::Pending => LiteralValue::Pending,
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -867,11 +945,17 @@ impl Overlay {
         }
     }
     #[inline]
-    pub fn get(&self, off: usize) -> Option<&OverlayValue> {
+    pub(crate) fn get_scalar(&self, off: usize) -> Option<&OverlayValue> {
         self.map.get(&off)
     }
+
     #[inline]
-    pub fn set(&mut self, off: usize, v: OverlayValue) -> isize {
+    pub fn get(&self, off: usize) -> Option<&OverlayValue> {
+        self.get_scalar(off)
+    }
+
+    #[inline]
+    pub(crate) fn set_scalar(&mut self, off: usize, v: OverlayValue) -> isize {
         let new_est = Self::ENTRY_BASE_BYTES + v.estimated_payload_bytes();
         let old_est = self
             .map
@@ -889,7 +973,12 @@ impl Overlay {
     }
 
     #[inline]
-    pub fn remove(&mut self, off: usize) -> isize {
+    pub fn set(&mut self, off: usize, v: OverlayValue) -> isize {
+        self.set_scalar(off, v)
+    }
+
+    #[inline]
+    pub(crate) fn remove_scalar(&mut self, off: usize) -> isize {
         let Some(old) = self.map.remove(&off) else {
             return 0;
         };
@@ -897,12 +986,23 @@ impl Overlay {
         self.estimated_bytes = self.estimated_bytes.saturating_sub(old_est);
         -(old_est as isize)
     }
+
     #[inline]
-    pub fn clear(&mut self) -> usize {
+    pub fn remove(&mut self, off: usize) -> isize {
+        self.remove_scalar(off)
+    }
+
+    #[inline]
+    pub(crate) fn clear_all(&mut self) -> usize {
         let freed = self.estimated_bytes;
         self.map.clear();
         self.estimated_bytes = 0;
         freed
+    }
+
+    #[inline]
+    pub fn clear(&mut self) -> usize {
+        self.clear_all()
     }
     #[inline]
     pub fn len(&self) -> usize {
@@ -918,13 +1018,323 @@ impl Overlay {
         self.map.is_empty()
     }
     #[inline]
-    pub fn any_in_range(&self, range: core::ops::Range<usize>) -> bool {
+    pub(crate) fn has_any_in_range(&self, range: core::ops::Range<usize>) -> bool {
         self.map.keys().any(|k| range.contains(k))
+    }
+
+    #[inline]
+    pub fn any_in_range(&self, range: core::ops::Range<usize>) -> bool {
+        self.has_any_in_range(range)
+    }
+
+    pub(crate) fn slice(&self, off: usize, len: usize) -> Overlay {
+        let mut out = Overlay::new();
+        let end = off.saturating_add(len);
+        for (k, v) in self.map.iter() {
+            if *k >= off && *k < end {
+                let _ = out.set_scalar(*k - off, v.clone());
+            }
+        }
+        out
     }
 
     /// Iterate over all `(offset, value)` pairs in the overlay.
     pub fn iter(&self) -> impl Iterator<Item = (&usize, &OverlayValue)> {
         self.map.iter()
+    }
+}
+
+pub(crate) struct OverlayCascade<'a> {
+    user: &'a Overlay,
+    computed: &'a Overlay,
+}
+
+impl<'a> OverlayCascade<'a> {
+    #[inline]
+    pub(crate) fn new(user: &'a Overlay, computed: &'a Overlay) -> Self {
+        Self { user, computed }
+    }
+
+    #[inline]
+    pub(crate) fn get_scalar(&self, off: usize) -> Option<&'a OverlayValue> {
+        self.user
+            .get_scalar(off)
+            .or_else(|| self.computed.get_scalar(off))
+    }
+
+    #[inline]
+    pub(crate) fn has_any_in_range(&self, range: core::ops::Range<usize>) -> bool {
+        self.user.has_any_in_range(range.clone()) || self.computed.has_any_in_range(range)
+    }
+
+    pub(crate) fn select_numbers(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &Float64Array,
+    ) -> Arc<Float64Array> {
+        let len = range.end.saturating_sub(range.start);
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = Float64Builder::with_capacity(len);
+        for off in range {
+            if let Some(value) = self.get_scalar(off) {
+                mask_b.append_value(true);
+                if let Some(n) = value.numeric_lane_value() {
+                    values_b.append_value(n);
+                } else {
+                    values_b.append_null();
+                }
+            } else {
+                mask_b.append_value(false);
+                values_b.append_null();
+            }
+        }
+        let mask = mask_b.finish();
+        let values = values_b.finish();
+        let zipped =
+            crate::compute_prelude::zip_select(&mask, &values, base).expect("zip numeric overlay");
+        Arc::new(
+            zipped
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .expect("numeric overlay zip type")
+                .clone(),
+        )
+    }
+
+    pub(crate) fn select_booleans(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &BooleanArray,
+    ) -> Arc<BooleanArray> {
+        let len = range.end.saturating_sub(range.start);
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = BooleanBuilder::with_capacity(len);
+        for off in range {
+            if let Some(value) = self.get_scalar(off) {
+                mask_b.append_value(true);
+                if let Some(b) = value.boolean_lane_value() {
+                    values_b.append_value(b);
+                } else {
+                    values_b.append_null();
+                }
+            } else {
+                mask_b.append_value(false);
+                values_b.append_null();
+            }
+        }
+        let mask = mask_b.finish();
+        let values = values_b.finish();
+        let zipped =
+            crate::compute_prelude::zip_select(&mask, &values, base).expect("zip boolean overlay");
+        Arc::new(
+            zipped
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .expect("boolean overlay zip type")
+                .clone(),
+        )
+    }
+
+    pub(crate) fn select_text(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &StringArray,
+    ) -> ArrayRef {
+        let len = range.end.saturating_sub(range.start);
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = StringBuilder::with_capacity(len, len * 8);
+        for off in range {
+            if let Some(value) = self.get_scalar(off) {
+                mask_b.append_value(true);
+                if let Some(s) = value.text_lane_value() {
+                    values_b.append_value(s);
+                } else {
+                    values_b.append_null();
+                }
+            } else {
+                mask_b.append_value(false);
+                values_b.append_null();
+            }
+        }
+        let mask = mask_b.finish();
+        let values = values_b.finish();
+        crate::compute_prelude::zip_select(&mask, &values, base).expect("zip text overlay")
+    }
+
+    pub(crate) fn select_errors(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &UInt8Array,
+    ) -> Arc<UInt8Array> {
+        let len = range.end.saturating_sub(range.start);
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = UInt8Builder::with_capacity(len);
+        for off in range {
+            if let Some(value) = self.get_scalar(off) {
+                mask_b.append_value(true);
+                if let Some(code) = value.error_lane_value() {
+                    values_b.append_value(code);
+                } else {
+                    values_b.append_null();
+                }
+            } else {
+                mask_b.append_value(false);
+                values_b.append_null();
+            }
+        }
+        let mask = mask_b.finish();
+        let values = values_b.finish();
+        let zipped =
+            crate::compute_prelude::zip_select(&mask, &values, base).expect("zip error overlay");
+        Arc::new(
+            zipped
+                .as_any()
+                .downcast_ref::<UInt8Array>()
+                .expect("error overlay zip type")
+                .clone(),
+        )
+    }
+
+    pub(crate) fn select_type_tags(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &UInt8Array,
+    ) -> Arc<UInt8Array> {
+        let len = range.end.saturating_sub(range.start);
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = UInt8Builder::with_capacity(len);
+        for off in range {
+            if let Some(value) = self.get_scalar(off) {
+                mask_b.append_value(true);
+                values_b.append_value(value.type_tag() as u8);
+            } else {
+                mask_b.append_value(false);
+                values_b.append_null();
+            }
+        }
+        let mask = mask_b.finish();
+        let values = values_b.finish();
+        let zipped =
+            crate::compute_prelude::zip_select(&mask, &values, base).expect("zip type-tag overlay");
+        Arc::new(
+            zipped
+                .as_any()
+                .downcast_ref::<UInt8Array>()
+                .expect("type-tag overlay zip type")
+                .clone(),
+        )
+    }
+
+    pub(crate) fn select_lowered_text(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &StringArray,
+    ) -> Arc<StringArray> {
+        let len = range.end.saturating_sub(range.start);
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = StringBuilder::with_capacity(len, len * 8);
+        for off in range {
+            if let Some(value) = self.get_scalar(off) {
+                mask_b.append_value(true);
+                if let Some(s) = value.lowered_text_value() {
+                    values_b.append_value(&s);
+                } else {
+                    values_b.append_null();
+                }
+            } else {
+                mask_b.append_value(false);
+                values_b.append_null();
+            }
+        }
+        let mask = mask_b.finish();
+        let values = values_b.finish();
+        let zipped = crate::compute_prelude::zip_select(&mask, &values, base)
+            .expect("zip lowered text overlay");
+        Arc::new(
+            zipped
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("lowered text overlay zip type")
+                .clone(),
+        )
+    }
+}
+
+fn append_overlay_value_to_lane_builders(
+    ov: &OverlayValue,
+    tag_b: &mut UInt8Builder,
+    nb: &mut Float64Builder,
+    bb: &mut BooleanBuilder,
+    sb: &mut StringBuilder,
+    eb: &mut UInt8Builder,
+    non_num: &mut usize,
+    non_bool: &mut usize,
+    non_text: &mut usize,
+    non_err: &mut usize,
+) {
+    match ov {
+        OverlayValue::Empty => {
+            tag_b.append_value(TypeTag::Empty as u8);
+            nb.append_null();
+            bb.append_null();
+            sb.append_null();
+            eb.append_null();
+        }
+        OverlayValue::Number(n) => {
+            tag_b.append_value(TypeTag::Number as u8);
+            nb.append_value(*n);
+            *non_num += 1;
+            bb.append_null();
+            sb.append_null();
+            eb.append_null();
+        }
+        OverlayValue::DateTime(serial) => {
+            tag_b.append_value(TypeTag::DateTime as u8);
+            nb.append_value(*serial);
+            *non_num += 1;
+            bb.append_null();
+            sb.append_null();
+            eb.append_null();
+        }
+        OverlayValue::Duration(serial) => {
+            tag_b.append_value(TypeTag::Duration as u8);
+            nb.append_value(*serial);
+            *non_num += 1;
+            bb.append_null();
+            sb.append_null();
+            eb.append_null();
+        }
+        OverlayValue::Boolean(b) => {
+            tag_b.append_value(TypeTag::Boolean as u8);
+            nb.append_null();
+            bb.append_value(*b);
+            *non_bool += 1;
+            sb.append_null();
+            eb.append_null();
+        }
+        OverlayValue::Text(s) => {
+            tag_b.append_value(TypeTag::Text as u8);
+            nb.append_null();
+            bb.append_null();
+            sb.append_value(s);
+            *non_text += 1;
+            eb.append_null();
+        }
+        OverlayValue::Error(code) => {
+            tag_b.append_value(TypeTag::Error as u8);
+            nb.append_null();
+            bb.append_null();
+            sb.append_null();
+            eb.append_value(*code);
+            *non_err += 1;
+        }
+        OverlayValue::Pending => {
+            tag_b.append_value(TypeTag::Pending as u8);
+            nb.append_null();
+            bb.append_null();
+            sb.append_null();
+            eb.append_null();
+        }
     }
 }
 
@@ -995,28 +1405,9 @@ impl ArrowSheet {
         };
 
         // Overlay takes precedence: user edits over computed over base.
-        if let Some(ov) = ch
-            .overlay
-            .get(in_off)
-            .or_else(|| ch.computed_overlay.get(in_off))
-        {
-            return match ov {
-                OverlayValue::Empty => LiteralValue::Empty,
-                OverlayValue::Number(n) => LiteralValue::Number(*n),
-                OverlayValue::DateTime(serial) => LiteralValue::from_serial_number(*serial),
-                OverlayValue::Duration(serial) => {
-                    let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
-                    let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
-                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
-                }
-                OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
-                OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
-                OverlayValue::Error(code) => {
-                    let kind = unmap_error_code(*code);
-                    LiteralValue::Error(ExcelError::new(kind))
-                }
-                OverlayValue::Pending => LiteralValue::Pending,
-            };
+        let cascade = OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+        if let Some(ov) = cascade.get_scalar(in_off) {
+            return ov.to_literal();
         }
 
         // Read tag and route to lane.
@@ -1275,19 +1666,9 @@ impl ArrowSheet {
             let nn = len.saturating_sub(ea.null_count());
             if nn == 0 { None } else { Some(Arc::new(ea)) }
         });
-        // Split overlays for this slice
-        let mut overlay = Overlay::new();
-        for (k, v) in ch.overlay.map.iter() {
-            if *k >= off && *k < off + len {
-                let _ = overlay.set(*k - off, v.clone());
-            }
-        }
-        let mut computed_overlay = Overlay::new();
-        for (k, v) in ch.computed_overlay.map.iter() {
-            if *k >= off && *k < off + len {
-                let _ = computed_overlay.set(*k - off, v.clone());
-            }
-        }
+        // Split overlays for this slice.
+        let overlay = ch.overlay.slice(off, len);
+        let computed_overlay = ch.computed_overlay.slice(off, len);
         let non_null_num = numbers.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
         let non_null_bool = booleans.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
         let non_null_text = text.as_ref().map(|a| len - a.null_count()).unwrap_or(0);
@@ -1358,71 +1739,19 @@ impl ArrowSheet {
 
             for i in 0..len {
                 // If overlay present, use it. Otherwise, use base tag+lane.
-                if let Some(ov) = ch_ref.overlay.get(i) {
-                    match ov {
-                        OverlayValue::Empty => {
-                            tag_b.append_value(TypeTag::Empty as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Number(n) => {
-                            tag_b.append_value(TypeTag::Number as u8);
-                            nb.append_value(*n);
-                            non_num += 1;
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::DateTime(serial) => {
-                            tag_b.append_value(TypeTag::DateTime as u8);
-                            nb.append_value(*serial);
-                            non_num += 1;
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Duration(serial) => {
-                            tag_b.append_value(TypeTag::Duration as u8);
-                            nb.append_value(*serial);
-                            non_num += 1;
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Boolean(b) => {
-                            tag_b.append_value(TypeTag::Boolean as u8);
-                            nb.append_null();
-                            bb.append_value(*b);
-                            non_bool += 1;
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Text(s) => {
-                            tag_b.append_value(TypeTag::Text as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_value(s);
-                            non_text += 1;
-                            eb.append_null();
-                        }
-                        OverlayValue::Error(code) => {
-                            tag_b.append_value(TypeTag::Error as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_value(*code);
-                            non_err += 1;
-                        }
-                        OverlayValue::Pending => {
-                            tag_b.append_value(TypeTag::Pending as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                    }
+                if let Some(ov) = ch_ref.overlay.get_scalar(i) {
+                    append_overlay_value_to_lane_builders(
+                        ov,
+                        &mut tag_b,
+                        &mut nb,
+                        &mut bb,
+                        &mut sb,
+                        &mut eb,
+                        &mut non_num,
+                        &mut non_bool,
+                        &mut non_text,
+                        &mut non_err,
+                    );
                 } else {
                     let tag = TypeTag::from_u8(ch_ref.type_tag.value(i));
                     match tag {
@@ -1602,71 +1931,19 @@ impl ArrowSheet {
             let mut non_err = 0usize;
 
             for i in 0..len {
-                if let Some(ov) = ch_ref.computed_overlay.get(i) {
-                    match ov {
-                        OverlayValue::Empty => {
-                            tag_b.append_value(TypeTag::Empty as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Number(n) => {
-                            tag_b.append_value(TypeTag::Number as u8);
-                            nb.append_value(*n);
-                            non_num += 1;
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::DateTime(serial) => {
-                            tag_b.append_value(TypeTag::DateTime as u8);
-                            nb.append_value(*serial);
-                            non_num += 1;
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Duration(serial) => {
-                            tag_b.append_value(TypeTag::Duration as u8);
-                            nb.append_value(*serial);
-                            non_num += 1;
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Boolean(b) => {
-                            tag_b.append_value(TypeTag::Boolean as u8);
-                            nb.append_null();
-                            bb.append_value(*b);
-                            non_bool += 1;
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                        OverlayValue::Text(s) => {
-                            tag_b.append_value(TypeTag::Text as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_value(s);
-                            non_text += 1;
-                            eb.append_null();
-                        }
-                        OverlayValue::Error(code) => {
-                            tag_b.append_value(TypeTag::Error as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_value(*code);
-                            non_err += 1;
-                        }
-                        OverlayValue::Pending => {
-                            tag_b.append_value(TypeTag::Pending as u8);
-                            nb.append_null();
-                            bb.append_null();
-                            sb.append_null();
-                            eb.append_null();
-                        }
-                    }
+                if let Some(ov) = ch_ref.computed_overlay.get_scalar(i) {
+                    append_overlay_value_to_lane_builders(
+                        ov,
+                        &mut tag_b,
+                        &mut nb,
+                        &mut bb,
+                        &mut sb,
+                        &mut eb,
+                        &mut non_num,
+                        &mut non_bool,
+                        &mut non_text,
+                        &mut non_err,
+                    );
                 } else {
                     let tag = TypeTag::from_u8(ch_ref.type_tag.value(i));
                     match tag {
@@ -2407,6 +2684,92 @@ mod tests {
         let nums1: Vec<_> = rv1.numbers_slices().map(|r| r.unwrap()).collect();
         assert_eq!(nums1.len(), 1);
         assert_eq!(nums1[0].2[0].value(0), 3.0);
+    }
+
+    #[test]
+    fn overlay_slice_preserves_explicit_empty_and_offsets() {
+        let mut overlay = Overlay::new();
+        overlay.set(2, OverlayValue::Number(2.0));
+        overlay.set(4, OverlayValue::Empty);
+        overlay.set(6, OverlayValue::Text(Arc::from("outside")));
+
+        let sliced = overlay.slice(1, 4);
+        assert!(sliced.get_scalar(0).is_none());
+        assert_eq!(
+            sliced.get_scalar(1).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            sliced.get_scalar(3).unwrap().to_literal(),
+            LiteralValue::Empty
+        );
+        assert!(sliced.get_scalar(5).is_none());
+    }
+
+    #[test]
+    fn overlay_cascade_user_empty_masks_computed_and_base() {
+        let mut user = Overlay::new();
+        let mut computed = Overlay::new();
+        computed.set(1, OverlayValue::Number(42.0));
+        user.set(1, OverlayValue::Empty);
+
+        let cascade = OverlayCascade::new(&user, &computed);
+        assert_eq!(
+            cascade.get_scalar(1).unwrap().to_literal(),
+            LiteralValue::Empty
+        );
+        assert!(cascade.has_any_in_range(1..2));
+    }
+
+    #[test]
+    fn overlay_segment_numbers_masks_base_for_non_numeric_overlays() {
+        let mut user = Overlay::new();
+        user.set(1, OverlayValue::Text(Arc::from("x")));
+        user.set(2, OverlayValue::Empty);
+        user.set(3, OverlayValue::Error(map_error_code(ExcelErrorKind::Div)));
+        user.set(4, OverlayValue::Pending);
+        let computed = Overlay::new();
+        let cascade = OverlayCascade::new(&user, &computed);
+
+        let base = Float64Array::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
+        let selected = cascade.select_numbers(0..5, &base);
+        assert_eq!(selected.value(0), 10.0);
+        assert!(selected.is_null(1));
+        assert!(selected.is_null(2));
+        assert!(selected.is_null(3));
+        assert!(selected.is_null(4));
+    }
+
+    #[test]
+    fn overlay_segment_type_tags_preserve_temporal_tags() {
+        let mut computed = Overlay::new();
+        computed.set(0, OverlayValue::DateTime(45000.5));
+        computed.set(1, OverlayValue::Duration(0.25));
+        let user = Overlay::new();
+        let cascade = OverlayCascade::new(&user, &computed);
+
+        let base = UInt8Array::from(vec![TypeTag::Empty as u8; 2]);
+        let selected = cascade.select_type_tags(0..2, &base);
+        assert_eq!(selected.value(0), TypeTag::DateTime as u8);
+        assert_eq!(selected.value(1), TypeTag::Duration as u8);
+    }
+
+    #[test]
+    fn overlay_lowered_text_matches_existing_overlay_semantics() {
+        let mut user = Overlay::new();
+        user.set(0, OverlayValue::Text(Arc::from("HeLLo")));
+        user.set(1, OverlayValue::Number(1.5));
+        user.set(2, OverlayValue::Boolean(true));
+        user.set(3, OverlayValue::Empty);
+        let computed = Overlay::new();
+        let cascade = OverlayCascade::new(&user, &computed);
+
+        let base = StringArray::from(vec![Some("A"), Some("B"), Some("C"), Some("D")]);
+        let selected = cascade.select_lowered_text(0..4, &base);
+        assert_eq!(selected.value(0), "hello");
+        assert_eq!(selected.value(1), "1.5");
+        assert_eq!(selected.value(2), "true");
+        assert!(selected.is_null(3));
     }
 
     #[test]

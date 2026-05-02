@@ -3244,28 +3244,6 @@ where
     }
 
     #[inline]
-    fn overlay_value_to_literal(&self, ov: &crate::arrow_store::OverlayValue) -> LiteralValue {
-        use crate::arrow_store::OverlayValue;
-        match ov {
-            OverlayValue::Empty => LiteralValue::Empty,
-            OverlayValue::Number(n) => LiteralValue::Number(*n),
-            OverlayValue::DateTime(serial) => LiteralValue::from_serial_number(*serial),
-            OverlayValue::Duration(serial) => {
-                let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
-                let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
-                LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
-            }
-            OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
-            OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
-            OverlayValue::Error(code) => {
-                let kind = crate::arrow_store::unmap_error_code(*code);
-                LiteralValue::Error(formualizer_common::ExcelError::new(kind))
-            }
-            OverlayValue::Pending => LiteralValue::Pending,
-        }
-    }
-
-    #[inline]
     fn literal_to_overlay_value(&self, value: &LiteralValue) -> crate::arrow_store::OverlayValue {
         use crate::arrow_store::OverlayValue;
         match value {
@@ -3317,9 +3295,7 @@ where
         }
         let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
         let ch = asheet.columns[col0].chunk(ch_idx)?;
-        ch.overlay
-            .get(in_off)
-            .map(|ov| self.overlay_value_to_literal(ov))
+        ch.overlay.get_scalar(in_off).map(|ov| ov.to_literal())
     }
 
     /// Read a single cell's computed overlay entry (if present), preserving the distinction
@@ -3340,8 +3316,8 @@ where
         let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
         let ch = asheet.columns[col0].chunk(ch_idx)?;
         ch.computed_overlay
-            .get(in_off)
-            .map(|ov| self.overlay_value_to_literal(ov))
+            .get_scalar(in_off)
+            .map(|ov| ov.to_literal())
     }
 
     fn set_delta_overlay_cell_raw(
