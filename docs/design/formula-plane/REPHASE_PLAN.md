@@ -202,10 +202,10 @@ Status: **future**.
 Deliverables:
 
 - Builtin/function dependency classification audit.
-- Dependency-only function contract registry or equivalent local sidecar.
-- Classification tied to existing `FnCaps`, `ArgSchema`, registry identity, and
-  explicit FormulaPlane reject reasons.
-- No span eval kernels yet.
+- Function-owned opt-in dependency contracts via defaulted `Function` metadata.
+- Classification tied to existing registry resolution, `FnCaps`, `ArgSchema`, and
+  explicit conservative fallback reasons.
+- No sidecar function-name registry and no span eval kernels yet.
 
 Gate:
 

@@ -2,6 +2,7 @@ use super::super::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
 use crate::engine::VisibilityMaskMode;
 use crate::function::Function;
+use crate::function_contract::FunctionDependencyContract;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use arrow_array::Array;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -73,6 +74,9 @@ impl Function for SumFn {
     }
     fn variadic(&self) -> bool {
         true
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_reduction(arity, self.min_args())
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
@@ -194,6 +198,9 @@ impl Function for CountFn {
     fn variadic(&self) -> bool {
         true
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_reduction(arity, self.min_args())
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]
     }
@@ -301,6 +308,9 @@ impl Function for AverageFn {
     }
     fn variadic(&self) -> bool {
         true
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_reduction(arity, self.min_args())
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]

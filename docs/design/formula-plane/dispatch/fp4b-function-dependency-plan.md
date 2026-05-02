@@ -34,32 +34,44 @@ parsed formula AST
 
 ## 2. Core design decision
 
-FP4.B uses a **FormulaPlane-local function dependency contract registry**.
+FP4.B uses **function-owned, opt-in dependency contracts**.
 
-It does **not** modify the core `Function` trait in this phase, and it does not
-try to encode the taxonomy purely as `FnCaps` bitflags.
+The dependency semantics for a function belong on the `Function` abstraction,
+not in a FormulaPlane sidecar name table and not in a separate registration side
+map. The core trait gains an additive default method:
+
+```rust
+fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+    None
+}
+```
+
+Default `None` is the conservative production contract: no dependency-summary
+optimization, no materialization reduction, and no behavior change. Functions opt
+in only when their implementation can describe dependency roles for the supplied
+arity without under-approximating dependencies.
 
 Rationale:
 
-- `Function` is core runtime/evaluation machinery; FP4.B is an experimental
-  passive FormulaPlane phase.
-- The registry stores functions as `Arc<dyn Function>`, so associated constants
-  are not a good fit for rich dependency contracts.
+- Function identity, aliases, namespaces, and Excel compatibility prefixes are
+  already owned by `function_registry`; FormulaPlane must not duplicate that
+  normalization path.
+- Dependency roles are function semantics and should be colocated with each
+  `impl Function` as functions are brought into FormulaPlane support.
 - Existing `FnCaps` are useful coarse facts (`VOLATILE`, `REDUCTION`, `LOOKUP`,
   `RETURNS_REFERENCE`, `DYNAMIC_DEPENDENCY`) but cannot encode per-argument
   roles like `SUMIFS(value_range, criteria_range, criteria_expr, ...)`.
 - Existing `ArgSchema` is useful validation/evaluation metadata but is not a full
   dependency contract.
 
-FP4.B should consume `FnCaps`, `ArgSchema`, `RETURNS_REFERENCE` /
-`eval_reference` capability, aliases, and registry identity as **inputs to
-required report-only drift diagnostics**, not as the only source of dependency
-truth. Drift diagnostics must never decide runtime behavior or silently change
-whether a summary is supported.
+FP4.B should still consume `FnCaps`, `ArgSchema`, `RETURNS_REFERENCE` /
+`eval_reference` capability, aliases, and registry identity as report-only
+consistency checks where safely available. Those checks must never decide runtime
+behavior or silently change whether a summary is supported.
 
-The implementation should centralize normalized function-name matching in one
-FormulaPlane module. Scattered ad-hoc `if name == ...` checks across canonicalizer,
-dependency summary, scanner, and future graph-hint code are out of scope.
+The implementation must not introduce FormulaPlane-owned function-name lists.
+FormulaPlane should resolve function calls through the standard registry path and
+then ask the resolved `Function` for its opt-in dependency contract.
 
 ## 3. Strict non-goals
 
@@ -90,8 +102,8 @@ FP4.B has two levels of recognition:
 2. **Supported summary**: the function emits a dependency summary and participates
    in no-under-approximation comparison.
 
-`FunctionSupportStatus::Supported` is a **contract-level possibility** for a
-name/arity, not unconditional summary authority. The summary pass must still
+`Some(FunctionDependencyContract)` is a **contract-level possibility** for a
+function/arity, not unconditional summary authority. The summary pass must still
 reject unsupported argument shapes such as whole/open ranges, names, tables,
 spills, arrays, dynamic references, unsupported nested functions, and malformed
 criteria pairings.
@@ -208,72 +220,52 @@ Shape constraints:
 
 Invalid arity/pairing should reject with explicit fallback reasons.
 
-### 4.2 Classified but not supported in FP4.B
+### 4.2 Conservative fallbacks in FP4.B
 
-These functions/classes should be recognized and explicitly rejected unless a
-later plan expands support:
+Functions without an opt-in dependency contract are conservative fallbacks unless
+a later plan expands support. Diagnostics may still label broad categories using
+registry facts such as `FnCaps` and function-owned metadata, but absence of a
+contract means no FormulaPlane dependency-summary optimization.
 
-| Class | Examples | FP4.B status |
+| Category | Examples | FP4.B behavior |
 |---|---|---|
-| `MaskConditional` | `IF`, `IFERROR`, `IFNA`, `IFS`, `SWITCH` | `ClassifiedOnly` + `UnsupportedFunctionClass` |
-| `LookupStaticRange` | `VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `MATCH` | `ClassifiedOnly` + `UnsupportedFunctionClass` |
-| `ReferenceReturning` | `INDEX`, `CHOOSE` | `Rejected` + `ReferenceReturningFunction` unless a later context-specific contract is approved |
-| `DynamicDependency` | `INDIRECT`, `OFFSET` | `Rejected` + `DynamicDependency` |
-| `Volatile` | `NOW`, `TODAY`, `RAND`, `RANDBETWEEN` | `Rejected` + `VolatileFunction`; volatility pseudo-precedent deferred |
-| `LocalEnvironment` | `LET`, `LAMBDA` | `Rejected` + `LocalEnvironmentFunction` |
-| `ArrayOrSpill` | `FILTER`, `SEQUENCE`, `SORT`, `SORTBY`, `UNIQUE`, `RANDARRAY`, `TEXTSPLIT` | `Rejected` + `ArrayOrSpillFunction` |
-| `UnsupportedKnownBuiltin` | any registered/known builtin not in supported or deferred lists | `Rejected` + `UnsupportedFunctionClass` |
-| `OpaqueScalar` | unknown/custom functions and registry misses | `Rejected` + `UnknownFunction` |
+| mask/lazy conditionals | `IF`, `IFERROR`, `IFNA`, `IFS`, `SWITCH` | no summary support unless a function-owned contract is added later |
+| lookups | `VLOOKUP`, `HLOOKUP`, `XLOOKUP`, `MATCH` | no summary support unless a function-owned contract is added later |
+| reference-returning | `INDEX`, `CHOOSE` | conservative fallback unless context-specific reference contracts are approved |
+| dynamic dependency | `INDIRECT`, `OFFSET` | conservative fallback from `FnCaps::DYNAMIC_DEPENDENCY` / `RETURNS_REFERENCE` |
+| volatile | `NOW`, `TODAY`, `RAND`, `RANDBETWEEN` | conservative fallback from `FnCaps::VOLATILE`; volatility pseudo-precedent deferred |
+| local environment | `LET`, `LAMBDA` | conservative fallback until local-scope dependency contracts are approved |
+| array/spill | `FILTER`, `SEQUENCE`, `SORT`, `SORTBY`, `UNIQUE`, `RANDARRAY`, `TEXTSPLIT` | conservative fallback until result-region/spill contracts are approved |
+| registered builtin without contract | any builtin not opted in | `NoDependencyContract` / conservative fallback |
+| unknown/custom function without contract | registry miss or custom no-opt-in | unknown/no-contract conservative fallback |
 
 ## 5. Proposed module and type shape
 
-Add a FormulaPlane-local module:
+Add root-level function dependency metadata, not a FormulaPlane sidecar:
 
 ```text
-crates/formualizer-eval/src/formula_plane/function_dependency.rs
+crates/formualizer-eval/src/function_contract.rs
+crates/formualizer-eval/src/function.rs
 ```
 
-Wire it crate-internally from:
-
-```text
-crates/formualizer-eval/src/formula_plane/mod.rs
-```
-
-Names are illustrative but the implementation should preserve these concepts:
+Expose the contract types from the core eval crate because `Function` implementors
+need them for opt-in declarations. Names are illustrative but the implementation
+should preserve these concepts:
 
 ```rust
-pub(crate) enum FunctionDependencyClass {
+pub enum FunctionDependencyClass {
     StaticScalarAllArgs,
     StaticReduction,
     CriteriaAggregation,
-    MaskConditional,
-    LookupStaticRange,
-    DynamicDependency,
-    Volatile,
-    ReferenceReturning,
-    LocalEnvironment,
-    ArrayOrSpill,
-    OpaqueScalar,
-    Unsupported,
 }
 
-pub(crate) enum FunctionSupportStatus {
-    /// The name/arity can produce a supported summary if all argument shapes are
-    /// supported by the summary analyzer.
-    Supported,
-    /// The function is recognized for taxonomy/reporting but does not emit a
-    /// supported dependency summary in FP4.B.
-    ClassifiedOnly,
-    /// The function is recognized as an explicit fallback/reject case.
-    Rejected,
-}
-
-pub(crate) enum ArgumentDependencyRole {
+pub enum FunctionArgumentDependencyRole {
     ScalarValue,
     FiniteRangeValue,
+    ReductionValue,
     CriteriaRange,
     CriteriaExpression,
-    ReductionValue,
+    ValueRange,
     LazyBranch,
     LookupKey,
     LookupTable,
@@ -286,69 +278,46 @@ pub(crate) enum ArgumentDependencyRole {
     Unsupported,
 }
 
-pub(crate) enum FunctionDependencyRejectReason {
-    UnknownFunction,
-    DynamicDependency,
-    VolatileFunction,
-    ReferenceReturningFunction,
-    LocalEnvironmentFunction,
-    ArrayOrSpillFunction,
-    UnsupportedFunctionClass,
-    InvalidArity,
-    InvalidCriteriaPairing,
-    UnsupportedArgumentRole,
-    FunctionContractDrift,
+pub enum FunctionArityRule {
+    Exactly(usize),
+    AtLeast(usize),
+    OneOf(&'static [usize]),
+    EvenAtLeast(usize),
+    OddAtLeast(usize),
 }
 
-pub(crate) struct FunctionDependencyContract {
-    pub(crate) canonical_name: String,
-    pub(crate) class: FunctionDependencyClass,
-    pub(crate) support_status: FunctionSupportStatus,
-    pub(crate) arg_roles: FunctionArgContract,
-    pub(crate) reject_reasons: Vec<FunctionDependencyRejectReason>,
+pub enum CriteriaValueRange {
+    None,
+    Fixed(usize),
+    Optional { provided_index: usize, fallback_criteria_range_index: usize },
 }
 
-pub(crate) enum FunctionArgContract {
-    AllArgs(ArgumentDependencyRole),
-    VariadicReduction,
-    Fixed(&'static [ArgumentDependencyRole]),
-    CriteriaPairs { value_range: Option<usize>, first_pair: usize },
-    Unsupported,
+pub struct FunctionDependencyContract {
+    pub class: FunctionDependencyClass,
+    pub arity: FunctionArityRule,
+    pub arguments: FunctionArgumentDependencyContract,
 }
 ```
 
-`FunctionArgContract` variants are intentionally code-shaped so implementation
-agents do not infer argument roles ad hoc from raw names later.
-
-The central classifier should be the only place that maps normalized function
-names to FormulaPlane dependency contracts:
+`Function` gets a defaulted opt-in method:
 
 ```rust
-pub(crate) fn dependency_contract_for_function(
-    canonical_name: &str,
-    arity: usize,
-) -> FunctionDependencyContract;
+fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+    None
+}
 ```
 
-FP4.B must include a report-only drift diagnostic helper that can compare local
-contracts with existing registry metadata when safely available:
+Contracts should be declared beside the relevant `impl Function`, for example
+`SUM` declares `StaticReduction`, `ABS` declares `StaticScalarAllArgs`, and
+`COUNTIFS` declares `CriteriaAggregation` with even criteria-pair arity. Functions
+without an explicit contract remain conservative and unsupported for FormulaPlane
+summary optimization.
 
-```rust
-pub(crate) fn dependency_contract_drift(
-    contract: &FunctionDependencyContract,
-    registry: FunctionRegistryDiagnosticInput,
-) -> Vec<FunctionContractDrift>;
-```
-
-Drift checks should inspect, when available: registry identity/aliases,
-`FnCaps::VOLATILE`, `FnCaps::DYNAMIC_DEPENDENCY`, `FnCaps::RETURNS_REFERENCE`,
-`FnCaps::REDUCTION`, `FnCaps::LOOKUP`, `FnCaps::SHORT_CIRCUIT`, `ArgSchema::by_ref`,
-`ShapeKind`, and arity.
-
-Drift checks are report-only and must not change summary support or runtime
-behavior. They must also be safe when builtins are not loaded and must not call
-`Function::arg_schema()` blindly: the default implementation can panic for
-functions with `min_args() > 0` and no schema override.
+Drift/consistency checks, where added, compare the function-owned contract to
+registry metadata (`FnCaps`, `ArgSchema`, aliases, arity, and `eval_reference`)
+without changing runtime behavior. They must be safe when builtins are not loaded
+and must not call `Function::arg_schema()` blindly: the default implementation
+can panic for functions with `min_args() > 0` and no schema override.
 
 ## 6. Dependency-summary model changes
 
@@ -515,37 +484,33 @@ Commit suggestion:
 docs(formula-plane): plan fp4b function dependency taxonomy
 ```
 
-### FP4.B.1 — Contract model and central classifier
+### FP4.B.1 — Function-owned contract model and opt-ins
 
-Goal: add FormulaPlane-local function dependency contracts without changing
-summary behavior.
+Goal: add root-level function dependency contract types and a defaulted
+`Function::dependency_contract(...)` opt-in without changing summary behavior.
 
 Deliverables:
 
-- `crates/formualizer-eval/src/formula_plane/function_dependency.rs`
-- crate-internal module wire-up
-- concrete `FunctionArgContract` variants for all-args, variadic reductions,
-  fixed argument roles, and criteria pairs
-- report-only registry drift diagnostic DTO/helper that is safe when the registry
-  is empty or schemas would panic
-- tests for classification, exact status/reason, and arity/pairing decisions
+- `crates/formualizer-eval/src/function_contract.rs`
+- additive default method on `Function`
+- deletion of the provisional FormulaPlane sidecar classifier
+- concrete contract variants for all-args scalar functions, variadic reductions,
+  and criteria pairs
+- tests proving default/no-opt-in functions return `None` and remain
+  conservative
+- initial colocated opt-ins only for the selected FP4.B supported functions
 
 Required tests:
 
-| Function | Expected class/status |
+| Function / behavior | Expected contract behavior |
 |---|---|
-| `ABS` | `StaticScalarAllArgs` / supported |
-| `SUM` | `StaticReduction` / supported for finite args |
-| `COUNTIFS` | `CriteriaAggregation` / supported for valid finite pairs |
-| `IF` | `MaskConditional` / `ClassifiedOnly` + `UnsupportedFunctionClass` |
-| `VLOOKUP` | `LookupStaticRange` / `ClassifiedOnly` + `UnsupportedFunctionClass` |
-| `INDIRECT` | `DynamicDependency` / `Rejected` + `DynamicDependency` |
-| `INDEX` | `ReferenceReturning` / `Rejected` + `ReferenceReturningFunction` |
-| `RAND` | `Volatile` / `Rejected` + `VolatileFunction` |
-| `LET` | `LocalEnvironment` / `Rejected` + `LocalEnvironmentFunction` |
-| `FILTER` | `ArrayOrSpill` / `Rejected` + `ArrayOrSpillFunction` |
-| known registered unsupported builtin | `Unsupported` / `Rejected` + `UnsupportedFunctionClass` |
-| `CUSTOMFN` | `OpaqueScalar` / `Rejected` + `UnknownFunction` |
+| no opt-in function | `dependency_contract(_) == None` |
+| `ABS` | `StaticScalarAllArgs` for arity 1, `None` otherwise |
+| `SUM` | `StaticReduction`, including runtime-supported zero-arity |
+| `AVERAGE` | `None` for arity 0, `StaticReduction` for valid arities |
+| `COUNTIFS` | `CriteriaAggregation` for even arity >= 2, `None` for malformed pairing |
+| `SUMIF` / `AVERAGEIF` | optional value range contract for arity 2 or 3 |
+| `SUMIFS` / `AVERAGEIFS` | fixed value range at arg 0 and odd arity >= 3 |
 
 Gate:
 
@@ -554,20 +519,23 @@ timeout 10m cargo fmt --all -- --check
 timeout 15m cargo test -p formualizer-eval formula_plane --quiet
 ```
 
-### FP4.B.2 — Canonicalizer and summary classifier unification
+### FP4.B.2 — Registry resolution and summary contract unification
 
-Goal: eliminate duplicated FormulaPlane-local function classification logic.
+Goal: eliminate duplicated function classification logic while using
+registry-resolved, function-owned contracts.
 
 Tasks:
 
-- Update `template_canonical.rs` to ask the central classifier for dynamic,
-  volatile, reference-returning, local-env, array/spill, and unknown/custom
-  labels.
+- Update `template_canonical.rs` to resolve calls through `function_registry`
+  instead of duplicating function-name/prefix logic.
+- Use resolved `Function` metadata (`FnCaps`, `eval_reference`, and
+  `dependency_contract(args.len())`) for passive labels and explicit conservative
+  fallbacks.
 - Keep authority template keys stable where semantics are unchanged; if key
   payload changes are unavoidable, document that FP4.A artifacts were generated
   at `6b527c9` and FP4.B emits a new diagnostic version.
-- Update `dependency_summary.rs` to use the same contracts rather than ad-hoc
-  function rejection.
+- Update `dependency_summary.rs` to consume the resolved function-owned contract
+  rather than ad-hoc function-name rejection.
 
 Gate:
 
@@ -741,8 +709,8 @@ Stop and report instead of broadening if:
   behavior changes;
 - criteria aggregation shape semantics become ambiguous enough to risk
   under-approximation;
-- function registry metadata conflicts with FormulaPlane contracts and cannot be
-  represented as a report-only drift diagnostic;
+- function-owned dependency contracts conflict with registry metadata or runtime
+  function behavior and cannot be resolved conservatively;
 - support for a function would require eval semantics, span kernels, loader
   changes, or public API changes;
 - whole/open-axis ranges require used-region tracking not available in this phase;
@@ -756,10 +724,10 @@ Stop and report instead of broadening if:
 If all gates pass, the correct closeout wording is:
 
 ```text
-FP4.B PASS: passive function dependency taxonomy exists for selected builtins,
-finite static reductions and finite criteria aggregations are classified and
-summarized where bounded, scanner reporting exposes supported/rejected function
-contracts, and comparison against current dependency planning shows no
+FP4.B PASS: selected builtins expose function-owned opt-in dependency contracts,
+finite static reductions and finite criteria aggregations are summarized where
+bounded, scanner reporting exposes supported/conservative function-contract
+outcomes, and comparison against current dependency planning shows no
 under-approximation for supported fixtures. No graph/runtime/materialization
 authority changed.
 ```

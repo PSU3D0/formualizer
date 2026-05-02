@@ -1,5 +1,6 @@
 use crate::args::ArgSchema;
 use crate::function::Function;
+use crate::function_contract::FunctionDependencyContract;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
@@ -59,6 +60,9 @@ impl Function for IsNumberFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
@@ -139,6 +143,9 @@ impl Function for IsTextFn {
     fn min_args(&self) -> usize {
         1
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -208,6 +215,9 @@ impl Function for IsLogicalFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
@@ -279,6 +289,9 @@ impl Function for IsBlankFn {
     fn min_args(&self) -> usize {
         1
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -349,6 +362,9 @@ impl Function for IsErrorFn {
     fn min_args(&self) -> usize {
         1
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -418,6 +434,9 @@ impl Function for IsErrFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
@@ -492,6 +511,9 @@ impl Function for IsNaFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
@@ -783,6 +805,9 @@ impl Function for NFn {
     fn min_args(&self) -> usize {
         1
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -883,6 +908,9 @@ impl Function for TFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
@@ -1259,6 +1287,9 @@ impl Function for IsNonTextFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
