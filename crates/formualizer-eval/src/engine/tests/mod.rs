@@ -78,6 +78,7 @@ mod arrow_sparse_extension;
 mod arrow_sparse_structural_ops;
 mod arrow_sparse_used_bounds;
 mod compressed_range_scheduler;
+mod computed_flush;
 mod config_defaults;
 mod context_default_noops;
 mod countifs_arrow_overlay;

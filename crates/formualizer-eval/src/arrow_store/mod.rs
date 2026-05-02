@@ -816,7 +816,7 @@ pub enum CellIngest<'a> {
     Pending,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum OverlayValue {
     Empty,
     Number(f64),
@@ -832,7 +832,7 @@ pub enum OverlayValue {
 
 impl OverlayValue {
     #[inline]
-    fn estimated_payload_bytes(&self) -> usize {
+    pub(crate) fn estimated_payload_bytes(&self) -> usize {
         match self {
             OverlayValue::Empty | OverlayValue::Pending => 0,
             OverlayValue::Number(_) | OverlayValue::DateTime(_) | OverlayValue::Duration(_) => {
