@@ -1421,6 +1421,15 @@ mod tests {
         );
         assert_eq!(prefixed.canonical_name, "SUM");
 
+        let xll = assert_contract(
+            "_xll.AVERAGEIFS",
+            3,
+            FunctionDependencyClass::CriteriaAggregation,
+            FunctionSupportStatus::Supported,
+            &[],
+        );
+        assert_eq!(xll.canonical_name, "AVERAGEIFS");
+
         let chained = assert_contract(
             "_xlfn._xlws.FILTER",
             1,
