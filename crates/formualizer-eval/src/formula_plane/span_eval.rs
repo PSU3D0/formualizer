@@ -31,11 +31,13 @@ pub(crate) struct SpanEvalReport {
     pub(crate) span_eval_placement_count: u64,
     pub(crate) skipped_overlay_punchout_count: u64,
     pub(crate) computed_write_buffer_push_count: u64,
+    pub(crate) transient_ast_relocation_count: u64,
     pub(crate) fallback_count: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SpanEvalError {
+    StalePlaneEpoch,
     StaleSpan,
     MissingTemplate,
     UnsupportedDirtyDomain,
@@ -90,6 +92,10 @@ impl<'a> SpanEvaluator<'a> {
         task: &SpanEvalTask,
         sink: &mut SpanComputedWriteSink<'_>,
     ) -> Result<SpanEvalReport, SpanEvalError> {
+        if self.plane.epoch().0 != task.plane_epoch {
+            return Err(SpanEvalError::StalePlaneEpoch);
+        }
+
         let span = self
             .plane
             .spans
@@ -116,6 +122,8 @@ impl<'a> SpanEvaluator<'a> {
             }
 
             let relocated = relocate_ast_for_placement(&template.ast, origin, placement)?;
+            report.transient_ast_relocation_count =
+                report.transient_ast_relocation_count.saturating_add(1);
             let interpreter = Interpreter::new_with_cell(
                 self.context,
                 self.current_sheet,
@@ -349,10 +357,12 @@ mod tests {
     use formualizer_common::LiteralValue;
     use formualizer_parse::parser::parse;
 
-    use crate::engine::eval::ComputedWrite;
+    use crate::engine::EvalConfig;
+    use crate::engine::eval::{ComputedWrite, Engine};
     use crate::test_workbook::TestWorkbook;
 
     use super::super::placement::{FormulaPlacementCandidate, place_candidate_family};
+    use super::super::region_index::RegionPattern;
     use super::super::runtime::{FormulaOverlayEntryKind, NewFormulaSpan, ResultRegion};
     use super::*;
 
@@ -366,11 +376,35 @@ mod tests {
         )
     }
 
-    fn whole_span_task(span: FormulaSpanRef) -> SpanEvalTask {
+    fn whole_span_task(plane: &FormulaPlane, span: FormulaSpanRef) -> SpanEvalTask {
         SpanEvalTask {
             span,
             dirty: DirtyDomain::WholeSpan(span),
-            plane_epoch: 0,
+            plane_epoch: plane.epoch().0,
+        }
+    }
+
+    fn cells_task(
+        plane: &FormulaPlane,
+        span: FormulaSpanRef,
+        cells: Vec<RegionKey>,
+    ) -> SpanEvalTask {
+        SpanEvalTask {
+            span,
+            dirty: DirtyDomain::Cells(cells),
+            plane_epoch: plane.epoch().0,
+        }
+    }
+
+    fn regions_task(
+        plane: &FormulaPlane,
+        span: FormulaSpanRef,
+        regions: Vec<RegionPattern>,
+    ) -> SpanEvalTask {
+        SpanEvalTask {
+            span,
+            dirty: DirtyDomain::Regions(regions),
+            plane_epoch: plane.epoch().0,
         }
     }
 
@@ -385,6 +419,24 @@ mod tests {
         evaluator.evaluate_task(task, &mut sink).unwrap()
     }
 
+    fn arrow_eval_config() -> EvalConfig {
+        EvalConfig {
+            arrow_storage_enabled: true,
+            delta_overlay_enabled: true,
+            write_formula_overlay_enabled: true,
+            ..Default::default()
+        }
+    }
+
+    fn span_from_report(
+        report: &super::super::placement::FormulaPlacementReport,
+    ) -> FormulaSpanRef {
+        match report.results[0] {
+            super::super::placement::FormulaPlacementResult::Span { span, .. } => span,
+            _ => panic!("expected span"),
+        }
+    }
+
     fn cell_values(buffer: &ComputedWriteBuffer) -> Vec<(u32, u32, OverlayValue)> {
         buffer
             .writes()
@@ -396,6 +448,37 @@ mod tests {
                 ComputedWrite::Rect { .. } => panic!("span evaluator should push cells"),
             })
             .collect()
+    }
+
+    fn computed_overlay_stats(
+        engine: &Engine<TestWorkbook>,
+        sheet: &str,
+        col0: usize,
+        row0: usize,
+    ) -> crate::arrow_store::OverlayDebugStats {
+        let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+        let (chunk_idx, _) = asheet.chunk_of_row(row0).expect("row chunk");
+        asheet.columns[col0]
+            .chunk(chunk_idx)
+            .expect("column chunk")
+            .computed_overlay
+            .debug_stats()
+    }
+
+    fn range_number_values(
+        engine: &Engine<TestWorkbook>,
+        sheet: &str,
+        sr: u32,
+        sc: u32,
+        er: u32,
+        ec: u32,
+    ) -> Vec<f64> {
+        let view = engine.read_range_values(sheet, sr, sc, er, ec);
+        let rows = er.saturating_sub(sr).saturating_add(1) as usize;
+        let cols = view.slice_numbers(0, rows);
+        assert_eq!(cols.len(), ec.saturating_sub(sc).saturating_add(1) as usize);
+        let arr = cols[0].as_ref().expect("numeric column");
+        (0..arr.len()).map(|idx| arr.value(idx)).collect()
     }
 
     #[test]
@@ -422,7 +505,12 @@ mod tests {
         };
         let mut buffer = ComputedWriteBuffer::default();
 
-        let report = eval_task(&plane, &workbook, &whole_span_task(span), &mut buffer);
+        let report = eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
 
         assert_eq!(report.span_eval_placement_count, 3);
         assert_eq!(report.computed_write_buffer_push_count, 3);
@@ -460,7 +548,12 @@ mod tests {
         };
         let mut buffer = ComputedWriteBuffer::default();
 
-        eval_task(&plane, &workbook, &whole_span_task(span), &mut buffer);
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
 
         assert_eq!(
             cell_values(&buffer),
@@ -495,7 +588,12 @@ mod tests {
         };
         let mut buffer = ComputedWriteBuffer::default();
 
-        eval_task(&plane, &workbook, &whole_span_task(span), &mut buffer);
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
 
         assert_eq!(
             cell_values(&buffer),
@@ -530,7 +628,12 @@ mod tests {
         let workbook = TestWorkbook::new();
         let mut buffer = ComputedWriteBuffer::default();
 
-        eval_task(&plane, &workbook, &whole_span_task(span), &mut buffer);
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
 
         assert_eq!(
             cell_values(&buffer),
@@ -560,7 +663,12 @@ mod tests {
         );
         let mut buffer = ComputedWriteBuffer::default();
 
-        let report = eval_task(&plane, &workbook, &whole_span_task(span), &mut buffer);
+        let report = eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
 
         assert_eq!(report.span_eval_placement_count, 1);
         assert_eq!(report.skipped_overlay_punchout_count, 1);
@@ -584,10 +692,424 @@ mod tests {
         };
         let mut buffer = ComputedWriteBuffer::default();
 
-        let report = eval_task(&plane, &workbook, &whole_span_task(span), &mut buffer);
+        let report = eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
 
         assert_eq!(report.computed_write_buffer_push_count, buffer.len() as u64);
         assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn span_eval_cells_dirty_domain_evaluates_only_matching_cells() {
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0));
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 1, "=A1+1"),
+                candidate(0, 1, 1, "=A2+1"),
+                candidate(0, 2, 1, "=A3+1"),
+            ],
+        );
+        let span = span_from_report(&placement);
+        let mut buffer = ComputedWriteBuffer::default();
+        let task = cells_task(
+            &plane,
+            span,
+            vec![RegionKey::new(0, 1, 1), RegionKey::new(0, 99, 1)],
+        );
+
+        let report = eval_task(&plane, &workbook, &task, &mut buffer);
+
+        assert_eq!(report.span_eval_placement_count, 1);
+        assert_eq!(report.transient_ast_relocation_count, 1);
+        assert_eq!(
+            cell_values(&buffer),
+            vec![(1, 1, OverlayValue::Number(3.0))]
+        );
+    }
+
+    #[test]
+    fn span_eval_regions_dirty_domain_intersects_span_domain() {
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0));
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 1, "=A1+1"),
+                candidate(0, 1, 1, "=A2+1"),
+                candidate(0, 2, 1, "=A3+1"),
+            ],
+        );
+        let span = span_from_report(&placement);
+        let mut buffer = ComputedWriteBuffer::default();
+        let task = regions_task(&plane, span, vec![RegionPattern::rect(0, 1, 2, 1, 1)]);
+
+        let report = eval_task(&plane, &workbook, &task, &mut buffer);
+
+        assert_eq!(report.span_eval_placement_count, 2);
+        assert_eq!(report.transient_ast_relocation_count, 2);
+        assert_eq!(
+            cell_values(&buffer),
+            vec![
+                (1, 1, OverlayValue::Number(3.0)),
+                (2, 1, OverlayValue::Number(4.0))
+            ]
+        );
+    }
+
+    #[test]
+    fn span_eval_stale_span_generation_fails_closed() {
+        let workbook = TestWorkbook::new();
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 1, "=1"), candidate(0, 1, 1, "=1")],
+        );
+        let span = span_from_report(&placement);
+        let task = whole_span_task(&plane, span);
+        assert!(plane.remove_span(span));
+        let stale_generation_task = SpanEvalTask {
+            plane_epoch: plane.epoch().0,
+            ..task
+        };
+        let mut buffer = ComputedWriteBuffer::default();
+        let evaluator = SpanEvaluator::new(&plane, &workbook, "Sheet1");
+        let mut sink = SpanComputedWriteSink::new(&mut buffer);
+
+        let err = evaluator
+            .evaluate_task(&stale_generation_task, &mut sink)
+            .unwrap_err();
+
+        assert_eq!(err, SpanEvalError::StaleSpan);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn span_eval_stale_plane_epoch_fails_closed() {
+        let workbook = TestWorkbook::new();
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 1, "=1"), candidate(0, 1, 1, "=1")],
+        );
+        let span = span_from_report(&placement);
+        let task = whole_span_task(&plane, span);
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 0, 0, 1),
+            FormulaOverlayEntryKind::ValueOverride,
+            Some(span),
+        );
+        let mut buffer = ComputedWriteBuffer::default();
+        let evaluator = SpanEvaluator::new(&plane, &workbook, "Sheet1");
+        let mut sink = SpanComputedWriteSink::new(&mut buffer);
+
+        let err = evaluator.evaluate_task(&task, &mut sink).unwrap_err();
+
+        assert_eq!(err, SpanEvalError::StalePlaneEpoch);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn span_eval_absolute_refs_match_legacy_engine_outputs() {
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(3.0))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Number(4.0))
+            .with_cell("Sheet1", 1, 6, LiteralValue::Number(10.0));
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=A1*$F$1"),
+                candidate(0, 1, 2, "=A2*$F$1"),
+                candidate(0, 2, 2, "=A3*$F$1"),
+            ],
+        );
+        let span = span_from_report(&placement);
+        let mut formula_plane_engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        assert_eq!(formula_plane_engine.graph.sheet_id_mut("Sheet1"), 0);
+        let mut buffer = ComputedWriteBuffer::default();
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
+        formula_plane_engine
+            .flush_computed_write_buffer(&mut buffer)
+            .unwrap();
+
+        let mut legacy = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        legacy
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2.0))
+            .unwrap();
+        legacy
+            .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(3.0))
+            .unwrap();
+        legacy
+            .set_cell_value("Sheet1", 3, 1, LiteralValue::Number(4.0))
+            .unwrap();
+        legacy
+            .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(10.0))
+            .unwrap();
+        legacy
+            .set_cell_formula("Sheet1", 1, 3, parse("=A1*$F$1").unwrap())
+            .unwrap();
+        legacy
+            .set_cell_formula("Sheet1", 2, 3, parse("=A2*$F$1").unwrap())
+            .unwrap();
+        legacy
+            .set_cell_formula("Sheet1", 3, 3, parse("=A3*$F$1").unwrap())
+            .unwrap();
+        legacy.evaluate_all().unwrap();
+
+        for row in 1..=3 {
+            assert_eq!(
+                formula_plane_engine.get_cell_value("Sheet1", row, 3),
+                legacy.get_cell_value("Sheet1", row, 3)
+            );
+        }
+    }
+
+    #[test]
+    fn span_eval_div_zero_error_matches_legacy_engine_outputs() {
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 1, 2, LiteralValue::Number(0.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(3.0))
+            .with_cell("Sheet1", 2, 2, LiteralValue::Number(0.0));
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 2, "=A1/B1"), candidate(0, 1, 2, "=A2/B2")],
+        );
+        let span = span_from_report(&placement);
+        let mut formula_plane_engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        assert_eq!(formula_plane_engine.graph.sheet_id_mut("Sheet1"), 0);
+        let mut buffer = ComputedWriteBuffer::default();
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
+        formula_plane_engine
+            .flush_computed_write_buffer(&mut buffer)
+            .unwrap();
+
+        let mut legacy = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        legacy
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2.0))
+            .unwrap();
+        legacy
+            .set_cell_value("Sheet1", 1, 2, LiteralValue::Number(0.0))
+            .unwrap();
+        legacy
+            .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(3.0))
+            .unwrap();
+        legacy
+            .set_cell_value("Sheet1", 2, 2, LiteralValue::Number(0.0))
+            .unwrap();
+        legacy
+            .set_cell_formula("Sheet1", 1, 3, parse("=A1/B1").unwrap())
+            .unwrap();
+        legacy
+            .set_cell_formula("Sheet1", 2, 3, parse("=A2/B2").unwrap())
+            .unwrap();
+        legacy.evaluate_all().unwrap();
+
+        for row in 1..=2 {
+            assert_eq!(
+                formula_plane_engine.get_cell_value("Sheet1", row, 3),
+                legacy.get_cell_value("Sheet1", row, 3)
+            );
+        }
+    }
+
+    #[test]
+    fn span_eval_varying_outputs_emit_dense_fragment_and_rangeview_reads_results() {
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0))
+            .with_cell("Sheet1", 4, 1, LiteralValue::Number(4.0));
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=A1+1"),
+                candidate(0, 1, 2, "=A2+1"),
+                candidate(0, 2, 2, "=A3+1"),
+                candidate(0, 3, 2, "=A4+1"),
+            ],
+        );
+        let span = span_from_report(&placement);
+        let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        assert_eq!(engine.graph.sheet_id_mut("Sheet1"), 0);
+        let mut buffer = ComputedWriteBuffer::default();
+
+        let report = eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
+        engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+        assert_eq!(report.transient_ast_relocation_count, 4);
+        let stats = computed_overlay_stats(&engine, "Sheet1", 2, 0);
+        assert_eq!(stats.dense_fragments, 1);
+        assert_eq!(stats.run_fragments, 0);
+        assert_eq!(
+            range_number_values(&engine, "Sheet1", 1, 3, 4, 3),
+            vec![2.0, 3.0, 4.0, 5.0]
+        );
+    }
+
+    #[test]
+    fn span_eval_constant_outputs_emit_run_fragment() {
+        let workbook = TestWorkbook::new();
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            (0..8).map(|row| candidate(0, row, 0, "=7")).collect(),
+        );
+        let span = span_from_report(&placement);
+        let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        assert_eq!(engine.graph.sheet_id_mut("Sheet1"), 0);
+        let mut buffer = ComputedWriteBuffer::default();
+
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
+        engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+        let stats = computed_overlay_stats(&engine, "Sheet1", 0, 0);
+        assert_eq!(stats.run_fragments, 1);
+        assert_eq!(stats.dense_fragments, 0);
+        assert_eq!(
+            range_number_values(&engine, "Sheet1", 1, 1, 8, 1),
+            vec![7.0; 8]
+        );
+    }
+
+    #[test]
+    fn span_eval_sparse_dirty_domain_emits_sparse_fragment() {
+        let workbook = TestWorkbook::new();
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            (0..128).map(|row| candidate(0, row, 0, "=1")).collect(),
+        );
+        let span = span_from_report(&placement);
+        let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        assert_eq!(engine.graph.sheet_id_mut("Sheet1"), 0);
+        let dirty_cells = (0..128)
+            .step_by(2)
+            .map(|row| RegionKey::new(0, row, 0))
+            .collect();
+        let task = cells_task(&plane, span, dirty_cells);
+        let mut buffer = ComputedWriteBuffer::default();
+
+        let report = eval_task(&plane, &workbook, &task, &mut buffer);
+        engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+        assert_eq!(report.span_eval_placement_count, 64);
+        let stats = computed_overlay_stats(&engine, "Sheet1", 0, 0);
+        assert_eq!(stats.sparse_fragments, 1);
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 1, 1),
+            Some(LiteralValue::Number(1.0))
+        );
+        assert_eq!(engine.get_cell_value("Sheet1", 2, 1), None);
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 127, 1),
+            Some(LiteralValue::Number(1.0))
+        );
+        assert_eq!(engine.get_cell_value("Sheet1", 128, 1), None);
+    }
+
+    #[test]
+    fn span_eval_user_overlay_masks_computed_span_result_after_flush() {
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0));
+        let mut plane = FormulaPlane::default();
+        let placement = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=A1+1"),
+                candidate(0, 1, 2, "=A2+1"),
+                candidate(0, 2, 2, "=A3+1"),
+            ],
+        );
+        let span = span_from_report(&placement);
+        let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+        assert_eq!(engine.graph.sheet_id_mut("Sheet1"), 0);
+        {
+            let mut ingest = engine.begin_bulk_ingest_arrow();
+            ingest.add_sheet("Sheet1", 3, 8);
+            for _ in 0..3 {
+                ingest
+                    .append_row(
+                        "Sheet1",
+                        &[
+                            LiteralValue::Empty,
+                            LiteralValue::Empty,
+                            LiteralValue::Empty,
+                        ],
+                    )
+                    .unwrap();
+            }
+            ingest.finish().unwrap();
+        }
+        {
+            let asheet = engine.sheet_store_mut().sheet_mut("Sheet1").unwrap();
+            let (chunk_idx, offset) = asheet.chunk_of_row(1).unwrap();
+            asheet.columns[2].chunks[chunk_idx]
+                .overlay
+                .set_scalar(offset, OverlayValue::Text("user".into()));
+        }
+        let mut buffer = ComputedWriteBuffer::default();
+
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, span),
+            &mut buffer,
+        );
+        engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+        let stats = computed_overlay_stats(&engine, "Sheet1", 2, 0);
+        assert_eq!(stats.dense_fragments, 1);
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 1, 3),
+            Some(LiteralValue::Number(2.0))
+        );
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 2, 3),
+            Some(LiteralValue::Text("user".into()))
+        );
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 3, 3),
+            Some(LiteralValue::Number(4.0))
+        );
     }
 
     #[test]
@@ -612,7 +1134,7 @@ mod tests {
         let mut sink = SpanComputedWriteSink::new(&mut buffer);
 
         let err = evaluator
-            .evaluate_task(&whole_span_task(span), &mut sink)
+            .evaluate_task(&whole_span_task(&plane, span), &mut sink)
             .unwrap_err();
 
         assert_eq!(err, SpanEvalError::UnsupportedReferenceRelocation);
