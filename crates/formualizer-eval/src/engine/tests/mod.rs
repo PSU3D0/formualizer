@@ -89,6 +89,7 @@ mod criteria_overlay_parity;
 mod custom_function_registry_compat;
 mod dynamic_lookup_arrow;
 mod eval_delta;
+mod eval_flush_recalc_probe;
 mod formula_edit_propagation;
 mod formula_error_propagation;
 mod formula_overlay_writeback;
