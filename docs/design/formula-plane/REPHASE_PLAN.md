@@ -1,6 +1,26 @@
 # FormulaPlane Bridge Rephase Plan
 
-Status: updated plan for `formula-plane/bridge` after FP4.0 runtime-contract review and FP4.A implementation planning.
+Status: historical rephase record. Forward runtime FP5-FP7 below are superseded by the active FP6 runtime documents.
+
+Supersession note, 2026-05-03:
+
+```text
+FORMULA_PLANE_RUNTIME_ARCHITECTURE.md
+FORMULA_PLANE_IMPLEMENTATION_PLAN.md
+```
+
+are now the controlling docs for production FormulaPlane runtime work. Completed
+passive phases in this file remain historical/prerequisite context. The old
+forward FP5-FP7 path is superseded by the new opt-in span-authority path:
+
+```text
+eval-flush PR #95 substrate
+  -> FormulaPlane core stores/resolution/overlay
+  -> sidecar region indexes and dirty projection
+  -> sidecar mixed span/legacy scheduler
+  -> scalar span evaluator writing through ComputedWriteBuffer/fragments
+  -> FormulaOverlay punchouts and later partial dirty/normalization
+```
 
 ## Decision
 
@@ -47,8 +67,10 @@ These are seed primitives/docs. They are not yet runtime authority and are not p
 
 ## Incremental phases
 
-This phase map supersedes the initial coarse FP4/FP5 naming. Historical reports
-may refer to the older labels; forward-looking work should use this map.
+This phase map supersedes the initial coarse FP4/FP5 naming used during passive
+bridge setup. Historical reports may refer to the older labels. Forward-looking
+runtime implementation should no longer use FP5-FP7 below as the controlling
+plan; use the active runtime architecture and implementation plan instead.
 
 ### FP0 — Seed branch and reusable primitives
 
@@ -197,7 +219,7 @@ Gate:
 
 ### FP4.B — Passive function dependency taxonomy
 
-Status: **future**.
+Status: **complete for initial function-owned contract; later expansion deferred**.
 
 Deliverables:
 
@@ -212,6 +234,7 @@ Gate:
 - Function classification is passive and report-only.
 - Unknown/custom/reference-returning/dynamic functions have explicit fallback
   reasons.
+- Default `None` remains conservative and preserves existing behavior.
 
 ### FP4.C — Small-workbook overhead gates
 
@@ -250,7 +273,11 @@ Gate:
 
 ### FP5 — Graph-build hint integration, no authority change
 
-Status: **future**.
+Status: **superseded for forward runtime work**.
+
+This historical phase is replaced by the active FP6 runtime plan's store,
+placement, sidecar-index, and scheduler phases. Do not dispatch new production
+work from this section without explicitly re-scoping it against the active docs.
 
 Deliverables:
 
@@ -269,7 +296,11 @@ Gate:
 
 ### FP6 — First materialization reduction
 
-Status: **future**.
+Status: **superseded for forward runtime work**.
+
+The materialization-reduction goal remains valid, but the controlling plan is now
+`FORMULA_PLANE_IMPLEMENTATION_PLAN.md`: core runtime stores, authority-grade
+placement, sidecar indexes, and compact-authority counters.
 
 Deliverables:
 
@@ -292,7 +323,11 @@ graph/AST/edge set per dense formula cell.
 
 ### FP7 — First span executor
 
-Status: **future**.
+Status: **superseded for forward runtime work**.
+
+The first span executor is now scoped as FP6.4/FP6.5 in the active
+implementation plan and assumes eval-flush PR #95 / Phase 5 result-write
+substrate.
 
 Deliverables:
 
