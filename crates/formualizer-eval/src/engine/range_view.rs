@@ -393,30 +393,9 @@ impl<'a> RangeView<'a> {
         let row_start = chunk_starts[ch_idx];
         let in_off = abs_row - row_start;
         // Overlay takes precedence: user edits over computed over base.
-        if let Some(ov) = ch
-            .overlay
-            .get(in_off)
-            .or_else(|| ch.computed_overlay.get(in_off))
-        {
-            return match ov {
-                arrow_store::OverlayValue::Empty => LiteralValue::Empty,
-                arrow_store::OverlayValue::Number(n) => LiteralValue::Number(*n),
-                arrow_store::OverlayValue::DateTime(serial) => {
-                    LiteralValue::from_serial_number(*serial)
-                }
-                arrow_store::OverlayValue::Duration(serial) => {
-                    let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
-                    let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
-                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
-                }
-                arrow_store::OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
-                arrow_store::OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
-                arrow_store::OverlayValue::Error(code) => {
-                    let kind = arrow_store::unmap_error_code(*code);
-                    LiteralValue::Error(ExcelError::new(kind))
-                }
-                arrow_store::OverlayValue::Pending => LiteralValue::Pending,
-            };
+        let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+        if let Some(ov) = cascade.get_scalar(in_off) {
+            return ov.to_literal();
         }
         // Read tag and route to lane
         let tag_u8 = ch.type_tag.value(in_off);
@@ -650,9 +629,6 @@ impl<'a> RangeView<'a> {
         &self,
     ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::Float64Array>>), ExcelError>> + '_
     {
-        use crate::compute_prelude::zip_select;
-        use arrow_array::builder::{BooleanBuilder, Float64Builder};
-
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<Arc<arrow_array::Float64Array>> =
@@ -691,43 +667,13 @@ impl<'a> RangeView<'a> {
                 };
                 let rel_off = (self.sr + cs.row_start) - chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                    || (!ch.computed_overlay.is_empty()
-                        && ch.computed_overlay.any_in_range(seg_range.clone()));
-                if has_overlay {
-                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
-                    let mut ob = Float64Builder::with_capacity(cs.row_len);
-                    for i in 0..cs.row_len {
-                        if let Some(ov) = ch
-                            .overlay
-                            .get(rel_off + i)
-                            .or_else(|| ch.computed_overlay.get(rel_off + i))
-                        {
-                            mask_b.append_value(true);
-                            match ov {
-                                arrow_store::OverlayValue::Number(n)
-                                | arrow_store::OverlayValue::DateTime(n)
-                                | arrow_store::OverlayValue::Duration(n) => ob.append_value(*n),
-                                _ => ob.append_null(),
-                            }
-                        } else {
-                            mask_b.append_value(false);
-                            ob.append_null();
-                        }
-                    }
-                    let mask = mask_b.finish();
-                    let overlay_vals = ob.finish();
+                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                if cascade.has_any_in_range(seg_range.clone()) {
                     let base_fa = base
                         .as_any()
                         .downcast_ref::<arrow_array::Float64Array>()
                         .unwrap();
-                    let zipped = zip_select(&mask, &overlay_vals, base_fa).expect("zip overlay");
-                    let fa = zipped
-                        .as_any()
-                        .downcast_ref::<arrow_array::Float64Array>()
-                        .unwrap()
-                        .clone();
-                    out_cols.push(Arc::new(fa));
+                    out_cols.push(cascade.select_numbers(seg_range, base_fa));
                 } else {
                     out_cols.push(base_arc);
                 }
@@ -741,9 +687,6 @@ impl<'a> RangeView<'a> {
         &self,
     ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::BooleanArray>>), ExcelError>> + '_
     {
-        use crate::compute_prelude::zip_select;
-        use arrow_array::builder::BooleanBuilder;
-
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<Arc<arrow_array::BooleanArray>> =
@@ -782,42 +725,13 @@ impl<'a> RangeView<'a> {
                 };
                 let rel_off = (self.sr + cs.row_start) - chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                    || (!ch.computed_overlay.is_empty()
-                        && ch.computed_overlay.any_in_range(seg_range.clone()));
-                if has_overlay {
-                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
-                    let mut bb = BooleanBuilder::with_capacity(cs.row_len);
-                    for i in 0..cs.row_len {
-                        if let Some(ov) = ch
-                            .overlay
-                            .get(rel_off + i)
-                            .or_else(|| ch.computed_overlay.get(rel_off + i))
-                        {
-                            mask_b.append_value(true);
-                            match ov {
-                                arrow_store::OverlayValue::Boolean(b) => bb.append_value(*b),
-                                _ => bb.append_null(),
-                            }
-                        } else {
-                            mask_b.append_value(false);
-                            bb.append_null();
-                        }
-                    }
-                    let mask = mask_b.finish();
-                    let overlay_vals = bb.finish();
+                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                if cascade.has_any_in_range(seg_range.clone()) {
                     let base_ba = base
                         .as_any()
                         .downcast_ref::<arrow_array::BooleanArray>()
                         .unwrap();
-                    let zipped =
-                        zip_select(&mask, &overlay_vals, base_ba).expect("zip boolean overlay");
-                    let ba = zipped
-                        .as_any()
-                        .downcast_ref::<arrow_array::BooleanArray>()
-                        .unwrap()
-                        .clone();
-                    out_cols.push(Arc::new(ba));
+                    out_cols.push(cascade.select_booleans(seg_range, base_ba));
                 } else {
                     out_cols.push(base_arc);
                 }
@@ -831,9 +745,6 @@ impl<'a> RangeView<'a> {
         &self,
     ) -> impl Iterator<Item = Result<(usize, usize, Vec<arrow_array::ArrayRef>), ExcelError>> + '_
     {
-        use crate::compute_prelude::zip_select;
-        use arrow_array::builder::{BooleanBuilder, StringBuilder};
-
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<arrow_array::ArrayRef> = Vec::with_capacity(cs.cols.len());
@@ -863,37 +774,13 @@ impl<'a> RangeView<'a> {
                 };
                 let rel_off = (self.sr + cs.row_start) - chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                    || (!ch.computed_overlay.is_empty()
-                        && ch.computed_overlay.any_in_range(seg_range.clone()));
-                if has_overlay {
-                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
-                    let mut sb = StringBuilder::with_capacity(cs.row_len, cs.row_len * 8);
-                    for i in 0..cs.row_len {
-                        if let Some(ov) = ch
-                            .overlay
-                            .get(rel_off + i)
-                            .or_else(|| ch.computed_overlay.get(rel_off + i))
-                        {
-                            mask_b.append_value(true);
-                            match ov {
-                                arrow_store::OverlayValue::Text(s) => sb.append_value(s),
-                                _ => sb.append_null(),
-                            }
-                        } else {
-                            mask_b.append_value(false);
-                            sb.append_null();
-                        }
-                    }
-                    let mask = mask_b.finish();
-                    let overlay_vals = sb.finish();
+                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                if cascade.has_any_in_range(seg_range.clone()) {
                     let base_sa = base
                         .as_any()
                         .downcast_ref::<arrow_array::StringArray>()
                         .unwrap();
-                    let zipped =
-                        zip_select(&mask, &overlay_vals, base_sa).expect("zip text overlay");
-                    out_cols.push(zipped);
+                    out_cols.push(cascade.select_text(seg_range, base_sa));
                 } else {
                     out_cols.push(base.clone());
                 }
@@ -907,9 +794,6 @@ impl<'a> RangeView<'a> {
         &self,
     ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::StringArray>>), ExcelError>> + '_
     {
-        use crate::compute_prelude::zip_select;
-        use arrow_array::builder::{BooleanBuilder, StringBuilder};
-
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<Arc<arrow_array::StringArray>> =
@@ -937,11 +821,6 @@ impl<'a> RangeView<'a> {
                 let rel_off = (self.sr + cs.row_start) - chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
 
-                // Check overlay
-                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                    || (!ch.computed_overlay.is_empty()
-                        && ch.computed_overlay.any_in_range(seg_range.clone()));
-
                 let base_lowered = ch.text_lower_or_null();
                 let base_seg = base_lowered.slice(rel_off, cs.row_len);
                 let base_sa = base_seg
@@ -949,52 +828,9 @@ impl<'a> RangeView<'a> {
                     .downcast_ref::<arrow_array::StringArray>()
                     .expect("lowered slice downcast");
 
-                if has_overlay {
-                    // Build lowered overlay values builder
-                    let mut sb = StringBuilder::with_capacity(cs.row_len, cs.row_len * 8);
-                    let mut mb = BooleanBuilder::with_capacity(cs.row_len);
-                    for i in 0..cs.row_len {
-                        if let Some(ov) = ch
-                            .overlay
-                            .get(rel_off + i)
-                            .or_else(|| ch.computed_overlay.get(rel_off + i))
-                        {
-                            mb.append_value(true);
-                            match ov {
-                                arrow_store::OverlayValue::Text(s) => {
-                                    sb.append_value(s.to_lowercase());
-                                }
-                                arrow_store::OverlayValue::Empty => {
-                                    sb.append_null();
-                                }
-                                arrow_store::OverlayValue::Number(n)
-                                | arrow_store::OverlayValue::DateTime(n)
-                                | arrow_store::OverlayValue::Duration(n) => {
-                                    sb.append_value(n.to_string());
-                                }
-                                arrow_store::OverlayValue::Boolean(b) => {
-                                    sb.append_value(if *b { "true" } else { "false" });
-                                }
-                                arrow_store::OverlayValue::Error(_)
-                                | arrow_store::OverlayValue::Pending => {
-                                    sb.append_null();
-                                }
-                            }
-                        } else {
-                            sb.append_null();
-                            mb.append_value(false);
-                        }
-                    }
-                    let overlay_vals = sb.finish();
-                    let mask = mb.finish();
-                    let zipped = zip_select(&mask, &overlay_vals, base_sa)
-                        .expect("zip lowered text overlay");
-                    let za = zipped
-                        .as_any()
-                        .downcast_ref::<arrow_array::StringArray>()
-                        .unwrap()
-                        .clone();
-                    out_cols.push(Arc::new(za));
+                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                if cascade.has_any_in_range(seg_range.clone()) {
+                    out_cols.push(cascade.select_lowered_text(seg_range, base_sa));
                 } else {
                     out_cols.push(Arc::new(base_sa.clone()));
                 }
@@ -1008,9 +844,6 @@ impl<'a> RangeView<'a> {
         &self,
     ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::UInt8Array>>), ExcelError>> + '_
     {
-        use crate::compute_prelude::zip_select;
-        use arrow_array::builder::{BooleanBuilder, UInt8Builder};
-
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<Arc<arrow_array::UInt8Array>> = Vec::with_capacity(cs.cols.len());
@@ -1046,42 +879,13 @@ impl<'a> RangeView<'a> {
                 };
                 let rel_off = (self.sr + cs.row_start) - chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                    || (!ch.computed_overlay.is_empty()
-                        && ch.computed_overlay.any_in_range(seg_range.clone()));
-                if has_overlay {
-                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
-                    let mut eb = UInt8Builder::with_capacity(cs.row_len);
-                    for i in 0..cs.row_len {
-                        if let Some(ov) = ch
-                            .overlay
-                            .get(rel_off + i)
-                            .or_else(|| ch.computed_overlay.get(rel_off + i))
-                        {
-                            mask_b.append_value(true);
-                            match ov {
-                                arrow_store::OverlayValue::Error(code) => eb.append_value(*code),
-                                _ => eb.append_null(),
-                            }
-                        } else {
-                            mask_b.append_value(false);
-                            eb.append_null();
-                        }
-                    }
-                    let mask = mask_b.finish();
-                    let overlay_vals = eb.finish();
+                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                if cascade.has_any_in_range(seg_range.clone()) {
                     let base_ea = base
                         .as_any()
                         .downcast_ref::<arrow_array::UInt8Array>()
                         .unwrap();
-                    let zipped =
-                        zip_select(&mask, &overlay_vals, base_ea).expect("zip err overlay");
-                    let ea = zipped
-                        .as_any()
-                        .downcast_ref::<arrow_array::UInt8Array>()
-                        .unwrap()
-                        .clone();
-                    out_cols.push(Arc::new(ea));
+                    out_cols.push(cascade.select_errors(seg_range, base_ea));
                 } else {
                     out_cols.push(base_arc);
                 }
@@ -1095,9 +899,6 @@ impl<'a> RangeView<'a> {
         &self,
     ) -> impl Iterator<Item = Result<(usize, usize, Vec<Arc<arrow_array::UInt8Array>>), ExcelError>> + '_
     {
-        use crate::compute_prelude::zip_select;
-        use arrow_array::builder::{BooleanBuilder, UInt8Builder};
-
         self.iter_row_chunks().map(move |res| {
             let cs = res?;
             let mut out_cols: Vec<Arc<arrow_array::UInt8Array>> = Vec::with_capacity(cs.cols.len());
@@ -1130,57 +931,13 @@ impl<'a> RangeView<'a> {
                 };
                 let rel_off = (self.sr + cs.row_start) - chunk_starts[ch_idx];
                 let seg_range = rel_off..(rel_off + cs.row_len);
-                let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                    || (!ch.computed_overlay.is_empty()
-                        && ch.computed_overlay.any_in_range(seg_range.clone()));
-                if has_overlay {
-                    let mut mask_b = BooleanBuilder::with_capacity(cs.row_len);
-                    let mut tb = UInt8Builder::with_capacity(cs.row_len);
-                    for i in 0..cs.row_len {
-                        if let Some(ov) = ch
-                            .overlay
-                            .get(rel_off + i)
-                            .or_else(|| ch.computed_overlay.get(rel_off + i))
-                        {
-                            mask_b.append_value(true);
-                            let tag = match ov {
-                                arrow_store::OverlayValue::Empty => arrow_store::TypeTag::Empty,
-                                arrow_store::OverlayValue::Number(_) => {
-                                    arrow_store::TypeTag::Number
-                                }
-                                arrow_store::OverlayValue::DateTime(_) => {
-                                    arrow_store::TypeTag::DateTime
-                                }
-                                arrow_store::OverlayValue::Duration(_) => {
-                                    arrow_store::TypeTag::Duration
-                                }
-                                arrow_store::OverlayValue::Boolean(_) => {
-                                    arrow_store::TypeTag::Boolean
-                                }
-                                arrow_store::OverlayValue::Text(_) => arrow_store::TypeTag::Text,
-                                arrow_store::OverlayValue::Error(_) => arrow_store::TypeTag::Error,
-                                arrow_store::OverlayValue::Pending => arrow_store::TypeTag::Pending,
-                            };
-                            tb.append_value(tag as u8);
-                        } else {
-                            mask_b.append_value(false);
-                            tb.append_null();
-                        }
-                    }
-                    let mask = mask_b.finish();
-                    let overlay_vals = tb.finish();
+                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                if cascade.has_any_in_range(seg_range.clone()) {
                     let base_ta = base
                         .as_any()
                         .downcast_ref::<arrow_array::UInt8Array>()
                         .unwrap();
-                    let zipped =
-                        zip_select(&mask, &overlay_vals, base_ta).expect("zip tag overlay");
-                    let ta = zipped
-                        .as_any()
-                        .downcast_ref::<arrow_array::UInt8Array>()
-                        .unwrap()
-                        .clone();
-                    out_cols.push(Arc::new(ta));
+                    out_cols.push(cascade.select_type_tags(seg_range, base_ta));
                 } else {
                     out_cols.push(base_arc);
                 }
@@ -1192,8 +949,7 @@ impl<'a> RangeView<'a> {
     /// Build per-column concatenated lowered text arrays for this view.
     /// Uses per-chunk lowered cache for base text and merges overlays via zip_select.
     pub fn lowered_text_columns(&self) -> Vec<arrow_array::ArrayRef> {
-        use crate::compute_prelude::{concat_arrays, zip_select};
-        use arrow_array::builder::{BooleanBuilder, StringBuilder};
+        use crate::compute_prelude::concat_arrays;
 
         let mut out: Vec<arrow_array::ArrayRef> = Vec::with_capacity(self.cols);
         if self.rows == 0 || self.cols == 0 {
@@ -1237,61 +993,17 @@ impl<'a> RangeView<'a> {
                     let rel_off = is - start;
                     if let Some(ch) = col_ref.chunk(ci) {
                         // Overlay-aware lowered segment
-                        let has_overlay = ch.overlay.any_in_range(rel_off..(rel_off + seg_len))
-                            || (!ch.computed_overlay.is_empty()
-                                && ch
-                                    .computed_overlay
-                                    .any_in_range(rel_off..(rel_off + seg_len)));
-                        if has_overlay {
-                            // Build lowered overlay values builder
-                            let mut sb = StringBuilder::with_capacity(seg_len, seg_len * 8);
-                            // mask overlaid rows
-                            let mut mb = BooleanBuilder::with_capacity(seg_len);
-                            for i in 0..seg_len {
-                                if let Some(ov) = ch
-                                    .overlay
-                                    .get(rel_off + i)
-                                    .or_else(|| ch.computed_overlay.get(rel_off + i))
-                                {
-                                    mb.append_value(true);
-                                    match ov {
-                                        arrow_store::OverlayValue::Text(s) => {
-                                            sb.append_value(s.to_lowercase());
-                                        }
-                                        arrow_store::OverlayValue::Empty => {
-                                            sb.append_null();
-                                        }
-                                        arrow_store::OverlayValue::Number(n)
-                                        | arrow_store::OverlayValue::DateTime(n)
-                                        | arrow_store::OverlayValue::Duration(n) => {
-                                            sb.append_value(n.to_string());
-                                        }
-                                        arrow_store::OverlayValue::Boolean(b) => {
-                                            sb.append_value(if *b { "true" } else { "false" });
-                                        }
-                                        arrow_store::OverlayValue::Error(_)
-                                        | arrow_store::OverlayValue::Pending => {
-                                            sb.append_null();
-                                        }
-                                    }
-                                } else {
-                                    // not overlaid
-                                    sb.append_null();
-                                    mb.append_value(false);
-                                }
-                            }
-                            let overlay_vals = sb.finish();
-                            let mask = mb.finish();
-                            // base lowered segment
+                        let seg_range = rel_off..(rel_off + seg_len);
+                        let cascade =
+                            arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                        if cascade.has_any_in_range(seg_range.clone()) {
                             let base_lowered = ch.text_lower_or_null();
                             let base_seg = base_lowered.slice(rel_off, seg_len);
                             let base_sa = base_seg
                                 .as_any()
                                 .downcast_ref::<arrow_array::StringArray>()
                                 .expect("lowered slice downcast");
-                            let zipped = zip_select(&mask, &overlay_vals, base_sa)
-                                .expect("zip lowered text overlay");
-                            segs.push(zipped);
+                            segs.push(cascade.select_lowered_text(seg_range, base_sa));
                         } else {
                             // No overlay: slice from lowered base
                             let lowered = ch.text_lower_or_null();
@@ -1373,50 +1085,16 @@ impl<'a> RangeView<'a> {
                         let base_nums = base_nums_arc.as_ref();
 
                         let seg_range = rel_off_in_chunk..(rel_off_in_chunk + seg_len);
-                        let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                            || (!ch.computed_overlay.is_empty()
-                                && ch.computed_overlay.any_in_range(seg_range.clone()));
+                        let cascade =
+                            arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
 
-                        let final_arr = if has_overlay {
-                            let mut nb =
-                                arrow_array::builder::Float64Builder::with_capacity(seg_len);
-                            let mut mask_b =
-                                arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
-                            for i in 0..seg_len {
-                                if let Some(ov) = ch
-                                    .overlay
-                                    .get(rel_off_in_chunk + i)
-                                    .or_else(|| ch.computed_overlay.get(rel_off_in_chunk + i))
-                                {
-                                    mask_b.append_value(true);
-                                    match ov {
-                                        arrow_store::OverlayValue::Number(n)
-                                        | arrow_store::OverlayValue::DateTime(n)
-                                        | arrow_store::OverlayValue::Duration(n) => {
-                                            nb.append_value(*n)
-                                        }
-                                        _ => nb.append_null(),
-                                    }
-                                } else {
-                                    mask_b.append_value(false);
-                                    nb.append_null();
-                                }
-                            }
-                            let mask = mask_b.finish();
-                            let overlay_vals = nb.finish();
+                        let final_arr = if cascade.has_any_in_range(seg_range.clone()) {
                             let base_slice = base_nums.slice(rel_off_in_chunk, seg_len);
                             let base_fa = base_slice
                                 .as_any()
                                 .downcast_ref::<arrow_array::Float64Array>()
                                 .unwrap();
-                            let zipped =
-                                crate::compute_prelude::zip_select(&mask, &overlay_vals, base_fa)
-                                    .expect("zip slice");
-                            zipped
-                                .as_any()
-                                .downcast_ref::<arrow_array::Float64Array>()
-                                .unwrap()
-                                .clone()
+                            cascade.select_numbers(seg_range, base_fa).as_ref().clone()
                         } else {
                             let sl = base_nums.slice(rel_off_in_chunk, seg_len);
                             sl.as_any()
@@ -1516,57 +1194,18 @@ impl<'a> RangeView<'a> {
                     if let Some(ch) = col.chunk(ch_idx) {
                         let base_lowered = ch.text_lower_or_null();
                         let seg_range = rel_off_in_chunk..(rel_off_in_chunk + seg_len);
-                        let has_overlay = ch.overlay.any_in_range(seg_range.clone())
-                            || (!ch.computed_overlay.is_empty()
-                                && ch.computed_overlay.any_in_range(seg_range.clone()));
+                        let cascade =
+                            arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
 
-                        let final_arr = if has_overlay {
-                            let mut sb = arrow_array::builder::StringBuilder::with_capacity(
-                                seg_len,
-                                seg_len * 8,
-                            );
-                            let mut mask_b =
-                                arrow_array::builder::BooleanBuilder::with_capacity(seg_len);
-                            for i in 0..seg_len {
-                                if let Some(ov) = ch
-                                    .overlay
-                                    .get(rel_off_in_chunk + i)
-                                    .or_else(|| ch.computed_overlay.get(rel_off_in_chunk + i))
-                                {
-                                    mask_b.append_value(true);
-                                    match ov {
-                                        arrow_store::OverlayValue::Text(s) => {
-                                            sb.append_value(s.to_lowercase())
-                                        }
-                                        arrow_store::OverlayValue::Number(n)
-                                        | arrow_store::OverlayValue::DateTime(n)
-                                        | arrow_store::OverlayValue::Duration(n) => {
-                                            sb.append_value(n.to_string())
-                                        }
-                                        arrow_store::OverlayValue::Boolean(b) => {
-                                            sb.append_value(if *b { "true" } else { "false" })
-                                        }
-                                        _ => sb.append_null(),
-                                    }
-                                } else {
-                                    mask_b.append_value(false);
-                                    sb.append_null();
-                                }
-                            }
-                            let mask = mask_b.finish();
-                            let overlay_vals = sb.finish();
+                        let final_arr = if cascade.has_any_in_range(seg_range.clone()) {
                             let base_slice = base_lowered.slice(rel_off_in_chunk, seg_len);
                             let base_sa = base_slice
                                 .as_any()
                                 .downcast_ref::<arrow_array::StringArray>()
                                 .unwrap();
-                            let zipped =
-                                crate::compute_prelude::zip_select(&mask, &overlay_vals, base_sa)
-                                    .expect("zip text");
-                            zipped
-                                .as_any()
-                                .downcast_ref::<arrow_array::StringArray>()
-                                .unwrap()
+                            cascade
+                                .select_lowered_text(seg_range, base_sa)
+                                .as_ref()
                                 .clone()
                         } else {
                             let sl = base_lowered.slice(rel_off_in_chunk, seg_len);

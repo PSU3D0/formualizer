@@ -41,13 +41,13 @@ smallvec = { workspace = true }
 # web-time is only needed for the js-runtime (browser/wasm-bindgen) profile.
 web-time = { workspace = true, optional = true }
 
-# Arrow (per-crate) — pinned to 56.x series
-arrow-array = "56"
-arrow-buffer = "56"
-arrow-schema = "56"
-arrow-select = "56"
-arrow-cast = "56"
-arrow = "56"
+# Arrow (per-crate) — pinned to 58.x series
+arrow-array = "58.2.0"
+arrow-buffer = "58.2.0"
+arrow-schema = "58.2.0"
+arrow-select = "58.2.0"
+arrow-cast = "58.2.0"
+arrow = "58.2.0"
 
 [dependencies.tracing]
 version = "0.1"
