@@ -1,0 +1,531 @@
+//! Internal FormulaPlane span-placement substrate for FP6.2.
+//!
+//! This module promotes already-collected candidate formula families into the
+//! inert FormulaPlane runtime stores. It does not wire FormulaPlane into graph
+//! build, dirty propagation, scheduling, or evaluation.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+use formualizer_parse::parser::ASTNode;
+
+use crate::SheetId;
+
+use super::ids::FormulaTemplateId;
+use super::runtime::{
+    FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
+};
+use super::template_canonical::{CanonicalTemplate, CanonicalTemplateFlag, canonicalize_template};
+
+#[derive(Clone, Debug)]
+pub(crate) struct FormulaPlacementCandidate {
+    pub(crate) sheet_id: SheetId,
+    pub(crate) row: u32,
+    pub(crate) col: u32,
+    pub(crate) ast: Arc<ASTNode>,
+    pub(crate) formula_text: Option<Arc<str>>,
+}
+
+impl FormulaPlacementCandidate {
+    pub(crate) fn new(
+        sheet_id: SheetId,
+        row: u32,
+        col: u32,
+        ast: Arc<ASTNode>,
+        formula_text: Option<Arc<str>>,
+    ) -> Self {
+        Self {
+            sheet_id,
+            row,
+            col,
+            ast,
+            formula_text,
+        }
+    }
+
+    pub(crate) fn placement(&self) -> PlacementCoord {
+        PlacementCoord::new(self.sheet_id, self.row, self.col)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FormulaPlacementResult {
+    Legacy {
+        placement: PlacementCoord,
+        reason: PlacementFallbackReason,
+    },
+    Span {
+        span: FormulaSpanRef,
+        template_id: FormulaTemplateId,
+        placement: PlacementCoord,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum PlacementFallbackReason {
+    EmptyCandidateSet,
+    UnsupportedCanonicalTemplate,
+    NonEquivalentTemplate,
+    UnsupportedShapeOrGaps,
+    SingletonUnique,
+    CrossSheetOrSheetMismatch,
+    DuplicatePlacement,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FormulaPlacementReport {
+    pub(crate) counters: FormulaPlacementCounters,
+    pub(crate) results: Vec<FormulaPlacementResult>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FormulaPlacementCounters {
+    pub(crate) formula_cells_seen: u64,
+    pub(crate) accepted_span_cells: u64,
+    pub(crate) legacy_cells: u64,
+    pub(crate) templates_interned: u64,
+    pub(crate) spans_created: u64,
+    pub(crate) formula_vertices_avoided: u64,
+    pub(crate) ast_roots_avoided: u64,
+    pub(crate) edge_rows_avoided: u64,
+    pub(crate) per_placement_formula_vertices_created: u64,
+    pub(crate) per_placement_ast_roots_created: u64,
+    pub(crate) per_placement_edge_rows_created: u64,
+    pub(crate) fallback_reasons: BTreeMap<PlacementFallbackReason, u64>,
+}
+
+pub(crate) fn place_candidate_family(
+    plane: &mut FormulaPlane,
+    candidates: Vec<FormulaPlacementCandidate>,
+) -> FormulaPlacementReport {
+    let mut report = FormulaPlacementReport::default();
+    report.counters.formula_cells_seen = candidates.len() as u64;
+
+    if candidates.is_empty() {
+        return report;
+    }
+
+    let analyses = match analyze_candidates(&candidates) {
+        Ok(analyses) => analyses,
+        Err(reason) => {
+            mark_all_legacy(&mut report, &candidates, reason);
+            return report;
+        }
+    };
+
+    let first = &analyses[0];
+    let sheet_id = first.candidate.sheet_id;
+    if analyses
+        .iter()
+        .any(|analysis| analysis.candidate.sheet_id != sheet_id)
+    {
+        mark_all_legacy(
+            &mut report,
+            &candidates,
+            PlacementFallbackReason::CrossSheetOrSheetMismatch,
+        );
+        return report;
+    }
+
+    if analyses
+        .iter()
+        .any(|analysis| analysis.template.key.payload() != first.template.key.payload())
+    {
+        mark_all_legacy(
+            &mut report,
+            &candidates,
+            PlacementFallbackReason::NonEquivalentTemplate,
+        );
+        return report;
+    }
+
+    let domain = match detect_domain(&analyses) {
+        Ok(domain) => domain,
+        Err(reason) => {
+            mark_all_legacy(&mut report, &candidates, reason);
+            return report;
+        }
+    };
+
+    let template_count_before = plane.templates.len();
+    let template_id = plane.intern_template(
+        Arc::<str>::from(first.template.key.payload()),
+        Arc::clone(&first.candidate.ast),
+        first.candidate.formula_text.clone(),
+    );
+    if plane.templates.len() > template_count_before {
+        report.counters.templates_interned = 1;
+    }
+
+    let span = plane.insert_span(NewFormulaSpan {
+        sheet_id,
+        template_id,
+        result_region: ResultRegion::scalar_cells(domain.clone()),
+        domain,
+        intrinsic_mask_id: None,
+    });
+
+    report.counters.spans_created = 1;
+    report.counters.accepted_span_cells = candidates.len() as u64;
+    report.counters.formula_vertices_avoided = report.counters.accepted_span_cells;
+    report.counters.ast_roots_avoided = report.counters.accepted_span_cells.saturating_sub(1);
+    report.counters.edge_rows_avoided = report.counters.accepted_span_cells;
+    report.results = candidates
+        .into_iter()
+        .map(|candidate| FormulaPlacementResult::Span {
+            span,
+            template_id,
+            placement: candidate.placement(),
+        })
+        .collect();
+    report
+}
+
+struct CandidateAnalysis<'a> {
+    candidate: &'a FormulaPlacementCandidate,
+    template: CanonicalTemplate,
+}
+
+fn analyze_candidates(
+    candidates: &[FormulaPlacementCandidate],
+) -> Result<Vec<CandidateAnalysis<'_>>, PlacementFallbackReason> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let anchor_row = candidate
+                .row
+                .checked_add(1)
+                .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
+            let anchor_col = candidate
+                .col
+                .checked_add(1)
+                .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
+            let template = canonicalize_template(&candidate.ast, anchor_row, anchor_col);
+            if !template.labels.is_authority_supported() {
+                return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
+            }
+            if template
+                .labels
+                .flags
+                .contains(&CanonicalTemplateFlag::ExplicitSheetBinding)
+            {
+                return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
+            }
+            Ok(CandidateAnalysis {
+                candidate,
+                template,
+            })
+        })
+        .collect()
+}
+
+fn detect_domain(
+    analyses: &[CandidateAnalysis<'_>],
+) -> Result<PlacementDomain, PlacementFallbackReason> {
+    if analyses.len() < 2 {
+        return Err(PlacementFallbackReason::SingletonUnique);
+    }
+
+    let sheet_id = analyses[0].candidate.sheet_id;
+    let mut coords = Vec::with_capacity(analyses.len());
+    let mut unique = BTreeSet::new();
+    for analysis in analyses {
+        let coord = analysis.candidate.placement();
+        if !unique.insert((coord.row, coord.col)) {
+            return Err(PlacementFallbackReason::DuplicatePlacement);
+        }
+        coords.push(coord);
+    }
+
+    if coords.iter().any(|coord| coord.sheet_id != sheet_id) {
+        return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
+    }
+
+    let same_col = coords.iter().all(|coord| coord.col == coords[0].col);
+    if same_col {
+        let mut rows: Vec<_> = coords.iter().map(|coord| coord.row).collect();
+        rows.sort_unstable();
+        if is_contiguous(&rows) {
+            return Ok(PlacementDomain::row_run(
+                sheet_id,
+                rows[0],
+                *rows.last().expect("non-empty rows"),
+                coords[0].col,
+            ));
+        }
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+
+    let same_row = coords.iter().all(|coord| coord.row == coords[0].row);
+    if same_row {
+        let mut cols: Vec<_> = coords.iter().map(|coord| coord.col).collect();
+        cols.sort_unstable();
+        if is_contiguous(&cols) {
+            return Ok(PlacementDomain::col_run(
+                sheet_id,
+                coords[0].row,
+                cols[0],
+                *cols.last().expect("non-empty cols"),
+            ));
+        }
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+
+    let rows: BTreeSet<_> = coords.iter().map(|coord| coord.row).collect();
+    let cols: BTreeSet<_> = coords.iter().map(|coord| coord.col).collect();
+    let rows_vec: Vec<_> = rows.iter().copied().collect();
+    let cols_vec: Vec<_> = cols.iter().copied().collect();
+    if !is_contiguous(&rows_vec) || !is_contiguous(&cols_vec) {
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+    if rows.len() * cols.len() != coords.len() {
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+
+    Ok(PlacementDomain::rect(
+        sheet_id,
+        rows_vec[0],
+        *rows_vec.last().expect("non-empty rows"),
+        cols_vec[0],
+        *cols_vec.last().expect("non-empty cols"),
+    ))
+}
+
+fn is_contiguous(values: &[u32]) -> bool {
+    values
+        .windows(2)
+        .all(|window| window[0].saturating_add(1) == window[1])
+}
+
+fn mark_all_legacy(
+    report: &mut FormulaPlacementReport,
+    candidates: &[FormulaPlacementCandidate],
+    reason: PlacementFallbackReason,
+) {
+    report.counters.legacy_cells = candidates.len() as u64;
+    report
+        .counters
+        .fallback_reasons
+        .insert(reason, candidates.len() as u64);
+    report.results = candidates
+        .iter()
+        .map(|candidate| FormulaPlacementResult::Legacy {
+            placement: candidate.placement(),
+            reason,
+        })
+        .collect();
+}
+
+#[cfg(test)]
+mod tests {
+    use formualizer_parse::parser::parse;
+
+    use super::super::runtime::FormulaResolution;
+    use super::*;
+
+    fn candidate(
+        sheet_id: SheetId,
+        row: u32,
+        col: u32,
+        formula: &str,
+    ) -> FormulaPlacementCandidate {
+        FormulaPlacementCandidate::new(
+            sheet_id,
+            row,
+            col,
+            Arc::new(parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"))),
+            Some(Arc::<str>::from(formula)),
+        )
+    }
+
+    #[test]
+    fn row_run_same_template_promotes_to_span() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=A1+1"),
+                candidate(0, 1, 2, "=A2+1"),
+                candidate(0, 2, 2, "=A3+1"),
+            ],
+        );
+
+        assert_eq!(report.counters.formula_cells_seen, 3);
+        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.legacy_cells, 0);
+        assert_eq!(report.counters.spans_created, 1);
+        assert_eq!(report.counters.templates_interned, 1);
+        assert!(matches!(
+            report.results[0],
+            FormulaPlacementResult::Span { .. }
+        ));
+        assert!(matches!(
+            plane
+                .resolve_formula_at(PlacementCoord::new(0, 1, 2), None)
+                .resolution,
+            FormulaResolution::SpanPlacement { .. }
+        ));
+    }
+
+    #[test]
+    fn col_run_same_template_promotes_to_span() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 2, 0, "=A1+1"),
+                candidate(0, 2, 1, "=B1+1"),
+                candidate(0, 2, 2, "=C1+1"),
+            ],
+        );
+
+        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        assert!(matches!(
+            plane.spans.get(span).unwrap().domain,
+            PlacementDomain::ColRun { .. }
+        ));
+    }
+
+    #[test]
+    fn rect_same_template_promotes_to_span() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 1, 1, "=A1+1"),
+                candidate(0, 1, 2, "=B1+1"),
+                candidate(0, 2, 1, "=A2+1"),
+                candidate(0, 2, 2, "=B2+1"),
+            ],
+        );
+
+        assert_eq!(report.counters.accepted_span_cells, 4);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        assert!(matches!(
+            plane.spans.get(span).unwrap().domain,
+            PlacementDomain::Rect { .. }
+        ));
+    }
+
+    #[test]
+    fn unique_formulas_remain_legacy() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(&mut plane, vec![candidate(0, 0, 0, "=A1+1")]);
+
+        assert_eq!(report.counters.accepted_span_cells, 0);
+        assert_eq!(report.counters.legacy_cells, 1);
+        assert_eq!(
+            report.counters.fallback_reasons,
+            BTreeMap::from([(PlacementFallbackReason::SingletonUnique, 1)])
+        );
+        assert!(matches!(
+            report.results[0],
+            FormulaPlacementResult::Legacy {
+                reason: PlacementFallbackReason::SingletonUnique,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unsupported_dynamic_formula_remains_legacy_with_reason() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 0, "=RAND()"), candidate(0, 1, 0, "=RAND()")],
+        );
+
+        assert_eq!(report.counters.accepted_span_cells, 0);
+        assert_eq!(report.counters.legacy_cells, 2);
+        assert_eq!(
+            report
+                .counters
+                .fallback_reasons
+                .get(&PlacementFallbackReason::UnsupportedCanonicalTemplate),
+            Some(&2)
+        );
+    }
+
+    #[test]
+    fn non_equivalent_formula_never_promotes() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 1, 2, "=A1+1")],
+        );
+
+        assert_eq!(report.counters.accepted_span_cells, 0);
+        assert_eq!(report.counters.legacy_cells, 2);
+        assert_eq!(
+            report
+                .counters
+                .fallback_reasons
+                .get(&PlacementFallbackReason::NonEquivalentTemplate),
+            Some(&2)
+        );
+    }
+
+    #[test]
+    fn accepted_row_run_avoids_per_placement_vertices_ast_and_edges() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=A1+1"),
+                candidate(0, 1, 2, "=A2+1"),
+                candidate(0, 2, 2, "=A3+1"),
+            ],
+        );
+
+        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.per_placement_formula_vertices_created, 0);
+        assert_eq!(report.counters.per_placement_ast_roots_created, 0);
+        assert_eq!(report.counters.per_placement_edge_rows_created, 0);
+        assert_eq!(report.counters.formula_vertices_avoided, 3);
+        assert_eq!(report.counters.ast_roots_avoided, 2);
+        assert_eq!(report.counters.edge_rows_avoided, 3);
+    }
+
+    #[test]
+    fn span_virtual_formula_matches_legacy_formula_text_or_ast_relocation() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 1, 2, "=A2+1")],
+        );
+
+        let FormulaPlacementResult::Span {
+            span, template_id, ..
+        } = report.results[1]
+        else {
+            panic!("expected span result");
+        };
+        let handle = plane.resolve_formula_at(PlacementCoord::new(0, 1, 2), None);
+
+        assert_eq!(
+            handle.resolution,
+            FormulaResolution::SpanPlacement {
+                span,
+                template_id,
+                placement: PlacementCoord::new(0, 1, 2),
+            }
+        );
+        assert_eq!(
+            plane
+                .templates
+                .get(template_id)
+                .unwrap()
+                .formula_text
+                .as_deref(),
+            Some("=A1+1")
+        );
+        assert_eq!(report.counters.per_placement_formula_vertices_created, 0);
+    }
+}
