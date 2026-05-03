@@ -51,8 +51,8 @@ impl FunctionArityRule {
             Self::Exactly(expected) => arity == expected,
             Self::AtLeast(min) => arity >= min,
             Self::OneOf(allowed) => allowed.contains(&arity),
-            Self::EvenAtLeast(min) => arity >= min && arity % 2 == 0,
-            Self::OddAtLeast(min) => arity >= min && arity % 2 == 1,
+            Self::EvenAtLeast(min) => arity >= min && arity.is_multiple_of(2),
+            Self::OddAtLeast(min) => arity >= min && !arity.is_multiple_of(2),
         }
     }
 }

@@ -1444,7 +1444,7 @@ mod tests {
 
     #[test]
     fn multi_sheet_determinism() {
-        let cells = vec![
+        let cells = [
             cell("Alpha", 1, 1, "tpl"),
             cell("Alpha", 2, 1, "tpl"),
             cell("Beta", 4, 3, "tpl"),
