@@ -3625,6 +3625,7 @@ mod tests {
     use super::*;
     use arrow_array::Array;
     use arrow_schema::DataType;
+    use chrono::Datelike;
 
     fn add_overlay_stats(into: &mut OverlayDebugStats, next: OverlayDebugStats) {
         into.points += next.points;
@@ -3691,6 +3692,332 @@ mod tests {
                 chunk.computed_overlay.estimated_bytes(),
                 chunk.computed_overlay.debug_recomputed_estimated_bytes()
             );
+        }
+    }
+
+    fn column_computed_overlay_estimated_bytes(sheet: &ArrowSheet, col_idx: usize) -> usize {
+        let Some(column) = sheet.columns.get(col_idx) else {
+            return 0;
+        };
+        column
+            .chunks
+            .iter()
+            .map(|chunk| chunk.computed_overlay.estimated_bytes())
+            .chain(
+                column
+                    .sparse_chunks
+                    .values()
+                    .map(|chunk| chunk.computed_overlay.estimated_bytes()),
+            )
+            .fold(0usize, usize::saturating_add)
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum Phase4ProbeFixture {
+        PointNumeric,
+        DenseNumeric,
+        RunNumeric,
+        SparseNumeric,
+        EmptyRun,
+        MixedDense,
+    }
+
+    impl Phase4ProbeFixture {
+        fn name(self) -> &'static str {
+            match self {
+                Phase4ProbeFixture::PointNumeric => "point_numeric",
+                Phase4ProbeFixture::DenseNumeric => "dense_numeric",
+                Phase4ProbeFixture::RunNumeric => "run_numeric",
+                Phase4ProbeFixture::SparseNumeric => "sparse_numeric",
+                Phase4ProbeFixture::EmptyRun => "empty_run",
+                Phase4ProbeFixture::MixedDense => "mixed_dense",
+            }
+        }
+    }
+
+    #[derive(Debug, serde::Serialize)]
+    struct Phase4ProbeOp {
+        ms: f64,
+        segments: usize,
+        arrays: usize,
+        rows_scanned: usize,
+        checksum: f64,
+        non_null: usize,
+    }
+
+    #[derive(Debug, serde::Serialize)]
+    struct Phase4ProbeRow {
+        fixture: &'static str,
+        rows: usize,
+        points: usize,
+        sparse_fragments: usize,
+        dense_fragments: usize,
+        run_fragments: usize,
+        covered_len: usize,
+        overlay_estimated_bytes: usize,
+        numbers: Phase4ProbeOp,
+        type_tags: Phase4ProbeOp,
+        lowered_text: Phase4ProbeOp,
+        get_cell_scan: Phase4ProbeOp,
+        expected_current_zip_select_calls: usize,
+    }
+
+    fn build_phase4_probe_sheet(rows: usize, fixture: Phase4ProbeFixture) -> ArrowSheet {
+        let mut builder =
+            IngestBuilder::new("S", 1, rows.max(1), crate::engine::DateSystem::Excel1900);
+        for row in 0..rows {
+            builder
+                .append_row(&[LiteralValue::Number((row + 1) as f64)])
+                .unwrap();
+        }
+        let mut sheet = builder.finish();
+        let chunk = sheet.columns[0].chunk_mut(0).unwrap();
+        match fixture {
+            Phase4ProbeFixture::PointNumeric => {
+                for row in 0..rows {
+                    chunk
+                        .computed_overlay
+                        .set_scalar(row, OverlayValue::Number((row + 1) as f64));
+                }
+            }
+            Phase4ProbeFixture::DenseNumeric => {
+                chunk.computed_overlay.apply_fragment(
+                    OverlayFragment::dense_range(
+                        0,
+                        (0..rows)
+                            .map(|row| OverlayValue::Number((row + 1) as f64))
+                            .collect(),
+                    )
+                    .unwrap(),
+                );
+            }
+            Phase4ProbeFixture::RunNumeric => {
+                chunk.computed_overlay.apply_fragment(
+                    OverlayFragment::run_range(0, vec![OverlayValue::Number(1.0); rows]).unwrap(),
+                );
+            }
+            Phase4ProbeFixture::SparseNumeric => {
+                chunk.computed_overlay.apply_fragment(
+                    OverlayFragment::sparse_offsets(
+                        (0..rows)
+                            .step_by(10)
+                            .map(|row| (row, OverlayValue::Number(10.0)))
+                            .collect(),
+                    )
+                    .unwrap(),
+                );
+            }
+            Phase4ProbeFixture::EmptyRun => {
+                chunk.computed_overlay.apply_fragment(
+                    OverlayFragment::run_range(0, vec![OverlayValue::Empty; rows]).unwrap(),
+                );
+            }
+            Phase4ProbeFixture::MixedDense => {
+                let pattern = [
+                    OverlayValue::Number(1.0),
+                    OverlayValue::Boolean(true),
+                    OverlayValue::Text(Arc::from("Alpha")),
+                    OverlayValue::Empty,
+                    OverlayValue::Error(map_error_code(ExcelErrorKind::Div)),
+                    OverlayValue::Pending,
+                    OverlayValue::DateTime(45000.25),
+                    OverlayValue::Duration(0.5),
+                ];
+                chunk.computed_overlay.apply_fragment(
+                    OverlayFragment::dense_range(
+                        0,
+                        (0..rows)
+                            .map(|row| pattern[row % pattern.len()].clone())
+                            .collect(),
+                    )
+                    .unwrap(),
+                );
+            }
+        }
+        sheet
+    }
+
+    fn measure_probe_numbers(sheet: &ArrowSheet, rows: usize) -> Phase4ProbeOp {
+        let view = sheet.range_view(0, 0, rows.saturating_sub(1), 0);
+        let start = std::time::Instant::now();
+        let mut segments = 0usize;
+        let mut arrays = 0usize;
+        let mut rows_scanned = 0usize;
+        let mut checksum = 0.0;
+        let mut non_null = 0usize;
+        for segment in view.numbers_slices() {
+            let (_row_start, row_len, cols) = segment.unwrap();
+            segments += 1;
+            rows_scanned += row_len;
+            for array in cols {
+                arrays += 1;
+                for idx in 0..array.len() {
+                    if array.is_valid(idx) {
+                        checksum += array.value(idx);
+                        non_null += 1;
+                    }
+                }
+            }
+        }
+        Phase4ProbeOp {
+            ms: start.elapsed().as_secs_f64() * 1000.0,
+            segments,
+            arrays,
+            rows_scanned,
+            checksum,
+            non_null,
+        }
+    }
+
+    fn measure_probe_type_tags(sheet: &ArrowSheet, rows: usize) -> Phase4ProbeOp {
+        let view = sheet.range_view(0, 0, rows.saturating_sub(1), 0);
+        let start = std::time::Instant::now();
+        let mut segments = 0usize;
+        let mut arrays = 0usize;
+        let mut rows_scanned = 0usize;
+        let mut checksum = 0.0;
+        let mut non_null = 0usize;
+        for segment in view.type_tags_slices() {
+            let (_row_start, row_len, cols) = segment.unwrap();
+            segments += 1;
+            rows_scanned += row_len;
+            for array in cols {
+                arrays += 1;
+                for idx in 0..array.len() {
+                    if array.is_valid(idx) {
+                        checksum += array.value(idx) as f64;
+                        non_null += 1;
+                    }
+                }
+            }
+        }
+        Phase4ProbeOp {
+            ms: start.elapsed().as_secs_f64() * 1000.0,
+            segments,
+            arrays,
+            rows_scanned,
+            checksum,
+            non_null,
+        }
+    }
+
+    fn measure_probe_lowered_text(sheet: &ArrowSheet, rows: usize) -> Phase4ProbeOp {
+        let view = sheet.range_view(0, 0, rows.saturating_sub(1), 0);
+        let start = std::time::Instant::now();
+        let mut segments = 0usize;
+        let mut arrays = 0usize;
+        let mut rows_scanned = 0usize;
+        let mut checksum = 0.0;
+        let mut non_null = 0usize;
+        for segment in view.lowered_text_slices() {
+            let (_row_start, row_len, cols) = segment.unwrap();
+            segments += 1;
+            rows_scanned += row_len;
+            for array in cols {
+                arrays += 1;
+                for idx in 0..array.len() {
+                    if array.is_valid(idx) {
+                        checksum += array.value(idx).len() as f64;
+                        non_null += 1;
+                    }
+                }
+            }
+        }
+        Phase4ProbeOp {
+            ms: start.elapsed().as_secs_f64() * 1000.0,
+            segments,
+            arrays,
+            rows_scanned,
+            checksum,
+            non_null,
+        }
+    }
+
+    fn literal_probe_weight(value: LiteralValue) -> f64 {
+        match value {
+            LiteralValue::Empty => 0.0,
+            LiteralValue::Int(value) => value as f64,
+            LiteralValue::Number(value) => value,
+            LiteralValue::Boolean(value) => {
+                if value {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            LiteralValue::Text(value) => value.len() as f64,
+            LiteralValue::Error(_) => -1.0,
+            LiteralValue::Date(value) => value.num_days_from_ce() as f64,
+            LiteralValue::DateTime(value) => value.and_utc().timestamp() as f64,
+            LiteralValue::Time(value) => value.num_seconds_from_midnight() as f64,
+            LiteralValue::Duration(value) => value.num_seconds() as f64,
+            LiteralValue::Array(values) => values.len() as f64,
+            LiteralValue::Pending => -2.0,
+        }
+    }
+
+    fn measure_probe_get_cell(sheet: &ArrowSheet, rows: usize) -> Phase4ProbeOp {
+        let view = sheet.range_view(0, 0, rows.saturating_sub(1), 0);
+        let start = std::time::Instant::now();
+        let mut checksum = 0.0;
+        for row in 0..rows {
+            checksum += literal_probe_weight(view.get_cell(row, 0));
+        }
+        Phase4ProbeOp {
+            ms: start.elapsed().as_secs_f64() * 1000.0,
+            segments: 1,
+            arrays: 0,
+            rows_scanned: rows,
+            checksum,
+            non_null: rows,
+        }
+    }
+
+    fn run_phase4_probe_fixture(rows: usize, fixture: Phase4ProbeFixture) -> Phase4ProbeRow {
+        let sheet = build_phase4_probe_sheet(rows, fixture);
+        assert_column_overlays_normalized(&sheet, 0);
+        let stats = column_overlay_stats(&sheet, 0, true);
+        let numbers = measure_probe_numbers(&sheet, rows);
+        let type_tags = measure_probe_type_tags(&sheet, rows);
+        let lowered_text = measure_probe_lowered_text(&sheet, rows);
+        let get_cell_scan = measure_probe_get_cell(&sheet, rows);
+        let expected_current_zip_select_calls =
+            numbers.segments + type_tags.segments + lowered_text.segments;
+        Phase4ProbeRow {
+            fixture: fixture.name(),
+            rows,
+            points: stats.points,
+            sparse_fragments: stats.sparse_fragments,
+            dense_fragments: stats.dense_fragments,
+            run_fragments: stats.run_fragments,
+            covered_len: stats.covered_len,
+            overlay_estimated_bytes: column_computed_overlay_estimated_bytes(&sheet, 0),
+            numbers,
+            type_tags,
+            lowered_text,
+            get_cell_scan,
+            expected_current_zip_select_calls,
+        }
+    }
+
+    #[test]
+    #[ignore = "manual Phase 4 observability probe; run with --ignored --nocapture"]
+    fn phase4_overlay_rangeview_observability_probe() {
+        let rows = std::env::var("FORMUALIZER_OVERLAY_PROBE_ROWS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(100_000)
+            .max(1);
+        for fixture in [
+            Phase4ProbeFixture::PointNumeric,
+            Phase4ProbeFixture::DenseNumeric,
+            Phase4ProbeFixture::RunNumeric,
+            Phase4ProbeFixture::SparseNumeric,
+            Phase4ProbeFixture::EmptyRun,
+            Phase4ProbeFixture::MixedDense,
+        ] {
+            let row = run_phase4_probe_fixture(rows, fixture);
+            println!("{}", serde_json::to_string(&row).unwrap());
         }
     }
 
