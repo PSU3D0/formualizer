@@ -1176,6 +1176,18 @@ impl OverlayFragment {
         })
     }
 
+    pub(crate) fn sparse_offsets_if_estimated_smaller_than_points(
+        items: Vec<(usize, OverlayValue)>,
+        point_estimate: usize,
+    ) -> Option<Result<Self, Vec<(usize, OverlayValue)>>> {
+        let fragment = Self::sparse_offsets(items)?;
+        if fragment.estimated_bytes() < point_estimate {
+            Some(Ok(fragment))
+        } else {
+            Some(Err(fragment.cells()))
+        }
+    }
+
     pub(crate) fn dense_range(start: usize, values: Vec<OverlayValue>) -> Option<Self> {
         let len = values.len();
         if len == 0 {

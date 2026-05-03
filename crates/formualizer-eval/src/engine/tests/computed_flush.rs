@@ -254,7 +254,170 @@ fn coalesced_flush_sparse_gaps_do_not_fill_base() {
         .computed_overlay
         .debug_stats();
     assert_eq!(stats.points, 2);
+    assert_eq!(stats.sparse_fragments, 0);
     assert_eq!(stats.covered_len, 2);
+}
+
+#[test]
+fn coalesced_flush_sparse_offsets_creates_sparse_fragment() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 1, 256);
+        for row0 in 0..128 {
+            ab.append_row(sheet, &[LiteralValue::Number((row0 + 1) as f64)])
+                .unwrap();
+        }
+        ab.finish().unwrap();
+    }
+    let sheet_id = engine.sheet_id(sheet).unwrap();
+    let mut buffer = ComputedWriteBuffer::default();
+
+    for row0 in (0..128).step_by(2) {
+        buffer.push_cell(
+            sheet_id,
+            row0,
+            0,
+            OverlayValue::Number(1000.0 + row0 as f64),
+        );
+    }
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let (ch_i, _) = asheet.chunk_of_row(0).unwrap();
+    let stats = asheet.columns[0]
+        .chunk(ch_i)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.points, 0);
+    assert_eq!(stats.sparse_fragments, 1);
+    assert_eq!(stats.dense_fragments, 0);
+    assert_eq!(stats.run_fragments, 0);
+    assert_eq!(stats.covered_len, 64);
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(1000.0));
+    assert_eq!(asheet.get_cell_value(1, 0), LiteralValue::Number(2.0));
+    assert_eq!(asheet.get_cell_value(126, 0), LiteralValue::Number(1126.0));
+    assert_eq!(asheet.get_cell_value(127, 0), LiteralValue::Number(128.0));
+}
+
+#[test]
+fn coalesced_flush_sparse_empty_masks_base_only_at_offsets() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 1, 256);
+        for row0 in 0..128 {
+            ab.append_row(sheet, &[LiteralValue::Number((row0 + 1) as f64)])
+                .unwrap();
+        }
+        ab.finish().unwrap();
+    }
+    let sheet_id = engine.sheet_id(sheet).unwrap();
+    let mut buffer = ComputedWriteBuffer::default();
+
+    for row0 in (0..128).step_by(2) {
+        buffer.push_cell(sheet_id, row0, 0, OverlayValue::Empty);
+    }
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let (ch_i, _) = asheet.chunk_of_row(0).unwrap();
+    let stats = asheet.columns[0]
+        .chunk(ch_i)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.sparse_fragments, 1);
+    assert_eq!(stats.covered_len, 64);
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Empty);
+    assert_eq!(asheet.get_cell_value(1, 0), LiteralValue::Number(2.0));
+    assert_eq!(asheet.get_cell_value(126, 0), LiteralValue::Empty);
+    assert_eq!(asheet.get_cell_value(127, 0), LiteralValue::Number(128.0));
+}
+
+#[test]
+fn coalesced_flush_sparse_user_overlay_precedence() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 1, 256);
+        for _ in 0..128 {
+            ab.append_row(sheet, &[LiteralValue::Empty]).unwrap();
+        }
+        ab.finish().unwrap();
+    }
+    {
+        let asheet = engine.sheet_store_mut().sheet_mut(sheet).unwrap();
+        let (ch_i, off) = asheet.chunk_of_row(10).unwrap();
+        asheet.columns[0].chunks[ch_i]
+            .overlay
+            .set_scalar(off, OverlayValue::Text("user".into()));
+    }
+    let sheet_id = engine.sheet_id(sheet).unwrap();
+    let mut buffer = ComputedWriteBuffer::default();
+
+    for row0 in (0..128).step_by(2) {
+        buffer.push_cell(
+            sheet_id,
+            row0,
+            0,
+            OverlayValue::Number(1000.0 + row0 as f64),
+        );
+    }
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let (ch_i, _) = asheet.chunk_of_row(0).unwrap();
+    let stats = asheet.columns[0]
+        .chunk(ch_i)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.sparse_fragments, 1);
+    assert_eq!(asheet.get_cell_value(8, 0), LiteralValue::Number(1008.0));
+    assert_eq!(
+        asheet.get_cell_value(10, 0),
+        LiteralValue::Text("user".into())
+    );
+    assert_eq!(asheet.get_cell_value(11, 0), LiteralValue::Empty);
+}
+
+#[test]
+fn coalesced_flush_sparse_cap_zero_compacts_fragment_safely() {
+    let mut cfg = arrow_eval_config();
+    cfg.max_overlay_memory_bytes = Some(0);
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    let sheet = "Sheet1";
+    let sheet_id = engine.graph.sheet_id_mut(sheet);
+    let mut buffer = ComputedWriteBuffer::default();
+
+    for row0 in (0..128).step_by(2) {
+        buffer.push_cell(
+            sheet_id,
+            row0,
+            0,
+            OverlayValue::Number(1000.0 + row0 as f64),
+        );
+    }
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+    assert!(buffer.is_empty());
+    assert_eq!(engine.overlay_memory_usage(), 0);
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let (ch_i, _) = asheet.chunk_of_row(0).unwrap();
+    let stats = asheet.columns[0]
+        .chunk(ch_i)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.covered_len, 0);
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(1000.0));
+    assert_eq!(asheet.get_cell_value(1, 0), LiteralValue::Empty);
+    assert_eq!(asheet.get_cell_value(126, 0), LiteralValue::Number(1126.0));
 }
 
 #[test]

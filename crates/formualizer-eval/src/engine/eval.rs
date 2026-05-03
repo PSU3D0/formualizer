@@ -4110,9 +4110,11 @@ where
 
     fn flush_computed_write_chunk_plan(&mut self, chunk: ComputedWriteChunkPlan) {
         match &chunk.shape {
-            ComputedWriteChunkPlanShape::Point
-            | ComputedWriteChunkPlanShape::SparseOffsets { .. } => {
+            ComputedWriteChunkPlanShape::Point => {
                 self.flush_computed_write_chunk_plan_as_points(chunk);
+            }
+            ComputedWriteChunkPlanShape::SparseOffsets { .. } => {
+                self.flush_computed_write_chunk_plan_as_sparse_fragment_or_points(chunk);
             }
             ComputedWriteChunkPlanShape::DenseRange { .. } => {
                 self.flush_computed_write_chunk_plan_as_dense_fragment(chunk);
@@ -4139,6 +4141,62 @@ where
                 .chunk_start_row0
                 .saturating_add(entry.row_in_chunk as u32);
             self.write_computed_overlay_value_0based(&sheet_name, row0, chunk.col0, entry.value);
+        }
+    }
+
+    fn flush_computed_write_chunk_plan_as_sparse_fragment_or_points(
+        &mut self,
+        chunk: ComputedWriteChunkPlan,
+    ) {
+        let point_estimate = Self::computed_write_chunk_plan_point_estimate(&chunk);
+        let sheet_id = chunk.sheet_id;
+        let col0 = chunk.col0;
+        let chunk_idx = chunk.chunk_idx;
+        let chunk_start_row0 = chunk.chunk_start_row0;
+        let items: Vec<(usize, OverlayValue)> = chunk
+            .entries
+            .into_iter()
+            .map(|entry| (entry.row_in_chunk, entry.value))
+            .collect();
+        match OverlayFragment::sparse_offsets_if_estimated_smaller_than_points(
+            items,
+            point_estimate,
+        ) {
+            Some(Ok(fragment)) => {
+                self.apply_computed_overlay_fragment(sheet_id, col0, chunk_idx, fragment);
+            }
+            Some(Err(cells)) => {
+                self.flush_computed_overlay_cells_as_points(
+                    sheet_id,
+                    col0,
+                    chunk_start_row0,
+                    cells,
+                );
+            }
+            None => {}
+        }
+    }
+
+    #[inline]
+    fn computed_write_chunk_plan_point_estimate(chunk: &ComputedWriteChunkPlan) -> usize {
+        chunk
+            .entries
+            .iter()
+            .map(|entry| ComputedWriteBuffer::estimate_value_bytes(&entry.value))
+            .fold(0usize, usize::saturating_add)
+    }
+
+    fn flush_computed_overlay_cells_as_points(
+        &mut self,
+        sheet_id: SheetId,
+        col0: u32,
+        chunk_start_row0: u32,
+        cells: Vec<(usize, OverlayValue)>,
+    ) {
+        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        for (row_in_chunk, value) in cells {
+            let row0 = chunk_start_row0.saturating_add(row_in_chunk as u32);
+            self.write_computed_overlay_value_0based(&sheet_name, row0, col0, value);
         }
     }
 
