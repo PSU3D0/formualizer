@@ -151,7 +151,7 @@ fn computed_write_coalescing_plan_preserves_sparse_gaps_and_empty_values() {
 }
 
 #[test]
-fn computed_write_buffer_flush_to_map_matches_immediate_cell_writes() {
+fn coalesced_flush_lww_matches_legacy_point_flush() {
     let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
     let sheet = "Sheet1";
     let sheet_id = engine.graph.sheet_id_mut(sheet);
@@ -179,7 +179,7 @@ fn computed_write_buffer_flush_to_map_matches_immediate_cell_writes() {
 }
 
 #[test]
-fn computed_write_buffer_rect_expands_row_major_correctly() {
+fn coalesced_flush_rect_expansion_matches_legacy() {
     let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
     let sheet = "Sheet1";
     let sheet_id = engine.graph.sheet_id_mut(sheet);
@@ -202,6 +202,84 @@ fn computed_write_buffer_rect_expands_row_major_correctly() {
     assert_eq!(asheet.get_cell_value(1, 3), LiteralValue::Number(2.0));
     assert_eq!(asheet.get_cell_value(2, 2), LiteralValue::Text("a".into()));
     assert_eq!(asheet.get_cell_value(2, 3), LiteralValue::Empty);
+}
+
+#[test]
+fn coalesced_flush_empty_masks_base() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 1, 8);
+        ab.append_row(sheet, &[LiteralValue::Number(42.0)]).unwrap();
+        ab.finish().unwrap();
+    }
+    let sheet_id = engine.sheet_id(sheet).unwrap();
+    let mut buffer = ComputedWriteBuffer::default();
+
+    buffer.push_cell(sheet_id, 0, 0, OverlayValue::Empty);
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Empty);
+}
+
+#[test]
+fn coalesced_flush_sparse_gaps_do_not_fill_base() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 1, 8);
+        ab.append_row(sheet, &[LiteralValue::Number(1.0)]).unwrap();
+        ab.append_row(sheet, &[LiteralValue::Number(2.0)]).unwrap();
+        ab.append_row(sheet, &[LiteralValue::Number(3.0)]).unwrap();
+        ab.finish().unwrap();
+    }
+    let sheet_id = engine.sheet_id(sheet).unwrap();
+    let mut buffer = ComputedWriteBuffer::default();
+
+    buffer.push_cell(sheet_id, 0, 0, OverlayValue::Number(10.0));
+    buffer.push_cell(sheet_id, 2, 0, OverlayValue::Empty);
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(10.0));
+    assert_eq!(asheet.get_cell_value(1, 0), LiteralValue::Number(2.0));
+    assert_eq!(asheet.get_cell_value(2, 0), LiteralValue::Empty);
+    let (ch_i, _) = asheet.chunk_of_row(0).unwrap();
+    let stats = asheet.columns[0]
+        .chunk(ch_i)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.points, 2);
+    assert_eq!(stats.covered_len, 2);
+}
+
+#[test]
+fn coalesced_flush_cap_zero_still_compacts_safely() {
+    let mut cfg = arrow_eval_config();
+    cfg.max_overlay_memory_bytes = Some(0);
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    let sheet = "Sheet1";
+    let sheet_id = engine.graph.sheet_id_mut(sheet);
+    let mut buffer = ComputedWriteBuffer::default();
+
+    buffer.push_cell(sheet_id, 0, 0, OverlayValue::Number(7.0));
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+
+    assert!(buffer.is_empty());
+    assert_eq!(engine.overlay_memory_usage(), 0);
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(7.0));
+    let (ch_i, _) = asheet.chunk_of_row(0).unwrap();
+    let stats = asheet.columns[0]
+        .chunk(ch_i)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.covered_len, 0);
 }
 
 #[test]

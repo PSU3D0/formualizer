@@ -3920,11 +3920,25 @@ where
         &self,
         buffer: &ComputedWriteBuffer,
     ) -> ComputedWriteCoalescingPlan {
+        self.plan_computed_write_coalescing_from_writes(buffer.writes().iter().cloned())
+    }
+
+    fn plan_owned_computed_write_coalescing(
+        &self,
+        writes: Vec<ComputedWrite>,
+    ) -> ComputedWriteCoalescingPlan {
+        self.plan_computed_write_coalescing_from_writes(writes)
+    }
+
+    fn plan_computed_write_coalescing_from_writes(
+        &self,
+        writes: impl IntoIterator<Item = ComputedWrite>,
+    ) -> ComputedWriteCoalescingPlan {
         let mut groups: BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>> =
             BTreeMap::new();
         let mut input_cells = 0usize;
 
-        for write in buffer.writes() {
+        for write in writes {
             match write {
                 ComputedWrite::Cell {
                     seq,
@@ -3936,11 +3950,11 @@ where
                     input_cells = input_cells.saturating_add(1);
                     self.push_computed_write_plan_entry(
                         &mut groups,
-                        *seq,
-                        *sheet_id,
-                        *row0,
-                        *col0,
-                        value.clone(),
+                        seq,
+                        sheet_id,
+                        row0,
+                        col0,
+                        value,
                     );
                 }
                 ComputedWrite::Rect {
@@ -3950,16 +3964,16 @@ where
                     sc0,
                     values,
                 } => {
-                    for (r_off, row) in values.iter().enumerate() {
-                        for (c_off, value) in row.iter().enumerate() {
+                    for (r_off, row) in values.into_iter().enumerate() {
+                        for (c_off, value) in row.into_iter().enumerate() {
                             input_cells = input_cells.saturating_add(1);
                             self.push_computed_write_plan_entry(
                                 &mut groups,
-                                *seq,
-                                *sheet_id,
+                                seq,
+                                sheet_id,
                                 sr0.saturating_add(r_off as u32),
                                 sc0.saturating_add(c_off as u32),
-                                value.clone(),
+                                value,
                             );
                         }
                     }
@@ -4082,41 +4096,27 @@ where
             return Ok(());
         }
 
-        for write in buffer.take_writes() {
-            match write {
-                ComputedWrite::Cell {
-                    sheet_id,
-                    row0,
-                    col0,
-                    value,
-                    ..
-                } => {
-                    let sheet_name = self.graph.sheet_name(sheet_id).to_string();
-                    self.write_computed_overlay_value_0based(&sheet_name, row0, col0, value);
-                }
-                ComputedWrite::Rect {
-                    sheet_id,
-                    sr0,
-                    sc0,
-                    values,
-                    ..
-                } => {
-                    let sheet_name = self.graph.sheet_name(sheet_id).to_string();
-                    for (r_off, row) in values.into_iter().enumerate() {
-                        for (c_off, value) in row.into_iter().enumerate() {
-                            self.write_computed_overlay_value_0based(
-                                &sheet_name,
-                                sr0.saturating_add(r_off as u32),
-                                sc0.saturating_add(c_off as u32),
-                                value,
-                            );
-                        }
-                    }
-                }
-            }
-        }
+        let plan = self.plan_owned_computed_write_coalescing(buffer.take_writes());
+        self.flush_computed_write_plan_as_points(plan);
 
         Ok(())
+    }
+
+    fn flush_computed_write_plan_as_points(&mut self, plan: ComputedWriteCoalescingPlan) {
+        for chunk in plan.chunks {
+            let sheet_name = self.graph.sheet_name(chunk.sheet_id).to_string();
+            for entry in chunk.entries {
+                let row0 = chunk
+                    .chunk_start_row0
+                    .saturating_add(entry.row_in_chunk as u32);
+                self.write_computed_overlay_value_0based(
+                    &sheet_name,
+                    row0,
+                    chunk.col0,
+                    entry.value,
+                );
+            }
+        }
     }
 
     #[inline]
