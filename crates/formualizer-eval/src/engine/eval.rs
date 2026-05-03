@@ -3318,16 +3318,16 @@ where
                     formualizer_common::ExcelErrorKind::Value,
                 )),
             };
-            if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
+            let computed_delta = if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
                 let _ = ch.overlay.set(in_off, ov);
                 // A user edit must invalidate any computed (formula/spill) overlay entry at
                 // this cell. Otherwise, if the delta overlay later compacts into the base lanes
                 // (clearing `overlay`), a stale `computed_overlay=Empty` could incorrectly mask
                 // the edited base value under the read cascade.
-                let _ = ch.computed_overlay.remove(in_off);
+                ch.computed_overlay.remove(in_off)
             } else {
                 return;
-            }
+            };
             // Heuristic compaction: > len/50 or > 1024
             let abs_threshold = 1024usize;
             let frac_den = 50usize;
@@ -3335,6 +3335,7 @@ where
             if freed > 0 {
                 self.overlay_compactions = self.overlay_compactions.saturating_add(1);
             }
+            self.adjust_computed_overlay_bytes(computed_delta);
         }
     }
 
@@ -3947,6 +3948,23 @@ where
     /// Estimated memory usage for computed overlays (formula/spill mirroring).
     pub fn overlay_memory_usage(&self) -> usize {
         self.computed_overlay_bytes_estimate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_recompute_computed_overlay_bytes(&mut self) -> usize {
+        let mut total = 0usize;
+        for sheet in &self.arrow_sheets.sheets {
+            for column in &sheet.columns {
+                for chunk in &column.chunks {
+                    total = total.saturating_add(chunk.computed_overlay.estimated_bytes());
+                }
+                for chunk in column.sparse_chunks.values() {
+                    total = total.saturating_add(chunk.computed_overlay.estimated_bytes());
+                }
+            }
+        }
+        self.computed_overlay_bytes_estimate = total;
+        total
     }
 
     fn resolve_sheet_locator_for_write(

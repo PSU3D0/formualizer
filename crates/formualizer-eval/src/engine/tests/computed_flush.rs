@@ -137,6 +137,8 @@ fn user_edit_removes_same_cell_computed_fragment_before_compaction() {
         );
     }
 
+    assert!(engine.debug_recompute_computed_overlay_bytes() > 0);
+
     engine
         .set_cell_value(sheet, 1, 1, LiteralValue::Number(9.0))
         .unwrap();
@@ -151,4 +153,5 @@ fn user_edit_removes_same_cell_computed_fragment_before_compaction() {
         "user edit should remove same-cell computed fragment before user overlay compaction"
     );
     assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(9.0));
+    assert_eq!(engine.overlay_memory_usage(), 0);
 }
