@@ -1,5 +1,5 @@
 use super::common::arrow_eval_config;
-use crate::arrow_store::OverlayValue;
+use crate::arrow_store::{OverlayFragment, OverlayValue};
 use crate::engine::eval::{ComputedWrite, ComputedWriteBuffer, Engine};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
@@ -105,4 +105,50 @@ fn computed_flush_parallel_scalar_group_flushes_before_return() {
             row0 + 1
         );
     }
+}
+
+#[test]
+fn user_edit_removes_same_cell_computed_fragment_before_compaction() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 1, 8);
+        ab.append_row(sheet, &[LiteralValue::Empty]).unwrap();
+        ab.finish().unwrap();
+    }
+
+    {
+        let asheet = engine.sheet_store_mut().sheet_mut(sheet).unwrap();
+        let (ch_i, off) = asheet.chunk_of_row(0).unwrap();
+        asheet.columns[0].chunks[ch_i]
+            .computed_overlay
+            .apply_fragment(
+                OverlayFragment::run_range(0, vec![OverlayValue::Number(42.0)]).unwrap(),
+            );
+        assert_eq!(
+            asheet.columns[0].chunks[ch_i]
+                .computed_overlay
+                .get_scalar(off)
+                .unwrap()
+                .to_literal(),
+            LiteralValue::Number(42.0)
+        );
+    }
+
+    engine
+        .set_cell_value(sheet, 1, 1, LiteralValue::Number(9.0))
+        .unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).unwrap();
+    let (ch_i, off) = asheet.chunk_of_row(0).unwrap();
+    assert!(
+        asheet.columns[0].chunks[ch_i]
+            .computed_overlay
+            .get_scalar(off)
+            .is_none(),
+        "user edit should remove same-cell computed fragment before user overlay compaction"
+    );
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(9.0));
 }
