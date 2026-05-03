@@ -1,11 +1,348 @@
 use super::common::arrow_eval_config;
-use crate::arrow_store::{OverlayFragment, OverlayValue};
+use crate::arrow_store::{
+    ArrowSheet, OverlayDebugStats, OverlayFragment, OverlaySelectStats, OverlayValue,
+    reset_overlay_select_stats, snapshot_overlay_select_stats,
+};
 use crate::engine::eval::{
     ComputedWrite, ComputedWriteBuffer, ComputedWriteChunkPlanShape, Engine,
 };
 use crate::test_workbook::TestWorkbook;
+use arrow_array::Array;
 use formualizer_common::LiteralValue;
+use formualizer_parse::ASTNode;
 use formualizer_parse::parser::parse;
+
+#[derive(Debug, Clone, Copy)]
+enum Phase5ComputedFlushProbeFixture {
+    ConstantCopied,
+    RowVarying,
+    AlternatingMostlyVaried,
+    SparseEveryOther,
+    CapZeroConstant,
+}
+
+impl Phase5ComputedFlushProbeFixture {
+    fn name(self) -> &'static str {
+        match self {
+            Phase5ComputedFlushProbeFixture::ConstantCopied => "constant_copied",
+            Phase5ComputedFlushProbeFixture::RowVarying => "row_varying",
+            Phase5ComputedFlushProbeFixture::AlternatingMostlyVaried => "alternating_mostly_varied",
+            Phase5ComputedFlushProbeFixture::SparseEveryOther => "sparse_every_other",
+            Phase5ComputedFlushProbeFixture::CapZeroConstant => "cap_zero_constant",
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Phase5ComputedFlushProbeOp {
+    ms: f64,
+    segments: usize,
+    arrays: usize,
+    rows_scanned: usize,
+    checksum: f64,
+    non_null: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Phase5ComputedFlushProbeOverlayStats {
+    points: usize,
+    sparse_fragments: usize,
+    dense_fragments: usize,
+    run_fragments: usize,
+    covered_len: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Phase5ComputedFlushProbeRow {
+    fixture: &'static str,
+    rows: usize,
+    formulas: usize,
+    chunk_rows: usize,
+    eval_ms: f64,
+    overlay_memory_usage: usize,
+    computed_overlay_estimated_bytes: usize,
+    overlay_stats: Phase5ComputedFlushProbeOverlayStats,
+    numbers: Phase5ComputedFlushProbeOp,
+    type_tags: Phase5ComputedFlushProbeOp,
+    lowered_text: Phase5ComputedFlushProbeOp,
+    select_stats: OverlaySelectStats,
+}
+
+fn phase5_probe_overlay_stats(sheet: &ArrowSheet, col_idx: usize) -> OverlayDebugStats {
+    let mut total = OverlayDebugStats::default();
+    let Some(column) = sheet.columns.get(col_idx) else {
+        return total;
+    };
+    for chunk in &column.chunks {
+        let stats = chunk.computed_overlay.debug_stats();
+        total.points += stats.points;
+        total.sparse_fragments += stats.sparse_fragments;
+        total.dense_fragments += stats.dense_fragments;
+        total.run_fragments += stats.run_fragments;
+        total.covered_len += stats.covered_len;
+    }
+    for chunk in column.sparse_chunks.values() {
+        let stats = chunk.computed_overlay.debug_stats();
+        total.points += stats.points;
+        total.sparse_fragments += stats.sparse_fragments;
+        total.dense_fragments += stats.dense_fragments;
+        total.run_fragments += stats.run_fragments;
+        total.covered_len += stats.covered_len;
+    }
+    total
+}
+
+fn phase5_probe_computed_overlay_estimated_bytes(sheet: &ArrowSheet, col_idx: usize) -> usize {
+    let Some(column) = sheet.columns.get(col_idx) else {
+        return 0;
+    };
+    column
+        .chunks
+        .iter()
+        .map(|chunk| chunk.computed_overlay.estimated_bytes())
+        .chain(
+            column
+                .sparse_chunks
+                .values()
+                .map(|chunk| chunk.computed_overlay.estimated_bytes()),
+        )
+        .fold(0usize, usize::saturating_add)
+}
+
+fn phase5_seed_base_rows(
+    engine: &mut Engine<TestWorkbook>,
+    sheet: &str,
+    rows: usize,
+    chunk_rows: usize,
+) {
+    let mut ab = engine.begin_bulk_ingest_arrow();
+    ab.add_sheet(sheet, 1, chunk_rows.max(1));
+    for _ in 0..rows.max(1) {
+        ab.append_row(sheet, &[LiteralValue::Empty]).unwrap();
+    }
+    ab.finish().unwrap();
+}
+
+fn phase5_set_formula_rows(
+    engine: &mut Engine<TestWorkbook>,
+    sheet: &str,
+    rows: usize,
+    fixture: Phase5ComputedFlushProbeFixture,
+) -> usize {
+    let one = parse("=1").unwrap();
+    let two = parse("=2").unwrap();
+    let row_fn = parse("=ROW()").unwrap();
+    let mut formulas = 0usize;
+
+    let mut set_formula = |row0: usize, ast: &ASTNode| {
+        engine
+            .set_cell_formula(sheet, row0 as u32 + 1, 1, ast.clone())
+            .unwrap();
+        formulas += 1;
+    };
+
+    match fixture {
+        Phase5ComputedFlushProbeFixture::ConstantCopied
+        | Phase5ComputedFlushProbeFixture::CapZeroConstant => {
+            for row0 in 0..rows {
+                set_formula(row0, &one);
+            }
+        }
+        Phase5ComputedFlushProbeFixture::RowVarying => {
+            for row0 in 0..rows {
+                set_formula(row0, &row_fn);
+            }
+        }
+        Phase5ComputedFlushProbeFixture::AlternatingMostlyVaried => {
+            for row0 in 0..rows {
+                let ast = if row0 % 2 == 0 { &one } else { &two };
+                set_formula(row0, ast);
+            }
+        }
+        Phase5ComputedFlushProbeFixture::SparseEveryOther => {
+            for row0 in (0..rows).step_by(2) {
+                set_formula(row0, &row_fn);
+            }
+        }
+    }
+
+    formulas
+}
+
+fn phase5_measure_numbers(sheet: &ArrowSheet, rows: usize) -> Phase5ComputedFlushProbeOp {
+    let view = sheet.range_view(0, 0, rows.saturating_sub(1), 0);
+    let start = std::time::Instant::now();
+    let mut segments = 0usize;
+    let mut arrays = 0usize;
+    let mut rows_scanned = 0usize;
+    let mut checksum = 0.0;
+    let mut non_null = 0usize;
+    for segment in view.numbers_slices() {
+        let (_row_start, row_len, cols) = segment.unwrap();
+        segments += 1;
+        rows_scanned += row_len;
+        for array in cols {
+            arrays += 1;
+            for idx in 0..array.len() {
+                if array.is_valid(idx) {
+                    checksum += array.value(idx);
+                    non_null += 1;
+                }
+            }
+        }
+    }
+    Phase5ComputedFlushProbeOp {
+        ms: start.elapsed().as_secs_f64() * 1000.0,
+        segments,
+        arrays,
+        rows_scanned,
+        checksum,
+        non_null,
+    }
+}
+
+fn phase5_measure_type_tags(sheet: &ArrowSheet, rows: usize) -> Phase5ComputedFlushProbeOp {
+    let view = sheet.range_view(0, 0, rows.saturating_sub(1), 0);
+    let start = std::time::Instant::now();
+    let mut segments = 0usize;
+    let mut arrays = 0usize;
+    let mut rows_scanned = 0usize;
+    let mut checksum = 0.0;
+    let mut non_null = 0usize;
+    for segment in view.type_tags_slices() {
+        let (_row_start, row_len, cols) = segment.unwrap();
+        segments += 1;
+        rows_scanned += row_len;
+        for array in cols {
+            arrays += 1;
+            for idx in 0..array.len() {
+                if array.is_valid(idx) {
+                    checksum += array.value(idx) as f64;
+                    non_null += 1;
+                }
+            }
+        }
+    }
+    Phase5ComputedFlushProbeOp {
+        ms: start.elapsed().as_secs_f64() * 1000.0,
+        segments,
+        arrays,
+        rows_scanned,
+        checksum,
+        non_null,
+    }
+}
+
+fn phase5_measure_lowered_text(sheet: &ArrowSheet, rows: usize) -> Phase5ComputedFlushProbeOp {
+    let view = sheet.range_view(0, 0, rows.saturating_sub(1), 0);
+    let start = std::time::Instant::now();
+    let mut segments = 0usize;
+    let mut arrays = 0usize;
+    let mut rows_scanned = 0usize;
+    let mut checksum = 0.0;
+    let mut non_null = 0usize;
+    for segment in view.lowered_text_slices() {
+        let (_row_start, row_len, cols) = segment.unwrap();
+        segments += 1;
+        rows_scanned += row_len;
+        for array in cols {
+            arrays += 1;
+            for idx in 0..array.len() {
+                if array.is_valid(idx) {
+                    checksum += array.value(idx).len() as f64;
+                    non_null += 1;
+                }
+            }
+        }
+    }
+    Phase5ComputedFlushProbeOp {
+        ms: start.elapsed().as_secs_f64() * 1000.0,
+        segments,
+        arrays,
+        rows_scanned,
+        checksum,
+        non_null,
+    }
+}
+
+fn run_phase5_computed_flush_probe_fixture(
+    rows: usize,
+    chunk_rows: usize,
+    fixture: Phase5ComputedFlushProbeFixture,
+) -> Phase5ComputedFlushProbeRow {
+    let mut cfg = arrow_eval_config();
+    if matches!(fixture, Phase5ComputedFlushProbeFixture::CapZeroConstant) {
+        cfg.max_overlay_memory_bytes = Some(0);
+    }
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    let sheet = "Sheet1";
+    phase5_seed_base_rows(&mut engine, sheet, rows, chunk_rows);
+    let formulas = phase5_set_formula_rows(&mut engine, sheet, rows, fixture);
+
+    let eval_start = std::time::Instant::now();
+    engine.evaluate_all().unwrap();
+    let eval_ms = eval_start.elapsed().as_secs_f64() * 1000.0;
+
+    let overlay_memory_usage = engine.overlay_memory_usage();
+    let sheet_ref = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let raw_stats = phase5_probe_overlay_stats(sheet_ref, 0);
+    let overlay_stats = Phase5ComputedFlushProbeOverlayStats {
+        points: raw_stats.points,
+        sparse_fragments: raw_stats.sparse_fragments,
+        dense_fragments: raw_stats.dense_fragments,
+        run_fragments: raw_stats.run_fragments,
+        covered_len: raw_stats.covered_len,
+    };
+    let computed_overlay_estimated_bytes =
+        phase5_probe_computed_overlay_estimated_bytes(sheet_ref, 0);
+
+    reset_overlay_select_stats();
+    let numbers = phase5_measure_numbers(sheet_ref, rows);
+    let type_tags = phase5_measure_type_tags(sheet_ref, rows);
+    let lowered_text = phase5_measure_lowered_text(sheet_ref, rows);
+    let select_stats = snapshot_overlay_select_stats();
+
+    Phase5ComputedFlushProbeRow {
+        fixture: fixture.name(),
+        rows,
+        formulas,
+        chunk_rows,
+        eval_ms,
+        overlay_memory_usage,
+        computed_overlay_estimated_bytes,
+        overlay_stats,
+        numbers,
+        type_tags,
+        lowered_text,
+        select_stats,
+    }
+}
+
+#[test]
+#[ignore = "manual Phase 5 computed flush observability probe; run with --ignored --nocapture"]
+fn phase5_computed_flush_coalescing_observability_probe() {
+    let rows = std::env::var("FORMUALIZER_COMPUTED_FLUSH_PROBE_ROWS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(100_000)
+        .max(1);
+    let chunk_rows = std::env::var("FORMUALIZER_COMPUTED_FLUSH_PROBE_CHUNK_ROWS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(32 * 1024)
+        .max(1);
+
+    for fixture in [
+        Phase5ComputedFlushProbeFixture::ConstantCopied,
+        Phase5ComputedFlushProbeFixture::RowVarying,
+        Phase5ComputedFlushProbeFixture::AlternatingMostlyVaried,
+        Phase5ComputedFlushProbeFixture::SparseEveryOther,
+        Phase5ComputedFlushProbeFixture::CapZeroConstant,
+    ] {
+        let row = run_phase5_computed_flush_probe_fixture(rows, chunk_rows, fixture);
+        println!("{}", serde_json::to_string(&row).unwrap());
+    }
+}
 
 #[test]
 fn computed_write_buffer_records_sequence_order() {
