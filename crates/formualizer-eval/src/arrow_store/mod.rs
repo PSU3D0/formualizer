@@ -924,13 +924,66 @@ impl OverlayValue {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) enum OverlayScalar<'a> {
+    Borrowed(&'a OverlayValue),
+    Owned(OverlayValue),
+}
+
+impl<'a> OverlayScalar<'a> {
+    #[inline]
+    fn as_value(&self) -> &OverlayValue {
+        match self {
+            OverlayScalar::Borrowed(value) => value,
+            OverlayScalar::Owned(value) => value,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn to_overlay_value(&self) -> OverlayValue {
+        self.as_value().clone()
+    }
+
+    #[inline]
+    pub(crate) fn type_tag(&self) -> TypeTag {
+        self.as_value().type_tag()
+    }
+
+    #[inline]
+    pub(crate) fn numeric_lane_value(&self) -> Option<f64> {
+        self.as_value().numeric_lane_value()
+    }
+
+    #[inline]
+    pub(crate) fn boolean_lane_value(&self) -> Option<bool> {
+        self.as_value().boolean_lane_value()
+    }
+
+    #[inline]
+    pub(crate) fn text_lane_value(&self) -> Option<&str> {
+        self.as_value().text_lane_value()
+    }
+
+    #[inline]
+    pub(crate) fn error_lane_value(&self) -> Option<u8> {
+        self.as_value().error_lane_value()
+    }
+
+    pub(crate) fn lowered_text_value(&self) -> Option<String> {
+        self.as_value().lowered_text_value()
+    }
+
+    pub(crate) fn to_literal(&self) -> LiteralValue {
+        self.as_value().to_literal()
+    }
+}
+
 const OVERLAY_ENTRY_BASE_BYTES: usize = 32;
 const OVERLAY_FRAGMENT_BASE_BYTES: usize = 48;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayFragmentPayload {
-    values: Arc<[OverlayValue]>,
     type_tags: Arc<UInt8Array>,
     numbers: Option<Arc<Float64Array>>,
     booleans: Option<Arc<BooleanArray>>,
@@ -967,45 +1020,111 @@ impl OverlayFragmentPayload {
             );
         }
 
-        let payload_bytes = values
-            .iter()
-            .map(|value| value.estimated_payload_bytes())
-            .fold(0usize, usize::saturating_add);
-        let estimated_bytes = len
-            .saturating_mul(OVERLAY_ENTRY_BASE_BYTES)
-            .saturating_add(payload_bytes);
+        let type_tags = Arc::new(tag_b.finish());
+        let numbers = {
+            let a = nb.finish();
+            (non_num > 0).then(|| Arc::new(a))
+        };
+        let booleans = {
+            let a = bb.finish();
+            (non_bool > 0).then(|| Arc::new(a))
+        };
+        let text = {
+            let a = sb.finish();
+            (non_text > 0).then(|| Arc::new(a) as ArrayRef)
+        };
+        let errors = {
+            let a = eb.finish();
+            (non_err > 0).then(|| Arc::new(a))
+        };
+
+        let estimated_bytes = type_tags
+            .get_array_memory_size()
+            .saturating_add(
+                numbers
+                    .as_ref()
+                    .map(|a| a.get_array_memory_size())
+                    .unwrap_or(0),
+            )
+            .saturating_add(
+                booleans
+                    .as_ref()
+                    .map(|a| a.get_array_memory_size())
+                    .unwrap_or(0),
+            )
+            .saturating_add(
+                text.as_ref()
+                    .map(|a| a.get_array_memory_size())
+                    .unwrap_or(0),
+            )
+            .saturating_add(
+                errors
+                    .as_ref()
+                    .map(|a| a.get_array_memory_size())
+                    .unwrap_or(0),
+            );
 
         Self {
-            values: Arc::from(values.into_boxed_slice()),
-            type_tags: Arc::new(tag_b.finish()),
-            numbers: {
-                let a = nb.finish();
-                (non_num > 0).then(|| Arc::new(a))
-            },
-            booleans: {
-                let a = bb.finish();
-                (non_bool > 0).then(|| Arc::new(a))
-            },
-            text: {
-                let a = sb.finish();
-                (non_text > 0).then(|| Arc::new(a) as ArrayRef)
-            },
-            errors: {
-                let a = eb.finish();
-                (non_err > 0).then(|| Arc::new(a))
-            },
+            type_tags,
+            numbers,
+            booleans,
+            text,
+            errors,
             estimated_bytes,
         }
     }
 
+    fn overlay_value(&self, idx: usize) -> Option<OverlayValue> {
+        if idx >= self.type_tags.len() || self.type_tags.is_null(idx) {
+            return None;
+        }
+        match TypeTag::from_u8(self.type_tags.value(idx)) {
+            TypeTag::Empty => Some(OverlayValue::Empty),
+            TypeTag::Number => Some(OverlayValue::Number(self.number_at(idx)?)),
+            TypeTag::DateTime => Some(OverlayValue::DateTime(self.number_at(idx)?)),
+            TypeTag::Duration => Some(OverlayValue::Duration(self.number_at(idx)?)),
+            TypeTag::Boolean => Some(OverlayValue::Boolean(self.boolean_at(idx)?)),
+            TypeTag::Text => Some(OverlayValue::Text(Arc::from(self.text_at(idx)?))),
+            TypeTag::Error => Some(OverlayValue::Error(self.error_at(idx)?)),
+            TypeTag::Pending => Some(OverlayValue::Pending),
+        }
+    }
+
     #[inline]
-    fn get(&self, idx: usize) -> Option<&OverlayValue> {
-        self.values.get(idx)
+    fn get_scalar(&self, idx: usize) -> Option<OverlayScalar<'_>> {
+        self.overlay_value(idx).map(OverlayScalar::Owned)
+    }
+
+    #[inline]
+    fn number_at(&self, idx: usize) -> Option<f64> {
+        let arr = self.numbers.as_ref()?;
+        (!arr.is_null(idx)).then(|| arr.value(idx))
+    }
+
+    #[inline]
+    fn boolean_at(&self, idx: usize) -> Option<bool> {
+        let arr = self.booleans.as_ref()?;
+        (!arr.is_null(idx)).then(|| arr.value(idx))
+    }
+
+    #[inline]
+    fn text_at(&self, idx: usize) -> Option<&str> {
+        let arr = self.text.as_ref()?;
+        let arr = arr.as_any().downcast_ref::<StringArray>()?;
+        (!arr.is_null(idx)).then(|| arr.value(idx))
+    }
+
+    #[inline]
+    fn error_at(&self, idx: usize) -> Option<u8> {
+        let arr = self.errors.as_ref()?;
+        (!arr.is_null(idx)).then(|| arr.value(idx))
     }
 
     #[inline]
     fn values_slice(&self, start: usize, len: usize) -> Vec<OverlayValue> {
-        self.values[start..start.saturating_add(len)].to_vec()
+        (start..start.saturating_add(len))
+            .filter_map(|idx| self.overlay_value(idx))
+            .collect()
     }
 
     #[inline]
@@ -1013,7 +1132,6 @@ impl OverlayFragmentPayload {
         self.estimated_bytes
     }
 }
-
 #[derive(Debug, Clone)]
 pub(crate) enum OverlayFragment {
     SparseOffsets {
@@ -1259,12 +1377,12 @@ impl OverlayFragment {
         self.get_scalar(off).is_some()
     }
 
-    fn get_scalar(&self, off: usize) -> Option<&OverlayValue> {
+    fn get_scalar(&self, off: usize) -> Option<OverlayScalar<'_>> {
         match self {
             OverlayFragment::SparseOffsets { offsets, payload } => {
                 let off = u32::try_from(off).ok()?;
                 let idx = offsets.binary_search(&off).ok()?;
-                payload.get(idx)
+                payload.get_scalar(idx)
             }
             OverlayFragment::DenseRange {
                 start,
@@ -1276,7 +1394,7 @@ impl OverlayFragment {
                 if rel >= *len as usize {
                     return None;
                 }
-                payload.get(rel)
+                payload.get_scalar(rel)
             }
             OverlayFragment::RunRange {
                 start,
@@ -1291,7 +1409,7 @@ impl OverlayFragment {
                 }
                 let rel_u32 = u32::try_from(rel).ok()?;
                 let run_idx = run_ends.partition_point(|end| *end <= rel_u32);
-                payload.get(run_idx)
+                payload.get_scalar(run_idx)
             }
         }
     }
@@ -1333,7 +1451,7 @@ impl OverlayFragment {
                     .filter_map(|(idx, off)| {
                         let off_usize = *off as usize;
                         (!replacement.contains(&off_usize))
-                            .then(|| payload.get(idx).cloned().map(|value| (off_usize, value)))?
+                            .then(|| payload.overlay_value(idx).map(|value| (off_usize, value)))?
                     })
                     .collect();
                 OverlayFragment::sparse_offsets(cells).into_iter().collect()
@@ -1399,8 +1517,7 @@ impl OverlayFragment {
                     .filter_map(|(idx, off)| {
                         replacement_offsets.binary_search(off).is_err().then(|| {
                             payload
-                                .get(idx)
-                                .cloned()
+                                .overlay_value(idx)
                                 .map(|value| (*off as usize, value))
                         })?
                     })
@@ -1570,7 +1687,7 @@ impl OverlayFragment {
             let inter_end = run_end.min(rel_end);
             if inter_start < inter_end {
                 new_run_ends.push(inter_end - rel_start);
-                if let Some(value) = payload.get(run_idx).cloned() {
+                if let Some(value) = payload.overlay_value(run_idx) {
                     new_values.push(value);
                 }
             }
@@ -1595,8 +1712,7 @@ impl OverlayFragment {
                 .enumerate()
                 .filter_map(|(idx, off)| {
                     payload
-                        .get(idx)
-                        .cloned()
+                        .overlay_value(idx)
                         .map(|value| (*off as usize, value))
                 })
                 .collect(),
@@ -1609,8 +1725,7 @@ impl OverlayFragment {
                 (0..*len as usize)
                     .filter_map(|idx| {
                         payload
-                            .get(idx)
-                            .cloned()
+                            .overlay_value(idx)
                             .map(|value| (start.saturating_add(idx), value))
                     })
                     .collect()
@@ -1620,8 +1735,7 @@ impl OverlayFragment {
                 (0..*len as usize)
                     .filter_map(|idx| {
                         self.get_scalar(start.saturating_add(idx))
-                            .cloned()
-                            .map(|value| (start.saturating_add(idx), value))
+                            .map(|value| (start.saturating_add(idx), value.to_overlay_value()))
                     })
                     .collect()
             }
@@ -1642,7 +1756,7 @@ impl OverlayFragment {
                 let cells: Vec<_> = (lo..hi)
                     .filter_map(|idx| {
                         let rebased = (offsets[idx] as usize).saturating_sub(off);
-                        payload.get(idx).cloned().map(|value| (rebased, value))
+                        payload.overlay_value(idx).map(|value| (rebased, value))
                     })
                     .collect();
                 OverlayFragment::sparse_offsets(cells)
@@ -1706,15 +1820,16 @@ impl Overlay {
     }
 
     #[inline]
-    pub(crate) fn get_scalar(&self, off: usize) -> Option<&OverlayValue> {
+    pub(crate) fn get_scalar(&self, off: usize) -> Option<OverlayScalar<'_>> {
         self.points
             .get(&off)
+            .map(OverlayScalar::Borrowed)
             .or_else(|| self.fragments.iter().rev().find_map(|f| f.get_scalar(off)))
     }
 
     #[inline]
-    pub fn get(&self, off: usize) -> Option<&OverlayValue> {
-        self.get_scalar(off)
+    pub fn get(&self, off: usize) -> Option<OverlayValue> {
+        self.get_scalar(off).map(|value| value.to_overlay_value())
     }
 
     #[inline]
@@ -1900,8 +2015,22 @@ impl Overlay {
         out
     }
 
-    /// Iterate over point `(offset, value)` pairs in the overlay.
-    pub fn iter(&self) -> impl Iterator<Item = (&usize, &OverlayValue)> {
+    /// Iterate over logical `(offset, value)` pairs in the overlay.
+    pub fn iter(&self) -> impl Iterator<Item = (usize, OverlayValue)> {
+        let mut cells = BTreeMap::new();
+        for fragment in &self.fragments {
+            for (off, value) in fragment.cells() {
+                cells.insert(off, value);
+            }
+        }
+        for (off, value) in &self.points {
+            cells.insert(*off, value.clone());
+        }
+        cells.into_iter()
+    }
+
+    /// Iterate over physical point entries only.
+    pub(crate) fn iter_points(&self) -> impl Iterator<Item = (&usize, &OverlayValue)> {
         self.points.iter()
     }
 }
@@ -1964,7 +2093,7 @@ impl<'a> OverlayCascade<'a> {
     }
 
     #[inline]
-    pub(crate) fn get_scalar(&self, off: usize) -> Option<&'a OverlayValue> {
+    pub(crate) fn get_scalar(&self, off: usize) -> Option<OverlayScalar<'a>> {
         self.user
             .get_scalar(off)
             .or_else(|| self.computed.get_scalar(off))
@@ -2648,8 +2777,9 @@ impl ArrowSheet {
             for i in 0..len {
                 // If overlay present, use it. Otherwise, use base tag+lane.
                 if let Some(ov) = ch_ref.overlay.get_scalar(i) {
+                    let ov = ov.to_overlay_value();
                     append_overlay_value_to_lane_builders(
-                        ov,
+                        &ov,
                         &mut tag_b,
                         &mut nb,
                         &mut bb,
@@ -2840,8 +2970,9 @@ impl ArrowSheet {
 
             for i in 0..len {
                 if let Some(ov) = ch_ref.computed_overlay.get_scalar(i) {
+                    let ov = ov.to_overlay_value();
                     append_overlay_value_to_lane_builders(
-                        ov,
+                        &ov,
                         &mut tag_b,
                         &mut nb,
                         &mut bb,
@@ -4050,6 +4181,94 @@ mod tests {
         assert_eq!(sheet.get_cell_value(0, 0), LiteralValue::Empty);
         assert_eq!(sheet.get_cell_value(1, 0), LiteralValue::Empty);
         assert_eq!(sheet.get_cell_value(2, 0), LiteralValue::Empty);
+    }
+
+    #[test]
+    fn overlay_fragments_reconstruct_scalars_from_typed_lanes() {
+        let values = vec![
+            OverlayValue::Empty,
+            OverlayValue::Number(1.5),
+            OverlayValue::DateTime(45000.25),
+            OverlayValue::Duration(0.5),
+            OverlayValue::Boolean(true),
+            OverlayValue::Text(Arc::from("Hello")),
+            OverlayValue::Error(map_error_code(ExcelErrorKind::Div)),
+            OverlayValue::Pending,
+        ];
+
+        let mut dense = Overlay::new();
+        dense.apply_fragment(OverlayFragment::dense_range(0, values.clone()).unwrap());
+        for (idx, expected) in values.iter().enumerate() {
+            assert_eq!(
+                dense.get_scalar(idx).unwrap().to_overlay_value(),
+                expected.clone()
+            );
+        }
+
+        let mut sparse = Overlay::new();
+        sparse.apply_fragment(
+            OverlayFragment::sparse_offsets(
+                values
+                    .iter()
+                    .cloned()
+                    .enumerate()
+                    .map(|(idx, value)| (idx * 2, value))
+                    .collect(),
+            )
+            .unwrap(),
+        );
+        for (idx, expected) in values.iter().enumerate() {
+            assert_eq!(
+                sparse.get_scalar(idx * 2).unwrap().to_overlay_value(),
+                expected.clone()
+            );
+        }
+
+        let mut run = Overlay::new();
+        run.apply_fragment(
+            OverlayFragment::run_range(
+                0,
+                vec![
+                    OverlayValue::Number(7.0),
+                    OverlayValue::Number(7.0),
+                    OverlayValue::Text(Arc::from("run")),
+                    OverlayValue::Text(Arc::from("run")),
+                ],
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            run.get_scalar(0).unwrap().to_overlay_value(),
+            OverlayValue::Number(7.0)
+        );
+        assert_eq!(
+            run.get_scalar(2).unwrap().to_overlay_value(),
+            OverlayValue::Text(Arc::from("run"))
+        );
+    }
+
+    #[test]
+    fn overlay_iter_returns_complete_logical_entries() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                2,
+                vec![OverlayValue::Number(2.0), OverlayValue::Number(3.0)],
+            )
+            .unwrap(),
+        );
+        overlay.set_scalar(5, OverlayValue::Text(Arc::from("point")));
+
+        let entries: Vec<_> = overlay.iter().collect();
+        assert_eq!(
+            entries,
+            vec![
+                (2, OverlayValue::Number(2.0)),
+                (3, OverlayValue::Number(3.0)),
+                (5, OverlayValue::Text(Arc::from("point"))),
+            ]
+        );
+        assert_eq!(overlay.iter_points().count(), 1);
     }
 
     #[test]
