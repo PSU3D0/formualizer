@@ -1,12 +1,16 @@
 #[cfg(feature = "formualizer_runner")]
-use std::time::Instant;
+use std::{path::PathBuf, time::Instant};
 
 #[cfg(feature = "formualizer_runner")]
 use anyhow::{Result, bail};
 #[cfg(feature = "formualizer_runner")]
 use clap::Parser;
 #[cfg(feature = "formualizer_runner")]
-use formualizer_workbook::{LiteralValue, Workbook, WorkbookConfig};
+use formualizer_testkit::write_workbook;
+#[cfg(feature = "formualizer_runner")]
+use formualizer_workbook::{
+    LiteralValue, LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+};
 #[cfg(feature = "formualizer_runner")]
 use serde::Serialize;
 
@@ -40,6 +44,12 @@ struct Cli {
     sparse_edits: usize,
     #[arg(long, default_value = "phase-candidate")]
     label: String,
+    /// Optional XLSX fixture path. Defaults under target/finance-recalc-fixtures/.
+    #[arg(long)]
+    workbook_path: Option<PathBuf>,
+    /// Reuse --workbook-path if it already exists instead of regenerating it.
+    #[arg(long)]
+    reuse_workbook: bool,
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -50,6 +60,10 @@ struct FinanceRecalcProbeReport {
     cycles: usize,
     dense_edit_len: usize,
     sparse_edits: usize,
+    workbook_path: String,
+    reused_workbook: bool,
+    fixture_gen_ms: f64,
+    load_ms: f64,
     setup_ms: f64,
     initial_eval_ms: f64,
     total_recalc_ms: f64,
@@ -92,9 +106,23 @@ fn run_probe(cli: &Cli) -> Result<FinanceRecalcProbeReport> {
         bail!("--cycles must be > 0");
     }
 
-    let setup_start = Instant::now();
-    let mut probe = FinanceProbeWorkbook::new(cli.rows)?;
-    let setup_ms = setup_start.elapsed().as_secs_f64() * 1000.0;
+    let workbook_path = cli
+        .workbook_path
+        .clone()
+        .unwrap_or_else(|| default_workbook_path(&cli.label, cli.rows));
+
+    let (fixture_gen_ms, reused_workbook) = if cli.reuse_workbook && workbook_path.exists() {
+        (0.0, true)
+    } else {
+        let gen_start = Instant::now();
+        generate_finance_fixture(&workbook_path, cli.rows)?;
+        (gen_start.elapsed().as_secs_f64() * 1000.0, false)
+    };
+
+    let load_start = Instant::now();
+    let mut probe = FinanceProbeWorkbook::load(&workbook_path, cli.rows)?;
+    let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
+    let setup_ms = fixture_gen_ms + load_ms;
 
     let initial_start = Instant::now();
     probe
@@ -152,6 +180,10 @@ fn run_probe(cli: &Cli) -> Result<FinanceRecalcProbeReport> {
         cycles: cli.cycles,
         dense_edit_len: cli.dense_edit_len,
         sparse_edits: cli.sparse_edits,
+        workbook_path: workbook_path.display().to_string(),
+        reused_workbook,
+        fixture_gen_ms,
+        load_ms,
         setup_ms,
         initial_eval_ms,
         total_recalc_ms,
@@ -169,34 +201,13 @@ fn run_probe(cli: &Cli) -> Result<FinanceRecalcProbeReport> {
 
 #[cfg(feature = "formualizer_runner")]
 impl FinanceProbeWorkbook {
-    fn new(rows: usize) -> Result<Self> {
-        let mut workbook = Workbook::new_with_config(WorkbookConfig::ephemeral());
-        let mut units = Vec::with_capacity(rows);
-        let mut prices = Vec::with_capacity(rows);
-
-        for row0 in 0..rows {
-            let row = row0 as u32 + 1;
-            let unit = (row0 + 1) as f64;
-            let price = 10.0 + (row0 % 17) as f64;
-            units.push(unit);
-            prices.push(price);
-            workbook
-                .set_value("Sheet1", row, 1, LiteralValue::Number(unit))
-                .map_err(|e| anyhow::anyhow!("set unit row {row}: {e}"))?;
-            workbook
-                .set_value("Sheet1", row, 2, LiteralValue::Number(price))
-                .map_err(|e| anyhow::anyhow!("set price row {row}: {e}"))?;
-            workbook
-                .set_formula("Sheet1", row, 3, &format!("=A{row}*B{row}*$F$1"))
-                .map_err(|e| anyhow::anyhow!("set formula row {row}: {e}"))?;
-        }
-        workbook
-            .set_value("Sheet1", 1, 6, LiteralValue::Number(1.0))
-            .map_err(|e| anyhow::anyhow!("set multiplier: {e}"))?;
-        workbook
-            .set_formula("Sheet1", 1, 7, &format!("=SUM(C1:C{rows})"))
-            .map_err(|e| anyhow::anyhow!("set rollup formula: {e}"))?;
-
+    fn load(path: &PathBuf, rows: usize) -> Result<Self> {
+        let backend = UmyaAdapter::open_path(path)
+            .map_err(|e| anyhow::anyhow!("open fixture via umya {}: {e}", path.display()))?;
+        let workbook =
+            Workbook::from_reader(backend, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
+                .map_err(|e| anyhow::anyhow!("load fixture into workbook: {e}"))?;
+        let (units, prices) = deterministic_inputs(rows);
         Ok(Self {
             workbook,
             units,
@@ -271,6 +282,60 @@ impl FinanceProbeWorkbook {
         }
         Ok(())
     }
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn generate_finance_fixture(path: &PathBuf, rows: usize) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("create fixture dir {}: {e}", parent.display()))?;
+    }
+    write_workbook(path, |book| {
+        let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+        for row0 in 0..rows {
+            let row = row0 as u32 + 1;
+            let unit = (row0 + 1) as f64;
+            let price = 10.0 + (row0 % 17) as f64;
+            sheet.get_cell_mut((1, row)).set_value_number(unit);
+            sheet.get_cell_mut((2, row)).set_value_number(price);
+            sheet
+                .get_cell_mut((3, row))
+                .set_formula(format!("=A{row}*B{row}*$F$1"));
+        }
+        sheet.get_cell_mut((6, 1)).set_value_number(1.0);
+        sheet
+            .get_cell_mut((7, 1))
+            .set_formula(format!("=SUM(C1:C{rows})"));
+    });
+    Ok(())
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn deterministic_inputs(rows: usize) -> (Vec<f64>, Vec<f64>) {
+    let mut units = Vec::with_capacity(rows);
+    let mut prices = Vec::with_capacity(rows);
+    for row0 in 0..rows {
+        units.push((row0 + 1) as f64);
+        prices.push(10.0 + (row0 % 17) as f64);
+    }
+    (units, prices)
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn default_workbook_path(label: &str, rows: usize) -> PathBuf {
+    let safe_label: String = label
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    PathBuf::from("target")
+        .join("finance-recalc-fixtures")
+        .join(format!("{safe_label}-{rows}.xlsx"))
 }
 
 #[cfg(feature = "formualizer_runner")]
