@@ -1004,8 +1004,8 @@ impl OverlayFragmentPayload {
     }
 
     #[inline]
-    fn len(&self) -> usize {
-        self.values.len()
+    fn values_slice(&self, start: usize, len: usize) -> Vec<OverlayValue> {
+        self.values[start..start.saturating_add(len)].to_vec()
     }
 
     #[inline]
@@ -1034,6 +1034,8 @@ pub(crate) enum OverlayFragment {
 }
 
 impl OverlayFragment {
+    const MAX_SPLIT_SEGMENTS_BEFORE_SPARSE_FALLBACK: usize = 128;
+
     pub(crate) fn sparse_offsets(items: Vec<(usize, OverlayValue)>) -> Option<Self> {
         let mut by_offset: BTreeMap<usize, OverlayValue> = BTreeMap::new();
         for (offset, value) in items {
@@ -1078,19 +1080,54 @@ impl OverlayFragment {
         let mut current = values[0].clone();
         for (idx, value) in values.iter().enumerate().skip(1) {
             if *value != current {
-                run_ends.push(u32::try_from(idx).expect("run end fits in u32"));
+                run_ends.push(idx);
                 run_values.push(current);
                 current = value.clone();
             }
         }
-        run_ends.push(u32::try_from(values.len()).expect("run end fits in u32"));
+        run_ends.push(values.len());
         run_values.push(current);
+
+        Self::run_range_from_parts(start, values.len(), run_ends, run_values)
+    }
+
+    fn run_range_from_parts(
+        start: usize,
+        len: usize,
+        run_ends: Vec<usize>,
+        values: Vec<OverlayValue>,
+    ) -> Option<Self> {
+        if len == 0 || run_ends.is_empty() || run_ends.len() != values.len() {
+            return None;
+        }
+
+        let mut merged_ends: Vec<u32> = Vec::with_capacity(run_ends.len());
+        let mut merged_values: Vec<OverlayValue> = Vec::with_capacity(values.len());
+        let mut prev_end = 0usize;
+        for (end, value) in run_ends.into_iter().zip(values.into_iter()) {
+            if end <= prev_end || end > len {
+                return None;
+            }
+            if merged_values.last().is_some_and(|last| *last == value) {
+                if let Some(last_end) = merged_ends.last_mut() {
+                    *last_end = u32::try_from(end).expect("run end fits in u32");
+                }
+            } else {
+                merged_ends.push(u32::try_from(end).expect("run end fits in u32"));
+                merged_values.push(value);
+            }
+            prev_end = end;
+        }
+
+        if prev_end != len || merged_ends.last().copied() != Some(len as u32) {
+            return None;
+        }
 
         Some(Self::RunRange {
             start: u32::try_from(start).expect("overlay start fits in u32"),
-            len: u32::try_from(values.len()).expect("overlay length fits in u32"),
-            run_ends,
-            payload: OverlayFragmentPayload::from_values(run_values),
+            len: u32::try_from(len).expect("overlay length fits in u32"),
+            run_ends: merged_ends,
+            payload: OverlayFragmentPayload::from_values(merged_values),
         })
     }
 
@@ -1121,18 +1158,21 @@ impl OverlayFragment {
         }
     }
 
-    fn covered_range(&self) -> Option<core::ops::Range<usize>> {
+    fn interval_coverage(&self) -> Option<core::ops::Range<usize>> {
         match self {
-            OverlayFragment::SparseOffsets { offsets, .. } => {
-                let start = *offsets.first()? as usize;
-                let end = (*offsets.last()? as usize).saturating_add(1);
-                Some(start..end)
-            }
             OverlayFragment::DenseRange { start, len, .. }
             | OverlayFragment::RunRange { start, len, .. } => {
                 let start = *start as usize;
                 Some(start..start.saturating_add(*len as usize))
             }
+            OverlayFragment::SparseOffsets { .. } => None,
+        }
+    }
+
+    fn sparse_offsets_slice(&self) -> Option<&[u32]> {
+        match self {
+            OverlayFragment::SparseOffsets { offsets, .. } => Some(offsets.as_slice()),
+            _ => None,
         }
     }
 
@@ -1149,9 +1189,70 @@ impl OverlayFragment {
                     .is_some_and(|off| (*off as usize) < range.end)
             }
             OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => self
-                .covered_range()
+                .interval_coverage()
                 .is_some_and(|r| r.start < range.end && range.start < r.end),
         }
+    }
+
+    fn intersects_fragment_exact(&self, replacement: &OverlayFragment) -> bool {
+        if let Some(offsets) = replacement.sparse_offsets_slice() {
+            self.intersects_sparse_offsets(offsets)
+        } else if let Some(range) = replacement.interval_coverage() {
+            self.intersects_interval(range)
+        } else {
+            false
+        }
+    }
+
+    fn intersects_interval(&self, range: core::ops::Range<usize>) -> bool {
+        if range.is_empty() {
+            return false;
+        }
+        match self {
+            OverlayFragment::SparseOffsets { offsets, .. } => {
+                let start = u32::try_from(range.start).unwrap_or(u32::MAX);
+                let idx = offsets.partition_point(|off| *off < start);
+                offsets
+                    .get(idx)
+                    .is_some_and(|off| (*off as usize) < range.end)
+            }
+            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => self
+                .interval_coverage()
+                .is_some_and(|own| own.start < range.end && range.start < own.end),
+        }
+    }
+
+    fn intersects_sparse_offsets(&self, replacement_offsets: &[u32]) -> bool {
+        if replacement_offsets.is_empty() {
+            return false;
+        }
+        match self {
+            OverlayFragment::SparseOffsets { offsets, .. } => {
+                Self::sorted_offsets_intersect(offsets, replacement_offsets)
+            }
+            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => {
+                self.interval_coverage().is_some_and(|range| {
+                    let start = u32::try_from(range.start).unwrap_or(u32::MAX);
+                    let idx = replacement_offsets.partition_point(|off| *off < start);
+                    replacement_offsets
+                        .get(idx)
+                        .is_some_and(|off| (*off as usize) < range.end)
+                })
+            }
+        }
+    }
+
+    fn sorted_offsets_intersect(a: &[u32], b: &[u32]) -> bool {
+        let mut ai = 0usize;
+        let mut bi = 0usize;
+        while ai < a.len() && bi < b.len() {
+            match a[ai].cmp(&b[bi]) {
+                core::cmp::Ordering::Equal => return true,
+                core::cmp::Ordering::Less => ai += 1,
+                core::cmp::Ordering::Greater => bi += 1,
+            }
+        }
+        false
     }
 
     fn covers_offset(&self, off: usize) -> bool {
@@ -1195,17 +1296,296 @@ impl OverlayFragment {
         }
     }
 
-    fn covered_offsets(&self) -> Vec<usize> {
+    fn subtract_fragment(&self, replacement: &OverlayFragment) -> Vec<OverlayFragment> {
+        if let Some(offsets) = replacement.sparse_offsets_slice() {
+            self.subtract_sparse_offsets(offsets)
+        } else if let Some(range) = replacement.interval_coverage() {
+            self.subtract_interval(range)
+        } else {
+            vec![self.clone()]
+        }
+    }
+
+    fn subtract_offset(&self, off: usize) -> Vec<OverlayFragment> {
         match self {
-            OverlayFragment::SparseOffsets { offsets, .. } => {
-                offsets.iter().map(|off| *off as usize).collect()
+            OverlayFragment::SparseOffsets { .. } => {
+                let Ok(off) = u32::try_from(off) else {
+                    return vec![self.clone()];
+                };
+                self.subtract_sparse_offsets(core::slice::from_ref(&off))
             }
-            OverlayFragment::DenseRange { start, len, .. }
-            | OverlayFragment::RunRange { start, len, .. } => {
-                let start = *start as usize;
-                (start..start.saturating_add(*len as usize)).collect()
+            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => {
+                self.subtract_interval(off..off.saturating_add(1))
             }
         }
+    }
+
+    fn subtract_interval(&self, replacement: core::ops::Range<usize>) -> Vec<OverlayFragment> {
+        if replacement.is_empty() {
+            return vec![self.clone()];
+        }
+
+        match self {
+            OverlayFragment::SparseOffsets { offsets, payload } => {
+                let cells: Vec<_> = offsets
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, off)| {
+                        let off_usize = *off as usize;
+                        (!replacement.contains(&off_usize))
+                            .then(|| payload.get(idx).cloned().map(|value| (off_usize, value)))?
+                    })
+                    .collect();
+                OverlayFragment::sparse_offsets(cells).into_iter().collect()
+            }
+            OverlayFragment::DenseRange { .. } => {
+                let Some(own) = self.interval_coverage() else {
+                    return vec![self.clone()];
+                };
+                if own.end <= replacement.start || replacement.end <= own.start {
+                    return vec![self.clone()];
+                }
+                let cut_start = replacement.start.max(own.start);
+                let cut_end = replacement.end.min(own.end);
+                let mut out = Vec::with_capacity(2);
+                if own.start < cut_start
+                    && let Some(left) =
+                        self.dense_segment_with_start(own.start, own.start, cut_start)
+                {
+                    out.push(left);
+                }
+                if cut_end < own.end
+                    && let Some(right) = self.dense_segment_with_start(cut_end, cut_end, own.end)
+                {
+                    out.push(right);
+                }
+                out
+            }
+            OverlayFragment::RunRange { .. } => {
+                let Some(own) = self.interval_coverage() else {
+                    return vec![self.clone()];
+                };
+                if own.end <= replacement.start || replacement.end <= own.start {
+                    return vec![self.clone()];
+                }
+                let cut_start = replacement.start.max(own.start);
+                let cut_end = replacement.end.min(own.end);
+                let mut out = Vec::with_capacity(2);
+                if own.start < cut_start
+                    && let Some(left) = self.run_segment_with_start(own.start, own.start, cut_start)
+                {
+                    out.push(left);
+                }
+                if cut_end < own.end
+                    && let Some(right) = self.run_segment_with_start(cut_end, cut_end, own.end)
+                {
+                    out.push(right);
+                }
+                out
+            }
+        }
+    }
+
+    fn subtract_sparse_offsets(&self, replacement_offsets: &[u32]) -> Vec<OverlayFragment> {
+        if replacement_offsets.is_empty() {
+            return vec![self.clone()];
+        }
+
+        match self {
+            OverlayFragment::SparseOffsets { offsets, payload } => {
+                let cells: Vec<_> = offsets
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, off)| {
+                        replacement_offsets.binary_search(off).is_err().then(|| {
+                            payload
+                                .get(idx)
+                                .cloned()
+                                .map(|value| (*off as usize, value))
+                        })?
+                    })
+                    .collect();
+                OverlayFragment::sparse_offsets(cells).into_iter().collect()
+            }
+            OverlayFragment::DenseRange { .. } => {
+                self.subtract_sparse_offsets_from_dense(replacement_offsets)
+            }
+            OverlayFragment::RunRange { .. } => {
+                self.subtract_sparse_offsets_from_run(replacement_offsets)
+            }
+        }
+    }
+
+    fn sparse_holes_in_interval(offsets: &[u32], range: core::ops::Range<usize>) -> Vec<usize> {
+        if range.is_empty() {
+            return Vec::new();
+        }
+        let start = u32::try_from(range.start).unwrap_or(u32::MAX);
+        let mut idx = offsets.partition_point(|off| *off < start);
+        let mut holes = Vec::new();
+        let mut last = None;
+        while let Some(off) = offsets.get(idx).copied() {
+            let off_usize = off as usize;
+            if off_usize >= range.end {
+                break;
+            }
+            if last != Some(off_usize) {
+                holes.push(off_usize);
+                last = Some(off_usize);
+            }
+            idx += 1;
+        }
+        holes
+    }
+
+    fn subtract_sparse_offsets_from_dense(
+        &self,
+        replacement_offsets: &[u32],
+    ) -> Vec<OverlayFragment> {
+        let Some(own) = self.interval_coverage() else {
+            return vec![self.clone()];
+        };
+        let holes = Self::sparse_holes_in_interval(replacement_offsets, own.clone());
+        if holes.is_empty() {
+            return vec![self.clone()];
+        }
+        if holes.len().saturating_add(1) > Self::MAX_SPLIT_SEGMENTS_BEFORE_SPARSE_FALLBACK {
+            return self.sparse_remainder_excluding_offsets(&holes);
+        }
+
+        let mut out = Vec::with_capacity(holes.len().saturating_add(1));
+        let mut seg_start = own.start;
+        for hole in holes {
+            if seg_start < hole
+                && let Some(segment) = self.dense_segment_with_start(seg_start, seg_start, hole)
+            {
+                out.push(segment);
+            }
+            seg_start = hole.saturating_add(1);
+        }
+        if seg_start < own.end
+            && let Some(segment) = self.dense_segment_with_start(seg_start, seg_start, own.end)
+        {
+            out.push(segment);
+        }
+        out
+    }
+
+    fn subtract_sparse_offsets_from_run(
+        &self,
+        replacement_offsets: &[u32],
+    ) -> Vec<OverlayFragment> {
+        let Some(own) = self.interval_coverage() else {
+            return vec![self.clone()];
+        };
+        let holes = Self::sparse_holes_in_interval(replacement_offsets, own.clone());
+        if holes.is_empty() {
+            return vec![self.clone()];
+        }
+        if holes.len().saturating_add(1) > Self::MAX_SPLIT_SEGMENTS_BEFORE_SPARSE_FALLBACK {
+            return self.sparse_remainder_excluding_offsets(&holes);
+        }
+
+        let mut out = Vec::with_capacity(holes.len().saturating_add(1));
+        let mut seg_start = own.start;
+        for hole in holes {
+            if seg_start < hole
+                && let Some(segment) = self.run_segment_with_start(seg_start, seg_start, hole)
+            {
+                out.push(segment);
+            }
+            seg_start = hole.saturating_add(1);
+        }
+        if seg_start < own.end
+            && let Some(segment) = self.run_segment_with_start(seg_start, seg_start, own.end)
+        {
+            out.push(segment);
+        }
+        out
+    }
+
+    fn sparse_remainder_excluding_offsets(&self, sorted_holes: &[usize]) -> Vec<OverlayFragment> {
+        let cells: Vec<_> = self
+            .cells()
+            .into_iter()
+            .filter(|(off, _)| sorted_holes.binary_search(off).is_err())
+            .collect();
+        OverlayFragment::sparse_offsets(cells).into_iter().collect()
+    }
+
+    fn dense_segment_with_start(
+        &self,
+        new_start: usize,
+        abs_start: usize,
+        abs_end: usize,
+    ) -> Option<OverlayFragment> {
+        match self {
+            OverlayFragment::DenseRange { start, payload, .. } => {
+                if abs_start >= abs_end {
+                    return None;
+                }
+                let base = *start as usize;
+                let rel_start = abs_start.checked_sub(base)?;
+                let len = abs_end.saturating_sub(abs_start);
+                OverlayFragment::dense_range(new_start, payload.values_slice(rel_start, len))
+            }
+            _ => None,
+        }
+    }
+
+    fn run_segment_with_start(
+        &self,
+        new_start: usize,
+        abs_start: usize,
+        abs_end: usize,
+    ) -> Option<OverlayFragment> {
+        let OverlayFragment::RunRange {
+            start,
+            len,
+            run_ends,
+            payload,
+        } = self
+        else {
+            return None;
+        };
+        if abs_start >= abs_end {
+            return None;
+        }
+        let base = *start as usize;
+        let frag_end = base.saturating_add(*len as usize);
+        if abs_start < base || abs_end > frag_end {
+            return None;
+        }
+
+        let rel_start = abs_start - base;
+        let rel_end = abs_end - base;
+        let mut new_run_ends = Vec::new();
+        let mut new_values = Vec::new();
+        let mut prev_end = 0usize;
+
+        for (run_idx, end) in run_ends.iter().enumerate() {
+            let run_start = prev_end;
+            let run_end = *end as usize;
+            let inter_start = run_start.max(rel_start);
+            let inter_end = run_end.min(rel_end);
+            if inter_start < inter_end {
+                new_run_ends.push(inter_end - rel_start);
+                if let Some(value) = payload.get(run_idx).cloned() {
+                    new_values.push(value);
+                }
+            }
+            prev_end = run_end;
+            if prev_end >= rel_end {
+                break;
+            }
+        }
+
+        OverlayFragment::run_range_from_parts(
+            new_start,
+            abs_end.saturating_sub(abs_start),
+            new_run_ends,
+            new_values,
+        )
     }
 
     fn cells(&self) -> Vec<(usize, OverlayValue)> {
@@ -1248,44 +1628,46 @@ impl OverlayFragment {
         }
     }
 
-    fn without_offset(&self, off: usize) -> Vec<OverlayFragment> {
-        let cells: Vec<_> = self
-            .cells()
-            .into_iter()
-            .filter(|(cell_off, _)| *cell_off != off)
-            .collect();
-        OverlayFragment::sparse_offsets(cells).into_iter().collect()
-    }
-
     fn slice(&self, off: usize, len: usize) -> Option<OverlayFragment> {
         let end = off.saturating_add(len);
-        let cells: Vec<_> = self
-            .cells()
-            .into_iter()
-            .filter(|(cell_off, _)| *cell_off >= off && *cell_off < end)
-            .map(|(cell_off, value)| (cell_off - off, value))
-            .collect();
-
-        if cells.is_empty() {
+        if len == 0 {
             return None;
         }
 
         match self {
-            OverlayFragment::SparseOffsets { .. } => OverlayFragment::sparse_offsets(cells),
+            OverlayFragment::SparseOffsets { offsets, payload } => {
+                let start = u32::try_from(off).unwrap_or(u32::MAX);
+                let lo = offsets.partition_point(|candidate| *candidate < start);
+                let hi = offsets.partition_point(|candidate| (*candidate as usize) < end);
+                let cells: Vec<_> = (lo..hi)
+                    .filter_map(|idx| {
+                        let rebased = (offsets[idx] as usize).saturating_sub(off);
+                        payload.get(idx).cloned().map(|value| (rebased, value))
+                    })
+                    .collect();
+                OverlayFragment::sparse_offsets(cells)
+            }
             OverlayFragment::DenseRange { .. } => {
-                let start = cells[0].0;
-                let values = cells.into_iter().map(|(_, value)| value).collect();
-                OverlayFragment::dense_range(start, values)
+                let own = self.interval_coverage()?;
+                let seg_start = own.start.max(off);
+                let seg_end = own.end.min(end);
+                if seg_start >= seg_end {
+                    return None;
+                }
+                self.dense_segment_with_start(seg_start - off, seg_start, seg_end)
             }
             OverlayFragment::RunRange { .. } => {
-                let start = cells[0].0;
-                let values = cells.into_iter().map(|(_, value)| value).collect();
-                OverlayFragment::run_range(start, values)
+                let own = self.interval_coverage()?;
+                let seg_start = own.start.max(off);
+                let seg_end = own.end.min(end);
+                if seg_start >= seg_end {
+                    return None;
+                }
+                self.run_segment_with_start(seg_start - off, seg_start, seg_end)
             }
         }
     }
 }
-
 #[derive(Debug, Default, Clone)]
 pub struct Overlay {
     points: HashMap<usize, OverlayValue>,
@@ -1361,9 +1743,28 @@ impl Overlay {
 
     fn remove_points_covered_by_fragment(&mut self, fragment: &OverlayFragment) -> isize {
         let mut removed = 0usize;
-        for off in fragment.covered_offsets() {
-            if let Some(old) = self.points.remove(&off) {
-                removed = removed.saturating_add(Self::point_estimate(&old));
+        match fragment {
+            OverlayFragment::SparseOffsets { offsets, .. } => {
+                for off in offsets.iter().copied() {
+                    if let Some(old) = self.points.remove(&(off as usize)) {
+                        removed = removed.saturating_add(Self::point_estimate(&old));
+                    }
+                }
+            }
+            OverlayFragment::DenseRange { .. } | OverlayFragment::RunRange { .. } => {
+                if let Some(range) = fragment.interval_coverage() {
+                    let keys: Vec<_> = self
+                        .points
+                        .keys()
+                        .copied()
+                        .filter(|off| range.contains(off))
+                        .collect();
+                    for off in keys {
+                        if let Some(old) = self.points.remove(&off) {
+                            removed = removed.saturating_add(Self::point_estimate(&old));
+                        }
+                    }
+                }
             }
         }
         self.estimated_bytes = self.estimated_bytes.saturating_sub(removed);
@@ -1378,26 +1779,18 @@ impl Overlay {
         let mut delta: isize = 0;
         let mut fragments = Vec::with_capacity(self.fragments.len());
         for fragment in self.fragments.drain(..) {
-            let Some(range) = replacement.covered_range() else {
-                fragments.push(fragment);
-                continue;
-            };
-            if !fragment.has_any_in_range(range) {
+            if !fragment.intersects_fragment_exact(replacement) {
                 fragments.push(fragment);
                 continue;
             }
 
             let old_est = fragment.estimated_bytes();
-            let remaining_cells: Vec<_> = fragment
-                .cells()
-                .into_iter()
-                .filter(|(off, _)| !replacement.covers_offset(*off))
-                .collect();
-            let mut new_est = 0usize;
-            if let Some(fragment) = OverlayFragment::sparse_offsets(remaining_cells) {
-                new_est = fragment.estimated_bytes();
-                fragments.push(fragment);
-            }
+            let replacements = fragment.subtract_fragment(replacement);
+            let new_est = replacements
+                .iter()
+                .map(OverlayFragment::estimated_bytes)
+                .fold(0usize, usize::saturating_add);
+            fragments.extend(replacements);
             delta = delta.saturating_add(new_est as isize - old_est as isize);
         }
         self.fragments = fragments;
@@ -1423,7 +1816,7 @@ impl Overlay {
                 }
 
                 let old_est = fragment.estimated_bytes();
-                let replacements = fragment.without_offset(off);
+                let replacements = fragment.subtract_offset(off);
                 let new_est = replacements
                     .iter()
                     .map(OverlayFragment::estimated_bytes)
@@ -1512,6 +1905,53 @@ impl Overlay {
         self.points.iter()
     }
 }
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+pub(crate) struct OverlayDebugStats {
+    pub(crate) points: usize,
+    pub(crate) sparse_fragments: usize,
+    pub(crate) dense_fragments: usize,
+    pub(crate) run_fragments: usize,
+    pub(crate) covered_len: usize,
+}
+
+#[cfg(test)]
+impl Overlay {
+    pub(crate) fn debug_stats(&self) -> OverlayDebugStats {
+        let mut stats = OverlayDebugStats {
+            points: self.points.len(),
+            covered_len: self.len(),
+            ..OverlayDebugStats::default()
+        };
+        for fragment in &self.fragments {
+            match fragment {
+                OverlayFragment::SparseOffsets { .. } => stats.sparse_fragments += 1,
+                OverlayFragment::DenseRange { .. } => stats.dense_fragments += 1,
+                OverlayFragment::RunRange { .. } => stats.run_fragments += 1,
+            }
+        }
+        stats
+    }
+
+    pub(crate) fn debug_is_normalized(&self) -> bool {
+        let mut covered = std::collections::HashSet::new();
+        for off in self.points.keys().copied() {
+            if !covered.insert(off) {
+                return false;
+            }
+        }
+        for fragment in &self.fragments {
+            for (off, _) in fragment.cells() {
+                if !covered.insert(off) {
+                    return false;
+                }
+            }
+        }
+        covered.len() == self.len()
+    }
+}
+
 pub(crate) struct OverlayCascade<'a> {
     user: &'a Overlay,
     computed: &'a Overlay,
@@ -3301,8 +3741,10 @@ mod tests {
             .unwrap(),
         );
 
-        assert!(overlay.points.is_empty());
-        assert_eq!(overlay.fragments.len(), 1);
+        let stats = overlay.debug_stats();
+        assert_eq!(stats.points, 0);
+        assert_eq!(stats.dense_fragments, 1);
+        assert!(overlay.debug_is_normalized());
         assert_eq!(
             overlay.get_scalar(0).unwrap().to_literal(),
             LiteralValue::Number(10.0)
@@ -3315,6 +3757,271 @@ mod tests {
             overlay.get_scalar(2).unwrap().to_literal(),
             LiteralValue::Number(30.0)
         );
+    }
+
+    #[test]
+    fn overlay_sparse_far_apart_replacement_does_not_rewrite_unrelated_dense_fragment() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(100, vec![OverlayValue::Number(1.0); 10]).unwrap(),
+        );
+
+        overlay.apply_fragment(
+            OverlayFragment::sparse_offsets(vec![
+                (0, OverlayValue::Empty),
+                (1000, OverlayValue::Number(1000.0)),
+            ])
+            .unwrap(),
+        );
+
+        let stats = overlay.debug_stats();
+        assert_eq!(stats.dense_fragments, 1);
+        assert_eq!(stats.sparse_fragments, 1);
+        assert_eq!(stats.run_fragments, 0);
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.get_scalar(105).unwrap().to_literal(),
+            LiteralValue::Number(1.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(0).unwrap().to_literal(),
+            LiteralValue::Empty
+        );
+        assert_eq!(
+            overlay.get_scalar(1000).unwrap().to_literal(),
+            LiteralValue::Number(1000.0)
+        );
+    }
+
+    #[test]
+    fn overlay_sparse_offsets_are_sorted_unique_last_write_wins() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::sparse_offsets(vec![
+                (3, OverlayValue::Number(3.0)),
+                (1, OverlayValue::Number(1.0)),
+                (3, OverlayValue::Number(33.0)),
+            ])
+            .unwrap(),
+        );
+
+        let stats = overlay.debug_stats();
+        assert_eq!(stats.sparse_fragments, 1);
+        assert_eq!(overlay.len(), 2);
+        assert_eq!(
+            overlay.get_scalar(1).unwrap().to_literal(),
+            LiteralValue::Number(1.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(3).unwrap().to_literal(),
+            LiteralValue::Number(33.0)
+        );
+        assert!(overlay.debug_is_normalized());
+    }
+
+    #[test]
+    fn overlay_dense_point_replacement_splits_dense_not_sparse() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                (0..6)
+                    .map(|i| OverlayValue::Number(i as f64))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+
+        overlay.set_scalar(3, OverlayValue::Number(99.0));
+
+        let stats = overlay.debug_stats();
+        assert_eq!(stats.points, 1);
+        assert_eq!(stats.dense_fragments, 2);
+        assert_eq!(stats.sparse_fragments, 0);
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.get_scalar(2).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(3).unwrap().to_literal(),
+            LiteralValue::Number(99.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(4).unwrap().to_literal(),
+            LiteralValue::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn overlay_dense_fragment_replacement_splits_left_and_right_dense() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                (0..8)
+                    .map(|i| OverlayValue::Number(i as f64))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                3,
+                vec![OverlayValue::Number(30.0), OverlayValue::Number(40.0)],
+            )
+            .unwrap(),
+        );
+
+        let stats = overlay.debug_stats();
+        assert_eq!(stats.points, 0);
+        assert_eq!(stats.dense_fragments, 3);
+        assert_eq!(stats.sparse_fragments, 0);
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.get_scalar(2).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(3).unwrap().to_literal(),
+            LiteralValue::Number(30.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(4).unwrap().to_literal(),
+            LiteralValue::Number(40.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(5).unwrap().to_literal(),
+            LiteralValue::Number(5.0)
+        );
+    }
+
+    #[test]
+    fn overlay_run_point_replacement_splits_run_not_sparse() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::run_range(0, vec![OverlayValue::Number(1.0); 10]).unwrap(),
+        );
+
+        overlay.set_scalar(5, OverlayValue::Number(99.0));
+
+        let stats = overlay.debug_stats();
+        assert_eq!(stats.points, 1);
+        assert_eq!(stats.run_fragments, 2);
+        assert_eq!(stats.sparse_fragments, 0);
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.get_scalar(4).unwrap().to_literal(),
+            LiteralValue::Number(1.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(5).unwrap().to_literal(),
+            LiteralValue::Number(99.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(6).unwrap().to_literal(),
+            LiteralValue::Number(1.0)
+        );
+    }
+
+    #[test]
+    fn overlay_run_fragment_replacement_splits_left_and_right_run() {
+        let mut overlay = Overlay::new();
+        let values = [
+            vec![OverlayValue::Number(1.0); 4],
+            vec![OverlayValue::Number(2.0); 4],
+            vec![OverlayValue::Number(3.0); 4],
+        ]
+        .concat();
+        overlay.apply_fragment(OverlayFragment::run_range(0, values).unwrap());
+
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                5,
+                vec![OverlayValue::Number(50.0), OverlayValue::Number(60.0)],
+            )
+            .unwrap(),
+        );
+
+        let stats = overlay.debug_stats();
+        assert_eq!(stats.run_fragments, 2);
+        assert_eq!(stats.dense_fragments, 1);
+        assert_eq!(stats.sparse_fragments, 0);
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.get_scalar(4).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(5).unwrap().to_literal(),
+            LiteralValue::Number(50.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(6).unwrap().to_literal(),
+            LiteralValue::Number(60.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(7).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+    }
+
+    #[test]
+    fn overlay_slice_preserves_dense_and_run_encodings() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                10,
+                (0..5)
+                    .map(|i| OverlayValue::Number(i as f64))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+        overlay.apply_fragment(
+            OverlayFragment::run_range(
+                20,
+                [
+                    vec![OverlayValue::Number(1.0); 3],
+                    vec![OverlayValue::Number(2.0); 3],
+                ]
+                .concat(),
+            )
+            .unwrap(),
+        );
+
+        let dense_slice = overlay.slice(12, 2);
+        let dense_stats = dense_slice.debug_stats();
+        assert_eq!(dense_stats.dense_fragments, 1);
+        assert_eq!(dense_stats.sparse_fragments, 0);
+        assert_eq!(
+            dense_slice.get_scalar(0).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            dense_slice.get_scalar(1).unwrap().to_literal(),
+            LiteralValue::Number(3.0)
+        );
+        assert!(dense_slice.debug_is_normalized());
+
+        let run_slice = overlay.slice(22, 3);
+        let run_stats = run_slice.debug_stats();
+        assert_eq!(run_stats.run_fragments, 1);
+        assert_eq!(run_stats.sparse_fragments, 0);
+        assert_eq!(
+            run_slice.get_scalar(0).unwrap().to_literal(),
+            LiteralValue::Number(1.0)
+        );
+        assert_eq!(
+            run_slice.get_scalar(1).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert_eq!(
+            run_slice.get_scalar(2).unwrap().to_literal(),
+            LiteralValue::Number(2.0)
+        );
+        assert!(run_slice.debug_is_normalized());
     }
 
     #[test]
