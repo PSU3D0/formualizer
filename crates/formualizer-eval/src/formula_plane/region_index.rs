@@ -885,6 +885,74 @@ mod tests {
     }
 
     #[test]
+    fn sheet_region_index_no_under_return_matches_bruteforce_table() {
+        let inserted = vec![
+            (RegionPattern::point(1, 0, 0), "s1_point_origin"),
+            (RegionPattern::point(1, 7, 7), "s1_point_far"),
+            (RegionPattern::col_interval(1, 2, 1, 6), "s1_col_interval"),
+            (RegionPattern::row_interval(1, 5, 1, 6), "s1_row_interval"),
+            (RegionPattern::rect(1, 3, 5, 3, 5), "s1_rect_cross_bucket"),
+            (RegionPattern::whole_row(1, 9), "s1_whole_row"),
+            (RegionPattern::whole_col(1, 10), "s1_whole_col"),
+            (RegionPattern::whole_sheet(1), "s1_whole_sheet"),
+            (RegionPattern::point(2, 0, 0), "s2_point_origin"),
+            (RegionPattern::rect(2, 3, 5, 3, 5), "s2_rect_cross_bucket"),
+            (RegionPattern::whole_sheet(2), "s2_whole_sheet"),
+        ];
+        let queries = vec![
+            RegionPattern::point(1, 0, 0),
+            RegionPattern::point(1, 4, 4),
+            RegionPattern::point(1, 5, 2),
+            RegionPattern::point(1, 9, 99),
+            RegionPattern::point(1, 99, 10),
+            RegionPattern::rect(1, 4, 6, 4, 6),
+            RegionPattern::whole_row(1, 5),
+            RegionPattern::whole_col(1, 2),
+            RegionPattern::whole_sheet(1),
+            RegionPattern::point(2, 4, 4),
+            RegionPattern::whole_sheet(2),
+        ];
+        let mut index = SheetRegionIndex::with_rect_bucket_size(4, 4);
+        for (region, value) in &inserted {
+            index.insert(*region, *value);
+        }
+
+        for query in queries {
+            let expected: FxHashSet<_> = inserted
+                .iter()
+                .filter_map(|(region, value)| region.intersects(&query).then_some(*value))
+                .collect();
+            let actual: FxHashSet<_> = index
+                .query(query)
+                .matches
+                .into_iter()
+                .map(|matched| matched.value)
+                .collect();
+
+            assert_eq!(actual, expected, "query {query:?}");
+        }
+    }
+
+    #[test]
+    fn sheet_region_index_rect_bucket_boundary_queries_do_not_under_return() {
+        let mut index = SheetRegionIndex::with_rect_bucket_size(4, 4);
+        index.insert(RegionPattern::rect(1, 3, 4, 3, 4), "crossing_rect");
+        index.insert(RegionPattern::rect(1, 0, 2, 0, 2), "unrelated_rect");
+
+        for point in [
+            RegionPattern::point(1, 3, 3),
+            RegionPattern::point(1, 3, 4),
+            RegionPattern::point(1, 4, 3),
+            RegionPattern::point(1, 4, 4),
+        ] {
+            let result = index.query(point);
+            let values: FxHashSet<_> = result.matches.iter().map(|matched| matched.value).collect();
+            assert!(values.contains("crossing_rect"), "query {point:?}");
+            assert!(!values.contains("unrelated_rect"), "query {point:?}");
+        }
+    }
+
+    #[test]
     fn sheet_region_index_may_overreturn_rect_bucket_but_never_misses_intersection() {
         let mut index = SheetRegionIndex::with_rect_bucket_size(10, 10);
         index.insert(RegionPattern::rect(1, 0, 0, 0, 0), "hit");

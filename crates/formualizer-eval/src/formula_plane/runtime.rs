@@ -671,6 +671,30 @@ mod tests {
         }
     }
 
+    fn plane_with_row_span() -> (FormulaPlane, FormulaTemplateId, FormulaSpanRef) {
+        let mut plane = FormulaPlane::default();
+        let template_id = plane.intern_template(
+            Arc::<str>::from("template"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+        let span_ref = plane.insert_span(new_row_span(0, template_id));
+        (plane, template_id, span_ref)
+    }
+
+    fn overlay_kind_at(plane: &FormulaPlane, coord: PlacementCoord) -> FormulaOverlayEntryKind {
+        let handle = plane.resolve_formula_at(coord, None);
+        let FormulaResolution::Overlay(overlay_ref) = handle.resolution else {
+            panic!("expected overlay resolution, got {:?}", handle.resolution);
+        };
+        plane
+            .formula_overlay
+            .get(overlay_ref)
+            .expect("overlay record")
+            .kind
+            .clone()
+    }
+
     #[test]
     fn template_store_interns_equivalent_templates_once() {
         let mut store = TemplateStore::default();
@@ -813,14 +837,109 @@ mod tests {
     }
 
     #[test]
-    fn formula_overlay_masks_span_resolution() {
-        let mut plane = FormulaPlane::default();
-        let template_id = plane.intern_template(
-            Arc::<str>::from("template"),
-            literal_ast(1),
-            Some(Arc::<str>::from("=1")),
+    fn formula_overlay_formula_override_resolves_with_template_id() {
+        let (mut plane, _template_id, span_ref) = plane_with_row_span();
+        let override_template = plane.intern_template(
+            Arc::<str>::from("override-template"),
+            literal_ast(2),
+            Some(Arc::<str>::from("=2")),
         );
-        let span_ref = plane.insert_span(new_row_span(0, template_id));
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 3, 3, 2),
+            FormulaOverlayEntryKind::FormulaOverride(override_template),
+            Some(span_ref),
+        );
+
+        assert_eq!(
+            overlay_kind_at(&plane, PlacementCoord::new(0, 3, 2)),
+            FormulaOverlayEntryKind::FormulaOverride(override_template)
+        );
+    }
+
+    #[test]
+    fn formula_overlay_value_override_resolves_as_formula_tombstone() {
+        let (mut plane, _template_id, span_ref) = plane_with_row_span();
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 3, 3, 2),
+            FormulaOverlayEntryKind::ValueOverride,
+            Some(span_ref),
+        );
+
+        assert_eq!(
+            overlay_kind_at(&plane, PlacementCoord::new(0, 3, 2)),
+            FormulaOverlayEntryKind::ValueOverride
+        );
+    }
+
+    #[test]
+    fn formula_overlay_cleared_resolves_as_formula_tombstone() {
+        let (mut plane, _template_id, span_ref) = plane_with_row_span();
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 3, 3, 2),
+            FormulaOverlayEntryKind::Cleared,
+            Some(span_ref),
+        );
+
+        assert_eq!(
+            overlay_kind_at(&plane, PlacementCoord::new(0, 3, 2)),
+            FormulaOverlayEntryKind::Cleared
+        );
+    }
+
+    #[test]
+    fn formula_overlay_unsupported_resolves_with_reason() {
+        let (mut plane, _template_id, span_ref) = plane_with_row_span();
+        let reason = UnsupportedReason::Other(Arc::<str>::from("test unsupported"));
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 3, 3, 2),
+            FormulaOverlayEntryKind::Unsupported(reason.clone()),
+            Some(span_ref),
+        );
+
+        assert_eq!(
+            overlay_kind_at(&plane, PlacementCoord::new(0, 3, 2)),
+            FormulaOverlayEntryKind::Unsupported(reason)
+        );
+    }
+
+    #[test]
+    fn removed_overlay_ref_no_longer_masks_span() {
+        let (mut plane, template_id, span_ref) = plane_with_row_span();
+        let overlay_ref = plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 3, 3, 2),
+            FormulaOverlayEntryKind::ValueOverride,
+            Some(span_ref),
+        );
+        assert!(matches!(
+            plane
+                .resolve_formula_at(PlacementCoord::new(0, 3, 2), None)
+                .resolution,
+            FormulaResolution::Overlay(_)
+        ));
+
+        assert!(plane.remove_overlay(overlay_ref));
+
+        assert!(plane.formula_overlay.get(overlay_ref).is_none());
+        assert_eq!(
+            plane
+                .resolve_formula_at(PlacementCoord::new(0, 3, 2), None)
+                .resolution,
+            FormulaResolution::SpanPlacement {
+                span: span_ref,
+                template_id,
+                placement: PlacementCoord::new(0, 3, 2),
+            }
+        );
+    }
+
+    #[test]
+    fn formula_overlay_masks_span_resolution() {
+        let (mut plane, _template_id, span_ref) = plane_with_row_span();
         plane.insert_overlay(
             0,
             PlacementDomain::row_run(0, 3, 3, 2),
