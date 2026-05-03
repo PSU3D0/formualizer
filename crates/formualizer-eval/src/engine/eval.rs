@@ -20,6 +20,7 @@ use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -148,6 +149,140 @@ impl ComputedWriteBuffer {
     #[inline]
     fn estimate_value_bytes(value: &OverlayValue) -> usize {
         Self::ENTRY_BASE_BYTES.saturating_add(value.estimated_payload_bytes())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ComputedWriteChunkKey {
+    sheet_id: SheetId,
+    col0: u32,
+    chunk_idx: usize,
+    chunk_start_row0: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ComputedWriteChunkEntryPlan {
+    pub(crate) row_in_chunk: usize,
+    pub(crate) seq: u64,
+    pub(crate) value: OverlayValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ComputedWriteChunkPlanShape {
+    Point,
+    SparseOffsets {
+        entries: usize,
+        span_len: usize,
+    },
+    DenseRange {
+        start: usize,
+        len: usize,
+    },
+    RunRange {
+        start: usize,
+        len: usize,
+        runs: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ComputedWriteChunkPlan {
+    pub(crate) sheet_id: SheetId,
+    pub(crate) col0: u32,
+    pub(crate) chunk_idx: usize,
+    pub(crate) chunk_start_row0: u32,
+    pub(crate) entries: Vec<ComputedWriteChunkEntryPlan>,
+    pub(crate) shape: ComputedWriteChunkPlanShape,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ComputedWriteCoalescingPlan {
+    pub(crate) chunks: Vec<ComputedWriteChunkPlan>,
+    pub(crate) input_cells: usize,
+    pub(crate) coalesced_cells: usize,
+    pub(crate) overwritten_cells: usize,
+}
+
+impl ComputedWriteCoalescingPlan {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+}
+
+impl ComputedWriteChunkPlan {
+    fn from_group(
+        key: ComputedWriteChunkKey,
+        mut entries: Vec<ComputedWriteChunkEntryPlan>,
+    ) -> (Self, usize) {
+        entries.sort_by_key(|entry| (entry.row_in_chunk, entry.seq));
+        let input_len = entries.len();
+        let mut coalesced: Vec<ComputedWriteChunkEntryPlan> = Vec::with_capacity(input_len);
+        for entry in entries {
+            if let Some(prev) = coalesced.last_mut()
+                && prev.row_in_chunk == entry.row_in_chunk
+            {
+                *prev = entry;
+                continue;
+            }
+            coalesced.push(entry);
+        }
+        let overwritten = input_len.saturating_sub(coalesced.len());
+        let shape = Self::classify_shape(&coalesced);
+        (
+            Self {
+                sheet_id: key.sheet_id,
+                col0: key.col0,
+                chunk_idx: key.chunk_idx,
+                chunk_start_row0: key.chunk_start_row0,
+                entries: coalesced,
+                shape,
+            },
+            overwritten,
+        )
+    }
+
+    fn classify_shape(entries: &[ComputedWriteChunkEntryPlan]) -> ComputedWriteChunkPlanShape {
+        debug_assert!(!entries.is_empty());
+        if entries.len() == 1 {
+            return ComputedWriteChunkPlanShape::Point;
+        }
+
+        let start = entries[0].row_in_chunk;
+        let end = entries[entries.len() - 1].row_in_chunk;
+        let span_len = end.saturating_sub(start).saturating_add(1);
+        if span_len != entries.len() {
+            return ComputedWriteChunkPlanShape::SparseOffsets {
+                entries: entries.len(),
+                span_len,
+            };
+        }
+
+        let runs = Self::run_count(entries);
+        if runs < entries.len() {
+            ComputedWriteChunkPlanShape::RunRange {
+                start,
+                len: entries.len(),
+                runs,
+            }
+        } else {
+            ComputedWriteChunkPlanShape::DenseRange {
+                start,
+                len: entries.len(),
+            }
+        }
+    }
+
+    fn run_count(entries: &[ComputedWriteChunkEntryPlan]) -> usize {
+        let mut runs = 0usize;
+        let mut prev: Option<&OverlayValue> = None;
+        for entry in entries {
+            if prev != Some(&entry.value) {
+                runs = runs.saturating_add(1);
+                prev = Some(&entry.value);
+            }
+        }
+        runs
     }
 }
 
@@ -3779,6 +3914,164 @@ where
         {
             self.disable_computed_overlay_mirroring_due_to_budget(cap);
         }
+    }
+
+    pub(crate) fn plan_computed_write_coalescing(
+        &self,
+        buffer: &ComputedWriteBuffer,
+    ) -> ComputedWriteCoalescingPlan {
+        let mut groups: BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>> =
+            BTreeMap::new();
+        let mut input_cells = 0usize;
+
+        for write in buffer.writes() {
+            match write {
+                ComputedWrite::Cell {
+                    seq,
+                    sheet_id,
+                    row0,
+                    col0,
+                    value,
+                } => {
+                    input_cells = input_cells.saturating_add(1);
+                    self.push_computed_write_plan_entry(
+                        &mut groups,
+                        *seq,
+                        *sheet_id,
+                        *row0,
+                        *col0,
+                        value.clone(),
+                    );
+                }
+                ComputedWrite::Rect {
+                    seq,
+                    sheet_id,
+                    sr0,
+                    sc0,
+                    values,
+                } => {
+                    for (r_off, row) in values.iter().enumerate() {
+                        for (c_off, value) in row.iter().enumerate() {
+                            input_cells = input_cells.saturating_add(1);
+                            self.push_computed_write_plan_entry(
+                                &mut groups,
+                                *seq,
+                                *sheet_id,
+                                sr0.saturating_add(r_off as u32),
+                                sc0.saturating_add(c_off as u32),
+                                value.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut plan = ComputedWriteCoalescingPlan {
+            chunks: Vec::with_capacity(groups.len()),
+            input_cells,
+            coalesced_cells: 0,
+            overwritten_cells: 0,
+        };
+        for (key, entries) in groups {
+            let (chunk_plan, overwritten) = ComputedWriteChunkPlan::from_group(key, entries);
+            plan.coalesced_cells = plan
+                .coalesced_cells
+                .saturating_add(chunk_plan.entries.len());
+            plan.overwritten_cells = plan.overwritten_cells.saturating_add(overwritten);
+            plan.chunks.push(chunk_plan);
+        }
+        debug_assert_eq!(
+            plan.input_cells,
+            plan.coalesced_cells.saturating_add(plan.overwritten_cells)
+        );
+        plan
+    }
+
+    fn push_computed_write_plan_entry(
+        &self,
+        groups: &mut BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>>,
+        seq: u64,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        value: OverlayValue,
+    ) {
+        let (chunk_idx, chunk_start_row0, row_in_chunk) =
+            self.locate_computed_write_chunk(sheet_id, row0);
+        let key = ComputedWriteChunkKey {
+            sheet_id,
+            col0,
+            chunk_idx,
+            chunk_start_row0,
+        };
+        groups
+            .entry(key)
+            .or_default()
+            .push(ComputedWriteChunkEntryPlan {
+                row_in_chunk,
+                seq,
+                value,
+            });
+    }
+
+    fn locate_computed_write_chunk(&self, sheet_id: SheetId, row0: u32) -> (usize, u32, usize) {
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        if let Some(sheet) = self.arrow_sheets.sheet(sheet_name) {
+            return Self::locate_row_in_sheet_for_computed_write_plan(sheet, row0 as usize);
+        }
+        Self::locate_row_in_empty_sheet_for_computed_write_plan(row0 as usize, 32 * 1024)
+    }
+
+    fn locate_row_in_sheet_for_computed_write_plan(
+        sheet: &crate::arrow_store::ArrowSheet,
+        row0: usize,
+    ) -> (usize, u32, usize) {
+        if row0 < sheet.nrows as usize
+            && let Some((chunk_idx, row_in_chunk)) = sheet.chunk_of_row(row0)
+        {
+            let chunk_start = sheet.chunk_starts.get(chunk_idx).copied().unwrap_or(0);
+            return (chunk_idx, chunk_start as u32, row_in_chunk);
+        }
+
+        let chunk_rows = sheet.chunk_rows.max(1);
+        if sheet.chunk_starts.is_empty() {
+            return Self::locate_row_in_empty_sheet_for_computed_write_plan(row0, chunk_rows);
+        }
+
+        let mut chunk_idx = sheet.chunk_starts.len().saturating_sub(1);
+        let mut chunk_start = sheet.chunk_starts[chunk_idx];
+        while chunk_start.saturating_add(chunk_rows) <= row0 {
+            chunk_idx = chunk_idx.saturating_add(1);
+            chunk_start = chunk_start.saturating_add(chunk_rows);
+        }
+        (
+            chunk_idx,
+            chunk_start as u32,
+            row0.saturating_sub(chunk_start),
+        )
+    }
+
+    fn locate_row_in_empty_sheet_for_computed_write_plan(
+        row0: usize,
+        chunk_rows: usize,
+    ) -> (usize, u32, usize) {
+        let chunk_rows = chunk_rows.max(1);
+        let chunk_idx = row0 / chunk_rows;
+        let chunk_start = chunk_idx.saturating_mul(chunk_rows);
+        (
+            chunk_idx,
+            chunk_start as u32,
+            row0.saturating_sub(chunk_start),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_plan_computed_write_coalescing(
+        &self,
+        buffer: &ComputedWriteBuffer,
+    ) -> ComputedWriteCoalescingPlan {
+        self.plan_computed_write_coalescing(buffer)
     }
 
     pub(crate) fn flush_computed_write_buffer(

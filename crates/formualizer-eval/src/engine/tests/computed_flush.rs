@@ -1,6 +1,8 @@
 use super::common::arrow_eval_config;
 use crate::arrow_store::{OverlayFragment, OverlayValue};
-use crate::engine::eval::{ComputedWrite, ComputedWriteBuffer, Engine};
+use crate::engine::eval::{
+    ComputedWrite, ComputedWriteBuffer, ComputedWriteChunkPlanShape, Engine,
+};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
@@ -22,6 +24,130 @@ fn computed_write_buffer_records_sequence_order() {
     let seqs: Vec<u64> = buffer.writes().iter().map(ComputedWrite::seq).collect();
     assert_eq!(seqs, vec![0, 1, 2]);
     assert!(buffer.estimated_bytes() > 0);
+}
+
+#[test]
+fn computed_write_coalescing_plan_groups_sorts_and_applies_last_write_wins() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 2, 2);
+        for _ in 0..4 {
+            ab.append_row(sheet, &[LiteralValue::Empty, LiteralValue::Empty])
+                .unwrap();
+        }
+        ab.finish().unwrap();
+    }
+    let sheet_id = engine.sheet_id(sheet).unwrap();
+    let mut buffer = ComputedWriteBuffer::default();
+
+    buffer.push_cell(sheet_id, 3, 0, OverlayValue::Number(30.0));
+    buffer.push_cell(sheet_id, 0, 0, OverlayValue::Number(10.0));
+    buffer.push_cell(sheet_id, 0, 0, OverlayValue::Number(11.0));
+    buffer.push_rect(
+        sheet_id,
+        1,
+        0,
+        vec![
+            vec![OverlayValue::Number(20.0), OverlayValue::Text("a".into())],
+            vec![OverlayValue::Number(30.0), OverlayValue::Text("b".into())],
+        ],
+    );
+
+    let plan = engine.debug_plan_computed_write_coalescing(&buffer);
+    assert!(!plan.is_empty());
+    assert_eq!(plan.input_cells, 7);
+    assert_eq!(plan.coalesced_cells, 6);
+    assert_eq!(plan.overwritten_cells, 1);
+    assert_eq!(
+        buffer.len(),
+        4,
+        "debug planning must not consume the buffer"
+    );
+
+    let c0_ch0 = plan
+        .chunks
+        .iter()
+        .find(|chunk| chunk.col0 == 0 && chunk.chunk_idx == 0)
+        .expect("column 0 chunk 0");
+    assert_eq!(c0_ch0.chunk_start_row0, 0);
+    assert_eq!(
+        c0_ch0.shape,
+        ComputedWriteChunkPlanShape::DenseRange { start: 0, len: 2 }
+    );
+    assert_eq!(c0_ch0.entries.len(), 2);
+    assert_eq!(c0_ch0.entries[0].row_in_chunk, 0);
+    assert_eq!(c0_ch0.entries[0].seq, 2);
+    assert_eq!(c0_ch0.entries[0].value, OverlayValue::Number(11.0));
+    assert_eq!(c0_ch0.entries[1].row_in_chunk, 1);
+    assert_eq!(c0_ch0.entries[1].seq, 3);
+    assert_eq!(c0_ch0.entries[1].value, OverlayValue::Number(20.0));
+
+    let c0_ch1 = plan
+        .chunks
+        .iter()
+        .find(|chunk| chunk.col0 == 0 && chunk.chunk_idx == 1)
+        .expect("column 0 chunk 1");
+    assert_eq!(c0_ch1.chunk_start_row0, 2);
+    assert_eq!(
+        c0_ch1.shape,
+        ComputedWriteChunkPlanShape::RunRange {
+            start: 0,
+            len: 2,
+            runs: 1,
+        }
+    );
+    assert_eq!(c0_ch1.entries[0].row_in_chunk, 0);
+    assert_eq!(c0_ch1.entries[1].row_in_chunk, 1);
+
+    let c1_ch0 = plan
+        .chunks
+        .iter()
+        .find(|chunk| chunk.col0 == 1 && chunk.chunk_idx == 0)
+        .expect("column 1 chunk 0");
+    assert_eq!(c1_ch0.entries[0].row_in_chunk, 1);
+    assert_eq!(c1_ch0.shape, ComputedWriteChunkPlanShape::Point);
+
+    let c1_ch1 = plan
+        .chunks
+        .iter()
+        .find(|chunk| chunk.col0 == 1 && chunk.chunk_idx == 1)
+        .expect("column 1 chunk 1");
+    assert_eq!(c1_ch1.entries[0].row_in_chunk, 0);
+    assert_eq!(c1_ch1.shape, ComputedWriteChunkPlanShape::Point);
+}
+
+#[test]
+fn computed_write_coalescing_plan_preserves_sparse_gaps_and_empty_values() {
+    let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
+    let sheet = "Sheet1";
+    let sheet_id = engine.graph.sheet_id_mut(sheet);
+    let mut buffer = ComputedWriteBuffer::default();
+
+    buffer.push_cell(sheet_id, 0, 0, OverlayValue::Empty);
+    buffer.push_cell(sheet_id, 2, 0, OverlayValue::Empty);
+
+    let plan = engine.debug_plan_computed_write_coalescing(&buffer);
+    assert_eq!(plan.input_cells, 2);
+    assert_eq!(plan.coalesced_cells, 2);
+    assert_eq!(plan.overwritten_cells, 0);
+    assert_eq!(plan.chunks.len(), 1);
+
+    let chunk = &plan.chunks[0];
+    assert_eq!(chunk.col0, 0);
+    assert_eq!(chunk.chunk_idx, 0);
+    assert_eq!(chunk.entries[0].row_in_chunk, 0);
+    assert_eq!(chunk.entries[0].value, OverlayValue::Empty);
+    assert_eq!(chunk.entries[1].row_in_chunk, 2);
+    assert_eq!(chunk.entries[1].value, OverlayValue::Empty);
+    assert_eq!(
+        chunk.shape,
+        ComputedWriteChunkPlanShape::SparseOffsets {
+            entries: 2,
+            span_len: 3,
+        }
+    );
 }
 
 #[test]
