@@ -783,6 +783,49 @@ fn coalesced_flush_cap_zero_still_compacts_safely() {
 }
 
 #[test]
+fn cap_zero_batches_computed_writes_before_compaction() {
+    let mut cfg = arrow_eval_config();
+    cfg.max_overlay_memory_bytes = Some(0);
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    let sheet = "Sheet1";
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(sheet, 1, 8);
+        for _ in 0..32 {
+            ab.append_row(sheet, &[LiteralValue::Empty]).unwrap();
+        }
+        ab.finish().unwrap();
+    }
+
+    let formula = parse("=1").unwrap();
+    for row in 1..=32 {
+        engine
+            .set_cell_formula(sheet, row, 1, formula.clone())
+            .unwrap();
+    }
+
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.overlay_memory_usage(), 0);
+    assert!(
+        engine.debug_overlay_compactions() <= 4,
+        "cap=0 should compact per coalesced chunk, not per formula; compactions={}",
+        engine.debug_overlay_compactions()
+    );
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let stats = asheet.columns[0]
+        .chunk(0)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.covered_len, 0);
+    for row0 in 0..32 {
+        assert_eq!(asheet.get_cell_value(row0, 0), LiteralValue::Number(1.0));
+    }
+}
+
+#[test]
 fn coalesced_flush_dense_range_creates_dense_fragment() {
     let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
     let sheet = "Sheet1";

@@ -4405,6 +4405,9 @@ where
     #[inline]
     fn should_flush_computed_write_buffer(&self, buffer: &ComputedWriteBuffer) -> bool {
         self.config.max_overlay_memory_bytes.is_some_and(|cap| {
+            if cap == 0 {
+                return false;
+            }
             self.computed_overlay_bytes_estimate
                 .saturating_add(buffer.estimated_bytes())
                 > cap
@@ -4414,6 +4417,11 @@ where
     /// Estimated memory usage for computed overlays (formula/spill mirroring).
     pub fn overlay_memory_usage(&self) -> usize {
         self.computed_overlay_bytes_estimate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_overlay_compactions(&self) -> u64 {
+        self.overlay_compactions
     }
 
     #[cfg(test)]
