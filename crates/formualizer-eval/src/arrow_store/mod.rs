@@ -1276,6 +1276,18 @@ impl OverlayFragment {
         }
     }
 
+    pub(crate) fn max_covered_offset(&self) -> usize {
+        match self {
+            OverlayFragment::SparseOffsets { offsets, .. } => {
+                offsets.iter().copied().max().unwrap_or(0) as usize
+            }
+            OverlayFragment::DenseRange { start, len, .. }
+            | OverlayFragment::RunRange { start, len, .. } => (*start as usize)
+                .saturating_add(*len as usize)
+                .saturating_sub(1),
+        }
+    }
+
     fn interval_coverage(&self) -> Option<core::ops::Range<usize>> {
         match self {
             OverlayFragment::DenseRange { start, len, .. }

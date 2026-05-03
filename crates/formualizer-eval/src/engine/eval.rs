@@ -1,5 +1,5 @@
 use crate::SheetId;
-use crate::arrow_store::{OverlayValue, SheetStore};
+use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
@@ -4097,25 +4097,140 @@ where
         }
 
         let plan = self.plan_owned_computed_write_coalescing(buffer.take_writes());
-        self.flush_computed_write_plan_as_points(plan);
+        self.flush_computed_write_plan(plan);
 
         Ok(())
     }
 
-    fn flush_computed_write_plan_as_points(&mut self, plan: ComputedWriteCoalescingPlan) {
+    fn flush_computed_write_plan(&mut self, plan: ComputedWriteCoalescingPlan) {
         for chunk in plan.chunks {
-            let sheet_name = self.graph.sheet_name(chunk.sheet_id).to_string();
-            for entry in chunk.entries {
-                let row0 = chunk
-                    .chunk_start_row0
-                    .saturating_add(entry.row_in_chunk as u32);
-                self.write_computed_overlay_value_0based(
-                    &sheet_name,
-                    row0,
-                    chunk.col0,
-                    entry.value,
-                );
+            self.flush_computed_write_chunk_plan(chunk);
+        }
+    }
+
+    fn flush_computed_write_chunk_plan(&mut self, chunk: ComputedWriteChunkPlan) {
+        match &chunk.shape {
+            ComputedWriteChunkPlanShape::Point
+            | ComputedWriteChunkPlanShape::SparseOffsets { .. } => {
+                self.flush_computed_write_chunk_plan_as_points(chunk);
             }
+            ComputedWriteChunkPlanShape::DenseRange { .. } => {
+                self.flush_computed_write_chunk_plan_as_dense_fragment(chunk);
+            }
+            ComputedWriteChunkPlanShape::RunRange { len, runs, .. } => {
+                if Self::should_emit_computed_run_fragment(*len, *runs) {
+                    self.flush_computed_write_chunk_plan_as_run_fragment(chunk);
+                } else {
+                    self.flush_computed_write_chunk_plan_as_dense_fragment(chunk);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn should_emit_computed_run_fragment(len: usize, runs: usize) -> bool {
+        runs <= len / 2
+    }
+
+    fn flush_computed_write_chunk_plan_as_points(&mut self, chunk: ComputedWriteChunkPlan) {
+        let sheet_name = self.graph.sheet_name(chunk.sheet_id).to_string();
+        for entry in chunk.entries {
+            let row0 = chunk
+                .chunk_start_row0
+                .saturating_add(entry.row_in_chunk as u32);
+            self.write_computed_overlay_value_0based(&sheet_name, row0, chunk.col0, entry.value);
+        }
+    }
+
+    fn flush_computed_write_chunk_plan_as_dense_fragment(&mut self, chunk: ComputedWriteChunkPlan) {
+        if chunk.entries.is_empty() {
+            return;
+        }
+        let start = chunk.entries[0].row_in_chunk;
+        let values: Vec<OverlayValue> =
+            chunk.entries.into_iter().map(|entry| entry.value).collect();
+        if let Some(fragment) = OverlayFragment::dense_range(start, values) {
+            self.apply_computed_overlay_fragment(
+                chunk.sheet_id,
+                chunk.col0,
+                chunk.chunk_idx,
+                fragment,
+            );
+        }
+    }
+
+    fn flush_computed_write_chunk_plan_as_run_fragment(&mut self, chunk: ComputedWriteChunkPlan) {
+        if chunk.entries.is_empty() {
+            return;
+        }
+        let start = chunk.entries[0].row_in_chunk;
+        let values: Vec<OverlayValue> =
+            chunk.entries.into_iter().map(|entry| entry.value).collect();
+        if let Some(fragment) = OverlayFragment::run_range(start, values) {
+            self.apply_computed_overlay_fragment(
+                chunk.sheet_id,
+                chunk.col0,
+                chunk.chunk_idx,
+                fragment,
+            );
+        }
+    }
+
+    fn apply_computed_overlay_fragment(
+        &mut self,
+        sheet_id: SheetId,
+        col0: u32,
+        chunk_idx: usize,
+        fragment: OverlayFragment,
+    ) {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+        {
+            return;
+        }
+        if self.computed_overlay_mirroring_disabled {
+            return;
+        }
+
+        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        self.ensure_arrow_sheet(&sheet_name);
+
+        let col0 = col0 as usize;
+        let asheet = self
+            .arrow_sheets
+            .sheet_mut(&sheet_name)
+            .expect("ArrowSheet must exist");
+
+        let cur_cols = asheet.columns.len();
+        if col0 >= cur_cols {
+            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
+        }
+
+        let start_row0 = asheet
+            .chunk_starts
+            .get(chunk_idx)
+            .copied()
+            .unwrap_or_else(|| chunk_idx.saturating_mul(asheet.chunk_rows.max(1)));
+        let required_rows =
+            start_row0.saturating_add(fragment.max_covered_offset().saturating_add(1));
+        if required_rows > asheet.nrows as usize {
+            if asheet.columns.is_empty() {
+                asheet.insert_columns(0, 1);
+            }
+            asheet.ensure_row_capacity(required_rows);
+        }
+
+        let Some(ch) = asheet.ensure_column_chunk_mut(col0, chunk_idx) else {
+            return;
+        };
+        let delta = ch.computed_overlay.apply_fragment(fragment);
+        self.adjust_computed_overlay_bytes(delta);
+
+        if let Some(cap) = self.config.max_overlay_memory_bytes
+            && self.computed_overlay_bytes_estimate > cap
+        {
+            self.disable_computed_overlay_mirroring_due_to_budget(cap);
         }
     }
 
