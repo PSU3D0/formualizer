@@ -102,6 +102,7 @@ impl<'a> SpanEvaluator<'a> {
             .ok_or(SpanEvalError::MissingTemplate)?;
         let origin = domain_origin(&span.domain);
         let placements = placements_for_dirty(span, &task.dirty)?;
+        let push_count_before = sink.push_count();
 
         let mut report = SpanEvalReport {
             span_eval_task_count: 1,
@@ -127,7 +128,8 @@ impl<'a> SpanEvaluator<'a> {
             sink.push_cell(placement, value);
             report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);
         }
-        report.computed_write_buffer_push_count = sink.push_count();
+        report.computed_write_buffer_push_count =
+            sink.push_count().saturating_sub(push_count_before);
         Ok(report)
     }
 }
