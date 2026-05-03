@@ -2095,6 +2095,84 @@ impl Overlay {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+#[cfg_attr(test, derive(serde::Serialize))]
+pub(crate) struct OverlaySelectStats {
+    pub(crate) zip_select_calls: usize,
+    pub(crate) direct_dense_slices: usize,
+    pub(crate) direct_run_materializations: usize,
+    pub(crate) partial_sparse_intersections: usize,
+    pub(crate) partial_dense_intersections: usize,
+    pub(crate) partial_run_intersections: usize,
+    pub(crate) partial_overlay_builds: usize,
+    pub(crate) row_scalar_fallbacks: usize,
+    pub(crate) point_entries_applied: usize,
+    pub(crate) fragment_intersections: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static OVERLAY_SELECT_STATS: std::cell::RefCell<OverlaySelectStats> =
+        std::cell::RefCell::new(OverlaySelectStats::default());
+}
+
+#[cfg(test)]
+pub(crate) fn reset_overlay_select_stats() {
+    OVERLAY_SELECT_STATS.with(|stats| *stats.borrow_mut() = OverlaySelectStats::default());
+}
+
+#[cfg(test)]
+pub(crate) fn snapshot_overlay_select_stats() -> OverlaySelectStats {
+    OVERLAY_SELECT_STATS.with(|stats| *stats.borrow())
+}
+
+#[cfg(test)]
+fn record_overlay_select_stats(f: impl FnOnce(&mut OverlaySelectStats)) {
+    OVERLAY_SELECT_STATS.with(|stats| f(&mut stats.borrow_mut()));
+}
+
+#[cfg(not(test))]
+#[inline]
+fn record_overlay_select_stats(_f: impl FnOnce(&mut OverlaySelectStats)) {}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum OverlayFragmentShape {
+    Sparse,
+    Dense,
+    Run,
+}
+
+struct OverlaySlots<T> {
+    present: Vec<bool>,
+    values: Vec<Option<T>>,
+    any_present: bool,
+}
+
+impl<T> OverlaySlots<T> {
+    fn new(len: usize) -> Self {
+        Self {
+            present: vec![false; len],
+            values: (0..len).map(|_| None).collect(),
+            any_present: false,
+        }
+    }
+
+    #[inline]
+    fn set(&mut self, idx: usize, value: Option<T>) {
+        if idx >= self.present.len() {
+            return;
+        }
+        self.present[idx] = true;
+        self.values[idx] = value;
+        self.any_present = true;
+    }
+
+    #[inline]
+    fn any_present(&self) -> bool {
+        self.any_present
+    }
+}
+
 pub(crate) struct OverlayCascade<'a> {
     user: &'a Overlay,
     computed: &'a Overlay,
@@ -2123,22 +2201,48 @@ impl<'a> OverlayCascade<'a> {
         range: core::ops::Range<usize>,
         base: &Float64Array,
     ) -> Arc<Float64Array> {
-        let len = range.end.saturating_sub(range.start);
-        let mut mask_b = BooleanBuilder::with_capacity(len);
-        let mut values_b = Float64Builder::with_capacity(len);
-        for off in range {
-            if let Some(value) = self.get_scalar(off) {
-                mask_b.append_value(true);
-                if let Some(n) = value.numeric_lane_value() {
-                    values_b.append_value(n);
-                } else {
-                    values_b.append_null();
-                }
-            } else {
-                mask_b.append_value(false);
-                values_b.append_null();
+        if let Some(fragment) = self.user.full_cover_dense_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+            return Self::dense_numbers(fragment, range);
+        }
+        if let Some(fragment) = self.user.full_cover_run_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+            return Self::run_numbers(fragment, range);
+        }
+        if !self.user.has_any_in_range(range.clone()) {
+            if let Some(fragment) = self.computed.full_cover_dense_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+                return Self::dense_numbers(fragment, range);
+            }
+            if let Some(fragment) = self.computed.full_cover_run_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+                return Self::run_numbers(fragment, range);
             }
         }
+
+        if !self.has_any_in_range(range.clone()) {
+            return Arc::new(base.clone());
+        }
+
+        record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
+        let len = range.end.saturating_sub(range.start);
+        let mut slots = OverlaySlots::<f64>::new(len);
+        Self::apply_number_layer(self.computed, range.clone(), &mut slots);
+        Self::apply_number_layer(self.user, range.clone(), &mut slots);
+        if !slots.any_present() {
+            return Arc::new(base.clone());
+        }
+
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = Float64Builder::with_capacity(len);
+        for idx in 0..len {
+            mask_b.append_value(slots.present[idx]);
+            match slots.values[idx] {
+                Some(value) => values_b.append_value(value),
+                None => values_b.append_null(),
+            }
+        }
+        record_overlay_select_stats(|stats| stats.zip_select_calls += 1);
         let mask = mask_b.finish();
         let values = values_b.finish();
         let zipped =
@@ -2157,22 +2261,48 @@ impl<'a> OverlayCascade<'a> {
         range: core::ops::Range<usize>,
         base: &BooleanArray,
     ) -> Arc<BooleanArray> {
-        let len = range.end.saturating_sub(range.start);
-        let mut mask_b = BooleanBuilder::with_capacity(len);
-        let mut values_b = BooleanBuilder::with_capacity(len);
-        for off in range {
-            if let Some(value) = self.get_scalar(off) {
-                mask_b.append_value(true);
-                if let Some(b) = value.boolean_lane_value() {
-                    values_b.append_value(b);
-                } else {
-                    values_b.append_null();
-                }
-            } else {
-                mask_b.append_value(false);
-                values_b.append_null();
+        if let Some(fragment) = self.user.full_cover_dense_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+            return Self::dense_booleans(fragment, range);
+        }
+        if let Some(fragment) = self.user.full_cover_run_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+            return Self::run_booleans(fragment, range);
+        }
+        if !self.user.has_any_in_range(range.clone()) {
+            if let Some(fragment) = self.computed.full_cover_dense_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+                return Self::dense_booleans(fragment, range);
+            }
+            if let Some(fragment) = self.computed.full_cover_run_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+                return Self::run_booleans(fragment, range);
             }
         }
+
+        if !self.has_any_in_range(range.clone()) {
+            return Arc::new(base.clone());
+        }
+
+        record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
+        let len = range.end.saturating_sub(range.start);
+        let mut slots = OverlaySlots::<bool>::new(len);
+        Self::apply_boolean_layer(self.computed, range.clone(), &mut slots);
+        Self::apply_boolean_layer(self.user, range.clone(), &mut slots);
+        if !slots.any_present() {
+            return Arc::new(base.clone());
+        }
+
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = BooleanBuilder::with_capacity(len);
+        for idx in 0..len {
+            mask_b.append_value(slots.present[idx]);
+            match slots.values[idx] {
+                Some(value) => values_b.append_value(value),
+                None => values_b.append_null(),
+            }
+        }
+        record_overlay_select_stats(|stats| stats.zip_select_calls += 1);
         let mask = mask_b.finish();
         let values = values_b.finish();
         let zipped =
@@ -2191,22 +2321,48 @@ impl<'a> OverlayCascade<'a> {
         range: core::ops::Range<usize>,
         base: &StringArray,
     ) -> ArrayRef {
-        let len = range.end.saturating_sub(range.start);
-        let mut mask_b = BooleanBuilder::with_capacity(len);
-        let mut values_b = StringBuilder::with_capacity(len, len * 8);
-        for off in range {
-            if let Some(value) = self.get_scalar(off) {
-                mask_b.append_value(true);
-                if let Some(s) = value.text_lane_value() {
-                    values_b.append_value(s);
-                } else {
-                    values_b.append_null();
-                }
-            } else {
-                mask_b.append_value(false);
-                values_b.append_null();
+        if let Some(fragment) = self.user.full_cover_dense_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+            return Self::dense_text(fragment, range);
+        }
+        if let Some(fragment) = self.user.full_cover_run_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+            return Self::run_text(fragment, range);
+        }
+        if !self.user.has_any_in_range(range.clone()) {
+            if let Some(fragment) = self.computed.full_cover_dense_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+                return Self::dense_text(fragment, range);
+            }
+            if let Some(fragment) = self.computed.full_cover_run_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+                return Self::run_text(fragment, range);
             }
         }
+
+        if !self.has_any_in_range(range.clone()) {
+            return Arc::new(base.clone()) as ArrayRef;
+        }
+
+        record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
+        let len = range.end.saturating_sub(range.start);
+        let mut slots = OverlaySlots::<String>::new(len);
+        Self::apply_text_layer(self.computed, range.clone(), &mut slots);
+        Self::apply_text_layer(self.user, range.clone(), &mut slots);
+        if !slots.any_present() {
+            return Arc::new(base.clone()) as ArrayRef;
+        }
+
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = StringBuilder::with_capacity(len, len.saturating_mul(8));
+        for idx in 0..len {
+            mask_b.append_value(slots.present[idx]);
+            match &slots.values[idx] {
+                Some(value) => values_b.append_value(value),
+                None => values_b.append_null(),
+            }
+        }
+        record_overlay_select_stats(|stats| stats.zip_select_calls += 1);
         let mask = mask_b.finish();
         let values = values_b.finish();
         crate::compute_prelude::zip_select(&mask, &values, base).expect("zip text overlay")
@@ -2217,22 +2373,48 @@ impl<'a> OverlayCascade<'a> {
         range: core::ops::Range<usize>,
         base: &UInt8Array,
     ) -> Arc<UInt8Array> {
-        let len = range.end.saturating_sub(range.start);
-        let mut mask_b = BooleanBuilder::with_capacity(len);
-        let mut values_b = UInt8Builder::with_capacity(len);
-        for off in range {
-            if let Some(value) = self.get_scalar(off) {
-                mask_b.append_value(true);
-                if let Some(code) = value.error_lane_value() {
-                    values_b.append_value(code);
-                } else {
-                    values_b.append_null();
-                }
-            } else {
-                mask_b.append_value(false);
-                values_b.append_null();
+        if let Some(fragment) = self.user.full_cover_dense_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+            return Self::dense_errors(fragment, range);
+        }
+        if let Some(fragment) = self.user.full_cover_run_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+            return Self::run_errors(fragment, range);
+        }
+        if !self.user.has_any_in_range(range.clone()) {
+            if let Some(fragment) = self.computed.full_cover_dense_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+                return Self::dense_errors(fragment, range);
+            }
+            if let Some(fragment) = self.computed.full_cover_run_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+                return Self::run_errors(fragment, range);
             }
         }
+
+        if !self.has_any_in_range(range.clone()) {
+            return Arc::new(base.clone());
+        }
+
+        record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
+        let len = range.end.saturating_sub(range.start);
+        let mut slots = OverlaySlots::<u8>::new(len);
+        Self::apply_error_layer(self.computed, range.clone(), &mut slots);
+        Self::apply_error_layer(self.user, range.clone(), &mut slots);
+        if !slots.any_present() {
+            return Arc::new(base.clone());
+        }
+
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = UInt8Builder::with_capacity(len);
+        for idx in 0..len {
+            mask_b.append_value(slots.present[idx]);
+            match slots.values[idx] {
+                Some(value) => values_b.append_value(value),
+                None => values_b.append_null(),
+            }
+        }
+        record_overlay_select_stats(|stats| stats.zip_select_calls += 1);
         let mask = mask_b.finish();
         let values = values_b.finish();
         let zipped =
@@ -2251,18 +2433,48 @@ impl<'a> OverlayCascade<'a> {
         range: core::ops::Range<usize>,
         base: &UInt8Array,
     ) -> Arc<UInt8Array> {
-        let len = range.end.saturating_sub(range.start);
-        let mut mask_b = BooleanBuilder::with_capacity(len);
-        let mut values_b = UInt8Builder::with_capacity(len);
-        for off in range {
-            if let Some(value) = self.get_scalar(off) {
-                mask_b.append_value(true);
-                values_b.append_value(value.type_tag() as u8);
-            } else {
-                mask_b.append_value(false);
-                values_b.append_null();
+        if let Some(fragment) = self.user.full_cover_dense_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+            return Self::dense_type_tags(fragment, range);
+        }
+        if let Some(fragment) = self.user.full_cover_run_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+            return Self::run_type_tags(fragment, range);
+        }
+        if !self.user.has_any_in_range(range.clone()) {
+            if let Some(fragment) = self.computed.full_cover_dense_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+                return Self::dense_type_tags(fragment, range);
+            }
+            if let Some(fragment) = self.computed.full_cover_run_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+                return Self::run_type_tags(fragment, range);
             }
         }
+
+        if !self.has_any_in_range(range.clone()) {
+            return Arc::new(base.clone());
+        }
+
+        record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
+        let len = range.end.saturating_sub(range.start);
+        let mut slots = OverlaySlots::<u8>::new(len);
+        Self::apply_type_tag_layer(self.computed, range.clone(), &mut slots);
+        Self::apply_type_tag_layer(self.user, range.clone(), &mut slots);
+        if !slots.any_present() {
+            return Arc::new(base.clone());
+        }
+
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = UInt8Builder::with_capacity(len);
+        for idx in 0..len {
+            mask_b.append_value(slots.present[idx]);
+            match slots.values[idx] {
+                Some(value) => values_b.append_value(value),
+                None => values_b.append_null(),
+            }
+        }
+        record_overlay_select_stats(|stats| stats.zip_select_calls += 1);
         let mask = mask_b.finish();
         let values = values_b.finish();
         let zipped =
@@ -2281,22 +2493,51 @@ impl<'a> OverlayCascade<'a> {
         range: core::ops::Range<usize>,
         base: &StringArray,
     ) -> Arc<StringArray> {
-        let len = range.end.saturating_sub(range.start);
-        let mut mask_b = BooleanBuilder::with_capacity(len);
-        let mut values_b = StringBuilder::with_capacity(len, len * 8);
-        for off in range {
-            if let Some(value) = self.get_scalar(off) {
-                mask_b.append_value(true);
-                if let Some(s) = value.lowered_text_value() {
-                    values_b.append_value(&s);
-                } else {
-                    values_b.append_null();
-                }
-            } else {
-                mask_b.append_value(false);
-                values_b.append_null();
+        if let Some(fragment) = self.user.full_cover_dense_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+            return Self::dense_lowered_text(fragment, range);
+        }
+        if let Some(fragment) = self.user.full_cover_run_fragment(range.clone()) {
+            record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+            return Self::run_lowered_text(fragment, range);
+        }
+        if !self.user.has_any_in_range(range.clone()) {
+            if let Some(fragment) = self.computed.full_cover_dense_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_dense_slices += 1);
+                return Self::dense_lowered_text(fragment, range);
+            }
+            if let Some(fragment) = self.computed.full_cover_run_fragment(range.clone()) {
+                record_overlay_select_stats(|stats| stats.direct_run_materializations += 1);
+                return Self::run_lowered_text(fragment, range);
             }
         }
+
+        if !self.has_any_in_range(range.clone()) {
+            return Arc::new(base.clone());
+        }
+        if self.user.fragments.is_empty() && self.computed.fragments.is_empty() {
+            return self.select_lowered_text_point_scalar(range, base);
+        }
+
+        record_overlay_select_stats(|stats| stats.partial_overlay_builds += 1);
+        let len = range.end.saturating_sub(range.start);
+        let mut slots = OverlaySlots::<String>::new(len);
+        Self::apply_lowered_text_layer(self.computed, range.clone(), &mut slots);
+        Self::apply_lowered_text_layer(self.user, range.clone(), &mut slots);
+        if !slots.any_present() {
+            return Arc::new(base.clone());
+        }
+
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = StringBuilder::with_capacity(len, len.saturating_mul(8));
+        for idx in 0..len {
+            mask_b.append_value(slots.present[idx]);
+            match &slots.values[idx] {
+                Some(value) => values_b.append_value(value),
+                None => values_b.append_null(),
+            }
+        }
+        record_overlay_select_stats(|stats| stats.zip_select_calls += 1);
         let mask = mask_b.finish();
         let values = values_b.finish();
         let zipped = crate::compute_prelude::zip_select(&mask, &values, base)
@@ -2309,8 +2550,624 @@ impl<'a> OverlayCascade<'a> {
                 .clone(),
         )
     }
+
+    fn select_lowered_text_point_scalar(
+        &self,
+        range: core::ops::Range<usize>,
+        base: &StringArray,
+    ) -> Arc<StringArray> {
+        let len = range.end.saturating_sub(range.start);
+        let mut mask_b = BooleanBuilder::with_capacity(len);
+        let mut values_b = StringBuilder::with_capacity(len, len.saturating_mul(8));
+        record_overlay_select_stats(|stats| stats.row_scalar_fallbacks += len);
+        for off in range {
+            if let Some(value) = self.get_scalar(off) {
+                mask_b.append_value(true);
+                if let Some(s) = value.lowered_text_value() {
+                    values_b.append_value(&s);
+                } else {
+                    values_b.append_null();
+                }
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+            } else {
+                mask_b.append_value(false);
+                values_b.append_null();
+            }
+        }
+        record_overlay_select_stats(|stats| stats.zip_select_calls += 1);
+        let mask = mask_b.finish();
+        let values = values_b.finish();
+        let zipped = crate::compute_prelude::zip_select(&mask, &values, base)
+            .expect("zip lowered text overlay");
+        Arc::new(
+            zipped
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .expect("lowered text overlay zip type")
+                .clone(),
+        )
+    }
+
+    fn dense_numbers(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<Float64Array> {
+        let (rel_start, len, payload) = Self::dense_payload_window(fragment, range);
+        Self::payload_numbers_slice(payload, rel_start, len)
+    }
+
+    fn dense_booleans(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<BooleanArray> {
+        let (rel_start, len, payload) = Self::dense_payload_window(fragment, range);
+        Self::payload_booleans_slice(payload, rel_start, len)
+    }
+
+    fn dense_text(fragment: &OverlayFragment, range: core::ops::Range<usize>) -> ArrayRef {
+        let (rel_start, len, payload) = Self::dense_payload_window(fragment, range);
+        Self::payload_text_slice(payload, rel_start, len)
+    }
+
+    fn dense_errors(fragment: &OverlayFragment, range: core::ops::Range<usize>) -> Arc<UInt8Array> {
+        let (rel_start, len, payload) = Self::dense_payload_window(fragment, range);
+        Self::payload_errors_slice(payload, rel_start, len)
+    }
+
+    fn dense_type_tags(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<UInt8Array> {
+        let (rel_start, len, payload) = Self::dense_payload_window(fragment, range);
+        Self::payload_type_tags_slice(payload, rel_start, len)
+    }
+
+    fn dense_lowered_text(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<StringArray> {
+        let (rel_start, len, payload) = Self::dense_payload_window(fragment, range);
+        Self::payload_lowered_text_materialize(payload, rel_start, len)
+    }
+
+    fn dense_payload_window(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> (usize, usize, &OverlayFragmentPayload) {
+        let OverlayFragment::DenseRange { start, payload, .. } = fragment else {
+            unreachable!("dense payload window requires DenseRange")
+        };
+        let rel_start = range.start.saturating_sub(*start as usize);
+        (rel_start, range.end.saturating_sub(range.start), payload)
+    }
+
+    fn run_numbers(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<Float64Array> {
+        let mut b = Float64Builder::with_capacity(range.end.saturating_sub(range.start));
+        Self::for_each_run_payload_index(fragment, range, |payload, run_idx, repeat| {
+            if let Some(value) = payload.number_at(run_idx) {
+                for _ in 0..repeat {
+                    b.append_value(value);
+                }
+            } else {
+                for _ in 0..repeat {
+                    b.append_null();
+                }
+            }
+        });
+        Arc::new(b.finish())
+    }
+
+    fn run_booleans(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<BooleanArray> {
+        let mut b = BooleanBuilder::with_capacity(range.end.saturating_sub(range.start));
+        Self::for_each_run_payload_index(fragment, range, |payload, run_idx, repeat| {
+            if let Some(value) = payload.boolean_at(run_idx) {
+                for _ in 0..repeat {
+                    b.append_value(value);
+                }
+            } else {
+                for _ in 0..repeat {
+                    b.append_null();
+                }
+            }
+        });
+        Arc::new(b.finish())
+    }
+
+    fn run_text(fragment: &OverlayFragment, range: core::ops::Range<usize>) -> ArrayRef {
+        let mut b = StringBuilder::with_capacity(
+            range.end.saturating_sub(range.start),
+            range.end.saturating_sub(range.start).saturating_mul(8),
+        );
+        Self::for_each_run_payload_index(fragment, range, |payload, run_idx, repeat| {
+            if let Some(value) = payload.text_at(run_idx) {
+                for _ in 0..repeat {
+                    b.append_value(value);
+                }
+            } else {
+                for _ in 0..repeat {
+                    b.append_null();
+                }
+            }
+        });
+        Arc::new(b.finish()) as ArrayRef
+    }
+
+    fn run_errors(fragment: &OverlayFragment, range: core::ops::Range<usize>) -> Arc<UInt8Array> {
+        let mut b = UInt8Builder::with_capacity(range.end.saturating_sub(range.start));
+        Self::for_each_run_payload_index(fragment, range, |payload, run_idx, repeat| {
+            if let Some(value) = payload.error_at(run_idx) {
+                for _ in 0..repeat {
+                    b.append_value(value);
+                }
+            } else {
+                for _ in 0..repeat {
+                    b.append_null();
+                }
+            }
+        });
+        Arc::new(b.finish())
+    }
+
+    fn run_type_tags(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<UInt8Array> {
+        let mut b = UInt8Builder::with_capacity(range.end.saturating_sub(range.start));
+        Self::for_each_run_payload_index(fragment, range, |payload, run_idx, repeat| {
+            let tag = payload.type_tag_at(run_idx).unwrap_or(TypeTag::Empty) as u8;
+            for _ in 0..repeat {
+                b.append_value(tag);
+            }
+        });
+        Arc::new(b.finish())
+    }
+
+    fn run_lowered_text(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+    ) -> Arc<StringArray> {
+        let mut b = StringBuilder::with_capacity(
+            range.end.saturating_sub(range.start),
+            range.end.saturating_sub(range.start).saturating_mul(8),
+        );
+        Self::for_each_run_payload_index(fragment, range, |payload, run_idx, repeat| {
+            let value = Self::payload_lowered_text_at(payload, run_idx);
+            if let Some(value) = value {
+                for _ in 0..repeat {
+                    b.append_value(&value);
+                }
+            } else {
+                for _ in 0..repeat {
+                    b.append_null();
+                }
+            }
+        });
+        Arc::new(b.finish())
+    }
+
+    fn payload_numbers_slice(
+        payload: &OverlayFragmentPayload,
+        start: usize,
+        len: usize,
+    ) -> Arc<Float64Array> {
+        if let Some(array) = &payload.numbers {
+            let sliced = array.slice(start, len);
+            Arc::new(
+                sliced
+                    .as_any()
+                    .downcast_ref::<Float64Array>()
+                    .unwrap()
+                    .clone(),
+            )
+        } else {
+            Self::null_numbers(len)
+        }
+    }
+
+    fn payload_booleans_slice(
+        payload: &OverlayFragmentPayload,
+        start: usize,
+        len: usize,
+    ) -> Arc<BooleanArray> {
+        if let Some(array) = &payload.booleans {
+            let sliced = array.slice(start, len);
+            Arc::new(
+                sliced
+                    .as_any()
+                    .downcast_ref::<BooleanArray>()
+                    .unwrap()
+                    .clone(),
+            )
+        } else {
+            Self::null_booleans(len)
+        }
+    }
+
+    fn payload_text_slice(payload: &OverlayFragmentPayload, start: usize, len: usize) -> ArrayRef {
+        if let Some(array) = &payload.text {
+            array.slice(start, len)
+        } else {
+            new_null_array(&DataType::Utf8, len)
+        }
+    }
+
+    fn payload_errors_slice(
+        payload: &OverlayFragmentPayload,
+        start: usize,
+        len: usize,
+    ) -> Arc<UInt8Array> {
+        if let Some(array) = &payload.errors {
+            let sliced = array.slice(start, len);
+            Arc::new(
+                sliced
+                    .as_any()
+                    .downcast_ref::<UInt8Array>()
+                    .unwrap()
+                    .clone(),
+            )
+        } else {
+            Self::null_errors(len)
+        }
+    }
+
+    fn payload_type_tags_slice(
+        payload: &OverlayFragmentPayload,
+        start: usize,
+        len: usize,
+    ) -> Arc<UInt8Array> {
+        let sliced = payload.type_tags.slice(start, len);
+        Arc::new(
+            sliced
+                .as_any()
+                .downcast_ref::<UInt8Array>()
+                .unwrap()
+                .clone(),
+        )
+    }
+
+    fn payload_lowered_text_materialize(
+        payload: &OverlayFragmentPayload,
+        start: usize,
+        len: usize,
+    ) -> Arc<StringArray> {
+        let mut b = StringBuilder::with_capacity(len, len.saturating_mul(8));
+        for idx in start..start.saturating_add(len) {
+            if let Some(value) = Self::payload_lowered_text_at(payload, idx) {
+                b.append_value(&value);
+            } else {
+                b.append_null();
+            }
+        }
+        Arc::new(b.finish())
+    }
+
+    fn payload_lowered_text_at(payload: &OverlayFragmentPayload, idx: usize) -> Option<String> {
+        match payload.type_tag_at(idx)? {
+            TypeTag::Text => payload.text_at(idx).map(|value| value.to_lowercase()),
+            TypeTag::Number | TypeTag::DateTime | TypeTag::Duration => {
+                payload.number_at(idx).map(|value| value.to_string())
+            }
+            TypeTag::Boolean => payload
+                .boolean_at(idx)
+                .map(|value| if value { "true" } else { "false" }.to_string()),
+            TypeTag::Empty | TypeTag::Error | TypeTag::Pending => None,
+        }
+    }
+
+    fn null_numbers(len: usize) -> Arc<Float64Array> {
+        let arr = new_null_array(&DataType::Float64, len);
+        Arc::new(arr.as_any().downcast_ref::<Float64Array>().unwrap().clone())
+    }
+
+    fn null_booleans(len: usize) -> Arc<BooleanArray> {
+        let arr = new_null_array(&DataType::Boolean, len);
+        Arc::new(arr.as_any().downcast_ref::<BooleanArray>().unwrap().clone())
+    }
+
+    fn null_errors(len: usize) -> Arc<UInt8Array> {
+        let arr = new_null_array(&DataType::UInt8, len);
+        Arc::new(arr.as_any().downcast_ref::<UInt8Array>().unwrap().clone())
+    }
+
+    fn apply_number_layer(
+        layer: &Overlay,
+        range: core::ops::Range<usize>,
+        slots: &mut OverlaySlots<f64>,
+    ) {
+        Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
+            payload.number_at(idx)
+        });
+        for (off, value) in layer.iter_points() {
+            if range.contains(off) {
+                slots.set(*off - range.start, value.numeric_lane_value());
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+            }
+        }
+    }
+
+    fn apply_boolean_layer(
+        layer: &Overlay,
+        range: core::ops::Range<usize>,
+        slots: &mut OverlaySlots<bool>,
+    ) {
+        Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
+            payload.boolean_at(idx)
+        });
+        for (off, value) in layer.iter_points() {
+            if range.contains(off) {
+                slots.set(*off - range.start, value.boolean_lane_value());
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+            }
+        }
+    }
+
+    fn apply_text_layer(
+        layer: &Overlay,
+        range: core::ops::Range<usize>,
+        slots: &mut OverlaySlots<String>,
+    ) {
+        Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
+            payload.text_at(idx).map(ToString::to_string)
+        });
+        for (off, value) in layer.iter_points() {
+            if range.contains(off) {
+                slots.set(
+                    *off - range.start,
+                    value.text_lane_value().map(ToString::to_string),
+                );
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+            }
+        }
+    }
+
+    fn apply_error_layer(
+        layer: &Overlay,
+        range: core::ops::Range<usize>,
+        slots: &mut OverlaySlots<u8>,
+    ) {
+        Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
+            payload.error_at(idx)
+        });
+        for (off, value) in layer.iter_points() {
+            if range.contains(off) {
+                slots.set(*off - range.start, value.error_lane_value());
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+            }
+        }
+    }
+
+    fn apply_type_tag_layer(
+        layer: &Overlay,
+        range: core::ops::Range<usize>,
+        slots: &mut OverlaySlots<u8>,
+    ) {
+        Self::apply_fragment_layer(layer, range.clone(), slots, |payload, idx| {
+            payload.type_tag_at(idx).map(|tag| tag as u8)
+        });
+        for (off, value) in layer.iter_points() {
+            if range.contains(off) {
+                slots.set(*off - range.start, Some(value.type_tag() as u8));
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+            }
+        }
+    }
+
+    fn apply_lowered_text_layer(
+        layer: &Overlay,
+        range: core::ops::Range<usize>,
+        slots: &mut OverlaySlots<String>,
+    ) {
+        Self::apply_fragment_layer(layer, range.clone(), slots, Self::payload_lowered_text_at);
+        for (off, value) in layer.iter_points() {
+            if range.contains(off) {
+                slots.set(*off - range.start, value.lowered_text_value());
+                record_overlay_select_stats(|stats| stats.point_entries_applied += 1);
+            }
+        }
+    }
+
+    fn apply_fragment_layer<T>(
+        layer: &Overlay,
+        range: core::ops::Range<usize>,
+        slots: &mut OverlaySlots<T>,
+        mut value_at: impl FnMut(&OverlayFragmentPayload, usize) -> Option<T>,
+    ) {
+        for fragment in &layer.fragments {
+            if !fragment.has_any_in_range(range.clone()) {
+                continue;
+            }
+            Self::record_fragment_intersection(fragment);
+            Self::for_each_fragment_payload_index(
+                fragment,
+                range.clone(),
+                |out_idx, payload, payload_idx| {
+                    slots.set(out_idx, value_at(payload, payload_idx));
+                },
+            );
+        }
+    }
+
+    fn record_fragment_intersection(fragment: &OverlayFragment) {
+        let shape = match fragment {
+            OverlayFragment::SparseOffsets { .. } => OverlayFragmentShape::Sparse,
+            OverlayFragment::DenseRange { .. } => OverlayFragmentShape::Dense,
+            OverlayFragment::RunRange { .. } => OverlayFragmentShape::Run,
+        };
+        record_overlay_select_stats(|stats| {
+            stats.fragment_intersections += 1;
+            match shape {
+                OverlayFragmentShape::Sparse => stats.partial_sparse_intersections += 1,
+                OverlayFragmentShape::Dense => stats.partial_dense_intersections += 1,
+                OverlayFragmentShape::Run => stats.partial_run_intersections += 1,
+            }
+        });
+    }
+
+    fn for_each_fragment_payload_index(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+        mut f: impl FnMut(usize, &OverlayFragmentPayload, usize),
+    ) {
+        if range.is_empty() {
+            return;
+        }
+        match fragment {
+            OverlayFragment::SparseOffsets { offsets, payload } => {
+                let start = u32::try_from(range.start).unwrap_or(u32::MAX);
+                let lo = offsets.partition_point(|off| *off < start);
+                let hi = offsets.partition_point(|off| (*off as usize) < range.end);
+                for idx in lo..hi {
+                    let out_idx = (offsets[idx] as usize).saturating_sub(range.start);
+                    f(out_idx, payload, idx);
+                }
+            }
+            OverlayFragment::DenseRange {
+                start,
+                len,
+                payload,
+            } => {
+                let frag_start = *start as usize;
+                let frag_end = frag_start.saturating_add(*len as usize);
+                let inter_start = frag_start.max(range.start);
+                let inter_end = frag_end.min(range.end);
+                if inter_start >= inter_end {
+                    return;
+                }
+                for abs in inter_start..inter_end {
+                    f(abs - range.start, payload, abs - frag_start);
+                }
+            }
+            OverlayFragment::RunRange {
+                start,
+                len,
+                run_ends,
+                payload,
+            } => {
+                let frag_start = *start as usize;
+                let frag_end = frag_start.saturating_add(*len as usize);
+                let inter_start = frag_start.max(range.start);
+                let inter_end = frag_end.min(range.end);
+                if inter_start >= inter_end {
+                    return;
+                }
+                let mut prev_end = 0usize;
+                for (run_idx, run_end) in run_ends.iter().enumerate() {
+                    let run_start_abs = frag_start.saturating_add(prev_end);
+                    let run_end_abs = frag_start.saturating_add(*run_end as usize);
+                    let start_abs = run_start_abs.max(inter_start);
+                    let end_abs = run_end_abs.min(inter_end);
+                    if start_abs < end_abs {
+                        for abs in start_abs..end_abs {
+                            f(abs - range.start, payload, run_idx);
+                        }
+                    }
+                    prev_end = *run_end as usize;
+                    if run_end_abs >= inter_end {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn for_each_run_payload_index(
+        fragment: &OverlayFragment,
+        range: core::ops::Range<usize>,
+        mut f: impl FnMut(&OverlayFragmentPayload, usize, usize),
+    ) {
+        let OverlayFragment::RunRange {
+            start,
+            len,
+            run_ends,
+            payload,
+        } = fragment
+        else {
+            unreachable!("run payload iteration requires RunRange")
+        };
+        let frag_start = *start as usize;
+        let frag_end = frag_start.saturating_add(*len as usize);
+        let inter_start = frag_start.max(range.start);
+        let inter_end = frag_end.min(range.end);
+        if inter_start >= inter_end {
+            return;
+        }
+        let mut prev_end = 0usize;
+        for (run_idx, run_end) in run_ends.iter().enumerate() {
+            let run_start_abs = frag_start.saturating_add(prev_end);
+            let run_end_abs = frag_start.saturating_add(*run_end as usize);
+            let start_abs = run_start_abs.max(inter_start);
+            let end_abs = run_end_abs.min(inter_end);
+            if start_abs < end_abs {
+                f(payload, run_idx, end_abs - start_abs);
+            }
+            prev_end = *run_end as usize;
+            if run_end_abs >= inter_end {
+                break;
+            }
+        }
+    }
 }
 
+impl OverlayFragmentPayload {
+    #[inline]
+    fn type_tag_at(&self, idx: usize) -> Option<TypeTag> {
+        if idx >= self.type_tags.len() || self.type_tags.is_null(idx) {
+            return None;
+        }
+        Some(TypeTag::from_u8(self.type_tags.value(idx)))
+    }
+}
+
+impl Overlay {
+    fn full_cover_dense_fragment(
+        &self,
+        range: core::ops::Range<usize>,
+    ) -> Option<&OverlayFragment> {
+        self.full_cover_single_fragment(range, OverlayFragmentShape::Dense)
+    }
+
+    fn full_cover_run_fragment(&self, range: core::ops::Range<usize>) -> Option<&OverlayFragment> {
+        self.full_cover_single_fragment(range, OverlayFragmentShape::Run)
+    }
+
+    fn full_cover_single_fragment(
+        &self,
+        range: core::ops::Range<usize>,
+        shape: OverlayFragmentShape,
+    ) -> Option<&OverlayFragment> {
+        if range.is_empty() || self.points.keys().any(|off| range.contains(off)) {
+            return None;
+        }
+        let mut found = None;
+        for fragment in &self.fragments {
+            if !fragment.has_any_in_range(range.clone()) {
+                continue;
+            }
+            let shape_matches = matches!(
+                (shape, fragment),
+                (
+                    OverlayFragmentShape::Dense,
+                    OverlayFragment::DenseRange { .. }
+                ) | (OverlayFragmentShape::Run, OverlayFragment::RunRange { .. })
+            );
+            let covers = fragment
+                .interval_coverage()
+                .is_some_and(|own| own.start <= range.start && range.end <= own.end);
+            if shape_matches && covers && found.is_none() {
+                found = Some(fragment);
+            } else {
+                return None;
+            }
+        }
+        found
+    }
+}
 fn append_overlay_value_to_lane_builders(
     ov: &OverlayValue,
     tag_b: &mut UInt8Builder,
@@ -3759,7 +4616,7 @@ mod tests {
         type_tags: Phase4ProbeOp,
         lowered_text: Phase4ProbeOp,
         get_cell_scan: Phase4ProbeOp,
-        expected_current_zip_select_calls: usize,
+        select_stats: OverlaySelectStats,
     }
 
     fn build_phase4_probe_sheet(rows: usize, fixture: Phase4ProbeFixture) -> ArrowSheet {
@@ -3977,12 +4834,12 @@ mod tests {
         let sheet = build_phase4_probe_sheet(rows, fixture);
         assert_column_overlays_normalized(&sheet, 0);
         let stats = column_overlay_stats(&sheet, 0, true);
+        reset_overlay_select_stats();
         let numbers = measure_probe_numbers(&sheet, rows);
         let type_tags = measure_probe_type_tags(&sheet, rows);
         let lowered_text = measure_probe_lowered_text(&sheet, rows);
+        let select_stats = snapshot_overlay_select_stats();
         let get_cell_scan = measure_probe_get_cell(&sheet, rows);
-        let expected_current_zip_select_calls =
-            numbers.segments + type_tags.segments + lowered_text.segments;
         Phase4ProbeRow {
             fixture: fixture.name(),
             rows,
@@ -3996,7 +4853,7 @@ mod tests {
             type_tags,
             lowered_text,
             get_cell_scan,
-            expected_current_zip_select_calls,
+            select_stats,
         }
     }
 
@@ -4836,6 +5693,288 @@ mod tests {
         assert_eq!(selected.value(1), "1.5");
         assert_eq!(selected.value(2), "true");
         assert!(selected.is_null(3));
+    }
+
+    fn numeric_sheet(rows: usize) -> ArrowSheet {
+        let mut b = IngestBuilder::new("S", 1, rows.max(1), crate::engine::DateSystem::Excel1900);
+        for row in 0..rows {
+            b.append_row(&[LiteralValue::Number((row + 1) as f64)])
+                .unwrap();
+        }
+        b.finish()
+    }
+
+    fn numbers_for_range(sheet: &ArrowSheet, sr: usize, er: usize) -> Arc<Float64Array> {
+        let view = sheet.range_view(sr, 0, er, 0);
+        let segments: Vec<_> = view.numbers_slices().map(|res| res.unwrap()).collect();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].2.len(), 1);
+        segments[0].2[0].clone()
+    }
+
+    fn type_tags_for_range(sheet: &ArrowSheet, sr: usize, er: usize) -> Arc<UInt8Array> {
+        let view = sheet.range_view(sr, 0, er, 0);
+        let segments: Vec<_> = view.type_tags_slices().map(|res| res.unwrap()).collect();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].2.len(), 1);
+        segments[0].2[0].clone()
+    }
+
+    fn lowered_for_range(sheet: &ArrowSheet, sr: usize, er: usize) -> Arc<StringArray> {
+        let view = sheet.range_view(sr, 0, er, 0);
+        let segments: Vec<_> = view.lowered_text_slices().map(|res| res.unwrap()).collect();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].2.len(), 1);
+        segments[0].2[0].clone()
+    }
+
+    #[test]
+    fn rangeview_dense_text_masks_base_numbers() {
+        let mut sheet = numeric_sheet(4);
+        sheet.columns[0].chunks[0].computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                vec![
+                    OverlayValue::Text(Arc::from("x")),
+                    OverlayValue::Text(Arc::from("y")),
+                    OverlayValue::Text(Arc::from("z")),
+                    OverlayValue::Text(Arc::from("w")),
+                ],
+            )
+            .unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 3);
+        assert_eq!(numbers.null_count(), 4);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 1);
+        assert_eq!(stats.zip_select_calls, 0);
+    }
+
+    #[test]
+    fn rangeview_empty_dense_masks_base_all_selectors() {
+        let mut sheet = numeric_sheet(3);
+        sheet.columns[0].chunks[0]
+            .computed_overlay
+            .apply_fragment(OverlayFragment::dense_range(0, vec![OverlayValue::Empty; 3]).unwrap());
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 2);
+        let type_tags = type_tags_for_range(&sheet, 0, 2);
+        let lowered = lowered_for_range(&sheet, 0, 2);
+        assert_eq!(numbers.null_count(), 3);
+        assert_eq!(lowered.null_count(), 3);
+        assert_eq!(type_tags.values(), &[TypeTag::Empty as u8; 3]);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 3);
+        assert_eq!(stats.zip_select_calls, 0);
+    }
+
+    #[test]
+    fn rangeview_pending_masks_base_type_tag_present_lanes_null() {
+        let mut sheet = numeric_sheet(2);
+        sheet.columns[0].chunks[0].computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(0, vec![OverlayValue::Pending; 2]).unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 1);
+        let type_tags = type_tags_for_range(&sheet, 0, 1);
+        let lowered = lowered_for_range(&sheet, 0, 1);
+        assert_eq!(numbers.null_count(), 2);
+        assert_eq!(lowered.null_count(), 2);
+        assert_eq!(type_tags.values(), &[TypeTag::Pending as u8; 2]);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 3);
+        assert_eq!(stats.zip_select_calls, 0);
+    }
+
+    #[test]
+    fn rangeview_subrange_inside_dense_fragment_uses_direct_path() {
+        let mut sheet = numeric_sheet(10);
+        sheet.columns[0].chunks[0].computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                (0..10)
+                    .map(|row| OverlayValue::Number((row + 10) as f64))
+                    .collect(),
+            )
+            .unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 2, 6);
+        assert_eq!(numbers.len(), 5);
+        assert_eq!(numbers.value(0), 12.0);
+        assert_eq!(numbers.value(4), 16.0);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 1);
+        assert_eq!(stats.zip_select_calls, 0);
+    }
+
+    #[test]
+    fn rangeview_subrange_inside_run_fragment_uses_direct_path() {
+        let mut sheet = numeric_sheet(10);
+        sheet.columns[0].chunks[0].computed_overlay.apply_fragment(
+            OverlayFragment::run_range(0, vec![OverlayValue::Number(7.0); 10]).unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 2, 6);
+        assert_eq!(numbers.len(), 5);
+        for idx in 0..numbers.len() {
+            assert_eq!(numbers.value(idx), 7.0);
+        }
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_run_materializations, 1);
+        assert_eq!(stats.zip_select_calls, 0);
+    }
+
+    #[test]
+    fn rangeview_user_partial_wrong_type_masks_computed_numeric() {
+        let mut sheet = numeric_sheet(5);
+        let chunk = &mut sheet.columns[0].chunks[0];
+        chunk.computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                (0..5)
+                    .map(|row| OverlayValue::Number((row + 10) as f64))
+                    .collect(),
+            )
+            .unwrap(),
+        );
+        chunk.overlay.apply_fragment(
+            OverlayFragment::dense_range(2, vec![OverlayValue::Text(Arc::from("mask"))]).unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 4);
+        assert_eq!(numbers.value(0), 10.0);
+        assert_eq!(numbers.value(1), 11.0);
+        assert!(numbers.is_null(2));
+        assert_eq!(numbers.value(3), 13.0);
+        assert_eq!(numbers.value(4), 14.0);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 0);
+        assert_eq!(stats.zip_select_calls, 1);
+        assert_eq!(stats.partial_dense_intersections, 2);
+    }
+
+    #[test]
+    fn rangeview_computed_full_cover_user_no_overlap_uses_computed_direct() {
+        let mut sheet = numeric_sheet(5);
+        let chunk = &mut sheet.columns[0].chunks[0];
+        chunk.computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(0, vec![OverlayValue::Number(3.0); 5]).unwrap(),
+        );
+        chunk
+            .overlay
+            .set_scalar(10, OverlayValue::Text(Arc::from("outside")));
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 4);
+        assert_eq!(numbers.value(0), 3.0);
+        assert_eq!(numbers.value(4), 3.0);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 1);
+        assert_eq!(stats.zip_select_calls, 0);
+    }
+
+    #[test]
+    fn rangeview_user_full_cover_ignores_computed() {
+        let mut sheet = numeric_sheet(4);
+        let chunk = &mut sheet.columns[0].chunks[0];
+        chunk.computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(0, vec![OverlayValue::Number(99.0); 4]).unwrap(),
+        );
+        chunk.overlay.apply_fragment(
+            OverlayFragment::dense_range(0, vec![OverlayValue::Text(Arc::from("user")); 4])
+                .unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 3);
+        assert_eq!(numbers.null_count(), 4);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 1);
+        assert_eq!(stats.zip_select_calls, 0);
+    }
+
+    #[test]
+    fn rangeview_point_overlay_still_matches_legacy_scalar_path() {
+        let mut sheet = numeric_sheet(3);
+        sheet.columns[0].chunks[0]
+            .computed_overlay
+            .set_scalar(1, OverlayValue::Text(Arc::from("point")));
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 2);
+        assert_eq!(numbers.value(0), 1.0);
+        assert!(numbers.is_null(1));
+        assert_eq!(numbers.value(2), 3.0);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.zip_select_calls, 1);
+        assert_eq!(stats.point_entries_applied, 1);
+        assert_eq!(stats.row_scalar_fallbacks, 0);
+    }
+
+    #[test]
+    fn rangeview_multi_fragment_full_union_does_not_use_direct_path() {
+        let mut sheet = numeric_sheet(4);
+        let chunk = &mut sheet.columns[0].chunks[0];
+        chunk.computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(0, vec![OverlayValue::Number(10.0); 2]).unwrap(),
+        );
+        chunk.computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(2, vec![OverlayValue::Number(20.0); 2]).unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let numbers = numbers_for_range(&sheet, 0, 3);
+        assert_eq!(numbers.value(0), 10.0);
+        assert_eq!(numbers.value(1), 10.0);
+        assert_eq!(numbers.value(2), 20.0);
+        assert_eq!(numbers.value(3), 20.0);
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 0);
+        assert_eq!(stats.zip_select_calls, 1);
+        assert_eq!(stats.partial_dense_intersections, 2);
+    }
+
+    #[test]
+    fn rangeview_lowered_text_fragment_semantics_match_scalar_semantics() {
+        let mut sheet = numeric_sheet(8);
+        sheet.columns[0].chunks[0].computed_overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                vec![
+                    OverlayValue::Text(Arc::from("HeLLo")),
+                    OverlayValue::Number(1.5),
+                    OverlayValue::DateTime(45000.25),
+                    OverlayValue::Duration(0.5),
+                    OverlayValue::Boolean(true),
+                    OverlayValue::Empty,
+                    OverlayValue::Error(map_error_code(ExcelErrorKind::Div)),
+                    OverlayValue::Pending,
+                ],
+            )
+            .unwrap(),
+        );
+
+        reset_overlay_select_stats();
+        let lowered = lowered_for_range(&sheet, 0, 7);
+        assert_eq!(lowered.value(0), "hello");
+        assert_eq!(lowered.value(1), "1.5");
+        assert_eq!(lowered.value(2), "45000.25");
+        assert_eq!(lowered.value(3), "0.5");
+        assert_eq!(lowered.value(4), "true");
+        assert!(lowered.is_null(5));
+        assert!(lowered.is_null(6));
+        assert!(lowered.is_null(7));
+        let stats = snapshot_overlay_select_stats();
+        assert_eq!(stats.direct_dense_slices, 1);
+        assert_eq!(stats.zip_select_calls, 0);
     }
 
     #[test]
