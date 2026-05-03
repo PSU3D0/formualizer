@@ -86,13 +86,13 @@ impl FinanceRecalcFixture {
         }
 
         for row in 1..=rows {
-            let formula = parse(&format!("=A{row}*B{row}*$F$1")).unwrap();
+            let formula = parse(format!("=A{row}*B{row}*$F$1")).unwrap();
             engine
                 .set_cell_formula(sheet, row as u32, 3, formula)
                 .unwrap();
         }
         engine
-            .set_cell_formula(sheet, 1, 7, parse(&format!("=SUM(C1:C{rows})")).unwrap())
+            .set_cell_formula(sheet, 1, 7, parse(format!("=SUM(C1:C{rows})")).unwrap())
             .unwrap();
 
         Self {

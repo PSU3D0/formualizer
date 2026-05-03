@@ -8842,10 +8842,10 @@ where
         &mut self,
         vertex_id: VertexId,
         value: &LiteralValue,
-        mut delta: Option<&mut DeltaCollector>,
+        delta: Option<&mut DeltaCollector>,
         mut computed_writes: Option<&mut ComputedWriteBuffer>,
     ) -> Result<(), ExcelError> {
-        if let Some(d) = delta.as_deref_mut()
+        if let Some(d) = delta
             && d.mode != DeltaMode::Off
         {
             if let Some(buffer) = computed_writes.as_deref_mut() {

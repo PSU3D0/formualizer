@@ -3046,8 +3046,8 @@ impl<'a> OverlayCascade<'a> {
                 let start = u32::try_from(range.start).unwrap_or(u32::MAX);
                 let lo = offsets.partition_point(|off| *off < start);
                 let hi = offsets.partition_point(|off| (*off as usize) < range.end);
-                for idx in lo..hi {
-                    let out_idx = (offsets[idx] as usize).saturating_sub(range.start);
+                for (idx, off) in offsets.iter().enumerate().take(hi).skip(lo) {
+                    let out_idx = (*off as usize).saturating_sub(range.start);
                     f(out_idx, payload, idx);
                 }
             }
