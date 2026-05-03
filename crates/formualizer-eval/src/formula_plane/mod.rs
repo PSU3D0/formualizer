@@ -11,6 +11,7 @@ pub mod diagnostics;
 pub mod grid;
 pub mod ids;
 pub mod partition;
+pub(crate) mod runtime;
 pub mod span_counters;
 pub mod span_store;
 pub(crate) mod template_canonical;

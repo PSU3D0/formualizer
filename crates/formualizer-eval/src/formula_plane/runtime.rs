@@ -1,0 +1,932 @@
+//! Internal FormulaPlane runtime store vocabulary for FP6.1.
+
+use std::sync::Arc;
+
+use formualizer_parse::parser::ASTNode;
+use rustc_hash::FxHashMap;
+
+use crate::SheetId;
+use crate::engine::VertexId;
+
+use super::ids::FormulaTemplateId;
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FormulaPlaneEpoch(pub(crate) u64);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FormulaSpanId(pub(crate) u32);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct FormulaOverlayEntryId(pub(crate) u32);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct SpanMaskId(pub(crate) u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct FormulaSpanRef {
+    pub(crate) id: FormulaSpanId,
+    pub(crate) generation: u32,
+    pub(crate) version: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct FormulaOverlayRef {
+    pub(crate) id: FormulaOverlayEntryId,
+    pub(crate) generation: u32,
+    pub(crate) overlay_epoch: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PlacementCoord {
+    pub(crate) sheet_id: SheetId,
+    pub(crate) row: u32,
+    pub(crate) col: u32,
+}
+
+impl PlacementCoord {
+    pub(crate) fn new(sheet_id: SheetId, row: u32, col: u32) -> Self {
+        Self { sheet_id, row, col }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum PlacementDomain {
+    RowRun {
+        sheet_id: SheetId,
+        row_start: u32,
+        row_end: u32,
+        col: u32,
+    },
+    ColRun {
+        sheet_id: SheetId,
+        row: u32,
+        col_start: u32,
+        col_end: u32,
+    },
+    Rect {
+        sheet_id: SheetId,
+        row_start: u32,
+        row_end: u32,
+        col_start: u32,
+        col_end: u32,
+    },
+}
+
+impl PlacementDomain {
+    pub(crate) fn row_run(sheet_id: SheetId, row_start: u32, row_end: u32, col: u32) -> Self {
+        Self::RowRun {
+            sheet_id,
+            row_start,
+            row_end,
+            col,
+        }
+    }
+
+    pub(crate) fn col_run(sheet_id: SheetId, row: u32, col_start: u32, col_end: u32) -> Self {
+        Self::ColRun {
+            sheet_id,
+            row,
+            col_start,
+            col_end,
+        }
+    }
+
+    pub(crate) fn rect(
+        sheet_id: SheetId,
+        row_start: u32,
+        row_end: u32,
+        col_start: u32,
+        col_end: u32,
+    ) -> Self {
+        Self::Rect {
+            sheet_id,
+            row_start,
+            row_end,
+            col_start,
+            col_end,
+        }
+    }
+
+    pub(crate) fn sheet_id(&self) -> SheetId {
+        match self {
+            Self::RowRun { sheet_id, .. }
+            | Self::ColRun { sheet_id, .. }
+            | Self::Rect { sheet_id, .. } => *sheet_id,
+        }
+    }
+
+    pub(crate) fn contains(&self, coord: PlacementCoord) -> bool {
+        if self.sheet_id() != coord.sheet_id {
+            return false;
+        }
+        match self {
+            Self::RowRun {
+                row_start,
+                row_end,
+                col,
+                ..
+            } => coord.col == *col && coord.row >= *row_start && coord.row <= *row_end,
+            Self::ColRun {
+                row,
+                col_start,
+                col_end,
+                ..
+            } => coord.row == *row && coord.col >= *col_start && coord.col <= *col_end,
+            Self::Rect {
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+                ..
+            } => {
+                coord.row >= *row_start
+                    && coord.row <= *row_end
+                    && coord.col >= *col_start
+                    && coord.col <= *col_end
+            }
+        }
+    }
+
+    pub(crate) fn iter(&self) -> std::vec::IntoIter<PlacementCoord> {
+        let mut coords = Vec::new();
+        match self {
+            Self::RowRun {
+                sheet_id,
+                row_start,
+                row_end,
+                col,
+            } => {
+                for row in *row_start..=*row_end {
+                    coords.push(PlacementCoord::new(*sheet_id, row, *col));
+                }
+            }
+            Self::ColRun {
+                sheet_id,
+                row,
+                col_start,
+                col_end,
+            } => {
+                for col in *col_start..=*col_end {
+                    coords.push(PlacementCoord::new(*sheet_id, *row, col));
+                }
+            }
+            Self::Rect {
+                sheet_id,
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+            } => {
+                for row in *row_start..=*row_end {
+                    for col in *col_start..=*col_end {
+                        coords.push(PlacementCoord::new(*sheet_id, row, col));
+                    }
+                }
+            }
+        }
+        coords.into_iter()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ResultRegion {
+    domain: PlacementDomain,
+}
+
+impl ResultRegion {
+    pub(crate) fn scalar_cells(domain: PlacementDomain) -> Self {
+        Self { domain }
+    }
+
+    pub(crate) fn domain(&self) -> &PlacementDomain {
+        &self.domain
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct TemplateStore {
+    records: Vec<TemplateRecord>,
+    intern: FxHashMap<Arc<str>, FormulaTemplateId>,
+    epoch: u64,
+}
+
+#[derive(Debug)]
+pub(crate) struct TemplateRecord {
+    pub(crate) id: FormulaTemplateId,
+    pub(crate) generation: u32,
+    pub(crate) version: u32,
+    pub(crate) ast: Arc<ASTNode>,
+    pub(crate) canonical_key: Arc<str>,
+    pub(crate) formula_text: Option<Arc<str>>,
+}
+
+impl TemplateStore {
+    pub(crate) fn intern_template(
+        &mut self,
+        canonical_key: Arc<str>,
+        ast: Arc<ASTNode>,
+        formula_text: Option<Arc<str>>,
+    ) -> (FormulaTemplateId, bool) {
+        if let Some(id) = self.intern.get(canonical_key.as_ref()).copied() {
+            return (id, false);
+        }
+
+        let id = FormulaTemplateId(self.records.len() as u32);
+        self.records.push(TemplateRecord {
+            id,
+            generation: 0,
+            version: 0,
+            ast,
+            canonical_key: Arc::clone(&canonical_key),
+            formula_text,
+        });
+        self.intern.insert(canonical_key, id);
+        self.epoch = self.epoch.saturating_add(1);
+        (id, true)
+    }
+
+    pub(crate) fn get(&self, id: FormulaTemplateId) -> Option<&TemplateRecord> {
+        self.records
+            .get(id.0 as usize)
+            .filter(|record| record.id == id)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SpanState {
+    Active,
+    Demoted,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FormulaSpan {
+    pub(crate) id: FormulaSpanId,
+    pub(crate) generation: u32,
+    pub(crate) sheet_id: SheetId,
+    pub(crate) template_id: FormulaTemplateId,
+    pub(crate) domain: PlacementDomain,
+    pub(crate) result_region: ResultRegion,
+    pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
+    pub(crate) state: SpanState,
+    pub(crate) version: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct NewFormulaSpan {
+    pub(crate) sheet_id: SheetId,
+    pub(crate) template_id: FormulaTemplateId,
+    pub(crate) domain: PlacementDomain,
+    pub(crate) result_region: ResultRegion,
+    pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
+}
+
+#[derive(Debug)]
+struct SpanSlot {
+    generation: u32,
+    span: Option<FormulaSpan>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct SpanStore {
+    slots: Vec<SpanSlot>,
+    epoch: u64,
+}
+
+impl SpanStore {
+    pub(crate) fn insert(&mut self, new_span: NewFormulaSpan) -> FormulaSpanRef {
+        assert_eq!(
+            new_span.sheet_id,
+            new_span.domain.sheet_id(),
+            "FormulaSpan sheet_id must match placement domain sheet_id"
+        );
+        assert_eq!(
+            new_span.sheet_id,
+            new_span.result_region.domain().sheet_id(),
+            "FormulaSpan sheet_id must match result region sheet_id"
+        );
+
+        let id = FormulaSpanId(self.slots.len() as u32);
+        let generation = 0;
+        let version = 0;
+        let span = FormulaSpan {
+            id,
+            generation,
+            sheet_id: new_span.sheet_id,
+            template_id: new_span.template_id,
+            domain: new_span.domain,
+            result_region: new_span.result_region,
+            intrinsic_mask_id: new_span.intrinsic_mask_id,
+            state: SpanState::Active,
+            version,
+        };
+        self.slots.push(SpanSlot {
+            generation,
+            span: Some(span),
+        });
+        self.epoch = self.epoch.saturating_add(1);
+        FormulaSpanRef {
+            id,
+            generation,
+            version,
+        }
+    }
+
+    pub(crate) fn get(&self, span_ref: FormulaSpanRef) -> Option<&FormulaSpan> {
+        let slot = self.slots.get(span_ref.id.0 as usize)?;
+        if slot.generation != span_ref.generation {
+            return None;
+        }
+        let span = slot.span.as_ref()?;
+        (span.version == span_ref.version).then_some(span)
+    }
+
+    pub(crate) fn remove(&mut self, span_ref: FormulaSpanRef) -> bool {
+        let Some(slot) = self.slots.get_mut(span_ref.id.0 as usize) else {
+            return false;
+        };
+        let Some(span) = slot.span.as_ref() else {
+            return false;
+        };
+        if slot.generation != span_ref.generation || span.version != span_ref.version {
+            return false;
+        }
+        slot.span = None;
+        slot.generation = slot.generation.saturating_add(1);
+        self.epoch = self.epoch.saturating_add(1);
+        true
+    }
+
+    pub(crate) fn find_at(&self, coord: PlacementCoord) -> Option<&FormulaSpan> {
+        self.slots
+            .iter()
+            .rev()
+            .filter_map(|slot| slot.span.as_ref())
+            .find(|span| span.state == SpanState::Active && span.domain.contains(coord))
+    }
+
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum UnsupportedReason {
+    Dynamic,
+    Volatile,
+    Opaque,
+    Structural,
+    Other(Arc<str>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FormulaOverlayEntryKind {
+    FormulaOverride(FormulaTemplateId),
+    ValueOverride,
+    Cleared,
+    LegacyOwned(VertexId),
+    Unsupported(UnsupportedReason),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FormulaOverlayEntryRecord {
+    pub(crate) id: FormulaOverlayEntryId,
+    pub(crate) generation: u32,
+    pub(crate) sheet_id: SheetId,
+    pub(crate) domain: PlacementDomain,
+    pub(crate) source_span: Option<FormulaSpanRef>,
+    pub(crate) kind: FormulaOverlayEntryKind,
+    pub(crate) created_epoch: u64,
+}
+
+#[derive(Debug)]
+struct OverlaySlot {
+    generation: u32,
+    entry: Option<FormulaOverlayEntryRecord>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct FormulaOverlay {
+    slots: Vec<OverlaySlot>,
+    epoch: u64,
+}
+
+impl FormulaOverlay {
+    pub(crate) fn insert(
+        &mut self,
+        sheet_id: SheetId,
+        domain: PlacementDomain,
+        kind: FormulaOverlayEntryKind,
+        source_span: Option<FormulaSpanRef>,
+    ) -> FormulaOverlayRef {
+        assert_eq!(
+            sheet_id,
+            domain.sheet_id(),
+            "FormulaOverlay sheet_id must match entry domain sheet_id"
+        );
+
+        let id = FormulaOverlayEntryId(self.slots.len() as u32);
+        let generation = 0;
+        self.epoch = self.epoch.saturating_add(1);
+        let entry = FormulaOverlayEntryRecord {
+            id,
+            generation,
+            sheet_id,
+            domain,
+            source_span,
+            kind,
+            created_epoch: self.epoch,
+        };
+        self.slots.push(OverlaySlot {
+            generation,
+            entry: Some(entry),
+        });
+        FormulaOverlayRef {
+            id,
+            generation,
+            overlay_epoch: self.epoch,
+        }
+    }
+
+    pub(crate) fn get(&self, overlay_ref: FormulaOverlayRef) -> Option<&FormulaOverlayEntryRecord> {
+        let slot = self.slots.get(overlay_ref.id.0 as usize)?;
+        if slot.generation != overlay_ref.generation {
+            return None;
+        }
+        slot.entry.as_ref()
+    }
+
+    pub(crate) fn remove(&mut self, overlay_ref: FormulaOverlayRef) -> bool {
+        let Some(slot) = self.slots.get_mut(overlay_ref.id.0 as usize) else {
+            return false;
+        };
+        if slot.generation != overlay_ref.generation || slot.entry.is_none() {
+            return false;
+        }
+        slot.entry = None;
+        slot.generation = slot.generation.saturating_add(1);
+        self.epoch = self.epoch.saturating_add(1);
+        true
+    }
+
+    pub(crate) fn find_at(&self, coord: PlacementCoord) -> Option<FormulaOverlayRef> {
+        self.slots.iter().rev().find_map(|slot| {
+            let entry = slot.entry.as_ref()?;
+            if entry.sheet_id == coord.sheet_id && entry.domain.contains(coord) {
+                Some(FormulaOverlayRef {
+                    id: entry.id,
+                    generation: entry.generation,
+                    overlay_epoch: self.epoch,
+                })
+            } else {
+                None
+            }
+        })
+    }
+
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct SpanProjectionCache {
+    epoch: u64,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct SpanDirtyStore {
+    epoch: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FormulaResolution {
+    StagedFormula {
+        text: Arc<str>,
+    },
+    Overlay(FormulaOverlayRef),
+    SpanPlacement {
+        span: FormulaSpanRef,
+        template_id: FormulaTemplateId,
+        placement: PlacementCoord,
+    },
+    LegacyVertex(VertexId),
+    Empty,
+    Stale,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FormulaHandle {
+    pub(crate) resolution: FormulaResolution,
+    pub(crate) plane_epoch: FormulaPlaneEpoch,
+    pub(crate) overlay_epoch: u64,
+    pub(crate) span_epoch: u64,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct FormulaPlane {
+    pub(crate) templates: TemplateStore,
+    pub(crate) spans: SpanStore,
+    pub(crate) formula_overlay: FormulaOverlay,
+    pub(crate) projection_cache: SpanProjectionCache,
+    pub(crate) dirty: SpanDirtyStore,
+    epoch: FormulaPlaneEpoch,
+}
+
+impl FormulaPlane {
+    pub(crate) fn epoch(&self) -> FormulaPlaneEpoch {
+        self.epoch
+    }
+
+    pub(crate) fn intern_template(
+        &mut self,
+        canonical_key: Arc<str>,
+        ast: Arc<ASTNode>,
+        formula_text: Option<Arc<str>>,
+    ) -> FormulaTemplateId {
+        let (id, inserted) = self
+            .templates
+            .intern_template(canonical_key, ast, formula_text);
+        if inserted {
+            self.bump_epoch();
+        }
+        id
+    }
+
+    pub(crate) fn insert_span(&mut self, new_span: NewFormulaSpan) -> FormulaSpanRef {
+        let span = self.spans.insert(new_span);
+        self.bump_epoch();
+        span
+    }
+
+    pub(crate) fn remove_span(&mut self, span_ref: FormulaSpanRef) -> bool {
+        let removed = self.spans.remove(span_ref);
+        if removed {
+            self.bump_epoch();
+        }
+        removed
+    }
+
+    pub(crate) fn insert_overlay(
+        &mut self,
+        sheet_id: SheetId,
+        domain: PlacementDomain,
+        kind: FormulaOverlayEntryKind,
+        source_span: Option<FormulaSpanRef>,
+    ) -> FormulaOverlayRef {
+        let overlay = self
+            .formula_overlay
+            .insert(sheet_id, domain, kind, source_span);
+        self.bump_epoch();
+        overlay
+    }
+
+    pub(crate) fn remove_overlay(&mut self, overlay_ref: FormulaOverlayRef) -> bool {
+        let removed = self.formula_overlay.remove(overlay_ref);
+        if removed {
+            self.bump_epoch();
+        }
+        removed
+    }
+
+    pub(crate) fn resolve_formula_at(
+        &self,
+        coord: PlacementCoord,
+        legacy_vertex: Option<VertexId>,
+    ) -> FormulaHandle {
+        let resolution = if let Some(overlay) = self.formula_overlay.find_at(coord) {
+            FormulaResolution::Overlay(overlay)
+        } else if let Some(span) = self.spans.find_at(coord) {
+            FormulaResolution::SpanPlacement {
+                span: FormulaSpanRef {
+                    id: span.id,
+                    generation: span.generation,
+                    version: span.version,
+                },
+                template_id: span.template_id,
+                placement: coord,
+            }
+        } else if let Some(vertex) = legacy_vertex {
+            FormulaResolution::LegacyVertex(vertex)
+        } else {
+            FormulaResolution::Empty
+        };
+
+        FormulaHandle {
+            resolution,
+            plane_epoch: self.epoch,
+            overlay_epoch: self.formula_overlay.epoch(),
+            span_epoch: self.spans.epoch(),
+        }
+    }
+
+    fn bump_epoch(&mut self) {
+        self.epoch.0 = self.epoch.0.saturating_add(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use formualizer_common::LiteralValue;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+
+    use super::*;
+
+    fn literal_ast(value: i64) -> Arc<ASTNode> {
+        Arc::new(ASTNode::new(
+            ASTNodeType::Literal(LiteralValue::Int(value)),
+            None,
+        ))
+    }
+
+    fn template_id(store: &mut TemplateStore, key: &str) -> FormulaTemplateId {
+        store
+            .intern_template(
+                Arc::<str>::from(key),
+                literal_ast(1),
+                Some(Arc::<str>::from("=1")),
+            )
+            .0
+    }
+
+    fn new_row_span(sheet_id: SheetId, template_id: FormulaTemplateId) -> NewFormulaSpan {
+        let domain = PlacementDomain::row_run(sheet_id, 0, 9, 2);
+        NewFormulaSpan {
+            sheet_id,
+            template_id,
+            result_region: ResultRegion::scalar_cells(domain.clone()),
+            domain,
+            intrinsic_mask_id: None,
+        }
+    }
+
+    #[test]
+    fn template_store_interns_equivalent_templates_once() {
+        let mut store = TemplateStore::default();
+        let (first, inserted_first) = store.intern_template(
+            Arc::<str>::from("key:literal-one"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+        let (second, inserted_second) = store.intern_template(
+            Arc::<str>::from("key:literal-one"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+
+        assert_eq!(first, second);
+        assert!(inserted_first);
+        assert!(!inserted_second);
+        assert_eq!(store.len(), 1);
+        assert_eq!(store.epoch(), 1);
+    }
+
+    #[test]
+    fn formula_resolution_vocabulary_includes_staged_formula() {
+        let resolution = FormulaResolution::StagedFormula {
+            text: Arc::<str>::from("=1"),
+        };
+
+        assert!(matches!(
+            resolution,
+            FormulaResolution::StagedFormula { .. }
+        ));
+    }
+
+    #[test]
+    fn span_store_allocates_generational_span_ids() {
+        let mut templates = TemplateStore::default();
+        let template_id = template_id(&mut templates, "template");
+        let mut spans = SpanStore::default();
+
+        let first = spans.insert(new_row_span(0, template_id));
+        let second = spans.insert(NewFormulaSpan {
+            domain: PlacementDomain::col_run(0, 1, 0, 3),
+            result_region: ResultRegion::scalar_cells(PlacementDomain::col_run(0, 1, 0, 3)),
+            ..new_row_span(0, template_id)
+        });
+
+        assert_eq!(first.id, FormulaSpanId(0));
+        assert_eq!(second.id, FormulaSpanId(1));
+        assert_eq!(first.generation, 0);
+        assert_eq!(second.generation, 0);
+        assert!(spans.get(first).is_some());
+        assert!(spans.get(second).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "FormulaSpan sheet_id must match placement domain sheet_id")]
+    fn span_store_rejects_inconsistent_sheet_id_and_domain() {
+        let mut templates = TemplateStore::default();
+        let template_id = template_id(&mut templates, "template");
+        let mut spans = SpanStore::default();
+        let domain = PlacementDomain::row_run(1, 0, 9, 2);
+        spans.insert(NewFormulaSpan {
+            sheet_id: 0,
+            template_id,
+            result_region: ResultRegion::scalar_cells(domain.clone()),
+            domain,
+            intrinsic_mask_id: None,
+        });
+    }
+
+    #[test]
+    fn span_store_rejects_stale_generation_after_remove() {
+        let mut templates = TemplateStore::default();
+        let template_id = template_id(&mut templates, "template");
+        let mut spans = SpanStore::default();
+        let span_ref = spans.insert(new_row_span(0, template_id));
+
+        assert!(spans.remove(span_ref));
+        assert!(spans.get(span_ref).is_none());
+        assert!(!spans.remove(span_ref));
+    }
+
+    #[test]
+    fn placement_domain_row_run_iteration_is_correct() {
+        let domain = PlacementDomain::row_run(7, 2, 4, 9);
+        let coords: Vec<_> = domain.iter().collect();
+
+        assert_eq!(
+            coords,
+            vec![
+                PlacementCoord::new(7, 2, 9),
+                PlacementCoord::new(7, 3, 9),
+                PlacementCoord::new(7, 4, 9),
+            ]
+        );
+    }
+
+    #[test]
+    fn placement_domain_col_run_iteration_is_correct() {
+        let domain = PlacementDomain::col_run(7, 4, 2, 5);
+        let coords: Vec<_> = domain.iter().collect();
+
+        assert_eq!(
+            coords,
+            vec![
+                PlacementCoord::new(7, 4, 2),
+                PlacementCoord::new(7, 4, 3),
+                PlacementCoord::new(7, 4, 4),
+                PlacementCoord::new(7, 4, 5),
+            ]
+        );
+    }
+
+    #[test]
+    fn placement_domain_rect_iteration_is_row_major_and_bounded() {
+        let domain = PlacementDomain::rect(3, 1, 2, 4, 5);
+        let coords: Vec<_> = domain.iter().collect();
+
+        assert_eq!(
+            coords,
+            vec![
+                PlacementCoord::new(3, 1, 4),
+                PlacementCoord::new(3, 1, 5),
+                PlacementCoord::new(3, 2, 4),
+                PlacementCoord::new(3, 2, 5),
+            ]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "FormulaOverlay sheet_id must match entry domain sheet_id")]
+    fn formula_overlay_rejects_inconsistent_sheet_id_and_domain() {
+        let mut overlay = FormulaOverlay::default();
+        overlay.insert(
+            0,
+            PlacementDomain::row_run(1, 0, 0, 0),
+            FormulaOverlayEntryKind::ValueOverride,
+            None,
+        );
+    }
+
+    #[test]
+    fn formula_overlay_masks_span_resolution() {
+        let mut plane = FormulaPlane::default();
+        let template_id = plane.intern_template(
+            Arc::<str>::from("template"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+        let span_ref = plane.insert_span(new_row_span(0, template_id));
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 3, 3, 2),
+            FormulaOverlayEntryKind::ValueOverride,
+            Some(span_ref),
+        );
+
+        let handle = plane.resolve_formula_at(PlacementCoord::new(0, 3, 2), None);
+        assert!(matches!(handle.resolution, FormulaResolution::Overlay(_)));
+    }
+
+    #[test]
+    fn legacy_owned_overlay_prevents_span_resolution() {
+        let mut plane = FormulaPlane::default();
+        let template_id = plane.intern_template(
+            Arc::<str>::from("template"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+        let span_ref = plane.insert_span(new_row_span(0, template_id));
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 4, 4, 2),
+            FormulaOverlayEntryKind::LegacyOwned(VertexId(42)),
+            Some(span_ref),
+        );
+
+        let handle = plane.resolve_formula_at(PlacementCoord::new(0, 4, 2), None);
+        assert!(matches!(handle.resolution, FormulaResolution::Overlay(_)));
+    }
+
+    #[test]
+    fn formula_resolution_prefers_overlay_over_span_over_legacy() {
+        let mut plane = FormulaPlane::default();
+        let template_id = plane.intern_template(
+            Arc::<str>::from("template"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+        let span_ref = plane.insert_span(new_row_span(0, template_id));
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 5, 5, 2),
+            FormulaOverlayEntryKind::Cleared,
+            Some(span_ref),
+        );
+
+        let overlay = plane.resolve_formula_at(PlacementCoord::new(0, 5, 2), Some(VertexId(7)));
+        let span = plane.resolve_formula_at(PlacementCoord::new(0, 6, 2), Some(VertexId(7)));
+        let legacy = plane.resolve_formula_at(PlacementCoord::new(0, 11, 2), Some(VertexId(7)));
+        let empty = plane.resolve_formula_at(PlacementCoord::new(0, 11, 2), None);
+
+        assert!(matches!(overlay.resolution, FormulaResolution::Overlay(_)));
+        assert!(matches!(
+            span.resolution,
+            FormulaResolution::SpanPlacement { .. }
+        ));
+        assert!(matches!(
+            legacy.resolution,
+            FormulaResolution::LegacyVertex(VertexId(7))
+        ));
+        assert_eq!(empty.resolution, FormulaResolution::Empty);
+    }
+
+    #[test]
+    fn formula_resolution_returns_span_placement_without_legacy_materialization() {
+        let mut plane = FormulaPlane::default();
+        let template_id = plane.intern_template(
+            Arc::<str>::from("template"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+        let span_ref = plane.insert_span(new_row_span(0, template_id));
+
+        let handle = plane.resolve_formula_at(PlacementCoord::new(0, 2, 2), None);
+        assert_eq!(
+            handle.resolution,
+            FormulaResolution::SpanPlacement {
+                span: span_ref,
+                template_id,
+                placement: PlacementCoord::new(0, 2, 2),
+            }
+        );
+    }
+
+    #[test]
+    fn formula_plane_epoch_increments_when_store_mutates() {
+        let mut plane = FormulaPlane::default();
+        assert_eq!(plane.epoch(), FormulaPlaneEpoch(0));
+
+        let template_id = plane.intern_template(
+            Arc::<str>::from("template"),
+            literal_ast(1),
+            Some(Arc::<str>::from("=1")),
+        );
+        assert_eq!(plane.epoch(), FormulaPlaneEpoch(1));
+
+        let span_ref = plane.insert_span(new_row_span(0, template_id));
+        assert_eq!(plane.epoch(), FormulaPlaneEpoch(2));
+
+        plane.insert_overlay(
+            0,
+            PlacementDomain::row_run(0, 2, 2, 2),
+            FormulaOverlayEntryKind::ValueOverride,
+            Some(span_ref),
+        );
+        assert_eq!(plane.epoch(), FormulaPlaneEpoch(3));
+    }
+}
