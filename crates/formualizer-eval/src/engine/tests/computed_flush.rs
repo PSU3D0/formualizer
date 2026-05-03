@@ -38,6 +38,17 @@ fn computed_write_buffer_flush_to_map_matches_immediate_cell_writes() {
 
     assert!(buffer.is_empty());
     let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let (ch_i, in_off) = asheet.chunk_of_row(0).unwrap();
+    let stats = asheet.columns[0]
+        .chunk(ch_i)
+        .unwrap()
+        .computed_overlay
+        .debug_stats();
+    assert_eq!(stats.points, 1);
+    assert_eq!(stats.sparse_fragments, 0);
+    assert_eq!(stats.dense_fragments, 0);
+    assert_eq!(stats.run_fragments, 0);
+    assert_eq!(in_off, 0);
     assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(9.0));
 }
 
