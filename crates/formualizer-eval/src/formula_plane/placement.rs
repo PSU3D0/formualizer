@@ -11,6 +11,7 @@ use formualizer_parse::parser::ASTNode;
 
 use crate::SheetId;
 
+use super::dependency_summary::{FormulaClass, summarize_canonical_template};
 use super::ids::FormulaTemplateId;
 use super::runtime::{
     FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
@@ -65,6 +66,7 @@ pub(crate) enum FormulaPlacementResult {
 pub(crate) enum PlacementFallbackReason {
     EmptyCandidateSet,
     UnsupportedCanonicalTemplate,
+    UnsupportedDependencySummary,
     NonEquivalentTemplate,
     UnsupportedShapeOrGaps,
     SingletonUnique,
@@ -224,6 +226,12 @@ fn analyze_candidates(
             {
                 return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
             }
+            let summary = summarize_canonical_template(&template);
+            if summary.formula_class != FormulaClass::StaticPointwise
+                || !summary.reject_reasons.is_empty()
+            {
+                return Err(PlacementFallbackReason::UnsupportedDependencySummary);
+            }
             Ok(CandidateAnalysis {
                 candidate,
                 template,
@@ -374,6 +382,36 @@ mod tests {
         )
     }
 
+    fn assert_all_legacy(
+        report: &FormulaPlacementReport,
+        cells: u64,
+        reason: PlacementFallbackReason,
+    ) {
+        assert_eq!(report.counters.formula_cells_seen, cells);
+        assert_eq!(report.counters.accepted_span_cells, 0);
+        assert_eq!(report.counters.legacy_cells, cells);
+        assert_eq!(report.counters.spans_created, 0);
+        assert_eq!(report.counters.templates_interned, 0);
+        assert_eq!(report.counters.formula_vertices_avoided, 0);
+        assert_eq!(report.counters.ast_roots_avoided, 0);
+        assert_eq!(report.counters.edge_rows_avoided, 0);
+        assert_eq!(report.counters.per_placement_formula_vertices_created, 0);
+        assert_eq!(report.counters.per_placement_ast_roots_created, 0);
+        assert_eq!(report.counters.per_placement_edge_rows_created, 0);
+        assert_eq!(
+            report.counters.fallback_reasons,
+            BTreeMap::from([(reason, cells)])
+        );
+        assert_eq!(report.results.len(), cells as usize);
+        assert!(report.results.iter().all(|result| matches!(
+            result,
+            FormulaPlacementResult::Legacy {
+                reason: result_reason,
+                ..
+            } if *result_reason == reason
+        )));
+    }
+
     #[test]
     fn row_run_same_template_promotes_to_span() {
         let mut plane = FormulaPlane::default();
@@ -455,19 +493,25 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let report = place_candidate_family(&mut plane, vec![candidate(0, 0, 0, "=A1+1")]);
 
-        assert_eq!(report.counters.accepted_span_cells, 0);
-        assert_eq!(report.counters.legacy_cells, 1);
-        assert_eq!(
-            report.counters.fallback_reasons,
-            BTreeMap::from([(PlacementFallbackReason::SingletonUnique, 1)])
+        assert_all_legacy(&report, 1, PlacementFallbackReason::SingletonUnique);
+    }
+
+    #[test]
+    fn placement_rejects_without_supported_dependency_summary() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=SUM(A1:A2)"),
+                candidate(0, 1, 2, "=SUM(A2:A3)"),
+            ],
         );
-        assert!(matches!(
-            report.results[0],
-            FormulaPlacementResult::Legacy {
-                reason: PlacementFallbackReason::SingletonUnique,
-                ..
-            }
-        ));
+
+        assert_all_legacy(
+            &report,
+            2,
+            PlacementFallbackReason::UnsupportedDependencySummary,
+        );
     }
 
     #[test]
@@ -478,14 +522,117 @@ mod tests {
             vec![candidate(0, 0, 0, "=RAND()"), candidate(0, 1, 0, "=RAND()")],
         );
 
-        assert_eq!(report.counters.accepted_span_cells, 0);
-        assert_eq!(report.counters.legacy_cells, 2);
-        assert_eq!(
+        assert_all_legacy(
+            &report,
+            2,
+            PlacementFallbackReason::UnsupportedCanonicalTemplate,
+        );
+    }
+
+    #[test]
+    fn gapped_row_run_remains_legacy() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 2, 2, "=A3+1")],
+        );
+
+        assert_all_legacy(&report, 2, PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+
+    #[test]
+    fn gapped_col_run_remains_legacy() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 2, 0, "=A1+1"), candidate(0, 2, 2, "=C1+1")],
+        );
+
+        assert_all_legacy(&report, 2, PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+
+    #[test]
+    fn rect_with_missing_cell_remains_legacy() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 1, 1, "=A1+1"),
+                candidate(0, 1, 2, "=B1+1"),
+                candidate(0, 2, 1, "=A2+1"),
+            ],
+        );
+
+        assert_all_legacy(&report, 3, PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+
+    #[test]
+    fn duplicate_placement_remains_legacy_with_reason() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 0, 2, "=A1+1")],
+        );
+
+        assert_all_legacy(&report, 2, PlacementFallbackReason::DuplicatePlacement);
+    }
+
+    #[test]
+    fn explicit_sheet_binding_remains_legacy_with_reason() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=Sheet2!A1+1"),
+                candidate(0, 1, 2, "=Sheet2!A2+1"),
+            ],
+        );
+
+        assert_all_legacy(
+            &report,
+            2,
+            PlacementFallbackReason::CrossSheetOrSheetMismatch,
+        );
+    }
+
+    #[test]
+    fn mixed_sheet_candidates_remain_legacy_with_reason() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(0, 0, 2, "=A1+1"), candidate(1, 1, 2, "=A2+1")],
+        );
+
+        assert_all_legacy(
+            &report,
+            2,
+            PlacementFallbackReason::CrossSheetOrSheetMismatch,
+        );
+    }
+
+    #[test]
+    fn placement_promotes_supported_mixed_anchor_family() {
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 0, 2, "=$A1+B$1"),
+                candidate(0, 1, 2, "=$A2+B$1"),
+                candidate(0, 2, 2, "=$A3+B$1"),
+            ],
+        );
+
+        assert_eq!(report.counters.formula_cells_seen, 3);
+        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.legacy_cells, 0);
+        assert_eq!(report.counters.spans_created, 1);
+        assert_eq!(report.counters.templates_interned, 1);
+        assert!(report.counters.fallback_reasons.is_empty());
+        assert!(
             report
-                .counters
-                .fallback_reasons
-                .get(&PlacementFallbackReason::UnsupportedCanonicalTemplate),
-            Some(&2)
+                .results
+                .iter()
+                .all(|result| matches!(result, FormulaPlacementResult::Span { .. }))
         );
     }
 
@@ -497,15 +644,7 @@ mod tests {
             vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 1, 2, "=A1+1")],
         );
 
-        assert_eq!(report.counters.accepted_span_cells, 0);
-        assert_eq!(report.counters.legacy_cells, 2);
-        assert_eq!(
-            report
-                .counters
-                .fallback_reasons
-                .get(&PlacementFallbackReason::NonEquivalentTemplate),
-            Some(&2)
-        );
+        assert_all_legacy(&report, 2, PlacementFallbackReason::NonEquivalentTemplate);
     }
 
     #[test]
