@@ -147,11 +147,24 @@ pub(crate) fn place_candidate_family(
         }
     };
 
+    let origin = domain_origin(&domain);
+    let origin_analysis = analyses
+        .iter()
+        .find(|analysis| analysis.candidate.placement() == origin)
+        .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    let origin_analysis = match origin_analysis {
+        Ok(origin_analysis) => origin_analysis,
+        Err(reason) => {
+            mark_all_legacy(&mut report, &candidates, reason);
+            return report;
+        }
+    };
+
     let template_count_before = plane.templates.len();
     let template_id = plane.intern_template(
         Arc::<str>::from(first.template.key.payload()),
-        Arc::clone(&first.candidate.ast),
-        first.candidate.formula_text.clone(),
+        Arc::clone(&origin_analysis.candidate.ast),
+        origin_analysis.candidate.formula_text.clone(),
     );
     if plane.templates.len() > template_count_before {
         report.counters.templates_interned = 1;
@@ -289,6 +302,29 @@ fn detect_domain(
         cols_vec[0],
         *cols_vec.last().expect("non-empty cols"),
     ))
+}
+
+fn domain_origin(domain: &PlacementDomain) -> PlacementCoord {
+    match *domain {
+        PlacementDomain::RowRun {
+            sheet_id,
+            row_start,
+            col,
+            ..
+        } => PlacementCoord::new(sheet_id, row_start, col),
+        PlacementDomain::ColRun {
+            sheet_id,
+            row,
+            col_start,
+            ..
+        } => PlacementCoord::new(sheet_id, row, col_start),
+        PlacementDomain::Rect {
+            sheet_id,
+            row_start,
+            col_start,
+            ..
+        } => PlacementCoord::new(sheet_id, row_start, col_start),
+    }
 }
 
 fn is_contiguous(values: &[u32]) -> bool {

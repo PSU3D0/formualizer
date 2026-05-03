@@ -15,6 +15,7 @@ pub(crate) mod placement;
 pub(crate) mod region_index;
 pub(crate) mod runtime;
 pub mod span_counters;
+pub(crate) mod span_eval;
 pub mod span_store;
 pub(crate) mod template_canonical;
 pub mod virtual_ref;
