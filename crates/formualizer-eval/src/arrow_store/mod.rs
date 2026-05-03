@@ -2079,6 +2079,20 @@ impl Overlay {
         }
         covered.len() == self.len()
     }
+
+    pub(crate) fn debug_recomputed_estimated_bytes(&self) -> usize {
+        let point_bytes = self
+            .points
+            .values()
+            .map(Self::point_estimate)
+            .fold(0usize, usize::saturating_add);
+        let fragment_bytes = self
+            .fragments
+            .iter()
+            .map(OverlayFragment::estimated_bytes)
+            .fold(0usize, usize::saturating_add);
+        point_bytes.saturating_add(fragment_bytes)
+    }
 }
 
 pub(crate) struct OverlayCascade<'a> {
@@ -3612,6 +3626,74 @@ mod tests {
     use arrow_array::Array;
     use arrow_schema::DataType;
 
+    fn add_overlay_stats(into: &mut OverlayDebugStats, next: OverlayDebugStats) {
+        into.points += next.points;
+        into.sparse_fragments += next.sparse_fragments;
+        into.dense_fragments += next.dense_fragments;
+        into.run_fragments += next.run_fragments;
+        into.covered_len += next.covered_len;
+    }
+
+    fn column_overlay_stats(
+        sheet: &ArrowSheet,
+        col_idx: usize,
+        computed: bool,
+    ) -> OverlayDebugStats {
+        let mut stats = OverlayDebugStats::default();
+        let Some(column) = sheet.columns.get(col_idx) else {
+            return stats;
+        };
+        for chunk in &column.chunks {
+            add_overlay_stats(
+                &mut stats,
+                if computed {
+                    chunk.computed_overlay.debug_stats()
+                } else {
+                    chunk.overlay.debug_stats()
+                },
+            );
+        }
+        for chunk in column.sparse_chunks.values() {
+            add_overlay_stats(
+                &mut stats,
+                if computed {
+                    chunk.computed_overlay.debug_stats()
+                } else {
+                    chunk.overlay.debug_stats()
+                },
+            );
+        }
+        stats
+    }
+
+    fn assert_column_overlays_normalized(sheet: &ArrowSheet, col_idx: usize) {
+        let column = &sheet.columns[col_idx];
+        for chunk in &column.chunks {
+            assert!(chunk.overlay.debug_is_normalized());
+            assert!(chunk.computed_overlay.debug_is_normalized());
+            assert_eq!(
+                chunk.overlay.estimated_bytes(),
+                chunk.overlay.debug_recomputed_estimated_bytes()
+            );
+            assert_eq!(
+                chunk.computed_overlay.estimated_bytes(),
+                chunk.computed_overlay.debug_recomputed_estimated_bytes()
+            );
+        }
+        for chunk in column.sparse_chunks.values() {
+            assert!(chunk.overlay.debug_is_normalized());
+            assert!(chunk.computed_overlay.debug_is_normalized());
+            assert_eq!(
+                chunk.overlay.estimated_bytes(),
+                chunk.overlay.debug_recomputed_estimated_bytes()
+            );
+            assert_eq!(
+                chunk.computed_overlay.estimated_bytes(),
+                chunk.computed_overlay.debug_recomputed_estimated_bytes()
+            );
+        }
+    }
+
     #[test]
     fn ingest_mixed_rows_into_lanes_and_tags() {
         let mut b = IngestBuilder::new("Sheet1", 1, 1024, crate::engine::DateSystem::Excel1900);
@@ -4272,6 +4354,113 @@ mod tests {
     }
 
     #[test]
+    fn overlay_fragment_estimates_follow_encoded_shapes() {
+        let mut points = Overlay::new();
+        for idx in 0..512 {
+            points.set_scalar(idx, OverlayValue::Number(idx as f64));
+        }
+
+        let mut dense = Overlay::new();
+        dense.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                (0..512)
+                    .map(|idx| OverlayValue::Number(idx as f64))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            dense.estimated_bytes(),
+            dense.debug_recomputed_estimated_bytes()
+        );
+        assert!(
+            dense.estimated_bytes() < points.estimated_bytes(),
+            "dense fragment should account like encoded lanes, not point-map entries"
+        );
+
+        let mut short_run = Overlay::new();
+        short_run.apply_fragment(
+            OverlayFragment::run_range(0, vec![OverlayValue::Number(1.0); 8]).unwrap(),
+        );
+        let mut long_run = Overlay::new();
+        long_run.apply_fragment(
+            OverlayFragment::run_range(0, vec![OverlayValue::Number(1.0); 4096]).unwrap(),
+        );
+        assert_eq!(
+            short_run.estimated_bytes(),
+            short_run.debug_recomputed_estimated_bytes()
+        );
+        assert_eq!(
+            long_run.estimated_bytes(),
+            long_run.debug_recomputed_estimated_bytes()
+        );
+        assert_eq!(
+            short_run.estimated_bytes(),
+            long_run.estimated_bytes(),
+            "single-run estimate should scale with run count, not covered rows"
+        );
+
+        let sparse10 = OverlayFragment::sparse_offsets(
+            (0..10)
+                .map(|idx| (idx * 3, OverlayValue::Number(idx as f64)))
+                .collect(),
+        )
+        .unwrap();
+        let sparse20 = OverlayFragment::sparse_offsets(
+            (0..20)
+                .map(|idx| (idx * 3, OverlayValue::Number(idx as f64)))
+                .collect(),
+        )
+        .unwrap();
+        assert!(sparse20.estimated_bytes() > sparse10.estimated_bytes());
+    }
+
+    #[test]
+    fn overlay_estimated_bytes_stay_consistent_after_split_and_clear() {
+        let mut overlay = Overlay::new();
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                (0..16)
+                    .map(|idx| OverlayValue::Number(idx as f64))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            overlay.estimated_bytes(),
+            overlay.debug_recomputed_estimated_bytes()
+        );
+
+        overlay.set_scalar(8, OverlayValue::Text(Arc::from("split")));
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.estimated_bytes(),
+            overlay.debug_recomputed_estimated_bytes()
+        );
+
+        overlay.apply_fragment(
+            OverlayFragment::sparse_offsets(vec![
+                (0, OverlayValue::Empty),
+                (15, OverlayValue::Boolean(true)),
+            ])
+            .unwrap(),
+        );
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.estimated_bytes(),
+            overlay.debug_recomputed_estimated_bytes()
+        );
+
+        let freed = overlay.clear_all();
+        assert!(freed > 0);
+        assert_eq!(overlay.estimated_bytes(), 0);
+        assert_eq!(overlay.debug_recomputed_estimated_bytes(), 0);
+        assert!(overlay.is_empty());
+    }
+
+    #[test]
     fn overlay_segment_numbers_masks_base_for_non_numeric_overlays() {
         let mut user = Overlay::new();
         user.set(1, OverlayValue::Text(Arc::from("x")));
@@ -4526,6 +4715,118 @@ mod tests {
             .map(|c| c.type_tag.len())
             .unwrap_or(0);
         assert_eq!(last_start + last_len, sheet.nrows as usize);
+    }
+
+    #[test]
+    fn row_insert_delete_preserves_user_dense_fragments() {
+        let mut b = IngestBuilder::new("S", 1, 4, crate::engine::DateSystem::Excel1900);
+        for _ in 0..10 {
+            b.append_row(&[LiteralValue::Empty]).unwrap();
+        }
+        let mut sheet = b.finish();
+
+        let (ch_idx, off) = sheet.chunk_of_row(1).unwrap();
+        sheet.columns[0]
+            .chunk_mut(ch_idx)
+            .unwrap()
+            .overlay
+            .apply_fragment(
+                OverlayFragment::dense_range(
+                    off,
+                    vec![
+                        OverlayValue::Number(10.0),
+                        OverlayValue::Number(20.0),
+                        OverlayValue::Number(30.0),
+                    ],
+                )
+                .unwrap(),
+            );
+
+        let before = column_overlay_stats(&sheet, 0, false);
+        assert_eq!(before.dense_fragments, 1);
+        assert_eq!(before.sparse_fragments, 0);
+        assert_column_overlays_normalized(&sheet, 0);
+
+        sheet.insert_rows(2, 2);
+        assert_eq!(sheet.nrows, 12);
+        let av = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av.get_cell(1, 0), LiteralValue::Number(10.0));
+        assert_eq!(av.get_cell(2, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(3, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(4, 0), LiteralValue::Number(20.0));
+        assert_eq!(av.get_cell(5, 0), LiteralValue::Number(30.0));
+        let after_insert = column_overlay_stats(&sheet, 0, false);
+        assert_eq!(after_insert.sparse_fragments, 0);
+        assert!(after_insert.dense_fragments >= 2);
+        assert_column_overlays_normalized(&sheet, 0);
+
+        sheet.delete_rows(2, 2);
+        assert_eq!(sheet.nrows, 10);
+        let av = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av.get_cell(1, 0), LiteralValue::Number(10.0));
+        assert_eq!(av.get_cell(2, 0), LiteralValue::Number(20.0));
+        assert_eq!(av.get_cell(3, 0), LiteralValue::Number(30.0));
+        let after_delete = column_overlay_stats(&sheet, 0, false);
+        assert_eq!(after_delete.sparse_fragments, 0);
+        assert!(after_delete.dense_fragments >= 1);
+        assert_column_overlays_normalized(&sheet, 0);
+    }
+
+    #[test]
+    fn row_insert_delete_preserves_computed_empty_run_fragments() {
+        let mut b = IngestBuilder::new("S", 1, 4, crate::engine::DateSystem::Excel1900);
+        for row in 0..8 {
+            b.append_row(&[LiteralValue::Number((row + 1) as f64)])
+                .unwrap();
+        }
+        let mut sheet = b.finish();
+
+        let (ch_idx, off) = sheet.chunk_of_row(1).unwrap();
+        sheet.columns[0]
+            .chunk_mut(ch_idx)
+            .unwrap()
+            .computed_overlay
+            .apply_fragment(
+                OverlayFragment::run_range(
+                    off,
+                    vec![
+                        OverlayValue::Empty,
+                        OverlayValue::Empty,
+                        OverlayValue::Empty,
+                    ],
+                )
+                .unwrap(),
+            );
+
+        let before = column_overlay_stats(&sheet, 0, true);
+        assert_eq!(before.run_fragments, 1);
+        assert_eq!(before.sparse_fragments, 0);
+        assert_column_overlays_normalized(&sheet, 0);
+
+        sheet.insert_rows(2, 1);
+        assert_eq!(sheet.nrows, 9);
+        let av = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av.get_cell(1, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(2, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(3, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(4, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(5, 0), LiteralValue::Number(5.0));
+        let after_insert = column_overlay_stats(&sheet, 0, true);
+        assert_eq!(after_insert.sparse_fragments, 0);
+        assert!(after_insert.run_fragments >= 2);
+        assert_column_overlays_normalized(&sheet, 0);
+
+        sheet.delete_rows(2, 1);
+        assert_eq!(sheet.nrows, 8);
+        let av = sheet.range_view(0, 0, (sheet.nrows - 1) as usize, 0);
+        assert_eq!(av.get_cell(1, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(2, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(3, 0), LiteralValue::Empty);
+        assert_eq!(av.get_cell(4, 0), LiteralValue::Number(5.0));
+        let after_delete = column_overlay_stats(&sheet, 0, true);
+        assert_eq!(after_delete.sparse_fragments, 0);
+        assert!(after_delete.run_fragments >= 1);
+        assert_column_overlays_normalized(&sheet, 0);
     }
 
     #[test]
