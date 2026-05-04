@@ -135,8 +135,16 @@ Beyond that, span-aware vectorized kernels are the next tier — recognize that 
           (8df5095). Closes audit correctness item #1. 6 new tests
           covering spill, source, row-visibility, insert_rows, and
           remove_sheet structural ops under AuthoritativeExperimental.
-[plan]    Merged store_and_plan: arena interning + dependency planning
-          in one pass. Closes Issue C residual no-span load tax.
+[done]    Arena-native bulk dependency planning (c675295). Eliminates
+          retrieve_ast in BulkIngestBuilder for the common case. The
+          targeted no-span load tax did NOT move; the residual was
+          actually upstream in FormulaPlane authoritative ingest, which
+          still calls retrieve_ast per record to feed canonicalize_template.
+          Closing that requires either arena-mirroring the 1588-line
+          canonicalizer (large maintenance surface) or pre-grouping by raw
+          text (correctness-fragile for relative families). Accepted as
+          floor for this round; revisit when an arena-walking canonicalizer
+          is justified by other workstreams.
 [plan]    Uniform-value span broadcast (50-100x on absolute-only families)
 [plan]    Direct DenseRange writes for Rect/RowRun/ColRun spans
 [plan]    Cache mixed-schedule indexes by (topology_epoch, indexes_epoch)
