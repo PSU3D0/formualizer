@@ -5,6 +5,7 @@ use crate::traits::{
 };
 use chrono::Timelike;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
+use formualizer_eval::engine::{FormulaIngestBatch, FormulaIngestRecord};
 use formualizer_parse::parser::ReferenceType;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -12,6 +13,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 use umya_spreadsheet::{
     CellRawValue, CellValue, Spreadsheet,
@@ -21,7 +23,7 @@ use umya_spreadsheet::{
 
 use crate::traits::{DefinedName as WorkbookDefinedName, DefinedNameDefinition, DefinedNameScope};
 
-type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+type FormulaBatch = FormulaIngestBatch;
 
 /// Owned cache-write update used by batch formula-cache APIs.
 #[derive(Clone, Debug, PartialEq)]
@@ -1309,7 +1311,7 @@ where
                     }
                 }
             } else {
-                let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
+                let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
                 for ((row, col), cd) in &sheet_data.cells {
                     if let Some(f) = &cd.formula {
                         if f.is_empty() {
@@ -1321,7 +1323,12 @@ where
                             format!("={f}")
                         };
                         match formualizer_parse::parser::parse(&with_eq) {
-                            Ok(parsed) => formulas.push((*row, *col, parsed)),
+                            Ok(parsed) => formulas.push(FormulaIngestRecord::new(
+                                *row,
+                                *col,
+                                parsed,
+                                Some(Arc::<str>::from(with_eq.clone())),
+                            )),
                             Err(e) => {
                                 if let Some(recovered) = engine
                                     .handle_formula_parse_error(
@@ -1333,7 +1340,12 @@ where
                                     )
                                     .map_err(IoError::Engine)?
                                 {
-                                    formulas.push((*row, *col, recovered));
+                                    formulas.push(FormulaIngestRecord::new(
+                                        *row,
+                                        *col,
+                                        recovered,
+                                        Some(Arc::<str>::from(with_eq.clone())),
+                                    ));
                                 }
                             }
                         }
@@ -1342,7 +1354,7 @@ where
                 }
                 formula_handed_to_engine += formulas.len();
                 if !formulas.is_empty() {
-                    eager_formula_batches.push((n.clone(), formulas));
+                    eager_formula_batches.push(FormulaIngestBatch::new(n.clone(), formulas));
                 }
             }
             let formula_ms = t_formulas.elapsed().as_secs_f64() * 1000.0;
@@ -1394,12 +1406,9 @@ where
 
         if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
             let t_bulk = Instant::now();
-            let mut builder = engine.begin_bulk_ingest();
-            for (sheet_name, formulas) in eager_formula_batches {
-                let sid = builder.add_sheet(&sheet_name);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            builder.finish().map_err(IoError::Engine)?;
+            engine
+                .ingest_formula_batches(eager_formula_batches)
+                .map_err(IoError::Engine)?;
             if debug {
                 eprintln!(
                     "[fz][load] umya: bulk formula ingest finished in {:.1} ms",

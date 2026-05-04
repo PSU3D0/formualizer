@@ -9,12 +9,13 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Read, Seek};
 use std::path::Path;
+use std::sync::Arc;
 
 use calamine::{Data, Range, Reader, Xlsx, open_workbook, open_workbook_from_rs};
 use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{CellIngest, IngestBuilder, map_error_code};
-use formualizer_eval::engine::Engine as EvalEngine;
 use formualizer_eval::engine::ingest::EngineLoadStream;
+use formualizer_eval::engine::{Engine as EvalEngine, FormulaIngestBatch, FormulaIngestRecord};
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::ReferenceType;
 use quick_xml::Reader as XmlReader;
@@ -22,7 +23,7 @@ use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::QName;
 use zip::ZipArchive;
 
-type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+type FormulaBatch = FormulaIngestBatch;
 
 enum CalamineWorkbook {
     File(Xlsx<BufReader<File>>),
@@ -974,7 +975,7 @@ where
                     let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
                         rustc_hash::FxHashMap::default();
                     cache.reserve(4096);
-                    let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
+                    let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
                     for (row, col, formula) in frm_range.used_cells() {
                         if formula.is_empty() {
                             continue;
@@ -1013,7 +1014,12 @@ where
                             }
                         };
                         if let Some(ast) = ast {
-                            formulas.push((excel_row, excel_col, ast));
+                            formulas.push(FormulaIngestRecord::new(
+                                excel_row,
+                                excel_col,
+                                ast,
+                                Some(Arc::<str>::from(key_owned.clone())),
+                            ));
                         }
                         parsed_n += 1;
                         if debug && parsed_n.is_multiple_of(5000) {
@@ -1022,7 +1028,7 @@ where
                     }
                     formula_handed_to_engine += formulas.len();
                     if !formulas.is_empty() {
-                        eager_formula_batches.push((n.clone(), formulas));
+                        eager_formula_batches.push(FormulaIngestBatch::new(n.clone(), formulas));
                     }
                 }
             }
@@ -1070,13 +1076,8 @@ where
         }
 
         if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
-            let mut builder = engine.begin_bulk_ingest();
-            for (sheet_name, formulas) in eager_formula_batches {
-                let sid = builder.add_sheet(&sheet_name);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            builder
-                .finish()
+            engine
+                .ingest_formula_batches(eager_formula_batches)
                 .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
         }
 

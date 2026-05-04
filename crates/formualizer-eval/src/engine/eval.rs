@@ -11,6 +11,11 @@ use crate::engine::{
     FormulaParseDiagnostic, FormulaParsePolicy, FormulaPlaneMode, RowVisibilitySource, Scheduler,
     VertexId, VertexKind, VisibilityMaskMode,
 };
+use crate::formula_plane::placement::{
+    FormulaPlacementCandidate, PlacementFallbackReason, place_candidate_family,
+};
+use crate::formula_plane::runtime::FormulaPlane;
+use crate::formula_plane::template_canonical::canonicalize_template;
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
@@ -21,7 +26,7 @@ use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -2437,11 +2442,164 @@ where
         self.last_formula_ingest_report = Some(report);
     }
 
+    fn analyze_formula_plane_shadow_candidates(
+        &mut self,
+        batches: &[FormulaIngestBatch],
+    ) -> FormulaIngestReport {
+        let mut report = FormulaIngestReport::with_mode(FormulaPlaneMode::Shadow);
+        report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+
+        // Touch graph-owned authority deliberately: Tranche 3 shadow analysis uses
+        // scratch state, but FormulaPlane ownership now lives on DependencyGraph.
+        let _active_epoch = self.graph.formula_authority().plane.epoch();
+
+        let mut groups: BTreeMap<(SheetId, String), Vec<FormulaPlacementCandidate>> =
+            BTreeMap::new();
+        for batch in batches {
+            let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
+            for record in &batch.formulas {
+                if record.row == 0 || record.col == 0 {
+                    Self::record_shadow_fallback_reason(
+                        &mut report,
+                        PlacementFallbackReason::UnsupportedShapeOrGaps,
+                        1,
+                    );
+                    continue;
+                }
+
+                let template = canonicalize_template(&record.ast, record.row, record.col);
+                groups
+                    .entry((sheet_id, template.key.payload().to_string()))
+                    .or_default()
+                    .push(FormulaPlacementCandidate::new(
+                        sheet_id,
+                        record.row - 1,
+                        record.col - 1,
+                        Arc::new(record.ast.clone()),
+                        record.formula_text.clone(),
+                    ));
+            }
+        }
+
+        let mut scratch_plane = FormulaPlane::default();
+        for candidates in groups.into_values() {
+            for component in Self::split_shadow_candidate_components(candidates) {
+                let placement_report = place_candidate_family(&mut scratch_plane, component);
+                let counters = placement_report.counters;
+                report.shadow_candidate_cells = report
+                    .shadow_candidate_cells
+                    .saturating_add(counters.formula_cells_seen);
+                report.shadow_accepted_span_cells = report
+                    .shadow_accepted_span_cells
+                    .saturating_add(counters.accepted_span_cells);
+                report.shadow_fallback_cells = report
+                    .shadow_fallback_cells
+                    .saturating_add(counters.legacy_cells);
+                report.shadow_templates_interned = report
+                    .shadow_templates_interned
+                    .saturating_add(counters.templates_interned);
+                report.shadow_spans_created = report
+                    .shadow_spans_created
+                    .saturating_add(counters.spans_created);
+                report.graph_formula_vertices_avoided_shadow = report
+                    .graph_formula_vertices_avoided_shadow
+                    .saturating_add(counters.formula_vertices_avoided);
+                report.ast_roots_avoided_shadow = report
+                    .ast_roots_avoided_shadow
+                    .saturating_add(counters.ast_roots_avoided);
+                report.edge_rows_avoided_shadow = report
+                    .edge_rows_avoided_shadow
+                    .saturating_add(counters.edge_rows_avoided);
+                for (reason, count) in counters.fallback_reasons {
+                    Self::record_shadow_fallback_reason(&mut report, reason, count);
+                }
+            }
+        }
+        report
+    }
+
+    fn record_shadow_fallback_reason(
+        report: &mut FormulaIngestReport,
+        reason: PlacementFallbackReason,
+        count: u64,
+    ) {
+        *report
+            .fallback_reasons
+            .entry(format!("{reason:?}"))
+            .or_default() += count;
+    }
+
+    fn split_shadow_candidate_components(
+        candidates: Vec<FormulaPlacementCandidate>,
+    ) -> Vec<Vec<FormulaPlacementCandidate>> {
+        if candidates.len() <= 1 {
+            return vec![candidates];
+        }
+
+        let mut coord_to_indices: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
+        for (idx, candidate) in candidates.iter().enumerate() {
+            coord_to_indices
+                .entry((candidate.row, candidate.col))
+                .or_default()
+                .push(idx);
+        }
+
+        let mut remaining: BTreeSet<usize> = (0..candidates.len()).collect();
+        let mut components = Vec::new();
+        while let Some(&start) = remaining.iter().next() {
+            remaining.remove(&start);
+            let mut queue = VecDeque::from([start]);
+            let mut component_indices = Vec::new();
+
+            while let Some(idx) = queue.pop_front() {
+                component_indices.push(idx);
+                let candidate = &candidates[idx];
+                let mut neighbor_coords = Vec::with_capacity(5);
+                neighbor_coords.push((candidate.row, candidate.col));
+                if let Some(row) = candidate.row.checked_sub(1) {
+                    neighbor_coords.push((row, candidate.col));
+                }
+                neighbor_coords.push((candidate.row.saturating_add(1), candidate.col));
+                if let Some(col) = candidate.col.checked_sub(1) {
+                    neighbor_coords.push((candidate.row, col));
+                }
+                neighbor_coords.push((candidate.row, candidate.col.saturating_add(1)));
+
+                for coord in neighbor_coords {
+                    if let Some(indices) = coord_to_indices.get(&coord) {
+                        for &neighbor in indices {
+                            if remaining.remove(&neighbor) {
+                                queue.push_back(neighbor);
+                            }
+                        }
+                    }
+                }
+            }
+
+            component_indices.sort_by_key(|idx| {
+                let candidate = &candidates[*idx];
+                (candidate.row, candidate.col, *idx)
+            });
+            components.push(
+                component_indices
+                    .into_iter()
+                    .map(|idx| candidates[idx].clone())
+                    .collect(),
+            );
+        }
+
+        components
+    }
+
     pub fn ingest_formula_batches(
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        let mut report = FormulaIngestReport::with_mode(self.config.formula_plane_mode);
+        let mut report = if self.config.formula_plane_mode == FormulaPlaneMode::Shadow {
+            self.analyze_formula_plane_shadow_candidates(&batches)
+        } else {
+            FormulaIngestReport::with_mode(self.config.formula_plane_mode)
+        };
         report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
 
         if !batches.iter().all(FormulaIngestBatch::is_empty) {
@@ -2463,11 +2621,6 @@ where
             report.graph_formula_cells_materialized = report.formula_cells_seen;
             report.graph_vertices_created = summary.vertices as u64;
             report.graph_edges_created = summary.edges as u64;
-        }
-
-        if self.config.formula_plane_mode == FormulaPlaneMode::Shadow {
-            // Tranche 3A centralizes ingest only. Shadow candidate analysis is
-            // added in Tranche 3B; all formulas are still graph-materialized.
         }
 
         self.record_formula_ingest_report(report.clone());

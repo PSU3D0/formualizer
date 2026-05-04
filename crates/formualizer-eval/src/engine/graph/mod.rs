@@ -2,6 +2,7 @@ use crate::SheetId;
 use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
+use crate::formula_plane::authority::FormulaAuthority;
 use formualizer_common::{
     CoordBuildHasher, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell,
 };
@@ -242,6 +243,9 @@ pub struct DependencyGraph {
     // Evaluation configuration
     config: super::EvalConfig,
 
+    // Graph-owned FormulaPlane authority shell. Inert until a later runtime cut-over.
+    formula_authority: FormulaAuthority,
+
     // Dynamic topology orderer (Pearce–Kelly) maintained alongside edges when enabled
     pk_order: Option<DynamicTopo<VertexId>>,
 
@@ -276,6 +280,14 @@ impl DependencyGraph {
 
     pub fn get_config(&self) -> &super::EvalConfig {
         &self.config
+    }
+
+    pub(crate) fn formula_authority(&self) -> &FormulaAuthority {
+        &self.formula_authority
+    }
+
+    pub(crate) fn formula_authority_mut(&mut self) -> &mut FormulaAuthority {
+        &mut self.formula_authority
     }
 
     /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
@@ -1022,6 +1034,7 @@ impl DependencyGraph {
             cell_to_name_dependents: FxHashMap::default(),
             name_to_cell_dependencies: FxHashMap::default(),
             config: config.clone(),
+            formula_authority: FormulaAuthority::default(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: std::collections::HashMap::with_hasher(CoordBuildHasher),

@@ -49,8 +49,14 @@ fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
-    engine.stage_formula_text("Sheet1", 1, 1, "=1+1".to_string());
-    engine.stage_formula_text("Sheet1", 2, 1, "=A1+1".to_string());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    engine.stage_formula_text("Sheet1", 1, 2, "=A1+1".to_string());
+    engine.stage_formula_text("Sheet1", 2, 2, "=A2+1".to_string());
     assert_eq!(engine.staged_formula_count(), 2);
 
     engine.build_graph_all().expect("build staged formulas");
@@ -62,11 +68,12 @@ fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas() {
     assert_eq!(report.mode, FormulaPlaneMode::Shadow);
     assert_eq!(report.formula_cells_seen, 2);
     assert_eq!(report.graph_formula_cells_materialized, 2);
-    assert_eq!(report.shadow_accepted_span_cells, 0);
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    assert_eq!(report.graph_formula_vertices_avoided_shadow, 2);
     assert_eq!(engine.staged_formula_count(), 0);
     assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
     assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 1),
+        engine.get_cell_value("Sheet1", 2, 2),
         Some(LiteralValue::Number(3.0))
     );
 }

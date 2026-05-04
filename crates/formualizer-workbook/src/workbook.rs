@@ -1481,6 +1481,16 @@ impl Workbook {
         &self.engine.config
     }
 
+    pub fn last_formula_ingest_report(
+        &self,
+    ) -> Option<formualizer_eval::engine::FormulaIngestReport> {
+        self.engine.last_formula_ingest_report().cloned()
+    }
+
+    pub fn formula_ingest_report_total(&self) -> formualizer_eval::engine::FormulaIngestReport {
+        self.engine.formula_ingest_report_total().clone()
+    }
+
     pub fn has_staged_formulas(&self) -> bool {
         self.engine.has_staged_formulas()
     }
