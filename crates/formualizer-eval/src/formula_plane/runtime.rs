@@ -380,6 +380,13 @@ impl SpanStore {
             .find(|span| span.state == SpanState::Active && span.domain.contains(coord))
     }
 
+    pub(crate) fn active_spans(&self) -> impl Iterator<Item = &FormulaSpan> {
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.span.as_ref())
+            .filter(|span| span.state == SpanState::Active)
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }

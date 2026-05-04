@@ -157,6 +157,20 @@ impl FormulaProducerResultIndex {
         }
     }
 
+    pub(crate) fn producer_result_region(
+        &self,
+        producer: FormulaProducerId,
+    ) -> Option<RegionPattern> {
+        self.entries
+            .iter()
+            .find(|entry| entry.producer == producer)
+            .map(|entry| entry.result_region)
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
@@ -246,6 +260,10 @@ impl FormulaConsumerReadIndex {
                 .collect(),
             stats: result.stats,
         }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
     }
 
     pub(crate) fn epoch(&self) -> u64 {
