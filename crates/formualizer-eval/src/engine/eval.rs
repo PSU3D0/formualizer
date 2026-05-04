@@ -15,10 +15,13 @@ use crate::formula_plane::placement::{
     FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
     place_candidate_family,
 };
-use crate::formula_plane::producer::{FormulaProducerId, FormulaProducerWork, ProducerDirtyDomain};
-use crate::formula_plane::region_index::DirtyDomain;
+use crate::formula_plane::producer::{
+    DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
+    FormulaProducerWork, ProducerDirtyDomain,
+};
+use crate::formula_plane::region_index::{DirtyDomain, RegionPattern};
 use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef};
-use crate::formula_plane::scheduler::build_mixed_schedule;
+use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
 use crate::formula_plane::template_canonical::canonicalize_template;
 use crate::interpreter::Interpreter;
@@ -50,6 +53,12 @@ fn producer_dirty_to_span_dirty(
 }
 type PreparedFormulaBatches = Vec<FormulaIngestBatch>;
 type StagedFormulaBatches = Vec<(String, Vec<StagedFormulaEntry>)>;
+type FormulaPlaneMixedScheduleBuild = (
+    MixedSchedule,
+    BTreeMap<crate::formula_plane::runtime::FormulaSpanId, FormulaSpanRef>,
+    u64,
+    Vec<VertexId>,
+);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
@@ -5112,7 +5121,9 @@ where
     }
 
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+        }
         self.evaluate_vertex_impl(vertex_id, None)
     }
 
@@ -5755,7 +5766,9 @@ where
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
         let _source_cache = self.source_cache_session();
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            return self.evaluate_authoritative_formula_plane_all();
+        }
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -5966,7 +5979,9 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            return self.evaluate_authoritative_formula_plane_all();
+        }
 
         let start = crate::instant::FzInstant::now();
         let dirty_vertices = self.graph.get_evaluation_vertices();
@@ -6037,46 +6052,14 @@ where
             elapsed: start.elapsed(),
         })
     }
-    fn fail_if_authoritative_formula_plane_requires_mixed_runtime(&self) -> Result<(), ExcelError> {
-        if self.graph.formula_authority().active_span_count() > 0 {
-            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                "FormulaPlane authoritative spans require evaluate_all mixed span runtime; this evaluation entry point is not enabled yet",
-            ));
-        }
-        Ok(())
-    }
-
     fn evaluate_authoritative_formula_plane_all(&mut self) -> Result<EvalResult, ExcelError> {
-        // Initial guarded runtime scope: evaluate_all only, sequential only, all
-        // active spans as whole-span work. Dirty-domain-bounded span runtime and
-        // mixed legacy/span runtime remain separate follow-up cutovers.
-        let graph_formula_count = self.graph.baseline_stats().graph_formula_vertex_count;
-        if graph_formula_count > 0 {
-            return Err(ExcelError::new(ExcelErrorKind::NImpl)
-                .with_message("FormulaPlane mixed legacy/span evaluate_all is not enabled yet"));
-        }
-
+        // Radical test-runtime scope: evaluate_all routes all active FormulaPlane
+        // authority through a mixed whole-producer coordinator. Targeted/delta/
+        // plan APIs can delegate here in follow-up, but no public path may ignore
+        // active spans.
         let start = crate::instant::FzInstant::now();
-        let (schedule, span_refs_by_id, plane_epoch) = {
-            let authority = self.graph.formula_authority();
-            let span_refs = authority.active_span_refs();
-            let span_refs_by_id = span_refs
-                .iter()
-                .copied()
-                .map(|span_ref| (span_ref.id, span_ref))
-                .collect::<BTreeMap<_, _>>();
-            let work = span_refs
-                .iter()
-                .copied()
-                .map(|span_ref| FormulaProducerWork {
-                    producer: FormulaProducerId::Span(span_ref.id),
-                    dirty: ProducerDirtyDomain::Whole,
-                })
-                .collect::<Vec<_>>();
-            let schedule =
-                build_mixed_schedule(work, &authority.producer_results, &authority.consumer_reads);
-            (schedule, span_refs_by_id, authority.plane.epoch().0)
-        };
+        let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) =
+            self.build_formula_plane_mixed_schedule()?;
 
         if !schedule.is_authoritative_safe() {
             return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
@@ -6089,48 +6072,201 @@ where
         for layer in schedule.layers {
             let mut buffer = ComputedWriteBuffer::default();
             for work in layer.work {
-                let FormulaProducerId::Span(span_id) = work.producer else {
-                    return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                        "FormulaPlane mixed legacy/span evaluate_all is not enabled yet",
-                    ));
-                };
-                let span_ref = *span_refs_by_id.get(&span_id).ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message("FormulaPlane schedule referenced a stale span")
-                })?;
-                let dirty = producer_dirty_to_span_dirty(work.dirty, span_ref);
-                let task = SpanEvalTask {
-                    span: span_ref,
-                    dirty,
-                    plane_epoch,
-                };
-                let current_sheet = {
-                    let authority = self.graph.formula_authority();
-                    let span = authority.plane.spans.get(span_ref).ok_or_else(|| {
-                        ExcelError::new(ExcelErrorKind::NImpl)
-                            .with_message("FormulaPlane schedule referenced a stale span")
-                    })?;
-                    self.graph.sheet_name(span.sheet_id).to_string()
-                };
-                let authority = self.graph.formula_authority();
-                let evaluator = SpanEvaluator::new(&authority.plane, self, &current_sheet);
-                let mut sink = SpanComputedWriteSink::new(&mut buffer);
-                let report = evaluator.evaluate_task(&task, &mut sink).map_err(|err| {
-                    ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message(format!("FormulaPlane span evaluation failed: {err:?}"))
-                })?;
-                computed_vertices =
-                    computed_vertices.saturating_add(report.span_eval_placement_count as usize);
+                match work.producer {
+                    FormulaProducerId::Span(span_id) => {
+                        let span_ref = *span_refs_by_id.get(&span_id).ok_or_else(|| {
+                            ExcelError::new(ExcelErrorKind::NImpl)
+                                .with_message("FormulaPlane schedule referenced a stale span")
+                        })?;
+                        let dirty = producer_dirty_to_span_dirty(work.dirty, span_ref);
+                        let task = SpanEvalTask {
+                            span: span_ref,
+                            dirty,
+                            plane_epoch,
+                        };
+                        let current_sheet = {
+                            let authority = self.graph.formula_authority();
+                            let span = authority.plane.spans.get(span_ref).ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::NImpl)
+                                    .with_message("FormulaPlane schedule referenced a stale span")
+                            })?;
+                            self.graph.sheet_name(span.sheet_id).to_string()
+                        };
+                        let authority = self.graph.formula_authority();
+                        let evaluator = SpanEvaluator::new(&authority.plane, self, &current_sheet);
+                        let mut sink = SpanComputedWriteSink::new(&mut buffer);
+                        let report = evaluator.evaluate_task(&task, &mut sink).map_err(|err| {
+                            ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                                "FormulaPlane span evaluation failed: {err:?}"
+                            ))
+                        })?;
+                        computed_vertices = computed_vertices
+                            .saturating_add(report.span_eval_placement_count as usize);
+                    }
+                    FormulaProducerId::Legacy(vertex_id) => {
+                        let _ = self.evaluate_vertex_impl(vertex_id, None)?;
+                        computed_vertices = computed_vertices.saturating_add(1);
+                    }
+                }
             }
             self.flush_computed_write_buffer(&mut buffer)?;
         }
 
+        self.graph.clear_dirty_flags(&legacy_vertices);
+        self.graph.redirty_volatiles();
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
         Ok(EvalResult {
             computed_vertices,
             cycle_errors: 0,
             elapsed: start.elapsed(),
         })
+    }
+
+    fn build_formula_plane_mixed_schedule(
+        &self,
+    ) -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
+        let authority = self.graph.formula_authority();
+        let mut producer_results = FormulaProducerResultIndex::default();
+        let mut consumer_reads = FormulaConsumerReadIndex::default();
+        let mut work = Vec::new();
+
+        let span_refs = authority.active_span_refs();
+        let span_refs_by_id = span_refs
+            .iter()
+            .copied()
+            .map(|span_ref| (span_ref.id, span_ref))
+            .collect::<BTreeMap<_, _>>();
+        for span_ref in &span_refs {
+            let span = authority.plane.spans.get(*span_ref).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span ref is stale")
+            })?;
+            let result_region = RegionPattern::from_domain(span.result_region.domain());
+            producer_results.insert_producer(FormulaProducerId::Span(span.id), result_region);
+            let Some(read_summary_id) = span.read_summary_id else {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span is missing read summary"));
+            };
+            let Some(read_summary) = authority.plane.span_read_summaries.get(read_summary_id)
+            else {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span has stale read summary"));
+            };
+            if read_summary.result_region != result_region {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span read summary is stale"));
+            }
+            for dependency in &read_summary.dependencies {
+                consumer_reads.insert_read(
+                    FormulaProducerId::Span(span.id),
+                    dependency.read_region,
+                    read_summary.result_region,
+                    dependency.projection,
+                );
+            }
+            work.push(FormulaProducerWork {
+                producer: FormulaProducerId::Span(span.id),
+                dirty: ProducerDirtyDomain::Whole,
+            });
+        }
+
+        let legacy_vertices = self.graph.formula_vertices();
+        for vertex in &legacy_vertices {
+            let cell = self.graph.get_cell_ref_for_vertex(*vertex).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("legacy formula vertex has no cell result region")
+            })?;
+            let result_region =
+                RegionPattern::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            producer_results.insert_producer(FormulaProducerId::Legacy(*vertex), result_region);
+            work.push(FormulaProducerWork {
+                producer: FormulaProducerId::Legacy(*vertex),
+                dirty: ProducerDirtyDomain::Whole,
+            });
+        }
+
+        for vertex in &legacy_vertices {
+            let cell = self.graph.get_cell_ref_for_vertex(*vertex).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("legacy formula vertex has no cell result region")
+            })?;
+            let result_region =
+                RegionPattern::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            let mut seen = rustc_hash::FxHashSet::default();
+            for dep in self.graph.get_dependencies(*vertex) {
+                let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
+                    return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("unsupported non-cell legacy formula dependency"));
+                };
+                let read_region = RegionPattern::point(
+                    dep_cell.sheet_id,
+                    dep_cell.coord.row(),
+                    dep_cell.coord.col(),
+                );
+                if seen.insert(read_region) {
+                    consumer_reads.insert_read(
+                        FormulaProducerId::Legacy(*vertex),
+                        read_region,
+                        result_region,
+                        DirtyProjectionRule::WholeResult,
+                    );
+                }
+            }
+            if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+                for range in ranges {
+                    let read_region = self.shared_range_to_region_pattern(range)?;
+                    if seen.insert(read_region) {
+                        consumer_reads.insert_read(
+                            FormulaProducerId::Legacy(*vertex),
+                            read_region,
+                            result_region,
+                            DirtyProjectionRule::WholeResult,
+                        );
+                    }
+                }
+            }
+        }
+
+        let schedule = build_mixed_schedule(work, &producer_results, &consumer_reads);
+        Ok((
+            schedule,
+            span_refs_by_id,
+            authority.plane.epoch().0,
+            legacy_vertices,
+        ))
+    }
+
+    fn shared_range_to_region_pattern(
+        &self,
+        range: &crate::reference::SharedRangeRef<'static>,
+    ) -> Result<RegionPattern, ExcelError> {
+        use crate::reference::SharedSheetLocator;
+        let sheet_id = match range.sheet {
+            SharedSheetLocator::Id(id) => id,
+            SharedSheetLocator::Current => self.graph.default_sheet_id(),
+            SharedSheetLocator::Name(_) => {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("unresolved named-sheet legacy range dependency"));
+            }
+        };
+        match (
+            range.start_row,
+            range.end_row,
+            range.start_col,
+            range.end_col,
+        ) {
+            (Some(sr), Some(er), Some(sc), Some(ec)) => Ok(RegionPattern::rect(
+                sheet_id, sr.index, er.index, sc.index, ec.index,
+            )),
+            (None, None, Some(sc), Some(ec)) if sc.index == ec.index => {
+                Ok(RegionPattern::whole_col(sheet_id, sc.index))
+            }
+            (Some(sr), Some(er), None, None) if sr.index == er.index => {
+                Ok(RegionPattern::whole_row(sheet_id, sr.index))
+            }
+            _ => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("unsupported unbounded legacy range dependency")),
+        }
     }
 
     /// Evaluate all dirty/volatile vertices
@@ -6255,7 +6391,10 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = delta;
+            return self.evaluate_authoritative_formula_plane_all();
+        }
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all_with_delta").entered();
@@ -6414,8 +6553,11 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
-        self.evaluate_until(targets)?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+        } else {
+            self.evaluate_until(targets)?;
+        }
         Ok(targets
             .iter()
             .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
@@ -6449,7 +6591,18 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Evaluation cancelled before FormulaPlane scheduling".to_string(),
+                ));
+            }
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+            return Ok(targets
+                .iter()
+                .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
+                .collect());
+        }
 
         // evaluate_until_cancellable takes &[&str] in A1 notation, but we have (&str, u32, u32)
         // Let's implement evaluate_until_coords_cancellable or similar, or just convert
@@ -6484,7 +6637,14 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+            let values = targets
+                .iter()
+                .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
+                .collect();
+            return Ok((values, EvalDelta::default()));
+        }
         let mut collector = DeltaCollector::new(DeltaMode::Cells);
         self.evaluate_until_with_delta_collector(targets, &mut collector)?;
         let values = targets
@@ -6897,7 +7057,14 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Evaluation cancelled before FormulaPlane scheduling".to_string(),
+                ));
+            }
+            return self.evaluate_authoritative_formula_plane_all();
+        }
         self.reset_virtual_dep_telemetry_if_disabled();
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
@@ -7042,7 +7209,14 @@ where
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
         let start = crate::instant::FzInstant::now();
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Evaluation cancelled before FormulaPlane scheduling".to_string(),
+                ));
+            }
+            return self.evaluate_authoritative_formula_plane_all();
+        }
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -10128,7 +10302,9 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
-        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            return self.evaluate_authoritative_formula_plane_all();
+        }
         self.reset_virtual_dep_telemetry_if_disabled();
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;

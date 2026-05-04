@@ -116,12 +116,11 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
         engine.get_cell_value("Sheet1", 2, 2),
         Some(LiteralValue::Number(3.0))
     );
-    let err = engine
-        .evaluate_cell("Sheet1", 1, 2)
-        .expect_err("non-evaluate_all paths remain fail-closed");
-    assert!(
-        err.to_string()
-            .contains("evaluation entry point is not enabled yet")
+    assert_eq!(
+        engine
+            .evaluate_cell("Sheet1", 1, 2)
+            .expect("evaluate_cell routes through FormulaPlane coordinator"),
+        Some(LiteralValue::Number(2.0))
     );
 }
 
@@ -186,12 +185,74 @@ fn formula_plane_authoritative_mixed_accept_and_fallback_materializes_only_fallb
     let stats = engine.baseline_stats();
     assert_eq!(stats.graph_formula_vertex_count, 1);
     assert_eq!(stats.formula_plane_active_span_count, 1);
-    let err = engine
+    engine
         .evaluate_all()
-        .expect_err("mixed legacy/span runtime should fail closed");
-    assert!(
-        err.to_string()
-            .contains("mixed legacy/span evaluate_all is not enabled yet")
+        .expect("mixed independent legacy/span runtime");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(2.0))
+    );
+}
+
+#[test]
+fn formula_plane_authoritative_mixed_span_to_legacy_sum_evaluates() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(
+            "Sheet1",
+            vec![
+                record(1, 2, "=A1+1"),
+                record(2, 2, "=A2+1"),
+                record(1, 4, "=SUM(B1:B2)"),
+            ],
+        )])
+        .expect("authoritative ingest");
+
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    assert_eq!(report.graph_formula_cells_materialized, 1);
+    engine.evaluate_all().expect("span to legacy runtime");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 4),
+        Some(LiteralValue::Number(5.0))
+    );
+}
+
+#[test]
+fn formula_plane_authoritative_mixed_legacy_to_span_evaluates() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(
+            "Sheet1",
+            vec![
+                record(1, 1, "=1+1"),
+                record(1, 2, "=$A$1+1"),
+                record(2, 2, "=$A$1+1"),
+            ],
+        )])
+        .expect("authoritative ingest");
+
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    assert_eq!(report.graph_formula_cells_materialized, 1);
+    engine.evaluate_all().expect("legacy to span runtime");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(3.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(3.0))
     );
 }
 

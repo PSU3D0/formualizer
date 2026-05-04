@@ -2901,6 +2901,12 @@ impl DependencyGraph {
         self.vertex_formulas.get(&vertex_id).copied()
     }
 
+    pub(crate) fn formula_vertices(&self) -> Vec<VertexId> {
+        let mut vertices = self.vertex_formulas.keys().copied().collect::<Vec<_>>();
+        vertices.sort_unstable();
+        vertices
+    }
+
     pub fn get_formula_id_and_volatile(&self, vertex_id: VertexId) -> Option<(AstNodeId, bool)> {
         let ast_id = self.get_formula_id(vertex_id)?;
         Some((ast_id, self.is_volatile(vertex_id)))
