@@ -6053,10 +6053,14 @@ where
         })
     }
     fn evaluate_authoritative_formula_plane_all(&mut self) -> Result<EvalResult, ExcelError> {
-        // Radical test-runtime scope: evaluate_all routes all active FormulaPlane
-        // authority through a mixed whole-producer coordinator. Targeted/delta/
-        // plan APIs can delegate here in follow-up, but no public path may ignore
-        // active spans.
+        // The FormulaPlane coordinator is now selected by mode for evaluate_all.
+        // SingletonUnique formulas intentionally remain legacy graph vertices;
+        // when no spans are active, execute through the private legacy primitive
+        // rather than the public legacy entry path.
+        if self.graph.formula_authority().active_span_count() == 0 {
+            return self.evaluate_all_legacy_impl();
+        }
+
         let start = crate::instant::FzInstant::now();
         let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) =
             self.build_formula_plane_mixed_schedule()?;
@@ -6138,11 +6142,8 @@ where
         // every legacy formula so that span->legacy and legacy->span ordering is
         // visible to the scheduler regardless of dirty status, but only dirty
         // vertices receive scheduled work.
-        let dirty_legacy: rustc_hash::FxHashSet<VertexId> = self
-            .graph
-            .get_evaluation_vertices()
-            .into_iter()
-            .collect();
+        let dirty_legacy: rustc_hash::FxHashSet<VertexId> =
+            self.graph.get_evaluation_vertices().into_iter().collect();
 
         let span_refs = authority.active_span_refs();
         let span_refs_by_id = span_refs
@@ -6185,15 +6186,16 @@ where
         }
 
         let legacy_vertices = self.graph.formula_vertices();
+        let mut scheduled_legacy_vertices = Vec::new();
         for vertex in &legacy_vertices {
-            let cell = self.graph.get_cell_ref_for_vertex(*vertex).ok_or_else(|| {
-                ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message("legacy formula vertex has no cell result region")
-            })?;
+            let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
+                continue;
+            };
             let result_region =
                 RegionPattern::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
             producer_results.insert_producer(FormulaProducerId::Legacy(*vertex), result_region);
             if dirty_legacy.contains(vertex) {
+                scheduled_legacy_vertices.push(*vertex);
                 work.push(FormulaProducerWork {
                     producer: FormulaProducerId::Legacy(*vertex),
                     dirty: ProducerDirtyDomain::Whole,
@@ -6202,17 +6204,15 @@ where
         }
 
         for vertex in &legacy_vertices {
-            let cell = self.graph.get_cell_ref_for_vertex(*vertex).ok_or_else(|| {
-                ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message("legacy formula vertex has no cell result region")
-            })?;
+            let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
+                continue;
+            };
             let result_region =
                 RegionPattern::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
             let mut seen = rustc_hash::FxHashSet::default();
             for dep in self.graph.get_dependencies(*vertex) {
                 let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
-                    return Err(ExcelError::new(ExcelErrorKind::NImpl)
-                        .with_message("unsupported non-cell legacy formula dependency"));
+                    continue;
                 };
                 let read_region = RegionPattern::point(
                     dep_cell.sheet_id,
@@ -6230,7 +6230,9 @@ where
             }
             if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
                 for range in ranges {
-                    let read_region = self.shared_range_to_region_pattern(range)?;
+                    let Some(read_region) = self.shared_range_to_region_pattern(range)? else {
+                        continue;
+                    };
                     if seen.insert(read_region) {
                         consumer_reads.insert_read(
                             FormulaProducerId::Legacy(*vertex),
@@ -6248,22 +6250,19 @@ where
             schedule,
             span_refs_by_id,
             authority.plane.epoch().0,
-            legacy_vertices,
+            scheduled_legacy_vertices,
         ))
     }
 
     fn shared_range_to_region_pattern(
         &self,
         range: &crate::reference::SharedRangeRef<'static>,
-    ) -> Result<RegionPattern, ExcelError> {
+    ) -> Result<Option<RegionPattern>, ExcelError> {
         use crate::reference::SharedSheetLocator;
         let sheet_id = match range.sheet {
             SharedSheetLocator::Id(id) => id,
             SharedSheetLocator::Current => self.graph.default_sheet_id(),
-            SharedSheetLocator::Name(_) => {
-                return Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message("unresolved named-sheet legacy range dependency"));
-            }
+            SharedSheetLocator::Name(_) => return Ok(None),
         };
         match (
             range.start_row,
@@ -6271,17 +6270,16 @@ where
             range.start_col,
             range.end_col,
         ) {
-            (Some(sr), Some(er), Some(sc), Some(ec)) => Ok(RegionPattern::rect(
+            (Some(sr), Some(er), Some(sc), Some(ec)) => Ok(Some(RegionPattern::rect(
                 sheet_id, sr.index, er.index, sc.index, ec.index,
-            )),
+            ))),
             (None, None, Some(sc), Some(ec)) if sc.index == ec.index => {
-                Ok(RegionPattern::whole_col(sheet_id, sc.index))
+                Ok(Some(RegionPattern::whole_col(sheet_id, sc.index)))
             }
             (Some(sr), Some(er), None, None) if sr.index == er.index => {
-                Ok(RegionPattern::whole_row(sheet_id, sr.index))
+                Ok(Some(RegionPattern::whole_row(sheet_id, sr.index)))
             }
-            _ => Err(ExcelError::new(ExcelErrorKind::NImpl)
-                .with_message("unsupported unbounded legacy range dependency")),
+            _ => Ok(None),
         }
     }
 
@@ -6296,17 +6294,45 @@ where
         self.evaluate_all_coordinator()
     }
 
-    /// Central FormulaPlane-aware coordinator for `evaluate_all`. Routes to the
-    /// FormulaPlane mixed runtime when active spans exist, otherwise delegates
-    /// to the legacy primitive. This is the only entry point that decides which
-    /// runtime executes for `evaluate_all`-class work.
+    /// Central FormulaPlane-aware coordinator for `evaluate_all`. In
+    /// `AuthoritativeExperimental` mode every call enters the FormulaPlane
+    /// coordinator; the coordinator itself composes with private legacy
+    /// primitives for legacy-only work.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
-        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
-            && self.graph.formula_authority().active_span_count() > 0
-        {
+        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
             return self.evaluate_authoritative_formula_plane_all();
         }
         self.evaluate_all_legacy_impl()
+    }
+
+    fn legacy_pass_apply_cycles(&mut self, schedule: &crate::engine::scheduler::Schedule) -> usize {
+        let circ_error = LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Circular dependency detected".to_string()),
+        );
+        for cycle in &schedule.cycles {
+            for &vertex_id in cycle {
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+            }
+        }
+        schedule.cycles.len()
+    }
+
+    fn legacy_pass_run_layers(
+        &mut self,
+        schedule: &crate::engine::scheduler::Schedule,
+    ) -> Result<usize, ExcelError> {
+        let mut computed_vertices = 0;
+        for layer in &schedule.layers {
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel(layer)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential(layer)?;
+            }
+        }
+        Ok(computed_vertices)
     }
 
     /// Legacy `evaluate_all` body, reachable from the FormulaPlane coordinator
@@ -6343,28 +6369,8 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            // Handle cycles first by marking them with #CIRC!
-            for cycle in &schedule.cycles {
-                cycle_errors += 1;
-                let circ_error = LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Circ)
-                        .with_message("Circular dependency detected".to_string()),
-                );
-                for &vertex_id in cycle {
-                    self.graph
-                        .update_vertex_value(vertex_id, circ_error.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
-                }
-            }
-
-            // Evaluate acyclic layers (parallel or sequential based on config)
-            for layer in &schedule.layers {
-                if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                    computed_vertices += self.evaluate_layer_parallel(layer)?;
-                } else {
-                    computed_vertices += self.evaluate_layer_sequential(layer)?;
-                }
-            }
+            cycle_errors += self.legacy_pass_apply_cycles(&schedule);
+            computed_vertices += self.legacy_pass_run_layers(&schedule)?;
 
             // Check if dynamic dependencies changed
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
