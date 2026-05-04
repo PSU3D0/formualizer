@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::engine::{
     Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+    RowVisibilitySource,
 };
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
@@ -318,4 +319,204 @@ fn formula_plane_shadow_build_graph_for_sheets_reports_selected_sheet_only() {
     assert_eq!(engine.staged_formula_count(), 1);
     assert!(engine.get_staged_formula_text("Other", 1, 1).is_some());
     assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+}
+
+#[test]
+fn formula_plane_spill_commit_redirties_span_reading_spill_children() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 2, 2, "=A2+10"),
+            record(&mut engine, 3, 2, "=A3+10"),
+        ],
+    )];
+    let report = engine.ingest_formula_batches(batches).unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(10.0))
+    );
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=SEQUENCE(3,1)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 3, 1),
+        Some(LiteralValue::Number(3.0))
+    );
+
+    let result = engine.evaluate_all().unwrap();
+    assert!(
+        result.computed_vertices >= 2,
+        "expected spill-region notification to re-evaluate span, got {result:?}"
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(12.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 3, 2),
+        Some(LiteralValue::Number(13.0))
+    );
+}
+
+#[test]
+fn formula_plane_source_invalidation_uses_conservative_whole_span_dirty() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.define_source_scalar("Feed", Some(1)).unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=$A$1+1"),
+            record(&mut engine, 2, 2, "=$A$1+1"),
+        ],
+    )];
+    let report = engine.ingest_formula_batches(batches).unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    engine.evaluate_all().unwrap();
+
+    engine.invalidate_source("Feed").unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert!(
+        result.computed_vertices >= 2,
+        "expected source invalidation to re-evaluate active spans, got {result:?}"
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(6.0))
+    );
+}
+
+#[test]
+fn formula_plane_row_visibility_change_redirties_absolute_anchor_span() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=$A$1+1"),
+            record(&mut engine, 2, 2, "=$A$1+1"),
+        ],
+    )];
+    engine.ingest_formula_batches(batches).unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine
+        .set_row_hidden("Sheet1", 1, true, RowVisibilitySource::Manual)
+        .unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert!(
+        result.computed_vertices >= 2,
+        "expected whole-row visibility notification to re-evaluate span, got {result:?}"
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(6.0))
+    );
+}
+
+#[test]
+fn formula_plane_insert_rows_conservatively_redirties_sheet_spans() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=$A$1+1"),
+            record(&mut engine, 2, 2, "=$A$1+1"),
+        ],
+    )];
+    engine.ingest_formula_batches(batches).unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine.insert_rows("Sheet1", 10, 1).unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert!(
+        result.computed_vertices >= 2,
+        "expected sheet structural notification to re-evaluate span, got {result:?}"
+    );
+}
+
+#[test]
+fn formula_plane_remove_sheet_redirties_surviving_spans() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let data_id = engine.add_sheet("Data").unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
+        .unwrap();
+
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=$A$1+1"),
+            record(&mut engine, 2, 2, "=$A$1+1"),
+        ],
+    )];
+    let report = engine.ingest_formula_batches(batches).unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    engine.evaluate_all().unwrap();
+
+    engine.remove_sheet(data_id).unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert!(
+        result.computed_vertices >= 2,
+        "expected remove-sheet notification to re-evaluate surviving spans, got {result:?}"
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(6.0))
+    );
+}
+
+#[test]
+fn formula_plane_remove_sheet_hosting_span_removes_active_span() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let other_id = engine.add_sheet("Other").unwrap();
+    engine
+        .set_cell_value("Other", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Other", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+
+    let batches = vec![FormulaIngestBatch::new(
+        "Other",
+        vec![
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
+        ],
+    )];
+    let report = engine.ingest_formula_batches(batches).unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    engine.remove_sheet(other_id).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert!(engine.graph.sheet_id("Other").is_none());
 }

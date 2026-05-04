@@ -74,10 +74,19 @@ impl FormulaAuthority {
     }
 
     pub(crate) fn mark_all_active_spans_dirty(&mut self) {
-        // Conservative escape hatch: invalidate every span by recording each
-        // span's result region as a changed region. Used when edit semantics
-        // cannot be projected exactly (e.g. structural edits) so the next eval
-        // recomputes affected spans rather than serving stale results.
+        // Conservative escape hatch: invalidate every span by bumping the
+        // authority index epoch. The FormulaPlane coordinator treats an unseen
+        // epoch as `WholeAll`, which is the only representation that guarantees
+        // self-dirtying for spans whose result region (rather than read region)
+        // was structurally affected.
+        if self.active_span_count() == 0 {
+            return;
+        }
+        self.indexes_epoch = self.indexes_epoch.saturating_add(1);
+
+        // Also publish result regions as changed regions so downstream span
+        // consumers can be discovered through the normal dirty-closure path if
+        // the caller evaluates before another epoch-bumping rebuild.
         let regions: Vec<RegionPattern> = self
             .plane
             .spans

@@ -794,6 +794,15 @@ struct VisibilityMaskCacheKey {
     version: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructuralScope {
+    Cell { sheet: SheetId, row: u32, col: u32 },
+    Region(RegionPattern),
+    Sheet(SheetId),
+    RemovedSheet(SheetId),
+    AllSheets,
+}
+
 struct SourceCacheSession {
     cache: Arc<std::sync::RwLock<SourceCache>>,
 }
@@ -1556,6 +1565,7 @@ where
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(id)
     }
@@ -1583,6 +1593,8 @@ where
         if self.row_visibility.remove(&sheet_id).is_some() {
             self.invalidate_row_visibility_mask_cache();
         }
+        self.record_formula_plane_structural_change(StructuralScope::RemovedSheet(sheet_id));
+        self.mark_topology_edited();
         Ok(())
     }
 
@@ -1617,6 +1629,7 @@ where
                 for v_id in sheet_vertices {
                     self.graph.mark_vertex_dirty(v_id);
                 }
+                self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
                 self.mark_topology_edited();
                 Ok(())
             }
@@ -1702,6 +1715,7 @@ where
         scope: NameScope,
     ) -> Result<(), ExcelError> {
         self.graph.define_name(name, definition, scope)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1713,12 +1727,14 @@ where
         scope: NameScope,
     ) -> Result<(), ExcelError> {
         self.graph.update_name(name, definition, scope)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
 
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
         self.graph.delete_name(name, scope)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1733,6 +1749,7 @@ where
     ) -> Result<(), ExcelError> {
         self.graph
             .define_table(name, range, header_row, headers, totals_row)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1743,6 +1760,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.define_source_scalar(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1753,6 +1771,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.define_source_table(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1762,7 +1781,9 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
-        self.graph.set_source_scalar_version(name, version)
+        self.graph.set_source_scalar_version(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        Ok(())
     }
 
     pub fn set_source_table_version(
@@ -1770,11 +1791,15 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
-        self.graph.set_source_table_version(name, version)
+        self.graph.set_source_table_version(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        Ok(())
     }
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
-        self.graph.invalidate_source(name)
+        self.graph.invalidate_source(name)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        Ok(())
     }
 
     pub fn vertex_value(&self, vertex: VertexId) -> Option<LiteralValue> {
@@ -1937,6 +1962,7 @@ where
         match res {
             Ok(v) => {
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                    self.record_formula_plane_structural_change(StructuralScope::AllSheets);
                     self.mark_data_edited();
                 }
                 Ok((v, journal))
@@ -1948,6 +1974,9 @@ where
                             "Engine::action_atomic rollback failed after error '{e}': {rb}"
                         ),
                     });
+                }
+                if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                    self.record_formula_plane_structural_change(StructuralScope::AllSheets);
                 }
                 Err(e)
             }
@@ -2132,6 +2161,9 @@ where
             self.apply_inverse_staged_formula_event(&item.event);
         }
         self.mirror_undo_batch_to_arrow(&batch);
+        if !batch.is_empty() {
+            self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        }
         Ok(())
     }
 
@@ -2146,6 +2178,9 @@ where
             self.apply_forward_staged_formula_event(&item.event);
         }
         self.mirror_redo_batch_to_arrow(&batch);
+        if !batch.is_empty() {
+            self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        }
         Ok(())
     }
 
@@ -2163,6 +2198,7 @@ where
         journal.graph.undo(&mut self.graph)?;
         self.apply_inverse_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
 
         undo.push_redo_action(journal);
         Ok(())
@@ -2182,6 +2218,7 @@ where
         journal.graph.redo(&mut self.graph)?;
         self.apply_forward_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
 
         undo.push_done_action(journal);
         Ok(())
@@ -3278,6 +3315,9 @@ where
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let row0 = Self::normalize_row_1based(row_1based)?;
         if self.set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source) {
+            self.record_formula_plane_structural_change(StructuralScope::Region(
+                RegionPattern::whole_row(sheet_id, row0),
+            ));
             self.mark_data_edited();
         }
         Ok(())
@@ -3295,6 +3335,13 @@ where
         let (start_row0, end_row0) =
             Self::normalize_row_range_1based(start_row_1based, end_row_1based)?;
         if self.set_rows_hidden_by_sheet_id(sheet_id, start_row0, end_row0, hidden, source) {
+            if start_row0 == end_row0 {
+                self.record_formula_plane_structural_change(StructuralScope::Region(
+                    RegionPattern::whole_row(sheet_id, start_row0),
+                ));
+            } else {
+                self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
+            }
             self.mark_data_edited();
         }
         Ok(())
@@ -3418,6 +3465,7 @@ where
             asheet.insert_rows(before0, count as usize);
         }
         self.shift_row_visibility_insert(sheet_id, before0, count);
+        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -3442,6 +3490,7 @@ where
             asheet.delete_rows(start0, count as usize);
         }
         self.shift_row_visibility_delete(sheet_id, start0, count);
+        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -3470,6 +3519,7 @@ where
             let before0 = before0 as usize;
             asheet.insert_columns(before0, count as usize);
         }
+        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -3498,6 +3548,7 @@ where
             let start0 = start0 as usize;
             asheet.delete_columns(start0, count as usize);
         }
+        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -5020,15 +5071,85 @@ where
             return;
         }
         let sheet_id = self.graph.sheet_id_mut(sheet);
-        // Internal storage uses 0-based coordinates.
-        let region = crate::formula_plane::region_index::RegionPattern::point(
-            sheet_id,
-            row.saturating_sub(1),
-            col.saturating_sub(1),
-        );
-        self.graph
-            .formula_authority_mut()
-            .record_changed_region(region);
+        self.record_formula_plane_structural_change(StructuralScope::Cell {
+            sheet: sheet_id,
+            row: row.saturating_sub(1),
+            col: col.saturating_sub(1),
+        });
+    }
+
+    fn record_formula_plane_structural_change(&mut self, scope: StructuralScope) {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return;
+        }
+
+        match scope {
+            StructuralScope::Cell { sheet, row, col } => {
+                self.graph
+                    .formula_authority_mut()
+                    .record_changed_region(RegionPattern::point(sheet, row, col));
+            }
+            StructuralScope::Region(region) => {
+                self.graph
+                    .formula_authority_mut()
+                    .record_changed_region(region);
+            }
+            StructuralScope::Sheet(sheet_id) => {
+                self.graph
+                    .formula_authority_mut()
+                    .record_changed_region(RegionPattern::whole_sheet(sheet_id));
+            }
+            StructuralScope::RemovedSheet(sheet_id) => {
+                let removed_refs = {
+                    let authority = self.graph.formula_authority();
+                    authority
+                        .active_span_refs()
+                        .into_iter()
+                        .filter(|span_ref| {
+                            authority
+                                .plane
+                                .spans
+                                .get(*span_ref)
+                                .map(|span| span.sheet_id == sheet_id)
+                                .unwrap_or(false)
+                        })
+                        .collect::<Vec<_>>()
+                };
+
+                let authority = self.graph.formula_authority_mut();
+                for span_ref in removed_refs {
+                    authority.plane.remove_span(span_ref);
+                }
+                authority.mark_all_active_spans_dirty();
+                let _ = authority.rebuild_indexes();
+            }
+            StructuralScope::AllSheets => {
+                let authority = self.graph.formula_authority_mut();
+                authority.mark_all_active_spans_dirty();
+                let _ = authority.rebuild_indexes();
+            }
+        }
+    }
+
+    fn formula_plane_region_from_cells(cells: &[CellRef]) -> Option<StructuralScope> {
+        let first = cells.first()?;
+        let sheet_id = first.sheet_id;
+        if cells.iter().any(|cell| cell.sheet_id != sheet_id) {
+            return Some(StructuralScope::AllSheets);
+        }
+        let mut row_start = first.coord.row();
+        let mut row_end = row_start;
+        let mut col_start = first.coord.col();
+        let mut col_end = col_start;
+        for cell in cells.iter().skip(1) {
+            row_start = row_start.min(cell.coord.row());
+            row_end = row_end.max(cell.coord.row());
+            col_start = col_start.min(cell.coord.col());
+            col_end = col_end.max(cell.coord.col());
+        }
+        Some(StructuralScope::Region(RegionPattern::rect(
+            sheet_id, row_start, row_end, col_start, col_end,
+        )))
     }
 
     pub fn set_cell_value_ref(
@@ -5654,6 +5775,9 @@ where
                             }
                         }
                         self.graph.clear_spill_region(vertex_id);
+                        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+                            self.record_formula_plane_structural_change(scope);
+                        }
                         if self.config.arrow_storage_enabled
                             && self.config.delta_overlay_enabled
                             && self.config.write_formula_overlay_enabled
@@ -5737,6 +5861,9 @@ where
                     }
                 }
                 self.graph.clear_spill_region(vertex_id);
+                if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+                    self.record_formula_plane_structural_change(scope);
+                }
                 if self.config.arrow_storage_enabled
                     && self.config.delta_overlay_enabled
                     && self.config.write_formula_overlay_enabled
@@ -7908,6 +8035,9 @@ where
         }
 
         self.graph.clear_spill_region(vertex_id);
+        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         if self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -9393,6 +9523,9 @@ where
         }
 
         self.graph.clear_spill_region(anchor_vertex);
+        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         if self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -9502,6 +9635,13 @@ where
                 }
             },
         )?;
+
+        if let Some(scope) = Self::formula_plane_region_from_cells(&prev_spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
+        if let Some(scope) = Self::formula_plane_region_from_cells(targets) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         if self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -9905,6 +10045,9 @@ where
         }
 
         self.graph.clear_spill_region(anchor_vertex);
+        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         // Mirror Empty to Arrow overlay for cleared cells.
         if self.config.arrow_storage_enabled
