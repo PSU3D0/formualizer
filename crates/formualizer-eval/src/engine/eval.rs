@@ -7,8 +7,9 @@ use crate::engine::row_visibility::RowVisibilityState;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
-    DependencyGraph, EvalConfig, FormulaParseDiagnostic, FormulaParsePolicy, RowVisibilitySource,
-    Scheduler, VertexId, VertexKind, VisibilityMaskMode,
+    DependencyGraph, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport,
+    FormulaParseDiagnostic, FormulaParsePolicy, FormulaPlaneMode, RowVisibilitySource, Scheduler,
+    VertexId, VertexKind, VisibilityMaskMode,
 };
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
@@ -25,9 +26,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 type StagedFormulaEntry = (u32, u32, String);
-type ParsedFormulaEntry = (u32, u32, ASTNode);
 type StagedFormulaMap = std::collections::HashMap<String, Vec<StagedFormulaEntry>>;
-type PreparedFormulaBatches = Vec<(String, Vec<ParsedFormulaEntry>)>;
+type PreparedFormulaBatches = Vec<FormulaIngestBatch>;
 type StagedFormulaBatches = Vec<(String, Vec<StagedFormulaEntry>)>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -324,6 +324,10 @@ pub struct Engine<R> {
     >,
     /// Non-fatal malformed formula diagnostics captured during ingest/graph-build.
     formula_parse_diagnostics: Vec<FormulaParseDiagnostic>,
+    /// Last centralized formula ingest report.
+    last_formula_ingest_report: Option<FormulaIngestReport>,
+    /// Aggregate centralized formula ingest report for this engine.
+    formula_ingest_report_total: FormulaIngestReport,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
 
@@ -1183,6 +1187,8 @@ where
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
+            last_formula_ingest_report: None,
+            formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -1243,6 +1249,8 @@ where
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
+            last_formula_ingest_report: None,
+            formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -2415,6 +2423,57 @@ where
         self.formula_parse_diagnostics.clear();
     }
 
+    pub fn last_formula_ingest_report(&self) -> Option<&FormulaIngestReport> {
+        self.last_formula_ingest_report.as_ref()
+    }
+
+    pub fn formula_ingest_report_total(&self) -> &FormulaIngestReport {
+        &self.formula_ingest_report_total
+    }
+
+    fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
+        self.formula_ingest_report_total.mode = report.mode;
+        self.formula_ingest_report_total.accumulate(&report);
+        self.last_formula_ingest_report = Some(report);
+    }
+
+    pub fn ingest_formula_batches(
+        &mut self,
+        batches: Vec<FormulaIngestBatch>,
+    ) -> Result<FormulaIngestReport, ExcelError> {
+        let mut report = FormulaIngestReport::with_mode(self.config.formula_plane_mode);
+        report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+
+        if !batches.iter().all(FormulaIngestBatch::is_empty) {
+            let mut builder = self.begin_bulk_ingest();
+            for batch in batches {
+                if batch.is_empty() {
+                    continue;
+                }
+                let sheet_id = builder.add_sheet(&batch.sheet_name);
+                builder.add_formulas(
+                    sheet_id,
+                    batch
+                        .formulas
+                        .into_iter()
+                        .map(|record| (record.row, record.col, record.ast)),
+                );
+            }
+            let summary = builder.finish()?;
+            report.graph_formula_cells_materialized = report.formula_cells_seen;
+            report.graph_vertices_created = summary.vertices as u64;
+            report.graph_edges_created = summary.edges as u64;
+        }
+
+        if self.config.formula_plane_mode == FormulaPlaneMode::Shadow {
+            // Tranche 3A centralizes ingest only. Shadow candidate analysis is
+            // added in Tranche 3B; all formulas are still graph-materialized.
+        }
+
+        self.record_formula_ingest_report(report.clone());
+        Ok(report)
+    }
+
     pub fn handle_formula_parse_error(
         &mut self,
         sheet: &str,
@@ -2470,10 +2529,10 @@ where
             let _ = self.add_sheet(sheet);
         }
 
-        // Parse/recover first, then borrow graph builder.
+        // Parse/recover first, then pass prepared batches through the centralized ingest seam.
         let mut prepared: PreparedFormulaBatches = Vec::new();
         for (sheet, entries) in staged {
-            let mut formulas: Vec<ParsedFormulaEntry> = Vec::new();
+            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
             let mut cache: rustc_hash::FxHashMap<String, ASTNode> =
                 rustc_hash::FxHashMap::default();
             cache.reserve(4096);
@@ -2499,22 +2558,22 @@ where
                 };
 
                 if let Some(ast) = ast {
-                    formulas.push((row, col, ast));
+                    formulas.push(FormulaIngestRecord::new(
+                        row,
+                        col,
+                        ast,
+                        Some(Arc::<str>::from(key.clone())),
+                    ));
                 }
             }
 
             if !formulas.is_empty() {
-                prepared.push((sheet, formulas));
+                prepared.push(FormulaIngestBatch::new(sheet, formulas));
             }
         }
 
         if !prepared.is_empty() {
-            let mut builder = self.begin_bulk_ingest();
-            for (sheet, formulas) in prepared {
-                let sid = builder.add_sheet(&sheet);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            let _ = builder.finish();
+            let _ = self.ingest_formula_batches(prepared)?;
         }
         Ok(())
     }
@@ -2539,13 +2598,13 @@ where
             let _ = self.add_sheet(sheet);
         }
 
-        // Parse/recover first, then borrow graph builder.
+        // Parse/recover first, then pass prepared batches through the centralized ingest seam.
         let mut prepared: PreparedFormulaBatches = Vec::new();
         let mut cache: rustc_hash::FxHashMap<String, ASTNode> = rustc_hash::FxHashMap::default();
         cache.reserve(4096);
 
         for (sheet, entries) in collected {
-            let mut formulas: Vec<ParsedFormulaEntry> = Vec::new();
+            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
             for (row, col, txt) in entries {
                 let key = if txt.starts_with('=') {
                     txt
@@ -2567,21 +2626,21 @@ where
                 };
 
                 if let Some(ast) = ast {
-                    formulas.push((row, col, ast));
+                    formulas.push(FormulaIngestRecord::new(
+                        row,
+                        col,
+                        ast,
+                        Some(Arc::<str>::from(key.clone())),
+                    ));
                 }
             }
             if !formulas.is_empty() {
-                prepared.push((sheet, formulas));
+                prepared.push(FormulaIngestBatch::new(sheet, formulas));
             }
         }
 
         if !prepared.is_empty() {
-            let mut builder = self.begin_bulk_ingest();
-            for (sheet, formulas) in prepared {
-                let sid = builder.add_sheet(&sheet);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            let _ = builder.finish();
+            let _ = self.ingest_formula_batches(prepared)?;
         }
         Ok(())
     }

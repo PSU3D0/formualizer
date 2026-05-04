@@ -6,6 +6,7 @@ pub mod arrow_ingest;
 pub mod effects;
 pub mod eval;
 pub mod eval_delta;
+pub mod formula_ingest;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
@@ -42,6 +43,7 @@ pub use eval::{
     Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan, VirtualDepTelemetry,
 };
 pub use eval_delta::{DeltaMode, EvalDelta};
+pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
@@ -194,6 +196,13 @@ pub struct FormulaParseDiagnostic {
     pub policy: FormulaParsePolicy,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FormulaPlaneMode {
+    #[default]
+    Off,
+    Shadow,
+}
+
 /// Workbook ingest limits applied by loader backends before they materialize large sheets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbookLoadLimits {
@@ -323,6 +332,11 @@ pub struct EvalConfig {
     ///
     /// When disabled, the engine avoids per-pass timing/edge-count bookkeeping.
     pub enable_virtual_dep_telemetry: bool,
+
+    /// FormulaPlane ingest/planning mode. Defaults to `Off`; `Shadow` may report
+    /// candidate span opportunities but must still materialize every formula via
+    /// the legacy graph path.
+    pub formula_plane_mode: FormulaPlaneMode,
 }
 
 impl Default for EvalConfig {
@@ -375,6 +389,7 @@ impl Default for EvalConfig {
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
             enable_virtual_dep_telemetry: false,
+            formula_plane_mode: FormulaPlaneMode::Off,
         }
     }
 }
@@ -443,6 +458,12 @@ impl EvalConfig {
     #[inline]
     pub fn with_virtual_dep_telemetry(mut self, enable: bool) -> Self {
         self.enable_virtual_dep_telemetry = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_formula_plane_mode(mut self, mode: FormulaPlaneMode) -> Self {
+        self.formula_plane_mode = mode;
         self
     }
 }

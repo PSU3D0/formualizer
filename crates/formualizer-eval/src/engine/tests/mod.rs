@@ -93,6 +93,7 @@ mod eval_flush_recalc_probe;
 mod formula_edit_propagation;
 mod formula_error_propagation;
 mod formula_overlay_writeback;
+mod formula_plane_ingest_shadow;
 mod indirect;
 mod let_lambda;
 mod offset_dynamic;
