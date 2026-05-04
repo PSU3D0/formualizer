@@ -2459,6 +2459,8 @@ where
             let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
             for record in &batch.formulas {
                 if record.row == 0 || record.col == 0 {
+                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
+                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
                     Self::record_shadow_fallback_reason(
                         &mut report,
                         PlacementFallbackReason::UnsupportedShapeOrGaps,

@@ -356,7 +356,7 @@ impl DirtyProjectionRule {
         result_region: RegionPattern,
     ) -> Result<RegionPattern, ProjectionFallbackReason> {
         match self {
-            Self::WholeResult => Ok(result_region),
+            Self::WholeResult => Err(ProjectionFallbackReason::RequiresExplicitReadRegion),
             Self::AffineCell { row, col } => {
                 let (result_rows, result_cols) = bounded_extents(result_region)
                     .ok_or(ProjectionFallbackReason::UnboundedResultRegion)?;
@@ -482,6 +482,7 @@ pub(crate) enum ProjectionFallbackReason {
     UnboundedResultRegion,
     UnsupportedChangedRegion,
     CoordinateOverflow,
+    RequiresExplicitReadRegion,
     MissingProducerResultRegion,
     FixedPointIterationLimit,
 }
@@ -963,6 +964,10 @@ mod tests {
         let read = RegionPattern::col_interval(0, 1, 0, 99);
         let result = RegionPattern::point(0, 0, 3);
 
+        assert_eq!(
+            projection.read_region_for_result(0, result),
+            Err(ProjectionFallbackReason::RequiresExplicitReadRegion)
+        );
         assert_eq!(
             projection.project_changed_region(RegionPattern::point(0, 50, 1), read, result),
             ProjectionResult::Exact(ProducerDirtyDomain::Whole)
