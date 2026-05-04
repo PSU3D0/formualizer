@@ -109,6 +109,77 @@ pub(crate) fn place_candidate_family(
     plane: &mut FormulaPlane,
     candidates: Vec<FormulaPlacementCandidate>,
 ) -> FormulaPlacementReport {
+    let analyses = match analyze_candidates(&candidates) {
+        Ok(analyses) => analyses,
+        Err(reason) => {
+            let mut report = FormulaPlacementReport::default();
+            report.counters.formula_cells_seen = candidates.len() as u64;
+            mark_all_legacy(&mut report, &candidates, reason);
+            return report;
+        }
+    };
+    place_analyzed_family(plane, &candidates, &analyses)
+}
+
+pub(crate) fn place_candidate_family_with_analyses(
+    plane: &mut FormulaPlane,
+    candidates: Vec<FormulaPlacementCandidate>,
+    analyses: Vec<CandidateAnalysis<'_>>,
+) -> FormulaPlacementReport {
+    place_analyzed_family(plane, &candidates, &analyses)
+}
+
+pub(crate) struct CandidateAnalysis<'a> {
+    candidate: &'a FormulaPlacementCandidate,
+    pub(crate) template: CanonicalTemplate,
+    summary: FormulaDependencySummary,
+}
+
+pub(crate) fn analyze_candidate(
+    candidate: &FormulaPlacementCandidate,
+) -> Result<CandidateAnalysis<'_>, PlacementFallbackReason> {
+    let anchor_row = candidate
+        .row
+        .checked_add(1)
+        .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
+    let anchor_col = candidate
+        .col
+        .checked_add(1)
+        .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
+    let template = canonicalize_template(&candidate.ast, anchor_row, anchor_col);
+    if !template.labels.is_authority_supported() {
+        return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
+    }
+    if template
+        .labels
+        .flags
+        .contains(&CanonicalTemplateFlag::ExplicitSheetBinding)
+    {
+        return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
+    }
+    let summary = summarize_canonical_template(&template);
+    if summary.formula_class != FormulaClass::StaticPointwise || !summary.reject_reasons.is_empty()
+    {
+        return Err(PlacementFallbackReason::UnsupportedDependencySummary);
+    }
+    Ok(CandidateAnalysis {
+        candidate,
+        template,
+        summary,
+    })
+}
+
+fn analyze_candidates(
+    candidates: &[FormulaPlacementCandidate],
+) -> Result<Vec<CandidateAnalysis<'_>>, PlacementFallbackReason> {
+    candidates.iter().map(analyze_candidate).collect()
+}
+
+fn place_analyzed_family(
+    plane: &mut FormulaPlane,
+    candidates: &[FormulaPlacementCandidate],
+    analyses: &[CandidateAnalysis<'_>],
+) -> FormulaPlacementReport {
     let mut report = FormulaPlacementReport::default();
     report.counters.formula_cells_seen = candidates.len() as u64;
 
@@ -116,13 +187,7 @@ pub(crate) fn place_candidate_family(
         return report;
     }
 
-    let analyses = match analyze_candidates(&candidates) {
-        Ok(analyses) => analyses,
-        Err(reason) => {
-            mark_all_legacy(&mut report, &candidates, reason);
-            return report;
-        }
-    };
+    debug_assert_eq!(candidates.len(), analyses.len());
 
     let first = &analyses[0];
     let sheet_id = first.candidate.sheet_id;
@@ -132,7 +197,7 @@ pub(crate) fn place_candidate_family(
     {
         mark_all_legacy(
             &mut report,
-            &candidates,
+            candidates,
             PlacementFallbackReason::CrossSheetOrSheetMismatch,
         );
         return report;
@@ -144,16 +209,16 @@ pub(crate) fn place_candidate_family(
     {
         mark_all_legacy(
             &mut report,
-            &candidates,
+            candidates,
             PlacementFallbackReason::NonEquivalentTemplate,
         );
         return report;
     }
 
-    let domain = match detect_domain(&analyses) {
+    let domain = match detect_domain(analyses) {
         Ok(domain) => domain,
         Err(reason) => {
-            mark_all_legacy(&mut report, &candidates, reason);
+            mark_all_legacy(&mut report, candidates, reason);
             return report;
         }
     };
@@ -166,7 +231,7 @@ pub(crate) fn place_candidate_family(
     let origin_analysis = match origin_analysis {
         Ok(origin_analysis) => origin_analysis,
         Err(reason) => {
-            mark_all_legacy(&mut report, &candidates, reason);
+            mark_all_legacy(&mut report, candidates, reason);
             return report;
         }
     };
@@ -181,7 +246,7 @@ pub(crate) fn place_candidate_family(
         Err(_reason) => {
             mark_all_legacy(
                 &mut report,
-                &candidates,
+                candidates,
                 PlacementFallbackReason::UnsupportedDirtyProjection,
             );
             return report;
@@ -201,7 +266,7 @@ pub(crate) fn place_candidate_family(
     {
         mark_all_legacy(
             &mut report,
-            &candidates,
+            candidates,
             PlacementFallbackReason::InternalDependency,
         );
         return report;
@@ -233,7 +298,7 @@ pub(crate) fn place_candidate_family(
     report.counters.ast_roots_avoided = report.counters.accepted_span_cells.saturating_sub(1);
     report.counters.edge_rows_avoided = report.counters.accepted_span_cells;
     report.results = candidates
-        .into_iter()
+        .iter()
         .map(|candidate| FormulaPlacementResult::Span {
             span,
             template_id,
@@ -241,52 +306,6 @@ pub(crate) fn place_candidate_family(
         })
         .collect();
     report
-}
-
-struct CandidateAnalysis<'a> {
-    candidate: &'a FormulaPlacementCandidate,
-    template: CanonicalTemplate,
-    summary: FormulaDependencySummary,
-}
-
-fn analyze_candidates(
-    candidates: &[FormulaPlacementCandidate],
-) -> Result<Vec<CandidateAnalysis<'_>>, PlacementFallbackReason> {
-    candidates
-        .iter()
-        .map(|candidate| {
-            let anchor_row = candidate
-                .row
-                .checked_add(1)
-                .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
-            let anchor_col = candidate
-                .col
-                .checked_add(1)
-                .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
-            let template = canonicalize_template(&candidate.ast, anchor_row, anchor_col);
-            if !template.labels.is_authority_supported() {
-                return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
-            }
-            if template
-                .labels
-                .flags
-                .contains(&CanonicalTemplateFlag::ExplicitSheetBinding)
-            {
-                return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
-            }
-            let summary = summarize_canonical_template(&template);
-            if summary.formula_class != FormulaClass::StaticPointwise
-                || !summary.reject_reasons.is_empty()
-            {
-                return Err(PlacementFallbackReason::UnsupportedDependencySummary);
-            }
-            Ok(CandidateAnalysis {
-                candidate,
-                template,
-                summary,
-            })
-        })
-        .collect()
 }
 
 fn detect_domain(

@@ -12,8 +12,8 @@ use crate::engine::{
     VertexId, VertexKind, VisibilityMaskMode,
 };
 use crate::formula_plane::placement::{
-    FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
-    place_candidate_family,
+    CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
+    analyze_candidate, place_candidate_family, place_candidate_family_with_analyses,
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
@@ -2579,8 +2579,7 @@ where
             FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
         report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
 
-        let mut groups: BTreeMap<(SheetId, String, String), Vec<FormulaPlacementCandidate>> =
-            BTreeMap::new();
+        let mut pending_candidates: Vec<(String, FormulaPlacementCandidate)> = Vec::new();
         let mut fallback: BTreeMap<String, Vec<FormulaIngestRecord>> = BTreeMap::new();
 
         for batch in batches {
@@ -2601,29 +2600,105 @@ where
                     continue;
                 }
 
-                let template = canonicalize_template(&record.ast, record.row, record.col);
-                groups
-                    .entry((
-                        sheet_id,
-                        batch.sheet_name.clone(),
-                        template.key.payload().to_string(),
-                    ))
-                    .or_default()
-                    .push(FormulaPlacementCandidate::new(
+                pending_candidates.push((
+                    batch.sheet_name.clone(),
+                    FormulaPlacementCandidate::new(
                         sheet_id,
                         record.row - 1,
                         record.col - 1,
                         Arc::new(record.ast.clone()),
                         record.formula_text.clone(),
-                    ));
+                    ),
+                ));
             }
         }
 
-        for ((_sheet_id, sheet_name, _payload), candidates) in groups {
-            for component in Self::split_shadow_candidate_components(candidates) {
+        let mut groups: BTreeMap<(SheetId, String, String), Vec<usize>> = BTreeMap::new();
+        let mut analyses_by_index: Vec<Option<CandidateAnalysis<'_>>> =
+            (0..pending_candidates.len()).map(|_| None).collect();
+        for (idx, (sheet_name, candidate)) in pending_candidates.iter().enumerate() {
+            match analyze_candidate(candidate) {
+                Ok(analysis) => {
+                    let payload = analysis.template.key.payload().to_string();
+                    groups
+                        .entry((candidate.sheet_id, sheet_name.clone(), payload))
+                        .or_default()
+                        .push(idx);
+                    analyses_by_index[idx] = Some(analysis);
+                }
+                Err(reason) => {
+                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
+                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
+                    Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                    fallback
+                        .entry(sheet_name.clone())
+                        .or_default()
+                        .push(FormulaIngestRecord::new(
+                            candidate.row.saturating_add(1),
+                            candidate.col.saturating_add(1),
+                            (*candidate.ast).clone(),
+                            candidate.formula_text.clone(),
+                        ));
+                }
+            }
+        }
+
+        for ((_sheet_id, sheet_name, _payload), candidate_indices) in groups {
+            let candidates: Vec<_> = candidate_indices
+                .iter()
+                .map(|idx| pending_candidates[*idx].1.clone())
+                .collect();
+            let components = Self::split_shadow_candidate_components(candidates);
+            let analyzed_components =
+                if components.len() == 1 && components[0].len() == candidate_indices.len() {
+                    let component = components.into_iter().next().expect("one component");
+                    let component_analyses = candidate_indices
+                        .iter()
+                        .map(|idx| {
+                            analyses_by_index[*idx]
+                                .take()
+                                .expect("candidate analysis must be used once")
+                        })
+                        .collect();
+                    vec![(component, component_analyses)]
+                } else {
+                    let mut indices_by_coord: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
+                    for idx in candidate_indices.iter().rev() {
+                        let candidate = &pending_candidates[*idx].1;
+                        indices_by_coord
+                            .entry((candidate.row, candidate.col))
+                            .or_default()
+                            .push(*idx);
+                    }
+
+                    components
+                        .into_iter()
+                        .map(|component| {
+                            let mut component_analyses = Vec::with_capacity(component.len());
+                            for candidate in &component {
+                                let idx = indices_by_coord
+                                    .get_mut(&(candidate.row, candidate.col))
+                                    .and_then(Vec::pop)
+                                    .expect("component candidate must have a precomputed analysis");
+                                component_analyses.push(
+                                    analyses_by_index[idx]
+                                        .take()
+                                        .expect("candidate analysis must be used once"),
+                                );
+                            }
+                            (component, component_analyses)
+                        })
+                        .collect()
+                };
+
+            for (component, component_analyses) in analyzed_components {
                 let placement_report = {
                     let authority = self.graph.formula_authority_mut();
-                    place_candidate_family(&mut authority.plane, component.clone())
+                    place_candidate_family_with_analyses(
+                        &mut authority.plane,
+                        component.clone(),
+                        component_analyses,
+                    )
                 };
                 Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
 
