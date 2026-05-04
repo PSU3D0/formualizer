@@ -1105,4 +1105,198 @@ mod tests {
                 .contains(&RegionPattern::point(0, 0, 3))
         );
     }
+
+    #[test]
+    fn dirty_closure_filters_no_intersection_candidates() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let result = RegionPattern::col_interval(0, 1, 0, 9);
+        let projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: -1 },
+        };
+        // Deliberately over-broad read region to prove closure honors the
+        // projection result rather than treating index candidates as dirty work.
+        index.insert_read(
+            span(1),
+            RegionPattern::WholeSheet { sheet_id: 0 },
+            result,
+            projection,
+        );
+
+        let closure =
+            compute_dirty_closure(&index, [RegionPattern::point(0, 50, 25)], |producer| {
+                (producer == span(1)).then_some(result)
+            });
+
+        assert!(closure.work.is_empty());
+        assert!(closure.changed_result_regions.is_empty());
+        assert_eq!(closure.stats.projection_no_intersection_count, 1);
+        assert_eq!(closure.stats.projection_exact_count, 0);
+    }
+
+    #[test]
+    fn dirty_closure_records_unsupported_projection_without_silent_dirty() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: 0 },
+        };
+        index.insert_read(
+            span(1),
+            RegionPattern::WholeSheet { sheet_id: 0 },
+            RegionPattern::WholeSheet { sheet_id: 0 },
+            projection,
+        );
+
+        let closure = compute_dirty_closure(&index, [RegionPattern::point(0, 5, 5)], |_| {
+            Some(RegionPattern::WholeSheet { sheet_id: 0 })
+        });
+
+        assert!(closure.work.is_empty());
+        assert_eq!(closure.stats.projection_unsupported_count, 1);
+        assert_eq!(closure.fallbacks.len(), 1);
+        assert_eq!(closure.fallbacks[0].consumer, span(1));
+        assert_eq!(
+            closure.fallbacks[0].reason,
+            ProjectionFallbackReason::UnboundedResultRegion
+        );
+    }
+
+    #[test]
+    fn dirty_closure_whole_col_changed_region_is_producer_bounded_not_value_bounded() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let legacy_result = RegionPattern::point(0, 0, 3);
+        index.insert_read(
+            legacy(10),
+            RegionPattern::WholeCol {
+                sheet_id: 0,
+                col: 1,
+            },
+            legacy_result,
+            DirtyProjectionRule::WholeResult,
+        );
+
+        let closure = compute_dirty_closure(
+            &index,
+            [RegionPattern::WholeCol {
+                sheet_id: 0,
+                col: 1,
+            }],
+            |producer| (producer == legacy(10)).then_some(legacy_result),
+        );
+
+        assert_eq!(closure.work.len(), 1);
+        assert_eq!(closure.work[0].dirty, ProducerDirtyDomain::Whole);
+        assert_eq!(closure.changed_result_regions, vec![legacy_result]);
+        assert_eq!(closure.stats.read_index_candidate_count, 1);
+        assert_eq!(closure.stats.emitted_changed_regions, 1);
+    }
+
+    #[test]
+    fn dirty_closure_multi_precedent_summary_merges_sparse_cells_without_widening() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let result = RegionPattern::row_interval(0, 5, 0, 9);
+        let near_projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: 10 },
+        };
+        let far_projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: 20 },
+        };
+        index.insert_read(
+            span(1),
+            near_projection.read_region_for_result(0, result).unwrap(),
+            result,
+            near_projection,
+        );
+        index.insert_read(
+            span(1),
+            far_projection.read_region_for_result(0, result).unwrap(),
+            result,
+            far_projection,
+        );
+
+        let closure = compute_dirty_closure(
+            &index,
+            [
+                RegionPattern::point(0, 5, 15),
+                RegionPattern::point(0, 5, 26),
+            ],
+            |producer| (producer == span(1)).then_some(result),
+        );
+
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 1);
+        assert_eq!(
+            closure.work[0].dirty,
+            ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 5, 5), RegionKey::new(0, 5, 6)])
+        );
+    }
+
+    #[test]
+    fn dirty_closure_dedups_fixed_point_regions() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let result = RegionPattern::point(0, 0, 1);
+        index.insert_read(
+            span(1),
+            RegionPattern::point(0, 0, 0),
+            result,
+            DirtyProjectionRule::WholeResult,
+        );
+
+        let closure = compute_dirty_closure(
+            &index,
+            [RegionPattern::point(0, 0, 0), RegionPattern::point(0, 0, 0)],
+            |producer| (producer == span(1)).then_some(result),
+        );
+
+        assert_eq!(closure.work.len(), 1);
+        assert_eq!(closure.changed_result_regions, vec![result]);
+        assert_eq!(closure.stats.duplicate_changed_regions_skipped, 1);
+    }
+
+    #[test]
+    fn dirty_closure_affine_projection_no_under_return_bruteforce_small_grid() {
+        for row_offset in -2..=2 {
+            for col_offset in -2..=2 {
+                let projection = DirtyProjectionRule::AffineCell {
+                    row: AxisProjection::Relative { offset: row_offset },
+                    col: AxisProjection::Relative { offset: col_offset },
+                };
+                let result = RegionPattern::rect(0, 3, 6, 3, 6);
+                let read = projection.read_region_for_result(0, result).unwrap();
+
+                for source_row in 1..=8 {
+                    for source_col in 1..=8 {
+                        let dirty = projection.project_changed_region(
+                            RegionPattern::point(0, source_row, source_col),
+                            read,
+                            result,
+                        );
+                        let expected_row = i64::from(source_row) - row_offset;
+                        let expected_col = i64::from(source_col) - col_offset;
+                        let in_result =
+                            (3..=6).contains(&expected_row) && (3..=6).contains(&expected_col);
+
+                        if in_result {
+                            assert_eq!(
+                                dirty,
+                                ProjectionResult::Exact(ProducerDirtyDomain::Cells(vec![
+                                    RegionKey::new(0, expected_row as u32, expected_col as u32),
+                                ])),
+                                "offset=({row_offset},{col_offset}) source=({source_row},{source_col})"
+                            );
+                        } else {
+                            assert_eq!(
+                                dirty,
+                                ProjectionResult::NoIntersection,
+                                "offset=({row_offset},{col_offset}) source=({source_row},{source_col})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
