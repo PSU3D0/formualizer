@@ -5,6 +5,8 @@
 //! dirty projections. It does not wire FormulaPlane into graph dirty routing,
 //! scheduling, ingest cut-over, or evaluation.
 
+use std::collections::{BTreeMap, VecDeque};
+
 use rustc_hash::FxHashSet;
 
 use crate::SheetId;
@@ -43,6 +45,12 @@ impl ProducerDirtyDomain {
             Self::Cells(cells) => cells.is_empty(),
             Self::Regions(regions) => regions.is_empty(),
         }
+    }
+
+    pub(crate) fn merge_changed(&mut self, other: Self) -> bool {
+        let before = self.clone();
+        self.merge(other);
+        *self != before
     }
 
     pub(crate) fn merge(&mut self, other: Self) {
@@ -338,6 +346,7 @@ pub(crate) enum DirtyProjectionRule {
         row: AxisProjection,
         col: AxisProjection,
     },
+    WholeResult,
 }
 
 impl DirtyProjectionRule {
@@ -346,10 +355,11 @@ impl DirtyProjectionRule {
         sheet_id: SheetId,
         result_region: RegionPattern,
     ) -> Result<RegionPattern, ProjectionFallbackReason> {
-        let (result_rows, result_cols) = bounded_extents(result_region)
-            .ok_or(ProjectionFallbackReason::UnboundedResultRegion)?;
         match self {
+            Self::WholeResult => Ok(result_region),
             Self::AffineCell { row, col } => {
+                let (result_rows, result_cols) = bounded_extents(result_region)
+                    .ok_or(ProjectionFallbackReason::UnboundedResultRegion)?;
                 let source_rows = row.source_extent_for_result(result_rows)?;
                 let source_cols = col.source_extent_for_result(result_cols)?;
                 region_from_bounded_extents(sheet_id, source_rows, source_cols)
@@ -366,6 +376,10 @@ impl DirtyProjectionRule {
         if !changed.intersects(&read_region) {
             return ProjectionResult::NoIntersection;
         }
+        if self == Self::WholeResult {
+            return ProjectionResult::Exact(ProducerDirtyDomain::Whole);
+        }
+
         let Some((changed_rows, changed_cols)) = query_extents(changed) else {
             return ProjectionResult::Unsupported(
                 ProjectionFallbackReason::UnsupportedChangedRegion,
@@ -389,6 +403,7 @@ impl DirtyProjectionRule {
                     Err(reason) => ProjectionResult::Unsupported(reason),
                 }
             }
+            Self::WholeResult => unreachable!("handled above"),
         }
     }
 }
@@ -467,6 +482,198 @@ pub(crate) enum ProjectionFallbackReason {
     UnboundedResultRegion,
     UnsupportedChangedRegion,
     CoordinateOverflow,
+    MissingProducerResultRegion,
+    FixedPointIterationLimit,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FormulaDirtyClosure {
+    pub(crate) work: Vec<FormulaProducerWork>,
+    pub(crate) changed_result_regions: Vec<RegionPattern>,
+    pub(crate) stats: FormulaDirtyClosureStats,
+    pub(crate) fallbacks: Vec<FormulaDirtyFallback>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FormulaDirtyClosureStats {
+    pub(crate) input_changed_regions: usize,
+    pub(crate) read_index_query_count: usize,
+    pub(crate) read_index_candidate_count: usize,
+    pub(crate) exact_filter_drop_count: usize,
+    pub(crate) projection_exact_count: usize,
+    pub(crate) projection_conservative_count: usize,
+    pub(crate) projection_no_intersection_count: usize,
+    pub(crate) projection_unsupported_count: usize,
+    pub(crate) merged_dirty_domains: usize,
+    pub(crate) emitted_changed_regions: usize,
+    pub(crate) duplicate_changed_regions_skipped: usize,
+    pub(crate) fixed_point_iterations: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FormulaDirtyFallback {
+    pub(crate) consumer: FormulaProducerId,
+    pub(crate) changed_region: RegionPattern,
+    pub(crate) reason: ProjectionFallbackReason,
+}
+
+const DIRTY_CLOSURE_ITERATION_LIMIT: usize = 100_000;
+
+pub(crate) fn compute_dirty_closure(
+    consumer_reads: &FormulaConsumerReadIndex,
+    changed_regions: impl IntoIterator<Item = RegionPattern>,
+    result_region: impl Fn(FormulaProducerId) -> Option<RegionPattern>,
+) -> FormulaDirtyClosure {
+    let mut stats = FormulaDirtyClosureStats::default();
+    let mut queue = VecDeque::new();
+    let mut seen_changed_regions = FxHashSet::default();
+    for region in changed_regions {
+        stats.input_changed_regions = stats.input_changed_regions.saturating_add(1);
+        if seen_changed_regions.insert(region) {
+            queue.push_back(region);
+        } else {
+            stats.duplicate_changed_regions_skipped =
+                stats.duplicate_changed_regions_skipped.saturating_add(1);
+        }
+    }
+
+    let mut dirty_by_producer: BTreeMap<FormulaProducerId, ProducerDirtyDomain> = BTreeMap::new();
+    let mut changed_result_regions = Vec::new();
+    let mut fallbacks = Vec::new();
+
+    while let Some(changed_region) = queue.pop_front() {
+        stats.fixed_point_iterations = stats.fixed_point_iterations.saturating_add(1);
+        if stats.fixed_point_iterations > DIRTY_CLOSURE_ITERATION_LIMIT {
+            fallbacks.push(FormulaDirtyFallback {
+                consumer: FormulaProducerId::Legacy(VertexId(0)),
+                changed_region,
+                reason: ProjectionFallbackReason::FixedPointIterationLimit,
+            });
+            break;
+        }
+
+        stats.read_index_query_count = stats.read_index_query_count.saturating_add(1);
+        let query = consumer_reads.query_changed_region(changed_region);
+        stats.read_index_candidate_count = stats
+            .read_index_candidate_count
+            .saturating_add(query.stats.candidate_count);
+        stats.exact_filter_drop_count = stats
+            .exact_filter_drop_count
+            .saturating_add(query.stats.exact_filter_drop_count);
+
+        for matched in query.matches {
+            let candidate = matched.value;
+            match candidate.dirty {
+                ProjectionResult::Exact(dirty) => {
+                    stats.projection_exact_count = stats.projection_exact_count.saturating_add(1);
+                    apply_dirty_projection(
+                        candidate.consumer,
+                        changed_region,
+                        dirty,
+                        &result_region,
+                        &mut dirty_by_producer,
+                        &mut queue,
+                        &mut seen_changed_regions,
+                        &mut changed_result_regions,
+                        &mut fallbacks,
+                        &mut stats,
+                    );
+                }
+                ProjectionResult::Conservative { dirty, reason } => {
+                    stats.projection_conservative_count =
+                        stats.projection_conservative_count.saturating_add(1);
+                    fallbacks.push(FormulaDirtyFallback {
+                        consumer: candidate.consumer,
+                        changed_region,
+                        reason,
+                    });
+                    apply_dirty_projection(
+                        candidate.consumer,
+                        changed_region,
+                        dirty,
+                        &result_region,
+                        &mut dirty_by_producer,
+                        &mut queue,
+                        &mut seen_changed_regions,
+                        &mut changed_result_regions,
+                        &mut fallbacks,
+                        &mut stats,
+                    );
+                }
+                ProjectionResult::NoIntersection => {
+                    stats.projection_no_intersection_count =
+                        stats.projection_no_intersection_count.saturating_add(1);
+                }
+                ProjectionResult::Unsupported(reason) => {
+                    stats.projection_unsupported_count =
+                        stats.projection_unsupported_count.saturating_add(1);
+                    fallbacks.push(FormulaDirtyFallback {
+                        consumer: candidate.consumer,
+                        changed_region,
+                        reason,
+                    });
+                }
+            }
+        }
+    }
+
+    let work = dirty_by_producer
+        .into_iter()
+        .map(|(producer, dirty)| FormulaProducerWork { producer, dirty })
+        .collect();
+
+    FormulaDirtyClosure {
+        work,
+        changed_result_regions,
+        stats,
+        fallbacks,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_dirty_projection(
+    consumer: FormulaProducerId,
+    changed_region: RegionPattern,
+    dirty: ProducerDirtyDomain,
+    result_region: &impl Fn(FormulaProducerId) -> Option<RegionPattern>,
+    dirty_by_producer: &mut BTreeMap<FormulaProducerId, ProducerDirtyDomain>,
+    queue: &mut VecDeque<RegionPattern>,
+    seen_changed_regions: &mut FxHashSet<RegionPattern>,
+    changed_result_regions: &mut Vec<RegionPattern>,
+    fallbacks: &mut Vec<FormulaDirtyFallback>,
+    stats: &mut FormulaDirtyClosureStats,
+) {
+    let merged = if let Some(existing) = dirty_by_producer.get_mut(&consumer) {
+        existing.merge_changed(dirty.clone())
+    } else {
+        dirty_by_producer.insert(consumer, dirty.clone());
+        true
+    };
+
+    if !merged {
+        return;
+    }
+
+    stats.merged_dirty_domains = stats.merged_dirty_domains.saturating_add(1);
+    let Some(producer_result_region) = result_region(consumer) else {
+        fallbacks.push(FormulaDirtyFallback {
+            consumer,
+            changed_region,
+            reason: ProjectionFallbackReason::MissingProducerResultRegion,
+        });
+        return;
+    };
+
+    for emitted in dirty.result_regions(producer_result_region) {
+        if seen_changed_regions.insert(emitted) {
+            queue.push_back(emitted);
+            changed_result_regions.push(emitted);
+            stats.emitted_changed_regions = stats.emitted_changed_regions.saturating_add(1);
+        } else {
+            stats.duplicate_changed_regions_skipped =
+                stats.duplicate_changed_regions_skipped.saturating_add(1);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -736,6 +943,161 @@ mod tests {
         assert_eq!(
             dirty,
             ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2), RegionKey::new(0, 10, 2)])
+        );
+    }
+
+    #[test]
+    fn dirty_domain_merge_changed_reports_growth_only() {
+        let mut dirty = ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)]);
+        assert!(!dirty.merge_changed(ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2)])));
+        assert!(dirty.merge_changed(ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 2, 2)])));
+        assert_eq!(
+            dirty,
+            ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 1, 2), RegionKey::new(0, 2, 2)])
+        );
+    }
+
+    #[test]
+    fn whole_result_projection_dirties_entire_consumer_result() {
+        let projection = DirtyProjectionRule::WholeResult;
+        let read = RegionPattern::col_interval(0, 1, 0, 99);
+        let result = RegionPattern::point(0, 0, 3);
+
+        assert_eq!(
+            projection.project_changed_region(RegionPattern::point(0, 50, 1), read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Whole)
+        );
+        assert_eq!(
+            projection.project_changed_region(RegionPattern::point(0, 50, 2), read, result),
+            ProjectionResult::NoIntersection
+        );
+    }
+
+    #[test]
+    fn dirty_closure_same_row_source_dirties_single_span_cell() {
+        let projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: -1 },
+        };
+        let result = RegionPattern::col_interval(0, 1, 0, 9);
+        let read = projection.read_region_for_result(0, result).unwrap();
+        let mut index = FormulaConsumerReadIndex::default();
+        index.insert_read(span(1), read, result, projection);
+
+        let closure = compute_dirty_closure(&index, [RegionPattern::point(0, 5, 0)], |producer| {
+            (producer == span(1)).then_some(result)
+        });
+
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 1);
+        assert_eq!(closure.work[0].producer, span(1));
+        assert_eq!(
+            closure.work[0].dirty,
+            ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 5, 1)])
+        );
+        assert_eq!(
+            closure.changed_result_regions,
+            vec![RegionPattern::point(0, 5, 1)]
+        );
+    }
+
+    #[test]
+    fn dirty_closure_composes_span_to_span_single_cell() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let b_result = RegionPattern::col_interval(0, 1, 0, 9);
+        let c_result = RegionPattern::col_interval(0, 2, 0, 9);
+        let projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: -1 },
+        };
+        index.insert_read(
+            span(1),
+            projection.read_region_for_result(0, b_result).unwrap(),
+            b_result,
+            projection,
+        );
+        index.insert_read(
+            span(2),
+            projection.read_region_for_result(0, c_result).unwrap(),
+            c_result,
+            projection,
+        );
+
+        let closure =
+            compute_dirty_closure(
+                &index,
+                [RegionPattern::point(0, 5, 0)],
+                |producer| match producer {
+                    producer if producer == span(1) => Some(b_result),
+                    producer if producer == span(2) => Some(c_result),
+                    _ => None,
+                },
+            );
+
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 2);
+        assert_eq!(
+            closure.work[0].dirty,
+            ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 5, 1)])
+        );
+        assert_eq!(
+            closure.work[1].dirty,
+            ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 5, 2)])
+        );
+        assert_eq!(
+            closure.changed_result_regions,
+            vec![RegionPattern::point(0, 5, 1), RegionPattern::point(0, 5, 2)]
+        );
+    }
+
+    #[test]
+    fn dirty_closure_reaches_legacy_range_consumer_after_span_cell_dirty() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let b_result = RegionPattern::col_interval(0, 1, 0, 99);
+        let b_projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: -1 },
+        };
+        index.insert_read(
+            span(1),
+            b_projection.read_region_for_result(0, b_result).unwrap(),
+            b_result,
+            b_projection,
+        );
+        let legacy_result = RegionPattern::point(0, 0, 3);
+        index.insert_read(
+            legacy(10),
+            b_result,
+            legacy_result,
+            DirtyProjectionRule::WholeResult,
+        );
+
+        let closure = compute_dirty_closure(&index, [RegionPattern::point(0, 50, 0)], |producer| {
+            match producer {
+                producer if producer == span(1) => Some(b_result),
+                producer if producer == legacy(10) => Some(legacy_result),
+                _ => None,
+            }
+        });
+
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 2);
+        assert_eq!(closure.work[0].producer, legacy(10));
+        assert_eq!(closure.work[0].dirty, ProducerDirtyDomain::Whole);
+        assert_eq!(closure.work[1].producer, span(1));
+        assert_eq!(
+            closure.work[1].dirty,
+            ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 50, 1)])
+        );
+        assert!(
+            closure
+                .changed_result_regions
+                .contains(&RegionPattern::point(0, 50, 1))
+        );
+        assert!(
+            closure
+                .changed_result_regions
+                .contains(&RegionPattern::point(0, 0, 3))
         );
     }
 }
