@@ -79,6 +79,94 @@ fn formula_plane_shadow_deferred_build_graph_all_materializes_all_formulas() {
 }
 
 #[test]
+fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(
+            "Sheet1",
+            vec![record(1, 2, "=A1+1"), record(2, 2, "=A2+1")],
+        )])
+        .expect("authoritative ingest");
+
+    assert_eq!(report.mode, FormulaPlaneMode::AuthoritativeExperimental);
+    assert_eq!(report.formula_cells_seen, 2);
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    assert_eq!(report.graph_formula_cells_materialized, 0);
+    let stats = engine.baseline_stats();
+    assert_eq!(stats.graph_formula_vertex_count, 0);
+    assert_eq!(stats.formula_plane_active_span_count, 1);
+    assert_eq!(stats.formula_plane_producer_result_entries, 1);
+    assert_eq!(stats.formula_plane_consumer_read_entries, 1);
+
+    let err = engine
+        .evaluate_all()
+        .expect_err("mixed runtime should fail closed until enabled");
+    assert!(
+        err.to_string()
+            .contains("mixed span evaluation is not enabled yet")
+    );
+}
+
+#[test]
+fn formula_plane_authoritative_mixed_accept_and_fallback_materializes_only_fallback() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(
+            "Sheet1",
+            vec![
+                record(1, 2, "=A1+1"),
+                record(2, 2, "=A2+1"),
+                record(1, 3, "=1+1"),
+            ],
+        )])
+        .expect("authoritative ingest");
+
+    assert_eq!(report.formula_cells_seen, 3);
+    assert_eq!(report.shadow_accepted_span_cells, 2);
+    assert_eq!(report.shadow_fallback_cells, 1);
+    assert_eq!(report.graph_formula_cells_materialized, 1);
+    let stats = engine.baseline_stats();
+    assert_eq!(stats.graph_formula_vertex_count, 1);
+    assert_eq!(stats.formula_plane_active_span_count, 1);
+}
+
+#[test]
+fn formula_plane_authoritative_fallback_only_still_evaluates_legacy() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(
+            "Sheet1",
+            vec![record(1, 1, "=1+1")],
+        )])
+        .expect("authoritative fallback ingest");
+
+    assert_eq!(report.formula_cells_seen, 1);
+    assert_eq!(report.shadow_accepted_span_cells, 0);
+    assert_eq!(report.graph_formula_cells_materialized, 1);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    engine.evaluate_all().expect("fallback-only evaluation");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+}
+
+#[test]
 fn formula_plane_shadow_build_graph_for_sheets_reports_selected_sheet_only() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);

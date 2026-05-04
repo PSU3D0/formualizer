@@ -12,7 +12,8 @@ use crate::engine::{
     VertexId, VertexKind, VisibilityMaskMode,
 };
 use crate::formula_plane::placement::{
-    FormulaPlacementCandidate, PlacementFallbackReason, place_candidate_family,
+    FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
+    place_candidate_family,
 };
 use crate::formula_plane::runtime::FormulaPlane;
 use crate::formula_plane::template_canonical::canonicalize_template;
@@ -796,6 +797,9 @@ pub struct EngineBaselineStats {
     pub formula_ast_root_count: usize,
     pub formula_ast_node_count: usize,
     pub staged_formula_count: usize,
+    pub formula_plane_active_span_count: usize,
+    pub formula_plane_producer_result_entries: usize,
+    pub formula_plane_consumer_read_entries: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1760,6 +1764,7 @@ where
     /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
     pub fn baseline_stats(&self) -> EngineBaselineStats {
         let graph = self.graph.baseline_stats();
+        let formula_authority = self.graph.formula_authority();
         EngineBaselineStats {
             graph_vertex_count: graph.graph_vertex_count,
             graph_formula_vertex_count: graph.graph_formula_vertex_count,
@@ -1769,6 +1774,9 @@ where
             formula_ast_root_count: graph.formula_ast_root_count,
             formula_ast_node_count: graph.formula_ast_node_count,
             staged_formula_count: self.staged_formula_count(),
+            formula_plane_active_span_count: formula_authority.active_span_count(),
+            formula_plane_producer_result_entries: formula_authority.producer_results.len(),
+            formula_plane_consumer_read_entries: formula_authority.consumer_reads.len(),
         }
     }
 
@@ -2531,6 +2539,126 @@ where
             .or_default() += count;
     }
 
+    fn analyze_formula_plane_authoritative_ingest(
+        &mut self,
+        batches: &[FormulaIngestBatch],
+    ) -> (FormulaIngestReport, Vec<FormulaIngestBatch>) {
+        let mut report =
+            FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+        report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+
+        let mut groups: BTreeMap<(SheetId, String, String), Vec<FormulaPlacementCandidate>> =
+            BTreeMap::new();
+        let mut fallback: BTreeMap<String, Vec<FormulaIngestRecord>> = BTreeMap::new();
+
+        for batch in batches {
+            let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
+            for record in &batch.formulas {
+                if record.row == 0 || record.col == 0 {
+                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
+                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
+                    Self::record_shadow_fallback_reason(
+                        &mut report,
+                        PlacementFallbackReason::UnsupportedShapeOrGaps,
+                        1,
+                    );
+                    fallback
+                        .entry(batch.sheet_name.clone())
+                        .or_default()
+                        .push(record.clone());
+                    continue;
+                }
+
+                let template = canonicalize_template(&record.ast, record.row, record.col);
+                groups
+                    .entry((
+                        sheet_id,
+                        batch.sheet_name.clone(),
+                        template.key.payload().to_string(),
+                    ))
+                    .or_default()
+                    .push(FormulaPlacementCandidate::new(
+                        sheet_id,
+                        record.row - 1,
+                        record.col - 1,
+                        Arc::new(record.ast.clone()),
+                        record.formula_text.clone(),
+                    ));
+            }
+        }
+
+        for ((_sheet_id, sheet_name, _payload), candidates) in groups {
+            for component in Self::split_shadow_candidate_components(candidates) {
+                let placement_report = {
+                    let authority = self.graph.formula_authority_mut();
+                    place_candidate_family(&mut authority.plane, component.clone())
+                };
+                Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
+
+                for result in &placement_report.results {
+                    let FormulaPlacementResult::Legacy { placement, .. } = result else {
+                        continue;
+                    };
+                    if let Some(candidate) = component
+                        .iter()
+                        .find(|candidate| candidate.placement() == *placement)
+                    {
+                        fallback.entry(sheet_name.clone()).or_default().push(
+                            FormulaIngestRecord::new(
+                                candidate.row.saturating_add(1),
+                                candidate.col.saturating_add(1),
+                                (*candidate.ast).clone(),
+                                candidate.formula_text.clone(),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+
+        let _index_report = self.graph.formula_authority_mut().rebuild_indexes();
+
+        let fallback_batches = fallback
+            .into_iter()
+            .map(|(sheet_name, formulas)| FormulaIngestBatch::new(sheet_name, formulas))
+            .collect();
+        (report, fallback_batches)
+    }
+
+    fn accumulate_formula_plane_placement_report(
+        report: &mut FormulaIngestReport,
+        placement_report: &crate::formula_plane::placement::FormulaPlacementReport,
+    ) {
+        let counters = &placement_report.counters;
+        report.shadow_candidate_cells = report
+            .shadow_candidate_cells
+            .saturating_add(counters.formula_cells_seen);
+        report.shadow_accepted_span_cells = report
+            .shadow_accepted_span_cells
+            .saturating_add(counters.accepted_span_cells);
+        report.shadow_fallback_cells = report
+            .shadow_fallback_cells
+            .saturating_add(counters.legacy_cells);
+        report.shadow_templates_interned = report
+            .shadow_templates_interned
+            .saturating_add(counters.templates_interned);
+        report.shadow_spans_created = report
+            .shadow_spans_created
+            .saturating_add(counters.spans_created);
+        report.graph_formula_vertices_avoided_shadow = report
+            .graph_formula_vertices_avoided_shadow
+            .saturating_add(counters.formula_vertices_avoided);
+        report.ast_roots_avoided_shadow = report
+            .ast_roots_avoided_shadow
+            .saturating_add(counters.ast_roots_avoided);
+        report.edge_rows_avoided_shadow = report
+            .edge_rows_avoided_shadow
+            .saturating_add(counters.edge_rows_avoided);
+        for (reason, count) in &counters.fallback_reasons {
+            Self::record_shadow_fallback_reason(report, *reason, *count);
+        }
+    }
+
     fn split_shadow_candidate_components(
         candidates: Vec<FormulaPlacementCandidate>,
     ) -> Vec<Vec<FormulaPlacementCandidate>> {
@@ -2597,16 +2725,25 @@ where
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        let mut report = if self.config.formula_plane_mode == FormulaPlaneMode::Shadow {
-            self.analyze_formula_plane_shadow_candidates(&batches)
-        } else {
-            FormulaIngestReport::with_mode(self.config.formula_plane_mode)
+        let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+        let (mut report, materialize_batches) = match self.config.formula_plane_mode {
+            FormulaPlaneMode::Off => (
+                FormulaIngestReport::with_mode(FormulaPlaneMode::Off),
+                batches,
+            ),
+            FormulaPlaneMode::Shadow => (
+                self.analyze_formula_plane_shadow_candidates(&batches),
+                batches,
+            ),
+            FormulaPlaneMode::AuthoritativeExperimental => {
+                self.analyze_formula_plane_authoritative_ingest(&batches)
+            }
         };
-        report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+        report.formula_cells_seen = formula_cells_seen;
 
-        if !batches.iter().all(FormulaIngestBatch::is_empty) {
+        if !materialize_batches.iter().all(FormulaIngestBatch::is_empty) {
             let mut builder = self.begin_bulk_ingest();
-            for batch in batches {
+            for batch in materialize_batches {
                 if batch.is_empty() {
                     continue;
                 }
@@ -2620,7 +2757,7 @@ where
                 );
             }
             let summary = builder.finish()?;
-            report.graph_formula_cells_materialized = report.formula_cells_seen;
+            report.graph_formula_cells_materialized = summary.formulas as u64;
             report.graph_vertices_created = summary.vertices as u64;
             report.graph_edges_created = summary.edges as u64;
         }
@@ -4960,6 +5097,7 @@ where
     }
 
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
         self.evaluate_vertex_impl(vertex_id, None)
     }
 
@@ -5602,6 +5740,7 @@ where
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
         let _source_cache = self.source_cache_session();
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -5812,6 +5951,7 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
 
         let start = crate::instant::FzInstant::now();
         let dirty_vertices = self.graph.get_evaluation_vertices();
@@ -5882,6 +6022,15 @@ where
             elapsed: start.elapsed(),
         })
     }
+    fn fail_if_authoritative_formula_plane_requires_mixed_runtime(&self) -> Result<(), ExcelError> {
+        if self.graph.formula_authority().active_span_count() > 0 {
+            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                "FormulaPlane AuthoritativeExperimental ingest installed active spans; mixed span evaluation is not enabled yet",
+            ));
+        }
+        Ok(())
+    }
+
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
         let _source_cache = self.source_cache_session();
@@ -5890,6 +6039,7 @@ where
             // Build graph for all staged formulas before evaluating
             self.build_graph_all()?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
@@ -6001,6 +6151,7 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all_with_delta").entered();
@@ -6159,6 +6310,7 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
         self.evaluate_until(targets)?;
         Ok(targets
             .iter()
@@ -6193,6 +6345,7 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
 
         // evaluate_until_cancellable takes &[&str] in A1 notation, but we have (&str, u32, u32)
         // Let's implement evaluate_until_coords_cancellable or similar, or just convert
@@ -6227,6 +6380,7 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
         let mut collector = DeltaCollector::new(DeltaMode::Cells);
         self.evaluate_until_with_delta_collector(targets, &mut collector)?;
         let values = targets
@@ -6639,6 +6793,7 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
         self.reset_virtual_dep_telemetry_if_disabled();
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
@@ -6783,6 +6938,7 @@ where
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
         let start = crate::instant::FzInstant::now();
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -9868,6 +10024,7 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        self.fail_if_authoritative_formula_plane_requires_mixed_runtime()?;
         self.reset_virtual_dep_telemetry_if_disabled();
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;

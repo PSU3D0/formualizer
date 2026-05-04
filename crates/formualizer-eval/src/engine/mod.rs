@@ -201,6 +201,11 @@ pub enum FormulaPlaneMode {
     #[default]
     Off,
     Shadow,
+    /// Experimental non-default mode: accepted FormulaPlane spans are installed
+    /// into graph-owned authority and are not materialized as per-cell graph
+    /// formulas. Runtime evaluation remains fail-closed until mixed execution is
+    /// explicitly wired.
+    AuthoritativeExperimental,
 }
 
 /// Workbook ingest limits applied by loader backends before they materialize large sheets.

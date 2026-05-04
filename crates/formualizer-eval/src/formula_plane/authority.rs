@@ -34,6 +34,10 @@ impl FormulaAuthority {
         self.indexes_epoch
     }
 
+    pub(crate) fn active_span_count(&self) -> usize {
+        self.plane.spans.active_spans().count()
+    }
+
     pub(crate) fn rebuild_indexes(&mut self) -> FormulaAuthorityIndexReport {
         let mut producer_results = FormulaProducerResultIndex::default();
         let mut consumer_reads = FormulaConsumerReadIndex::default();
