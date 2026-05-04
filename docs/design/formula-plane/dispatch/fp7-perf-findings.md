@@ -131,11 +131,17 @@ Beyond that, span-aware vectorized kernels are the next tier — recognize that 
           - No-span load improved modestly (0.66 -> ~0.80) but not parity.
           - Residual tax: BulkIngestBuilder reconstructs trees from arena ids
             to feed dependency planning. Arena-native planning is the deeper fix.
+[done]    Wire structural/spill/source dirty hooks into FormulaAuthority
+          (8df5095). Closes audit correctness item #1. 6 new tests
+          covering spill, source, row-visibility, insert_rows, and
+          remove_sheet structural ops under AuthoritativeExperimental.
+[plan]    Merged store_and_plan: arena interning + dependency planning
+          in one pass. Closes Issue C residual no-span load tax.
 [plan]    Uniform-value span broadcast (50-100x on absolute-only families)
 [plan]    Direct DenseRange writes for Rect/RowRun/ColRun spans
 [plan]    Cache mixed-schedule indexes by (topology_epoch, indexes_epoch)
-[plan]    Wire structural/spill/source dirty hooks into FormulaAuthority
-[plan]    Arena-native dependency planning (closes Issue C residual)
+[future]  Arena-native AST rewrite (functional, dedup-friendly).
+          Foundation for live table edits and uniform structural-op handling.
 [future]  Span-aware vectorized kernels for known function shapes
 ```
 
