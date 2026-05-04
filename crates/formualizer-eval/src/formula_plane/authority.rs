@@ -7,7 +7,7 @@
 //! propagation, scheduling, or evaluation yet.
 
 use super::producer::{FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex};
-use super::runtime::FormulaPlane;
+use super::runtime::{FormulaPlane, FormulaSpanRef};
 
 #[derive(Debug, Default)]
 pub(crate) struct FormulaAuthority {
@@ -36,6 +36,18 @@ impl FormulaAuthority {
 
     pub(crate) fn active_span_count(&self) -> usize {
         self.plane.spans.active_spans().count()
+    }
+
+    pub(crate) fn active_span_refs(&self) -> Vec<FormulaSpanRef> {
+        self.plane
+            .spans
+            .active_spans()
+            .map(|span| FormulaSpanRef {
+                id: span.id,
+                generation: span.generation,
+                version: span.version,
+            })
+            .collect()
     }
 
     pub(crate) fn rebuild_indexes(&mut self) -> FormulaAuthorityIndexReport {

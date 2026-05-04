@@ -107,12 +107,58 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
     assert_eq!(stats.formula_plane_producer_result_entries, 1);
     assert_eq!(stats.formula_plane_consumer_read_entries, 1);
 
+    engine.evaluate_all().expect("span-only mixed evaluate_all");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(3.0))
+    );
     let err = engine
-        .evaluate_all()
-        .expect_err("mixed runtime should fail closed until enabled");
+        .evaluate_cell("Sheet1", 1, 2)
+        .expect_err("non-evaluate_all paths remain fail-closed");
     assert!(
         err.to_string()
-            .contains("mixed span evaluation is not enabled yet")
+            .contains("evaluation entry point is not enabled yet")
+    );
+}
+
+#[test]
+fn formula_plane_authoritative_evaluate_all_orders_span_chain() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(
+            "Sheet1",
+            vec![
+                record(1, 2, "=A1+1"),
+                record(2, 2, "=A2+1"),
+                record(1, 3, "=B1+2"),
+                record(2, 3, "=B2+2"),
+            ],
+        )])
+        .expect("authoritative ingest");
+
+    assert_eq!(report.graph_formula_cells_materialized, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    engine.evaluate_all().expect("span chain evaluate_all");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(4.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 3),
+        Some(LiteralValue::Number(5.0))
     );
 }
 
@@ -140,6 +186,13 @@ fn formula_plane_authoritative_mixed_accept_and_fallback_materializes_only_fallb
     let stats = engine.baseline_stats();
     assert_eq!(stats.graph_formula_vertex_count, 1);
     assert_eq!(stats.formula_plane_active_span_count, 1);
+    let err = engine
+        .evaluate_all()
+        .expect_err("mixed legacy/span runtime should fail closed");
+    assert!(
+        err.to_string()
+            .contains("mixed legacy/span evaluate_all is not enabled yet")
+    );
 }
 
 #[test]
