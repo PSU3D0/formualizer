@@ -6,7 +6,10 @@
 //! indexes from accepted spans, but those indexes are not wired into graph dirty
 //! propagation, scheduling, or evaluation yet.
 
+use rustc_hash::FxHashSet;
+
 use super::producer::{FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex};
+use super::region_index::RegionPattern;
 use super::runtime::{FormulaPlane, FormulaSpanRef};
 
 #[derive(Debug, Default)]
@@ -15,6 +18,11 @@ pub(crate) struct FormulaAuthority {
     pub(crate) producer_results: FormulaProducerResultIndex,
     pub(crate) consumer_reads: FormulaConsumerReadIndex,
     indexes_epoch: u64,
+    /// Externally-observed changed regions accumulated since the last
+    /// `take_pending_changed_regions` call. Edits that intersect span read
+    /// regions drive bounded span dirty work via `compute_dirty_closure`.
+    pending_changed_regions: Vec<RegionPattern>,
+    pending_seen: FxHashSet<RegionPattern>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -48,6 +56,37 @@ impl FormulaAuthority {
                 version: span.version,
             })
             .collect()
+    }
+
+    pub(crate) fn record_changed_region(&mut self, region: RegionPattern) {
+        if self.pending_seen.insert(region) {
+            self.pending_changed_regions.push(region);
+        }
+    }
+
+    pub(crate) fn take_pending_changed_regions(&mut self) -> Vec<RegionPattern> {
+        self.pending_seen.clear();
+        std::mem::take(&mut self.pending_changed_regions)
+    }
+
+    pub(crate) fn pending_changed_region_count(&self) -> usize {
+        self.pending_changed_regions.len()
+    }
+
+    pub(crate) fn mark_all_active_spans_dirty(&mut self) {
+        // Conservative escape hatch: invalidate every span by recording each
+        // span's result region as a changed region. Used when edit semantics
+        // cannot be projected exactly (e.g. structural edits) so the next eval
+        // recomputes affected spans rather than serving stale results.
+        let regions: Vec<RegionPattern> = self
+            .plane
+            .spans
+            .active_spans()
+            .map(|span| RegionPattern::from_domain(span.result_region.domain()))
+            .collect();
+        for region in regions {
+            self.record_changed_region(region);
+        }
     }
 
     pub(crate) fn rebuild_indexes(&mut self) -> FormulaAuthorityIndexReport {
