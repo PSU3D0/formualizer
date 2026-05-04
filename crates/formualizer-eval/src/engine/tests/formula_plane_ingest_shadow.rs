@@ -7,24 +7,30 @@ use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
-fn record(row: u32, col: u32, formula: &str) -> FormulaIngestRecord {
-    FormulaIngestRecord::new(
-        row,
-        col,
-        parse(formula).unwrap(),
-        Some(Arc::<str>::from(formula)),
-    )
+fn record(
+    engine: &mut Engine<TestWorkbook>,
+    row: u32,
+    col: u32,
+    formula: &str,
+) -> FormulaIngestRecord {
+    let ast = parse(formula).unwrap();
+    let ast_id = engine.intern_formula_ast(&ast);
+    FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(formula)))
 }
 
 #[test]
 fn formula_plane_off_ingest_reports_graph_materialized_formulas() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Off);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 1, "=1+1"),
+            record(&mut engine, 2, 1, "=A1+1"),
+        ],
+    )];
     let report = engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new(
-            "Sheet1",
-            vec![record(1, 1, "=1+1"), record(2, 1, "=A1+1")],
-        )])
+        .ingest_formula_batches(batches)
         .expect("ingest formulas");
 
     assert_eq!(report.mode, FormulaPlaneMode::Off);
@@ -91,11 +97,15 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
         .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
         .unwrap();
 
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
+        ],
+    )];
     let report = engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new(
-            "Sheet1",
-            vec![record(1, 2, "=A1+1"), record(2, 2, "=A2+1")],
-        )])
+        .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
     assert_eq!(report.mode, FormulaPlaneMode::AuthoritativeExperimental);
@@ -137,16 +147,17 @@ fn formula_plane_authoritative_evaluate_all_orders_span_chain() {
         .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
         .unwrap();
 
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
+            record(&mut engine, 1, 3, "=B1+2"),
+            record(&mut engine, 2, 3, "=B2+2"),
+        ],
+    )];
     let report = engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new(
-            "Sheet1",
-            vec![
-                record(1, 2, "=A1+1"),
-                record(2, 2, "=A2+1"),
-                record(1, 3, "=B1+2"),
-                record(2, 3, "=B2+2"),
-            ],
-        )])
+        .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
     assert_eq!(report.graph_formula_cells_materialized, 0);
@@ -168,15 +179,16 @@ fn formula_plane_authoritative_mixed_accept_and_fallback_materializes_only_fallb
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
+            record(&mut engine, 1, 3, "=1+1"),
+        ],
+    )];
     let report = engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new(
-            "Sheet1",
-            vec![
-                record(1, 2, "=A1+1"),
-                record(2, 2, "=A2+1"),
-                record(1, 3, "=1+1"),
-            ],
-        )])
+        .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
     assert_eq!(report.formula_cells_seen, 3);
@@ -207,15 +219,16 @@ fn formula_plane_authoritative_mixed_span_to_legacy_sum_evaluates() {
         .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
         .unwrap();
 
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
+            record(&mut engine, 1, 4, "=SUM(B1:B2)"),
+        ],
+    )];
     let report = engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new(
-            "Sheet1",
-            vec![
-                record(1, 2, "=A1+1"),
-                record(2, 2, "=A2+1"),
-                record(1, 4, "=SUM(B1:B2)"),
-            ],
-        )])
+        .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
     assert_eq!(report.shadow_accepted_span_cells, 2);
@@ -233,15 +246,16 @@ fn formula_plane_authoritative_mixed_legacy_to_span_evaluates() {
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![
+            record(&mut engine, 1, 1, "=1+1"),
+            record(&mut engine, 1, 2, "=$A$1+1"),
+            record(&mut engine, 2, 2, "=$A$1+1"),
+        ],
+    )];
     let report = engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new(
-            "Sheet1",
-            vec![
-                record(1, 1, "=1+1"),
-                record(1, 2, "=$A$1+1"),
-                record(2, 2, "=$A$1+1"),
-            ],
-        )])
+        .ingest_formula_batches(batches)
         .expect("authoritative ingest");
 
     assert_eq!(report.shadow_accepted_span_cells, 2);
@@ -263,11 +277,12 @@ fn formula_plane_authoritative_fallback_only_still_evaluates_legacy() {
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
+    let batches = vec![FormulaIngestBatch::new(
+        "Sheet1",
+        vec![record(&mut engine, 1, 1, "=1+1")],
+    )];
     let report = engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new(
-            "Sheet1",
-            vec![record(1, 1, "=1+1")],
-        )])
+        .ingest_formula_batches(batches)
         .expect("authoritative fallback ingest");
 
     assert_eq!(report.formula_cells_seen, 1);

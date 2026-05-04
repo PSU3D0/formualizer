@@ -972,8 +972,10 @@ where
                         formula_handed_to_engine += 1;
                     }
                 } else {
-                    let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
-                        rustc_hash::FxHashMap::default();
+                    let mut cache: rustc_hash::FxHashMap<
+                        String,
+                        Option<formualizer_eval::engine::AstNodeId>,
+                    > = rustc_hash::FxHashMap::default();
                     cache.reserve(4096);
                     let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
                     for (row, col, formula) in frm_range.used_cells() {
@@ -992,14 +994,11 @@ where
                                 "[fz][load] formula R{excel_row}C{excel_col} = {key_owned:?}"
                             );
                         }
-                        let ast = if let Some(ast) = cache.get(&key_owned) {
-                            Some(ast.clone())
+                        let ast_id = if let Some(cached) = cache.get(&key_owned) {
+                            *cached
                         } else {
-                            match formualizer_parse::parser::parse(&key_owned) {
-                                Ok(parsed) => {
-                                    cache.insert(key_owned.clone(), parsed.clone());
-                                    Some(parsed)
-                                }
+                            let parsed = match formualizer_parse::parser::parse(&key_owned) {
+                                Ok(parsed) => Some(parsed),
                                 Err(e) => engine
                                     .handle_formula_parse_error(
                                         n,
@@ -1011,13 +1010,16 @@ where
                                     .map_err(|e| {
                                         calamine::Error::Io(std::io::Error::other(e.to_string()))
                                     })?,
-                            }
+                            };
+                            let ast_id = parsed.as_ref().map(|ast| engine.intern_formula_ast(ast));
+                            cache.insert(key_owned.clone(), ast_id);
+                            ast_id
                         };
-                        if let Some(ast) = ast {
+                        if let Some(ast_id) = ast_id {
                             formulas.push(FormulaIngestRecord::new(
                                 excel_row,
                                 excel_col,
-                                ast,
+                                ast_id,
                                 Some(Arc::<str>::from(key_owned.clone())),
                             ));
                         }

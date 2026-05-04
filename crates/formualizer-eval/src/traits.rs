@@ -352,9 +352,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
                 })?;
                 match node {
-                    crate::engine::arena::AstNodeData::Reference { ref_type, .. } => Ok(
-                        data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry)
-                    ),
+                    crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
+                        let reference = data_store
+                            .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                        self.interp.reference_for_current_offset(&reference)
+                    }
                     crate::engine::arena::AstNodeData::Function { .. }
                     | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
                         .interp

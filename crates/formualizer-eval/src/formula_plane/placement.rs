@@ -10,6 +10,8 @@ use std::sync::Arc;
 use formualizer_parse::parser::ASTNode;
 
 use crate::SheetId;
+use crate::engine::arena::{AstNodeId, DataStore};
+use crate::engine::sheet_registry::SheetRegistry;
 
 use super::dependency_summary::{
     FormulaClass, FormulaDependencySummary, summarize_canonical_template,
@@ -26,7 +28,7 @@ pub(crate) struct FormulaPlacementCandidate {
     pub(crate) sheet_id: SheetId,
     pub(crate) row: u32,
     pub(crate) col: u32,
-    pub(crate) ast: Arc<ASTNode>,
+    pub(crate) ast_id: AstNodeId,
     pub(crate) formula_text: Option<Arc<str>>,
 }
 
@@ -35,14 +37,14 @@ impl FormulaPlacementCandidate {
         sheet_id: SheetId,
         row: u32,
         col: u32,
-        ast: Arc<ASTNode>,
+        ast_id: AstNodeId,
         formula_text: Option<Arc<str>>,
     ) -> Self {
         Self {
             sheet_id,
             row,
             col,
-            ast,
+            ast_id,
             formula_text,
         }
     }
@@ -108,8 +110,10 @@ pub(crate) struct FormulaPlacementCounters {
 pub(crate) fn place_candidate_family(
     plane: &mut FormulaPlane,
     candidates: Vec<FormulaPlacementCandidate>,
+    data_store: &DataStore,
+    sheet_registry: &SheetRegistry,
 ) -> FormulaPlacementReport {
-    let analyses = match analyze_candidates(&candidates) {
+    let analyses = match analyze_candidates(&candidates, data_store, sheet_registry) {
         Ok(analyses) => analyses,
         Err(reason) => {
             let mut report = FormulaPlacementReport::default();
@@ -124,20 +128,29 @@ pub(crate) fn place_candidate_family(
 pub(crate) fn place_candidate_family_with_analyses(
     plane: &mut FormulaPlane,
     candidates: Vec<FormulaPlacementCandidate>,
-    analyses: Vec<CandidateAnalysis<'_>>,
+    analyses: Vec<CandidateAnalysis>,
 ) -> FormulaPlacementReport {
     place_analyzed_family(plane, &candidates, &analyses)
 }
 
-pub(crate) struct CandidateAnalysis<'a> {
-    candidate: &'a FormulaPlacementCandidate,
+pub(crate) struct CandidateAnalysis {
+    sheet_id: SheetId,
+    row: u32,
+    col: u32,
     pub(crate) template: CanonicalTemplate,
     summary: FormulaDependencySummary,
 }
 
+impl CandidateAnalysis {
+    fn placement(&self) -> PlacementCoord {
+        PlacementCoord::new(self.sheet_id, self.row, self.col)
+    }
+}
+
 pub(crate) fn analyze_candidate(
     candidate: &FormulaPlacementCandidate,
-) -> Result<CandidateAnalysis<'_>, PlacementFallbackReason> {
+    ast: &ASTNode,
+) -> Result<CandidateAnalysis, PlacementFallbackReason> {
     let anchor_row = candidate
         .row
         .checked_add(1)
@@ -146,7 +159,7 @@ pub(crate) fn analyze_candidate(
         .col
         .checked_add(1)
         .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
-    let template = canonicalize_template(&candidate.ast, anchor_row, anchor_col);
+    let template = canonicalize_template(ast, anchor_row, anchor_col);
     if !template.labels.is_authority_supported() {
         return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
     }
@@ -163,7 +176,9 @@ pub(crate) fn analyze_candidate(
         return Err(PlacementFallbackReason::UnsupportedDependencySummary);
     }
     Ok(CandidateAnalysis {
-        candidate,
+        sheet_id: candidate.sheet_id,
+        row: candidate.row,
+        col: candidate.col,
         template,
         summary,
     })
@@ -171,14 +186,24 @@ pub(crate) fn analyze_candidate(
 
 fn analyze_candidates(
     candidates: &[FormulaPlacementCandidate],
-) -> Result<Vec<CandidateAnalysis<'_>>, PlacementFallbackReason> {
-    candidates.iter().map(analyze_candidate).collect()
+    data_store: &DataStore,
+    sheet_registry: &SheetRegistry,
+) -> Result<Vec<CandidateAnalysis>, PlacementFallbackReason> {
+    candidates
+        .iter()
+        .map(|candidate| {
+            let ast = data_store
+                .retrieve_ast(candidate.ast_id, sheet_registry)
+                .ok_or(PlacementFallbackReason::UnsupportedCanonicalTemplate)?;
+            analyze_candidate(candidate, &ast)
+        })
+        .collect()
 }
 
 fn place_analyzed_family(
     plane: &mut FormulaPlane,
     candidates: &[FormulaPlacementCandidate],
-    analyses: &[CandidateAnalysis<'_>],
+    analyses: &[CandidateAnalysis],
 ) -> FormulaPlacementReport {
     let mut report = FormulaPlacementReport::default();
     report.counters.formula_cells_seen = candidates.len() as u64;
@@ -190,10 +215,10 @@ fn place_analyzed_family(
     debug_assert_eq!(candidates.len(), analyses.len());
 
     let first = &analyses[0];
-    let sheet_id = first.candidate.sheet_id;
+    let sheet_id = first.sheet_id;
     if analyses
         .iter()
-        .any(|analysis| analysis.candidate.sheet_id != sheet_id)
+        .any(|analysis| analysis.sheet_id != sheet_id)
     {
         mark_all_legacy(
             &mut report,
@@ -226,7 +251,7 @@ fn place_analyzed_family(
     let origin = domain_origin(&domain);
     let origin_analysis = analyses
         .iter()
-        .find(|analysis| analysis.candidate.placement() == origin)
+        .find(|analysis| analysis.placement() == origin)
         .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps);
     let origin_analysis = match origin_analysis {
         Ok(origin_analysis) => origin_analysis,
@@ -272,11 +297,23 @@ fn place_analyzed_family(
         return report;
     }
 
+    let Some(origin_candidate) = candidates
+        .iter()
+        .find(|candidate| candidate.placement() == origin)
+    else {
+        mark_all_legacy(
+            &mut report,
+            candidates,
+            PlacementFallbackReason::UnsupportedShapeOrGaps,
+        );
+        return report;
+    };
+
     let template_count_before = plane.templates.len();
     let template_id = plane.intern_template(
         Arc::<str>::from(first.template.key.payload()),
-        Arc::clone(&origin_analysis.candidate.ast),
-        origin_analysis.candidate.formula_text.clone(),
+        origin_candidate.ast_id,
+        origin_candidate.formula_text.clone(),
     );
     if plane.templates.len() > template_count_before {
         report.counters.templates_interned = 1;
@@ -309,17 +346,17 @@ fn place_analyzed_family(
 }
 
 fn detect_domain(
-    analyses: &[CandidateAnalysis<'_>],
+    analyses: &[CandidateAnalysis],
 ) -> Result<PlacementDomain, PlacementFallbackReason> {
     if analyses.len() < 2 {
         return Err(PlacementFallbackReason::SingletonUnique);
     }
 
-    let sheet_id = analyses[0].candidate.sheet_id;
+    let sheet_id = analyses[0].sheet_id;
     let mut coords = Vec::with_capacity(analyses.len());
     let mut unique = BTreeSet::new();
     for analysis in analyses {
-        let coord = analysis.candidate.placement();
+        let coord = analysis.placement();
         if !unique.insert((coord.row, coord.col)) {
             return Err(PlacementFallbackReason::DuplicatePlacement);
         }
@@ -434,20 +471,20 @@ mod tests {
 
     use super::super::runtime::FormulaResolution;
     use super::*;
+    use crate::engine::arena::DataStore;
+    use crate::engine::sheet_registry::SheetRegistry;
 
     fn candidate(
+        data_store: &mut DataStore,
+        sheet_registry: &SheetRegistry,
         sheet_id: SheetId,
         row: u32,
         col: u32,
         formula: &str,
     ) -> FormulaPlacementCandidate {
-        FormulaPlacementCandidate::new(
-            sheet_id,
-            row,
-            col,
-            Arc::new(parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"))),
-            Some(Arc::<str>::from(formula)),
-        )
+        let ast = parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"));
+        let ast_id = data_store.store_ast(&ast, sheet_registry);
+        FormulaPlacementCandidate::new(sheet_id, row, col, ast_id, Some(Arc::<str>::from(formula)))
     }
 
     fn assert_all_legacy(
@@ -483,13 +520,17 @@ mod tests {
     #[test]
     fn row_run_same_template_promotes_to_span() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=A1+1"),
-                candidate(0, 1, 2, "=A2+1"),
-                candidate(0, 2, 2, "=A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.counters.formula_cells_seen, 3);
@@ -528,13 +569,17 @@ mod tests {
     #[test]
     fn col_run_same_template_promotes_to_span() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 2, 0, "=A1+1"),
-                candidate(0, 2, 1, "=B1+1"),
-                candidate(0, 2, 2, "=C1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 0, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=B1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=C1+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.counters.accepted_span_cells, 3);
@@ -557,14 +602,18 @@ mod tests {
         // to whole-span recompute on every change, so placement falls back to
         // legacy.
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 1, 1, "=A1+1"),
-                candidate(0, 1, 2, "=B1+1"),
-                candidate(0, 2, 1, "=A2+1"),
-                candidate(0, 2, 2, "=B2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=B1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=B2+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(&report, 4, PlacementFallbackReason::InternalDependency);
@@ -575,14 +624,18 @@ mod tests {
         // 2x2 rect of `=$A$1+1` cells. Reads are anchored to a single cell
         // outside the rect, so no internal dependency.
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 1, 1, "=$A$1+1"),
-                candidate(0, 1, 2, "=$A$1+1"),
-                candidate(0, 2, 1, "=$A$1+1"),
-                candidate(0, 2, 2, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A$1+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.counters.accepted_span_cells, 4);
@@ -599,7 +652,21 @@ mod tests {
     #[test]
     fn unique_formulas_remain_legacy() {
         let mut plane = FormulaPlane::default();
-        let report = place_candidate_family(&mut plane, vec![candidate(0, 0, 0, "=A1+1")]);
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![candidate(
+                &mut data_store,
+                &sheet_registry,
+                0,
+                0,
+                0,
+                "=A1+1",
+            )],
+            &data_store,
+            &sheet_registry,
+        );
 
         assert_all_legacy(&report, 1, PlacementFallbackReason::SingletonUnique);
     }
@@ -607,12 +674,16 @@ mod tests {
     #[test]
     fn placement_rejects_without_supported_dependency_summary() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=SUM(A1:A2)"),
-                candidate(0, 1, 2, "=SUM(A2:A3)"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=SUM(A1:A2)"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=SUM(A2:A3)"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(
@@ -625,9 +696,16 @@ mod tests {
     #[test]
     fn unsupported_dynamic_formula_remains_legacy_with_reason() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 0, "=RAND()"), candidate(0, 1, 0, "=RAND()")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 0, "=RAND()"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 0, "=RAND()"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(
@@ -640,9 +718,16 @@ mod tests {
     #[test]
     fn gapped_row_run_remains_legacy() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 2, 2, "=A3+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(&report, 2, PlacementFallbackReason::UnsupportedShapeOrGaps);
@@ -651,9 +736,16 @@ mod tests {
     #[test]
     fn gapped_col_run_remains_legacy() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 2, 0, "=A1+1"), candidate(0, 2, 2, "=C1+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 2, 0, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=C1+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(&report, 2, PlacementFallbackReason::UnsupportedShapeOrGaps);
@@ -662,13 +754,17 @@ mod tests {
     #[test]
     fn rect_with_missing_cell_remains_legacy() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 1, 1, "=A1+1"),
-                candidate(0, 1, 2, "=B1+1"),
-                candidate(0, 2, 1, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=B1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=A2+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(&report, 3, PlacementFallbackReason::UnsupportedShapeOrGaps);
@@ -677,9 +773,16 @@ mod tests {
     #[test]
     fn duplicate_placement_remains_legacy_with_reason() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 0, 2, "=A1+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(&report, 2, PlacementFallbackReason::DuplicatePlacement);
@@ -688,12 +791,16 @@ mod tests {
     #[test]
     fn explicit_sheet_binding_remains_legacy_with_reason() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=Sheet2!A1+1"),
-                candidate(0, 1, 2, "=Sheet2!A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=Sheet2!A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=Sheet2!A2+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(
@@ -706,9 +813,16 @@ mod tests {
     #[test]
     fn mixed_sheet_candidates_remain_legacy_with_reason() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 2, "=A1+1"), candidate(1, 1, 2, "=A2+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 1, 1, 2, "=A2+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(
@@ -721,13 +835,17 @@ mod tests {
     #[test]
     fn placement_promotes_supported_mixed_anchor_family() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=$A1+B$1"),
-                candidate(0, 1, 2, "=$A2+B$1"),
-                candidate(0, 2, 2, "=$A3+B$1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=$A1+B$1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A2+B$1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A3+B$1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.counters.formula_cells_seen, 3);
@@ -768,9 +886,16 @@ mod tests {
     #[test]
     fn non_equivalent_formula_never_promotes() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 1, 2, "=A1+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A1+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_all_legacy(&report, 2, PlacementFallbackReason::NonEquivalentTemplate);
@@ -779,13 +904,17 @@ mod tests {
     #[test]
     fn accepted_row_run_avoids_per_placement_vertices_ast_and_edges() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=A1+1"),
-                candidate(0, 1, 2, "=A2+1"),
-                candidate(0, 2, 2, "=A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.counters.accepted_span_cells, 3);
@@ -800,9 +929,16 @@ mod tests {
     #[test]
     fn span_virtual_formula_matches_legacy_formula_text_or_ast_relocation() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 2, "=A1+1"), candidate(0, 1, 2, "=A2+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
 
         let FormulaPlacementResult::Span {

@@ -1,24 +1,23 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use formualizer_parse::parser::ASTNode;
-
 use super::FormulaPlaneMode;
+use super::arena::AstNodeId;
 
 #[derive(Clone, Debug)]
 pub struct FormulaIngestRecord {
     pub row: u32,
     pub col: u32,
-    pub ast: ASTNode,
+    pub ast_id: AstNodeId,
     pub formula_text: Option<Arc<str>>,
 }
 
 impl FormulaIngestRecord {
-    pub fn new(row: u32, col: u32, ast: ASTNode, formula_text: Option<Arc<str>>) -> Self {
+    pub fn new(row: u32, col: u32, ast_id: AstNodeId, formula_text: Option<Arc<str>>) -> Self {
         Self {
             row,
             col,
-            ast,
+            ast_id,
             formula_text,
         }
     }

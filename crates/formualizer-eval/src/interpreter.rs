@@ -246,7 +246,9 @@ impl<'a> Interpreter<'a> {
 
         match node {
             AstNodeData::Reference { ref_type, .. } => {
-                Ok(data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry))
+                let reference =
+                    data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                self.reference_for_current_offset(&reference)
             }
             AstNodeData::Function { name_id, .. } => {
                 let name = data_store.resolve_ast_string(*name_id);
@@ -327,6 +329,26 @@ impl<'a> Interpreter<'a> {
             .map(|reference| reference.into_owned())
     }
 
+    pub(crate) fn evaluate_arena_ast_with_offset(
+        &self,
+        node_id: AstNodeId,
+        row_delta: i64,
+        col_delta: i64,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        let offset = Self {
+            context: self.context,
+            current_sheet: self.current_sheet,
+            current_cell: self.current_cell,
+            local_env: self.local_env.clone(),
+            reference_row_delta: row_delta,
+            reference_col_delta: col_delta,
+            disable_ast_planner: true,
+        };
+        offset.evaluate_arena_ast(node_id, data_store, sheet_registry)
+    }
+
     pub(crate) fn evaluate_arena_ast(
         &self,
         node_id: AstNodeId,
@@ -342,9 +364,14 @@ impl<'a> Interpreter<'a> {
                 data_store.retrieve_value(*vref),
             )),
             AstNodeData::Reference { ref_type, .. } => {
-                if let CompactRefType::Cell {
-                    sheet, row, col, ..
-                } = ref_type
+                if self.local_env.is_empty()
+                    && let CompactRefType::Cell {
+                        sheet,
+                        row,
+                        col,
+                        row_abs,
+                        col_abs,
+                    } = ref_type
                     && *row > 0
                     && *col > 0
                 {
@@ -355,16 +382,19 @@ impl<'a> Interpreter<'a> {
                         }
                         None => None,
                     };
+                    let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
+                    let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
                     let value = self.context.resolve_cell_reference_value(
                         sheet_name,
-                        *row,
-                        *col,
+                        row,
+                        col,
                         self.current_sheet,
                     )?;
                     Ok(crate::traits::CalcValue::Scalar(value))
                 } else {
                     let reference =
                         data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                    let reference = self.effective_reference(&reference)?;
                     if let Some(local) = self.resolve_local_reference(&reference) {
                         return Ok(local);
                     }

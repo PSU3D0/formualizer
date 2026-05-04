@@ -148,6 +148,8 @@ mod tests {
     use formualizer_parse::parser::parse;
 
     use super::*;
+    use crate::engine::arena::DataStore;
+    use crate::engine::sheet_registry::SheetRegistry;
     use crate::formula_plane::producer::{
         AxisProjection, DirtyProjectionRule, ProducerDirtyDomain, ProjectionResult,
         SpanReadDependency, SpanReadSummary, compute_dirty_closure,
@@ -160,7 +162,11 @@ mod tests {
     fn template(authority: &mut FormulaAuthority) -> crate::formula_plane::ids::FormulaTemplateId {
         authority.plane.intern_template(
             Arc::<str>::from("test-template"),
-            Arc::new(parse("=A1+1").unwrap()),
+            {
+                let mut data_store = DataStore::new();
+                let sheet_registry = SheetRegistry::new();
+                data_store.store_ast(&parse("=A1+1").unwrap(), &sheet_registry)
+            },
             Some(Arc::<str>::from("=A1+1")),
         )
     }

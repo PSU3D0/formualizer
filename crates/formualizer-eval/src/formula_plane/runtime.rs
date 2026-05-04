@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use formualizer_parse::parser::ASTNode;
 use rustc_hash::FxHashMap;
 
 use crate::SheetId;
 use crate::engine::VertexId;
+use crate::engine::arena::AstNodeId;
 
 use super::ids::FormulaTemplateId;
 use super::producer::{SpanReadSummary, SpanReadSummaryId, SpanReadSummaryStore};
@@ -220,7 +220,7 @@ pub(crate) struct TemplateRecord {
     pub(crate) id: FormulaTemplateId,
     pub(crate) generation: u32,
     pub(crate) version: u32,
-    pub(crate) ast: Arc<ASTNode>,
+    pub(crate) ast_id: AstNodeId,
     pub(crate) canonical_key: Arc<str>,
     pub(crate) formula_text: Option<Arc<str>>,
 }
@@ -229,7 +229,7 @@ impl TemplateStore {
     pub(crate) fn intern_template(
         &mut self,
         canonical_key: Arc<str>,
-        ast: Arc<ASTNode>,
+        ast_id: AstNodeId,
         formula_text: Option<Arc<str>>,
     ) -> (FormulaTemplateId, bool) {
         if let Some(id) = self.intern.get(canonical_key.as_ref()).copied() {
@@ -241,7 +241,7 @@ impl TemplateStore {
             id,
             generation: 0,
             version: 0,
-            ast,
+            ast_id,
             canonical_key: Arc::clone(&canonical_key),
             formula_text,
         });
@@ -564,12 +564,12 @@ impl FormulaPlane {
     pub(crate) fn intern_template(
         &mut self,
         canonical_key: Arc<str>,
-        ast: Arc<ASTNode>,
+        ast_id: AstNodeId,
         formula_text: Option<Arc<str>>,
     ) -> FormulaTemplateId {
         let (id, inserted) = self
             .templates
-            .intern_template(canonical_key, ast, formula_text);
+            .intern_template(canonical_key, ast_id, formula_text);
         if inserted {
             self.bump_epoch();
         }
@@ -663,19 +663,23 @@ mod tests {
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
     use super::*;
+    use crate::engine::arena::DataStore;
+    use crate::engine::sheet_registry::SheetRegistry;
 
-    fn literal_ast(value: i64) -> Arc<ASTNode> {
-        Arc::new(ASTNode::new(
-            ASTNodeType::Literal(LiteralValue::Int(value)),
-            None,
-        ))
+    fn literal_ast_id(value: i64) -> AstNodeId {
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        data_store.store_ast(
+            &ASTNode::new(ASTNodeType::Literal(LiteralValue::Int(value)), None),
+            &sheet_registry,
+        )
     }
 
     fn template_id(store: &mut TemplateStore, key: &str) -> FormulaTemplateId {
         store
             .intern_template(
                 Arc::<str>::from(key),
-                literal_ast(1),
+                literal_ast_id(1),
                 Some(Arc::<str>::from("=1")),
             )
             .0
@@ -697,7 +701,7 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
-            literal_ast(1),
+            literal_ast_id(1),
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -722,12 +726,12 @@ mod tests {
         let mut store = TemplateStore::default();
         let (first, inserted_first) = store.intern_template(
             Arc::<str>::from("key:literal-one"),
-            literal_ast(1),
+            literal_ast_id(1),
             Some(Arc::<str>::from("=1")),
         );
         let (second, inserted_second) = store.intern_template(
             Arc::<str>::from("key:literal-one"),
-            literal_ast(1),
+            literal_ast_id(1),
             Some(Arc::<str>::from("=1")),
         );
 
@@ -864,7 +868,7 @@ mod tests {
         let (mut plane, _template_id, span_ref) = plane_with_row_span();
         let override_template = plane.intern_template(
             Arc::<str>::from("override-template"),
-            literal_ast(2),
+            literal_ast_id(2),
             Some(Arc::<str>::from("=2")),
         );
         plane.insert_overlay(
@@ -979,7 +983,7 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
-            literal_ast(1),
+            literal_ast_id(1),
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -999,7 +1003,7 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
-            literal_ast(1),
+            literal_ast_id(1),
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -1032,7 +1036,7 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
-            literal_ast(1),
+            literal_ast_id(1),
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -1055,7 +1059,7 @@ mod tests {
 
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
-            literal_ast(1),
+            literal_ast_id(1),
             Some(Arc::<str>::from("=1")),
         );
         assert_eq!(plane.epoch(), FormulaPlaneEpoch(1));

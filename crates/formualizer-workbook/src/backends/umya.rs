@@ -1323,12 +1323,15 @@ where
                             format!("={f}")
                         };
                         match formualizer_parse::parser::parse(&with_eq) {
-                            Ok(parsed) => formulas.push(FormulaIngestRecord::new(
-                                *row,
-                                *col,
-                                parsed,
-                                Some(Arc::<str>::from(with_eq.clone())),
-                            )),
+                            Ok(parsed) => {
+                                let ast_id = engine.intern_formula_ast(&parsed);
+                                formulas.push(FormulaIngestRecord::new(
+                                    *row,
+                                    *col,
+                                    ast_id,
+                                    Some(Arc::<str>::from(with_eq.clone())),
+                                ));
+                            }
                             Err(e) => {
                                 if let Some(recovered) = engine
                                     .handle_formula_parse_error(
@@ -1340,10 +1343,11 @@ where
                                     )
                                     .map_err(IoError::Engine)?
                                 {
+                                    let ast_id = engine.intern_formula_ast(&recovered);
                                     formulas.push(FormulaIngestRecord::new(
                                         *row,
                                         *col,
-                                        recovered,
+                                        ast_id,
                                         Some(Arc::<str>::from(with_eq.clone())),
                                     ));
                                 }

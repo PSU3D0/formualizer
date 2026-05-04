@@ -730,6 +730,11 @@ impl DependencyGraph {
         self.ensure_touched_sheets.clear();
     }
 
+    /// Store an AST and return its arena id.
+    pub fn store_ast(&mut self, ast: &formualizer_parse::parser::ASTNode) -> AstNodeId {
+        self.data_store.store_ast(ast, &self.sheet_reg)
+    }
+
     /// Store ASTs in batch and return their arena ids
     pub fn store_asts_batch<'a, I>(&mut self, asts: I) -> Vec<AstNodeId>
     where
@@ -1556,7 +1561,7 @@ impl DependencyGraph {
         &self,
         ast: &mut ASTNode,
         cell: CellRef,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<bool, ExcelError> {
         self.rewrite_structured_references_node(ast, cell)
     }
 
@@ -1564,7 +1569,7 @@ impl DependencyGraph {
         &self,
         node: &mut ASTNode,
         cell: CellRef,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<bool, ExcelError> {
         match &mut node.node_type {
             ASTNodeType::Reference { reference, .. } => {
                 self.rewrite_structured_reference(reference, cell)
@@ -1573,31 +1578,34 @@ impl DependencyGraph {
                 self.rewrite_structured_references_node(expr, cell)
             }
             ASTNodeType::BinaryOp { left, right, .. } => {
-                self.rewrite_structured_references_node(left, cell)?;
-                self.rewrite_structured_references_node(right, cell)
+                let left_rewritten = self.rewrite_structured_references_node(left, cell)?;
+                let right_rewritten = self.rewrite_structured_references_node(right, cell)?;
+                Ok(left_rewritten || right_rewritten)
             }
             ASTNodeType::Function { args, .. } => {
+                let mut rewritten = false;
                 for a in args.iter_mut() {
-                    self.rewrite_structured_references_node(a, cell)?;
+                    rewritten |= self.rewrite_structured_references_node(a, cell)?;
                 }
-                Ok(())
+                Ok(rewritten)
             }
             ASTNodeType::Call { callee, args } => {
-                self.rewrite_structured_references_node(callee, cell)?;
+                let mut rewritten = self.rewrite_structured_references_node(callee, cell)?;
                 for a in args.iter_mut() {
-                    self.rewrite_structured_references_node(a, cell)?;
+                    rewritten |= self.rewrite_structured_references_node(a, cell)?;
                 }
-                Ok(())
+                Ok(rewritten)
             }
             ASTNodeType::Array(rows) => {
+                let mut rewritten = false;
                 for r in rows.iter_mut() {
                     for item in r.iter_mut() {
-                        self.rewrite_structured_references_node(item, cell)?;
+                        rewritten |= self.rewrite_structured_references_node(item, cell)?;
                     }
                 }
-                Ok(())
+                Ok(rewritten)
             }
-            ASTNodeType::Literal(_) => Ok(()),
+            ASTNodeType::Literal(_) => Ok(false),
         }
     }
 
@@ -1605,16 +1613,16 @@ impl DependencyGraph {
         &self,
         reference: &mut ReferenceType,
         cell: CellRef,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<bool, ExcelError> {
         use formualizer_parse::parser::{SpecialItem, TableSpecifier};
 
         let ReferenceType::Table(tref) = reference else {
-            return Ok(());
+            return Ok(false);
         };
 
         // This-row shorthand: parsed as an unnamed table reference with a Combination specifier.
         if !tref.name.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         let col_name = match &tref.specifier {
@@ -1709,7 +1717,7 @@ impl DependencyGraph {
             col_abs: true,
         };
 
-        Ok(())
+        Ok(true)
     }
 
     fn find_table_containing_cell(&self, cell: CellRef) -> Option<&tables::TableEntry> {

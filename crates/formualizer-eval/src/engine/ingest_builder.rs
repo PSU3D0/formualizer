@@ -2,8 +2,9 @@ use crate::engine::graph::DependencyGraph;
 use formualizer_common::Coord as AbsCoord;
 // use crate::engine::plan::RangeKey; // no longer needed directly here
 use crate::engine::EvalConfig;
+use crate::engine::arena::AstNodeId;
 use crate::{SheetId, engine::vertex::VertexId};
-use formualizer_common::ExcelError;
+use formualizer_common::{ExcelError, ExcelErrorKind};
 use formualizer_parse::parser::{ASTNode, CollectPolicy};
 use rustc_hash::FxHashMap;
 
@@ -17,10 +18,22 @@ pub struct BulkIngestSummary {
     pub elapsed: std::time::Duration,
 }
 
+enum FormulaAstSource {
+    Owned(ASTNode),
+    Interned(AstNodeId),
+}
+
+struct StagedFormula {
+    row: u32,
+    col: u32,
+    ast: FormulaAstSource,
+    volatile: bool,
+}
+
 struct SheetStage {
     name: String,
     id: SheetId,
-    formulas: Vec<(u32, u32, ASTNode, bool)>, // volatile flag
+    formulas: Vec<StagedFormula>,
 }
 
 impl SheetStage {
@@ -74,7 +87,30 @@ impl<'g> BulkIngestBuilder<'g> {
             .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
         for (r, c, ast) in formulas {
             let vol = Self::is_ast_volatile(&ast);
-            stage.formulas.push((r, c, ast, vol));
+            stage.formulas.push(StagedFormula {
+                row: r,
+                col: c,
+                ast: FormulaAstSource::Owned(ast),
+                volatile: vol,
+            });
+        }
+    }
+
+    pub fn add_formula_ids<I>(&mut self, sheet: SheetId, formulas: I)
+    where
+        I: IntoIterator<Item = (u32, u32, AstNodeId)>,
+    {
+        let stage = self
+            .sheets
+            .entry(sheet)
+            .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
+        for (r, c, ast_id) in formulas {
+            stage.formulas.push(StagedFormula {
+                row: r,
+                col: c,
+                ast: FormulaAstSource::Interned(ast_id),
+                volatile: false,
+            });
         }
     }
 
@@ -156,22 +192,44 @@ impl<'g> BulkIngestBuilder<'g> {
                 for chunk in stage.formulas.chunks_mut(formula_batch_size) {
                     batch_count += 1;
 
-                    // Rewrite context-dependent structured references (e.g., this-row selectors)
-                    // into concrete references using the current graph's table metadata.
-                    for (r, c, ast, _vol) in chunk.iter_mut() {
-                        let coord = crate::reference::Coord::from_excel(*r, *c, true, true);
+                    let mut working_asts = Vec::with_capacity(chunk.len());
+                    let mut rewritten_flags = Vec::with_capacity(chunk.len());
+                    for formula in chunk.iter_mut() {
+                        let mut ast = match &formula.ast {
+                            FormulaAstSource::Owned(ast) => ast.clone(),
+                            FormulaAstSource::Interned(ast_id) => self
+                                .g
+                                .data_store()
+                                .retrieve_ast(*ast_id, self.g.sheet_reg())
+                                .ok_or_else(|| {
+                                    ExcelError::new(ExcelErrorKind::Value)
+                                        .with_message("Missing interned formula AST")
+                                })?,
+                        };
+                        let coord = crate::reference::Coord::from_excel(
+                            formula.row,
+                            formula.col,
+                            true,
+                            true,
+                        );
                         let cell = crate::reference::CellRef::new(stage.id, coord);
-                        self.g.rewrite_structured_references_for_cell(ast, cell)?;
+                        let rewritten = self
+                            .g
+                            .rewrite_structured_references_for_cell(&mut ast, cell)?;
+                        formula.volatile = Self::is_ast_volatile(&ast);
+                        working_asts.push(ast);
+                        rewritten_flags.push(rewritten);
                     }
 
                     let tp0 = Instant::now();
                     let refs = chunk
                         .iter()
-                        .map(|(r, c, ast, _)| (stage.name.as_str(), *r, *c, ast));
+                        .zip(working_asts.iter())
+                        .map(|(formula, ast)| (stage.name.as_str(), formula.row, formula.col, ast));
                     self.vols_buf.clear();
                     self.vols_buf.reserve(chunk.len());
-                    for &(_, _, _, v) in chunk.iter() {
-                        self.vols_buf.push(v);
+                    for formula in chunk.iter() {
+                        self.vols_buf.push(formula.volatile);
                     }
                     let policy = CollectPolicy {
                         expand_small_ranges: true,
@@ -203,12 +261,20 @@ impl<'g> BulkIngestBuilder<'g> {
                     }
                     t_ensure_ms += te0.elapsed().as_millis();
 
-                    // Store ASTs and assign formula vertices.
+                    // Assign formula vertices. Pre-interned FormulaPlane records reuse their
+                    // existing arena ids unless a context-dependent structured reference had to
+                    // be rewritten for this cell.
                     let ta0 = Instant::now();
                     self.g.reserve_formula_metadata(plan.formula_targets.len());
-                    let ast_ids = self
-                        .g
-                        .store_asts_batch(chunk.iter().map(|(_, _, ast, _)| ast));
+                    let ast_ids: Vec<AstNodeId> = chunk
+                        .iter()
+                        .zip(working_asts.iter())
+                        .zip(rewritten_flags.iter().copied())
+                        .map(|((formula, ast), rewritten)| match &formula.ast {
+                            FormulaAstSource::Interned(ast_id) if !rewritten => *ast_id,
+                            _ => self.g.store_ast(ast),
+                        })
+                        .collect();
 
                     let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
                     for &pos in &plan.global_cell_pool_indices {
@@ -221,15 +287,16 @@ impl<'g> BulkIngestBuilder<'g> {
                     for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
                         let vid = all_vids[pos as usize];
                         target_vids.push(vid);
-                        let ast_ref = &chunk[i].2;
+                        let ast_ref = &working_asts[i];
                         let dynamic = self.g.is_ast_dynamic(ast_ref);
+                        let volatile = chunk[i].volatile;
                         if load_fast {
                             self.g.assign_formula_vertex_load_fast(
-                                vid, ast_ids[i], chunk[i].3, dynamic,
+                                vid, ast_ids[i], volatile, dynamic,
                             );
                         } else {
                             self.g
-                                .assign_formula_vertex(vid, ast_ids[i], chunk[i].3, dynamic);
+                                .assign_formula_vertex(vid, ast_ids[i], volatile, dynamic);
                         }
                     }
                     self.g.mark_vertices_dirty_batch(&target_vids);

@@ -2509,7 +2509,21 @@ where
                     continue;
                 }
 
-                let template = canonicalize_template(&record.ast, record.row, record.col);
+                let Some(ast) = self
+                    .graph
+                    .data_store()
+                    .retrieve_ast(record.ast_id, self.graph.sheet_reg())
+                else {
+                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
+                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
+                    Self::record_shadow_fallback_reason(
+                        &mut report,
+                        PlacementFallbackReason::UnsupportedCanonicalTemplate,
+                        1,
+                    );
+                    continue;
+                };
+                let template = canonicalize_template(&ast, record.row, record.col);
                 groups
                     .entry((sheet_id, template.key.payload().to_string()))
                     .or_default()
@@ -2517,7 +2531,7 @@ where
                         sheet_id,
                         record.row - 1,
                         record.col - 1,
-                        Arc::new(record.ast.clone()),
+                        record.ast_id,
                         record.formula_text.clone(),
                     ));
             }
@@ -2526,7 +2540,12 @@ where
         let mut scratch_plane = FormulaPlane::default();
         for candidates in groups.into_values() {
             for component in Self::split_shadow_candidate_components(candidates) {
-                let placement_report = place_candidate_family(&mut scratch_plane, component);
+                let placement_report = place_candidate_family(
+                    &mut scratch_plane,
+                    component,
+                    self.graph.data_store(),
+                    self.graph.sheet_reg(),
+                );
                 let counters = placement_report.counters;
                 report.shadow_candidate_cells = report
                     .shadow_candidate_cells
@@ -2606,7 +2625,7 @@ where
                         sheet_id,
                         record.row - 1,
                         record.col - 1,
-                        Arc::new(record.ast.clone()),
+                        record.ast_id,
                         record.formula_text.clone(),
                     ),
                 ));
@@ -2614,10 +2633,18 @@ where
         }
 
         let mut groups: BTreeMap<(SheetId, String, String), Vec<usize>> = BTreeMap::new();
-        let mut analyses_by_index: Vec<Option<CandidateAnalysis<'_>>> =
+        let mut analyses_by_index: Vec<Option<CandidateAnalysis>> =
             (0..pending_candidates.len()).map(|_| None).collect();
         for (idx, (sheet_name, candidate)) in pending_candidates.iter().enumerate() {
-            match analyze_candidate(candidate) {
+            let ast = self
+                .graph
+                .data_store()
+                .retrieve_ast(candidate.ast_id, self.graph.sheet_reg());
+            let analysis = ast
+                .as_ref()
+                .ok_or(PlacementFallbackReason::UnsupportedCanonicalTemplate)
+                .and_then(|ast| analyze_candidate(candidate, ast));
+            match analysis {
                 Ok(analysis) => {
                     let payload = analysis.template.key.payload().to_string();
                     groups
@@ -2636,7 +2663,7 @@ where
                         .push(FormulaIngestRecord::new(
                             candidate.row.saturating_add(1),
                             candidate.col.saturating_add(1),
-                            (*candidate.ast).clone(),
+                            candidate.ast_id,
                             candidate.formula_text.clone(),
                         ));
                 }
@@ -2714,7 +2741,7 @@ where
                             FormulaIngestRecord::new(
                                 candidate.row.saturating_add(1),
                                 candidate.col.saturating_add(1),
-                                (*candidate.ast).clone(),
+                                candidate.ast_id,
                                 candidate.formula_text.clone(),
                             ),
                         );
@@ -2855,12 +2882,12 @@ where
                     continue;
                 }
                 let sheet_id = builder.add_sheet(&batch.sheet_name);
-                builder.add_formulas(
+                builder.add_formula_ids(
                     sheet_id,
                     batch
                         .formulas
                         .into_iter()
-                        .map(|record| (record.row, record.col, record.ast)),
+                        .map(|record| (record.row, record.col, record.ast_id)),
                 );
             }
             let summary = builder.finish()?;
@@ -2932,7 +2959,7 @@ where
         let mut prepared: PreparedFormulaBatches = Vec::new();
         for (sheet, entries) in staged {
             let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
-            let mut cache: rustc_hash::FxHashMap<String, ASTNode> =
+            let mut cache: rustc_hash::FxHashMap<String, Option<crate::engine::arena::AstNodeId>> =
                 rustc_hash::FxHashMap::default();
             cache.reserve(4096);
 
@@ -2942,25 +2969,25 @@ where
                 } else {
                     format!("={txt}")
                 };
-                let ast = if let Some(p) = cache.get(&key) {
-                    Some(p.clone())
+                let ast_id = if let Some(cached) = cache.get(&key) {
+                    *cached
                 } else {
-                    match formualizer_parse::parser::parse(&key) {
-                        Ok(parsed) => {
-                            cache.insert(key.clone(), parsed.clone());
-                            Some(parsed)
-                        }
+                    let parsed = match formualizer_parse::parser::parse(&key) {
+                        Ok(parsed) => Some(parsed),
                         Err(e) => {
                             self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
                         }
-                    }
+                    };
+                    let ast_id = parsed.as_ref().map(|ast| self.intern_formula_ast(ast));
+                    cache.insert(key.clone(), ast_id);
+                    ast_id
                 };
 
-                if let Some(ast) = ast {
+                if let Some(ast_id) = ast_id {
                     formulas.push(FormulaIngestRecord::new(
                         row,
                         col,
-                        ast,
+                        ast_id,
                         Some(Arc::<str>::from(key.clone())),
                     ));
                 }
@@ -2999,7 +3026,8 @@ where
 
         // Parse/recover first, then pass prepared batches through the centralized ingest seam.
         let mut prepared: PreparedFormulaBatches = Vec::new();
-        let mut cache: rustc_hash::FxHashMap<String, ASTNode> = rustc_hash::FxHashMap::default();
+        let mut cache: rustc_hash::FxHashMap<String, Option<crate::engine::arena::AstNodeId>> =
+            rustc_hash::FxHashMap::default();
         cache.reserve(4096);
 
         for (sheet, entries) in collected {
@@ -3010,25 +3038,25 @@ where
                 } else {
                     format!("={txt}")
                 };
-                let ast = if let Some(p) = cache.get(&key) {
-                    Some(p.clone())
+                let ast_id = if let Some(cached) = cache.get(&key) {
+                    *cached
                 } else {
-                    match formualizer_parse::parser::parse(&key) {
-                        Ok(parsed) => {
-                            cache.insert(key.clone(), parsed.clone());
-                            Some(parsed)
-                        }
+                    let parsed = match formualizer_parse::parser::parse(&key) {
+                        Ok(parsed) => Some(parsed),
                         Err(e) => {
                             self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
                         }
-                    }
+                    };
+                    let ast_id = parsed.as_ref().map(|ast| self.intern_formula_ast(ast));
+                    cache.insert(key.clone(), ast_id);
+                    ast_id
                 };
 
-                if let Some(ast) = ast {
+                if let Some(ast_id) = ast_id {
                     formulas.push(FormulaIngestRecord::new(
                         row,
                         col,
-                        ast,
+                        ast_id,
                         Some(Arc::<str>::from(key.clone())),
                     ));
                 }
@@ -5196,13 +5224,59 @@ where
         let sheet_id = self.graph.sheet_id(sheet)?;
         let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
-        let vid = self.graph.get_vertex_for_cell(&cell)?;
-        let ast = self.graph.get_formula_id(vid).and_then(|ast_id| {
+        if let Some(vid) = self.graph.get_vertex_for_cell(&cell) {
+            let ast = self.graph.get_formula_id(vid).and_then(|ast_id| {
+                self.graph
+                    .data_store()
+                    .retrieve_ast(ast_id, self.graph.sheet_reg())
+            });
+            return Some((ast, v));
+        }
+
+        let placement =
+            crate::formula_plane::runtime::PlacementCoord::new(sheet_id, coord.row(), coord.col());
+        let handle = self
+            .graph
+            .formula_authority()
+            .plane
+            .resolve_formula_at(placement, None);
+        let template_id = match handle.resolution {
+            crate::formula_plane::runtime::FormulaResolution::SpanPlacement {
+                template_id, ..
+            } => Some(template_id),
+            crate::formula_plane::runtime::FormulaResolution::Overlay(overlay_ref) => self
+                .graph
+                .formula_authority()
+                .plane
+                .formula_overlay
+                .get(overlay_ref)
+                .and_then(|overlay| match overlay.kind {
+                    crate::formula_plane::runtime::FormulaOverlayEntryKind::FormulaOverride(
+                        template_id,
+                    ) => Some(template_id),
+                    _ => None,
+                }),
+            _ => None,
+        };
+        let ast = template_id.and_then(|template_id| {
+            let ast_id = self
+                .graph
+                .formula_authority()
+                .plane
+                .templates
+                .get(template_id)?
+                .ast_id;
             self.graph
                 .data_store()
                 .retrieve_ast(ast_id, self.graph.sheet_reg())
         });
-        Some((ast, v))
+        if let Some(ast) = ast {
+            Some((Some(ast), v))
+        } else if v.is_some() {
+            Some((None, v))
+        } else {
+            None
+        }
     }
 
     /// Begin batch operations - defer CSR rebuilds for better performance
@@ -6223,7 +6297,13 @@ where
                             self.graph.sheet_name(span.sheet_id).to_string()
                         };
                         let authority = self.graph.formula_authority();
-                        let evaluator = SpanEvaluator::new(&authority.plane, self, &current_sheet);
+                        let evaluator = SpanEvaluator::new(
+                            &authority.plane,
+                            self,
+                            &current_sheet,
+                            self.graph.data_store(),
+                            self.graph.sheet_reg(),
+                        );
                         let mut sink = SpanComputedWriteSink::new(&mut buffer);
                         let report = evaluator.evaluate_task(&task, &mut sink).map_err(|err| {
                             ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(

@@ -39,6 +39,7 @@ pub mod tuning;
 #[cfg(test)]
 mod tests;
 
+pub use arena::AstNodeId;
 pub use eval::{
     Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan, VirtualDepTelemetry,
 };
@@ -74,6 +75,10 @@ use std::collections::HashMap;
 impl<R: EvaluationContext> Engine<R> {
     pub fn begin_bulk_ingest(&mut self) -> ingest_builder::BulkIngestBuilder<'_> {
         ingest_builder::BulkIngestBuilder::new(&mut self.graph)
+    }
+
+    pub fn intern_formula_ast(&mut self, ast: &formualizer_parse::parser::ASTNode) -> AstNodeId {
+        self.graph.store_ast(ast)
     }
 }
 

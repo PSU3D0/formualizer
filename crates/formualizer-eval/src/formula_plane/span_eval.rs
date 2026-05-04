@@ -6,14 +6,14 @@
 
 use std::sync::Arc;
 
-use formualizer_common::LiteralValue;
-use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
-
 use crate::arrow_store::{OverlayValue, map_error_code};
+use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::eval::ComputedWriteBuffer;
+use crate::engine::sheet_registry::SheetRegistry;
 use crate::interpreter::Interpreter;
 use crate::reference::CellRef;
 use crate::traits::EvaluationContext;
+use formualizer_common::LiteralValue;
 
 use super::region_index::{DirtyDomain, RegionKey};
 use super::runtime::{FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord, PlacementDomain};
@@ -75,6 +75,8 @@ pub(crate) struct SpanEvaluator<'a> {
     plane: &'a FormulaPlane,
     context: &'a dyn EvaluationContext,
     current_sheet: &'a str,
+    data_store: &'a DataStore,
+    sheet_registry: &'a SheetRegistry,
 }
 
 impl<'a> SpanEvaluator<'a> {
@@ -82,11 +84,15 @@ impl<'a> SpanEvaluator<'a> {
         plane: &'a FormulaPlane,
         context: &'a dyn EvaluationContext,
         current_sheet: &'a str,
+        data_store: &'a DataStore,
+        sheet_registry: &'a SheetRegistry,
     ) -> Self {
         Self {
             plane,
             context,
             current_sheet,
+            data_store,
+            sheet_registry,
         }
     }
 
@@ -110,7 +116,7 @@ impl<'a> SpanEvaluator<'a> {
             .get(span.template_id)
             .ok_or(SpanEvalError::MissingTemplate)?;
         let origin = domain_origin(&span.domain);
-        validate_relocatable_ast(&template.ast)?;
+        validate_relocatable_arena_ast(template.ast_id, self.data_store)?;
         let placements = placements_for_dirty(span, &task.dirty)?;
         let push_count_before = sink.push_count();
         let base_interpreter = Interpreter::new(self.context, self.current_sheet);
@@ -135,11 +141,16 @@ impl<'a> SpanEvaluator<'a> {
                 placement.row,
                 placement.col,
             ));
-            let value =
-                match interpreter.evaluate_ast_with_offset(&template.ast, row_delta, col_delta) {
-                    Ok(calc) => literal_to_overlay(calc.into_literal()),
-                    Err(err) => OverlayValue::Error(map_error_code(err.kind)),
-                };
+            let value = match interpreter.evaluate_arena_ast_with_offset(
+                template.ast_id,
+                row_delta,
+                col_delta,
+                self.data_store,
+                self.sheet_registry,
+            ) {
+                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+            };
             sink.push_cell(placement, value);
             report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);
         }
@@ -206,47 +217,54 @@ fn domain_origin(domain: &PlacementDomain) -> PlacementCoord {
     }
 }
 
-fn validate_relocatable_ast(ast: &ASTNode) -> Result<(), SpanEvalError> {
-    match &ast.node_type {
-        ASTNodeType::Literal(_) => Ok(()),
-        ASTNodeType::Reference { reference, .. } => validate_relocatable_reference(reference),
-        ASTNodeType::UnaryOp { expr, .. } => validate_relocatable_ast(expr),
-        ASTNodeType::BinaryOp { left, right, .. } => {
-            validate_relocatable_ast(left)?;
-            validate_relocatable_ast(right)
+fn validate_relocatable_arena_ast(
+    node_id: AstNodeId,
+    data_store: &DataStore,
+) -> Result<(), SpanEvalError> {
+    let node = data_store
+        .get_node(node_id)
+        .ok_or(SpanEvalError::UnsupportedReferenceRelocation)?;
+    match node {
+        AstNodeData::Literal(_) => Ok(()),
+        AstNodeData::Reference { ref_type, .. } => validate_relocatable_compact_reference(ref_type),
+        AstNodeData::UnaryOp { expr_id, .. } => {
+            validate_relocatable_arena_ast(*expr_id, data_store)
         }
-        ASTNodeType::Function { args, .. } => {
+        AstNodeData::BinaryOp {
+            left_id, right_id, ..
+        } => {
+            validate_relocatable_arena_ast(*left_id, data_store)?;
+            validate_relocatable_arena_ast(*right_id, data_store)
+        }
+        AstNodeData::Function { .. } => {
+            let args = data_store
+                .get_args(node_id)
+                .ok_or(SpanEvalError::UnsupportedReferenceRelocation)?;
             for arg in args {
-                validate_relocatable_ast(arg)?;
+                validate_relocatable_arena_ast(*arg, data_store)?;
             }
             Ok(())
         }
-        ASTNodeType::Call { callee, args } => {
-            validate_relocatable_ast(callee)?;
-            for arg in args {
-                validate_relocatable_ast(arg)?;
-            }
-            Ok(())
-        }
-        ASTNodeType::Array(rows) => {
-            for row in rows {
-                for cell in row {
-                    validate_relocatable_ast(cell)?;
-                }
+        AstNodeData::Array { .. } => {
+            let (_, _, elements) = data_store
+                .get_array_elems(node_id)
+                .ok_or(SpanEvalError::UnsupportedReferenceRelocation)?;
+            for element in elements {
+                validate_relocatable_arena_ast(*element, data_store)?;
             }
             Ok(())
         }
     }
 }
 
-fn validate_relocatable_reference(reference: &ReferenceType) -> Result<(), SpanEvalError> {
+fn validate_relocatable_compact_reference(reference: &CompactRefType) -> Result<(), SpanEvalError> {
     match reference {
-        ReferenceType::Cell { .. } | ReferenceType::Range { .. } => Ok(()),
-        ReferenceType::NamedRange(_)
-        | ReferenceType::Table(_)
-        | ReferenceType::Cell3D { .. }
-        | ReferenceType::Range3D { .. }
-        | ReferenceType::External(_) => Err(SpanEvalError::UnsupportedReferenceRelocation),
+        CompactRefType::Cell { .. } | CompactRefType::Range { .. } => Ok(()),
+        CompactRefType::NamedRange(_)
+        | CompactRefType::Table { .. }
+        | CompactRefType::Cell3D { .. }
+        | CompactRefType::Range3D { .. }
+        | CompactRefType::External { .. } => Err(SpanEvalError::UnsupportedReferenceRelocation),
     }
 }
 
@@ -281,10 +299,12 @@ mod tests {
     use std::sync::Arc;
 
     use formualizer_common::LiteralValue;
-    use formualizer_parse::parser::parse;
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, parse};
 
     use crate::engine::EvalConfig;
+    use crate::engine::arena::DataStore;
     use crate::engine::eval::{ComputedWrite, Engine};
+    use crate::engine::sheet_registry::SheetRegistry;
     use crate::test_workbook::TestWorkbook;
 
     use super::super::placement::{FormulaPlacementCandidate, place_candidate_family};
@@ -292,14 +312,17 @@ mod tests {
     use super::super::runtime::{FormulaOverlayEntryKind, NewFormulaSpan, ResultRegion};
     use super::*;
 
-    fn candidate(sheet_id: u16, row: u32, col: u32, formula: &str) -> FormulaPlacementCandidate {
-        FormulaPlacementCandidate::new(
-            sheet_id,
-            row,
-            col,
-            Arc::new(parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"))),
-            Some(Arc::<str>::from(formula)),
-        )
+    fn candidate(
+        data_store: &mut DataStore,
+        sheet_registry: &SheetRegistry,
+        sheet_id: u16,
+        row: u32,
+        col: u32,
+        formula: &str,
+    ) -> FormulaPlacementCandidate {
+        let ast = parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"));
+        let ast_id = data_store.store_ast(&ast, sheet_registry);
+        FormulaPlacementCandidate::new(sheet_id, row, col, ast_id, Some(Arc::<str>::from(formula)))
     }
 
     fn whole_span_task(plane: &FormulaPlane, span: FormulaSpanRef) -> SpanEvalTask {
@@ -339,8 +362,10 @@ mod tests {
         workbook: &TestWorkbook,
         task: &SpanEvalTask,
         buffer: &mut ComputedWriteBuffer,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
     ) -> SpanEvalReport {
-        let evaluator = SpanEvaluator::new(plane, workbook, "Sheet1");
+        let evaluator = SpanEvaluator::new(plane, workbook, "Sheet1", data_store, sheet_registry);
         let mut sink = SpanComputedWriteSink::new(buffer);
         evaluator.evaluate_task(task, &mut sink).unwrap()
     }
@@ -417,13 +442,17 @@ mod tests {
             .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0))
             .with_cell("Sheet1", 3, 2, LiteralValue::Number(30.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=A1+B1"),
-                candidate(0, 1, 2, "=A2+B2"),
-                candidate(0, 2, 2, "=A3+B3"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+B1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+B2"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+B3"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = match placement.results[0] {
             super::super::placement::FormulaPlacementResult::Span { span, .. } => span,
@@ -436,6 +465,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.span_eval_placement_count, 3);
@@ -460,13 +491,17 @@ mod tests {
             .with_cell("Sheet1", 1, 3, LiteralValue::Number(3.0))
             .with_cell("Sheet1", 2, 3, LiteralValue::Number(30.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 2, 0, "=A1+A2"),
-                candidate(0, 2, 1, "=B1+B2"),
-                candidate(0, 2, 2, "=C1+C2"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 0, "=A1+A2"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=B1+B2"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=C1+C2"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = match placement.results[0] {
             super::super::placement::FormulaPlacementResult::Span { span, .. } => span,
@@ -479,6 +514,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(
@@ -497,14 +534,18 @@ mod tests {
         // dependency: every cell reads $A$1, none of which is in the rect.
         let workbook = TestWorkbook::new().with_cell("Sheet1", 1, 1, LiteralValue::Number(10.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 1, 1, "=$A$1+1"),
-                candidate(0, 1, 2, "=$A$1+1"),
-                candidate(0, 2, 1, "=$A$1+1"),
-                candidate(0, 2, 2, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A$1+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = match placement.results[0] {
             super::super::placement::FormulaPlacementResult::Span { span, .. } => span,
@@ -517,6 +558,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(
@@ -533,12 +576,14 @@ mod tests {
     #[test]
     fn span_eval_preserves_explicit_empty_outputs() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let template_id = plane.intern_template(
             Arc::<str>::from("empty-template"),
-            Arc::new(ASTNode::new(
-                ASTNodeType::Literal(LiteralValue::Empty),
-                None,
-            )),
+            data_store.store_ast(
+                &ASTNode::new(ASTNodeType::Literal(LiteralValue::Empty), None),
+                &sheet_registry,
+            ),
             Some(Arc::<str>::from("=")),
         );
         let domain = PlacementDomain::row_run(0, 0, 1, 0);
@@ -558,6 +603,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(
@@ -572,9 +619,16 @@ mod tests {
             .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
             .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 1, "=A1+1"), candidate(0, 1, 1, "=A2+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A2+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
         let span = match placement.results[0] {
             super::super::placement::FormulaPlacementResult::Span { span, .. } => span,
@@ -593,6 +647,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.span_eval_placement_count, 1);
@@ -607,9 +663,16 @@ mod tests {
     fn span_eval_writes_through_computed_write_buffer_not_direct_overlay() {
         let workbook = TestWorkbook::new().with_cell("Sheet1", 1, 1, LiteralValue::Number(9.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 1, "=A1+1"), candidate(0, 1, 1, "=A2+1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A2+1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
         let span = match placement.results[0] {
             super::super::placement::FormulaPlacementResult::Span { span, .. } => span,
@@ -622,6 +685,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
 
         assert_eq!(report.computed_write_buffer_push_count, buffer.len() as u64);
@@ -635,13 +700,17 @@ mod tests {
             .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
             .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 1, "=A1+1"),
-                candidate(0, 1, 1, "=A2+1"),
-                candidate(0, 2, 1, "=A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=A3+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut buffer = ComputedWriteBuffer::default();
@@ -651,7 +720,14 @@ mod tests {
             vec![RegionKey::new(0, 1, 1), RegionKey::new(0, 99, 1)],
         );
 
-        let report = eval_task(&plane, &workbook, &task, &mut buffer);
+        let report = eval_task(
+            &plane,
+            &workbook,
+            &task,
+            &mut buffer,
+            &data_store,
+            &sheet_registry,
+        );
 
         assert_eq!(report.span_eval_placement_count, 1);
         assert_eq!(report.transient_ast_relocation_count, 1);
@@ -668,19 +744,30 @@ mod tests {
             .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
             .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 1, "=A1+1"),
-                candidate(0, 1, 1, "=A2+1"),
-                candidate(0, 2, 1, "=A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=A3+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut buffer = ComputedWriteBuffer::default();
         let task = regions_task(&plane, span, vec![RegionPattern::rect(0, 1, 2, 1, 1)]);
 
-        let report = eval_task(&plane, &workbook, &task, &mut buffer);
+        let report = eval_task(
+            &plane,
+            &workbook,
+            &task,
+            &mut buffer,
+            &data_store,
+            &sheet_registry,
+        );
 
         assert_eq!(report.span_eval_placement_count, 2);
         assert_eq!(report.transient_ast_relocation_count, 2);
@@ -697,9 +784,16 @@ mod tests {
     fn span_eval_stale_span_generation_fails_closed() {
         let workbook = TestWorkbook::new();
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 1, "=1"), candidate(0, 1, 1, "=1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let task = whole_span_task(&plane, span);
@@ -709,7 +803,8 @@ mod tests {
             ..task
         };
         let mut buffer = ComputedWriteBuffer::default();
-        let evaluator = SpanEvaluator::new(&plane, &workbook, "Sheet1");
+        let evaluator =
+            SpanEvaluator::new(&plane, &workbook, "Sheet1", &data_store, &sheet_registry);
         let mut sink = SpanComputedWriteSink::new(&mut buffer);
 
         let err = evaluator
@@ -724,9 +819,16 @@ mod tests {
     fn span_eval_stale_plane_epoch_fails_closed() {
         let workbook = TestWorkbook::new();
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 1, "=1"), candidate(0, 1, 1, "=1")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=1"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let task = whole_span_task(&plane, span);
@@ -737,7 +839,8 @@ mod tests {
             Some(span),
         );
         let mut buffer = ComputedWriteBuffer::default();
-        let evaluator = SpanEvaluator::new(&plane, &workbook, "Sheet1");
+        let evaluator =
+            SpanEvaluator::new(&plane, &workbook, "Sheet1", &data_store, &sheet_registry);
         let mut sink = SpanComputedWriteSink::new(&mut buffer);
 
         let err = evaluator.evaluate_task(&task, &mut sink).unwrap_err();
@@ -754,13 +857,17 @@ mod tests {
             .with_cell("Sheet1", 3, 1, LiteralValue::Number(4.0))
             .with_cell("Sheet1", 1, 6, LiteralValue::Number(10.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=A1*$F$1"),
-                candidate(0, 1, 2, "=A2*$F$1"),
-                candidate(0, 2, 2, "=A3*$F$1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1*$F$1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2*$F$1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3*$F$1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut formula_plane_engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
@@ -771,6 +878,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
         formula_plane_engine
             .flush_computed_write_buffer(&mut buffer)
@@ -816,9 +925,16 @@ mod tests {
             .with_cell("Sheet1", 2, 1, LiteralValue::Number(3.0))
             .with_cell("Sheet1", 2, 2, LiteralValue::Number(0.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
-            vec![candidate(0, 0, 2, "=A1/B1"), candidate(0, 1, 2, "=A2/B2")],
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1/B1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2/B2"),
+            ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut formula_plane_engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
@@ -829,6 +945,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
         formula_plane_engine
             .flush_computed_write_buffer(&mut buffer)
@@ -871,14 +989,18 @@ mod tests {
             .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0))
             .with_cell("Sheet1", 4, 1, LiteralValue::Number(4.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=A1+1"),
-                candidate(0, 1, 2, "=A2+1"),
-                candidate(0, 2, 2, "=A3+1"),
-                candidate(0, 3, 2, "=A4+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 3, 2, "=A4+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
@@ -890,6 +1012,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
         engine.flush_computed_write_buffer(&mut buffer).unwrap();
 
@@ -907,9 +1031,15 @@ mod tests {
     fn span_eval_constant_outputs_emit_run_fragment() {
         let workbook = TestWorkbook::new();
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
-            (0..8).map(|row| candidate(0, row, 0, "=7")).collect(),
+            (0..8)
+                .map(|row| candidate(&mut data_store, &sheet_registry, 0, row, 0, "=7"))
+                .collect(),
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
@@ -921,6 +1051,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
         engine.flush_computed_write_buffer(&mut buffer).unwrap();
 
@@ -937,9 +1069,15 @@ mod tests {
     fn span_eval_sparse_dirty_domain_emits_sparse_fragment() {
         let workbook = TestWorkbook::new();
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
-            (0..128).map(|row| candidate(0, row, 0, "=1")).collect(),
+            (0..128)
+                .map(|row| candidate(&mut data_store, &sheet_registry, 0, row, 0, "=1"))
+                .collect(),
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
@@ -951,7 +1089,14 @@ mod tests {
         let task = cells_task(&plane, span, dirty_cells);
         let mut buffer = ComputedWriteBuffer::default();
 
-        let report = eval_task(&plane, &workbook, &task, &mut buffer);
+        let report = eval_task(
+            &plane,
+            &workbook,
+            &task,
+            &mut buffer,
+            &data_store,
+            &sheet_registry,
+        );
         engine.flush_computed_write_buffer(&mut buffer).unwrap();
 
         assert_eq!(report.span_eval_placement_count, 64);
@@ -976,13 +1121,17 @@ mod tests {
             .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
             .with_cell("Sheet1", 3, 1, LiteralValue::Number(3.0));
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 0, 2, "=A1+1"),
-                candidate(0, 1, 2, "=A2+1"),
-                candidate(0, 2, 2, "=A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+1"),
             ],
+            &data_store,
+            &sheet_registry,
         );
         let span = span_from_report(&placement);
         let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
@@ -1018,6 +1167,8 @@ mod tests {
             &workbook,
             &whole_span_task(&plane, span),
             &mut buffer,
+            &data_store,
+            &sheet_registry,
         );
         engine.flush_computed_write_buffer(&mut buffer).unwrap();
 
@@ -1040,9 +1191,11 @@ mod tests {
     #[test]
     fn span_eval_fallback_for_unsupported_template_matches_legacy() {
         let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
         let template_id = plane.intern_template(
             Arc::<str>::from("external-ref"),
-            Arc::new(parse("='[book.xlsx]Sheet1'!A1").unwrap()),
+            data_store.store_ast(&parse("='[book.xlsx]Sheet1'!A1").unwrap(), &sheet_registry),
             Some(Arc::<str>::from("='[book.xlsx]Sheet1'!A1")),
         );
         let domain = PlacementDomain::row_run(0, 0, 1, 0);
@@ -1056,7 +1209,8 @@ mod tests {
         });
         let workbook = TestWorkbook::new();
         let mut buffer = ComputedWriteBuffer::default();
-        let evaluator = SpanEvaluator::new(&plane, &workbook, "Sheet1");
+        let evaluator =
+            SpanEvaluator::new(&plane, &workbook, "Sheet1", &data_store, &sheet_registry);
         let mut sink = SpanComputedWriteSink::new(&mut buffer);
 
         let err = evaluator
