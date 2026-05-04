@@ -198,13 +198,11 @@ pub struct FormulaParseDiagnostic {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FormulaPlaneMode {
-    #[default]
     Off,
     Shadow,
-    /// Experimental non-default mode: accepted FormulaPlane spans are installed
-    /// into graph-owned authority and are not materialized as per-cell graph
-    /// formulas. Runtime evaluation remains fail-closed until mixed execution is
-    /// explicitly wired.
+    /// Experimental mode: accepted FormulaPlane spans are installed into
+    /// graph-owned authority and are not materialized as per-cell graph formulas.
+    #[default]
     AuthoritativeExperimental,
 }
 
@@ -338,9 +336,9 @@ pub struct EvalConfig {
     /// When disabled, the engine avoids per-pass timing/edge-count bookkeeping.
     pub enable_virtual_dep_telemetry: bool,
 
-    /// FormulaPlane ingest/planning mode. Defaults to `Off`; `Shadow` may report
-    /// candidate span opportunities but must still materialize every formula via
-    /// the legacy graph path.
+    /// FormulaPlane ingest/planning mode. Defaults to `AuthoritativeExperimental`;
+    /// `Shadow` may report candidate span opportunities but must still materialize
+    /// every formula via the legacy graph path.
     pub formula_plane_mode: FormulaPlaneMode,
 }
 
@@ -394,7 +392,7 @@ impl Default for EvalConfig {
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
             enable_virtual_dep_telemetry: false,
-            formula_plane_mode: FormulaPlaneMode::Off,
+            formula_plane_mode: FormulaPlaneMode::AuthoritativeExperimental,
         }
     }
 }

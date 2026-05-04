@@ -18,7 +18,8 @@ fn record(row: u32, col: u32, formula: &str) -> FormulaIngestRecord {
 
 #[test]
 fn formula_plane_off_ingest_reports_graph_materialized_formulas() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
+    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Off);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
     let report = engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(
             "Sheet1",
