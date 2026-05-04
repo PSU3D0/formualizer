@@ -6277,9 +6277,27 @@ where
             // Build graph for all staged formulas before evaluating
             self.build_graph_all()?;
         }
-        if self.graph.formula_authority().active_span_count() > 0 {
+        self.evaluate_all_coordinator()
+    }
+
+    /// Central FormulaPlane-aware coordinator for `evaluate_all`. Routes to the
+    /// FormulaPlane mixed runtime when active spans exist, otherwise delegates
+    /// to the legacy primitive. This is the only entry point that decides which
+    /// runtime executes for `evaluate_all`-class work.
+    fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
+        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+            && self.graph.formula_authority().active_span_count() > 0
+        {
             return self.evaluate_authoritative_formula_plane_all();
         }
+        self.evaluate_all_legacy_impl()
+    }
+
+    /// Legacy `evaluate_all` body, reachable from the FormulaPlane coordinator
+    /// when no active spans exist or FormulaPlane authority is not in
+    /// `AuthoritativeExperimental` mode. This is now an internal primitive; it
+    /// must not be invoked directly from public APIs.
+    fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
