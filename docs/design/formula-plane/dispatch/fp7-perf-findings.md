@@ -120,7 +120,36 @@ Beyond that, span-aware vectorized kernels are the next tier — recognize that 
 ```text
 [done]   Reject internal-dep families at placement
 [done]   Probe rework: realistic formula counts, anchored variants
+[done]   Issue A: relocation-aware visitor for SpanEvaluator (commit 2fe6fd1)
 [next]   Issue B: short-circuit canonicalization for trivially-unique groups
-[plan]   Issue A: relocation-aware visitor for SpanEvaluator
+[plan]   Uniform-value span broadcast (50-100x on absolute-only families)
+[plan]   Direct DenseRange writes for Rect/RowRun/ColRun spans
 [future] Span-aware vectorized kernels for known function shapes
 ```
+
+## Post-Issue-A probe (rows=50000)
+
+| scenario              | first eval Off→Auth | edit Off→Auth |
+|---|---|---|
+| two-trivial-families  | 96→25ms (3.84x)     | 2.54→2.33ms (1.09x) |
+| single-trivial-family | 46→12ms (3.83x)     | 1.23→1.25ms (0.98x) |
+| fixed-anchor-family   | 39→11ms (3.55x)     | 4.04→2.58ms (1.56x) |
+| five-families         | 260→69ms (3.77x)    | 6.34→5.93ms (1.07x) |
+| heavy-arith-family    | 36→44ms (0.82x)     | 1.39→1.36ms (1.02x) |
+| rect-family-10cols    | 527→124ms (4.25x)   | 50.25→28.41ms (1.77x) |
+| two-anchored-families | 62→23ms (2.70x)     | 7.37→5.25ms (1.40x) |
+
+All family-engaged scenarios now show 2.7–4.25x first-eval speedup and
+1.4–1.8x edit-recalc speedup. Heavy arithmetic is at parity.
+
+## Remaining gaps
+
+- **Load tax** on no-span workbooks (`all-unique-singletons`, `long-chain-family`):
+  -32% to -50% load. Issue B (canonicalization short-circuit) addresses this.
+- **Heavy-arith first eval** at parity but not winning. Span kernels would
+  unlock 5–10x here by recognizing repeated arithmetic shapes.
+- **Edit recalc on trivial families** at parity (~1.0–1.1x) because dirty
+  closure says "all dirty" for absolute-anchor cells edited at A1; the work
+  is the same as Off mode. Bounded dirty already correct; gain is bounded
+  by per-cell interpret cost which is now floor.
+
