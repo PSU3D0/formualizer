@@ -118,13 +118,23 @@ Beyond that, span-aware vectorized kernels are the next tier — recognize that 
 ## Action items
 
 ```text
-[done]   Reject internal-dep families at placement
-[done]   Probe rework: realistic formula counts, anchored variants
-[done]   Issue A: relocation-aware visitor for SpanEvaluator (commit 2fe6fd1)
-[next]   Issue B: short-circuit canonicalization for trivially-unique groups
-[plan]   Uniform-value span broadcast (50-100x on absolute-only families)
-[plan]   Direct DenseRange writes for Rect/RowRun/ColRun spans
-[future] Span-aware vectorized kernels for known function shapes
+[done]    Reject internal-dep families at placement
+[done]    Probe rework: realistic formula counts, anchored variants
+[done]    Issue A: relocation-aware visitor for SpanEvaluator (2fe6fd1)
+[done]    Issue B partial: dedupe canonicalization (8919312)
+[reject]  Issue B as scoped did not move the load-time needle for
+          no-span workbooks. Load tax is in FormulaPlacementCandidate
+          construction (Arc::new + ast.clone per record) and singleton
+          fallback's FormulaIngestRecord reconstruction, not in
+          canonicalization. A pre-pass that skips candidate construction
+          for unique-text records would lose relative-A1 families. A
+          deeper fix needs FormulaIngestRecord to carry Arc<ASTNode>
+          from the parser side, which is a wider refactor outside FP.
+[plan]    Uniform-value span broadcast (50-100x on absolute-only families)
+[plan]    Direct DenseRange writes for Rect/RowRun/ColRun spans
+[plan]    Cache mixed-schedule indexes by (topology_epoch, indexes_epoch)
+[plan]    Wire structural/spill/source dirty hooks into FormulaAuthority
+[future]  Span-aware vectorized kernels for known function shapes
 ```
 
 ## Post-Issue-A probe (rows=50000)
