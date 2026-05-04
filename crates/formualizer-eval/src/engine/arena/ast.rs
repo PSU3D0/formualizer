@@ -16,6 +16,11 @@ impl AstNodeId {
     pub fn as_u32(self) -> u32 {
         self.0
     }
+
+    #[cfg(test)]
+    pub(crate) const fn from_u32(raw: u32) -> Self {
+        Self(raw)
+    }
 }
 
 impl fmt::Display for AstNodeId {
@@ -133,10 +138,86 @@ pub enum CompactRefType {
     },
 }
 
+/// Arena entry containing structural node data plus canonical metadata.
+///
+/// Phase 1 keeps metadata at its default value for existing raw interning
+/// paths. Future canonical interning paths populate `meta` via the arena
+/// canonicalization helpers.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct AstNodeEntry {
+    pub(crate) data: AstNodeData,
+    pub(crate) meta: AstNodeMetadata,
+}
+
+/// Canonical metadata associated with an arena AST node.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct AstNodeMetadata {
+    pub(crate) canonical_hash: u64,
+    pub(crate) labels: CanonicalLabels,
+}
+
+/// Compact bitset labels for arena-native canonicalization.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct CanonicalLabels {
+    pub(crate) flags: u64,
+    pub(crate) rejects: u64,
+}
+
+#[allow(dead_code)]
+impl CanonicalLabels {
+    pub(crate) const FLAG_RELATIVE_ONLY: u64 = 1 << 0;
+    pub(crate) const FLAG_ABSOLUTE_ONLY: u64 = 1 << 1;
+    pub(crate) const FLAG_MIXED_ANCHORS: u64 = 1 << 2;
+    pub(crate) const FLAG_VOLATILE: u64 = 1 << 3;
+    pub(crate) const FLAG_DYNAMIC: u64 = 1 << 4;
+    pub(crate) const FLAG_CONTAINS_STRUCTURED_REF: u64 = 1 << 5;
+    pub(crate) const FLAG_NEEDS_PLACEMENT_REWRITE: u64 = 1 << 6;
+    pub(crate) const FLAG_CONTAINS_NAME: u64 = 1 << 7;
+    pub(crate) const FLAG_CONTAINS_TABLE: u64 = 1 << 8;
+    pub(crate) const FLAG_CONTAINS_RANGE: u64 = 1 << 9;
+    pub(crate) const FLAG_CONTAINS_ARRAY: u64 = 1 << 10;
+    pub(crate) const FLAG_CONTAINS_LET_LAMBDA: u64 = 1 << 11;
+    pub(crate) const FLAG_CONTAINS_FUNCTION: u64 = 1 << 12;
+    pub(crate) const FLAG_EXPLICIT_SHEET: u64 = 1 << 13;
+    pub(crate) const FLAG_CURRENT_SHEET: u64 = 1 << 14;
+
+    // Reject bits mirror `CanonicalRejectReason` variants in
+    // `formula_plane/template_canonical.rs` by kind/variant order.
+    pub(crate) const REJECT_INVALID_PLACEMENT_ANCHOR: u64 = 1 << 0;
+    pub(crate) const REJECT_DYNAMIC_REFERENCE: u64 = 1 << 1;
+    pub(crate) const REJECT_UNKNOWN_OR_CUSTOM_FUNCTION: u64 = 1 << 2;
+    pub(crate) const REJECT_LOCAL_ENVIRONMENT: u64 = 1 << 3;
+    pub(crate) const REJECT_PARSER_VOLATILE_FLAG: u64 = 1 << 4;
+    pub(crate) const REJECT_VOLATILE_FUNCTION: u64 = 1 << 5;
+    pub(crate) const REJECT_REFERENCE_RETURNING_FUNCTION: u64 = 1 << 6;
+    pub(crate) const REJECT_ARRAY_OR_SPILL_FUNCTION: u64 = 1 << 7;
+    pub(crate) const REJECT_ARRAY_LITERAL: u64 = 1 << 8;
+    pub(crate) const REJECT_SPILL_REFERENCE: u64 = 1 << 9;
+    pub(crate) const REJECT_SPILL_RESULT_REGION_OPERATOR: u64 = 1 << 10;
+    pub(crate) const REJECT_IMPLICIT_INTERSECTION_OPERATOR: u64 = 1 << 11;
+    pub(crate) const REJECT_CALL_EXPRESSION: u64 = 1 << 12;
+    pub(crate) const REJECT_NAMED_REFERENCE: u64 = 1 << 13;
+    pub(crate) const REJECT_STRUCTURED_REFERENCE: u64 = 1 << 14;
+    pub(crate) const REJECT_STRUCTURED_REFERENCE_CURRENT_ROW: u64 = 1 << 15;
+    pub(crate) const REJECT_THREE_D_REFERENCE: u64 = 1 << 16;
+    pub(crate) const REJECT_EXTERNAL_REFERENCE: u64 = 1 << 17;
+    pub(crate) const REJECT_OPEN_RANGE_REFERENCE: u64 = 1 << 18;
+    pub(crate) const REJECT_WHOLE_AXIS_REFERENCE: u64 = 1 << 19;
+    pub(crate) const REJECT_UNSUPPORTED_REFERENCE: u64 = 1 << 20;
+
+    pub(crate) fn has_flag(self, flag: u64) -> bool {
+        self.flags & flag != 0
+    }
+
+    pub(crate) fn has_reject(self, reject: u64) -> bool {
+        self.rejects & reject != 0
+    }
+}
+
 /// Arena for storing AST nodes with deduplication
 pub struct AstArena {
     /// Node storage
-    nodes: Vec<AstNodeData>,
+    nodes: Vec<AstNodeEntry>,
 
     /// Hash -> node index for deduplication
     dedup_map: FxHashMap<u64, AstNodeId>,
@@ -185,15 +266,37 @@ impl AstArena {
         }
     }
 
-    /// Insert a node, deduplicating if it already exists
+    /// Insert a node, deduplicating if it already exists.
+    ///
+    /// Phase 1 preserves raw/literal interning semantics: metadata is filled
+    /// with zeros and is not part of the dedup key.
     pub fn insert(&mut self, node: AstNodeData) -> AstNodeId {
-        // Compute hash
+        self.insert_entry(node, AstNodeMetadata::default())
+    }
+
+    /// Insert a node with precomputed canonical metadata.
+    ///
+    /// This is unused in Phase 1 and reserved for the future canonical
+    /// interning path. Deduplication remains structural on `AstNodeData` only;
+    /// if a matching node already exists, the existing entry (and metadata)
+    /// wins.
+    #[allow(dead_code)]
+    pub(crate) fn insert_with_meta(
+        &mut self,
+        node: AstNodeData,
+        meta: AstNodeMetadata,
+    ) -> AstNodeId {
+        self.insert_entry(node, meta)
+    }
+
+    fn insert_entry(&mut self, node: AstNodeData, meta: AstNodeMetadata) -> AstNodeId {
+        // Compute structural hash. Metadata is deliberately excluded.
         let hash = self.hash_node(&node);
 
         // Check for existing node
         if let Some(&id) = self.dedup_map.get(&hash) {
             // Verify it's actually the same (handle hash collisions)
-            if self.nodes[id.0 as usize] == node {
+            if self.nodes[id.0 as usize].data == node {
                 self.dedup_hits += 1;
                 return id;
             }
@@ -201,7 +304,7 @@ impl AstArena {
 
         // Add new node
         let id = AstNodeId(self.nodes.len() as u32);
-        self.nodes.push(node);
+        self.nodes.push(AstNodeEntry { data: node, meta });
         self.dedup_map.insert(hash, id);
         id
     }
@@ -274,7 +377,19 @@ impl AstArena {
 
     /// Get a node by ID
     pub fn get(&self, id: AstNodeId) -> Option<&AstNodeData> {
+        self.nodes.get(id.0 as usize).map(|entry| &entry.data)
+    }
+
+    /// Get an arena entry by ID.
+    #[allow(dead_code)]
+    pub(crate) fn entry(&self, id: AstNodeId) -> Option<&AstNodeEntry> {
         self.nodes.get(id.0 as usize)
+    }
+
+    /// Get canonical metadata for a node by ID.
+    #[allow(dead_code)]
+    pub(crate) fn metadata(&self, id: AstNodeId) -> Option<AstNodeMetadata> {
+        self.entry(id).map(|entry| entry.meta)
     }
 
     /// Get function arguments for a function node
@@ -382,7 +497,7 @@ impl AstArena {
 
     /// Returns memory usage in bytes (approximate)
     pub fn memory_usage(&self) -> usize {
-        self.nodes.capacity() * std::mem::size_of::<AstNodeData>()
+        self.nodes.capacity() * std::mem::size_of::<AstNodeEntry>()
             + self.dedup_map.capacity() * (8 + 4) // hash + id
             + self.function_args.capacity() * 4
             + self.array_elements.capacity() * 4

@@ -10,6 +10,7 @@ pub mod formula_ingest;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
+pub(crate) mod ingest_pipeline;
 pub mod journal;
 pub mod plan;
 pub mod range_view;
