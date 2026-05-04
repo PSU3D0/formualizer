@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::SheetId;
 use crate::engine::VertexId;
@@ -120,6 +120,7 @@ pub(crate) struct FormulaProducerResultEntry {
 pub(crate) struct FormulaProducerResultIndex {
     index: SheetRegionIndex<FormulaProducerResultEntryId>,
     entries: Vec<FormulaProducerResultEntry>,
+    by_producer: FxHashMap<FormulaProducerId, RegionPattern>,
     epoch: u64,
 }
 
@@ -134,6 +135,7 @@ impl FormulaProducerResultIndex {
             producer,
             result_region,
         });
+        self.by_producer.insert(producer, result_region);
         self.index.insert(result_region, id);
         self.epoch = self.epoch.saturating_add(1);
         id
@@ -161,10 +163,7 @@ impl FormulaProducerResultIndex {
         &self,
         producer: FormulaProducerId,
     ) -> Option<RegionPattern> {
-        self.entries
-            .iter()
-            .find(|entry| entry.producer == producer)
-            .map(|entry| entry.result_region)
+        self.by_producer.get(&producer).copied()
     }
 
     pub(crate) fn len(&self) -> usize {

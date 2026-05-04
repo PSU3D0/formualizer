@@ -16,6 +16,7 @@ pub(crate) mod placement;
 pub(crate) mod producer;
 pub(crate) mod region_index;
 pub(crate) mod runtime;
+pub(crate) mod scheduler;
 pub mod span_counters;
 pub(crate) mod span_eval;
 pub mod span_store;
