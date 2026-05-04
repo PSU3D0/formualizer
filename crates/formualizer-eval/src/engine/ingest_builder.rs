@@ -2,7 +2,8 @@ use crate::engine::graph::DependencyGraph;
 use formualizer_common::Coord as AbsCoord;
 // use crate::engine::plan::RangeKey; // no longer needed directly here
 use crate::engine::EvalConfig;
-use crate::engine::arena::AstNodeId;
+use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
+use crate::engine::plan::DependencyPlanAst;
 use crate::{SheetId, engine::vertex::VertexId};
 use formualizer_common::{ExcelError, ExcelErrorKind};
 use formualizer_parse::parser::{ASTNode, CollectPolicy};
@@ -28,6 +29,11 @@ struct StagedFormula {
     col: u32,
     ast: FormulaAstSource,
     volatile: bool,
+}
+
+enum WorkingAst {
+    Tree(ASTNode),
+    Arena(AstNodeId),
 }
 
 struct SheetStage {
@@ -141,6 +147,86 @@ impl<'g> BulkIngestBuilder<'g> {
         }
     }
 
+    fn ast_is_volatile_arena(ast_id: AstNodeId, data_store: &DataStore) -> bool {
+        let Some(node) = data_store.get_node(ast_id) else {
+            return false;
+        };
+        match node {
+            AstNodeData::Function { name_id, .. } => {
+                let name = data_store.resolve_ast_string(*name_id);
+                if let Some(func) = crate::function_registry::get("", name)
+                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
+                {
+                    return true;
+                }
+                data_store.get_args(ast_id).is_some_and(|args| {
+                    args.iter()
+                        .any(|&arg| Self::ast_is_volatile_arena(arg, data_store))
+                })
+            }
+            AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                Self::ast_is_volatile_arena(*left_id, data_store)
+                    || Self::ast_is_volatile_arena(*right_id, data_store)
+            }
+            AstNodeData::UnaryOp { expr_id, .. } => {
+                Self::ast_is_volatile_arena(*expr_id, data_store)
+            }
+            AstNodeData::Array { .. } => {
+                data_store
+                    .get_array_elems(ast_id)
+                    .is_some_and(|(_, _, elems)| {
+                        elems
+                            .iter()
+                            .any(|&elem| Self::ast_is_volatile_arena(elem, data_store))
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    fn ast_is_dynamic_arena(ast_id: AstNodeId, data_store: &DataStore) -> bool {
+        let Some(node) = data_store.get_node(ast_id) else {
+            return false;
+        };
+        match node {
+            AstNodeData::Function { name_id, .. } => {
+                let name = data_store.resolve_ast_string(*name_id);
+                if let Some(func) = crate::function_registry::get("", name)
+                    && func
+                        .caps()
+                        .contains(crate::function::FnCaps::DYNAMIC_DEPENDENCY)
+                {
+                    return true;
+                }
+                data_store.get_args(ast_id).is_some_and(|args| {
+                    args.iter()
+                        .any(|&arg| Self::ast_is_dynamic_arena(arg, data_store))
+                })
+            }
+            AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                Self::ast_is_dynamic_arena(*left_id, data_store)
+                    || Self::ast_is_dynamic_arena(*right_id, data_store)
+            }
+            AstNodeData::UnaryOp { expr_id, .. } => {
+                Self::ast_is_dynamic_arena(*expr_id, data_store)
+            }
+            AstNodeData::Array { .. } => {
+                data_store
+                    .get_array_elems(ast_id)
+                    .is_some_and(|(_, _, elems)| {
+                        elems
+                            .iter()
+                            .any(|&elem| Self::ast_is_dynamic_arena(elem, data_store))
+                    })
+            }
+            _ => false,
+        }
+    }
+
     pub fn finish(mut self) -> Result<BulkIngestSummary, ExcelError> {
         use crate::instant::FzInstant as Instant;
         let t0 = Instant::now();
@@ -193,19 +279,7 @@ impl<'g> BulkIngestBuilder<'g> {
                     batch_count += 1;
 
                     let mut working_asts = Vec::with_capacity(chunk.len());
-                    let mut rewritten_flags = Vec::with_capacity(chunk.len());
                     for formula in chunk.iter_mut() {
-                        let mut ast = match &formula.ast {
-                            FormulaAstSource::Owned(ast) => ast.clone(),
-                            FormulaAstSource::Interned(ast_id) => self
-                                .g
-                                .data_store()
-                                .retrieve_ast(*ast_id, self.g.sheet_reg())
-                                .ok_or_else(|| {
-                                    ExcelError::new(ExcelErrorKind::Value)
-                                        .with_message("Missing interned formula AST")
-                                })?,
-                        };
                         let coord = crate::reference::Coord::from_excel(
                             formula.row,
                             formula.col,
@@ -213,19 +287,47 @@ impl<'g> BulkIngestBuilder<'g> {
                             true,
                         );
                         let cell = crate::reference::CellRef::new(stage.id, coord);
-                        let rewritten = self
-                            .g
-                            .rewrite_structured_references_for_cell(&mut ast, cell)?;
-                        formula.volatile = Self::is_ast_volatile(&ast);
-                        working_asts.push(ast);
-                        rewritten_flags.push(rewritten);
+                        let working = match &formula.ast {
+                            FormulaAstSource::Owned(ast) => {
+                                let mut ast = ast.clone();
+                                self.g
+                                    .rewrite_structured_references_for_cell(&mut ast, cell)?;
+                                formula.volatile = Self::is_ast_volatile(&ast);
+                                WorkingAst::Tree(ast)
+                            }
+                            FormulaAstSource::Interned(ast_id) => {
+                                if self.g.data_store().ast_needs_structural_rewrite(*ast_id) {
+                                    let mut ast = self
+                                        .g
+                                        .data_store()
+                                        .retrieve_ast(*ast_id, self.g.sheet_reg())
+                                        .ok_or_else(|| {
+                                            ExcelError::new(ExcelErrorKind::Value)
+                                                .with_message("Missing interned formula AST")
+                                        })?;
+                                    self.g
+                                        .rewrite_structured_references_for_cell(&mut ast, cell)?;
+                                    formula.volatile = Self::is_ast_volatile(&ast);
+                                    let rewritten_id = self.g.store_ast(&ast);
+                                    WorkingAst::Arena(rewritten_id)
+                                } else {
+                                    formula.volatile =
+                                        Self::ast_is_volatile_arena(*ast_id, self.g.data_store());
+                                    WorkingAst::Arena(*ast_id)
+                                }
+                            }
+                        };
+                        working_asts.push(working);
                     }
 
                     let tp0 = Instant::now();
-                    let refs = chunk
-                        .iter()
-                        .zip(working_asts.iter())
-                        .map(|(formula, ast)| (stage.name.as_str(), formula.row, formula.col, ast));
+                    let refs = chunk.iter().zip(working_asts.iter()).map(|(formula, ast)| {
+                        let ast = match ast {
+                            WorkingAst::Tree(ast) => DependencyPlanAst::Tree(ast),
+                            WorkingAst::Arena(ast_id) => DependencyPlanAst::Arena(*ast_id),
+                        };
+                        (stage.name.as_str(), formula.row, formula.col, ast)
+                    });
                     self.vols_buf.clear();
                     self.vols_buf.reserve(chunk.len());
                     for formula in chunk.iter() {
@@ -236,9 +338,9 @@ impl<'g> BulkIngestBuilder<'g> {
                         range_expansion_limit: self.g.range_expansion_limit(),
                         include_names: true,
                     };
-                    let plan = self
-                        .g
-                        .plan_dependencies(refs, &policy, Some(&self.vols_buf))?;
+                    let plan =
+                        self.g
+                            .plan_dependencies_mixed(refs, &policy, Some(&self.vols_buf))?;
                     edges_adj.reserve(plan.formula_targets.len());
                     t_plan_ms += tp0.elapsed().as_millis();
                     n_targets += plan.formula_targets.len();
@@ -266,13 +368,11 @@ impl<'g> BulkIngestBuilder<'g> {
                     // be rewritten for this cell.
                     let ta0 = Instant::now();
                     self.g.reserve_formula_metadata(plan.formula_targets.len());
-                    let ast_ids: Vec<AstNodeId> = chunk
+                    let ast_ids: Vec<AstNodeId> = working_asts
                         .iter()
-                        .zip(working_asts.iter())
-                        .zip(rewritten_flags.iter().copied())
-                        .map(|((formula, ast), rewritten)| match &formula.ast {
-                            FormulaAstSource::Interned(ast_id) if !rewritten => *ast_id,
-                            _ => self.g.store_ast(ast),
+                        .map(|working| match working {
+                            WorkingAst::Tree(ast) => self.g.store_ast(ast),
+                            WorkingAst::Arena(ast_id) => *ast_id,
                         })
                         .collect();
 
@@ -287,8 +387,12 @@ impl<'g> BulkIngestBuilder<'g> {
                     for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
                         let vid = all_vids[pos as usize];
                         target_vids.push(vid);
-                        let ast_ref = &working_asts[i];
-                        let dynamic = self.g.is_ast_dynamic(ast_ref);
+                        let dynamic = match &working_asts[i] {
+                            WorkingAst::Tree(ast) => self.g.is_ast_dynamic(ast),
+                            WorkingAst::Arena(ast_id) => {
+                                Self::ast_is_dynamic_arena(*ast_id, self.g.data_store())
+                            }
+                        };
                         let volatile = chunk[i].volatile;
                         if load_fast {
                             self.g.assign_formula_vertex_load_fast(

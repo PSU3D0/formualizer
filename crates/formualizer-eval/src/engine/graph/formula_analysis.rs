@@ -50,6 +50,424 @@ impl DependencyGraph {
         self.extract_dependencies_inner(ast, current_sheet_id, UnresolvedNamePolicy::Collect)
     }
 
+    pub(super) fn extract_dependencies_arena(
+        &mut self,
+        ast_id: AstNodeId,
+        current_sheet_id: SheetId,
+    ) -> ExtractDependenciesResult {
+        let (dependencies, ranges, placeholders, named_dependencies, _pending_names) = self
+            .extract_dependencies_inner_arena(
+                ast_id,
+                current_sheet_id,
+                UnresolvedNamePolicy::Error,
+            )?;
+        Ok((dependencies, ranges, placeholders, named_dependencies))
+    }
+
+    pub(super) fn extract_dependencies_with_pending_names_arena(
+        &mut self,
+        ast_id: AstNodeId,
+        current_sheet_id: SheetId,
+    ) -> ExtractDependenciesWithPendingNamesResult {
+        self.extract_dependencies_inner_arena(
+            ast_id,
+            current_sheet_id,
+            UnresolvedNamePolicy::Collect,
+        )
+    }
+
+    fn extract_dependencies_inner_arena(
+        &mut self,
+        ast_id: AstNodeId,
+        current_sheet_id: SheetId,
+        unresolved_name_policy: UnresolvedNamePolicy,
+    ) -> ExtractDependenciesWithPendingNamesResult {
+        let mut dependencies = FxHashSet::default();
+        let mut range_dependencies: Vec<SharedRangeRef<'static>> = Vec::new();
+        let mut created_placeholders = Vec::new();
+        let mut named_dependencies = Vec::new();
+        let mut unresolved_names = FxHashSet::default();
+        let mut local_scopes: Vec<FxHashSet<String>> = Vec::new();
+        self.extract_dependencies_recursive_arena(
+            ast_id,
+            current_sheet_id,
+            &mut dependencies,
+            &mut range_dependencies,
+            &mut created_placeholders,
+            &mut named_dependencies,
+            &mut unresolved_names,
+            &mut local_scopes,
+            unresolved_name_policy,
+        )?;
+
+        // Deduplicate range references.
+        let mut deduped_ranges = Vec::new();
+        for range_ref in range_dependencies {
+            if !deduped_ranges.contains(&range_ref) {
+                deduped_ranges.push(range_ref);
+            }
+        }
+
+        named_dependencies.sort_unstable_by_key(|v| v.0);
+        named_dependencies.dedup_by_key(|v| v.0);
+
+        let mut unresolved_names: Vec<String> = unresolved_names.into_iter().collect();
+        unresolved_names.sort();
+
+        Ok((
+            dependencies.into_iter().collect(),
+            deduped_ranges,
+            created_placeholders,
+            named_dependencies,
+            unresolved_names,
+        ))
+    }
+
+    fn extract_dependencies_recursive_arena(
+        &mut self,
+        ast_id: AstNodeId,
+        current_sheet_id: SheetId,
+        dependencies: &mut FxHashSet<VertexId>,
+        range_dependencies: &mut Vec<SharedRangeRef<'static>>,
+        created_placeholders: &mut Vec<CellRef>,
+        named_dependencies: &mut Vec<VertexId>,
+        unresolved_names: &mut FxHashSet<String>,
+        local_scopes: &mut Vec<FxHashSet<String>>,
+        unresolved_name_policy: UnresolvedNamePolicy,
+    ) -> Result<(), ExcelError> {
+        let Some(node) = self.data_store.get_node(ast_id).cloned() else {
+            return Err(
+                ExcelError::new(ExcelErrorKind::Value).with_message("Missing interned formula AST")
+            );
+        };
+
+        match node {
+            super::super::arena::ast::AstNodeData::Reference { ref_type, .. } => {
+                let reference = self
+                    .data_store
+                    .reconstruct_reference_type_for_eval(&ref_type, &self.sheet_reg);
+                match &reference {
+                    ReferenceType::External(ext) => match ext.kind {
+                        formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
+                            let name = ext.raw.as_str();
+                            if let Some(source) = self.resolve_source_scalar_entry(name) {
+                                dependencies.insert(source.vertex);
+                            } else {
+                                return Err(ExcelError::new(ExcelErrorKind::Name)
+                                    .with_message(format!("Undefined name: {name}")));
+                            }
+                        }
+                        formualizer_parse::parser::ExternalRefKind::Range { .. } => {
+                            let name = ext.raw.as_str();
+                            if let Some(source) = self.resolve_source_table_entry(name) {
+                                dependencies.insert(source.vertex);
+                            } else {
+                                return Err(ExcelError::new(ExcelErrorKind::Name)
+                                    .with_message(format!("Undefined table: {name}")));
+                            }
+                        }
+                    },
+                    ReferenceType::Cell { .. } => {
+                        let vertex_id = self.get_or_create_vertex_for_reference(
+                            &reference,
+                            current_sheet_id,
+                            created_placeholders,
+                        )?;
+                        dependencies.insert(vertex_id);
+                    }
+                    ReferenceType::Range {
+                        sheet,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                        ..
+                    } => {
+                        // If any bound is missing (infinite/partial range), always keep compressed.
+                        let has_unbounded = start_row.is_none()
+                            || end_row.is_none()
+                            || start_col.is_none()
+                            || end_col.is_none();
+                        if has_unbounded {
+                            if let Some(SharedRef::Range(range)) = reference.to_sheet_ref_lossy() {
+                                let owned = range.into_owned();
+                                let sheet_id = match owned.sheet {
+                                    SharedSheetLocator::Id(id) => id,
+                                    SharedSheetLocator::Current => current_sheet_id,
+                                    SharedSheetLocator::Name(name) => {
+                                        self.sheet_id_mut(name.as_ref())
+                                    }
+                                };
+                                range_dependencies.push(SharedRangeRef {
+                                    sheet: SharedSheetLocator::Id(sheet_id),
+                                    start_row: owned.start_row,
+                                    start_col: owned.start_col,
+                                    end_row: owned.end_row,
+                                    end_col: owned.end_col,
+                                });
+                            }
+                        } else {
+                            let sr = start_row.unwrap();
+                            let sc = start_col.unwrap();
+                            let er = end_row.unwrap();
+                            let ec = end_col.unwrap();
+
+                            if sr > er || sc > ec {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref));
+                            }
+
+                            let height = er.saturating_sub(sr) + 1;
+                            let width = ec.saturating_sub(sc) + 1;
+                            let size = (width * height) as usize;
+
+                            if size <= self.config.range_expansion_limit {
+                                // Expand to individual cells.
+                                let sheet_id = match sheet {
+                                    Some(name) => self.resolve_existing_sheet_id(name)?,
+                                    None => current_sheet_id,
+                                };
+                                for row in sr..=er {
+                                    for col in sc..=ec {
+                                        let coord = Coord::from_excel(row, col, true, true);
+                                        let addr = CellRef::new(sheet_id, coord);
+                                        let vertex_id =
+                                            self.get_or_create_vertex(&addr, created_placeholders);
+                                        dependencies.insert(vertex_id);
+                                    }
+                                }
+                            } else {
+                                // Keep as a compressed range dependency.
+                                if let Some(SharedRef::Range(range)) =
+                                    reference.to_sheet_ref_lossy()
+                                {
+                                    let owned = range.into_owned();
+                                    let sheet_id = match owned.sheet {
+                                        SharedSheetLocator::Id(id) => id,
+                                        SharedSheetLocator::Current => current_sheet_id,
+                                        SharedSheetLocator::Name(name) => {
+                                            self.sheet_id_mut(name.as_ref())
+                                        }
+                                    };
+                                    range_dependencies.push(SharedRangeRef {
+                                        sheet: SharedSheetLocator::Id(sheet_id),
+                                        start_row: owned.start_row,
+                                        start_col: owned.start_col,
+                                        end_row: owned.end_row,
+                                        end_col: owned.end_col,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    ReferenceType::NamedRange(name) => {
+                        let key = name.to_ascii_uppercase();
+                        if local_scopes.iter().rev().any(|scope| scope.contains(&key)) {
+                            return Ok(());
+                        }
+
+                        if let Some(named_range) = self.resolve_name_entry(name, current_sheet_id) {
+                            dependencies.insert(named_range.vertex);
+                            named_dependencies.push(named_range.vertex);
+                        } else if let Some(source) = self.resolve_source_scalar_entry(name) {
+                            dependencies.insert(source.vertex);
+                        } else {
+                            match unresolved_name_policy {
+                                UnresolvedNamePolicy::Error => {
+                                    return Err(ExcelError::new(ExcelErrorKind::Name)
+                                        .with_message(format!("Undefined name: {name}")));
+                                }
+                                UnresolvedNamePolicy::Collect => {
+                                    unresolved_names.insert(name.to_string());
+                                }
+                            }
+                        }
+                    }
+                    ReferenceType::Table(tref) => {
+                        if let Some(table) = self.resolve_table_entry(&tref.name) {
+                            dependencies.insert(table.vertex);
+                        } else if let Some(source) = self.resolve_source_table_entry(&tref.name) {
+                            dependencies.insert(source.vertex);
+                        } else {
+                            return Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined table: {}", tref.name)));
+                        }
+                    }
+                    // 3D references parse correctly but aren't yet wired through
+                    // the dependency graph; treat them as no-op dependencies for
+                    // now so formulas containing them still load. Evaluation will
+                    // surface #N/IMPL! via the Resolver path.
+                    ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {}
+                }
+            }
+            super::super::arena::ast::AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                self.extract_dependencies_recursive_arena(
+                    left_id,
+                    current_sheet_id,
+                    dependencies,
+                    range_dependencies,
+                    created_placeholders,
+                    named_dependencies,
+                    unresolved_names,
+                    local_scopes,
+                    unresolved_name_policy,
+                )?;
+                self.extract_dependencies_recursive_arena(
+                    right_id,
+                    current_sheet_id,
+                    dependencies,
+                    range_dependencies,
+                    created_placeholders,
+                    named_dependencies,
+                    unresolved_names,
+                    local_scopes,
+                    unresolved_name_policy,
+                )?;
+            }
+            super::super::arena::ast::AstNodeData::UnaryOp { expr_id, .. } => {
+                self.extract_dependencies_recursive_arena(
+                    expr_id,
+                    current_sheet_id,
+                    dependencies,
+                    range_dependencies,
+                    created_placeholders,
+                    named_dependencies,
+                    unresolved_names,
+                    local_scopes,
+                    unresolved_name_policy,
+                )?;
+            }
+            super::super::arena::ast::AstNodeData::Function { name_id, .. } => {
+                let name = self.data_store.resolve_ast_string(name_id).to_string();
+                let args: Vec<AstNodeId> = self
+                    .data_store
+                    .get_args(ast_id)
+                    .map_or_else(Vec::new, |args| args.to_vec());
+                if name.eq_ignore_ascii_case("LET") {
+                    if args.len() >= 3 && args.len() % 2 == 1 {
+                        local_scopes.push(FxHashSet::default());
+
+                        for pair_idx in (0..args.len() - 1).step_by(2) {
+                            self.extract_dependencies_recursive_arena(
+                                args[pair_idx + 1],
+                                current_sheet_id,
+                                dependencies,
+                                range_dependencies,
+                                created_placeholders,
+                                named_dependencies,
+                                unresolved_names,
+                                local_scopes,
+                                unresolved_name_policy,
+                            )?;
+
+                            if let Some(local_name) = self.arena_named_range_name(args[pair_idx])
+                                && let Some(scope) = local_scopes.last_mut()
+                            {
+                                scope.insert(local_name.to_ascii_uppercase());
+                            }
+                        }
+
+                        self.extract_dependencies_recursive_arena(
+                            args[args.len() - 1],
+                            current_sheet_id,
+                            dependencies,
+                            range_dependencies,
+                            created_placeholders,
+                            named_dependencies,
+                            unresolved_names,
+                            local_scopes,
+                            unresolved_name_policy,
+                        )?;
+
+                        local_scopes.pop();
+                    } else {
+                        for arg in args {
+                            self.extract_dependencies_recursive_arena(
+                                arg,
+                                current_sheet_id,
+                                dependencies,
+                                range_dependencies,
+                                created_placeholders,
+                                named_dependencies,
+                                unresolved_names,
+                                local_scopes,
+                                unresolved_name_policy,
+                            )?;
+                        }
+                    }
+                } else if name.eq_ignore_ascii_case("LAMBDA") {
+                    if let Some((&body, params)) = args.split_last() {
+                        let mut lambda_scope = FxHashSet::default();
+                        for param in params {
+                            if let Some(param_name) = self.arena_named_range_name(*param) {
+                                lambda_scope.insert(param_name.to_ascii_uppercase());
+                            }
+                        }
+                        local_scopes.push(lambda_scope);
+                        self.extract_dependencies_recursive_arena(
+                            body,
+                            current_sheet_id,
+                            dependencies,
+                            range_dependencies,
+                            created_placeholders,
+                            named_dependencies,
+                            unresolved_names,
+                            local_scopes,
+                            unresolved_name_policy,
+                        )?;
+                        local_scopes.pop();
+                    }
+                } else {
+                    for arg in args {
+                        self.extract_dependencies_recursive_arena(
+                            arg,
+                            current_sheet_id,
+                            dependencies,
+                            range_dependencies,
+                            created_placeholders,
+                            named_dependencies,
+                            unresolved_names,
+                            local_scopes,
+                            unresolved_name_policy,
+                        )?;
+                    }
+                }
+            }
+            super::super::arena::ast::AstNodeData::Array { .. } => {
+                let elements: Vec<AstNodeId> = self
+                    .data_store
+                    .get_array_elems(ast_id)
+                    .map_or_else(Vec::new, |(_, _, elems)| elems.to_vec());
+                for cell in elements {
+                    self.extract_dependencies_recursive_arena(
+                        cell,
+                        current_sheet_id,
+                        dependencies,
+                        range_dependencies,
+                        created_placeholders,
+                        named_dependencies,
+                        unresolved_names,
+                        local_scopes,
+                        unresolved_name_policy,
+                    )?;
+                }
+            }
+            super::super::arena::ast::AstNodeData::Literal(_) => {}
+        }
+        Ok(())
+    }
+
+    fn arena_named_range_name(&self, ast_id: AstNodeId) -> Option<String> {
+        match self.data_store.get_node(ast_id)? {
+            super::super::arena::ast::AstNodeData::Reference {
+                ref_type: super::super::arena::ast::CompactRefType::NamedRange(name_id),
+                ..
+            } => Some(self.data_store.resolve_ast_string(*name_id).to_string()),
+            _ => None,
+        }
+    }
+
     fn extract_dependencies_inner(
         &mut self,
         ast: &ASTNode,

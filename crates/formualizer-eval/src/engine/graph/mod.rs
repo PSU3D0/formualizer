@@ -342,6 +342,31 @@ impl DependencyGraph {
         )
     }
 
+    pub fn plan_dependencies_mixed<'a, I>(
+        &mut self,
+        items: I,
+        policy: &formualizer_parse::parser::CollectPolicy,
+        volatile: Option<&[bool]>,
+    ) -> Result<crate::engine::plan::DependencyPlan, formualizer_common::ExcelError>
+    where
+        I: IntoIterator<
+            Item = (
+                &'a str,
+                u32,
+                u32,
+                crate::engine::plan::DependencyPlanAst<'a>,
+            ),
+        >,
+    {
+        crate::engine::plan::build_dependency_plan_mixed(
+            &mut self.sheet_reg,
+            &self.data_store,
+            items.into_iter(),
+            policy,
+            volatile,
+        )
+    }
+
     /// Ensure vertices exist for given coords; allocate missing in contiguous batches and add to edges/index.
     /// Returns a list suitable for edges.add_vertices_batch.
     pub fn ensure_vertices_batch(

@@ -328,6 +328,43 @@ impl DataStore {
         self.asts.get_array_elements_info(id)
     }
 
+    pub fn ast_needs_structural_rewrite(&self, id: AstNodeId) -> bool {
+        let mut stack = vec![id];
+        while let Some(node_id) = stack.pop() {
+            let Some(node) = self.get_node(node_id) else {
+                continue;
+            };
+            match node {
+                super::ast::AstNodeData::Reference { ref_type, .. } => {
+                    if let CompactRefType::Table { name_id, .. } = ref_type
+                        && self.resolve_ast_string(*name_id).is_empty()
+                    {
+                        return true;
+                    }
+                }
+                super::ast::AstNodeData::UnaryOp { expr_id, .. } => stack.push(*expr_id),
+                super::ast::AstNodeData::BinaryOp {
+                    left_id, right_id, ..
+                } => {
+                    stack.push(*right_id);
+                    stack.push(*left_id);
+                }
+                super::ast::AstNodeData::Function { .. } => {
+                    if let Some(args) = self.get_args(node_id) {
+                        stack.extend(args.iter().rev().copied());
+                    }
+                }
+                super::ast::AstNodeData::Array { .. } => {
+                    if let Some((_, _, elems)) = self.get_array_elems(node_id) {
+                        stack.extend(elems.iter().rev().copied());
+                    }
+                }
+                super::ast::AstNodeData::Literal(_) => {}
+            }
+        }
+        false
+    }
+
     /// Convert ASTNode to arena representation
     fn convert_ast_node(&mut self, node: &ASTNode, sheet_registry: &SheetRegistry) -> AstNodeId {
         match &node.node_type {
