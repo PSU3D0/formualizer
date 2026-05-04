@@ -6113,6 +6113,9 @@ where
         }
 
         self.graph.clear_dirty_flags(&legacy_vertices);
+        // Drop dirty flags on any newly-scheduled FP runtime cells whose graph
+        // vertices weren't in the dirty subset (e.g. recently-introduced span
+        // result cells); legacy clear_dirty_flags is safe over the full set.
         self.graph.redirty_volatiles();
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
         Ok(EvalResult {
@@ -6129,6 +6132,17 @@ where
         let mut producer_results = FormulaProducerResultIndex::default();
         let mut consumer_reads = FormulaConsumerReadIndex::default();
         let mut work = Vec::new();
+
+        // Legacy formula producers participate in the mixed runtime only when
+        // they are dirty under graph semantics. Result/read indexes still cover
+        // every legacy formula so that span->legacy and legacy->span ordering is
+        // visible to the scheduler regardless of dirty status, but only dirty
+        // vertices receive scheduled work.
+        let dirty_legacy: rustc_hash::FxHashSet<VertexId> = self
+            .graph
+            .get_evaluation_vertices()
+            .into_iter()
+            .collect();
 
         let span_refs = authority.active_span_refs();
         let span_refs_by_id = span_refs
@@ -6179,10 +6193,12 @@ where
             let result_region =
                 RegionPattern::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
             producer_results.insert_producer(FormulaProducerId::Legacy(*vertex), result_region);
-            work.push(FormulaProducerWork {
-                producer: FormulaProducerId::Legacy(*vertex),
-                dirty: ProducerDirtyDomain::Whole,
-            });
+            if dirty_legacy.contains(vertex) {
+                work.push(FormulaProducerWork {
+                    producer: FormulaProducerId::Legacy(*vertex),
+                    dirty: ProducerDirtyDomain::Whole,
+                });
+            }
         }
 
         for vertex in &legacy_vertices {
