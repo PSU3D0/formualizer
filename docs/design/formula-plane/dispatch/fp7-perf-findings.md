@@ -122,18 +122,20 @@ Beyond that, span-aware vectorized kernels are the next tier — recognize that 
 [done]    Probe rework: realistic formula counts, anchored variants
 [done]    Issue A: relocation-aware visitor for SpanEvaluator (2fe6fd1)
 [done]    Issue B partial: dedupe canonicalization (8919312)
-[reject]  Issue B as scoped did not move the load-time needle for
-          no-span workbooks. Load tax is in FormulaPlacementCandidate
-          construction (Arc::new + ast.clone per record) and singleton
-          fallback's FormulaIngestRecord reconstruction, not in
-          canonicalization. A pre-pass that skips candidate construction
-          for unique-text records would lose relative-A1 families. A
-          deeper fix needs FormulaIngestRecord to carry Arc<ASTNode>
-          from the parser side, which is a wider refactor outside FP.
+[done]    Issue C: arena-intern formula ASTs across ingest+runtime (f4f67d4)
+          - FormulaIngestRecord, FormulaPlacementCandidate, FormulaTemplate
+            now hold AstNodeId instead of cloned/Arc'd ASTNode trees.
+          - SpanEvaluator arena-walks via evaluate_arena_ast_with_offset.
+          - Subexpression-level dedup automatic via AstArena.
+          - Family-engaged scenarios hold post-Issue-A wins (3-4x first eval).
+          - No-span load improved modestly (0.66 -> ~0.80) but not parity.
+          - Residual tax: BulkIngestBuilder reconstructs trees from arena ids
+            to feed dependency planning. Arena-native planning is the deeper fix.
 [plan]    Uniform-value span broadcast (50-100x on absolute-only families)
 [plan]    Direct DenseRange writes for Rect/RowRun/ColRun spans
 [plan]    Cache mixed-schedule indexes by (topology_epoch, indexes_epoch)
 [plan]    Wire structural/spill/source dirty hooks into FormulaAuthority
+[plan]    Arena-native dependency planning (closes Issue C residual)
 [future]  Span-aware vectorized kernels for known function shapes
 ```
 
