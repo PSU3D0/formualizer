@@ -7,7 +7,7 @@ use crate::{
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use crate::engine::arena::ast::SheetKey;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
@@ -70,6 +70,9 @@ pub struct Interpreter<'a> {
     current_sheet: &'a str,
     current_cell: Option<crate::CellRef>,
     local_env: LocalEnv,
+    reference_row_delta: i64,
+    reference_col_delta: i64,
+    disable_ast_planner: bool,
 }
 
 impl<'a> Interpreter<'a> {
@@ -79,6 +82,9 @@ impl<'a> Interpreter<'a> {
             current_sheet,
             current_cell: None,
             local_env: LocalEnv::default(),
+            reference_row_delta: 0,
+            reference_col_delta: 0,
+            disable_ast_planner: false,
         }
     }
 
@@ -92,6 +98,9 @@ impl<'a> Interpreter<'a> {
             current_sheet,
             current_cell: Some(cell),
             local_env: LocalEnv::default(),
+            reference_row_delta: 0,
+            reference_col_delta: 0,
+            disable_ast_planner: false,
         }
     }
 
@@ -103,13 +112,43 @@ impl<'a> Interpreter<'a> {
         &self.local_env
     }
 
+    pub(crate) fn with_current_cell(&self, cell: crate::CellRef) -> Self {
+        Self {
+            context: self.context,
+            current_sheet: self.current_sheet,
+            current_cell: Some(cell),
+            local_env: self.local_env.clone(),
+            reference_row_delta: self.reference_row_delta,
+            reference_col_delta: self.reference_col_delta,
+            disable_ast_planner: self.disable_ast_planner,
+        }
+    }
+
     pub fn with_local_env(&self, env: LocalEnv) -> Self {
         Self {
             context: self.context,
             current_sheet: self.current_sheet,
             current_cell: self.current_cell,
             local_env: env,
+            reference_row_delta: self.reference_row_delta,
+            reference_col_delta: self.reference_col_delta,
+            disable_ast_planner: self.disable_ast_planner,
         }
+    }
+
+    fn effective_reference<'r>(
+        &self,
+        reference: &'r ReferenceType,
+    ) -> Result<Cow<'r, ReferenceType>, ExcelError> {
+        if self.reference_row_delta == 0 && self.reference_col_delta == 0 {
+            return Ok(Cow::Borrowed(reference));
+        }
+
+        Ok(Cow::Owned(relocate_reference_for_offset(
+            reference,
+            self.reference_row_delta,
+            self.reference_col_delta,
+        )?))
     }
 
     fn resolve_local_reference(
@@ -157,7 +196,9 @@ impl<'a> Interpreter<'a> {
     /// `FnCaps::RETURNS_REFERENCE` and override `eval_reference`.
     pub fn evaluate_ast_as_reference(&self, node: &ASTNode) -> Result<ReferenceType, ExcelError> {
         match &node.node_type {
-            ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+            ASTNodeType::Reference { reference, .. } => {
+                self.reference_for_current_offset(reference)
+            }
             ASTNodeType::Function { name, args } => {
                 if let Some(fun) = self.context.get_function("", name) {
                     // Build handles; allow function to decide reference semantics
@@ -258,6 +299,32 @@ impl<'a> Interpreter<'a> {
     /* ===================  public  =================== */
     pub fn evaluate_ast(&self, node: &ASTNode) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         self.evaluate_ast_uncached(node)
+    }
+
+    pub(crate) fn evaluate_ast_with_offset(
+        &self,
+        node: &ASTNode,
+        row_delta: i64,
+        col_delta: i64,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        let offset = Self {
+            context: self.context,
+            current_sheet: self.current_sheet,
+            current_cell: self.current_cell,
+            local_env: self.local_env.clone(),
+            reference_row_delta: row_delta,
+            reference_col_delta: col_delta,
+            disable_ast_planner: true,
+        };
+        offset.evaluate_ast_uncached(node)
+    }
+
+    pub(crate) fn reference_for_current_offset(
+        &self,
+        reference: &ReferenceType,
+    ) -> Result<ReferenceType, ExcelError> {
+        self.effective_reference(reference)
+            .map(|reference| reference.into_owned())
     }
 
     pub(crate) fn evaluate_arena_ast(
@@ -473,6 +540,10 @@ impl<'a> Interpreter<'a> {
         &self,
         node: &ASTNode,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        if self.disable_ast_planner {
+            return self.eval_tree_uncached(node);
+        }
+
         // Plan-aware evaluation: build a plan for this node and execute accordingly.
         // Provide the planner with a lightweight range-dimension probe and function lookup
         // so it can select chunked reduction and arg-parallel strategies where appropriate.
@@ -580,6 +651,26 @@ impl<'a> Interpreter<'a> {
         self.eval_with_plan(node, &plan.root)
     }
 
+    fn eval_tree_uncached(
+        &self,
+        node: &ASTNode,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        match &node.node_type {
+            ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
+            ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
+            ASTNodeType::UnaryOp { op, expr } => self
+                .eval_unary(op, expr)
+                .map(crate::traits::CalcValue::Scalar),
+            ASTNodeType::BinaryOp { op, left, right } => self
+                .eval_binary(op, left, right)
+                .map(crate::traits::CalcValue::Scalar),
+            ASTNodeType::Function { name, args } => self.eval_function_to_calc(name, args),
+            ASTNodeType::Call { .. } => Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("Immediate-invocation calls are not yet supported")),
+            ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
+        }
+    }
+
     fn eval_with_plan(
         &self,
         node: &ASTNode,
@@ -587,13 +678,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         match &node.node_type {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
-            ASTNodeType::Reference { reference, .. } => {
-                if let Some(local) = self.resolve_local_reference(reference) {
-                    Ok(local)
-                } else {
-                    self.eval_reference_to_calc(reference)
-                }
-            }
+            ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
             ASTNodeType::UnaryOp { op, expr } => {
                 // For now, reuse existing unary implementation (which recurses).
                 // In a later phase, we can map plan_node.children[0].
@@ -625,9 +710,11 @@ impl<'a> Interpreter<'a> {
                         for arg in args {
                             match &arg.node_type {
                                 ASTNodeType::Reference { reference, .. } => {
-                                    let _ = self
-                                        .context
-                                        .resolve_range_view(reference, self.current_sheet);
+                                    if let Ok(reference) = self.effective_reference(reference) {
+                                        let _ = self
+                                            .context
+                                            .resolve_range_view(&reference, self.current_sheet);
+                                    }
                                 }
                                 _ => {
                                     let _ = self.evaluate_ast(arg);
@@ -649,24 +736,65 @@ impl<'a> Interpreter<'a> {
     }
 
     /* ===================  reference  =================== */
+    fn eval_ast_reference_to_calc(
+        &self,
+        reference: &ReferenceType,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        if !self.local_env.is_empty() {
+            let reference = self.effective_reference(reference)?;
+            if let Some(local) = self.resolve_local_reference(&reference) {
+                return Ok(local);
+            }
+            return self.eval_reference_to_calc(&reference);
+        }
+
+        if let ReferenceType::Cell {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } = reference
+        {
+            let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
+            let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
+            return Ok(crate::traits::CalcValue::Scalar(
+                self.context.resolve_cell_reference_value(
+                    sheet.as_deref(),
+                    row,
+                    col,
+                    self.current_sheet,
+                )?,
+            ));
+        }
+
+        let reference = self.effective_reference(reference)?;
+        self.eval_reference_to_calc(&reference)
+    }
+
     fn eval_reference_to_calc(
         &self,
         reference: &ReferenceType,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        if let ReferenceType::Cell {
+            sheet, row, col, ..
+        } = reference
+        {
+            return Ok(crate::traits::CalcValue::Scalar(
+                self.context.resolve_cell_reference_value(
+                    sheet.as_deref(),
+                    *row,
+                    *col,
+                    self.current_sheet,
+                )?,
+            ));
+        }
+
         let view = self
             .context
             .resolve_range_view(reference, self.current_sheet)?
             .with_cancel_token(self.context.cancellation_token());
-
-        match reference {
-            ReferenceType::Cell { .. } => {
-                // For a single cell reference, just return the value.
-                Ok(crate::traits::CalcValue::Scalar(
-                    view.as_1x1().unwrap_or(LiteralValue::Empty),
-                ))
-            }
-            _ => Ok(crate::traits::CalcValue::Range(view)),
-        }
+        Ok(crate::traits::CalcValue::Range(view))
     }
 
     fn eval_reference(&self, reference: &ReferenceType) -> Result<LiteralValue, ExcelError> {
@@ -678,7 +806,8 @@ impl<'a> Interpreter<'a> {
     fn eval_unary(&self, op: &str, expr: &ASTNode) -> Result<LiteralValue, ExcelError> {
         if op == "@" {
             if let ASTNodeType::Reference { reference, .. } = &expr.node_type {
-                return Ok(self.implicit_intersection_from_reference(reference));
+                let reference = self.effective_reference(reference)?;
+                return Ok(self.implicit_intersection_from_reference(&reference));
             }
 
             let cv = self.evaluate_ast(expr)?;
@@ -1361,4 +1490,78 @@ impl<'a> Interpreter<'a> {
             },
         )
     }
+}
+
+fn relocate_reference_for_offset(
+    reference: &ReferenceType,
+    row_delta: i64,
+    col_delta: i64,
+) -> Result<ReferenceType, ExcelError> {
+    match reference {
+        ReferenceType::Cell {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => Ok(ReferenceType::Cell {
+            sheet: sheet.clone(),
+            row: shift_axis_for_offset(*row, row_delta, *row_abs)?,
+            col: shift_axis_for_offset(*col, col_delta, *col_abs)?,
+            row_abs: *row_abs,
+            col_abs: *col_abs,
+        }),
+        ReferenceType::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        } => Ok(ReferenceType::Range {
+            sheet: sheet.clone(),
+            start_row: shift_optional_axis_for_offset(*start_row, row_delta, *start_row_abs)?,
+            start_col: shift_optional_axis_for_offset(*start_col, col_delta, *start_col_abs)?,
+            end_row: shift_optional_axis_for_offset(*end_row, row_delta, *end_row_abs)?,
+            end_col: shift_optional_axis_for_offset(*end_col, col_delta, *end_col_abs)?,
+            start_row_abs: *start_row_abs,
+            start_col_abs: *start_col_abs,
+            end_row_abs: *end_row_abs,
+            end_col_abs: *end_col_abs,
+        }),
+        ReferenceType::NamedRange(_)
+        | ReferenceType::Table(_)
+        | ReferenceType::Cell3D { .. }
+        | ReferenceType::Range3D { .. }
+        | ReferenceType::External(_) => Err(unsupported_reference_relocation_error()),
+    }
+}
+
+fn shift_optional_axis_for_offset(
+    value: Option<u32>,
+    delta: i64,
+    is_absolute: bool,
+) -> Result<Option<u32>, ExcelError> {
+    value
+        .map(|value| shift_axis_for_offset(value, delta, is_absolute))
+        .transpose()
+}
+
+fn shift_axis_for_offset(value: u32, delta: i64, is_absolute: bool) -> Result<u32, ExcelError> {
+    if is_absolute {
+        return Ok(value);
+    }
+    let shifted = i64::from(value) + delta;
+    if shifted < 1 || shifted > i64::from(u32::MAX) {
+        return Err(unsupported_reference_relocation_error());
+    }
+    Ok(shifted as u32)
+}
+
+fn unsupported_reference_relocation_error() -> ExcelError {
+    ExcelError::new(ExcelErrorKind::Ref)
+        .with_message("Unsupported reference relocation for FormulaPlane span evaluation")
 }

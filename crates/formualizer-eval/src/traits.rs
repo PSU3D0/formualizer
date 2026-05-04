@@ -334,7 +334,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     fn reference_for_eval(&self) -> Result<ReferenceType, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+                ASTNodeType::Reference { reference, .. } => {
+                    self.interp.reference_for_current_offset(reference)
+                }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }
@@ -369,10 +371,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
                     // Prefer RangeView since it has explicit current-sheet context.
+                    let reference = self.interp.reference_for_current_offset(reference)?;
                     let view = self
                         .interp
                         .context
-                        .resolve_range_view(reference, self.interp.current_sheet())?;
+                        .resolve_range_view(&reference, self.interp.current_sheet())?;
                     let (rows, cols) = view.dims();
                     let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
                     view.for_each_row(&mut |row| {
@@ -489,11 +492,13 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn range_view(&self) -> Result<RangeView<'b>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => self
-                    .interp
-                    .context
-                    .resolve_range_view(reference, self.interp.current_sheet())
-                    .map(|v| v.with_cancel_token(self.interp.context.cancellation_token())),
+                ASTNodeType::Reference { reference, .. } => {
+                    let reference = self.interp.reference_for_current_offset(reference)?;
+                    self.interp
+                        .context
+                        .resolve_range_view(&reference, self.interp.current_sheet())
+                        .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
+                }
                 // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
                 ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(
                     RangeView::from_owned_rows(arr.clone(), self.interp.context.date_system())
@@ -778,7 +783,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn as_reference_or_eval(&self) -> Result<ReferenceType, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+                ASTNodeType::Reference { reference, .. } => {
+                    self.interp.reference_for_current_offset(reference)
+                }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }

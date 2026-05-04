@@ -31,6 +31,9 @@ pub(crate) struct SpanEvalReport {
     pub(crate) span_eval_placement_count: u64,
     pub(crate) skipped_overlay_punchout_count: u64,
     pub(crate) computed_write_buffer_push_count: u64,
+    /// Number of placement-time reference-offset evaluations. This used to
+    /// count per-placement transient AST clones; the evaluator now walks the
+    /// canonical AST in place and applies offsets at reference leaves.
     pub(crate) transient_ast_relocation_count: u64,
     pub(crate) fallback_count: u64,
 }
@@ -107,8 +110,10 @@ impl<'a> SpanEvaluator<'a> {
             .get(span.template_id)
             .ok_or(SpanEvalError::MissingTemplate)?;
         let origin = domain_origin(&span.domain);
+        validate_relocatable_ast(&template.ast)?;
         let placements = placements_for_dirty(span, &task.dirty)?;
         let push_count_before = sink.push_count();
+        let base_interpreter = Interpreter::new(self.context, self.current_sheet);
 
         let mut report = SpanEvalReport {
             span_eval_task_count: 1,
@@ -121,18 +126,20 @@ impl<'a> SpanEvaluator<'a> {
                 continue;
             }
 
-            let relocated = relocate_ast_for_placement(&template.ast, origin, placement)?;
+            let row_delta = i64::from(placement.row) - i64::from(origin.row);
+            let col_delta = i64::from(placement.col) - i64::from(origin.col);
             report.transient_ast_relocation_count =
                 report.transient_ast_relocation_count.saturating_add(1);
-            let interpreter = Interpreter::new_with_cell(
-                self.context,
-                self.current_sheet,
-                CellRef::new_absolute(placement.sheet_id, placement.row, placement.col),
-            );
-            let value = match interpreter.evaluate_ast(&relocated) {
-                Ok(calc) => literal_to_overlay(calc.into_literal()),
-                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
-            };
+            let interpreter = base_interpreter.with_current_cell(CellRef::new_absolute(
+                placement.sheet_id,
+                placement.row,
+                placement.col,
+            ));
+            let value =
+                match interpreter.evaluate_ast_with_offset(&template.ast, row_delta, col_delta) {
+                    Ok(calc) => literal_to_overlay(calc.into_literal()),
+                    Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+                };
             sink.push_cell(placement, value);
             report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);
         }
@@ -199,129 +206,48 @@ fn domain_origin(domain: &PlacementDomain) -> PlacementCoord {
     }
 }
 
-fn relocate_ast_for_placement(
-    ast: &ASTNode,
-    origin: PlacementCoord,
-    target: PlacementCoord,
-) -> Result<ASTNode, SpanEvalError> {
-    let node_type = match &ast.node_type {
-        ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
-        ASTNodeType::Reference {
-            original,
-            reference,
-        } => ASTNodeType::Reference {
-            original: original.clone(),
-            reference: relocate_reference(reference, origin, target)?,
-        },
-        ASTNodeType::UnaryOp { op, expr } => ASTNodeType::UnaryOp {
-            op: op.clone(),
-            expr: Box::new(relocate_ast_for_placement(expr, origin, target)?),
-        },
-        ASTNodeType::BinaryOp { op, left, right } => ASTNodeType::BinaryOp {
-            op: op.clone(),
-            left: Box::new(relocate_ast_for_placement(left, origin, target)?),
-            right: Box::new(relocate_ast_for_placement(right, origin, target)?),
-        },
-        ASTNodeType::Function { name, args } => ASTNodeType::Function {
-            name: name.clone(),
-            args: args
-                .iter()
-                .map(|arg| relocate_ast_for_placement(arg, origin, target))
-                .collect::<Result<Vec<_>, _>>()?,
-        },
-        ASTNodeType::Call { callee, args } => ASTNodeType::Call {
-            callee: Box::new(relocate_ast_for_placement(callee, origin, target)?),
-            args: args
-                .iter()
-                .map(|arg| relocate_ast_for_placement(arg, origin, target))
-                .collect::<Result<Vec<_>, _>>()?,
-        },
-        ASTNodeType::Array(rows) => ASTNodeType::Array(
-            rows.iter()
-                .map(|row| {
-                    row.iter()
-                        .map(|cell| relocate_ast_for_placement(cell, origin, target))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .collect::<Result<Vec<_>, _>>()?,
-        ),
-    };
-    Ok(ASTNode {
-        node_type,
-        source_token: ast.source_token.clone(),
-        contains_volatile: ast.contains_volatile,
-    })
+fn validate_relocatable_ast(ast: &ASTNode) -> Result<(), SpanEvalError> {
+    match &ast.node_type {
+        ASTNodeType::Literal(_) => Ok(()),
+        ASTNodeType::Reference { reference, .. } => validate_relocatable_reference(reference),
+        ASTNodeType::UnaryOp { expr, .. } => validate_relocatable_ast(expr),
+        ASTNodeType::BinaryOp { left, right, .. } => {
+            validate_relocatable_ast(left)?;
+            validate_relocatable_ast(right)
+        }
+        ASTNodeType::Function { args, .. } => {
+            for arg in args {
+                validate_relocatable_ast(arg)?;
+            }
+            Ok(())
+        }
+        ASTNodeType::Call { callee, args } => {
+            validate_relocatable_ast(callee)?;
+            for arg in args {
+                validate_relocatable_ast(arg)?;
+            }
+            Ok(())
+        }
+        ASTNodeType::Array(rows) => {
+            for row in rows {
+                for cell in row {
+                    validate_relocatable_ast(cell)?;
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
-fn relocate_reference(
-    reference: &ReferenceType,
-    origin: PlacementCoord,
-    target: PlacementCoord,
-) -> Result<ReferenceType, SpanEvalError> {
-    let row_delta = i64::from(target.row) - i64::from(origin.row);
-    let col_delta = i64::from(target.col) - i64::from(origin.col);
+fn validate_relocatable_reference(reference: &ReferenceType) -> Result<(), SpanEvalError> {
     match reference {
-        ReferenceType::Cell {
-            sheet,
-            row,
-            col,
-            row_abs,
-            col_abs,
-        } => Ok(ReferenceType::Cell {
-            sheet: sheet.clone(),
-            row: shift_axis(*row, row_delta, *row_abs)?,
-            col: shift_axis(*col, col_delta, *col_abs)?,
-            row_abs: *row_abs,
-            col_abs: *col_abs,
-        }),
-        ReferenceType::Range {
-            sheet,
-            start_row,
-            start_col,
-            end_row,
-            end_col,
-            start_row_abs,
-            start_col_abs,
-            end_row_abs,
-            end_col_abs,
-        } => Ok(ReferenceType::Range {
-            sheet: sheet.clone(),
-            start_row: shift_optional_axis(*start_row, row_delta, *start_row_abs)?,
-            start_col: shift_optional_axis(*start_col, col_delta, *start_col_abs)?,
-            end_row: shift_optional_axis(*end_row, row_delta, *end_row_abs)?,
-            end_col: shift_optional_axis(*end_col, col_delta, *end_col_abs)?,
-            start_row_abs: *start_row_abs,
-            start_col_abs: *start_col_abs,
-            end_row_abs: *end_row_abs,
-            end_col_abs: *end_col_abs,
-        }),
+        ReferenceType::Cell { .. } | ReferenceType::Range { .. } => Ok(()),
         ReferenceType::NamedRange(_)
         | ReferenceType::Table(_)
         | ReferenceType::Cell3D { .. }
         | ReferenceType::Range3D { .. }
         | ReferenceType::External(_) => Err(SpanEvalError::UnsupportedReferenceRelocation),
     }
-}
-
-fn shift_optional_axis(
-    value: Option<u32>,
-    delta: i64,
-    is_absolute: bool,
-) -> Result<Option<u32>, SpanEvalError> {
-    value
-        .map(|value| shift_axis(value, delta, is_absolute))
-        .transpose()
-}
-
-fn shift_axis(value: u32, delta: i64, is_absolute: bool) -> Result<u32, SpanEvalError> {
-    if is_absolute {
-        return Ok(value);
-    }
-    let shifted = i64::from(value) + delta;
-    if shifted < 1 || shifted > i64::from(u32::MAX) {
-        return Err(SpanEvalError::UnsupportedReferenceRelocation);
-    }
-    Ok(shifted as u32)
 }
 
 fn literal_to_overlay(value: LiteralValue) -> OverlayValue {
