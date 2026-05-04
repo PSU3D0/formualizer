@@ -1,7 +1,22 @@
 # FP7 Universal FormulaPlane Runtime Plan
 
-Date: 2026-05-04  
-Status: architectural plan; production source unchanged.
+Date: 2026-05-04
+Status: Phase 2 complete (`evaluate_all`); Phases 3-7 outstanding.
+
+## Architectural Principle
+
+FormulaPlane is **authoritative on formula source** under `AuthoritativeExperimental`. Graph, dirty propagation, schedule, and evaluate-time runtime mechanics are unchanged. FormulaSpans are an **optimized representation** for patterned formulas, not a parallel runtime.
+
+Concretely:
+
+```text
+FormulaPlane                  formula source / authority / placement
+FormulaSpan                   optimized representation for a family
+DependencyGraph               correctness / dirty / scheduler backbone
+Engine                        evaluation, writeback, eval coordinator
+```
+
+Near-term escape hatch: an API that cannot yet honor spans natively may **materialize active spans into legacy graph formula vertices on demand** before proceeding. This preserves semantics at the cost of the FP optimization for that call. Long-term goal: every public API is span-aware and materialization is unnecessary.
 
 ## Purpose
 
@@ -252,12 +267,52 @@ Risks:
 - FormulaPlane spans have no graph vertices, so existing structural #REF! marking does not automatically reach span cells.
 - Table/structured refs should not be accepted as spans until dependency summaries can represent them; legacy producer extraction must be explicit.
 
-## Final Cutover Gate
+## Phase 2 Outcome (landed)
 
-After Phases 1-7 are green:
+- `evaluate_all` enters the FormulaPlane coordinator unconditionally in `AuthoritativeExperimental` mode.
+- Coordinator delegates to private legacy primitives (`evaluate_all_legacy_impl`) when no active spans exist; this is option (ii), not a hedge.
+- `build_formula_plane_mixed_schedule` skips non-cell legacy deps and unbounded ranges instead of failing closed; graph scheduler still owns those edges.
+- All 1414 tests green.
+
+## Remaining Gate Inventory
+
+11 `active_span_count() > 0` gates remain. They split into two classes; only the second class is a hedge.
+
+### Conservative-correct (4)
+
+These run the FP coordinator's whole-eval then read the requested target. Perf-conservative when spans exist, semantically correct.
 
 ```text
-Replace all 12 active_span_count() runtime gates with:
+evaluate_vertex
+evaluate_until
+evaluate_cell
+evaluate_cells
+```
+
+Resolved by Phase 4 (demand-driven mixed work).
+
+### Semantic-regression (7)
+
+These silently degrade when spans exist:
+
+```text
+evaluate_all_with_delta              empty delta
+evaluate_cells_with_delta            empty delta
+evaluate_all_logged                  no FP writes in ChangeLog
+evaluate_all_cancellable             cancellation only before scheduling
+evaluate_cells_cancellable           same
+evaluate_until_cancellable           same
+evaluate_recalc_plan                 ignores supplied plan
+```
+
+Resolved by Phases 5 and 6, or near-term by materializing spans before entering the legacy path.
+
+## Final Cutover Gate
+
+After Phases 3-7 are green:
+
+```text
+Replace all 11 remaining active_span_count() runtime gates with:
   if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
 
 Then remove any remaining public legacy evaluate_* branch reachable in AuthoritativeExperimental.
