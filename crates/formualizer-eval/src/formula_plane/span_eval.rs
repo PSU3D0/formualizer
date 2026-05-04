@@ -567,19 +567,17 @@ mod tests {
 
     #[test]
     fn span_eval_rect_matches_legacy_outputs() {
-        let workbook = TestWorkbook::new()
-            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
-            .with_cell("Sheet1", 1, 2, LiteralValue::Number(2.0))
-            .with_cell("Sheet1", 2, 1, LiteralValue::Number(3.0))
-            .with_cell("Sheet1", 2, 2, LiteralValue::Number(4.0));
+        // Use externally-anchored reads so the rect family has no internal
+        // dependency: every cell reads $A$1, none of which is in the rect.
+        let workbook = TestWorkbook::new().with_cell("Sheet1", 1, 1, LiteralValue::Number(10.0));
         let mut plane = FormulaPlane::default();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(0, 1, 1, "=A1+1"),
-                candidate(0, 1, 2, "=B1+1"),
-                candidate(0, 2, 1, "=A2+1"),
-                candidate(0, 2, 2, "=B2+1"),
+                candidate(0, 1, 1, "=$A$1+1"),
+                candidate(0, 1, 2, "=$A$1+1"),
+                candidate(0, 2, 1, "=$A$1+1"),
+                candidate(0, 2, 2, "=$A$1+1"),
             ],
         );
         let span = match placement.results[0] {
@@ -598,10 +596,10 @@ mod tests {
         assert_eq!(
             cell_values(&buffer),
             vec![
-                (1, 1, OverlayValue::Number(2.0)),
-                (1, 2, OverlayValue::Number(3.0)),
-                (2, 1, OverlayValue::Number(4.0)),
-                (2, 2, OverlayValue::Number(5.0)),
+                (1, 1, OverlayValue::Number(11.0)),
+                (1, 2, OverlayValue::Number(11.0)),
+                (2, 1, OverlayValue::Number(11.0)),
+                (2, 2, OverlayValue::Number(11.0)),
             ]
         );
     }

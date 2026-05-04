@@ -76,6 +76,11 @@ pub(crate) enum PlacementFallbackReason {
     SingletonUnique,
     CrossSheetOrSheetMismatch,
     DuplicatePlacement,
+    /// At least one read region intersects the family's own result region.
+    /// These families have an internal/self dependency that the current span
+    /// runtime cannot evaluate as bounded dirty work and demotes to whole-span
+    /// recompute on every change, producing O(N²) edit recalc on chains.
+    InternalDependency,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -182,6 +187,25 @@ pub(crate) fn place_candidate_family(
             return report;
         }
     };
+
+    // Reject internal-dependency families. If any precedent read region
+    // intersects the family's own result region, the span has self/internal
+    // dependencies (e.g. chains where B[r] reads B[r-1]). Bounded dirty
+    // projection cannot represent the cell-by-cell sequencing these need, so
+    // the runtime would always demote to whole-span recompute and produce
+    // O(N²) edit recalc behavior. Defer to legacy graph scheduling instead.
+    if read_summary
+        .dependencies
+        .iter()
+        .any(|dep| dep.read_region.intersects(&read_summary.result_region))
+    {
+        mark_all_legacy(
+            &mut report,
+            &candidates,
+            PlacementFallbackReason::InternalDependency,
+        );
+        return report;
+    }
 
     let template_count_before = plane.templates.len();
     let template_id = plane.intern_template(
@@ -507,6 +531,12 @@ mod tests {
 
     #[test]
     fn rect_same_template_promotes_to_span() {
+        // 2x2 rect of `=<col_left><row>+1` cells. Each cell reads its
+        // immediate left neighbor; the read region for col=2 cells lands on
+        // the col=1 cells which are also in the family domain. This is an
+        // internal-dependency family that the FP runtime would have to demote
+        // to whole-span recompute on every change, so placement falls back to
+        // legacy.
         let mut plane = FormulaPlane::default();
         let report = place_candidate_family(
             &mut plane,
@@ -515,6 +545,24 @@ mod tests {
                 candidate(0, 1, 2, "=B1+1"),
                 candidate(0, 2, 1, "=A2+1"),
                 candidate(0, 2, 2, "=B2+1"),
+            ],
+        );
+
+        assert_all_legacy(&report, 4, PlacementFallbackReason::InternalDependency);
+    }
+
+    #[test]
+    fn rect_anchored_external_reads_promotes_to_span() {
+        // 2x2 rect of `=$A$1+1` cells. Reads are anchored to a single cell
+        // outside the rect, so no internal dependency.
+        let mut plane = FormulaPlane::default();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(0, 1, 1, "=$A$1+1"),
+                candidate(0, 1, 2, "=$A$1+1"),
+                candidate(0, 2, 1, "=$A$1+1"),
+                candidate(0, 2, 2, "=$A$1+1"),
             ],
         );
 
