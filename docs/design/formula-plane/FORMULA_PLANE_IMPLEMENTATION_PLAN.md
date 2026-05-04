@@ -369,7 +369,9 @@ Exit claim:
 
 ```text
 FormulaPlane has fast sidecar lookup for ownership, punchouts, and conservative
-may-affect dirty routing. No partial dirty or span eval required yet.
+may-affect dirty routing. No partial dirty or span eval is required for this
+inert FP6.3 checkpoint; FP6.5R makes partial dirty first-class before runtime
+cut-over.
 ```
 
 ## 8. Phase FP6.4 — Span work item evaluator with computed fragment writes
@@ -451,62 +453,91 @@ First non-spike FormulaPlane runtime path evaluates accepted spans without
 per-cell formula materialization and writes fragment-backed computed results.
 ```
 
-## 9. Phase FP6.5 — Graph/proxy scheduling seam
+## 9. Phase FP6.5R — Region-derived formula producer planning
+
+Controlling design:
+
+```text
+docs/design/formula-plane/FORMULA_PRODUCER_PLANNING_V1.md
+```
 
 Goal:
 
 ```text
-Schedule legacy vertices and FormulaPlane span work items together without making
-the graph deeply span-aware.
+Build a region-derived mixed formula-producer planner before normal runtime
+cut-over. Formula producers own result regions; formula consumers read regions;
+dirty propagation projects changed regions into producer dirty domains; and the
+scheduler orders FormulaProducerId work items without graph proxy vertices.
 ```
 
-First implementation decision: **sidecar mixed work-item scheduler**.
+Core model:
 
 ```rust
-pub enum FormulaPlaneWorkItem {
+pub(crate) enum FormulaProducerId {
     Legacy(VertexId),
     Span(FormulaSpanId),
 }
+
+pub(crate) struct FormulaProducerWork {
+    pub(crate) producer: FormulaProducerId,
+    pub(crate) dirty: ProducerDirtyDomain,
+}
 ```
 
-The engine/FormulaPlane adapter builds a temporary recalc work graph for the
-current dirty set. The legacy graph remains the may-affect router and legacy
-formula dependency source; FormulaPlane contributes span dependency/result-domain
-edges.
+This replaces the earlier underspecified `Legacy(VertexId) + Span(FormulaSpanId)`
+work-item sketch with a producer/read-region model. The important V1 requirement
+is partial dirty from the start:
 
-Graph-native proxy vertices remain deferred:
+```text
+A50000 changed
+  -> B_span dirty B50000
+  -> C_span dirty C50000
+  -> D1 dirty
+```
+
+Whole-span dirty is allowed only when exact, such as absolute-reference fanout,
+or as an explicitly counted conservative fallback. It is not the default runtime
+architecture.
+
+Graph-native proxy vertices remain out of scope for V1:
 
 ```rust
-// later only if needed
+// intentionally not V1
 VertexKind::FormulaSpanProxy(FormulaSpanId)
 ```
 
-Rules:
+Deliverables before runtime cut-over:
 
-- One work item per dirty span, not per placement.
-- Downstream consumers see changed result regions.
-- Existing range dependency machinery remains the may-affect backbone.
-- Static graph-only schedule caches are disabled or keyed by FormulaPlane epochs
-  whenever span work exists.
-- Internal span dependencies/cycles demote unless an explicit recurrence policy
-  accepts them.
+- `FormulaProducerId`, `FormulaProducerWork`, and `ProducerDirtyDomain`;
+- `FormulaProducerResultIndex` covering legacy singleton producers and spans;
+- `FormulaConsumerReadIndex` covering legacy and span read regions;
+- retained span read summaries and executable dirty projection metadata;
+- changed-region fixed-point dirty closure producing dirty-domain work;
+- mixed topological scheduler over `FormulaProducerId`;
+- graph-owned FormulaPlane authority / ingest shadow seam;
+- sequential `evaluate_all` integration only after the pure planner and dirty
+  closure are proven.
 
-Acceptance tests:
+Initially disabled:
 
-```text
-formula_plane_disabled_schedule_is_unchanged
-legacy_precedent_dirty_schedules_one_span_task_not_n_placements
-span_result_region_dirty_schedules_legacy_dependent
-span_to_span_dependency_orders_precedent_before_dependent
-span_work_item_cycle_demotes_or_reports_conservative_cycle
-legacy_and_span_outputs_match_legacy_oracle
-```
+- parallel mixed span evaluation;
+- cached mixed `RecalcPlan`;
+- `evaluate_cells` / demand-driven mixed span execution;
+- array/spill/dynamic/volatile span formulas;
+- names/tables/structured refs inside accepted spans;
+- graph proxy vertices;
+- post-hoc graph-to-span optimize.
+
+Acceptance tests are defined in `FORMULA_PRODUCER_PLANNING_V1.md` and include
+partial-dirty precision, mixed producer planning, engine integration, unsupported
+semantics, and public/enclosing-interface coverage.
 
 Exit claim:
 
 ```text
-FormulaPlane spans participate in normal recalculation ordering with legacy
-formulas through a sidecar mixed work-item schedule.
+FormulaPlane has a precise mixed-producer planning contract and V1 partial-dirty
+substrate. Normal runtime authority is claimed only after the sequential
+mixed evaluate_all path passes the producer-planning acceptance suite.
 ```
 
 ## 10. Phase FP6.6 — FormulaOverlay punchouts and edit semantics
@@ -816,10 +847,11 @@ semantics.
 Owns FP6.2 canonical grouping, row/col/rect span construction, fallback reasons,
 and local repatterning later.
 
-### Lane C — Region indexes and dirty routing
+### Lane C — Producer/read indexes and dirty projection
 
-Owns FP6.3 and FP6.7 sidecar region indexes, span dependency index, FormulaOverlay
-index, dirty projections, exact-filtering, epoch/rebuild policy, and
+Owns FP6.3 and FP6.5R sidecar region indexes, `FormulaProducerResultIndex`,
+`FormulaConsumerReadIndex`, FormulaOverlay index, retained read summaries, exact
+partial-dirty projections, exact-filtering, epoch/rebuild policy, and
 no-under-approx tests.
 
 ### Lane D — Evaluation bridge
@@ -828,9 +860,11 @@ Owns FP6.4 span evaluator, placement context, `SpanComputedWriteSink`, and
 `ComputedWriteBuffer`/fragment result output. Must be based on the eval-flush PR
 #95 substrate.
 
-### Lane E — Scheduling/proxy
+### Lane E — Mixed producer planning
 
-Owns FP6.5 graph/scheduler seam and downstream propagation.
+Owns FP6.5R graph/scheduler seam, `FormulaProducerId` mixed topological planning,
+dirty-domain work payloads, cycle/demotion policy, and downstream propagation.
+Graph proxy vertices are out of scope for V1.
 
 ### Lane F — Edits/punchouts
 
@@ -859,11 +893,14 @@ Owns legacy parity harnesses, benchmark probes, and regression reports.
    - FP6.2 pattern placement behind internal/default-off gates;
    - FP6.3 sidecar region indexes and dirty-routing skeleton;
    - FP6.4 evaluator skeleton only on a branch with eval-flush PR #95 substrate.
-5. FP6.5 sidecar mixed scheduler before normal recalc invokes span tasks.
-6. Integration checkpoint: accepted row-run formula span evaluates through
-   `ComputedWriteBuffer`, writes fragments, and matches legacy outputs with
-   compact-authority counters.
-7. Then proceed to edits/punchouts and partial dirty.
+5. FP6.5R producer/read-index substrate, retained read summaries, and exact
+   partial-dirty projection before normal recalc invokes span tasks.
+6. FP6.5R mixed producer scheduler over `FormulaProducerId`, still pure/inert
+   until dirty closure and ordering tests pass.
+7. Integration checkpoint: accepted row-run formula span evaluates dirty-domain
+   work through `ComputedWriteBuffer`, writes fragments, and matches legacy
+   outputs with compact-authority counters.
+8. Then proceed to edits/punchouts and normalization/function kernels.
 
 ## 19. Safe kickoff checklist
 

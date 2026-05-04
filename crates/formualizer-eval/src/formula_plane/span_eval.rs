@@ -624,6 +624,7 @@ mod tests {
             result_region: ResultRegion::scalar_cells(domain.clone()),
             domain,
             intrinsic_mask_id: None,
+            read_summary_id: None,
         });
         let workbook = TestWorkbook::new();
         let mut buffer = ComputedWriteBuffer::default();
@@ -1127,6 +1128,7 @@ mod tests {
             result_region: ResultRegion::scalar_cells(domain.clone()),
             domain,
             intrinsic_mask_id: None,
+            read_summary_id: None,
         });
         let workbook = TestWorkbook::new();
         let mut buffer = ComputedWriteBuffer::default();

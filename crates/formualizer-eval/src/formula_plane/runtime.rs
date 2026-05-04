@@ -9,6 +9,7 @@ use crate::SheetId;
 use crate::engine::VertexId;
 
 use super::ids::FormulaTemplateId;
+use super::producer::{SpanReadSummary, SpanReadSummaryId, SpanReadSummaryStore};
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -279,6 +280,7 @@ pub(crate) struct FormulaSpan {
     pub(crate) domain: PlacementDomain,
     pub(crate) result_region: ResultRegion,
     pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
+    pub(crate) read_summary_id: Option<SpanReadSummaryId>,
     pub(crate) state: SpanState,
     pub(crate) version: u32,
 }
@@ -290,6 +292,7 @@ pub(crate) struct NewFormulaSpan {
     pub(crate) domain: PlacementDomain,
     pub(crate) result_region: ResultRegion,
     pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
+    pub(crate) read_summary_id: Option<SpanReadSummaryId>,
 }
 
 #[derive(Debug)]
@@ -328,6 +331,7 @@ impl SpanStore {
             domain: new_span.domain,
             result_region: new_span.result_region,
             intrinsic_mask_id: new_span.intrinsic_mask_id,
+            read_summary_id: new_span.read_summary_id,
             state: SpanState::Active,
             version,
         };
@@ -538,6 +542,7 @@ pub(crate) struct FormulaHandle {
 pub(crate) struct FormulaPlane {
     pub(crate) templates: TemplateStore,
     pub(crate) spans: SpanStore,
+    pub(crate) span_read_summaries: SpanReadSummaryStore,
     pub(crate) formula_overlay: FormulaOverlay,
     pub(crate) projection_cache: SpanProjectionCache,
     pub(crate) dirty: SpanDirtyStore,
@@ -561,6 +566,15 @@ impl FormulaPlane {
         if inserted {
             self.bump_epoch();
         }
+        id
+    }
+
+    pub(crate) fn insert_span_read_summary(
+        &mut self,
+        summary: SpanReadSummary,
+    ) -> SpanReadSummaryId {
+        let id = self.span_read_summaries.insert(summary);
+        self.bump_epoch();
         id
     }
 
@@ -668,6 +682,7 @@ mod tests {
             result_region: ResultRegion::scalar_cells(domain.clone()),
             domain,
             intrinsic_mask_id: None,
+            read_summary_id: None,
         }
     }
 
@@ -762,6 +777,7 @@ mod tests {
             result_region: ResultRegion::scalar_cells(domain.clone()),
             domain,
             intrinsic_mask_id: None,
+            read_summary_id: None,
         });
     }
 

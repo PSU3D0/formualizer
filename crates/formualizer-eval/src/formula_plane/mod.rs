@@ -12,6 +12,7 @@ pub mod grid;
 pub mod ids;
 pub mod partition;
 pub(crate) mod placement;
+pub(crate) mod producer;
 pub(crate) mod region_index;
 pub(crate) mod runtime;
 pub mod span_counters;

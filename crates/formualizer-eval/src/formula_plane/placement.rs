@@ -11,8 +11,11 @@ use formualizer_parse::parser::ASTNode;
 
 use crate::SheetId;
 
-use super::dependency_summary::{FormulaClass, summarize_canonical_template};
+use super::dependency_summary::{
+    FormulaClass, FormulaDependencySummary, summarize_canonical_template,
+};
 use super::ids::FormulaTemplateId;
+use super::producer::SpanReadSummary;
 use super::runtime::{
     FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
 };
@@ -67,6 +70,7 @@ pub(crate) enum PlacementFallbackReason {
     EmptyCandidateSet,
     UnsupportedCanonicalTemplate,
     UnsupportedDependencySummary,
+    UnsupportedDirtyProjection,
     NonEquivalentTemplate,
     UnsupportedShapeOrGaps,
     SingletonUnique,
@@ -162,6 +166,23 @@ pub(crate) fn place_candidate_family(
         }
     };
 
+    let result_region = ResultRegion::scalar_cells(domain.clone());
+    let read_summary = match SpanReadSummary::from_formula_summary(
+        sheet_id,
+        &result_region,
+        &origin_analysis.summary,
+    ) {
+        Ok(summary) => summary,
+        Err(_reason) => {
+            mark_all_legacy(
+                &mut report,
+                &candidates,
+                PlacementFallbackReason::UnsupportedDirtyProjection,
+            );
+            return report;
+        }
+    };
+
     let template_count_before = plane.templates.len();
     let template_id = plane.intern_template(
         Arc::<str>::from(first.template.key.payload()),
@@ -172,12 +193,14 @@ pub(crate) fn place_candidate_family(
         report.counters.templates_interned = 1;
     }
 
+    let read_summary_id = plane.insert_span_read_summary(read_summary);
     let span = plane.insert_span(NewFormulaSpan {
         sheet_id,
         template_id,
-        result_region: ResultRegion::scalar_cells(domain.clone()),
+        result_region,
         domain,
         intrinsic_mask_id: None,
+        read_summary_id: Some(read_summary_id),
     });
 
     report.counters.spans_created = 1;
@@ -199,6 +222,7 @@ pub(crate) fn place_candidate_family(
 struct CandidateAnalysis<'a> {
     candidate: &'a FormulaPlacementCandidate,
     template: CanonicalTemplate,
+    summary: FormulaDependencySummary,
 }
 
 fn analyze_candidates(
@@ -235,6 +259,7 @@ fn analyze_candidates(
             Ok(CandidateAnalysis {
                 candidate,
                 template,
+                summary,
             })
         })
         .collect()
@@ -439,6 +464,22 @@ mod tests {
                 .resolution,
             FormulaResolution::SpanPlacement { .. }
         ));
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        let span_record = plane.spans.get(span).expect("span record");
+        let read_summary_id = span_record
+            .read_summary_id
+            .expect("accepted span retains read summary");
+        let read_summary = plane
+            .span_read_summaries
+            .get(read_summary_id)
+            .expect("read summary");
+        assert_eq!(read_summary.dependencies.len(), 1);
+        assert_eq!(
+            read_summary.dependencies[0].read_region,
+            super::super::region_index::RegionPattern::col_interval(0, 0, 0, 2)
+        );
     }
 
     #[test]
@@ -634,6 +675,27 @@ mod tests {
                 .iter()
                 .all(|result| matches!(result, FormulaPlacementResult::Span { .. }))
         );
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        let span_record = plane.spans.get(span).expect("span record");
+        let read_summary = plane
+            .span_read_summaries
+            .get(span_record.read_summary_id.expect("read summary id"))
+            .expect("read summary");
+        let mut read_regions = read_summary
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.read_region)
+            .collect::<Vec<_>>();
+        read_regions.sort_by_key(|region| format!("{region:?}"));
+        assert_eq!(read_regions.len(), 2);
+        assert!(
+            read_regions.contains(&super::super::region_index::RegionPattern::col_interval(
+                0, 0, 0, 2
+            ))
+        );
+        assert!(read_regions.contains(&super::super::region_index::RegionPattern::point(0, 0, 1)));
     }
 
     #[test]

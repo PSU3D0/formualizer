@@ -36,8 +36,9 @@ It does not change formula semantics.
 
 The graph remains the correctness/router/scheduler backbone for legacy formulas
 and for conservative may-affect propagation. FormulaPlane plugs into that
-backbone as a sidecar/proxy target that can project dirty regions into span
-placements and produce fragment-backed computed results.
+backbone through graph-owned formula authority and sidecar region indexes: it
+projects dirty regions into producer dirty domains and enables fragment-backed
+computed results without graph proxy nodes in V1.
 
 The required result/value substrate is supplied by eval-flush Phase 1-5:
 
@@ -290,22 +291,29 @@ sparse domains should be representable without rewriting dirty/eval plumbing.
 The graph should remain mostly span-agnostic. It should provide conservative
 may-affect routing and scheduling, not inspect every placement.
 
-### 6.1 Initial integration: sidecar first
+### 6.1 Initial integration: producer-region sidecar first
 
-The first runtime path should use a FormulaPlane sidecar dependency index:
+The first runtime path should use graph-owned FormulaPlane authority plus sidecar
+region indexes:
 
 ```text
 changed region
-  -> legacy graph dependents
-  -> FormulaPlane SpanDependencyIndex candidate spans
+  -> legacy graph dependents / read summaries
+  -> FormulaConsumerReadIndex entries
+  -> projected FormulaProducerWork dirty domains
 ```
 
-This avoids invasive graph rewrites. The graph can remain the legacy formula
-vertex authority while FormulaPlane handles accepted spans.
+This avoids invasive graph rewrites while still making spans first-class formula
+producers. The graph remains the legacy formula vertex authority; FormulaPlane
+handles accepted span authority through producer/read-region indexes.
 
-### 6.2 Later integration: span/proxy targets
+### 6.2 Deferred/non-V1 option: graph proxy targets
 
-If needed, graph range dependencies can later generalize to:
+Graph proxy nodes are intentionally out of scope for V1. If a future design needs
+proxy targets, it must be re-approved separately and must not replace the
+producer-region planning contract in `FORMULA_PRODUCER_PLANNING_V1.md`.
+
+Historical deferred shape:
 
 ```rust
 enum DepTarget {
@@ -314,18 +322,8 @@ enum DepTarget {
 }
 ```
 
-or one proxy vertex per span:
-
-```rust
-struct FormulaSpanProxy {
-    vertex_id: VertexId,
-    span_id: FormulaSpanId,
-    result_region: RegionSet,
-}
-```
-
-A proxy is a coarse graph work item. FormulaPlane still owns placement
-projection, holes, exceptions, and evaluation.
+or one proxy vertex per span. This remains a post-V1 escape hatch only, not the
+active implementation path.
 
 ### 6.3 Sidecar region-index substrate
 
@@ -484,8 +482,10 @@ Examples:
 | `C_r = SUM(A$1:A_r)` | `A10` | `C10:C_end` |
 | `C_r = SUM($A$1:$A$10)` | `A5` | whole `C` span |
 
-Initial runtime can use conservative whole-span dirty for accepted spans. Partial
-dirty projections are added incrementally for exact common cases.
+Active FP6.5R supersession: initial runtime must make partial dirty domains
+first-class. Whole-span dirty is allowed only when exact, such as absolute fanout,
+or as an explicitly counted conservative fallback. It is not the default V1
+architecture.
 
 ### 7.3 DirtyProjection vocabulary
 
@@ -516,28 +516,38 @@ pub enum DirtyProjection {
 
 Unsupported/dynamic cases return `ConservativeWhole` only when the dependency
 footprint itself is bounded. If the footprint cannot be bounded, the formula
-remains legacy. Exact projection is added incrementally; whole-span dirty is the
-safe initial projection only after no-under-return candidate discovery.
+remains legacy. The active FP6.5R design requires partial dirty to be first-class
+from V1; whole-span dirty is permitted only when exact (for example absolute
+fanout) or as an explicitly counted conservative fallback. See
+`FORMULA_PRODUCER_PLANNING_V1.md`.
 
 ## 8. Scheduling and evaluation
 
-The first normal-runtime scheduler seam is a sidecar mixed work-item scheduler,
-not graph-native span proxy vertices:
+The first normal-runtime scheduler seam is region-derived mixed formula-producer
+planning, not graph-native span proxy vertices. The scheduler operates over
+formula producers and dirty-domain work payloads:
 
 ```rust
-pub enum FormulaPlaneWorkItem {
+pub enum FormulaProducerId {
     Legacy(VertexId),
     Span(FormulaSpanId),
+}
+
+pub struct FormulaProducerWork {
+    producer: FormulaProducerId,
+    dirty: ProducerDirtyDomain,
 }
 ```
 
 FormulaPlane/engine adapter code constructs a temporary recalc work graph over
-only the current dirty work set. The graph remains the source of legacy formula
-dependencies and may-affect routing; FormulaPlane supplies span dependency and
-result-domain edges.
+only the current dirty producer set. The graph remains the source of legacy
+formula metadata and may-affect routing; graph-owned FormulaPlane authority
+supplies span result regions, retained read summaries, and dirty projection
+metadata. Edges are derived by intersecting consumer read regions with producer
+result regions.
 
-Graph-native `DepTarget::SpanProxy` or `VertexKind::FormulaSpanProxy` remains a
-later option if the sidecar scheduler proves insufficient.
+Graph-native `DepTarget::SpanProxy` or `VertexKind::FormulaSpanProxy` remains out
+of scope for V1.
 
 A span task contains:
 
@@ -564,8 +574,8 @@ This already captures the major win:
 
 ```text
 one template
-one span work item
-compressed dependencies
+one producer work item with dirty-domain payload
+compressed region-derived dependencies
 fragment-backed result write
 ```
 
@@ -831,8 +841,11 @@ old forward FP5-FP7:
   graph-build hints -> first materialization reduction -> first span executor
 
 new runtime path:
-  hidden span authority -> sidecar may-affect dirty index -> span work items
-  -> computed fragment result writes -> punchouts/edit support -> partial dirty
+  hidden span authority -> sidecar region indexes
+  -> region-derived formula producer planning with V1 partial dirty
+  -> mixed FormulaProducerId scheduling, no graph proxy nodes
+  -> dirty-domain span work through ComputedWriteBuffer/fragments
+  -> punchouts/edit support -> normalization/function kernels
 ```
 
 `REPHASE_PLAN.md` should be treated as historical plus passive-phase context; new

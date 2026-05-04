@@ -7,6 +7,7 @@ Supersession note, 2026-05-03:
 ```text
 FORMULA_PLANE_RUNTIME_ARCHITECTURE.md
 FORMULA_PLANE_IMPLEMENTATION_PLAN.md
+FORMULA_PRODUCER_PLANNING_V1.md
 ```
 
 are now the controlling docs for production FormulaPlane runtime work. Completed
@@ -16,10 +17,11 @@ forward FP5-FP7 path is superseded by the new opt-in span-authority path:
 ```text
 eval-flush PR #95 substrate
   -> FormulaPlane core stores/resolution/overlay
-  -> sidecar region indexes and dirty projection
-  -> sidecar mixed span/legacy scheduler
-  -> scalar span evaluator writing through ComputedWriteBuffer/fragments
-  -> FormulaOverlay punchouts and later partial dirty/normalization
+  -> sidecar region indexes
+  -> region-derived formula producer planning with V1 partial dirty
+  -> mixed FormulaProducerId scheduling, no graph proxy nodes
+  -> scalar span evaluator writing dirty-domain work through ComputedWriteBuffer/fragments
+  -> FormulaOverlay punchouts and later normalization/function kernels
 ```
 
 ## Decision
