@@ -151,7 +151,7 @@ mod enabled {
                     mode.as_str(),
                     scale.as_str()
                 );
-                let report = run_tuple(
+                let report = match run_tuple(
                     scenario.as_ref(),
                     *mode,
                     scale,
@@ -159,7 +159,37 @@ mod enabled {
                     &fixture_dir,
                     cli.skip_fixture_rebuild,
                     cli.skip_edit_cycles,
-                )?;
+                ) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        eprintln!(
+                            "[probe-corpus] {} mode={} scale={} fixture/run error: {err:#}",
+                            scenario.id(),
+                            mode.as_str(),
+                            scale.as_str()
+                        );
+                        let mut report = ScenarioSummaryReport {
+                            scenario_id: scenario.id().to_string(),
+                            mode: mode.as_str().to_string(),
+                            scale: scale_title(scale).to_string(),
+                            fixture_path: String::new(),
+                            fixture_size_bytes: 0,
+                            phases: Vec::new(),
+                            final_invariants_passed: expected_failure_reason(
+                                scenario.as_ref(),
+                                *mode,
+                            )
+                            .is_some(),
+                            notes: vec![format!("fixture/run error: {err:#}")],
+                        };
+                        if let Some(reason) = expected_failure_reason(scenario.as_ref(), *mode) {
+                            report
+                                .notes
+                                .push(format!("expected_failure_reason: {reason}"));
+                        }
+                        report
+                    }
+                };
                 let json_path =
                     output_dir.join(format!("{}-{}.json", scenario.id(), mode.file_str()));
                 Reporter::write_json(&json_path, &report)?;

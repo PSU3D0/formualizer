@@ -4,8 +4,8 @@ use formualizer_workbook::Workbook;
 
 use super::common::{ScaleState, fixture_path};
 use super::{
-    EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
-    ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
+    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale, ScenarioTag,
 };
 
 pub struct S040UndoRedoOfRowInsert {
@@ -48,6 +48,19 @@ impl Scenario for S040UndoRedoOfRowInsert {
             ScenarioTag::SingleColumnFamily,
             ScenarioTag::UndoRedo,
             ScenarioTag::InsertRows,
+        ]
+    }
+
+    fn expected_to_fail_under(&self) -> &'static [ExpectedFailure] {
+        &[
+            ExpectedFailure {
+                mode: ExpectedFailureMode::OffOnly,
+                reason: "Workbook public API has no undoable insert_rows; engine_mut().insert_rows would bypass the Workbook undo/redo machinery this scenario tries to test. PM follow-up: add Workbook surface for structural ops.",
+            },
+            ExpectedFailure {
+                mode: ExpectedFailureMode::AuthOnly,
+                reason: "Workbook public API has no undoable insert_rows; engine_mut().insert_rows would bypass the Workbook undo/redo machinery this scenario tries to test. PM follow-up: add Workbook surface for structural ops.",
+            },
         ]
     }
 

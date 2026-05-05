@@ -4,8 +4,8 @@ use formualizer_workbook::Workbook;
 
 use super::common::{ScaleState, fixture_path, has_evaluated_formulas, numeric};
 use super::{
-    EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
-    ScenarioPhase, ScenarioTag,
+    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
+    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioTag,
 };
 
 const INITIAL_TABLE_ROWS: u32 = 100;
@@ -39,6 +39,19 @@ impl Scenario for S041TableGrowByRowAppend {
 
     fn tags(&self) -> &'static [ScenarioTag] {
         &[ScenarioTag::StructuredRefs, ScenarioTag::BulkEdit]
+    }
+
+    fn expected_to_fail_under(&self) -> &'static [ExpectedFailure] {
+        &[
+            ExpectedFailure {
+                mode: ExpectedFailureMode::OffOnly,
+                reason: "Workbook public API has no extend_table / update_table. PM follow-up: add Workbook surface for table growth.",
+            },
+            ExpectedFailure {
+                mode: ExpectedFailureMode::AuthOnly,
+                reason: "Workbook public API has no extend_table / update_table. PM follow-up: add Workbook surface for table growth.",
+            },
+        ]
     }
 
     fn build_fixture(&self, ctx: &ScenarioBuildCtx) -> Result<ScenarioFixture> {

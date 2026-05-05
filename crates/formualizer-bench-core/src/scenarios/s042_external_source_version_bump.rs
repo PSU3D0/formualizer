@@ -3,8 +3,8 @@ use formualizer_workbook::Workbook;
 
 use super::common::ScaleState;
 use super::{
-    EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
-    ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
+    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale, ScenarioTag,
 };
 
 pub struct S042ExternalSourceVersionBump {
@@ -44,6 +44,19 @@ impl Scenario for S042ExternalSourceVersionBump {
 
     fn tags(&self) -> &'static [ScenarioTag] {
         &[ScenarioTag::Mixed]
+    }
+
+    fn expected_to_fail_under(&self) -> &'static [ExpectedFailure] {
+        &[
+            ExpectedFailure {
+                mode: ExpectedFailureMode::OffOnly,
+                reason: "Workbook (XLSX path via UmyaAdapter) has no public API to declare/populate external sources. JSON-backed Workbook can; XLSX cannot. PM follow-up: add cross-backend external-source surface or skip this scenario.",
+            },
+            ExpectedFailure {
+                mode: ExpectedFailureMode::AuthOnly,
+                reason: "Workbook (XLSX path via UmyaAdapter) has no public API to declare/populate external sources. JSON-backed Workbook can; XLSX cannot. PM follow-up: add cross-backend external-source surface or skip this scenario.",
+            },
+        ]
     }
 
     fn build_fixture(&self, ctx: &ScenarioBuildCtx) -> Result<ScenarioFixture> {
