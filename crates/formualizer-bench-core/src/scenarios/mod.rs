@@ -40,6 +40,19 @@ mod s026_whole_column_refs_in_50k_formulas;
 mod s027_large_array_literals;
 mod s028_let_lambda_formulas;
 mod s029_calc_tab_200_complex_cells;
+mod s030_calc_and_data_tabs_mixed;
+mod s031_finance_anchored_with_edit_cycles;
+mod s032_family_with_row_insert_cycles;
+mod s033_family_with_row_delete_cycles;
+mod s034_family_with_column_insert;
+mod s035_family_with_column_delete;
+mod s036_multi_sheet_with_sheet_rename;
+mod s037_named_range_update_cycles;
+mod s038_bulk_edit_50_cells_per_cycle;
+mod s039_undo_redo_of_bulk_edit;
+mod s040_undo_redo_of_row_insert;
+mod s041_table_grow_by_row_append;
+mod s042_external_source_version_bump;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -70,6 +83,19 @@ pub use s026_whole_column_refs_in_50k_formulas::S026WholeColumnRefsIn50kFormulas
 pub use s027_large_array_literals::S027LargeArrayLiterals;
 pub use s028_let_lambda_formulas::S028LetLambdaFormulas;
 pub use s029_calc_tab_200_complex_cells::S029CalcTab200ComplexCells;
+pub use s030_calc_and_data_tabs_mixed::S030CalcAndDataTabsMixed;
+pub use s031_finance_anchored_with_edit_cycles::S031FinanceAnchoredWithEditCycles;
+pub use s032_family_with_row_insert_cycles::S032FamilyWithRowInsertCycles;
+pub use s033_family_with_row_delete_cycles::S033FamilyWithRowDeleteCycles;
+pub use s034_family_with_column_insert::S034FamilyWithColumnInsert;
+pub use s035_family_with_column_delete::S035FamilyWithColumnDelete;
+pub use s036_multi_sheet_with_sheet_rename::S036MultiSheetWithSheetRename;
+pub use s037_named_range_update_cycles::S037NamedRangeUpdateCycles;
+pub use s038_bulk_edit_50_cells_per_cycle::S038BulkEdit50CellsPerCycle;
+pub use s039_undo_redo_of_bulk_edit::S039UndoRedoOfBulkEdit;
+pub use s040_undo_redo_of_row_insert::S040UndoRedoOfRowInsert;
+pub use s041_table_grow_by_row_append::S041TableGrowByRowAppend;
+pub use s042_external_source_version_bump::S042ExternalSourceVersionBump;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -263,6 +289,19 @@ impl ScenarioRegistry {
             Box::new(S027LargeArrayLiterals::new()),
             Box::new(S028LetLambdaFormulas::new()),
             Box::new(S029CalcTab200ComplexCells::new()),
+            Box::new(S030CalcAndDataTabsMixed::new()),
+            Box::new(S031FinanceAnchoredWithEditCycles::new()),
+            Box::new(S032FamilyWithRowInsertCycles::new()),
+            Box::new(S033FamilyWithRowDeleteCycles::new()),
+            Box::new(S034FamilyWithColumnInsert::new()),
+            Box::new(S035FamilyWithColumnDelete::new()),
+            Box::new(S036MultiSheetWithSheetRename::new()),
+            Box::new(S037NamedRangeUpdateCycles::new()),
+            Box::new(S038BulkEdit50CellsPerCycle::new()),
+            Box::new(S039UndoRedoOfBulkEdit::new()),
+            Box::new(S040UndoRedoOfRowInsert::new()),
+            Box::new(S041TableGrowByRowAppend::new()),
+            Box::new(S042ExternalSourceVersionBump::new()),
         ]
     }
 }

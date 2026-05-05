@@ -73,6 +73,9 @@ fn main() {
         println!("  -> {wrong} wrong of 18 non-volatile rows");
     }
 
-    run("Auth (default)", FormulaPlaneMode::AuthoritativeExperimental);
+    run(
+        "Auth (default)",
+        FormulaPlaneMode::AuthoritativeExperimental,
+    );
     run("Off", FormulaPlaneMode::Off);
 }
