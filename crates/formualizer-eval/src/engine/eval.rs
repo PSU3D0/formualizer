@@ -382,6 +382,12 @@ pub struct Engine<R> {
 ///
 /// This wrapper is intentionally thin for ticket 614 (commit-only): it delegates to existing
 /// `Engine` edit methods and does not create changelog boundaries or implement rollback.
+impl<R: EvaluationContext> Engine<R> {
+    pub(crate) fn ingest_pipeline(&mut self) -> crate::engine::ingest_pipeline::IngestPipeline<'_> {
+        self.graph.ingest_pipeline(&self.resolver)
+    }
+}
+
 pub struct EngineAction<'a, R>
 where
     R: EvaluationContext,

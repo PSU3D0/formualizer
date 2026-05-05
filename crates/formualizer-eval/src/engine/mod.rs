@@ -64,6 +64,309 @@ pub use graph::editor::{
 
 pub use graph::editor::change_log::{ChangeLog, ChangeLogger, NullChangeLogger};
 
+#[doc(hidden)]
+pub mod fp8_parity_test_support {
+    use super::{Engine, EvalConfig};
+    use crate::engine::arena::CanonicalLabels;
+    use crate::formula_plane::dependency_summary::summarize_canonical_template;
+    use crate::formula_plane::producer::SpanReadSummary;
+    use crate::formula_plane::runtime::{PlacementDomain, ResultRegion};
+    use crate::formula_plane::template_canonical::{
+        CanonicalRejectReason, CanonicalTemplateFlag, canonicalize_template,
+    };
+    use crate::reference::{CellRef, Coord};
+    use crate::traits::EvaluationContext;
+    use formualizer_common::{ExcelError, LiteralValue};
+    use formualizer_parse::parser::{ASTNode, parse};
+    use std::sync::Arc;
+
+    #[derive(Clone, Debug)]
+    pub struct Fp8ParityObservation {
+        pub formula: String,
+        pub placement: CellRef,
+        pub old_payload: String,
+        pub new_hash: u64,
+    }
+
+    pub fn default_config() -> EvalConfig {
+        EvalConfig::default()
+    }
+
+    pub fn parse_formula(formula: &str) -> ASTNode {
+        parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"))
+    }
+
+    pub fn cell(sheet_id: u16, row: u32, col: u32) -> CellRef {
+        CellRef::new(sheet_id, Coord::from_excel(row, col, true, true))
+    }
+
+    pub fn assert_case<R: EvaluationContext>(
+        engine: &mut Engine<R>,
+        formula: &str,
+        placement: CellRef,
+    ) -> Fp8ParityObservation {
+        let parsed = parse_formula(formula);
+        assert_case_ast(engine, formula, parsed, placement)
+    }
+
+    pub fn assert_case_ast<R: EvaluationContext>(
+        engine: &mut Engine<R>,
+        formula: &str,
+        parsed: ASTNode,
+        placement: CellRef,
+    ) -> Fp8ParityObservation {
+        let mut old_ast = parsed.clone();
+        let old_rewrite = engine
+            .graph
+            .rewrite_structured_references_for_cell(&mut old_ast, placement);
+        let old = old_rewrite.and_then(|_| old_path(engine, &old_ast, placement));
+
+        let new = {
+            let mut pipeline = engine.ingest_pipeline();
+            pipeline.ingest_formula(
+                crate::engine::ingest_pipeline::FormulaAstInput::Tree(parsed),
+                placement,
+                Some(Arc::<str>::from(formula)),
+            )
+        };
+
+        match (old, new) {
+            (Ok(old), Ok(new)) => {
+                let new_direct = sorted_cells(new.dep_plan.direct_cell_deps.clone());
+                assert_eq!(
+                    old.direct_cells, new_direct,
+                    "direct deps differ for {formula} at {placement:?}\nold={:?}\nnew={:?}",
+                    old.direct_cells, new_direct
+                );
+                assert_eq!(
+                    old.range_deps, new.dep_plan.range_deps,
+                    "range deps differ for {formula} at {placement:?}"
+                );
+                assert_eq!(
+                    old.unresolved_names, new.dep_plan.named_refs,
+                    "unresolved names differ for {formula} at {placement:?}"
+                );
+                assert_eq!(
+                    old.volatile, new.dep_plan.volatile,
+                    "volatile flag differs for {formula} at {placement:?}"
+                );
+                assert_eq!(
+                    old.dynamic, new.dep_plan.dynamic,
+                    "dynamic flag differs for {formula} at {placement:?}"
+                );
+                let mut expected_labels = canonical_labels_from_old(&old.labels);
+                if old.dynamic {
+                    expected_labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
+                }
+                assert_eq!(
+                    expected_labels.flags, new.labels.flags,
+                    "canonical label flags differ for {formula} at {placement:?}\nold={:?}\nnew={:#x}",
+                    old.labels.flags, new.labels.flags
+                );
+                assert_eq!(
+                    expected_labels.rejects, new.labels.rejects,
+                    "canonical label rejects differ for {formula} at {placement:?}\nold={:?}\nnew={:#x}",
+                    old.labels.reject_reasons, new.labels.rejects
+                );
+                assert_eq!(
+                    old.read_summary_debug,
+                    new.read_summary.as_ref().map(|s| format!("{s:?}")),
+                    "read summary differs for {formula} at {placement:?}"
+                );
+                assert_eq!(new.formula_text.as_deref(), Some(formula));
+                assert_eq!(new.placement, placement);
+                Fp8ParityObservation {
+                    formula: formula.to_string(),
+                    placement,
+                    old_payload: old.payload,
+                    new_hash: new.canonical_hash,
+                }
+            }
+            (Err(old), Err(new)) => {
+                assert_eq!(
+                    old.kind.to_string(),
+                    new.kind.to_string(),
+                    "old and new errored differently for {formula} at {placement:?}: old={old:?} new={new:?}"
+                );
+                Fp8ParityObservation {
+                    formula: formula.to_string(),
+                    placement,
+                    old_payload: format!("ERR:{:?}", old.kind),
+                    new_hash: 0,
+                }
+            }
+            (Ok(_), Err(new)) => panic!(
+                "new pipeline errored but old path succeeded for {formula} at {placement:?}: {new:?}"
+            ),
+            (Err(old), Ok(_)) => panic!(
+                "old path errored but new pipeline succeeded for {formula} at {placement:?}: {old:?}"
+            ),
+        }
+    }
+
+    #[derive(Debug)]
+    struct OldOutput {
+        payload: String,
+        labels: crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+        direct_cells: Vec<CellRef>,
+        range_deps: Vec<crate::reference::SharedRangeRef<'static>>,
+        unresolved_names: Vec<String>,
+        volatile: bool,
+        dynamic: bool,
+        read_summary_debug: Option<String>,
+    }
+
+    fn old_path<R: EvaluationContext>(
+        engine: &mut Engine<R>,
+        ast: &ASTNode,
+        placement: CellRef,
+    ) -> Result<OldOutput, ExcelError> {
+        let (_deps, ranges, placeholders, _named, unresolved_names) = engine
+            .graph
+            .fp8_parity_extract_dependencies_with_pending_names(ast, placement.sheet_id)?;
+        let volatile = engine.graph.fp8_parity_is_ast_volatile(ast);
+        let dynamic = engine.graph.is_ast_dynamic(ast);
+        let template =
+            canonicalize_template(ast, placement.coord.row() + 1, placement.coord.col() + 1);
+        let summary = summarize_canonical_template(&template);
+        let scalar_domain = PlacementDomain::row_run(
+            placement.sheet_id,
+            placement.coord.row(),
+            placement.coord.row(),
+            placement.coord.col(),
+        );
+        let result_region = ResultRegion::scalar_cells(scalar_domain);
+        let read_summary =
+            SpanReadSummary::from_formula_summary(placement.sheet_id, &result_region, &summary)
+                .ok();
+        Ok(OldOutput {
+            payload: template.key.payload().to_string(),
+            labels: template.labels,
+            direct_cells: sorted_cells(placeholders),
+            range_deps: ranges,
+            unresolved_names,
+            volatile,
+            dynamic,
+            read_summary_debug: read_summary.as_ref().map(|s| format!("{s:?}")),
+        })
+    }
+
+    fn sorted_cells(mut cells: Vec<CellRef>) -> Vec<CellRef> {
+        cells.sort();
+        cells.dedup();
+        cells
+    }
+
+    fn canonical_labels_from_old(
+        old: &crate::formula_plane::template_canonical::CanonicalTemplateLabels,
+    ) -> CanonicalLabels {
+        let mut labels = CanonicalLabels::default();
+        for flag in &old.flags {
+            labels.flags |= match flag {
+                CanonicalTemplateFlag::ParserVolatileFlag => CanonicalLabels::FLAG_VOLATILE,
+                CanonicalTemplateFlag::FunctionCall => CanonicalLabels::FLAG_CONTAINS_FUNCTION,
+                CanonicalTemplateFlag::CurrentSheetBinding => CanonicalLabels::FLAG_CURRENT_SHEET,
+                CanonicalTemplateFlag::ExplicitSheetBinding => CanonicalLabels::FLAG_EXPLICIT_SHEET,
+                CanonicalTemplateFlag::RelativeReferenceAxis => CanonicalLabels::FLAG_RELATIVE_ONLY,
+                CanonicalTemplateFlag::AbsoluteReferenceAxis => CanonicalLabels::FLAG_ABSOLUTE_ONLY,
+                CanonicalTemplateFlag::MixedAnchors => CanonicalLabels::FLAG_MIXED_ANCHORS,
+                CanonicalTemplateFlag::FiniteRangeReference => CanonicalLabels::FLAG_CONTAINS_RANGE,
+            };
+        }
+        for reason in &old.reject_reasons {
+            labels.flags |= match reason {
+                CanonicalRejectReason::DynamicReferenceFunction { .. } => {
+                    CanonicalLabels::FLAG_DYNAMIC
+                }
+                CanonicalRejectReason::ParserVolatileFlag
+                | CanonicalRejectReason::VolatileFunction { .. } => CanonicalLabels::FLAG_VOLATILE,
+                CanonicalRejectReason::LocalEnvironmentFunction { .. } => {
+                    CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA
+                }
+                CanonicalRejectReason::ArrayOrSpillFunction { .. }
+                | CanonicalRejectReason::ArrayLiteral => CanonicalLabels::FLAG_CONTAINS_ARRAY,
+                CanonicalRejectReason::NamedReference { .. } => CanonicalLabels::FLAG_CONTAINS_NAME,
+                CanonicalRejectReason::StructuredReference { .. }
+                | CanonicalRejectReason::StructuredReferenceCurrentRow { .. } => {
+                    CanonicalLabels::FLAG_CONTAINS_TABLE
+                        | CanonicalLabels::FLAG_CONTAINS_STRUCTURED_REF
+                }
+                CanonicalRejectReason::OpenRangeReference { .. }
+                | CanonicalRejectReason::WholeAxisReference { .. } => {
+                    CanonicalLabels::FLAG_CONTAINS_RANGE
+                }
+                _ => 0,
+            };
+            labels.rejects |= match reason {
+                CanonicalRejectReason::InvalidPlacementAnchor { .. } => {
+                    CanonicalLabels::REJECT_INVALID_PLACEMENT_ANCHOR
+                }
+                CanonicalRejectReason::DynamicReferenceFunction { .. } => {
+                    CanonicalLabels::REJECT_DYNAMIC_REFERENCE
+                }
+                CanonicalRejectReason::UnknownOrCustomFunction { .. } => {
+                    CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION
+                }
+                CanonicalRejectReason::LocalEnvironmentFunction { .. } => {
+                    CanonicalLabels::REJECT_LOCAL_ENVIRONMENT
+                }
+                CanonicalRejectReason::ParserVolatileFlag => {
+                    CanonicalLabels::REJECT_PARSER_VOLATILE_FLAG
+                }
+                CanonicalRejectReason::VolatileFunction { .. } => {
+                    CanonicalLabels::REJECT_VOLATILE_FUNCTION
+                }
+                CanonicalRejectReason::ReferenceReturningFunction { .. } => {
+                    CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION
+                }
+                CanonicalRejectReason::ArrayOrSpillFunction { .. } => {
+                    CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION
+                }
+                CanonicalRejectReason::ArrayLiteral => CanonicalLabels::REJECT_ARRAY_LITERAL,
+                CanonicalRejectReason::SpillReference { .. } => {
+                    CanonicalLabels::REJECT_SPILL_REFERENCE
+                }
+                CanonicalRejectReason::SpillResultRegionOperator => {
+                    CanonicalLabels::REJECT_SPILL_RESULT_REGION_OPERATOR
+                }
+                CanonicalRejectReason::ImplicitIntersectionOperator => {
+                    CanonicalLabels::REJECT_IMPLICIT_INTERSECTION_OPERATOR
+                }
+                CanonicalRejectReason::CallExpression => CanonicalLabels::REJECT_CALL_EXPRESSION,
+                CanonicalRejectReason::NamedReference { .. } => {
+                    CanonicalLabels::REJECT_NAMED_REFERENCE
+                }
+                CanonicalRejectReason::StructuredReference { .. } => {
+                    CanonicalLabels::REJECT_STRUCTURED_REFERENCE
+                }
+                CanonicalRejectReason::StructuredReferenceCurrentRow { .. } => {
+                    CanonicalLabels::REJECT_STRUCTURED_REFERENCE_CURRENT_ROW
+                }
+                CanonicalRejectReason::ThreeDReference { .. } => {
+                    CanonicalLabels::REJECT_THREE_D_REFERENCE
+                }
+                CanonicalRejectReason::ExternalReference { .. } => {
+                    CanonicalLabels::REJECT_EXTERNAL_REFERENCE
+                }
+                CanonicalRejectReason::OpenRangeReference { .. } => {
+                    CanonicalLabels::REJECT_OPEN_RANGE_REFERENCE
+                }
+                CanonicalRejectReason::WholeAxisReference { .. } => {
+                    CanonicalLabels::REJECT_WHOLE_AXIS_REFERENCE
+                }
+                CanonicalRejectReason::UnsupportedReference { .. } => {
+                    CanonicalLabels::REJECT_UNSUPPORTED_REFERENCE
+                }
+            };
+        }
+        labels
+    }
+
+    pub fn literal_number(value: f64) -> LiteralValue {
+        LiteralValue::Number(value)
+    }
+}
+
 // CalcObserver is defined below
 
 use crate::timezone::TimeZoneSpec;

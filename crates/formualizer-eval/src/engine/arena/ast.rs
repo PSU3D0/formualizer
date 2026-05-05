@@ -17,7 +17,6 @@ impl AstNodeId {
         self.0
     }
 
-    #[cfg(test)]
     pub(crate) const fn from_u32(raw: u32) -> Self {
         Self(raw)
     }

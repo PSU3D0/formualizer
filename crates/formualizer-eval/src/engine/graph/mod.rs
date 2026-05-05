@@ -1183,6 +1183,129 @@ impl DependencyGraph {
         &self.data_store
     }
 
+    pub(crate) fn make_ingest_pipeline<'a>(
+        &'a mut self,
+        function_provider: &'a dyn crate::traits::FunctionProvider,
+        policy: formualizer_parse::parser::CollectPolicy,
+    ) -> crate::engine::ingest_pipeline::IngestPipeline<'a> {
+        use crate::engine::ingest_pipeline::{
+            NameRegistryView, NamedEntryRef, SourceEntryRef, SourceRegistryView,
+            TableEntrySnapshot, TableRegistryView,
+        };
+
+        let DependencyGraph {
+            data_store,
+            sheet_reg,
+            named_ranges,
+            named_ranges_lookup,
+            sheet_named_ranges,
+            sheet_named_ranges_lookup,
+            tables,
+            tables_lookup,
+            source_scalars,
+            source_tables,
+            config,
+            ..
+        } = self;
+
+        let case_sensitive_names = config.case_sensitive_names;
+        let names = NameRegistryView::new(move |name, current_sheet| {
+            let found = if case_sensitive_names {
+                sheet_named_ranges
+                    .get(&(current_sheet, name.to_string()))
+                    .or_else(|| named_ranges.get(name))
+            } else {
+                let key = name.to_lowercase();
+                sheet_named_ranges_lookup
+                    .get(&(current_sheet, key.clone()))
+                    .and_then(|canon| sheet_named_ranges.get(&(current_sheet, canon.clone())))
+                    .or_else(|| {
+                        named_ranges_lookup
+                            .get(&key)
+                            .and_then(|canon| named_ranges.get(canon))
+                    })
+            };
+            found.map(|entry| NamedEntryRef {
+                vertex: entry.vertex,
+            })
+        });
+
+        let case_sensitive_tables = config.case_sensitive_tables;
+        let tables_ref = &*tables;
+        let tables_lookup_ref = &*tables_lookup;
+        let snapshot_table = |entry: &tables::TableEntry| TableEntrySnapshot {
+            name: entry.name.clone(),
+            range: entry.range,
+            header_row: entry.header_row,
+            headers: entry.headers.clone(),
+            vertex: entry.vertex,
+        };
+        let tables_view = TableRegistryView::new(
+            move |name| {
+                if case_sensitive_tables {
+                    tables_ref.get(name).map(snapshot_table)
+                } else {
+                    let key = name.to_lowercase();
+                    tables_lookup_ref
+                        .get(&key)
+                        .and_then(|canon| tables_ref.get(canon))
+                        .map(snapshot_table)
+                }
+            },
+            move |cell| {
+                let row0 = cell.coord.row();
+                let col0 = cell.coord.col();
+                let mut best: Option<&tables::TableEntry> = None;
+                let mut best_area = u64::MAX;
+                let mut best_name = "";
+                for table in tables_ref.values() {
+                    if table.sheet_id() != cell.sheet_id {
+                        continue;
+                    }
+                    let sr0 = table.range.start.coord.row();
+                    let sc0 = table.range.start.coord.col();
+                    let er0 = table.range.end.coord.row();
+                    let ec0 = table.range.end.coord.col();
+                    if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
+                        continue;
+                    }
+                    let area = ((er0 - sr0 + 1) as u64).saturating_mul((ec0 - sc0 + 1) as u64);
+                    let name = table.name.as_str();
+                    if best.is_none() || area < best_area || (area == best_area && name < best_name)
+                    {
+                        best = Some(table);
+                        best_area = area;
+                        best_name = name;
+                    }
+                }
+                best.map(snapshot_table)
+            },
+        );
+
+        let sources = SourceRegistryView::new(
+            move |name| {
+                source_scalars.get(name).map(|entry| SourceEntryRef {
+                    vertex: entry.vertex,
+                })
+            },
+            move |name| {
+                source_tables.get(name).map(|entry| SourceEntryRef {
+                    vertex: entry.vertex,
+                })
+            },
+        );
+
+        crate::engine::ingest_pipeline::IngestPipeline::new(
+            data_store,
+            sheet_reg,
+            names,
+            tables_view,
+            sources,
+            function_provider,
+            policy,
+        )
+    }
+
     /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "SheetName!A1").
     pub fn to_a1(&self, cell_ref: CellRef) -> String {
         format!("{}!{}", self.sheet_name(cell_ref.sheet_id), cell_ref.coord)
@@ -1781,6 +1904,28 @@ impl DependencyGraph {
         }
 
         best
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn fp8_parity_extract_dependencies_with_pending_names(
+        &mut self,
+        ast: &ASTNode,
+        current_sheet_id: SheetId,
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            Vec<SharedRangeRef<'static>>,
+            Vec<CellRef>,
+            Vec<VertexId>,
+            Vec<String>,
+        ),
+        ExcelError,
+    > {
+        self.extract_dependencies_with_pending_names(ast, current_sheet_id)
+    }
+
+    pub(crate) fn fp8_parity_is_ast_volatile(&self, ast: &ASTNode) -> bool {
+        self.is_ast_volatile(ast)
     }
 
     pub fn set_cell_value_ref(

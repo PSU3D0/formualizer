@@ -19,17 +19,14 @@
 //!
 //! Reference axes are normalized in the same spirit as the tree canonicalizer:
 //! absolute axes contribute their literal coordinate, while relative axes
-//! contribute only a relative-axis discriminant and the abs/rel mode. Phase 1
-//! arena nodes still store literal coordinates and this function has no formula
-//! placement parameter, so it deliberately omits relative literal coordinates;
-//! Phase 3 canonical interning will replace those leaves with anchor-free arena
-//! data and can mix concrete deltas at that point.
+//! contribute a placement-normalized delta supplied by the caller. Arena callers
+//! that start from placement-bearing AST data must rewrite relative finite axes
+//! to those deltas before invoking this pure node-local helper.
 
 #![allow(dead_code)]
 
 use super::ast::{AstNodeData, AstNodeMetadata, CanonicalLabels, CompactRefType, SheetKey};
 use super::string_interner::StringInterner;
-use crate::function::FnCaps;
 use crate::traits::FunctionProvider;
 use formualizer_parse::parser::ExternalRefKind;
 
@@ -91,6 +88,9 @@ pub(crate) fn compute_node_metadata(
             let original = data_store_strings.get(*original_id).unwrap_or("");
             if original.trim_end().ends_with('#') {
                 labels.rejects |= CanonicalLabels::REJECT_SPILL_REFERENCE;
+            }
+            if matches!(ref_type, CompactRefType::Table { .. }) {
+                mix_string(&mut hasher, original);
             }
             mix_reference(&mut hasher, &mut labels, *ref_type, data_store_strings);
         }
@@ -306,6 +306,7 @@ fn mix_axis_value(hasher: &mut StableHasher, labels: &mut CanonicalLabels, value
     } else {
         labels.flags |= CanonicalLabels::FLAG_RELATIVE_ONLY;
         hasher.mix_u8(AXIS_RELATIVE);
+        hasher.mix_u32(value);
     }
 }
 
@@ -356,49 +357,40 @@ fn finalize_anchor_flags(labels: &mut CanonicalLabels) {
 fn classify_function(
     canonical_name: &str,
     labels: &mut CanonicalLabels,
-    function_provider: &dyn FunctionProvider,
+    _function_provider: &dyn FunctionProvider,
 ) {
-    let caps = function_provider
-        .get_function("", canonical_name)
-        .map(|function| function.caps());
+    let mut known_special = false;
 
-    if caps.is_some_and(|caps| caps.contains(FnCaps::VOLATILE))
-        || is_volatile_function(canonical_name)
-    {
-        labels.flags |= CanonicalLabels::FLAG_VOLATILE;
-        labels.rejects |= CanonicalLabels::REJECT_VOLATILE_FUNCTION;
-    }
-
-    if caps.is_some_and(|caps| caps.contains(FnCaps::DYNAMIC_DEPENDENCY))
-        || is_dynamic_reference_function(canonical_name)
-    {
+    if is_dynamic_reference_function(canonical_name) {
+        known_special = true;
         labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
         labels.rejects |= CanonicalLabels::REJECT_DYNAMIC_REFERENCE;
     }
 
-    if caps.is_some_and(|caps| caps.contains(FnCaps::RETURNS_REFERENCE))
-        || is_reference_returning_function(canonical_name)
-    {
-        labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
-    }
-
     if is_local_environment_function(canonical_name) {
+        known_special = true;
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
         labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
     }
 
+    if is_volatile_function(canonical_name) {
+        known_special = true;
+        labels.flags |= CanonicalLabels::FLAG_VOLATILE;
+        labels.rejects |= CanonicalLabels::REJECT_VOLATILE_FUNCTION;
+    }
+
+    if is_reference_returning_function(canonical_name) {
+        known_special = true;
+        labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
+    }
+
     if is_array_or_spill_function(canonical_name) {
+        known_special = true;
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
         labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
     }
 
-    let known_by_provider = caps.is_some();
-    let known_special = is_dynamic_reference_function(canonical_name)
-        || is_local_environment_function(canonical_name)
-        || is_volatile_function(canonical_name)
-        || is_reference_returning_function(canonical_name)
-        || is_array_or_spill_function(canonical_name);
-    if !known_by_provider && !known_special && !is_known_static_function(canonical_name) {
+    if !known_special && !is_known_static_function(canonical_name) {
         labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
     }
 }
@@ -798,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn function_provider_volatile_caps_set_flag_and_reject() {
+    fn function_provider_caps_do_not_override_legacy_function_classification() {
         let mut strings = StringInterner::new();
         let name_id = strings.intern("CUSTOMRAND");
         let data = AstNodeData::Function {
@@ -817,16 +809,21 @@ mod tests {
                 .labels
                 .has_flag(CanonicalLabels::FLAG_CONTAINS_FUNCTION)
         );
-        assert!(metadata.labels.has_flag(CanonicalLabels::FLAG_VOLATILE));
+        assert!(!metadata.labels.has_flag(CanonicalLabels::FLAG_VOLATILE));
+        assert!(
+            !metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_VOLATILE_FUNCTION)
+        );
         assert!(
             metadata
                 .labels
-                .has_reject(CanonicalLabels::REJECT_VOLATILE_FUNCTION)
+                .has_reject(CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION)
         );
     }
 
     #[test]
-    fn relative_references_at_different_literal_positions_hash_the_same() {
+    fn relative_references_with_same_normalized_deltas_hash_the_same() {
         let mut strings = StringInterner::new();
         let plus_id = strings.intern("+");
         let a1_id = strings.intern("A1");
@@ -858,7 +855,7 @@ mod tests {
             original_id: a2_id,
             ref_type: CompactRefType::Cell {
                 sheet: None,
-                row: 2,
+                row: 1,
                 col: 1,
                 row_abs: false,
                 col_abs: false,
@@ -868,7 +865,7 @@ mod tests {
             original_id: b2_id,
             ref_type: CompactRefType::Cell {
                 sheet: None,
-                row: 2,
+                row: 1,
                 col: 2,
                 row_abs: false,
                 col_abs: false,

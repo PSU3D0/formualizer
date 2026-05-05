@@ -308,6 +308,10 @@ impl DataStore {
         self.asts.resolve_string(id)
     }
 
+    pub(crate) fn ast_strings(&self) -> &StringInterner {
+        self.asts.strings()
+    }
+
     pub fn reconstruct_reference_type_for_eval(
         &self,
         ref_type: &CompactRefType,
