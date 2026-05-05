@@ -28,6 +28,18 @@ mod s014_sumifs_family_varying_criteria;
 mod s015_index_match_chain;
 mod s016_multi_sheet_5_tabs;
 mod s017_cross_sheet_references_in_family;
+mod s018_named_ranges_100;
+mod s019_table_with_structured_refs;
+mod s020_multi_table_cross_references;
+mod s021_volatile_functions_sprinkled;
+mod s022_dynamic_functions_offset_indirect;
+mod s023_empty_cell_gaps_in_family;
+mod s024_mixed_text_and_number_columns;
+mod s025_errors_propagating_through_family;
+mod s026_whole_column_refs_in_50k_formulas;
+mod s027_large_array_literals;
+mod s028_let_lambda_formulas;
+mod s029_calc_tab_200_complex_cells;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -46,6 +58,18 @@ pub use s014_sumifs_family_varying_criteria::S014SumifsFamilyVaryingCriteria;
 pub use s015_index_match_chain::S015IndexMatchChain;
 pub use s016_multi_sheet_5_tabs::S016MultiSheet5Tabs;
 pub use s017_cross_sheet_references_in_family::S017CrossSheetReferencesInFamily;
+pub use s018_named_ranges_100::S018NamedRanges100;
+pub use s019_table_with_structured_refs::S019TableWithStructuredRefs;
+pub use s020_multi_table_cross_references::S020MultiTableCrossReferences;
+pub use s021_volatile_functions_sprinkled::S021VolatileFunctionsSprinkled;
+pub use s022_dynamic_functions_offset_indirect::S022DynamicFunctionsOffsetIndirect;
+pub use s023_empty_cell_gaps_in_family::S023EmptyCellGapsInFamily;
+pub use s024_mixed_text_and_number_columns::S024MixedTextAndNumberColumns;
+pub use s025_errors_propagating_through_family::S025ErrorsPropagatingThroughFamily;
+pub use s026_whole_column_refs_in_50k_formulas::S026WholeColumnRefsIn50kFormulas;
+pub use s027_large_array_literals::S027LargeArrayLiterals;
+pub use s028_let_lambda_formulas::S028LetLambdaFormulas;
+pub use s029_calc_tab_200_complex_cells::S029CalcTab200ComplexCells;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -69,6 +93,28 @@ pub trait Scenario: Send + Sync {
     fn invariants(&self, _phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
         Vec::new()
     }
+
+    /// Modes under which this scenario is currently EXPECTED to fail invariant
+    /// checks. The runner tracks failures on these modes as KNOWN (not as a
+    /// regression). Default: empty (scenario expected to pass everywhere).
+    ///
+    /// Use sparingly. Each entry must reference a tracked bug or design
+    /// limitation that the corpus is intentionally surfacing.
+    fn expected_to_fail_under(&self) -> &'static [ExpectedFailure] {
+        &[]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpectedFailure {
+    pub mode: ExpectedFailureMode,
+    pub reason: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedFailureMode {
+    AuthOnly,
+    OffOnly,
 }
 
 pub struct ScenarioBuildCtx {
@@ -205,6 +251,18 @@ impl ScenarioRegistry {
             Box::new(S015IndexMatchChain::new()),
             Box::new(S016MultiSheet5Tabs::new()),
             Box::new(S017CrossSheetReferencesInFamily::new()),
+            Box::new(S018NamedRanges100::new()),
+            Box::new(S019TableWithStructuredRefs::new()),
+            Box::new(S020MultiTableCrossReferences::new()),
+            Box::new(S021VolatileFunctionsSprinkled::new()),
+            Box::new(S022DynamicFunctionsOffsetIndirect::new()),
+            Box::new(S023EmptyCellGapsInFamily::new()),
+            Box::new(S024MixedTextAndNumberColumns::new()),
+            Box::new(S025ErrorsPropagatingThroughFamily::new()),
+            Box::new(S026WholeColumnRefsIn50kFormulas::new()),
+            Box::new(S027LargeArrayLiterals::new()),
+            Box::new(S028LetLambdaFormulas::new()),
+            Box::new(S029CalcTab200ComplexCells::new()),
         ]
     }
 }

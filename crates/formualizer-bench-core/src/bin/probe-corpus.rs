@@ -283,11 +283,19 @@ mod enabled {
         }
 
         let mut notes = introspection_notes();
-        notes.extend(
-            invariant_failures
-                .iter()
-                .map(|failure| format!("invariant failure: {failure}")),
-        );
+        let expected_failure = expected_failure_reason(scenario, mode);
+        let failures_known = expected_failure.is_some();
+        for failure in &invariant_failures {
+            let prefix = if failures_known {
+                "expected invariant failure"
+            } else {
+                "invariant failure"
+            };
+            notes.push(format!("{prefix}: {failure}"));
+        }
+        if let Some(reason) = expected_failure {
+            notes.push(format!("expected_failure_reason: {reason}"));
+        }
         Ok(ScenarioSummaryReport {
             scenario_id: scenario.id().to_string(),
             mode: mode.as_str().to_string(),
@@ -295,9 +303,22 @@ mod enabled {
             fixture_path: fixture.path.display().to_string(),
             fixture_size_bytes,
             phases,
-            final_invariants_passed: invariant_failures.is_empty(),
+            final_invariants_passed: invariant_failures.is_empty() || failures_known,
             notes,
         })
+    }
+
+    fn expected_failure_reason(scenario: &dyn Scenario, mode: Mode) -> Option<&'static str> {
+        use formualizer_bench_core::scenarios::ExpectedFailureMode;
+        let target = match mode {
+            Mode::Off => ExpectedFailureMode::OffOnly,
+            Mode::Auth => ExpectedFailureMode::AuthOnly,
+        };
+        scenario
+            .expected_to_fail_under()
+            .iter()
+            .find(|ef| ef.mode == target)
+            .map(|ef| ef.reason)
     }
 
     fn check_invariants(

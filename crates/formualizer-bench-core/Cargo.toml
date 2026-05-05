@@ -11,7 +11,7 @@ publish = false
 
 [features]
 default = []
-xlsx = ["dep:formualizer-testkit"]
+xlsx = ["dep:formualizer-testkit", "dep:umya-spreadsheet"]
 formualizer_runner = ["xlsx", "dep:formualizer-workbook"]
 dhat-heap = ["dep:dhat"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
@@ -28,6 +28,7 @@ serde_yaml = { workspace = true }
 zip = "0.6"
 formualizer-testkit = { path = "../formualizer-testkit", optional = true }
 formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya", "calamine"] }
+umya-spreadsheet = { version = "=2.3.2", optional = true }
 formualizer-parse = { workspace = true }
 formualizer-common = { workspace = true }
 formualizer-eval = { workspace = true, features = ["formula_plane_diagnostics"] }

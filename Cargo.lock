@@ -1418,6 +1418,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "umya-spreadsheet",
  "zip 0.6.6",
 ]
 
