@@ -339,7 +339,13 @@ s013  sumifs-family-constant-criteria      tag: AggregationHeavy
 s014  sumifs-family-varying-criteria       tag: AggregationHeavy
 s015  index-match-chain                    tag: LookupHeavy
 s016  multi-sheet-5-tabs                   tag: MultiSheet, CrossSheet
-s017  cross-sheet-references-in-family     tag: SpanPromotable, CrossSheet
+s017  cross-sheet-references-in-family     tag: CrossSheet
+      NOTE (post-dispatch-2): originally tagged SpanPromotable; observed
+      span_count=0 under Auth. Current placement.rs rejects formulas
+      whose canonical labels have FLAG_EXPLICIT_SHEET
+      (PlacementFallbackReason::CrossSheetOrSheetMismatch). This is
+      design-correct; the scenario remains valuable as a NEGATIVE-coverage
+      probe. SpanPromotable tag dropped; CrossSheet tag retained.
 ```
 
 ### Dispatch 3 (next 12)

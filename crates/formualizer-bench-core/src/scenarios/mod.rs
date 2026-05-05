@@ -16,12 +16,36 @@ mod s002_single_column_trivial_family;
 mod s003_finance_anchored_arithmetic_family;
 mod s004_five_mixed_families;
 mod s005_long_chain_family;
+mod s006_rect_family_10cols;
+mod s007_fixed_anchor_family;
+mod s008_two_anchored_families;
+mod s009_heavy_arith_family;
+mod s010_all_unique_singletons;
+mod s011_vlookup_family_against_1k_table;
+mod s012_vlookup_family_against_10k_table;
+mod s013_sumifs_family_constant_criteria;
+mod s014_sumifs_family_varying_criteria;
+mod s015_index_match_chain;
+mod s016_multi_sheet_5_tabs;
+mod s017_cross_sheet_references_in_family;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
 pub use s003_finance_anchored_arithmetic_family::S003FinanceAnchoredArithmeticFamily;
 pub use s004_five_mixed_families::S004FiveMixedFamilies;
 pub use s005_long_chain_family::S005LongChainFamily;
+pub use s006_rect_family_10cols::S006RectFamily10Cols;
+pub use s007_fixed_anchor_family::S007FixedAnchorFamily;
+pub use s008_two_anchored_families::S008TwoAnchoredFamilies;
+pub use s009_heavy_arith_family::S009HeavyArithFamily;
+pub use s010_all_unique_singletons::S010AllUniqueSingletons;
+pub use s011_vlookup_family_against_1k_table::S011VlookupFamilyAgainst1kTable;
+pub use s012_vlookup_family_against_10k_table::S012VlookupFamilyAgainst10kTable;
+pub use s013_sumifs_family_constant_criteria::S013SumifsFamilyConstantCriteria;
+pub use s014_sumifs_family_varying_criteria::S014SumifsFamilyVaryingCriteria;
+pub use s015_index_match_chain::S015IndexMatchChain;
+pub use s016_multi_sheet_5_tabs::S016MultiSheet5Tabs;
+pub use s017_cross_sheet_references_in_family::S017CrossSheetReferencesInFamily;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -169,6 +193,18 @@ impl ScenarioRegistry {
             Box::new(S003FinanceAnchoredArithmeticFamily::new()),
             Box::new(S004FiveMixedFamilies::new()),
             Box::new(S005LongChainFamily::new()),
+            Box::new(S006RectFamily10Cols::new()),
+            Box::new(S007FixedAnchorFamily::new()),
+            Box::new(S008TwoAnchoredFamilies::new()),
+            Box::new(S009HeavyArithFamily::new()),
+            Box::new(S010AllUniqueSingletons::new()),
+            Box::new(S011VlookupFamilyAgainst1kTable::new()),
+            Box::new(S012VlookupFamilyAgainst10kTable::new()),
+            Box::new(S013SumifsFamilyConstantCriteria::new()),
+            Box::new(S014SumifsFamilyVaryingCriteria::new()),
+            Box::new(S015IndexMatchChain::new()),
+            Box::new(S016MultiSheet5Tabs::new()),
+            Box::new(S017CrossSheetReferencesInFamily::new()),
         ]
     }
 }
