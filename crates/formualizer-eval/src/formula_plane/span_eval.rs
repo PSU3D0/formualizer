@@ -16,7 +16,7 @@ use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
 
 use super::region_index::{DirtyDomain, RegionKey};
-use super::runtime::{FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord, PlacementDomain};
+use super::runtime::{FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpanEvalTask {
@@ -115,7 +115,6 @@ impl<'a> SpanEvaluator<'a> {
             .templates
             .get(span.template_id)
             .ok_or(SpanEvalError::MissingTemplate)?;
-        let origin = domain_origin(&span.domain);
         validate_relocatable_arena_ast(template.ast_id, self.data_store)?;
         let placements = placements_for_dirty(span, &task.dirty)?;
         let push_count_before = sink.push_count();
@@ -132,8 +131,10 @@ impl<'a> SpanEvaluator<'a> {
                 continue;
             }
 
-            let row_delta = i64::from(placement.row) - i64::from(origin.row);
-            let col_delta = i64::from(placement.col) - i64::from(origin.col);
+            // Placement coordinates are 0-indexed; template origins are stored
+            // in 1-indexed Excel coordinates to match canonicalization anchors.
+            let row_delta = i64::from(placement.row) + 1 - i64::from(template.origin_row);
+            let col_delta = i64::from(placement.col) + 1 - i64::from(template.origin_col);
             report.transient_ast_relocation_count =
                 report.transient_ast_relocation_count.saturating_add(1);
             let interpreter = base_interpreter.with_current_cell(CellRef::new_absolute(
@@ -191,29 +192,6 @@ fn placements_for_dirty(
 impl From<RegionKey> for PlacementCoord {
     fn from(key: RegionKey) -> Self {
         PlacementCoord::new(key.sheet_id, key.row, key.col)
-    }
-}
-
-fn domain_origin(domain: &PlacementDomain) -> PlacementCoord {
-    match *domain {
-        PlacementDomain::RowRun {
-            sheet_id,
-            row_start,
-            col,
-            ..
-        } => PlacementCoord::new(sheet_id, row_start, col),
-        PlacementDomain::ColRun {
-            sheet_id,
-            row,
-            col_start,
-            ..
-        } => PlacementCoord::new(sheet_id, row, col_start),
-        PlacementDomain::Rect {
-            sheet_id,
-            row_start,
-            col_start,
-            ..
-        } => PlacementCoord::new(sheet_id, row_start, col_start),
     }
 }
 
@@ -309,7 +287,9 @@ mod tests {
 
     use super::super::placement::{FormulaPlacementCandidate, place_candidate_family};
     use super::super::region_index::RegionPattern;
-    use super::super::runtime::{FormulaOverlayEntryKind, NewFormulaSpan, ResultRegion};
+    use super::super::runtime::{
+        FormulaOverlayEntryKind, NewFormulaSpan, PlacementDomain, ResultRegion,
+    };
     use super::*;
 
     fn candidate(
@@ -482,6 +462,80 @@ mod tests {
     }
 
     #[test]
+    fn span_eval_reuses_template_anchor_across_discontiguous_components() {
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(2.0))
+            .with_cell("Sheet1", 11, 1, LiteralValue::Number(11.0))
+            .with_cell("Sheet1", 12, 1, LiteralValue::Number(12.0));
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let first_component = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1*2"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A2*2"),
+            ],
+            &data_store,
+            &sheet_registry,
+        );
+        let second_component = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 10, 1, "=A11*2"),
+                candidate(&mut data_store, &sheet_registry, 0, 11, 1, "=A12*2"),
+            ],
+            &data_store,
+            &sheet_registry,
+        );
+        let first_span = span_from_report(&first_component);
+        let second_span = span_from_report(&second_component);
+        let first_template = match first_component.results[0] {
+            super::super::placement::FormulaPlacementResult::Span { template_id, .. } => {
+                template_id
+            }
+            _ => panic!("expected first component span"),
+        };
+        let second_template = match second_component.results[0] {
+            super::super::placement::FormulaPlacementResult::Span { template_id, .. } => {
+                template_id
+            }
+            _ => panic!("expected second component span"),
+        };
+        assert_eq!(first_template, second_template);
+        assert_eq!(plane.templates.len(), 1);
+
+        let mut buffer = ComputedWriteBuffer::default();
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, first_span),
+            &mut buffer,
+            &data_store,
+            &sheet_registry,
+        );
+        eval_task(
+            &plane,
+            &workbook,
+            &whole_span_task(&plane, second_span),
+            &mut buffer,
+            &data_store,
+            &sheet_registry,
+        );
+
+        assert_eq!(
+            cell_values(&buffer),
+            vec![
+                (0, 1, OverlayValue::Number(2.0)),
+                (1, 1, OverlayValue::Number(4.0)),
+                (10, 1, OverlayValue::Number(22.0)),
+                (11, 1, OverlayValue::Number(24.0)),
+            ]
+        );
+    }
+
+    #[test]
     fn span_eval_col_run_matches_legacy_outputs() {
         let workbook = TestWorkbook::new()
             .with_cell("Sheet1", 1, 1, LiteralValue::Number(1.0))
@@ -584,6 +638,8 @@ mod tests {
                 &ASTNode::new(ASTNodeType::Literal(LiteralValue::Empty), None),
                 &sheet_registry,
             ),
+            1,
+            1,
             Some(Arc::<str>::from("=")),
         );
         let domain = PlacementDomain::row_run(0, 0, 1, 0);
@@ -1196,6 +1252,8 @@ mod tests {
         let template_id = plane.intern_template(
             Arc::<str>::from("external-ref"),
             data_store.store_ast(&parse("='[book.xlsx]Sheet1'!A1").unwrap(), &sheet_registry),
+            1,
+            1,
             Some(Arc::<str>::from("='[book.xlsx]Sheet1'!A1")),
         );
         let domain = PlacementDomain::row_run(0, 0, 1, 0);

@@ -364,6 +364,8 @@ fn place_analyzed_family(
     let template_id = plane.intern_template(
         first.canonical_key.clone(),
         origin_candidate.ast_id,
+        origin_candidate.row + 1,
+        origin_candidate.col + 1,
         origin_candidate.formula_text.clone(),
     );
     if plane.templates.len() > template_count_before {

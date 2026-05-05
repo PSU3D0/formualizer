@@ -8,8 +8,8 @@ use super::common::{
     numeric,
 };
 use super::{
-    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
-    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
+    ScenarioPhase, ScenarioScale, ScenarioTag,
 };
 
 pub struct S025ErrorsPropagatingThroughFamily {
@@ -55,13 +55,6 @@ impl Scenario for S025ErrorsPropagatingThroughFamily {
         ]
     }
 
-    fn expected_to_fail_under(&self) -> &'static [ExpectedFailure] {
-        &[ExpectedFailure {
-            mode: ExpectedFailureMode::AuthOnly,
-            reason: "span over-broadens across error-formula gaps: non-error rows after a deliberate #DIV/0! break inherit stale values from earlier rows. Repro: examples/repro_intermixed_family.rs.",
-        }]
-    }
-
     fn build_fixture(&self, ctx: &ScenarioBuildCtx) -> Result<ScenarioFixture> {
         self.scale.set(ctx.scale);
         let rows = Self::rows(ctx.scale);
@@ -75,15 +68,6 @@ impl Scenario for S025ErrorsPropagatingThroughFamily {
                 } else {
                     format!("=A{r}*2")
                 };
-                // KNOWN BUG: span over-broadening across error gaps. Under
-                // Auth mode, non-error rows after a deliberate #DIV/0! break
-                // currently inherit stale values from earlier rows because the
-                // span placement does not respect the formula-shape break.
-                // Off mode is correct.
-                // Repro: crates/formualizer-bench-core/examples/repro_intermixed_family.rs
-                // The scenario MUST fail under Auth until this bug is fixed.
-                // DO NOT add an N("...") no-op or any other workaround that
-                // changes the formula shape to hide the bug.
                 sheet.get_cell_mut((2, r)).set_formula(formula);
             }
         });

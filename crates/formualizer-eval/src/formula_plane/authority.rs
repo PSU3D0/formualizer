@@ -176,6 +176,8 @@ mod tests {
                 let sheet_registry = SheetRegistry::new();
                 data_store.store_ast(&parse("=A1+1").unwrap(), &sheet_registry)
             },
+            1,
+            1,
             Some(Arc::<str>::from("=A1+1")),
         )
     }

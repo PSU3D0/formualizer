@@ -221,6 +221,8 @@ pub(crate) struct TemplateRecord {
     pub(crate) generation: u32,
     pub(crate) version: u32,
     pub(crate) ast_id: AstNodeId,
+    pub(crate) origin_row: u32,
+    pub(crate) origin_col: u32,
     pub(crate) canonical_key: Arc<str>,
     pub(crate) formula_text: Option<Arc<str>>,
 }
@@ -230,6 +232,8 @@ impl TemplateStore {
         &mut self,
         canonical_key: Arc<str>,
         ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
         formula_text: Option<Arc<str>>,
     ) -> (FormulaTemplateId, bool) {
         if let Some(id) = self.intern.get(canonical_key.as_ref()).copied() {
@@ -242,6 +246,8 @@ impl TemplateStore {
             generation: 0,
             version: 0,
             ast_id,
+            origin_row,
+            origin_col,
             canonical_key: Arc::clone(&canonical_key),
             formula_text,
         });
@@ -565,11 +571,17 @@ impl FormulaPlane {
         &mut self,
         canonical_key: Arc<str>,
         ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
         formula_text: Option<Arc<str>>,
     ) -> FormulaTemplateId {
-        let (id, inserted) = self
-            .templates
-            .intern_template(canonical_key, ast_id, formula_text);
+        let (id, inserted) = self.templates.intern_template(
+            canonical_key,
+            ast_id,
+            origin_row,
+            origin_col,
+            formula_text,
+        );
         if inserted {
             self.bump_epoch();
         }
@@ -680,6 +692,8 @@ mod tests {
             .intern_template(
                 Arc::<str>::from(key),
                 literal_ast_id(1),
+                1,
+                1,
                 Some(Arc::<str>::from("=1")),
             )
             .0
@@ -702,6 +716,8 @@ mod tests {
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
             literal_ast_id(1),
+            1,
+            1,
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -727,11 +743,15 @@ mod tests {
         let (first, inserted_first) = store.intern_template(
             Arc::<str>::from("key:literal-one"),
             literal_ast_id(1),
+            1,
+            1,
             Some(Arc::<str>::from("=1")),
         );
         let (second, inserted_second) = store.intern_template(
             Arc::<str>::from("key:literal-one"),
             literal_ast_id(1),
+            1,
+            1,
             Some(Arc::<str>::from("=1")),
         );
 
@@ -869,6 +889,8 @@ mod tests {
         let override_template = plane.intern_template(
             Arc::<str>::from("override-template"),
             literal_ast_id(2),
+            1,
+            1,
             Some(Arc::<str>::from("=2")),
         );
         plane.insert_overlay(
@@ -984,6 +1006,8 @@ mod tests {
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
             literal_ast_id(1),
+            1,
+            1,
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -1004,6 +1028,8 @@ mod tests {
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
             literal_ast_id(1),
+            1,
+            1,
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -1037,6 +1063,8 @@ mod tests {
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
             literal_ast_id(1),
+            1,
+            1,
             Some(Arc::<str>::from("=1")),
         );
         let span_ref = plane.insert_span(new_row_span(0, template_id));
@@ -1060,6 +1088,8 @@ mod tests {
         let template_id = plane.intern_template(
             Arc::<str>::from("template"),
             literal_ast_id(1),
+            1,
+            1,
             Some(Arc::<str>::from("=1")),
         );
         assert_eq!(plane.epoch(), FormulaPlaneEpoch(1));
