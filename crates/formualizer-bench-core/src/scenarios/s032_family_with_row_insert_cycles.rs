@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
+use formualizer_common::LiteralValue;
 use formualizer_testkit::write_workbook;
 use formualizer_workbook::Workbook;
 
-use super::common::{ScaleState, fixture_path};
+use super::common::{ScaleState, completed_cycles, fixture_path, has_evaluated_formulas, numeric};
 use super::{
     EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
     ScenarioPhase, ScenarioScale, ScenarioTag,
@@ -81,10 +82,28 @@ impl Scenario for S032FamilyWithRowInsertCycles {
         })
     }
 
-    fn invariants(&self, _phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
-        vec![ScenarioInvariant::NoErrorCells {
+    fn invariants(&self, phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
+        let base_rows = Self::rows(self.scale.get_or_small());
+        let mut invariants = vec![ScenarioInvariant::NoErrorCells {
             sheet: "Sheet1".to_string(),
-        }]
+        }];
+        if has_evaluated_formulas(phase) {
+            let cycles = completed_cycles(phase);
+            let rows = base_rows + INSERT_ROWS * cycles as u32;
+            invariants.reserve(rows as usize);
+            for row in 1..=rows {
+                let expected = current_row_origin_after_inserts(row, base_rows, cycles)
+                    .map(|origin| numeric(origin as f64 * 2.0))
+                    .unwrap_or(LiteralValue::Empty);
+                invariants.push(ScenarioInvariant::CellEquals {
+                    sheet: "Sheet1".to_string(),
+                    row,
+                    col: 2,
+                    expected,
+                });
+            }
+        }
+        invariants
     }
 }
 
@@ -106,4 +125,19 @@ fn apply_edit(wb: &mut Workbook, cycle: usize) -> Result<&'static str, anyhow::E
 fn insert_before_row(current_rows: u32, cycle: usize) -> u32 {
     let divisors = [5, 4, 3, 2, 6];
     (current_rows / divisors[cycle % divisors.len()]).max(1)
+}
+
+fn current_row_origin_after_inserts(row: u32, base_rows: u32, cycles: usize) -> Option<u32> {
+    let mut row = row;
+    for cycle in (0..cycles).rev() {
+        let rows_before_cycle = base_rows + INSERT_ROWS * cycle as u32;
+        let before = insert_before_row(rows_before_cycle, cycle);
+        if (before..before + INSERT_ROWS).contains(&row) {
+            return None;
+        }
+        if row >= before + INSERT_ROWS {
+            row -= INSERT_ROWS;
+        }
+    }
+    (row <= base_rows).then_some(row)
 }

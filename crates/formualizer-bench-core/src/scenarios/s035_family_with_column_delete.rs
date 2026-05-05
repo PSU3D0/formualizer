@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use formualizer_testkit::write_workbook;
 use formualizer_workbook::Workbook;
 
-use super::common::{ScaleState, fixture_path};
+use super::common::{ScaleState, completed_cycles, fixture_path, has_evaluated_formulas, numeric};
 use super::{
     EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
     ScenarioPhase, ScenarioScale, ScenarioTag,
@@ -90,10 +90,27 @@ impl Scenario for S035FamilyWithColumnDelete {
         })
     }
 
-    fn invariants(&self, _phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
-        vec![ScenarioInvariant::NoErrorCells {
+    fn invariants(&self, phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
+        let rows = Self::rows(self.scale.get_or_small());
+        let mut invariants = vec![ScenarioInvariant::NoErrorCells {
             sheet: "Sheet1".to_string(),
-        }]
+        }];
+        if has_evaluated_formulas(phase) {
+            let cycles = completed_cycles(phase);
+            let cols = 11u32.saturating_sub(cycles as u32);
+            invariants.reserve(rows as usize * cols as usize);
+            for row in 1..=rows {
+                for col in 1..=cols {
+                    invariants.push(ScenarioInvariant::CellEquals {
+                        sheet: "Sheet1".to_string(),
+                        row,
+                        col,
+                        expected: expected_value_after_buffer_deletes(row, col),
+                    });
+                }
+            }
+        }
+        invariants
     }
 }
 
@@ -104,4 +121,16 @@ fn apply_edit(wb: &mut Workbook, cycle: usize) -> Result<&'static str, anyhow::E
         .delete_columns("Sheet1", col, 1)
         .with_context(|| format!("engine delete_columns Sheet1 start={col} count=1"))?;
     Ok("delete_buffer_column_1")
+}
+
+fn expected_value_after_buffer_deletes(row: u32, col: u32) -> formualizer_common::LiteralValue {
+    match col {
+        1 => numeric(row as f64),
+        2 => numeric(row as f64 + 1.0),
+        3 => numeric(row as f64 * 2.0),
+        4 => numeric(row as f64 - 3.0),
+        5 => numeric(row as f64 * 2.0 + 1.0),
+        6 => numeric(row as f64 * 3.0 - 3.0),
+        _ => numeric(0.0),
+    }
 }

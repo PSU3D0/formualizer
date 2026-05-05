@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use formualizer_testkit::write_workbook;
 use formualizer_workbook::Workbook;
 
-use super::common::{ScaleState, fixture_path};
+use super::common::{ScaleState, completed_cycles, fixture_path, has_evaluated_formulas, numeric};
 use super::{
     EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
     ScenarioPhase, ScenarioScale, ScenarioTag,
@@ -82,10 +82,26 @@ impl Scenario for S033FamilyWithRowDeleteCycles {
         })
     }
 
-    fn invariants(&self, _phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
-        vec![ScenarioInvariant::NoErrorCells {
+    fn invariants(&self, phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
+        let base_rows = Self::rows(self.scale.get_or_small()) + BUFFER_ROWS;
+        let mut invariants = vec![ScenarioInvariant::NoErrorCells {
             sheet: "Sheet1".to_string(),
-        }]
+        }];
+        if has_evaluated_formulas(phase) {
+            let cycles = completed_cycles(phase);
+            let rows = base_rows.saturating_sub(DELETE_ROWS * cycles as u32);
+            invariants.reserve(rows as usize);
+            for row in 1..=rows {
+                let origin = current_row_origin_after_deletes(row, base_rows, cycles);
+                invariants.push(ScenarioInvariant::CellEquals {
+                    sheet: "Sheet1".to_string(),
+                    row,
+                    col: 2,
+                    expected: numeric(origin as f64 * 2.0),
+                });
+            }
+        }
+        invariants
     }
 }
 
@@ -107,4 +123,16 @@ fn delete_start_row(current_rows: u32, cycle: usize) -> u32 {
     (current_rows / divisors[cycle % divisors.len()])
         .max(1)
         .min(current_rows.saturating_sub(DELETE_ROWS).max(1))
+}
+
+fn current_row_origin_after_deletes(row: u32, base_rows: u32, cycles: usize) -> u32 {
+    let mut row = row;
+    for cycle in (0..cycles).rev() {
+        let rows_before_cycle = base_rows.saturating_sub(DELETE_ROWS * cycle as u32);
+        let start = delete_start_row(rows_before_cycle, cycle);
+        if row >= start {
+            row += DELETE_ROWS;
+        }
+    }
+    row
 }

@@ -25,6 +25,7 @@ use crate::formula_plane::region_index::{DirtyDomain, RegionPattern};
 use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef};
 use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
+use crate::formula_plane::structural::relocate_ast_for_template_placement;
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
@@ -655,6 +656,7 @@ where
             };
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
+            self.engine.demote_spans_for_structural_op(sheet_id)?;
             let before0 = before.saturating_sub(1);
 
             // Graph structural insert (logged) - no snapshot bump.
@@ -716,6 +718,7 @@ where
             };
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
+            self.engine.demote_spans_for_structural_op(sheet_id)?;
             let before0 = before.saturating_sub(1);
 
             let summary = {
@@ -3599,6 +3602,126 @@ where
         Some(mask)
     }
 
+    /// Demote all active FormulaPlane spans on `sheet_id` before a structural edit.
+    ///
+    /// This is the conservative Option-A correctness path for structural edits: rather than
+    /// attempting to transform FormulaPlane span domains/templates/indexes, materialize each span
+    /// placement as an ordinary legacy graph formula at its current coordinate, remove the span,
+    /// and let the existing VertexEditor structural machinery shift/delete those vertices and
+    /// adjust their ASTs.  The all-spans-on-sheet scope is intentionally broader than necessary;
+    /// precise overlap demotion can be added once exact span structural transforms exist.
+    fn demote_spans_for_structural_op(
+        &mut self,
+        sheet_id: SheetId,
+    ) -> Result<(), crate::engine::EditorError> {
+        struct SpanPlan {
+            span_ref: FormulaSpanRef,
+            ast: ASTNode,
+            origin_row: u32,
+            origin_col: u32,
+            placements: Vec<(u32, u32)>,
+        }
+
+        let span_refs = self.graph.formula_authority().active_span_refs();
+        if span_refs.is_empty() {
+            return Ok(());
+        }
+
+        let mut span_plans = Vec::new();
+        for span_ref in span_refs {
+            let Some(span) = self
+                .graph
+                .formula_authority()
+                .plane
+                .spans
+                .get(span_ref)
+                .filter(|span| span.sheet_id == sheet_id)
+            else {
+                continue;
+            };
+            let Some(template) = self
+                .graph
+                .formula_authority()
+                .plane
+                .templates
+                .get(span.template_id)
+            else {
+                return Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("FormulaPlane demotion found a span with a missing template")
+                    .into());
+            };
+            let ast = self
+                .graph
+                .data_store()
+                .retrieve_ast(template.ast_id, self.graph.sheet_reg())
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane demotion could not retrieve the template AST")
+                })?;
+            let placements = span
+                .domain
+                .iter()
+                .map(|placement| (placement.row + 1, placement.col + 1))
+                .collect();
+            span_plans.push(SpanPlan {
+                span_ref,
+                ast,
+                origin_row: template.origin_row,
+                origin_col: template.origin_col,
+                placements,
+            });
+        }
+
+        if span_plans.is_empty() {
+            return Ok(());
+        }
+
+        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        let mut relocated = Vec::new();
+        let mut placement_cells = Vec::new();
+        for plan in &span_plans {
+            for &(row, col) in &plan.placements {
+                let row_delta = i64::from(row) - i64::from(plan.origin_row);
+                let col_delta = i64::from(col) - i64::from(plan.origin_col);
+                let ast = relocate_ast_for_template_placement(&plan.ast, row_delta, col_delta)?;
+                relocated.push((row, col, ast));
+                placement_cells.push((row, col));
+            }
+        }
+
+        let planned = {
+            let mut pipeline = self.ingest_pipeline();
+            let mut planned = Vec::with_capacity(relocated.len());
+            for (row, col, ast) in relocated {
+                let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+                let ingested =
+                    pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?;
+                planned.push((row, col, ingested.ast_id, ingested.dep_plan));
+            }
+            planned
+        };
+
+        {
+            let authority = self.graph.formula_authority_mut();
+            for plan in &span_plans {
+                authority
+                    .plane
+                    .remove_overlays_for_source_span(plan.span_ref);
+                authority.plane.remove_span(plan.span_ref);
+            }
+            authority.rebuild_indexes();
+        }
+
+        for (row, col) in placement_cells {
+            self.clear_computed_overlay_cell(&sheet_name, row, col);
+        }
+
+        self.graph
+            .bulk_set_formulas_with_plans(&sheet_name, planned)?;
+        self.formula_plane_indexes_epoch_seen = 0;
+        Ok(())
+    }
+
     /// Insert rows (1-based) and mirror into Arrow store when enabled
     pub fn insert_rows(
         &mut self,
@@ -3609,6 +3732,7 @@ where
     {
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
+        self.demote_spans_for_structural_op(sheet_id)?;
         let before0 = before.saturating_sub(1);
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
@@ -3634,6 +3758,7 @@ where
     {
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
+        self.demote_spans_for_structural_op(sheet_id)?;
         let start0 = start.saturating_sub(1);
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
@@ -3664,6 +3789,7 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
+        self.demote_spans_for_structural_op(sheet_id)?;
         let before0 = before.saturating_sub(1);
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
@@ -3693,6 +3819,7 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
+        self.demote_spans_for_structural_op(sheet_id)?;
         let start0 = start.saturating_sub(1);
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
@@ -4225,6 +4352,31 @@ where
         if let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) {
             let _ = ch.overlay.remove(in_off);
         }
+    }
+
+    /// Remove a computed-overlay entry for a single cell (if present) without allocating
+    /// missing sheet/column/row storage. FormulaPlane structural demotion calls this for every
+    /// demoted placement so stale span results cannot mask freshly materialized legacy formulas.
+    fn clear_computed_overlay_cell(&mut self, sheet: &str, row: u32, col: u32) {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
+            return;
+        }
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) else {
+            return;
+        };
+        let delta = ch.computed_overlay.remove(in_off);
+        self.adjust_computed_overlay_bytes(delta);
     }
 
     #[inline]

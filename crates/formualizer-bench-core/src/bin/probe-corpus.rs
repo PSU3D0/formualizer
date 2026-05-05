@@ -388,6 +388,7 @@ mod enabled {
                         actual,
                         expected
                     ),
+                    None if literal_equals(&LiteralValue::Empty, &expected) => Ok(()),
                     None => bail!(
                         "{}!R{}C{} missing, expected {:?}",
                         sheet,

@@ -512,6 +512,20 @@ impl FormulaOverlay {
         })
     }
 
+    pub(crate) fn refs_for_source_span(&self, span_ref: FormulaSpanRef) -> Vec<FormulaOverlayRef> {
+        self.slots
+            .iter()
+            .filter_map(|slot| {
+                let entry = slot.entry.as_ref()?;
+                (entry.source_span == Some(span_ref)).then_some(FormulaOverlayRef {
+                    id: entry.id,
+                    generation: entry.generation,
+                    overlay_epoch: self.epoch,
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
@@ -629,6 +643,17 @@ impl FormulaPlane {
         let removed = self.formula_overlay.remove(overlay_ref);
         if removed {
             self.bump_epoch();
+        }
+        removed
+    }
+
+    pub(crate) fn remove_overlays_for_source_span(&mut self, span_ref: FormulaSpanRef) -> usize {
+        let overlay_refs = self.formula_overlay.refs_for_source_span(span_ref);
+        let mut removed = 0usize;
+        for overlay_ref in overlay_refs {
+            if self.remove_overlay(overlay_ref) {
+                removed = removed.saturating_add(1);
+            }
         }
         removed
     }

@@ -2371,6 +2371,7 @@ impl DependencyGraph {
             self.mark_volatile(tvid, planned[i].3.volatile);
             self.store.set_dynamic(tvid, planned[i].3.dynamic);
         }
+        self.dirty_vertices.extend(target_vids.iter().copied());
 
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
