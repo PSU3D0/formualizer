@@ -2155,6 +2155,9 @@ where
         for ev in &log.events()[start_len..] {
             self.mirror_forward_change_to_arrow(ev);
         }
+        for ev in &log.events()[start_len..] {
+            self.record_formula_plane_change_for_event(ev);
+        }
 
         ret
     }
@@ -5229,6 +5232,52 @@ where
         });
     }
 
+    fn record_formula_plane_change_for_event(&mut self, event: &ChangeEvent) {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return;
+        }
+
+        match event {
+            ChangeEvent::SetValue { addr, .. } | ChangeEvent::SetFormula { addr, .. } => {
+                self.record_formula_plane_structural_change(StructuralScope::Cell {
+                    sheet: addr.sheet_id,
+                    row: addr.coord.row(),
+                    col: addr.coord.col(),
+                });
+            }
+            ChangeEvent::SpillCommitted { new, .. } => {
+                if let Some(scope) = Self::formula_plane_region_from_cells(&new.target_cells) {
+                    self.record_formula_plane_structural_change(scope);
+                }
+            }
+            ChangeEvent::SpillCleared { old, .. } => {
+                if let Some(scope) = Self::formula_plane_region_from_cells(&old.target_cells) {
+                    self.record_formula_plane_structural_change(scope);
+                }
+            }
+            ChangeEvent::DefineName { .. }
+            | ChangeEvent::UpdateName { .. }
+            | ChangeEvent::DeleteName { .. }
+            | ChangeEvent::VertexMoved { .. }
+            | ChangeEvent::FormulaAdjusted { .. }
+            | ChangeEvent::NamedRangeAdjusted { .. } => {
+                self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+            }
+            ChangeEvent::SetRowVisibility { sheet_id, row0, .. } => {
+                self.record_formula_plane_structural_change(StructuralScope::Region(
+                    RegionPattern::whole_row(*sheet_id, *row0),
+                ));
+            }
+            ChangeEvent::AddVertex { .. }
+            | ChangeEvent::RemoveVertex { .. }
+            | ChangeEvent::EdgeAdded { .. }
+            | ChangeEvent::EdgeRemoved { .. }
+            | ChangeEvent::CompoundStart { .. }
+            | ChangeEvent::CompoundEnd { .. }
+            | ChangeEvent::StagedFormulaStateChanged { .. } => {}
+        }
+    }
+
     fn record_formula_plane_structural_change(&mut self, scope: StructuralScope) {
         if self.config.formula_plane_mode == FormulaPlaneMode::Off {
             return;
@@ -6777,11 +6826,7 @@ where
                 |producer| producer_results_ref.producer_result_region(producer),
             );
             for fallback_work in closure.work {
-                // Only span work is added by the dirty closure. Legacy producers
-                // still go through the existing graph-dirty seeding above.
-                if matches!(fallback_work.producer, FormulaProducerId::Span(_)) {
-                    work.push(fallback_work);
-                }
+                work.push(fallback_work);
             }
             // Any unsupported/conservative fallbacks for spans imply we may have
             // missed work; in that case demote to whole-span for affected spans.
