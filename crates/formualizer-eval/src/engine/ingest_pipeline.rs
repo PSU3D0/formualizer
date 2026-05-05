@@ -14,10 +14,10 @@ use crate::engine::graph::DependencyGraph;
 use crate::engine::plan::{DependencyPlan, F_HAS_NAMES, F_HAS_RANGES, F_HAS_TABLES, F_VOLATILE};
 use crate::engine::sheet_registry::SheetRegistry;
 use crate::engine::vertex::VertexId;
-use crate::formula_plane::dependency_summary::summarize_canonical_template;
-use crate::formula_plane::producer::SpanReadSummary;
-use crate::formula_plane::runtime::{PlacementDomain, ResultRegion};
-use crate::formula_plane::template_canonical::canonicalize_template;
+use crate::formula_plane::producer::{
+    AxisProjection, DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
+};
+use crate::formula_plane::region_index::RegionPattern;
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
 use crate::traits::FunctionProvider;
@@ -215,22 +215,10 @@ impl<'a> IngestPipeline<'a> {
         dep_plan.dynamic = metadata.labels.has_flag(CanonicalLabels::FLAG_DYNAMIC);
         dep_plan.dedup_and_sort();
 
-        let template = canonicalize_template(
-            &ast_for_oracles,
-            placement.coord.row() + 1,
-            placement.coord.col() + 1,
-        );
-        let summary = summarize_canonical_template(&template);
-        let scalar_domain = PlacementDomain::row_run(
-            placement.sheet_id,
-            placement.coord.row(),
-            placement.coord.row(),
-            placement.coord.col(),
-        );
-        let result_region = ResultRegion::scalar_cells(scalar_domain);
-        let read_summary =
-            SpanReadSummary::from_formula_summary(placement.sheet_id, &result_region, &summary)
-                .ok();
+        let read_projections = compute_read_projections(&ast_for_oracles, placement);
+        let read_summary = read_projections.as_ref().and_then(|projections| {
+            span_read_summary_from_projections(placement, projections).ok()
+        });
 
         Ok(IngestedFormula {
             ast_id,
@@ -239,6 +227,7 @@ impl<'a> IngestPipeline<'a> {
             labels: metadata.labels,
             dep_plan,
             read_summary,
+            read_projections,
             formula_text,
         })
     }
@@ -707,6 +696,7 @@ pub(crate) struct IngestedFormula {
     pub(crate) labels: CanonicalLabels,
     pub(crate) dep_plan: DependencyPlanRow,
     pub(crate) read_summary: Option<SpanReadSummary>,
+    pub(crate) read_projections: Option<Vec<DirtyProjectionRule>>,
     pub(crate) formula_text: Option<Arc<str>>,
 }
 
@@ -772,6 +762,107 @@ impl From<DependencyPlanRow> for DependencyPlan {
 fn dedup_strings(values: &mut Vec<String>) {
     values.sort();
     values.dedup();
+}
+
+fn compute_read_projections(ast: &ASTNode, placement: CellRef) -> Option<Vec<DirtyProjectionRule>> {
+    fn visit(
+        ast: &ASTNode,
+        placement: CellRef,
+        projections: &mut Vec<DirtyProjectionRule>,
+    ) -> Option<()> {
+        match &ast.node_type {
+            ASTNodeType::Literal(_) => Some(()),
+            ASTNodeType::Reference { reference, .. } => {
+                let ReferenceType::Cell {
+                    sheet,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } = reference
+                else {
+                    return None;
+                };
+                if sheet.is_some() {
+                    return None;
+                }
+                let anchor_row = placement.coord.row() as i64 + 1;
+                let anchor_col = placement.coord.col() as i64 + 1;
+                let row_projection = if *row_abs {
+                    AxisProjection::Absolute {
+                        index: row.saturating_sub(1),
+                    }
+                } else {
+                    AxisProjection::Relative {
+                        offset: i64::from(*row) - anchor_row,
+                    }
+                };
+                let col_projection = if *col_abs {
+                    AxisProjection::Absolute {
+                        index: col.saturating_sub(1),
+                    }
+                } else {
+                    AxisProjection::Relative {
+                        offset: i64::from(*col) - anchor_col,
+                    }
+                };
+                let projection = DirtyProjectionRule::AffineCell {
+                    row: row_projection,
+                    col: col_projection,
+                };
+                if !projections.contains(&projection) {
+                    projections.push(projection);
+                }
+                Some(())
+            }
+            ASTNodeType::UnaryOp { op, expr } => match op.as_str() {
+                "+" | "-" | "%" => visit(expr, placement, projections),
+                _ => None,
+            },
+            ASTNodeType::BinaryOp { op, left, right } => {
+                if !matches!(
+                    op.as_str(),
+                    "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
+                ) {
+                    return None;
+                }
+                visit(left, placement, projections)?;
+                visit(right, placement, projections)
+            }
+            ASTNodeType::Function { .. } | ASTNodeType::Call { .. } | ASTNodeType::Array(_) => None,
+        }
+    }
+
+    let mut projections = Vec::new();
+    visit(ast, placement, &mut projections)?;
+    Some(projections)
+}
+
+pub(crate) fn span_read_summary_from_projections(
+    placement: CellRef,
+    projections: &[DirtyProjectionRule],
+) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
+    let result_region = RegionPattern::col_interval(
+        placement.sheet_id,
+        placement.coord.col(),
+        placement.coord.row(),
+        placement.coord.row(),
+    );
+    let mut dependencies = Vec::new();
+    for &projection in projections {
+        let read_region = projection.read_region_for_result(placement.sheet_id, result_region)?;
+        let dependency = SpanReadDependency {
+            read_region,
+            projection,
+        };
+        if !dependencies.contains(&dependency) {
+            dependencies.push(dependency);
+        }
+    }
+    Ok(SpanReadSummary {
+        result_region,
+        dependencies,
+    })
 }
 
 fn missing_ast_error() -> ExcelError {

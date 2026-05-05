@@ -34,6 +34,7 @@ mod tables;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
+use super::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
@@ -44,6 +45,18 @@ use crate::engine::topo::{
 use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLocator};
 use formualizer_common::Coord as AbsCoord;
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
+
+struct RegistryFunctionProvider;
+
+impl crate::traits::FunctionProvider for RegistryFunctionProvider {
+    fn get_function(
+        &self,
+        ns: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
+        crate::function_registry::get(ns, name)
+    }
+}
 
 #[inline]
 fn normalize_stored_literal(value: LiteralValue) -> LiteralValue {
@@ -1553,18 +1566,46 @@ impl DependencyGraph {
         col: u32,
         ast: ASTNode,
     ) -> Result<OperationSummary, ExcelError> {
-        let volatile = self.is_ast_volatile(&ast);
-        self.set_cell_formula_with_volatility(sheet, row, col, ast, volatile)
+        self.set_cell_formula_with_volatility(sheet, row, col, ast, false)
     }
 
-    /// Set a formula in a cell with a known volatility flag (context-scoped detection upstream)
+    /// Set a formula in a cell. The volatility argument is retained for API compatibility;
+    /// dependency flags now come from `IngestPipeline`.
     pub fn set_cell_formula_with_volatility(
         &mut self,
         sheet: &str,
         row: u32,
         col: u32,
         ast: ASTNode,
+        _volatile: bool,
+    ) -> Result<OperationSummary, ExcelError> {
+        let sheet_id = self.sheet_id_mut(sheet);
+        let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let provider = RegistryFunctionProvider;
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline(&provider);
+            pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?
+        };
+        self.set_cell_formula_with_plan(
+            sheet,
+            row,
+            col,
+            ingested.ast_id,
+            &ingested.dep_plan,
+            ingested.dep_plan.volatile,
+            ingested.dep_plan.dynamic,
+        )
+    }
+
+    pub(crate) fn set_cell_formula_with_plan(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        ast_id: AstNodeId,
+        plan: &DependencyPlanRow,
         volatile: bool,
+        dynamic: bool,
     ) -> Result<OperationSummary, ExcelError> {
         let dbg = std::env::var("FZ_DEBUG_LOAD")
             .ok()
@@ -1586,50 +1627,74 @@ impl DependencyGraph {
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
-        // Rewrite context-dependent structured references (e.g., this-row selectors) into
-        // concrete cell/range references for this formula cell.
-        let mut ast = ast;
-        self.rewrite_structured_references_for_cell(&mut ast, addr)?;
-
-        // Extract dependencies from AST, creating placeholders if needed
         let t_dep0 = if dbg {
             Some(crate::instant::FzInstant::now())
         } else {
             None
         };
-        let (
-            new_dependencies,
-            new_range_dependencies,
-            mut created_placeholders,
-            named_dependencies,
-            unresolved_names,
-        ) = self.extract_dependencies_with_pending_names(&ast, sheet_id)?;
+        let mut created_placeholders = Vec::new();
+        let mut new_dependencies = Vec::with_capacity(plan.direct_cell_deps.len());
+        for dep in &plan.direct_cell_deps {
+            let dep_vid = self.get_or_create_vertex(dep, &mut created_placeholders);
+            if !new_dependencies.contains(&dep_vid) {
+                new_dependencies.push(dep_vid);
+            }
+        }
+        let mut named_dependencies = Vec::new();
+        let mut unresolved_names = Vec::new();
+        for name in plan
+            .resolved_named_refs
+            .iter()
+            .chain(plan.named_refs.iter())
+        {
+            if let Some(named) = self.resolve_name_entry(name, sheet_id) {
+                if !new_dependencies.contains(&named.vertex) {
+                    new_dependencies.push(named.vertex);
+                }
+                if !named_dependencies.contains(&named.vertex) {
+                    named_dependencies.push(named.vertex);
+                }
+            } else if let Some(source) = self.resolve_source_scalar_entry(name) {
+                if !new_dependencies.contains(&source.vertex) {
+                    new_dependencies.push(source.vertex);
+                }
+            } else {
+                unresolved_names.push(name.clone());
+            }
+        }
+        for source_name in &plan.source_refs {
+            if let Some(source) = self.resolve_source_scalar_entry(source_name) {
+                if !new_dependencies.contains(&source.vertex) {
+                    new_dependencies.push(source.vertex);
+                }
+            } else if let Some(source) = self.resolve_source_table_entry(source_name)
+                && !new_dependencies.contains(&source.vertex)
+            {
+                new_dependencies.push(source.vertex);
+            }
+        }
+        for table_name in &plan.table_refs {
+            if let Some(table) = self.resolve_table_entry(table_name) {
+                if !new_dependencies.contains(&table.vertex) {
+                    new_dependencies.push(table.vertex);
+                }
+            } else if let Some(source) = self.resolve_source_table_entry(table_name)
+                && !new_dependencies.contains(&source.vertex)
+            {
+                new_dependencies.push(source.vertex);
+            }
+        }
         if let (true, Some(t)) = (dbg, t_dep0) {
             let elapsed = t.elapsed().as_millis();
-            // Only log if over threshold or sampled
             let do_log = (dep_ms_thresh > 0 && elapsed >= dep_ms_thresh)
                 || (sample_n > 0 && (row as usize).is_multiple_of(sample_n));
-            if dep_ms_thresh == 0 && sample_n == 0 {
-                // default: very light sampling every 1000 rows
-                if row.is_multiple_of(1000) {
-                    eprintln!(
-                        "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
-                        self.sheet_name(sheet_id),
-                        crate::reference::Coord::from_excel(row, col, true, true),
-                        new_dependencies.len(),
-                        new_range_dependencies.len(),
-                        created_placeholders.len(),
-                        named_dependencies.len(),
-                        elapsed
-                    );
-                }
-            } else if do_log {
+            if (dep_ms_thresh == 0 && sample_n == 0 && row.is_multiple_of(1000)) || do_log {
                 eprintln!(
-                    "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
+                    "[fz][dep] {}!{} planned: deps={}, ranges={}, placeholders={}, names={} in {} ms",
                     self.sheet_name(sheet_id),
                     crate::reference::Coord::from_excel(row, col, true, true),
                     new_dependencies.len(),
-                    new_range_dependencies.len(),
+                    plan.range_deps.len(),
                     created_placeholders.len(),
                     named_dependencies.len(),
                     elapsed
@@ -1664,7 +1729,6 @@ impl DependencyGraph {
         // Update vertex properties
         self.store
             .set_kind(addr_vertex_id, VertexKind::FormulaScalar);
-        let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
         self.vertex_formulas.insert(addr_vertex_id, ast_id);
         self.store.set_dirty(addr_vertex_id, true);
 
@@ -1672,7 +1736,6 @@ impl DependencyGraph {
         self.vertex_values.remove(&addr_vertex_id);
 
         self.mark_volatile(addr_vertex_id, volatile);
-        let dynamic = self.is_ast_dynamic(&ast);
         self.store.set_dynamic(addr_vertex_id, dynamic);
 
         if !named_dependencies.is_empty() {
@@ -1697,7 +1760,7 @@ impl DependencyGraph {
 
         // Add new dependency edges
         self.add_dependent_edges(addr_vertex_id, &new_dependencies);
-        self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet_id);
+        self.add_range_dependent_edges(addr_vertex_id, &plan.range_deps, sheet_id);
 
         Ok(OperationSummary {
             affected_vertices: self.mark_dirty(addr_vertex_id),
@@ -2250,138 +2313,130 @@ impl DependencyGraph {
         &mut self,
         sheet: &str,
         collected: Vec<(u32, u32, ASTNode)>,
-        vol_flags: Vec<bool>,
+        _vol_flags: Vec<bool>,
     ) -> Result<usize, ExcelError> {
-        use formualizer_parse::parser::CollectPolicy;
         let sheet_id = self.sheet_id_mut(sheet);
-
         if collected.is_empty() {
             return Ok(0);
         }
-
-        // 1) Build plan across all formulas (read-only, no graph mutation)
-        let tiny_refs = collected.iter().map(|(r, c, ast)| (sheet, *r, *c, ast));
-        let policy = CollectPolicy {
-            expand_small_ranges: true,
-            range_expansion_limit: self.config.range_expansion_limit,
-            include_names: true,
+        let provider = RegistryFunctionProvider;
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline(&provider);
+            let inputs = collected.into_iter().map(|(row, col, ast)| {
+                let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+                (FormulaAstInput::Tree(ast), placement, None)
+            });
+            pipeline.ingest_batch(inputs)?
         };
-        let plan = crate::engine::plan::build_dependency_plan(
-            &mut self.sheet_reg,
-            tiny_refs,
-            &policy,
-            Some(&vol_flags),
-        )?;
+        let planned = ingested
+            .into_iter()
+            .map(|formula| {
+                (
+                    formula.placement.coord.row() + 1,
+                    formula.placement.coord.col() + 1,
+                    formula.ast_id,
+                    formula.dep_plan,
+                )
+            })
+            .collect();
+        self.bulk_set_formulas_with_plans(sheet, planned)
+    }
 
-        // 2) Ensure/create target vertices and referenced cells (placeholders) once
+    pub(crate) fn bulk_set_formulas_with_plans(
+        &mut self,
+        sheet: &str,
+        planned: Vec<(u32, u32, AstNodeId, DependencyPlanRow)>,
+    ) -> Result<usize, ExcelError> {
+        let sheet_id = self.sheet_id_mut(sheet);
+        if planned.is_empty() {
+            return Ok(0);
+        }
         let mut created_placeholders: Vec<CellRef> = Vec::new();
-
-        // Targets
-        let mut target_vids: Vec<VertexId> = Vec::with_capacity(plan.formula_targets.len());
-        for (sid, pc) in &plan.formula_targets {
-            let addr = CellRef::new(*sid, Coord::new(pc.row(), pc.col(), true, true));
-            let vid = if let Some(&existing) = self.cell_to_vertex.get(&addr) {
-                existing
-            } else {
-                self.get_or_create_vertex(&addr, &mut created_placeholders)
-            };
-            target_vids.push(vid);
+        let mut target_vids: Vec<VertexId> = Vec::with_capacity(planned.len());
+        for (row, col, _, _) in &planned {
+            let addr = CellRef::new(sheet_id, Coord::from_excel(*row, *col, true, true));
+            target_vids.push(self.get_or_create_vertex(&addr, &mut created_placeholders));
         }
 
-        // Global referenced cells
-        let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
-        for (sid, pc) in &plan.global_cells {
-            let addr = CellRef::new(*sid, Coord::new(pc.row(), pc.col(), true, true));
-            let vid = if let Some(&existing) = self.cell_to_vertex.get(&addr) {
-                existing
-            } else {
-                self.get_or_create_vertex(&addr, &mut created_placeholders)
-            };
-            dep_vids.push(vid);
-        }
-
-        // 3) Store ASTs in batch and update kinds/flags/value map
-        let ast_ids = self
-            .data_store
-            .store_asts_batch(collected.iter().map(|(_, _, ast)| ast), &self.sheet_reg);
         for (i, &tvid) in target_vids.iter().enumerate() {
-            // If this cell already had a formula, remove its edges once here
             if self.vertex_formulas.contains_key(&tvid) {
                 self.remove_dependent_edges(tvid);
             }
+            self.detach_vertex_from_names(tvid);
+            self.clear_pending_name_references(tvid);
             self.store.set_kind(tvid, VertexKind::FormulaScalar);
             self.store.set_dirty(tvid, true);
             self.vertex_values.remove(&tvid);
-            self.vertex_formulas.insert(tvid, ast_ids[i]);
-            self.mark_volatile(tvid, vol_flags.get(i).copied().unwrap_or(false));
-
-            let dynamic = self.is_ast_dynamic(&collected[i].2);
-            self.store.set_dynamic(tvid, dynamic);
+            self.vertex_formulas.insert(tvid, planned[i].2);
+            self.mark_volatile(tvid, planned[i].3.volatile);
+            self.store.set_dynamic(tvid, planned[i].3.dynamic);
         }
 
-        // 4) Add edges in one batch
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
+            let plan = &planned[i].3;
             let mut deps: Vec<VertexId> = Vec::new();
-
-            // Map per-formula indices into dep_vids
-            if let Some(indices) = plan.per_formula_cells.get(i) {
-                deps.reserve(indices.len());
-                for &idx in indices {
-                    if let Some(vid) = dep_vids.get(idx as usize) {
-                        deps.push(*vid);
-                    }
+            for cell in &plan.direct_cell_deps {
+                let dep_vid = self.get_or_create_vertex(cell, &mut created_placeholders);
+                if !deps.contains(&dep_vid) {
+                    deps.push(dep_vid);
                 }
             }
 
-            if let Some(names) = plan.per_formula_names.get(i)
-                && !names.is_empty()
+            let mut name_vertices = Vec::new();
+            for name in plan
+                .resolved_named_refs
+                .iter()
+                .chain(plan.named_refs.iter())
             {
-                let mut name_vertices = Vec::new();
-                let formula_sheet = plan
-                    .formula_targets
-                    .get(i)
-                    .map(|(sid, _)| *sid)
-                    .unwrap_or(sheet_id);
-                for name in names {
-                    if let Some(named) = self.resolve_name_entry(name, formula_sheet) {
+                if let Some(named) = self.resolve_name_entry(name, sheet_id) {
+                    if !deps.contains(&named.vertex) {
                         deps.push(named.vertex);
+                    }
+                    if !name_vertices.contains(&named.vertex) {
                         name_vertices.push(named.vertex);
-                    } else if let Some(source) = self.resolve_source_scalar_entry(name) {
-                        deps.push(source.vertex);
-                    } else {
-                        self.record_pending_name_reference(formula_sheet, name, tvid);
                     }
-                }
-                if !name_vertices.is_empty() {
-                    self.attach_vertex_to_names(tvid, &name_vertices);
+                } else if let Some(source) = self.resolve_source_scalar_entry(name) {
+                    if !deps.contains(&source.vertex) {
+                        deps.push(source.vertex);
+                    }
+                } else {
+                    self.record_pending_name_reference(sheet_id, name, tvid);
                 }
             }
-
-            if let Some(tables) = plan.per_formula_tables.get(i)
-                && !tables.is_empty()
-            {
-                for table_name in tables {
-                    if let Some(table) = self.resolve_table_entry(table_name) {
+            for source_name in &plan.source_refs {
+                if let Some(source) = self.resolve_source_scalar_entry(source_name) {
+                    if !deps.contains(&source.vertex) {
+                        deps.push(source.vertex);
+                    }
+                } else if let Some(source) = self.resolve_source_table_entry(source_name)
+                    && !deps.contains(&source.vertex)
+                {
+                    deps.push(source.vertex);
+                }
+            }
+            for table_name in &plan.table_refs {
+                if let Some(table) = self.resolve_table_entry(table_name) {
+                    if !deps.contains(&table.vertex) {
                         deps.push(table.vertex);
-                    } else if let Some(source) = self.resolve_source_table_entry(table_name) {
-                        deps.push(source.vertex);
                     }
+                } else if let Some(source) = self.resolve_source_table_entry(table_name)
+                    && !deps.contains(&source.vertex)
+                {
+                    deps.push(source.vertex);
                 }
             }
-
+            if !name_vertices.is_empty() {
+                self.attach_vertex_to_names(tvid, &name_vertices);
+            }
             if !deps.is_empty() {
                 self.add_dependent_edges_nobatch(tvid, &deps);
             }
-
-            // Range deps from plan are already compact RangeKeys; register directly.
-            if let Some(rks) = plan.per_formula_ranges.get(i) {
-                self.add_range_deps_from_keys(tvid, rks, sheet_id);
-            }
+            self.add_range_dependent_edges(tvid, &plan.range_deps, sheet_id);
         }
         self.edges.end_batch();
 
-        Ok(collected.len())
+        Ok(planned.len())
     }
 
     /// Public (crate) helper to add a single dependency edge (dependent -> dependency) used for restoration/undo.

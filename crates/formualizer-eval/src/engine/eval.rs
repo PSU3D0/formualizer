@@ -1,6 +1,8 @@
 use crate::SheetId;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
+use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
+use crate::engine::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::row_visibility::RowVisibilityState;
@@ -13,7 +15,7 @@ use crate::engine::{
 };
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
-    analyze_candidate, place_candidate_family, place_candidate_family_with_analyses,
+    place_candidate_family_with_analyses,
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
@@ -23,7 +25,6 @@ use crate::formula_plane::region_index::{DirtyDomain, RegionPattern};
 use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef};
 use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
-use crate::formula_plane::template_canonical::canonicalize_template;
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
@@ -59,6 +60,8 @@ type FormulaPlaneMixedScheduleBuild = (
     u64,
     Vec<VertexId>,
 );
+
+type PlannedFormulaMaterialize = BTreeMap<String, Vec<(u32, u32, AstNodeId, DependencyPlanRow)>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
@@ -2536,58 +2539,90 @@ where
         // scratch state, but FormulaPlane ownership now lives on DependencyGraph.
         let _active_epoch = self.graph.formula_authority().plane.epoch();
 
-        let mut groups: BTreeMap<(SheetId, String), Vec<FormulaPlacementCandidate>> =
-            BTreeMap::new();
-        for batch in batches {
-            let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
-            for record in &batch.formulas {
-                if record.row == 0 || record.col == 0 {
-                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
-                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
-                    Self::record_shadow_fallback_reason(
-                        &mut report,
-                        PlacementFallbackReason::UnsupportedShapeOrGaps,
-                        1,
-                    );
-                    continue;
-                }
+        let batch_sheet_ids: Vec<SheetId> = batches
+            .iter()
+            .map(|batch| self.graph.sheet_id_mut(&batch.sheet_name))
+            .collect();
+        let mut groups: BTreeMap<
+            (SheetId, u64),
+            Vec<(FormulaPlacementCandidate, CandidateAnalysis)>,
+        > = BTreeMap::new();
+        {
+            let mut pipeline = self.ingest_pipeline();
+            for (batch, sheet_id) in batches.iter().zip(batch_sheet_ids.iter().copied()) {
+                for record in &batch.formulas {
+                    if record.row == 0 || record.col == 0 {
+                        report.shadow_candidate_cells =
+                            report.shadow_candidate_cells.saturating_add(1);
+                        report.shadow_fallback_cells =
+                            report.shadow_fallback_cells.saturating_add(1);
+                        Self::record_shadow_fallback_reason(
+                            &mut report,
+                            PlacementFallbackReason::UnsupportedShapeOrGaps,
+                            1,
+                        );
+                        continue;
+                    }
 
-                let Some(ast) = self
-                    .graph
-                    .data_store()
-                    .retrieve_ast(record.ast_id, self.graph.sheet_reg())
-                else {
-                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
-                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
-                    Self::record_shadow_fallback_reason(
-                        &mut report,
-                        PlacementFallbackReason::UnsupportedCanonicalTemplate,
-                        1,
+                    let placement = CellRef::new(
+                        sheet_id,
+                        Coord::from_excel(record.row, record.col, true, true),
                     );
-                    continue;
-                };
-                let template = canonicalize_template(&ast, record.row, record.col);
-                groups
-                    .entry((sheet_id, template.key.payload().to_string()))
-                    .or_default()
-                    .push(FormulaPlacementCandidate::new(
+                    let ingested = match pipeline.ingest_formula(
+                        FormulaAstInput::RawArena(record.ast_id),
+                        placement,
+                        record.formula_text.clone(),
+                    ) {
+                        Ok(ingested) => ingested,
+                        Err(_) => {
+                            report.shadow_candidate_cells =
+                                report.shadow_candidate_cells.saturating_add(1);
+                            report.shadow_fallback_cells =
+                                report.shadow_fallback_cells.saturating_add(1);
+                            Self::record_shadow_fallback_reason(
+                                &mut report,
+                                PlacementFallbackReason::UnsupportedCanonicalTemplate,
+                                1,
+                            );
+                            continue;
+                        }
+                    };
+                    let candidate = FormulaPlacementCandidate::new(
                         sheet_id,
                         record.row - 1,
                         record.col - 1,
-                        record.ast_id,
+                        ingested.ast_id,
                         record.formula_text.clone(),
-                    ));
+                    );
+                    let analysis = match CandidateAnalysis::from_ingested(&candidate, &ingested) {
+                        Ok(analysis) => analysis,
+                        Err(reason) => {
+                            report.shadow_candidate_cells =
+                                report.shadow_candidate_cells.saturating_add(1);
+                            report.shadow_fallback_cells =
+                                report.shadow_fallback_cells.saturating_add(1);
+                            Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                            continue;
+                        }
+                    };
+                    groups
+                        .entry((sheet_id, ingested.canonical_hash))
+                        .or_default()
+                        .push((candidate, analysis));
+                }
             }
         }
 
         let mut scratch_plane = FormulaPlane::default();
-        for candidates in groups.into_values() {
-            for component in Self::split_shadow_candidate_components(candidates) {
-                let placement_report = place_candidate_family(
+        for entries in groups.into_values() {
+            let (candidates, analyses): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+            for (component, component_analyses) in
+                Self::split_candidate_components_with_analyses(candidates, analyses)
+            {
+                let placement_report = place_candidate_family_with_analyses(
                     &mut scratch_plane,
                     component,
-                    self.graph.data_store(),
-                    self.graph.sheet_reg(),
+                    component_analyses,
                 );
                 let counters = placement_report.counters;
                 report.shadow_candidate_cells = report
@@ -2636,13 +2671,18 @@ where
     fn analyze_formula_plane_authoritative_ingest(
         &mut self,
         batches: &[FormulaIngestBatch],
-    ) -> (FormulaIngestReport, Vec<FormulaIngestBatch>) {
+    ) -> (
+        FormulaIngestReport,
+        Vec<FormulaIngestBatch>,
+        PlannedFormulaMaterialize,
+    ) {
         let mut report =
             FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
         report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
 
         let mut pending_candidates: Vec<(String, FormulaPlacementCandidate)> = Vec::new();
         let mut fallback: BTreeMap<String, Vec<FormulaIngestRecord>> = BTreeMap::new();
+        let mut planned_fallback: PlannedFormulaMaterialize = BTreeMap::new();
 
         for batch in batches {
             let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
@@ -2675,45 +2715,95 @@ where
             }
         }
 
-        let mut groups: BTreeMap<(SheetId, String, String), Vec<usize>> = BTreeMap::new();
+        let mut groups: BTreeMap<(SheetId, u64), Vec<usize>> = BTreeMap::new();
         let mut analyses_by_index: Vec<Option<CandidateAnalysis>> =
             (0..pending_candidates.len()).map(|_| None).collect();
-        for (idx, (sheet_name, candidate)) in pending_candidates.iter().enumerate() {
-            let ast = self
-                .graph
-                .data_store()
-                .retrieve_ast(candidate.ast_id, self.graph.sheet_reg());
-            let analysis = ast
-                .as_ref()
-                .ok_or(PlacementFallbackReason::UnsupportedCanonicalTemplate)
-                .and_then(|ast| analyze_candidate(candidate, ast));
-            match analysis {
-                Ok(analysis) => {
-                    let payload = analysis.template.key.payload().to_string();
-                    groups
-                        .entry((candidate.sheet_id, sheet_name.clone(), payload))
-                        .or_default()
-                        .push(idx);
-                    analyses_by_index[idx] = Some(analysis);
-                }
-                Err(reason) => {
-                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
-                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
-                    Self::record_shadow_fallback_reason(&mut report, reason, 1);
-                    fallback
-                        .entry(sheet_name.clone())
-                        .or_default()
-                        .push(FormulaIngestRecord::new(
-                            candidate.row.saturating_add(1),
-                            candidate.col.saturating_add(1),
-                            candidate.ast_id,
-                            candidate.formula_text.clone(),
-                        ));
+        let mut plans_by_index: Vec<Option<DependencyPlanRow>> =
+            (0..pending_candidates.len()).map(|_| None).collect();
+        {
+            let mut pipeline = self.ingest_pipeline();
+            for (idx, (sheet_name, candidate)) in pending_candidates.iter_mut().enumerate() {
+                let placement = CellRef::new(
+                    candidate.sheet_id,
+                    Coord::from_excel(
+                        candidate.row.saturating_add(1),
+                        candidate.col.saturating_add(1),
+                        true,
+                        true,
+                    ),
+                );
+                let ingested = pipeline.ingest_formula(
+                    FormulaAstInput::RawArena(candidate.ast_id),
+                    placement,
+                    candidate.formula_text.clone(),
+                );
+                match ingested {
+                    Ok(ingested) => {
+                        candidate.ast_id = ingested.ast_id;
+                        let canonical_hash = ingested.canonical_hash;
+                        let dep_plan = ingested.dep_plan.clone();
+                        match CandidateAnalysis::from_ingested(candidate, &ingested) {
+                            Ok(analysis) => {
+                                groups
+                                    .entry((candidate.sheet_id, canonical_hash))
+                                    .or_default()
+                                    .push(idx);
+                                analyses_by_index[idx] = Some(analysis);
+                                plans_by_index[idx] = Some(dep_plan);
+                            }
+                            Err(reason) => {
+                                report.shadow_candidate_cells =
+                                    report.shadow_candidate_cells.saturating_add(1);
+                                report.shadow_fallback_cells =
+                                    report.shadow_fallback_cells.saturating_add(1);
+                                Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                                planned_fallback
+                                    .entry(sheet_name.clone())
+                                    .or_default()
+                                    .push((
+                                        candidate.row.saturating_add(1),
+                                        candidate.col.saturating_add(1),
+                                        candidate.ast_id,
+                                        dep_plan,
+                                    ));
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        report.shadow_candidate_cells =
+                            report.shadow_candidate_cells.saturating_add(1);
+                        report.shadow_fallback_cells =
+                            report.shadow_fallback_cells.saturating_add(1);
+                        Self::record_shadow_fallback_reason(
+                            &mut report,
+                            PlacementFallbackReason::UnsupportedCanonicalTemplate,
+                            1,
+                        );
+                        fallback.entry(sheet_name.clone()).or_default().push(
+                            FormulaIngestRecord::new(
+                                candidate.row.saturating_add(1),
+                                candidate.col.saturating_add(1),
+                                candidate.ast_id,
+                                candidate.formula_text.clone(),
+                            ),
+                        );
+                    }
                 }
             }
         }
 
-        for ((_sheet_id, sheet_name, _payload), candidate_indices) in groups {
+        for ((_sheet_id, _canonical_hash), candidate_indices) in groups {
+            let sheet_name = pending_candidates[candidate_indices[0]].0.clone();
+            let mut plans_by_coord: BTreeMap<(u32, u32), Vec<DependencyPlanRow>> = BTreeMap::new();
+            for idx in &candidate_indices {
+                if let Some(plan) = plans_by_index[*idx].clone() {
+                    let candidate = &pending_candidates[*idx].1;
+                    plans_by_coord
+                        .entry((candidate.row, candidate.col))
+                        .or_default()
+                        .push(plan);
+                }
+            }
             let candidates: Vec<_> = candidate_indices
                 .iter()
                 .map(|idx| pending_candidates[*idx].1.clone())
@@ -2780,14 +2870,29 @@ where
                         .iter()
                         .find(|candidate| candidate.placement() == *placement)
                     {
-                        fallback.entry(sheet_name.clone()).or_default().push(
-                            FormulaIngestRecord::new(
-                                candidate.row.saturating_add(1),
-                                candidate.col.saturating_add(1),
-                                candidate.ast_id,
-                                candidate.formula_text.clone(),
-                            ),
-                        );
+                        let plan = plans_by_coord
+                            .get_mut(&(candidate.row, candidate.col))
+                            .and_then(Vec::pop);
+                        if let Some(plan) = plan {
+                            planned_fallback
+                                .entry(sheet_name.clone())
+                                .or_default()
+                                .push((
+                                    candidate.row.saturating_add(1),
+                                    candidate.col.saturating_add(1),
+                                    candidate.ast_id,
+                                    plan,
+                                ));
+                        } else {
+                            fallback.entry(sheet_name.clone()).or_default().push(
+                                FormulaIngestRecord::new(
+                                    candidate.row.saturating_add(1),
+                                    candidate.col.saturating_add(1),
+                                    candidate.ast_id,
+                                    candidate.formula_text.clone(),
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -2799,7 +2904,7 @@ where
             .into_iter()
             .map(|(sheet_name, formulas)| FormulaIngestBatch::new(sheet_name, formulas))
             .collect();
-        (report, fallback_batches)
+        (report, fallback_batches, planned_fallback)
     }
 
     fn accumulate_formula_plane_placement_report(
@@ -2834,6 +2939,34 @@ where
         for (reason, count) in &counters.fallback_reasons {
             Self::record_shadow_fallback_reason(report, *reason, *count);
         }
+    }
+
+    fn split_candidate_components_with_analyses(
+        candidates: Vec<FormulaPlacementCandidate>,
+        mut analyses: Vec<CandidateAnalysis>,
+    ) -> Vec<(Vec<FormulaPlacementCandidate>, Vec<CandidateAnalysis>)> {
+        let components = Self::split_shadow_candidate_components(candidates.clone());
+        let mut analysis_by_coord: BTreeMap<(u32, u32), Vec<CandidateAnalysis>> = BTreeMap::new();
+        for (candidate, analysis) in candidates.into_iter().zip(analyses.drain(..)) {
+            analysis_by_coord
+                .entry((candidate.row, candidate.col))
+                .or_default()
+                .push(analysis);
+        }
+        components
+            .into_iter()
+            .map(|component| {
+                let mut component_analyses = Vec::with_capacity(component.len());
+                for candidate in &component {
+                    let analysis = analysis_by_coord
+                        .get_mut(&(candidate.row, candidate.col))
+                        .and_then(Vec::pop)
+                        .expect("component candidate must have a precomputed analysis");
+                    component_analyses.push(analysis);
+                }
+                (component, component_analyses)
+            })
+            .collect()
     }
 
     fn split_shadow_candidate_components(
@@ -2903,22 +3036,27 @@ where
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
         let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
-        let (mut report, materialize_batches) = match self.config.formula_plane_mode {
-            FormulaPlaneMode::Off => (
-                FormulaIngestReport::with_mode(FormulaPlaneMode::Off),
-                batches,
-            ),
-            FormulaPlaneMode::Shadow => (
-                self.analyze_formula_plane_shadow_candidates(&batches),
-                batches,
-            ),
-            FormulaPlaneMode::AuthoritativeExperimental => {
-                self.analyze_formula_plane_authoritative_ingest(&batches)
-            }
-        };
+        let (mut report, materialize_batches, planned_materialize) =
+            match self.config.formula_plane_mode {
+                FormulaPlaneMode::Off => (
+                    FormulaIngestReport::with_mode(FormulaPlaneMode::Off),
+                    batches,
+                    BTreeMap::new(),
+                ),
+                FormulaPlaneMode::Shadow => (
+                    self.analyze_formula_plane_shadow_candidates(&batches),
+                    batches,
+                    BTreeMap::new(),
+                ),
+                FormulaPlaneMode::AuthoritativeExperimental => {
+                    self.analyze_formula_plane_authoritative_ingest(&batches)
+                }
+            };
         report.formula_cells_seen = formula_cells_seen;
 
-        if !materialize_batches.iter().all(FormulaIngestBatch::is_empty) {
+        if !materialize_batches.iter().all(FormulaIngestBatch::is_empty)
+            || !planned_materialize.is_empty()
+        {
             let mut builder = self.begin_bulk_ingest();
             for batch in materialize_batches {
                 if batch.is_empty() {
@@ -2932,6 +3070,13 @@ where
                         .into_iter()
                         .map(|record| (record.row, record.col, record.ast_id)),
                 );
+            }
+            for (sheet_name, formulas) in planned_materialize {
+                if formulas.is_empty() {
+                    continue;
+                }
+                let sheet_id = builder.add_sheet(&sheet_name);
+                builder.add_formula_plans(sheet_id, formulas);
             }
             let summary = builder.finish()?;
             report.graph_formula_cells_materialized = summary.formulas as u64;
@@ -5250,9 +5395,21 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
-        let volatile = self.is_ast_volatile_with_provider(&ast);
-        self.graph
-            .set_cell_formula_with_volatility(sheet, row, col, ast, volatile)?;
+        let sheet_id = self.graph.sheet_id_mut(sheet);
+        let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline();
+            pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?
+        };
+        self.graph.set_cell_formula_with_plan(
+            sheet,
+            row,
+            col,
+            ingested.ast_id,
+            &ingested.dep_plan,
+            ingested.dep_plan.volatile,
+            ingested.dep_plan.dynamic,
+        )?;
         self.record_formula_plane_changed_cell(sheet, row, col);
 
         // If the cell previously held a user value in the delta overlay, it must not continue
@@ -5273,13 +5430,27 @@ where
     {
         let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
         let edited_cells: Vec<(u32, u32)> = collected.iter().map(|(r, c, _)| (*r, *c)).collect();
-        let vol_flags: Vec<bool> = collected
-            .iter()
-            .map(|(_, _, ast)| self.is_ast_volatile_with_provider(ast))
+        let sheet_id = self.graph.sheet_id_mut(sheet);
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline();
+            let inputs = collected.into_iter().map(|(row, col, ast)| {
+                let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+                (FormulaAstInput::Tree(ast), placement, None)
+            });
+            pipeline.ingest_batch(inputs)?
+        };
+        let planned = ingested
+            .into_iter()
+            .map(|formula| {
+                (
+                    formula.placement.coord.row() + 1,
+                    formula.placement.coord.col() + 1,
+                    formula.ast_id,
+                    formula.dep_plan,
+                )
+            })
             .collect();
-        let n = self
-            .graph
-            .bulk_set_formulas_with_volatility(sheet, collected, vol_flags)?;
+        let n = self.graph.bulk_set_formulas_with_plans(sheet, planned)?;
         for (row, col) in edited_cells {
             self.record_formula_plane_changed_cell(sheet, row, col);
         }

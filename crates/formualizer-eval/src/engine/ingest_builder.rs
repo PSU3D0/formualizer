@@ -2,12 +2,17 @@ use crate::engine::graph::DependencyGraph;
 use formualizer_common::Coord as AbsCoord;
 // use crate::engine::plan::RangeKey; // no longer needed directly here
 use crate::engine::EvalConfig;
-use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
-use crate::engine::plan::DependencyPlanAst;
+use crate::engine::arena::AstNodeId;
+use crate::engine::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
+use crate::engine::plan::{
+    DependencyPlan, F_HAS_NAMES, F_HAS_RANGES, F_HAS_TABLES, F_VOLATILE, RangeKey,
+};
 use crate::{SheetId, engine::vertex::VertexId};
-use formualizer_common::{ExcelError, ExcelErrorKind};
-use formualizer_parse::parser::{ASTNode, CollectPolicy};
+use formualizer_common::{CoordBuildHasher, ExcelError, PackedSheetCell};
+use formualizer_parse::parser::ASTNode;
 use rustc_hash::FxHashMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Summary of bulk ingest
 #[derive(Debug, Clone)]
@@ -22,18 +27,24 @@ pub struct BulkIngestSummary {
 enum FormulaAstSource {
     Owned(ASTNode),
     Interned(AstNodeId),
+    Planned {
+        ast_id: AstNodeId,
+        plan: DependencyPlanRow,
+    },
 }
 
 struct StagedFormula {
     row: u32,
     col: u32,
     ast: FormulaAstSource,
-    volatile: bool,
 }
 
-enum WorkingAst {
-    Tree(ASTNode),
-    Arena(AstNodeId),
+struct RegistryFunctionProvider;
+
+impl crate::traits::FunctionProvider for RegistryFunctionProvider {
+    fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn crate::function::Function>> {
+        crate::function_registry::get(ns, name)
+    }
 }
 
 struct SheetStage {
@@ -52,11 +63,142 @@ impl SheetStage {
     }
 }
 
+fn range_key_from_shared(
+    range: &crate::reference::SharedRangeRef<'static>,
+    current_sheet: SheetId,
+) -> RangeKey {
+    let sheet = match range.sheet {
+        crate::reference::SharedSheetLocator::Id(id) => id,
+        _ => current_sheet,
+    };
+    match (
+        range.start_row,
+        range.start_col,
+        range.end_row,
+        range.end_col,
+    ) {
+        (Some(sr), Some(sc), Some(er), Some(ec)) => RangeKey::Rect {
+            sheet,
+            start: AbsCoord::new(sr.index, sc.index),
+            end: AbsCoord::new(er.index, ec.index),
+        },
+        (None, Some(sc), None, Some(ec)) if sc.index == ec.index => RangeKey::WholeCol {
+            sheet,
+            col: sc.index + 1,
+        },
+        (Some(sr), None, Some(er), None) if sr.index == er.index => RangeKey::WholeRow {
+            sheet,
+            row: sr.index + 1,
+        },
+        _ => RangeKey::OpenRect {
+            sheet,
+            start: range
+                .start_row
+                .zip(range.start_col)
+                .map(|(r, c)| AbsCoord::new(r.index, c.index)),
+            end: range
+                .end_row
+                .zip(range.end_col)
+                .map(|(r, c)| AbsCoord::new(r.index, c.index)),
+        },
+    }
+}
+
+fn dependency_plan_from_rows(
+    sheet_id: SheetId,
+    rows: &[(u32, u32, DependencyPlanRow)],
+) -> DependencyPlan {
+    let mut plan = DependencyPlan::default();
+    let mut cell_index: HashMap<PackedSheetCell, u32, CoordBuildHasher> =
+        HashMap::with_hasher(CoordBuildHasher);
+    let mut vertex_pool_index: HashMap<PackedSheetCell, u32, CoordBuildHasher> =
+        HashMap::with_hasher(CoordBuildHasher);
+
+    fn ensure_vertex_pool_index(
+        plan: &mut DependencyPlan,
+        index: &mut HashMap<PackedSheetCell, u32, CoordBuildHasher>,
+        key: (SheetId, AbsCoord),
+    ) -> u32 {
+        let packed = PackedSheetCell::try_new(key.0, key.1.row(), key.1.col())
+            .expect("plan vertex pool coordinate must fit PackedSheetCell");
+        if let Some(&idx) = index.get(&packed) {
+            idx
+        } else {
+            let idx = plan.vertex_pool.len() as u32;
+            plan.vertex_pool.push(key);
+            plan.vertex_pool_packed.push(packed);
+            index.insert(packed, idx);
+            idx
+        }
+    }
+
+    for (row, col, row_plan) in rows {
+        let target = (sheet_id, AbsCoord::from_excel(*row, *col));
+        plan.formula_targets.push(target);
+        let target_pool_idx = ensure_vertex_pool_index(&mut plan, &mut vertex_pool_index, target);
+        plan.formula_target_pool_indices.push(target_pool_idx);
+
+        let mut per_cells = Vec::new();
+        for dep in &row_plan.direct_cell_deps {
+            let key = (
+                dep.sheet_id,
+                AbsCoord::new(dep.coord.row(), dep.coord.col()),
+            );
+            let packed = PackedSheetCell::try_new(key.0, key.1.row(), key.1.col())
+                .expect("plan dependency coordinate must fit PackedSheetCell");
+            let idx = if let Some(&idx) = cell_index.get(&packed) {
+                idx
+            } else {
+                let idx = plan.global_cells.len() as u32;
+                plan.global_cells.push(key);
+                cell_index.insert(packed, idx);
+                let pool_idx = ensure_vertex_pool_index(&mut plan, &mut vertex_pool_index, key);
+                plan.global_cell_pool_indices.push(pool_idx);
+                idx
+            };
+            per_cells.push(idx);
+        }
+
+        let flags = (if row_plan.volatile { F_VOLATILE } else { 0 })
+            | (if row_plan.range_deps.is_empty() {
+                0
+            } else {
+                F_HAS_RANGES
+            })
+            | (if row_plan.named_refs.is_empty() && row_plan.resolved_named_refs.is_empty() {
+                0
+            } else {
+                F_HAS_NAMES
+            })
+            | (if row_plan.table_refs.is_empty() {
+                0
+            } else {
+                F_HAS_TABLES
+            });
+        plan.per_formula_cells.push(per_cells);
+        plan.per_formula_ranges.push(
+            row_plan
+                .range_deps
+                .iter()
+                .map(|range| range_key_from_shared(range, sheet_id))
+                .collect(),
+        );
+        let mut names = row_plan.resolved_named_refs.clone();
+        names.extend(row_plan.named_refs.clone());
+        names.extend(row_plan.source_refs.clone());
+        plan.per_formula_names.push(names);
+        let mut tables = row_plan.table_refs.clone();
+        tables.extend(row_plan.source_refs.clone());
+        plan.per_formula_tables.push(tables);
+        plan.per_formula_flags.push(flags);
+    }
+    plan
+}
+
 pub struct BulkIngestBuilder<'g> {
     g: &'g mut DependencyGraph,
     sheets: FxHashMap<SheetId, SheetStage>,
     cfg_saved: EvalConfig,
-    vols_buf: Vec<bool>,
 }
 
 impl<'g> BulkIngestBuilder<'g> {
@@ -67,7 +209,6 @@ impl<'g> BulkIngestBuilder<'g> {
             g,
             sheets: FxHashMap::default(),
             cfg_saved,
-            vols_buf: Vec::new(),
         }
     }
 
@@ -92,12 +233,10 @@ impl<'g> BulkIngestBuilder<'g> {
             .entry(sheet)
             .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
         for (r, c, ast) in formulas {
-            let vol = Self::is_ast_volatile(&ast);
             stage.formulas.push(StagedFormula {
                 row: r,
                 col: c,
                 ast: FormulaAstSource::Owned(ast),
-                volatile: vol,
             });
         }
     }
@@ -115,115 +254,24 @@ impl<'g> BulkIngestBuilder<'g> {
                 row: r,
                 col: c,
                 ast: FormulaAstSource::Interned(ast_id),
-                volatile: false,
             });
         }
     }
 
-    fn is_ast_volatile(ast: &ASTNode) -> bool {
-        use formualizer_parse::parser::ASTNodeType;
-
-        if ast.contains_volatile() {
-            return true;
-        }
-
-        match &ast.node_type {
-            ASTNodeType::Function { name, args } => {
-                if let Some(func) = crate::function_registry::get("", name)
-                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
-                {
-                    return true;
-                }
-                args.iter().any(Self::is_ast_volatile)
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                Self::is_ast_volatile(left) || Self::is_ast_volatile(right)
-            }
-            ASTNodeType::UnaryOp { expr, .. } => Self::is_ast_volatile(expr),
-            ASTNodeType::Array(rows) => {
-                rows.iter().any(|row| row.iter().any(Self::is_ast_volatile))
-            }
-            _ => false,
-        }
-    }
-
-    fn ast_is_volatile_arena(ast_id: AstNodeId, data_store: &DataStore) -> bool {
-        let Some(node) = data_store.get_node(ast_id) else {
-            return false;
-        };
-        match node {
-            AstNodeData::Function { name_id, .. } => {
-                let name = data_store.resolve_ast_string(*name_id);
-                if let Some(func) = crate::function_registry::get("", name)
-                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
-                {
-                    return true;
-                }
-                data_store.get_args(ast_id).is_some_and(|args| {
-                    args.iter()
-                        .any(|&arg| Self::ast_is_volatile_arena(arg, data_store))
-                })
-            }
-            AstNodeData::BinaryOp {
-                left_id, right_id, ..
-            } => {
-                Self::ast_is_volatile_arena(*left_id, data_store)
-                    || Self::ast_is_volatile_arena(*right_id, data_store)
-            }
-            AstNodeData::UnaryOp { expr_id, .. } => {
-                Self::ast_is_volatile_arena(*expr_id, data_store)
-            }
-            AstNodeData::Array { .. } => {
-                data_store
-                    .get_array_elems(ast_id)
-                    .is_some_and(|(_, _, elems)| {
-                        elems
-                            .iter()
-                            .any(|&elem| Self::ast_is_volatile_arena(elem, data_store))
-                    })
-            }
-            _ => false,
-        }
-    }
-
-    fn ast_is_dynamic_arena(ast_id: AstNodeId, data_store: &DataStore) -> bool {
-        let Some(node) = data_store.get_node(ast_id) else {
-            return false;
-        };
-        match node {
-            AstNodeData::Function { name_id, .. } => {
-                let name = data_store.resolve_ast_string(*name_id);
-                if let Some(func) = crate::function_registry::get("", name)
-                    && func
-                        .caps()
-                        .contains(crate::function::FnCaps::DYNAMIC_DEPENDENCY)
-                {
-                    return true;
-                }
-                data_store.get_args(ast_id).is_some_and(|args| {
-                    args.iter()
-                        .any(|&arg| Self::ast_is_dynamic_arena(arg, data_store))
-                })
-            }
-            AstNodeData::BinaryOp {
-                left_id, right_id, ..
-            } => {
-                Self::ast_is_dynamic_arena(*left_id, data_store)
-                    || Self::ast_is_dynamic_arena(*right_id, data_store)
-            }
-            AstNodeData::UnaryOp { expr_id, .. } => {
-                Self::ast_is_dynamic_arena(*expr_id, data_store)
-            }
-            AstNodeData::Array { .. } => {
-                data_store
-                    .get_array_elems(ast_id)
-                    .is_some_and(|(_, _, elems)| {
-                        elems
-                            .iter()
-                            .any(|&elem| Self::ast_is_dynamic_arena(elem, data_store))
-                    })
-            }
-            _ => false,
+    pub(crate) fn add_formula_plans<I>(&mut self, sheet: SheetId, formulas: I)
+    where
+        I: IntoIterator<Item = (u32, u32, AstNodeId, DependencyPlanRow)>,
+    {
+        let stage = self
+            .sheets
+            .entry(sheet)
+            .or_insert_with(|| SheetStage::new(self.g.sheet_name(sheet).to_string(), sheet));
+        for (r, c, ast_id, plan) in formulas {
+            stage.formulas.push(StagedFormula {
+                row: r,
+                col: c,
+                ast: FormulaAstSource::Planned { ast_id, plan },
+            });
         }
     }
 
@@ -278,69 +326,76 @@ impl<'g> BulkIngestBuilder<'g> {
                 for chunk in stage.formulas.chunks_mut(formula_batch_size) {
                     batch_count += 1;
 
-                    let mut working_asts = Vec::with_capacity(chunk.len());
-                    for formula in chunk.iter_mut() {
-                        let coord = crate::reference::Coord::from_excel(
-                            formula.row,
-                            formula.col,
-                            true,
-                            true,
-                        );
-                        let cell = crate::reference::CellRef::new(stage.id, coord);
-                        let working = match &formula.ast {
+                    let tp0 = Instant::now();
+                    let mut prepared: Vec<Option<(AstNodeId, DependencyPlanRow)>> =
+                        (0..chunk.len()).map(|_| None).collect();
+                    let mut pipeline_inputs = Vec::new();
+                    for (idx, formula) in chunk.iter().enumerate() {
+                        match &formula.ast {
+                            FormulaAstSource::Planned { ast_id, plan } => {
+                                prepared[idx] = Some((*ast_id, plan.clone()));
+                            }
                             FormulaAstSource::Owned(ast) => {
-                                let mut ast = ast.clone();
-                                self.g
-                                    .rewrite_structured_references_for_cell(&mut ast, cell)?;
-                                formula.volatile = Self::is_ast_volatile(&ast);
-                                WorkingAst::Tree(ast)
+                                let placement = crate::reference::CellRef::new(
+                                    stage.id,
+                                    crate::reference::Coord::from_excel(
+                                        formula.row,
+                                        formula.col,
+                                        true,
+                                        true,
+                                    ),
+                                );
+                                pipeline_inputs.push((
+                                    idx,
+                                    FormulaAstInput::Tree(ast.clone()),
+                                    placement,
+                                ));
                             }
                             FormulaAstSource::Interned(ast_id) => {
-                                if self.g.data_store().ast_needs_structural_rewrite(*ast_id) {
-                                    let mut ast = self
-                                        .g
-                                        .data_store()
-                                        .retrieve_ast(*ast_id, self.g.sheet_reg())
-                                        .ok_or_else(|| {
-                                            ExcelError::new(ExcelErrorKind::Value)
-                                                .with_message("Missing interned formula AST")
-                                        })?;
-                                    self.g
-                                        .rewrite_structured_references_for_cell(&mut ast, cell)?;
-                                    formula.volatile = Self::is_ast_volatile(&ast);
-                                    let rewritten_id = self.g.store_ast(&ast);
-                                    WorkingAst::Arena(rewritten_id)
-                                } else {
-                                    formula.volatile =
-                                        Self::ast_is_volatile_arena(*ast_id, self.g.data_store());
-                                    WorkingAst::Arena(*ast_id)
-                                }
+                                let placement = crate::reference::CellRef::new(
+                                    stage.id,
+                                    crate::reference::Coord::from_excel(
+                                        formula.row,
+                                        formula.col,
+                                        true,
+                                        true,
+                                    ),
+                                );
+                                pipeline_inputs.push((
+                                    idx,
+                                    FormulaAstInput::RawArena(*ast_id),
+                                    placement,
+                                ));
                             }
-                        };
-                        working_asts.push(working);
+                        }
                     }
-
-                    let tp0 = Instant::now();
-                    let refs = chunk.iter().zip(working_asts.iter()).map(|(formula, ast)| {
-                        let ast = match ast {
-                            WorkingAst::Tree(ast) => DependencyPlanAst::Tree(ast),
-                            WorkingAst::Arena(ast_id) => DependencyPlanAst::Arena(*ast_id),
+                    if !pipeline_inputs.is_empty() {
+                        let indices: Vec<usize> =
+                            pipeline_inputs.iter().map(|(idx, _, _)| *idx).collect();
+                        let provider = RegistryFunctionProvider;
+                        let ingested = {
+                            let mut pipeline = self.g.ingest_pipeline(&provider);
+                            let inputs = pipeline_inputs
+                                .into_iter()
+                                .map(|(_, input, placement)| (input, placement, None));
+                            pipeline.ingest_batch(inputs)?
                         };
-                        (stage.name.as_str(), formula.row, formula.col, ast)
-                    });
-                    self.vols_buf.clear();
-                    self.vols_buf.reserve(chunk.len());
-                    for formula in chunk.iter() {
-                        self.vols_buf.push(formula.volatile);
+                        for (idx, ingested) in indices.into_iter().zip(ingested) {
+                            prepared[idx] = Some((ingested.ast_id, ingested.dep_plan));
+                        }
                     }
-                    let policy = CollectPolicy {
-                        expand_small_ranges: true,
-                        range_expansion_limit: self.g.range_expansion_limit(),
-                        include_names: true,
-                    };
-                    let plan =
-                        self.g
-                            .plan_dependencies_mixed(refs, &policy, Some(&self.vols_buf))?;
+                    let prepared: Vec<(AstNodeId, DependencyPlanRow)> = prepared
+                        .into_iter()
+                        .map(|entry| entry.expect("formula must be planned"))
+                        .collect();
+                    let ast_ids: Vec<AstNodeId> =
+                        prepared.iter().map(|(ast_id, _)| *ast_id).collect();
+                    let row_plans: Vec<(u32, u32, DependencyPlanRow)> = chunk
+                        .iter()
+                        .zip(prepared.into_iter())
+                        .map(|(formula, (_, plan))| (formula.row, formula.col, plan))
+                        .collect();
+                    let plan = dependency_plan_from_rows(stage.id, &row_plans);
                     edges_adj.reserve(plan.formula_targets.len());
                     t_plan_ms += tp0.elapsed().as_millis();
                     n_targets += plan.formula_targets.len();
@@ -363,18 +418,9 @@ impl<'g> BulkIngestBuilder<'g> {
                     }
                     t_ensure_ms += te0.elapsed().as_millis();
 
-                    // Assign formula vertices. Pre-interned FormulaPlane records reuse their
-                    // existing arena ids unless a context-dependent structured reference had to
-                    // be rewritten for this cell.
+                    // Assign formula vertices using the canonical AST ids and flags produced by the pipeline.
                     let ta0 = Instant::now();
                     self.g.reserve_formula_metadata(plan.formula_targets.len());
-                    let ast_ids: Vec<AstNodeId> = working_asts
-                        .iter()
-                        .map(|working| match working {
-                            WorkingAst::Tree(ast) => self.g.store_ast(ast),
-                            WorkingAst::Arena(ast_id) => *ast_id,
-                        })
-                        .collect();
 
                     let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
                     for &pos in &plan.global_cell_pool_indices {
@@ -387,20 +433,21 @@ impl<'g> BulkIngestBuilder<'g> {
                     for (i, &pos) in plan.formula_target_pool_indices.iter().enumerate() {
                         let vid = all_vids[pos as usize];
                         target_vids.push(vid);
-                        let dynamic = match &working_asts[i] {
-                            WorkingAst::Tree(ast) => self.g.is_ast_dynamic(ast),
-                            WorkingAst::Arena(ast_id) => {
-                                Self::ast_is_dynamic_arena(*ast_id, self.g.data_store())
-                            }
-                        };
-                        let volatile = chunk[i].volatile;
+                        let row_plan = &row_plans[i].2;
                         if load_fast {
                             self.g.assign_formula_vertex_load_fast(
-                                vid, ast_ids[i], volatile, dynamic,
+                                vid,
+                                ast_ids[i],
+                                row_plan.volatile,
+                                row_plan.dynamic,
                             );
                         } else {
-                            self.g
-                                .assign_formula_vertex(vid, ast_ids[i], volatile, dynamic);
+                            self.g.assign_formula_vertex(
+                                vid,
+                                ast_ids[i],
+                                row_plan.volatile,
+                                row_plan.dynamic,
+                            );
                         }
                     }
                     self.g.mark_vertices_dirty_batch(&target_vids);

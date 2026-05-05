@@ -5,23 +5,24 @@
 //! build, dirty propagation, scheduling, or evaluation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 use formualizer_parse::parser::ASTNode;
 
 use crate::SheetId;
-use crate::engine::arena::{AstNodeId, DataStore};
+use crate::engine::arena::{AstNodeId, CanonicalLabels, DataStore};
+use crate::engine::ingest_pipeline::IngestedFormula;
 use crate::engine::sheet_registry::SheetRegistry;
 
-use super::dependency_summary::{
-    FormulaClass, FormulaDependencySummary, summarize_canonical_template,
-};
+use super::dependency_summary::{FormulaClass, summarize_canonical_template};
 use super::ids::FormulaTemplateId;
-use super::producer::SpanReadSummary;
+use super::producer::{DirtyProjectionRule, SpanReadDependency, SpanReadSummary};
+use super::region_index::RegionPattern;
 use super::runtime::{
     FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
 };
-use super::template_canonical::{CanonicalTemplate, CanonicalTemplateFlag, canonicalize_template};
+use super::template_canonical::{CanonicalTemplateFlag, canonicalize_template};
 
 #[derive(Clone, Debug)]
 pub(crate) struct FormulaPlacementCandidate {
@@ -137,13 +138,41 @@ pub(crate) struct CandidateAnalysis {
     sheet_id: SheetId,
     row: u32,
     col: u32,
-    pub(crate) template: CanonicalTemplate,
-    summary: FormulaDependencySummary,
+    canonical_hash: u64,
+    canonical_key: Arc<str>,
+    read_projections: Vec<DirtyProjectionRule>,
 }
 
 impl CandidateAnalysis {
     fn placement(&self) -> PlacementCoord {
         PlacementCoord::new(self.sheet_id, self.row, self.col)
+    }
+
+    pub(crate) fn from_ingested(
+        candidate: &FormulaPlacementCandidate,
+        ingested: &IngestedFormula,
+    ) -> Result<Self, PlacementFallbackReason> {
+        if ingested.labels.rejects != 0 {
+            return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
+        }
+        if ingested
+            .labels
+            .has_flag(CanonicalLabels::FLAG_EXPLICIT_SHEET)
+        {
+            return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
+        }
+        let read_projections = ingested
+            .read_projections
+            .clone()
+            .ok_or(PlacementFallbackReason::UnsupportedDependencySummary)?;
+        Ok(Self {
+            sheet_id: candidate.sheet_id,
+            row: candidate.row,
+            col: candidate.col,
+            canonical_hash: ingested.canonical_hash,
+            canonical_key: Arc::<str>::from(format!("fp8:{:016x}", ingested.canonical_hash)),
+            read_projections,
+        })
     }
 }
 
@@ -175,12 +204,33 @@ pub(crate) fn analyze_candidate(
     {
         return Err(PlacementFallbackReason::UnsupportedDependencySummary);
     }
+    let scalar_domain = PlacementDomain::row_run(
+        candidate.sheet_id,
+        candidate.row,
+        candidate.row,
+        candidate.col,
+    );
+    let result_region = ResultRegion::scalar_cells(scalar_domain);
+    let mut read_projections = Vec::new();
+    for dependency in
+        SpanReadSummary::from_formula_summary(candidate.sheet_id, &result_region, &summary)
+            .map_err(|_| PlacementFallbackReason::UnsupportedDirtyProjection)?
+            .dependencies
+    {
+        if !read_projections.contains(&dependency.projection) {
+            read_projections.push(dependency.projection);
+        }
+    }
+    let payload = template.key.payload();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    payload.hash(&mut hasher);
     Ok(CandidateAnalysis {
         sheet_id: candidate.sheet_id,
         row: candidate.row,
         col: candidate.col,
-        template,
-        summary,
+        canonical_hash: hasher.finish(),
+        canonical_key: Arc::<str>::from(payload),
+        read_projections,
     })
 }
 
@@ -230,7 +280,7 @@ fn place_analyzed_family(
 
     if analyses
         .iter()
-        .any(|analysis| analysis.template.key.payload() != first.template.key.payload())
+        .any(|analysis| analysis.canonical_hash != first.canonical_hash)
     {
         mark_all_legacy(
             &mut report,
@@ -262,10 +312,11 @@ fn place_analyzed_family(
     };
 
     let result_region = ResultRegion::scalar_cells(domain.clone());
-    let read_summary = match SpanReadSummary::from_formula_summary(
+    let result_region_pattern = RegionPattern::from_domain(&domain);
+    let read_summary = match span_read_summary_for_domain(
         sheet_id,
-        &result_region,
-        &origin_analysis.summary,
+        result_region_pattern,
+        &origin_analysis.read_projections,
     ) {
         Ok(summary) => summary,
         Err(_reason) => {
@@ -311,7 +362,7 @@ fn place_analyzed_family(
 
     let template_count_before = plane.templates.len();
     let template_id = plane.intern_template(
-        Arc::<str>::from(first.template.key.payload()),
+        first.canonical_key.clone(),
         origin_candidate.ast_id,
         origin_candidate.formula_text.clone(),
     );
@@ -343,6 +394,28 @@ fn place_analyzed_family(
         })
         .collect();
     report
+}
+
+fn span_read_summary_for_domain(
+    sheet_id: SheetId,
+    result_region: RegionPattern,
+    projections: &[DirtyProjectionRule],
+) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
+    let mut dependencies = Vec::new();
+    for &projection in projections {
+        let read_region = projection.read_region_for_result(sheet_id, result_region)?;
+        let dependency = SpanReadDependency {
+            read_region,
+            projection,
+        };
+        if !dependencies.contains(&dependency) {
+            dependencies.push(dependency);
+        }
+    }
+    Ok(SpanReadSummary {
+        result_region,
+        dependencies,
+    })
 }
 
 fn detect_domain(
