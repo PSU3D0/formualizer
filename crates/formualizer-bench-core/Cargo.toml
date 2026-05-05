@@ -13,6 +13,7 @@ publish = false
 default = []
 xlsx = ["dep:formualizer-testkit"]
 formualizer_runner = ["xlsx", "dep:formualizer-workbook"]
+dhat-heap = ["dep:dhat"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]
 
@@ -30,4 +31,5 @@ formualizer-workbook = { path = "../formualizer-workbook", optional = true, defa
 formualizer-parse = { workspace = true }
 formualizer-common = { workspace = true }
 formualizer-eval = { workspace = true, features = ["formula_plane_diagnostics"] }
+dhat = { version = "0.3", optional = true }
 ironcalc = { version = "0.7.1", optional = true }
