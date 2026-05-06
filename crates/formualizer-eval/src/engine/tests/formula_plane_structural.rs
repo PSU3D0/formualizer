@@ -63,6 +63,18 @@ fn build_single_formula_column_family(rows: u32) -> Engine<TestWorkbook> {
     engine
 }
 
+fn only_active_span_is_constant(engine: &Engine<TestWorkbook>) -> bool {
+    let spans = engine
+        .graph
+        .formula_authority()
+        .plane
+        .spans
+        .active_spans()
+        .collect::<Vec<_>>();
+    assert_eq!(spans.len(), 1);
+    spans[0].is_constant_result
+}
+
 fn build_cross_sheet_span_engine(rows: u32) -> (Engine<TestWorkbook>, SheetId, SheetId) {
     let mut engine = authoritative_engine();
     let data_a_sheet_id = engine.add_sheet("DataA").unwrap();
@@ -90,6 +102,125 @@ fn build_cross_sheet_span_engine(rows: u32) -> (Engine<TestWorkbook>, SheetId, S
     assert_eq!(stats.formula_plane_active_span_count, 1);
     assert_eq!(stats.formula_plane_consumer_read_entries, 2);
     (engine, data_a_sheet_id, data_b_sheet_id)
+}
+
+#[test]
+fn formula_plane_authoritative_whole_column_sum_promotes_and_recalculates() {
+    let rows = 200;
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=rows {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, "=SUM($A:$A)"));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert!(only_active_span_is_constant(&engine));
+
+    engine.evaluate_all().unwrap();
+    let initial_sum = (rows * (rows + 1) / 2) as f64;
+    for row in [1, 50, 200] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 2),
+            Some(LiteralValue::Number(initial_sum))
+        );
+    }
+
+    engine
+        .set_cell_value("Sheet1", 50, 1, LiteralValue::Number(1_000.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let edited_sum = initial_sum - 50.0 + 1_000.0;
+    for row in [1, 50, 200] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 2),
+            Some(LiteralValue::Number(edited_sum))
+        );
+    }
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+}
+
+#[test]
+fn formula_plane_authoritative_whole_column_sum_with_relative_cell_promotes_and_recalculates() {
+    let rows = 200;
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=rows {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 3, &format!("=SUM($A:$A)-A{row}")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert!(!only_active_span_is_constant(&engine));
+
+    engine.evaluate_all().unwrap();
+    let initial_sum = (rows * (rows + 1) / 2) as f64;
+    for row in [1, 50, 200] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 3),
+            Some(LiteralValue::Number(initial_sum - row as f64))
+        );
+    }
+
+    engine
+        .set_cell_value("Sheet1", 50, 1, LiteralValue::Number(1_000.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let edited_sum = initial_sum - 50.0 + 1_000.0;
+    for row in [1, 50, 200] {
+        let row_value = if row == 50 { 1_000.0 } else { row as f64 };
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 3),
+            Some(LiteralValue::Number(edited_sum - row_value))
+        );
+    }
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+}
+
+#[test]
+fn formula_plane_authoritative_cross_sheet_whole_column_sum_recalculates_on_data_edit() {
+    let rows = 200;
+    let mut engine = authoritative_engine();
+    engine.add_sheet("DataA").unwrap();
+    let mut formulas = Vec::new();
+    for row in 1..=rows {
+        engine
+            .set_cell_value("DataA", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, "=SUM(DataA!$A:$A)"));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert!(only_active_span_is_constant(&engine));
+
+    engine.evaluate_all().unwrap();
+    let initial_sum = (rows * (rows + 1) / 2) as f64;
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 100, 2),
+        Some(LiteralValue::Number(initial_sum))
+    );
+
+    engine
+        .set_cell_value("DataA", 75, 1, LiteralValue::Number(2_000.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let edited_sum = initial_sum - 75.0 + 2_000.0;
+    for row in [1, 100, 200] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 2),
+            Some(LiteralValue::Number(edited_sum))
+        );
+    }
 }
 
 #[test]

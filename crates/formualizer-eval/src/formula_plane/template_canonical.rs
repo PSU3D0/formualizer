@@ -713,11 +713,7 @@ impl Canonicalizer {
 
     fn classify_range_bounds(&mut self, original: &str, start: Option<u32>, end: Option<u32>) {
         match (start, end) {
-            (None, None) => self
-                .labels
-                .reject(CanonicalRejectReason::WholeAxisReference {
-                    original: original.to_string(),
-                }),
+            (None, None) => {}
             (None, Some(_)) | (Some(_), None) => {
                 self.labels
                     .reject(CanonicalRejectReason::OpenRangeReference {
@@ -1585,6 +1581,46 @@ mod tests {
             template
                 .labels
                 .contains_reject_kind(CanonicalRejectKind::StructuredReferenceCurrentRow)
+        );
+    }
+
+    #[test]
+    fn formula_plane_whole_axis_range_is_authority_supported() {
+        let template = canonical("=SUM($A:$A)", 1, 2);
+
+        assert!(template.labels.is_authority_supported());
+        assert!(
+            !template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::WholeAxisReference)
+        );
+        match &template.expr {
+            CanonicalExpr::Function { args, .. } => match &args[0] {
+                CanonicalExpr::Reference { reference, .. } => assert_eq!(
+                    reference,
+                    &CanonicalReference::Range {
+                        sheet: SheetBinding::CurrentSheet,
+                        start_row: AxisRef::WholeAxis,
+                        start_col: AxisRef::AbsoluteVc { index: 1 },
+                        end_row: AxisRef::WholeAxis,
+                        end_col: AxisRef::AbsoluteVc { index: 1 },
+                    }
+                ),
+                other => panic!("expected reference arg, got {other:?}"),
+            },
+            other => panic!("expected function, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn formula_plane_open_ended_range_remains_authority_unsupported() {
+        let template = canonical("=SUM($A$1:$A)", 1, 2);
+
+        assert!(!template.labels.is_authority_supported());
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::OpenRangeReference)
         );
     }
 }

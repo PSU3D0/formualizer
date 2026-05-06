@@ -213,6 +213,9 @@ fn is_constant_projection(rule: &DirtyProjectionRule) -> bool {
                 && axis_projection_is_absolute(col_start)
                 && axis_projection_is_absolute(col_end)
         }
+        DirtyProjectionRule::WholeColumnRange { col_start, col_end } => {
+            axis_projection_is_absolute(col_start) && axis_projection_is_absolute(col_end)
+        }
         DirtyProjectionRule::WholeResult => false,
     }
 }
@@ -467,14 +470,16 @@ fn span_read_summary_for_domain(
     let mut dependencies = Vec::new();
     for &read_projection in projections {
         let projection = read_projection.rule;
-        let read_region =
-            projection.read_region_for_result(read_projection.target_sheet_id, result_region)?;
-        let dependency = SpanReadDependency {
-            read_region,
-            projection,
-        };
-        if !dependencies.contains(&dependency) {
-            dependencies.push(dependency);
+        for read_region in
+            projection.read_regions_for_result(read_projection.target_sheet_id, result_region)?
+        {
+            let dependency = SpanReadDependency {
+                read_region,
+                projection,
+            };
+            if !dependencies.contains(&dependency) {
+                dependencies.push(dependency);
+            }
         }
     }
     Ok(SpanReadSummary {
@@ -885,6 +890,208 @@ mod tests {
     }
 
     #[test]
+    fn placement_from_ingested_marks_absolute_whole_column_projection_constant() {
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let candidate = candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=SUM($A:$A)");
+        let ingested = IngestedFormula {
+            ast_id: candidate.ast_id,
+            placement: CellRef::new_absolute(0, 1, 2),
+            canonical_hash: 0x5678,
+            labels: CanonicalLabels::default(),
+            dep_plan: DependencyPlanRow::default(),
+            read_summary: None,
+            read_projections: Some(vec![ReadProjection {
+                target_sheet_id: 0,
+                rule: DirtyProjectionRule::WholeColumnRange {
+                    col_start: AxisProjection::Absolute { index: 0 },
+                    col_end: AxisProjection::Absolute { index: 0 },
+                },
+            }]),
+            read_projection_fallback: None,
+            formula_text: None,
+        };
+
+        let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested).unwrap();
+
+        assert!(analysis.is_constant_result);
+    }
+
+    #[test]
+    fn placement_promotes_absolute_whole_column_sum_as_constant_span() {
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet_id = sheet_registry.id_for("Sheet1");
+        let candidates = (0..100)
+            .map(|row| {
+                candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    sheet_id,
+                    row,
+                    1,
+                    "=SUM($A:$A)",
+                )
+            })
+            .collect();
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
+
+        assert_eq!(report.counters.accepted_span_cells, 100);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        let span_record = plane.spans.get(span).expect("span record");
+        assert!(span_record.is_constant_result);
+        let read_summary = plane
+            .span_read_summaries
+            .get(span_record.read_summary_id.expect("read summary id"))
+            .expect("read summary");
+        assert_eq!(read_summary.dependencies.len(), 1);
+        assert_eq!(
+            read_summary.dependencies[0].read_region,
+            super::super::region_index::RegionPattern::whole_col(sheet_id, 0)
+        );
+    }
+
+    #[test]
+    fn placement_promotes_whole_column_sum_with_relative_cell_as_non_constant_span() {
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet_id = sheet_registry.id_for("Sheet1");
+        let candidates = (0..100)
+            .map(|row| {
+                candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    sheet_id,
+                    row,
+                    2,
+                    &format!("=SUM($A:$A)-A{}", row + 1),
+                )
+            })
+            .collect();
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
+
+        assert_eq!(report.counters.accepted_span_cells, 100);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        let span_record = plane.spans.get(span).expect("span record");
+        assert!(!span_record.is_constant_result);
+        let read_summary = plane
+            .span_read_summaries
+            .get(span_record.read_summary_id.expect("read summary id"))
+            .expect("read summary");
+        assert_eq!(read_summary.dependencies.len(), 2);
+        let read_regions = read_summary
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.read_region)
+            .collect::<Vec<_>>();
+        assert!(
+            read_regions.contains(&super::super::region_index::RegionPattern::whole_col(
+                sheet_id, 0
+            ))
+        );
+        assert!(
+            read_regions.contains(&super::super::region_index::RegionPattern::col_interval(
+                sheet_id, 0, 0, 99
+            ))
+        );
+    }
+
+    #[test]
+    fn placement_promotes_sumifs_whole_column_ranges_as_constant_span() {
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet_id = sheet_registry.id_for("Sheet1");
+        let candidates = (0..100)
+            .map(|row| {
+                candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    sheet_id,
+                    row,
+                    2,
+                    "=SUMIFS($B:$B,$A:$A,\"Type1\")",
+                )
+            })
+            .collect();
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
+
+        assert_eq!(report.counters.accepted_span_cells, 100);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        let span_record = plane.spans.get(span).expect("span record");
+        assert!(span_record.is_constant_result);
+        let read_summary = plane
+            .span_read_summaries
+            .get(span_record.read_summary_id.expect("read summary id"))
+            .expect("read summary");
+        let read_regions = read_summary
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.read_region)
+            .collect::<Vec<_>>();
+        assert_eq!(read_regions.len(), 2);
+        assert!(
+            read_regions.contains(&super::super::region_index::RegionPattern::whole_col(
+                sheet_id, 0
+            ))
+        );
+        assert!(
+            read_regions.contains(&super::super::region_index::RegionPattern::whole_col(
+                sheet_id, 1
+            ))
+        );
+    }
+
+    #[test]
+    fn placement_promotes_cross_sheet_absolute_whole_column_sum() {
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet1_id = sheet_registry.id_for("Sheet1");
+        let data_id = sheet_registry.id_for("DataA");
+        let candidates = (0..100)
+            .map(|row| {
+                candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    sheet1_id,
+                    row,
+                    1,
+                    "=SUM(DataA!$A:$A)",
+                )
+            })
+            .collect();
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
+
+        assert_eq!(report.counters.accepted_span_cells, 100);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        let span_record = plane.spans.get(span).expect("span record");
+        let read_summary = plane
+            .span_read_summaries
+            .get(span_record.read_summary_id.expect("read summary id"))
+            .expect("read summary");
+        assert_eq!(read_summary.dependencies.len(), 1);
+        assert_eq!(
+            read_summary.dependencies[0].read_region,
+            super::super::region_index::RegionPattern::whole_col(data_id, 0)
+        );
+    }
+
+    #[test]
     fn unique_formulas_remain_legacy() {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
@@ -926,6 +1133,39 @@ mod tests {
             2,
             PlacementFallbackReason::UnsupportedDependencySummary,
         );
+    }
+
+    #[test]
+    fn placement_does_not_promote_open_top_level_or_whole_row_ranges() {
+        for (formula, reason) in [
+            (
+                "=SUM($A$1:$A)",
+                PlacementFallbackReason::UnsupportedCanonicalTemplate,
+            ),
+            (
+                "=$A:$A",
+                PlacementFallbackReason::UnsupportedDependencySummary,
+            ),
+            (
+                "=SUM($1:$1)",
+                PlacementFallbackReason::UnsupportedDirtyProjection,
+            ),
+        ] {
+            let mut plane = FormulaPlane::default();
+            let mut data_store = DataStore::new();
+            let sheet_registry = SheetRegistry::new();
+            let report = place_candidate_family(
+                &mut plane,
+                vec![
+                    candidate(&mut data_store, &sheet_registry, 0, 0, 2, formula),
+                    candidate(&mut data_store, &sheet_registry, 0, 1, 2, formula),
+                ],
+                &data_store,
+                &sheet_registry,
+            );
+
+            assert_all_legacy(&report, 2, reason);
+        }
     }
 
     #[test]

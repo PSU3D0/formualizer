@@ -176,7 +176,9 @@ fn mix_reference(
             end_col_abs,
         } => {
             hasher.mix_u8(REF_RANGE);
-            labels.flags |= CanonicalLabels::FLAG_CONTAINS_RANGE;
+            if start_row != 0 && end_row != u32::MAX && start_col != 0 && end_col != u32::MAX {
+                labels.flags |= CanonicalLabels::FLAG_CONTAINS_RANGE;
+            }
             mix_sheet(hasher, labels, sheet, strings);
 
             classify_range_axis(labels, start_row, end_row);
@@ -312,7 +314,7 @@ fn mix_axis_value(hasher: &mut StableHasher, labels: &mut CanonicalLabels, value
 
 fn classify_range_axis(labels: &mut CanonicalLabels, start: u32, end: u32) {
     match (start == 0, end == u32::MAX) {
-        (true, true) => labels.rejects |= CanonicalLabels::REJECT_WHOLE_AXIS_REFERENCE,
+        (true, true) => {}
         (true, false) | (false, true) => {
             labels.rejects |= CanonicalLabels::REJECT_OPEN_RANGE_REFERENCE;
         }
@@ -786,6 +788,67 @@ mod tests {
             mixed_meta
                 .labels
                 .has_flag(CanonicalLabels::FLAG_MIXED_ANCHORS)
+        );
+    }
+
+    #[test]
+    fn compact_whole_column_range_does_not_set_whole_axis_reject() {
+        let mut strings = StringInterner::new();
+        let original_id = strings.intern("$A:$A");
+        let data = AstNodeData::Reference {
+            original_id,
+            ref_type: CompactRefType::Range {
+                sheet: None,
+                start_row: 0,
+                start_col: 1,
+                end_row: u32::MAX,
+                end_col: 1,
+                start_row_abs: false,
+                start_col_abs: true,
+                end_row_abs: false,
+                end_col_abs: true,
+            },
+        };
+
+        let metadata = meta(&data, &[], &strings);
+
+        assert!(
+            !metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_WHOLE_AXIS_REFERENCE)
+        );
+        assert!(
+            !metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_OPEN_RANGE_REFERENCE)
+        );
+    }
+
+    #[test]
+    fn compact_open_range_still_sets_open_range_reject() {
+        let mut strings = StringInterner::new();
+        let original_id = strings.intern("$A$1:$A");
+        let data = AstNodeData::Reference {
+            original_id,
+            ref_type: CompactRefType::Range {
+                sheet: None,
+                start_row: 1,
+                start_col: 1,
+                end_row: u32::MAX,
+                end_col: 1,
+                start_row_abs: true,
+                start_col_abs: true,
+                end_row_abs: false,
+                end_col_abs: true,
+            },
+        };
+
+        let metadata = meta(&data, &[], &strings);
+
+        assert!(
+            metadata
+                .labels
+                .has_reject(CanonicalLabels::REJECT_OPEN_RANGE_REFERENCE)
         );
     }
 

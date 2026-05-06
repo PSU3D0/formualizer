@@ -322,20 +322,38 @@ impl SpanReadSummary {
                             .get_id(name)
                             .ok_or(ProjectionFallbackReason::UnsupportedSheetBinding)?,
                     };
-                    let projection = DirtyProjectionRule::AffineRange {
-                        row_start: AxisProjection::from_axis_ref(&range.start_row)?,
-                        row_end: AxisProjection::from_axis_ref(&range.end_row)?,
-                        col_start: AxisProjection::from_axis_ref(&range.start_col)?,
-                        col_end: AxisProjection::from_axis_ref(&range.end_col)?,
+                    let whole_column = matches!(range.start_row, AxisRef::WholeAxis)
+                        && matches!(range.end_row, AxisRef::WholeAxis)
+                        && axis_ref_is_finite_projection(&range.start_col)
+                        && axis_ref_is_finite_projection(&range.end_col);
+                    let whole_row = matches!(range.start_col, AxisRef::WholeAxis)
+                        && matches!(range.end_col, AxisRef::WholeAxis);
+                    if whole_row {
+                        return Err(ProjectionFallbackReason::UnsupportedAxis);
+                    }
+                    let projection = if whole_column {
+                        DirtyProjectionRule::WholeColumnRange {
+                            col_start: AxisProjection::from_axis_ref(&range.start_col)?,
+                            col_end: AxisProjection::from_axis_ref(&range.end_col)?,
+                        }
+                    } else {
+                        DirtyProjectionRule::AffineRange {
+                            row_start: AxisProjection::from_axis_ref(&range.start_row)?,
+                            row_end: AxisProjection::from_axis_ref(&range.end_row)?,
+                            col_start: AxisProjection::from_axis_ref(&range.start_col)?,
+                            col_end: AxisProjection::from_axis_ref(&range.end_col)?,
+                        }
                     };
-                    let read_region = projection
-                        .read_region_for_result(target_sheet_id, result_region_pattern)?;
-                    let dependency = SpanReadDependency {
-                        read_region,
-                        projection,
-                    };
-                    if !dependencies.contains(&dependency) {
-                        dependencies.push(dependency);
+                    for read_region in projection
+                        .read_regions_for_result(target_sheet_id, result_region_pattern)?
+                    {
+                        let dependency = SpanReadDependency {
+                            read_region,
+                            projection,
+                        };
+                        if !dependencies.contains(&dependency) {
+                            dependencies.push(dependency);
+                        }
                     }
                 }
             }
@@ -403,6 +421,10 @@ pub(crate) enum DirtyProjectionRule {
         col_start: AxisProjection,
         col_end: AxisProjection,
     },
+    WholeColumnRange {
+        col_start: AxisProjection,
+        col_end: AxisProjection,
+    },
     WholeResult,
 }
 
@@ -414,6 +436,7 @@ impl DirtyProjectionRule {
     ) -> Result<RegionPattern, ProjectionFallbackReason> {
         match self {
             Self::WholeResult => Err(ProjectionFallbackReason::RequiresExplicitReadRegion),
+            Self::WholeColumnRange { .. } => Err(ProjectionFallbackReason::UnsupportedAxis),
             Self::AffineCell { row, col } => {
                 let (result_rows, result_cols) = bounded_extents(result_region)
                     .ok_or(ProjectionFallbackReason::UnboundedResultRegion)?;
@@ -436,6 +459,35 @@ impl DirtyProjectionRule {
         }
     }
 
+    pub(crate) fn read_regions_for_result(
+        self,
+        sheet_id: SheetId,
+        result_region: RegionPattern,
+    ) -> Result<Vec<RegionPattern>, ProjectionFallbackReason> {
+        match self {
+            Self::AffineCell { .. } | Self::AffineRange { .. } => {
+                Ok(vec![self.read_region_for_result(sheet_id, result_region)?])
+            }
+            Self::WholeResult => Err(ProjectionFallbackReason::RequiresExplicitReadRegion),
+            Self::WholeColumnRange { col_start, col_end } => {
+                let (_, result_cols) = bounded_extents(result_region)
+                    .ok_or(ProjectionFallbackReason::UnboundedResultRegion)?;
+                let source_cols = range_source_extent_for_result(col_start, col_end, result_cols)?;
+                let col_count = source_cols
+                    .end
+                    .checked_sub(source_cols.start)
+                    .and_then(|width| width.checked_add(1))
+                    .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
+                if col_count > 256 {
+                    return Err(ProjectionFallbackReason::UnsupportedAxis);
+                }
+                Ok((source_cols.start..=source_cols.end)
+                    .map(|col| RegionPattern::whole_col(sheet_id, col))
+                    .collect())
+            }
+        }
+    }
+
     pub(crate) fn project_changed_region(
         self,
         changed: RegionPattern,
@@ -447,6 +499,9 @@ impl DirtyProjectionRule {
         }
         if self == Self::WholeResult {
             return ProjectionResult::Exact(ProducerDirtyDomain::Whole);
+        }
+        if matches!(self, Self::WholeColumnRange { .. }) {
+            return ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result_region]));
         }
 
         let Some((changed_rows, changed_cols)) = query_extents(changed) else {
@@ -498,7 +553,7 @@ impl DirtyProjectionRule {
                     Err(reason) => ProjectionResult::Unsupported(reason),
                 }
             }
-            Self::WholeResult => unreachable!("handled above"),
+            Self::WholeColumnRange { .. } | Self::WholeResult => unreachable!("handled above"),
         }
     }
 }
@@ -564,6 +619,13 @@ impl AxisProjection {
             Self::Absolute { index } => changed.contains(index).then_some(result),
         }
     }
+}
+
+fn axis_ref_is_finite_projection(axis: &AxisRef) -> bool {
+    matches!(
+        axis,
+        AxisRef::RelativeToPlacement { .. } | AxisRef::AbsoluteVc { .. }
+    )
 }
 
 fn range_source_extent_for_result(
@@ -1132,6 +1194,70 @@ mod tests {
         );
         assert_eq!(
             projection.project_changed_region(RegionPattern::point(0, 10, 1), read, result),
+            ProjectionResult::NoIntersection
+        );
+    }
+
+    #[test]
+    fn whole_column_range_read_regions_emit_whole_cols() {
+        let result = RegionPattern::col_interval(7, 5, 0, 99);
+        let single_col = DirtyProjectionRule::WholeColumnRange {
+            col_start: AxisProjection::Absolute { index: 0 },
+            col_end: AxisProjection::Absolute { index: 0 },
+        };
+        assert_eq!(
+            single_col.read_regions_for_result(7, result).unwrap(),
+            vec![RegionPattern::whole_col(7, 0)]
+        );
+        assert_eq!(
+            single_col.read_region_for_result(7, result),
+            Err(ProjectionFallbackReason::UnsupportedAxis)
+        );
+
+        let multi_col = DirtyProjectionRule::WholeColumnRange {
+            col_start: AxisProjection::Absolute { index: 0 },
+            col_end: AxisProjection::Absolute { index: 3 },
+        };
+        assert_eq!(
+            multi_col.read_regions_for_result(7, result).unwrap(),
+            vec![
+                RegionPattern::whole_col(7, 0),
+                RegionPattern::whole_col(7, 1),
+                RegionPattern::whole_col(7, 2),
+                RegionPattern::whole_col(7, 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn whole_column_range_rejects_projected_column_count_above_bound() {
+        let projection = DirtyProjectionRule::WholeColumnRange {
+            col_start: AxisProjection::Absolute { index: 0 },
+            col_end: AxisProjection::Absolute { index: 702 },
+        };
+        let result = RegionPattern::col_interval(0, 5, 0, 99);
+
+        assert_eq!(
+            projection.read_regions_for_result(0, result),
+            Err(ProjectionFallbackReason::UnsupportedAxis)
+        );
+    }
+
+    #[test]
+    fn whole_column_range_projects_any_intersecting_edit_to_whole_result_region() {
+        let projection = DirtyProjectionRule::WholeColumnRange {
+            col_start: AxisProjection::Absolute { index: 0 },
+            col_end: AxisProjection::Absolute { index: 0 },
+        };
+        let result = RegionPattern::col_interval(0, 2, 0, 99);
+        let read = projection.read_regions_for_result(0, result).unwrap()[0];
+
+        assert_eq!(
+            projection.project_changed_region(RegionPattern::point(0, 50, 0), read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result]))
+        );
+        assert_eq!(
+            projection.project_changed_region(RegionPattern::point(0, 50, 1), read, result),
             ProjectionResult::NoIntersection
         );
     }

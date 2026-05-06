@@ -870,6 +870,45 @@ fn compute_read_projections(
                         {
                             return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                         }
+                        let whole_column = start_row.is_none()
+                            && end_row.is_none()
+                            && start_col.is_some()
+                            && end_col.is_some();
+                        let whole_row = start_col.is_none()
+                            && end_col.is_none()
+                            && start_row.is_some()
+                            && end_row.is_some();
+                        if whole_row {
+                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                        }
+                        if whole_column {
+                            if start_col_abs != end_col_abs {
+                                return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                            }
+                            let (Some(start_col), Some(end_col)) = (*start_col, *end_col) else {
+                                return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                            };
+                            push_projection(
+                                projections,
+                                ReadProjection {
+                                    target_sheet_id,
+                                    rule: DirtyProjectionRule::WholeColumnRange {
+                                        col_start: axis_projection(
+                                            start_col,
+                                            *start_col_abs,
+                                            anchor_col,
+                                        ),
+                                        col_end: axis_projection(end_col, *end_col_abs, anchor_col),
+                                    },
+                                },
+                            );
+                            return Ok(());
+                        }
+                        if start_row.is_none() != end_row.is_none()
+                            || start_col.is_none() != end_col.is_none()
+                        {
+                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                        }
                         let (Some(start_row), Some(start_col), Some(end_row), Some(end_col)) =
                             (start_row, start_col, end_row, end_col)
                         else {
@@ -991,14 +1030,16 @@ pub(crate) fn span_read_summary_from_projections(
     let mut dependencies = Vec::new();
     for &read_projection in projections {
         let projection = read_projection.rule;
-        let read_region =
-            projection.read_region_for_result(read_projection.target_sheet_id, result_region)?;
-        let dependency = SpanReadDependency {
-            read_region,
-            projection,
-        };
-        if !dependencies.contains(&dependency) {
-            dependencies.push(dependency);
+        for read_region in
+            projection.read_regions_for_result(read_projection.target_sheet_id, result_region)?
+        {
+            let dependency = SpanReadDependency {
+                read_region,
+                projection,
+            };
+            if !dependencies.contains(&dependency) {
+                dependencies.push(dependency);
+            }
         }
     }
     Ok(SpanReadSummary {
@@ -1465,12 +1506,31 @@ mod tests {
     }
 
     #[test]
+    fn formula_plane_ingest_read_projections_accept_whole_column_function_arg_range() {
+        let projections = read_projections_for("=SUM($A:$A)", 1, 2);
+
+        assert_eq!(
+            projections,
+            vec![ReadProjection {
+                target_sheet_id: 0,
+                rule: DirtyProjectionRule::WholeColumnRange {
+                    col_start: AxisProjection::Absolute { index: 0 },
+                    col_end: AxisProjection::Absolute { index: 0 },
+                },
+            }]
+        );
+    }
+
+    #[test]
     fn formula_plane_ingest_read_projections_reject_top_level_and_mixed_ranges() {
         let mut sheet_registry = SheetRegistry::new();
         let sheet = sheet_registry.id_for("Sheet1");
         let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
         let top_level = parse("=A1:A10").unwrap();
         let mixed = parse("=SUM($A$1:$A1)").unwrap();
+        let top_level_whole_column = parse("=$A:$A").unwrap();
+        let open_whole_column = parse("=SUM($A$1:$A)").unwrap();
+        let whole_row = parse("=SUM($1:$1)").unwrap();
 
         assert_eq!(
             compute_read_projections(&top_level, placement, &sheet_registry),
@@ -1478,6 +1538,18 @@ mod tests {
         );
         assert_eq!(
             compute_read_projections(&mixed, placement, &sheet_registry),
+            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+        );
+        assert_eq!(
+            compute_read_projections(&top_level_whole_column, placement, &sheet_registry),
+            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+        );
+        assert_eq!(
+            compute_read_projections(&open_whole_column, placement, &sheet_registry),
+            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+        );
+        assert_eq!(
+            compute_read_projections(&whole_row, placement, &sheet_registry),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
     }

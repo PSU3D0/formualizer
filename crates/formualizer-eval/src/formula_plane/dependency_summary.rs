@@ -49,18 +49,18 @@ pub(crate) struct FormulaDependencySummary {
 }
 
 impl FormulaDependencySummary {
-    /// True if every precedent has all-absolute axes. Such formulas produce
-    /// the same value at every placement.
+    /// True if every precedent axis is invariant with placement. Such formulas
+    /// produce the same value at every placement.
     pub(crate) fn is_constant_result(&self) -> bool {
         self.precedent_patterns.iter().all(|pattern| match pattern {
             PrecedentPattern::Cell(cell) => {
-                axis_is_absolute(&cell.row) && axis_is_absolute(&cell.col)
+                axis_is_placement_invariant(&cell.row) && axis_is_placement_invariant(&cell.col)
             }
             PrecedentPattern::Range(rect) => {
-                axis_is_absolute(&rect.start_row)
-                    && axis_is_absolute(&rect.end_row)
-                    && axis_is_absolute(&rect.start_col)
-                    && axis_is_absolute(&rect.end_col)
+                axis_is_placement_invariant(&rect.start_row)
+                    && axis_is_placement_invariant(&rect.end_row)
+                    && axis_is_placement_invariant(&rect.start_col)
+                    && axis_is_placement_invariant(&rect.end_col)
             }
         })
     }
@@ -846,22 +846,18 @@ impl SummaryAnalyzer {
         context: AnalyzerContext,
         axes: impl IntoIterator<Item = &'a AxisRef>,
     ) -> bool {
-        let mut has_whole_axis = false;
         let mut has_open = false;
         let mut has_unsupported = false;
         for axis in axes {
             match axis {
-                AxisRef::WholeAxis => has_whole_axis = true,
                 AxisRef::OpenStart | AxisRef::OpenEnd => has_open = true,
                 AxisRef::Unsupported => has_unsupported = true,
-                AxisRef::RelativeToPlacement { .. } | AxisRef::AbsoluteVc { .. } => {}
+                AxisRef::WholeAxis
+                | AxisRef::RelativeToPlacement { .. }
+                | AxisRef::AbsoluteVc { .. } => {}
             }
         }
 
-        if has_whole_axis {
-            self.reasons
-                .insert(DependencyRejectReason::WholeAxisUnsupported { context });
-        }
         if has_open {
             self.reasons
                 .insert(DependencyRejectReason::OpenRangeUnsupported { context });
@@ -872,7 +868,7 @@ impl SummaryAnalyzer {
                     node: "range_reference_axis".to_string(),
                 });
         }
-        !has_whole_axis && !has_open && !has_unsupported
+        !has_open && !has_unsupported
     }
 
     fn reject_unsupported_reference(
@@ -991,8 +987,8 @@ fn axis_is_finite_cell(axis: &AxisRef) -> bool {
     )
 }
 
-fn axis_is_absolute(axis: &AxisRef) -> bool {
-    matches!(axis, AxisRef::AbsoluteVc { .. })
+fn axis_is_placement_invariant(axis: &AxisRef) -> bool {
+    matches!(axis, AxisRef::AbsoluteVc { .. } | AxisRef::WholeAxis)
 }
 
 fn axis_kinds_match(left: &AxisRef, right: &AxisRef) -> bool {
@@ -1002,6 +998,7 @@ fn axis_kinds_match(left: &AxisRef, right: &AxisRef) -> bool {
             AxisRef::RelativeToPlacement { .. },
             AxisRef::RelativeToPlacement { .. }
         ) | (AxisRef::AbsoluteVc { .. }, AxisRef::AbsoluteVc { .. })
+            | (AxisRef::WholeAxis, AxisRef::WholeAxis)
     )
 }
 
@@ -2631,6 +2628,84 @@ mod tests {
     }
 
     #[test]
+    fn formula_plane_dependency_summary_accepts_absolute_whole_column_sum() {
+        let summary = summary("=SUM($A:$A)", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(
+            summary.precedent_patterns,
+            vec![range(
+                SheetBinding::CurrentSheet,
+                AxisRef::WholeAxis,
+                AxisRef::AbsoluteVc { index: 1 },
+                AxisRef::WholeAxis,
+                AxisRef::AbsoluteVc { index: 1 },
+            )]
+        );
+        assert!(summary.is_constant_result());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_classifies_whole_column_constant_by_axes() {
+        let absolute_with_relative_cell = summary("=SUM($A:$A)-A1", 1, 2);
+        assert_eq!(
+            absolute_with_relative_cell.formula_class,
+            FormulaClass::StaticPointwise
+        );
+        assert!(absolute_with_relative_cell.reject_reasons.is_empty());
+        assert!(!absolute_with_relative_cell.is_constant_result());
+
+        let relative_whole_column = summary("=SUM(A:A)", 1, 2);
+        assert_eq!(
+            relative_whole_column.formula_class,
+            FormulaClass::StaticPointwise
+        );
+        assert!(relative_whole_column.reject_reasons.is_empty());
+        assert_eq!(
+            relative_whole_column.precedent_patterns,
+            vec![range(
+                SheetBinding::CurrentSheet,
+                AxisRef::WholeAxis,
+                AxisRef::RelativeToPlacement { offset: -1 },
+                AxisRef::WholeAxis,
+                AxisRef::RelativeToPlacement { offset: -1 },
+            )]
+        );
+        assert!(!relative_whole_column.is_constant_result());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_rejects_open_top_level_and_mixed_whole_column_ranges() {
+        let open = summary("=SUM($A$1:$A)", 1, 2);
+        assert_eq!(open.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &open,
+            &DependencyRejectReason::OpenRangeUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+
+        let top_level = summary("=$A:$A", 1, 2);
+        assert_eq!(top_level.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &top_level,
+            &DependencyRejectReason::FiniteRangeUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+
+        let mixed = summary("=SUM(A:$A)", 1, 2);
+        assert_eq!(mixed.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &mixed,
+            &DependencyRejectReason::MixedAxisRangeUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+    }
+
+    #[test]
     fn formula_plane_dependency_summary_accepts_average_range_and_cell() {
         let summary = summary("=AVERAGE($A$1:$A$50) * B1", 1, 3);
 
@@ -2732,26 +2807,28 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_dependency_summary_rejects_whole_axis_references() {
+    fn formula_plane_dependency_summary_accepts_function_arg_whole_column_but_rejects_direct_axis_ranges()
+     {
         let direct_column = summary("=A:A", 1, 2);
         let direct_row = summary("=1:10", 1, 2);
         let function_arg = summary("=SUM(A:A)", 1, 2);
 
         assert_eq!(direct_column.formula_class, FormulaClass::Rejected);
         assert_eq!(direct_row.formula_class, FormulaClass::Rejected);
-        assert_eq!(function_arg.formula_class, FormulaClass::Rejected);
-        assert!(has_reason_kind(&direct_column, |reason| matches!(
-            reason,
-            DependencyRejectReason::WholeAxisUnsupported { .. }
-        )));
-        assert!(has_reason_kind(&direct_row, |reason| matches!(
-            reason,
-            DependencyRejectReason::WholeAxisUnsupported { .. }
-        )));
-        assert!(has_reason_kind(&function_arg, |reason| matches!(
-            reason,
-            DependencyRejectReason::WholeAxisUnsupported { .. }
-        )));
+        assert_eq!(function_arg.formula_class, FormulaClass::StaticPointwise);
+        assert!(has_reason(
+            &direct_column,
+            &DependencyRejectReason::FiniteRangeUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+        assert!(has_reason(
+            &direct_row,
+            &DependencyRejectReason::FiniteRangeUnsupported {
+                context: AnalyzerContext::Value
+            }
+        ));
+        assert!(function_arg.reject_reasons.is_empty());
     }
 
     #[test]
