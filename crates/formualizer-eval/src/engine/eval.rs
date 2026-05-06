@@ -347,6 +347,8 @@ pub struct Engine<R> {
     pub(crate) force_materialize_range_views: bool,
     // Pass-scoped cache for Arrow used-row bounds per column
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
+    // Snapshot-scoped final used-axis bounds for open-ended references.
+    used_axis_bounds_cache: std::sync::RwLock<Option<UsedAxisBoundsCache>>,
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: StagedFormulaMap,
@@ -1242,6 +1244,7 @@ where
             computed_overlay_mirroring_disabled: false,
             force_materialize_range_views: false,
             row_bounds_cache: std::sync::RwLock::new(None),
+            used_axis_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
@@ -1305,6 +1308,7 @@ where
             computed_overlay_mirroring_disabled: false,
             force_materialize_range_views: false,
             row_bounds_cache: std::sync::RwLock::new(None),
+            used_axis_bounds_cache: std::sync::RwLock::new(None),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
@@ -1849,6 +1853,24 @@ where
             formula_plane_producer_result_entries: formula_authority.producer_results.len(),
             formula_plane_consumer_read_entries: formula_authority.consumer_reads.len(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn used_axis_bounds_cache_stats(&self) -> (usize, usize, usize, usize) {
+        self.used_axis_bounds_cache
+            .read()
+            .ok()
+            .and_then(|guard| {
+                guard.as_ref().map(|cache| {
+                    (
+                        cache.row_hits.load(Ordering::Relaxed),
+                        cache.row_misses.load(Ordering::Relaxed),
+                        cache.col_hits.load(Ordering::Relaxed),
+                        cache.col_misses.load(Ordering::Relaxed),
+                    )
+                })
+            })
+            .unwrap_or((0, 0, 0, 0))
     }
 
     pub fn set_first_load_assume_new(&mut self, enabled: bool) {
@@ -8835,6 +8857,118 @@ impl RowBoundsCache {
     }
 }
 
+struct UsedAxisBoundsCache {
+    snapshot: u64,
+    row_bounds_by_col_span: rustc_hash::FxHashMap<(SheetId, u32, u32), Option<(u32, u32)>>,
+    col_bounds_by_row_span: rustc_hash::FxHashMap<(SheetId, u32, u32), Option<(u32, u32)>>,
+    #[cfg(test)]
+    row_hits: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    row_misses: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    col_hits: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    col_misses: std::sync::atomic::AtomicUsize,
+}
+
+impl UsedAxisBoundsCache {
+    fn new(snapshot: u64) -> Self {
+        Self {
+            snapshot,
+            row_bounds_by_col_span: Default::default(),
+            col_bounds_by_row_span: Default::default(),
+            #[cfg(test)]
+            row_hits: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            row_misses: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            col_hits: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            col_misses: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn reset_for_snapshot(&mut self, snapshot: u64) {
+        if self.snapshot != snapshot {
+            self.snapshot = snapshot;
+            self.row_bounds_by_col_span.clear();
+            self.col_bounds_by_row_span.clear();
+        }
+    }
+
+    fn get_row_bounds(
+        &self,
+        sheet_id: SheetId,
+        start_col: u32,
+        end_col: u32,
+        snapshot: u64,
+    ) -> Option<Option<(u32, u32)>> {
+        if self.snapshot != snapshot {
+            return None;
+        }
+        let cached = self
+            .row_bounds_by_col_span
+            .get(&(sheet_id, start_col, end_col))
+            .copied();
+        #[cfg(test)]
+        if cached.is_some() {
+            self.row_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        cached
+    }
+
+    fn put_row_bounds(
+        &mut self,
+        sheet_id: SheetId,
+        start_col: u32,
+        end_col: u32,
+        snapshot: u64,
+        bounds: Option<(u32, u32)>,
+    ) {
+        self.reset_for_snapshot(snapshot);
+        self.row_bounds_by_col_span
+            .insert((sheet_id, start_col, end_col), bounds);
+        #[cfg(test)]
+        self.row_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn get_col_bounds(
+        &self,
+        sheet_id: SheetId,
+        start_row: u32,
+        end_row: u32,
+        snapshot: u64,
+    ) -> Option<Option<(u32, u32)>> {
+        if self.snapshot != snapshot {
+            return None;
+        }
+        let cached = self
+            .col_bounds_by_row_span
+            .get(&(sheet_id, start_row, end_row))
+            .copied();
+        #[cfg(test)]
+        if cached.is_some() {
+            self.col_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        cached
+    }
+
+    fn put_col_bounds(
+        &mut self,
+        sheet_id: SheetId,
+        start_row: u32,
+        end_row: u32,
+        snapshot: u64,
+        bounds: Option<(u32, u32)>,
+    ) {
+        self.reset_for_snapshot(snapshot);
+        self.col_bounds_by_row_span
+            .insert((sheet_id, start_row, end_row), bounds);
+        #[cfg(test)]
+        self.col_misses.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 // Phase 2 shim: in-process spill manager delegating to current graph methods.
 #[derive(Default)]
 pub struct ShimSpillManager {
@@ -9329,37 +9463,73 @@ where
     ) -> Option<(u32, u32)> {
         // Union Arrow-backed used-region with formula rows that have not been materialized yet.
         let sheet_id = self.graph.sheet_id(sheet)?;
+        let snap = self.data_snapshot_id();
+        if let Some(cached) = self.used_axis_bounds_cache.read().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|cache| cache.get_row_bounds(sheet_id, start_col, end_col, snap))
+        }) {
+            return cached;
+        }
+
         let arrow_bounds = self
             .sheet_store()
             .sheet(sheet)
             .and_then(|_| self.arrow_used_row_bounds(sheet, start_col, end_col));
         let formula_bounds = self.formula_row_bounds_for_columns(sheet, start_col, end_col);
-        if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
-            return Some(bounds);
+        let computed = if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
+            Some(bounds)
+        } else {
+            let sc0 = start_col.saturating_sub(1);
+            let ec0 = end_col.saturating_sub(1);
+            self.graph
+                .used_row_bounds_for_columns(sheet_id, sc0, ec0)
+                .map(|(a0, b0)| (a0 + 1, b0 + 1))
+        };
+
+        if let Ok(mut guard) = self.used_axis_bounds_cache.write() {
+            guard
+                .get_or_insert_with(|| UsedAxisBoundsCache::new(snap))
+                .put_row_bounds(sheet_id, start_col, end_col, snap, computed);
         }
-        let sc0 = start_col.saturating_sub(1);
-        let ec0 = end_col.saturating_sub(1);
-        self.graph
-            .used_row_bounds_for_columns(sheet_id, sc0, ec0)
-            .map(|(a0, b0)| (a0 + 1, b0 + 1))
+
+        computed
     }
 
     fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
         // Union Arrow-backed used-region with formula columns that have not been materialized yet.
         let sheet_id = self.graph.sheet_id(sheet)?;
+        let snap = self.data_snapshot_id();
+        if let Some(cached) = self.used_axis_bounds_cache.read().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|cache| cache.get_col_bounds(sheet_id, start_row, end_row, snap))
+        }) {
+            return cached;
+        }
+
         let arrow_bounds = self
             .sheet_store()
             .sheet(sheet)
             .and_then(|_| self.arrow_used_col_bounds(sheet, start_row, end_row));
         let formula_bounds = self.formula_col_bounds_for_rows(sheet, start_row, end_row);
-        if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
-            return Some(bounds);
+        let computed = if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
+            Some(bounds)
+        } else {
+            let sr0 = start_row.saturating_sub(1);
+            let er0 = end_row.saturating_sub(1);
+            self.graph
+                .used_col_bounds_for_rows(sheet_id, sr0, er0)
+                .map(|(a0, b0)| (a0 + 1, b0 + 1))
+        };
+
+        if let Ok(mut guard) = self.used_axis_bounds_cache.write() {
+            guard
+                .get_or_insert_with(|| UsedAxisBoundsCache::new(snap))
+                .put_col_bounds(sheet_id, start_row, end_row, snap, computed);
         }
-        let sr0 = start_row.saturating_sub(1);
-        let er0 = end_row.saturating_sub(1);
-        self.graph
-            .used_col_bounds_for_rows(sheet_id, sr0, er0)
-            .map(|(a0, b0)| (a0 + 1, b0 + 1))
+
+        computed
     }
 
     fn sheet_bounds(&self, sheet: &str) -> Option<(u32, u32)> {
