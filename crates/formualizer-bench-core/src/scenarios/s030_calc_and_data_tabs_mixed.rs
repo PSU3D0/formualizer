@@ -52,6 +52,7 @@ impl Scenario for S030CalcAndDataTabsMixed {
             ScenarioTag::Mixed,
             ScenarioTag::MultiSheet,
             ScenarioTag::CrossSheet,
+            ScenarioTag::SpanPromotable,
             ScenarioTag::SingleCellEdit,
         ]
     }

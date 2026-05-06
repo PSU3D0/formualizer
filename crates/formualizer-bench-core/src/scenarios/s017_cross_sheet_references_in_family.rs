@@ -49,11 +49,7 @@ impl Scenario for S017CrossSheetReferencesInFamily {
 
     fn tags(&self) -> &'static [ScenarioTag] {
         &[
-            // NOTE: originally tagged SpanPromotable in the plan, but cross-sheet
-            // references with explicit-sheet binding are currently rejected at
-            // placement (PlacementFallbackReason::CrossSheetOrSheetMismatch).
-            // Span_count=0 under Auth is design-correct; this scenario serves
-            // as a negative-coverage probe.
+            ScenarioTag::SpanPromotable,
             ScenarioTag::CrossSheet,
             ScenarioTag::SingleCellEdit,
         ]

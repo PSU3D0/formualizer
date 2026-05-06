@@ -3602,20 +3602,22 @@ where
         Some(mask)
     }
 
-    /// Demote all active FormulaPlane spans on `sheet_id` before a structural edit.
+    /// Demote active FormulaPlane spans affected by a structural edit on `sheet_id`.
     ///
     /// This is the conservative Option-A correctness path for structural edits: rather than
     /// attempting to transform FormulaPlane span domains/templates/indexes, materialize each span
     /// placement as an ordinary legacy graph formula at its current coordinate, remove the span,
     /// and let the existing VertexEditor structural machinery shift/delete those vertices and
-    /// adjust their ASTs.  The all-spans-on-sheet scope is intentionally broader than necessary;
-    /// precise overlap demotion can be added once exact span structural transforms exist.
+    /// adjust their ASTs.  Spans whose formula domain is on `sheet_id` are affected directly; spans
+    /// on other sheets are also affected when one of their retained read regions targets
+    /// `sheet_id`, because those read-region coordinates become stale after row/column shifts.
     fn demote_spans_for_structural_op(
         &mut self,
         sheet_id: SheetId,
     ) -> Result<(), crate::engine::EditorError> {
         struct SpanPlan {
             span_ref: FormulaSpanRef,
+            sheet_id: SheetId,
             ast: ASTNode,
             origin_row: u32,
             origin_col: u32,
@@ -3629,23 +3631,25 @@ where
 
         let mut span_plans = Vec::new();
         for span_ref in span_refs {
-            let Some(span) = self
-                .graph
-                .formula_authority()
-                .plane
-                .spans
-                .get(span_ref)
-                .filter(|span| span.sheet_id == sheet_id)
-            else {
+            let authority = self.graph.formula_authority();
+            let Some(span) = authority.plane.spans.get(span_ref) else {
                 continue;
             };
-            let Some(template) = self
-                .graph
-                .formula_authority()
-                .plane
-                .templates
-                .get(span.template_id)
-            else {
+            let read_region_on_affected_sheet = span
+                .read_summary_id
+                .and_then(|read_summary_id| {
+                    authority.plane.span_read_summaries.get(read_summary_id)
+                })
+                .is_some_and(|summary| {
+                    summary
+                        .dependencies
+                        .iter()
+                        .any(|dependency| dependency.read_region.sheet_id() == sheet_id)
+                });
+            if span.sheet_id != sheet_id && !read_region_on_affected_sheet {
+                continue;
+            }
+            let Some(template) = authority.plane.templates.get(span.template_id) else {
                 return Err(ExcelError::new(ExcelErrorKind::Ref)
                     .with_message("FormulaPlane demotion found a span with a missing template")
                     .into());
@@ -3665,6 +3669,7 @@ where
                 .collect();
             span_plans.push(SpanPlan {
                 span_ref,
+                sheet_id: span.sheet_id,
                 ast,
                 origin_row: template.origin_row,
                 origin_col: template.origin_col,
@@ -3676,7 +3681,6 @@ where
             return Ok(());
         }
 
-        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
         let mut relocated = Vec::new();
         let mut placement_cells = Vec::new();
         for plan in &span_plans {
@@ -3684,21 +3688,30 @@ where
                 let row_delta = i64::from(row) - i64::from(plan.origin_row);
                 let col_delta = i64::from(col) - i64::from(plan.origin_col);
                 let ast = relocate_ast_for_template_placement(&plan.ast, row_delta, col_delta)?;
-                relocated.push((row, col, ast));
-                placement_cells.push((row, col));
+                relocated.push((plan.sheet_id, row, col, ast));
+                placement_cells.push((plan.sheet_id, row, col));
             }
         }
 
-        let planned = {
+        let planned_by_sheet = {
             let mut pipeline = self.ingest_pipeline();
-            let mut planned = Vec::with_capacity(relocated.len());
-            for (row, col, ast) in relocated {
-                let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+            let mut planned_by_sheet: BTreeMap<
+                SheetId,
+                Vec<(u32, u32, AstNodeId, DependencyPlanRow)>,
+            > = BTreeMap::new();
+            for (formula_sheet_id, row, col, ast) in relocated {
+                let placement =
+                    CellRef::new(formula_sheet_id, Coord::from_excel(row, col, true, true));
                 let ingested =
                     pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?;
-                planned.push((row, col, ingested.ast_id, ingested.dep_plan));
+                planned_by_sheet.entry(formula_sheet_id).or_default().push((
+                    row,
+                    col,
+                    ingested.ast_id,
+                    ingested.dep_plan,
+                ));
             }
-            planned
+            planned_by_sheet
         };
 
         {
@@ -3712,12 +3725,16 @@ where
             authority.rebuild_indexes();
         }
 
-        for (row, col) in placement_cells {
+        for (formula_sheet_id, row, col) in placement_cells {
+            let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
             self.clear_computed_overlay_cell(&sheet_name, row, col);
         }
 
-        self.graph
-            .bulk_set_formulas_with_plans(&sheet_name, planned)?;
+        for (formula_sheet_id, planned) in planned_by_sheet {
+            let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
+            self.graph
+                .bulk_set_formulas_with_plans(&sheet_name, planned)?;
+        }
         self.formula_plane_indexes_epoch_seen = 0;
         Ok(())
     }

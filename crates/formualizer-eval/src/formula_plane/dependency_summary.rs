@@ -2088,6 +2088,24 @@ mod tests {
     }
 
     #[test]
+    fn formula_plane_dependency_summary_accepts_cross_sheet_relative_cell() {
+        let summary = summary("=Sheet2!A1", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert_eq!(
+            summary.precedent_patterns,
+            vec![cell(
+                SheetBinding::ExplicitName {
+                    name: "Sheet2".to_string(),
+                },
+                AxisRef::RelativeToPlacement { offset: 0 },
+                AxisRef::RelativeToPlacement { offset: -1 }
+            )]
+        );
+        assert!(summary.reject_reasons.is_empty());
+    }
+
+    #[test]
     fn formula_plane_dependency_summary_preserves_static_cross_sheet_binding() {
         let summary = summary("=Sheet2!A1+B1", 1, 3);
 

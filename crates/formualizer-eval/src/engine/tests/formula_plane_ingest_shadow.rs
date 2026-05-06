@@ -137,6 +137,52 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
 }
 
 #[test]
+fn formula_plane_authoritative_cross_sheet_family_promotes_and_dirty_propagates() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.add_sheet("Data").unwrap();
+
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Data", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 1, &format!("=Data!A{row}*2")));
+    }
+
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .expect("authoritative ingest");
+    assert_eq!(report.graph_formula_cells_materialized, 0);
+    assert!(engine.baseline_stats().formula_plane_active_span_count > 0);
+
+    engine.evaluate_all().expect("initial cross-sheet evaluate");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 1),
+        Some(LiteralValue::Number(100.0))
+    );
+
+    engine
+        .set_cell_value("Data", 50, 1, LiteralValue::Number(1000.0))
+        .unwrap();
+    engine.evaluate_all().expect("dirty cross-sheet evaluate");
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 49, 1),
+        Some(LiteralValue::Number(98.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 1),
+        Some(LiteralValue::Number(2000.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 51, 1),
+        Some(LiteralValue::Number(102.0))
+    );
+}
+
+#[test]
 fn formula_plane_authoritative_evaluate_all_orders_span_chain() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);

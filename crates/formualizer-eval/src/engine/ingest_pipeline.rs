@@ -15,7 +15,8 @@ use crate::engine::plan::{DependencyPlan, F_HAS_NAMES, F_HAS_RANGES, F_HAS_TABLE
 use crate::engine::sheet_registry::SheetRegistry;
 use crate::engine::vertex::VertexId;
 use crate::formula_plane::producer::{
-    AxisProjection, DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
+    AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
+    SpanReadDependency, SpanReadSummary,
 };
 use crate::formula_plane::region_index::RegionPattern;
 use crate::formula_plane::template_canonical::{is_known_static_function, normalize_function_name};
@@ -216,7 +217,11 @@ impl<'a> IngestPipeline<'a> {
         dep_plan.dynamic = metadata.labels.has_flag(CanonicalLabels::FLAG_DYNAMIC);
         dep_plan.dedup_and_sort();
 
-        let read_projections = compute_read_projections(&ast_for_oracles, placement);
+        let (read_projections, read_projection_fallback) =
+            match compute_read_projections(&ast_for_oracles, placement, self.sheet_registry) {
+                Ok(projections) => (Some(projections), None),
+                Err(reason) => (None, Some(reason)),
+            };
         let read_summary = read_projections.as_ref().and_then(|projections| {
             span_read_summary_from_projections(placement, projections).ok()
         });
@@ -229,6 +234,7 @@ impl<'a> IngestPipeline<'a> {
             dep_plan,
             read_summary,
             read_projections,
+            read_projection_fallback,
             formula_text,
         })
     }
@@ -697,7 +703,8 @@ pub(crate) struct IngestedFormula {
     pub(crate) labels: CanonicalLabels,
     pub(crate) dep_plan: DependencyPlanRow,
     pub(crate) read_summary: Option<SpanReadSummary>,
-    pub(crate) read_projections: Option<Vec<DirtyProjectionRule>>,
+    pub(crate) read_projections: Option<Vec<ReadProjection>>,
+    pub(crate) read_projection_fallback: Option<ProjectionFallbackReason>,
     pub(crate) formula_text: Option<Arc<str>>,
 }
 
@@ -765,14 +772,19 @@ fn dedup_strings(values: &mut Vec<String>) {
     values.dedup();
 }
 
-fn compute_read_projections(ast: &ASTNode, placement: CellRef) -> Option<Vec<DirtyProjectionRule>> {
+fn compute_read_projections(
+    ast: &ASTNode,
+    placement: CellRef,
+    sheet_registry: &SheetRegistry,
+) -> Result<Vec<ReadProjection>, ProjectionFallbackReason> {
     fn visit(
         ast: &ASTNode,
         placement: CellRef,
-        projections: &mut Vec<DirtyProjectionRule>,
-    ) -> Option<()> {
+        sheet_registry: &SheetRegistry,
+        projections: &mut Vec<ReadProjection>,
+    ) -> Result<(), ProjectionFallbackReason> {
         match &ast.node_type {
-            ASTNodeType::Literal(_) => Some(()),
+            ASTNodeType::Literal(_) => Ok(()),
             ASTNodeType::Reference { reference, .. } => {
                 let ReferenceType::Cell {
                     sheet,
@@ -782,11 +794,14 @@ fn compute_read_projections(ast: &ASTNode, placement: CellRef) -> Option<Vec<Dir
                     col_abs,
                 } = reference
                 else {
-                    return None;
+                    return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                 };
-                if sheet.is_some() {
-                    return None;
-                }
+                let target_sheet_id = match sheet {
+                    Some(name) => sheet_registry
+                        .get_id(name)
+                        .ok_or(ProjectionFallbackReason::UnsupportedSheetBinding)?,
+                    None => placement.sheet_id,
+                };
                 let anchor_row = placement.coord.row() as i64 + 1;
                 let anchor_col = placement.coord.col() as i64 + 1;
                 let row_projection = if *row_abs {
@@ -811,47 +826,53 @@ fn compute_read_projections(ast: &ASTNode, placement: CellRef) -> Option<Vec<Dir
                     row: row_projection,
                     col: col_projection,
                 };
-                if !projections.contains(&projection) {
-                    projections.push(projection);
+                let read_projection = ReadProjection {
+                    target_sheet_id,
+                    rule: projection,
+                };
+                if !projections.contains(&read_projection) {
+                    projections.push(read_projection);
                 }
-                Some(())
+                Ok(())
             }
             ASTNodeType::UnaryOp { op, expr } => match op.as_str() {
-                "+" | "-" | "%" => visit(expr, placement, projections),
-                _ => None,
+                "+" | "-" | "%" => visit(expr, placement, sheet_registry, projections),
+                _ => Err(ProjectionFallbackReason::UnsupportedDependencySummary),
             },
             ASTNodeType::BinaryOp { op, left, right } => {
                 if !matches!(
                     op.as_str(),
                     "+" | "-" | "*" | "/" | "^" | "&" | "=" | "<>" | "<" | "<=" | ">" | ">="
                 ) {
-                    return None;
+                    return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                 }
-                visit(left, placement, projections)?;
-                visit(right, placement, projections)
+                visit(left, placement, sheet_registry, projections)?;
+                visit(right, placement, sheet_registry, projections)
             }
             ASTNodeType::Function { name, args } => {
                 let canonical_name = normalize_function_name(name);
                 if !is_known_static_function(&canonical_name) {
-                    return None;
+                    return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                 }
                 for arg in args {
-                    visit(arg, placement, projections)?;
+                    visit(arg, placement, sheet_registry, projections)?;
                 }
-                Some(())
+                Ok(())
             }
-            ASTNodeType::Call { .. } | ASTNodeType::Array(_) => None,
+            ASTNodeType::Call { .. } | ASTNodeType::Array(_) => {
+                Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+            }
         }
     }
 
     let mut projections = Vec::new();
-    visit(ast, placement, &mut projections)?;
-    Some(projections)
+    visit(ast, placement, sheet_registry, &mut projections)?;
+    Ok(projections)
 }
 
 pub(crate) fn span_read_summary_from_projections(
     placement: CellRef,
-    projections: &[DirtyProjectionRule],
+    projections: &[ReadProjection],
 ) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
     let result_region = RegionPattern::col_interval(
         placement.sheet_id,
@@ -860,8 +881,10 @@ pub(crate) fn span_read_summary_from_projections(
         placement.coord.row(),
     );
     let mut dependencies = Vec::new();
-    for &projection in projections {
-        let read_region = projection.read_region_for_result(placement.sheet_id, result_region)?;
+    for &read_projection in projections {
+        let projection = read_projection.rule;
+        let read_region =
+            projection.read_region_for_result(read_projection.target_sheet_id, result_region)?;
         let dependency = SpanReadDependency {
             read_region,
             projection,

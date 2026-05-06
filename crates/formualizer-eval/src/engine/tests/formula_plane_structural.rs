@@ -113,6 +113,34 @@ fn formula_plane_authoritative_column_delete_shifts_span_outputs_correctly() {
 }
 
 #[test]
+fn formula_plane_authoritative_row_insert_on_cross_sheet_read_sheet_demotes_span() {
+    let mut engine = authoritative_engine();
+    engine.add_sheet("Data").unwrap();
+    let mut formulas = Vec::new();
+    for row in 1..=5 {
+        engine
+            .set_cell_value("Data", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 1, &format!("=Data!A{row}*2")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.insert_rows("Data", 3, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+}
+
+#[test]
 fn formula_plane_authoritative_row_insert_shifts_span_outputs_correctly() {
     let mut engine = build_single_formula_column_family(5);
 

@@ -50,6 +50,7 @@ impl Scenario for S016MultiSheet5Tabs {
         &[
             ScenarioTag::MultiSheet,
             ScenarioTag::CrossSheet,
+            ScenarioTag::SpanPromotable,
             ScenarioTag::SingleCellEdit,
         ]
     }

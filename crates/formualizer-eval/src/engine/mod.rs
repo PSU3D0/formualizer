@@ -236,9 +236,13 @@ pub mod fp8_parity_test_support {
             placement.coord.col(),
         );
         let result_region = ResultRegion::scalar_cells(scalar_domain);
-        let read_summary =
-            SpanReadSummary::from_formula_summary(placement.sheet_id, &result_region, &summary)
-                .ok();
+        let read_summary = SpanReadSummary::from_formula_summary(
+            placement.sheet_id,
+            &result_region,
+            &summary,
+            engine.graph.sheet_reg(),
+        )
+        .ok();
         Ok(OldOutput {
             payload: template.key.payload().to_string(),
             labels: template.labels,

@@ -11,6 +11,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::SheetId;
 use crate::engine::VertexId;
+use crate::engine::sheet_registry::SheetRegistry;
 
 use super::dependency_summary::{FormulaClass, FormulaDependencySummary, PrecedentPattern};
 use super::region_index::{
@@ -281,6 +282,7 @@ impl SpanReadSummary {
         sheet_id: SheetId,
         result_region: &ResultRegion,
         summary: &FormulaDependencySummary,
+        sheet_registry: &SheetRegistry,
     ) -> Result<Self, ProjectionFallbackReason> {
         if summary.formula_class != FormulaClass::StaticPointwise
             || !summary.reject_reasons.is_empty()
@@ -293,15 +295,18 @@ impl SpanReadSummary {
         for precedent in &summary.precedent_patterns {
             match precedent {
                 PrecedentPattern::Cell(cell) => {
-                    if cell.sheet != SheetBinding::CurrentSheet {
-                        return Err(ProjectionFallbackReason::UnsupportedSheetBinding);
-                    }
+                    let target_sheet_id = match &cell.sheet {
+                        SheetBinding::CurrentSheet => sheet_id,
+                        SheetBinding::ExplicitName { name } => sheet_registry
+                            .get_id(name)
+                            .ok_or(ProjectionFallbackReason::UnsupportedSheetBinding)?,
+                    };
                     let projection = DirtyProjectionRule::AffineCell {
                         row: AxisProjection::from_axis_ref(&cell.row)?,
                         col: AxisProjection::from_axis_ref(&cell.col)?,
                     };
-                    let read_region =
-                        projection.read_region_for_result(sheet_id, result_region_pattern)?;
+                    let read_region = projection
+                        .read_region_for_result(target_sheet_id, result_region_pattern)?;
                     let dependency = SpanReadDependency {
                         read_region,
                         projection,
@@ -355,6 +360,12 @@ impl SpanReadSummaryStore {
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ReadProjection {
+    pub(crate) target_sheet_id: SheetId,
+    pub(crate) rule: DirtyProjectionRule,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -834,7 +845,11 @@ fn add_offset(value: u32, offset: i64) -> Result<u32, ProjectionFallbackReason> 
 
 #[cfg(test)]
 mod tests {
-    use super::super::runtime::FormulaSpanId;
+    use formualizer_parse::parser::parse;
+
+    use super::super::dependency_summary::summarize_canonical_template;
+    use super::super::runtime::{FormulaSpanId, PlacementDomain};
+    use super::super::template_canonical::canonicalize_template;
     use super::*;
 
     fn span(id: u32) -> FormulaProducerId {
@@ -843,6 +858,55 @@ mod tests {
 
     fn legacy(id: u32) -> FormulaProducerId {
         FormulaProducerId::Legacy(VertexId(id))
+    }
+
+    fn dependency_summary(formula: &str, row: u32, col: u32) -> FormulaDependencySummary {
+        let ast = parse(formula).unwrap_or_else(|err| panic!("parse {formula}: {err}"));
+        let template = canonicalize_template(&ast, row, col);
+        summarize_canonical_template(&template)
+    }
+
+    #[test]
+    fn formula_plane_span_read_summary_resolves_cross_sheet_binding() {
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet1_id = sheet_registry.id_for("Sheet1");
+        let data_id = sheet_registry.id_for("Data");
+        let result_region =
+            ResultRegion::scalar_cells(PlacementDomain::row_run(sheet1_id, 0, 0, 1));
+        let summary = dependency_summary("=Data!A1", 1, 2);
+
+        let read_summary = SpanReadSummary::from_formula_summary(
+            sheet1_id,
+            &result_region,
+            &summary,
+            &sheet_registry,
+        )
+        .expect("cross-sheet read summary");
+
+        assert_eq!(read_summary.dependencies.len(), 1);
+        assert_eq!(
+            read_summary.dependencies[0].read_region,
+            RegionPattern::point(data_id, 0, 0)
+        );
+    }
+
+    #[test]
+    fn formula_plane_span_read_summary_rejects_unknown_sheet() {
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet1_id = sheet_registry.id_for("Sheet1");
+        let result_region =
+            ResultRegion::scalar_cells(PlacementDomain::row_run(sheet1_id, 0, 0, 1));
+        let summary = dependency_summary("=Data!A1", 1, 2);
+
+        let err = SpanReadSummary::from_formula_summary(
+            sheet1_id,
+            &result_region,
+            &summary,
+            &sheet_registry,
+        )
+        .expect_err("unknown sheet should reject");
+
+        assert_eq!(err, ProjectionFallbackReason::UnsupportedSheetBinding);
     }
 
     #[test]

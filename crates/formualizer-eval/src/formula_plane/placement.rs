@@ -11,18 +11,20 @@ use std::sync::Arc;
 use formualizer_parse::parser::ASTNode;
 
 use crate::SheetId;
-use crate::engine::arena::{AstNodeId, CanonicalLabels, DataStore};
+use crate::engine::arena::{AstNodeId, DataStore};
 use crate::engine::ingest_pipeline::IngestedFormula;
 use crate::engine::sheet_registry::SheetRegistry;
 
 use super::dependency_summary::{FormulaClass, summarize_canonical_template};
 use super::ids::FormulaTemplateId;
-use super::producer::{DirtyProjectionRule, SpanReadDependency, SpanReadSummary};
+use super::producer::{
+    ProjectionFallbackReason, ReadProjection, SpanReadDependency, SpanReadSummary,
+};
 use super::region_index::RegionPattern;
 use super::runtime::{
     FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
 };
-use super::template_canonical::{CanonicalTemplateFlag, canonicalize_template};
+use super::template_canonical::canonicalize_template;
 
 #[derive(Clone, Debug)]
 pub(crate) struct FormulaPlacementCandidate {
@@ -79,6 +81,10 @@ pub(crate) enum PlacementFallbackReason {
     SingletonUnique,
     CrossSheetOrSheetMismatch,
     DuplicatePlacement,
+    /// A formula contains an explicit sheet reference that could not be resolved
+    /// in the current sheet registry. Keep it legacy so the graph evaluator
+    /// preserves existing #REF!/missing-sheet diagnostics.
+    UnknownSheetBinding,
     /// At least one read region intersects the family's own result region.
     /// These families have an internal/self dependency that the current span
     /// runtime cannot evaluate as bounded dirty work and demotes to whole-span
@@ -140,7 +146,7 @@ pub(crate) struct CandidateAnalysis {
     col: u32,
     canonical_hash: u64,
     canonical_key: Arc<str>,
-    read_projections: Vec<DirtyProjectionRule>,
+    read_projections: Vec<ReadProjection>,
 }
 
 impl CandidateAnalysis {
@@ -155,16 +161,15 @@ impl CandidateAnalysis {
         if ingested.labels.rejects != 0 {
             return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
         }
-        if ingested
-            .labels
-            .has_flag(CanonicalLabels::FLAG_EXPLICIT_SHEET)
-        {
-            return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
-        }
-        let read_projections = ingested
-            .read_projections
-            .clone()
-            .ok_or(PlacementFallbackReason::UnsupportedDependencySummary)?;
+        let read_projections = ingested.read_projections.clone().ok_or_else(|| {
+            if ingested.read_projection_fallback
+                == Some(ProjectionFallbackReason::UnsupportedSheetBinding)
+            {
+                PlacementFallbackReason::UnknownSheetBinding
+            } else {
+                PlacementFallbackReason::UnsupportedDependencySummary
+            }
+        })?;
         Ok(Self {
             sheet_id: candidate.sheet_id,
             row: candidate.row,
@@ -179,6 +184,7 @@ impl CandidateAnalysis {
 pub(crate) fn analyze_candidate(
     candidate: &FormulaPlacementCandidate,
     ast: &ASTNode,
+    sheet_registry: &SheetRegistry,
 ) -> Result<CandidateAnalysis, PlacementFallbackReason> {
     let anchor_row = candidate
         .row
@@ -191,13 +197,6 @@ pub(crate) fn analyze_candidate(
     let template = canonicalize_template(ast, anchor_row, anchor_col);
     if !template.labels.is_authority_supported() {
         return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
-    }
-    if template
-        .labels
-        .flags
-        .contains(&CanonicalTemplateFlag::ExplicitSheetBinding)
-    {
-        return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
     }
     let summary = summarize_canonical_template(&template);
     if summary.formula_class != FormulaClass::StaticPointwise || !summary.reject_reasons.is_empty()
@@ -212,13 +211,26 @@ pub(crate) fn analyze_candidate(
     );
     let result_region = ResultRegion::scalar_cells(scalar_domain);
     let mut read_projections = Vec::new();
-    for dependency in
-        SpanReadSummary::from_formula_summary(candidate.sheet_id, &result_region, &summary)
-            .map_err(|_| PlacementFallbackReason::UnsupportedDirtyProjection)?
-            .dependencies
+    for dependency in SpanReadSummary::from_formula_summary(
+        candidate.sheet_id,
+        &result_region,
+        &summary,
+        sheet_registry,
+    )
+    .map_err(|reason| match reason {
+        ProjectionFallbackReason::UnsupportedSheetBinding => {
+            PlacementFallbackReason::UnknownSheetBinding
+        }
+        _ => PlacementFallbackReason::UnsupportedDirtyProjection,
+    })?
+    .dependencies
     {
-        if !read_projections.contains(&dependency.projection) {
-            read_projections.push(dependency.projection);
+        let read_projection = ReadProjection {
+            target_sheet_id: dependency.read_region.sheet_id(),
+            rule: dependency.projection,
+        };
+        if !read_projections.contains(&read_projection) {
+            read_projections.push(read_projection);
         }
     }
     let payload = template.key.payload();
@@ -245,7 +257,7 @@ fn analyze_candidates(
             let ast = data_store
                 .retrieve_ast(candidate.ast_id, sheet_registry)
                 .ok_or(PlacementFallbackReason::UnsupportedCanonicalTemplate)?;
-            analyze_candidate(candidate, &ast)
+            analyze_candidate(candidate, &ast, sheet_registry)
         })
         .collect()
 }
@@ -314,7 +326,6 @@ fn place_analyzed_family(
     let result_region = ResultRegion::scalar_cells(domain.clone());
     let result_region_pattern = RegionPattern::from_domain(&domain);
     let read_summary = match span_read_summary_for_domain(
-        sheet_id,
         result_region_pattern,
         &origin_analysis.read_projections,
     ) {
@@ -399,13 +410,14 @@ fn place_analyzed_family(
 }
 
 fn span_read_summary_for_domain(
-    sheet_id: SheetId,
     result_region: RegionPattern,
-    projections: &[DirtyProjectionRule],
+    projections: &[ReadProjection],
 ) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
     let mut dependencies = Vec::new();
-    for &projection in projections {
-        let read_region = projection.read_region_for_result(sheet_id, result_region)?;
+    for &read_projection in projections {
+        let projection = read_projection.rule;
+        let read_region =
+            projection.read_region_for_result(read_projection.target_sheet_id, result_region)?;
         let dependency = SpanReadDependency {
             read_region,
             projection,
@@ -864,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_sheet_binding_remains_legacy_with_reason() {
+    fn unknown_explicit_sheet_binding_remains_legacy_with_reason() {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
@@ -878,10 +890,54 @@ mod tests {
             &sheet_registry,
         );
 
-        assert_all_legacy(
-            &report,
-            2,
-            PlacementFallbackReason::CrossSheetOrSheetMismatch,
+        assert_all_legacy(&report, 2, PlacementFallbackReason::UnknownSheetBinding);
+    }
+
+    #[test]
+    fn explicit_sheet_binding_with_known_sheet_promotes() {
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet1_id = sheet_registry.id_for("Sheet1");
+        let sheet2_id = sheet_registry.id_for("Sheet2");
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    sheet1_id,
+                    0,
+                    2,
+                    "=Sheet2!A1+1",
+                ),
+                candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    sheet1_id,
+                    1,
+                    2,
+                    "=Sheet2!A2+1",
+                ),
+            ],
+            &data_store,
+            &sheet_registry,
+        );
+
+        assert_eq!(report.counters.accepted_span_cells, 2);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        let span_record = plane.spans.get(span).expect("span record");
+        let read_summary = plane
+            .span_read_summaries
+            .get(span_record.read_summary_id.expect("read summary id"))
+            .expect("read summary");
+        assert_eq!(read_summary.dependencies.len(), 1);
+        assert_eq!(
+            read_summary.dependencies[0].read_region,
+            super::super::region_index::RegionPattern::col_interval(sheet2_id, 0, 0, 1)
         );
     }
 
