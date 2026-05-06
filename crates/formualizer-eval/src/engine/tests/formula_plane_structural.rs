@@ -142,7 +142,7 @@ fn formula_plane_authoritative_repeated_column_insert_after_demotion_15k_vertice
 
 #[test]
 fn formula_plane_authoritative_column_insert_shifts_span_outputs_correctly() {
-    let mut engine = build_three_formula_column_family(5);
+    let mut engine = build_three_formula_column_family(100);
 
     engine.insert_columns("Sheet1", 3, 1).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
@@ -169,7 +169,7 @@ fn formula_plane_authoritative_column_insert_shifts_span_outputs_correctly() {
 
 #[test]
 fn formula_plane_authoritative_column_delete_shifts_span_outputs_correctly() {
-    let mut engine = build_three_formula_column_family(5);
+    let mut engine = build_three_formula_column_family(100);
 
     engine.delete_columns("Sheet1", 3, 1).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
@@ -195,7 +195,7 @@ fn formula_plane_authoritative_row_insert_on_cross_sheet_read_sheet_demotes_span
     let mut engine = authoritative_engine();
     engine.add_sheet("Data").unwrap();
     let mut formulas = Vec::new();
-    for row in 1..=5 {
+    for row in 1..=100 {
         engine
             .set_cell_value("Data", row, 1, LiteralValue::Number(row as f64))
             .unwrap();
@@ -228,7 +228,7 @@ fn formula_plane_authoritative_range_precedent_dirty_propagation_through_structu
             .unwrap();
     }
     let mut formulas = Vec::new();
-    for row in 1..=10 {
+    for row in 1..=100 {
         engine
             .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
             .unwrap();
@@ -252,7 +252,7 @@ fn formula_plane_authoritative_range_precedent_dirty_propagation_through_structu
 
 #[test]
 fn formula_plane_authoritative_row_insert_shifts_span_outputs_correctly() {
-    let mut engine = build_single_formula_column_family(5);
+    let mut engine = build_single_formula_column_family(100);
 
     engine.insert_rows("Sheet1", 3, 1).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
@@ -279,7 +279,7 @@ fn formula_plane_authoritative_row_insert_shifts_span_outputs_correctly() {
 
 #[test]
 fn formula_plane_authoritative_row_delete_shifts_span_outputs_correctly() {
-    let mut engine = build_single_formula_column_family(5);
+    let mut engine = build_single_formula_column_family(100);
 
     engine.delete_rows("Sheet1", 3, 1).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
@@ -301,5 +301,5 @@ fn formula_plane_authoritative_row_delete_shifts_span_outputs_correctly() {
         engine.get_cell_value("Sheet1", 4, 2),
         Some(LiteralValue::Number(10.0))
     );
-    assert_eq!(engine.get_cell_value("Sheet1", 5, 2), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 100, 2), None);
 }

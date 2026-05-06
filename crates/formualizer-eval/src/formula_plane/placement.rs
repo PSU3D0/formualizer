@@ -27,6 +27,15 @@ use super::runtime::{
 };
 use super::template_canonical::canonicalize_template;
 
+/// Minimum cell count for a non-constant span to be promoted. Below this
+/// threshold the per-span overhead (template intern, scheduler edge,
+/// per-task setup) overwhelms the legacy graph path.
+///
+/// 100 chosen because s025 medium showed 99-cell non-constant spans still
+/// 3.3x slower than legacy. Constant-result spans bypass this threshold
+/// because broadcast cost is amortized regardless of cell count.
+const MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS: u64 = 100;
+
 #[derive(Clone, Debug)]
 pub(crate) struct FormulaPlacementCandidate {
     pub(crate) sheet_id: SheetId,
@@ -91,6 +100,7 @@ pub(crate) enum PlacementFallbackReason {
     /// runtime cannot evaluate as bounded dirty work and demotes to whole-span
     /// recompute on every change, producing O(N²) edit recalc on chains.
     InternalDependency,
+    SmallDomain,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -340,6 +350,15 @@ fn place_analyzed_family(
             return report;
         }
     };
+
+    if !first.is_constant_result && domain.cell_count() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
+        mark_all_legacy(
+            &mut report,
+            candidates,
+            PlacementFallbackReason::SmallDomain,
+        );
+        return report;
+    }
 
     let origin = domain_origin(&domain);
     let origin_analysis = analyses
@@ -608,6 +627,60 @@ mod tests {
         FormulaPlacementCandidate::new(sheet_id, row, col, ast_id, Some(Arc::<str>::from(formula)))
     }
 
+    fn column_label(mut zero_based_col: u32) -> String {
+        let mut chars = Vec::new();
+        loop {
+            let rem = zero_based_col % 26;
+            chars.push((b'A' + rem as u8) as char);
+            zero_based_col /= 26;
+            if zero_based_col == 0 {
+                break;
+            }
+            zero_based_col -= 1;
+        }
+        chars.iter().rev().collect()
+    }
+
+    fn row_run_candidates(
+        data_store: &mut DataStore,
+        sheet_registry: &SheetRegistry,
+        sheet_id: SheetId,
+        cells: u32,
+    ) -> Vec<FormulaPlacementCandidate> {
+        (0..cells)
+            .map(|row| {
+                candidate(
+                    data_store,
+                    sheet_registry,
+                    sheet_id,
+                    row,
+                    2,
+                    &format!("=A{}+1", row + 1),
+                )
+            })
+            .collect()
+    }
+
+    fn col_run_candidates(
+        data_store: &mut DataStore,
+        sheet_registry: &SheetRegistry,
+        sheet_id: SheetId,
+        cells: u32,
+    ) -> Vec<FormulaPlacementCandidate> {
+        (0..cells)
+            .map(|col| {
+                candidate(
+                    data_store,
+                    sheet_registry,
+                    sheet_id,
+                    2,
+                    col,
+                    &format!("={}1+1", column_label(col)),
+                )
+            })
+            .collect()
+    }
+
     fn assert_all_legacy(
         report: &FormulaPlacementReport,
         cells: u64,
@@ -643,19 +716,11 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
-                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+1"),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+        let candidates = row_run_candidates(&mut data_store, &sheet_registry, 0, 100);
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
-        assert_eq!(report.counters.formula_cells_seen, 3);
-        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.formula_cells_seen, 100);
+        assert_eq!(report.counters.accepted_span_cells, 100);
         assert_eq!(report.counters.legacy_cells, 0);
         assert_eq!(report.counters.spans_created, 1);
         assert_eq!(report.counters.templates_interned, 1);
@@ -683,7 +748,7 @@ mod tests {
         assert_eq!(read_summary.dependencies.len(), 1);
         assert_eq!(
             read_summary.dependencies[0].read_region,
-            super::super::region_index::RegionPattern::col_interval(0, 0, 0, 2)
+            super::super::region_index::RegionPattern::col_interval(0, 0, 0, 99)
         );
     }
 
@@ -692,18 +757,10 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
-                candidate(&mut data_store, &sheet_registry, 0, 2, 0, "=A1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=B1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=C1+1"),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+        let candidates = col_run_candidates(&mut data_store, &sheet_registry, 0, 100);
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
-        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.accepted_span_cells, 100);
         assert_eq!(report.counters.spans_created, 1);
         let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
             panic!("expected span result");
@@ -716,51 +773,56 @@ mod tests {
 
     #[test]
     fn rect_same_template_promotes_to_span() {
-        // 2x2 rect of `=<col_left><row>+1` cells. Each cell reads its
-        // immediate left neighbor; the read region for col=2 cells lands on
-        // the col=1 cells which are also in the family domain. This is an
-        // internal-dependency family that the FP runtime would have to demote
-        // to whole-span recompute on every change, so placement falls back to
-        // legacy.
+        // 10x10 rect of `=<col_left><row>+1` cells. Each cell reads its
+        // immediate left neighbor; the read region for cols C:K lands inside
+        // the family domain. This is an internal-dependency family that the FP
+        // runtime would have to demote to whole-span recompute on every change,
+        // so placement falls back to legacy.
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
-                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=B1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=A2+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=B2+1"),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+        let mut candidates = Vec::new();
+        for row in 1..=10 {
+            for col in 1..=10 {
+                candidates.push(candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    0,
+                    row,
+                    col,
+                    &format!("={}{}+1", column_label(col - 1), row + 1),
+                ));
+            }
+        }
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
-        assert_all_legacy(&report, 4, PlacementFallbackReason::InternalDependency);
+        assert_all_legacy(&report, 100, PlacementFallbackReason::InternalDependency);
     }
 
     #[test]
     fn rect_anchored_external_reads_promotes_to_span() {
-        // 2x2 rect of `=$A<row>+1` cells. Reads use a relative row but an
+        // 10x10 rect of `=$A<row>+1` cells. Reads use a relative row but an
         // absolute column outside the rect, so there is no internal dependency
         // and the result varies by placement.
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
-                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=$A2+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A2+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=$A3+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A3+1"),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+        let mut candidates = Vec::new();
+        for row in 1..=10 {
+            for col in 1..=10 {
+                candidates.push(candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    0,
+                    row,
+                    col,
+                    &format!("=$A{}+1", row + 1),
+                ));
+            }
+        }
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
-        assert_eq!(report.counters.accepted_span_cells, 4);
+        assert_eq!(report.counters.accepted_span_cells, 100);
         assert_eq!(report.counters.spans_created, 1);
         let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
             panic!("expected span result");
@@ -986,31 +1048,21 @@ mod tests {
         let mut sheet_registry = SheetRegistry::new();
         let sheet1_id = sheet_registry.id_for("Sheet1");
         let sheet2_id = sheet_registry.id_for("Sheet2");
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
+        let candidates = (0..100)
+            .map(|row| {
                 candidate(
                     &mut data_store,
                     &sheet_registry,
                     sheet1_id,
-                    0,
+                    row,
                     2,
-                    "=Sheet2!A1+1",
-                ),
-                candidate(
-                    &mut data_store,
-                    &sheet_registry,
-                    sheet1_id,
-                    1,
-                    2,
-                    "=Sheet2!A2+1",
-                ),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+                    &format!("=Sheet2!A{}+1", row + 1),
+                )
+            })
+            .collect();
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
-        assert_eq!(report.counters.accepted_span_cells, 2);
+        assert_eq!(report.counters.accepted_span_cells, 100);
         assert_eq!(report.counters.spans_created, 1);
         let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
             panic!("expected span result");
@@ -1023,7 +1075,7 @@ mod tests {
         assert_eq!(read_summary.dependencies.len(), 1);
         assert_eq!(
             read_summary.dependencies[0].read_region,
-            super::super::region_index::RegionPattern::col_interval(sheet2_id, 0, 0, 1)
+            super::super::region_index::RegionPattern::col_interval(sheet2_id, 0, 0, 99)
         );
     }
 
@@ -1054,19 +1106,22 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
-                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=$A1+B$1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A2+B$1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A3+B$1"),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+        let candidates = (0..100)
+            .map(|row| {
+                candidate(
+                    &mut data_store,
+                    &sheet_registry,
+                    0,
+                    row,
+                    2,
+                    &format!("=$A{}+B$1", row + 1),
+                )
+            })
+            .collect();
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
-        assert_eq!(report.counters.formula_cells_seen, 3);
-        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.formula_cells_seen, 100);
+        assert_eq!(report.counters.accepted_span_cells, 100);
         assert_eq!(report.counters.legacy_cells, 0);
         assert_eq!(report.counters.spans_created, 1);
         assert_eq!(report.counters.templates_interned, 1);
@@ -1094,7 +1149,7 @@ mod tests {
         assert_eq!(read_regions.len(), 2);
         assert!(
             read_regions.contains(&super::super::region_index::RegionPattern::col_interval(
-                0, 0, 0, 2
+                0, 0, 0, 99
             ))
         );
         assert!(read_regions.contains(&super::super::region_index::RegionPattern::point(0, 0, 1)));
@@ -1123,24 +1178,16 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
-                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=A3+1"),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+        let candidates = row_run_candidates(&mut data_store, &sheet_registry, 0, 100);
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
-        assert_eq!(report.counters.accepted_span_cells, 3);
+        assert_eq!(report.counters.accepted_span_cells, 100);
         assert_eq!(report.counters.per_placement_formula_vertices_created, 0);
         assert_eq!(report.counters.per_placement_ast_roots_created, 0);
         assert_eq!(report.counters.per_placement_edge_rows_created, 0);
-        assert_eq!(report.counters.formula_vertices_avoided, 3);
-        assert_eq!(report.counters.ast_roots_avoided, 2);
-        assert_eq!(report.counters.edge_rows_avoided, 3);
+        assert_eq!(report.counters.formula_vertices_avoided, 100);
+        assert_eq!(report.counters.ast_roots_avoided, 99);
+        assert_eq!(report.counters.edge_rows_avoided, 100);
     }
 
     #[test]
@@ -1148,15 +1195,8 @@ mod tests {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
-        let report = place_candidate_family(
-            &mut plane,
-            vec![
-                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2+1"),
-            ],
-            &data_store,
-            &sheet_registry,
-        );
+        let candidates = row_run_candidates(&mut data_store, &sheet_registry, 0, 100);
+        let report = place_candidate_family(&mut plane, candidates, &data_store, &sheet_registry);
 
         let FormulaPlacementResult::Span {
             span, template_id, ..

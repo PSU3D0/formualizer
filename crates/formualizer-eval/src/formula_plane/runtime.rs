@@ -120,6 +120,24 @@ impl PlacementDomain {
         }
     }
 
+    pub(crate) fn cell_count(&self) -> u64 {
+        match self {
+            Self::RowRun {
+                row_start, row_end, ..
+            } => (*row_end - *row_start + 1) as u64,
+            Self::ColRun {
+                col_start, col_end, ..
+            } => (*col_end - *col_start + 1) as u64,
+            Self::Rect {
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+                ..
+            } => (*row_end - *row_start + 1) as u64 * (*col_end - *col_start + 1) as u64,
+        }
+    }
+
     pub(crate) fn contains(&self, coord: PlacementCoord) -> bool {
         if self.sheet_id() != coord.sheet_id {
             return false;
