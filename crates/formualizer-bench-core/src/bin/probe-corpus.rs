@@ -59,6 +59,10 @@ mod enabled {
         /// Measure only load + first-eval.
         #[arg(long)]
         skip_edit_cycles: bool,
+        /// Per-evaluation phase timeout in milliseconds (load/first_eval/recalc).
+        /// 0 disables. Defaults: small=5000, medium=15000, large=60000.
+        #[arg(long)]
+        phase_timeout_ms: Option<u64>,
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,6 +155,7 @@ mod enabled {
                     mode.as_str(),
                     scale.as_str()
                 );
+                let phase_timeout_ms = cli.phase_timeout_ms.unwrap_or(default_phase_timeout_ms(scale));
                 let report = match run_tuple(
                     scenario.as_ref(),
                     *mode,
@@ -159,6 +164,7 @@ mod enabled {
                     &fixture_dir,
                     cli.skip_fixture_rebuild,
                     cli.skip_edit_cycles,
+                    phase_timeout_ms,
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -218,6 +224,64 @@ mod enabled {
         Ok(())
     }
 
+    fn default_phase_timeout_ms(scale: ScenarioScale) -> u64 {
+        match scale {
+            ScenarioScale::Small => 5_000,
+            ScenarioScale::Medium => 15_000,
+            ScenarioScale::Large => 60_000,
+        }
+    }
+
+    /// Wrap a cancellable evaluate_all with a watchdog thread that flips the
+    /// cancel flag after `timeout_ms`. Returns Err(Cancelled) if the timeout
+    /// fired and the eval honored it. The cancel checkpoints inside
+    /// `evaluate_all_cancellable` are coarse, so the actual return may lag by
+    /// the duration of an in-flight scalar eval.
+    ///
+    /// The watchdog is detached (not joined). It uses a condvar so it returns
+    /// promptly when the eval finishes early, so the OS doesn't accumulate
+    /// long-running stuck threads across tuples.
+    fn evaluate_all_with_timeout(
+        workbook: &mut Workbook,
+        timeout_ms: u64,
+    ) -> std::result::Result<formualizer_eval::engine::EvalResult, formualizer_workbook::IoError>
+    {
+        if timeout_ms == 0 {
+            return workbook.evaluate_all();
+        }
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // (mutex<done>, condvar) — watchdog waits on the condvar with timeout.
+        let signal = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let watchdog = {
+            let cancel = cancel.clone();
+            let signal = signal.clone();
+            std::thread::spawn(move || {
+                let (lock, cvar) = &*signal;
+                let mut done = lock.lock().expect("watchdog mutex");
+                while !*done {
+                    let res = cvar
+                        .wait_timeout(done, std::time::Duration::from_millis(timeout_ms))
+                        .expect("watchdog cvar");
+                    done = res.0;
+                    if res.1.timed_out() && !*done {
+                        cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                        return;
+                    }
+                }
+            })
+        };
+        let result = workbook.evaluate_all_cancellable(cancel.clone());
+        // Wake the watchdog so it exits promptly.
+        {
+            let (lock, cvar) = &*signal;
+            let mut done = lock.lock().expect("watchdog signal lock");
+            *done = true;
+            cvar.notify_all();
+        }
+        let _ = watchdog.join();
+        result
+    }
+
     fn run_tuple(
         scenario: &dyn Scenario,
         mode: Mode,
@@ -226,6 +290,7 @@ mod enabled {
         fixture_dir: &Path,
         skip_fixture_rebuild: bool,
         skip_edit_cycles: bool,
+        phase_timeout_ms: u64,
     ) -> Result<ScenarioSummaryReport> {
         set_invariant_scale(scale);
         let ctx = ScenarioBuildCtx {
@@ -271,8 +336,7 @@ mod enabled {
         );
 
         let phase = PhaseMetrics::start("phase_first_eval");
-        workbook
-            .evaluate_all()
+        evaluate_all_with_timeout(&mut workbook, phase_timeout_ms)
             .with_context(|| format!("first evaluate_all for {}", scenario.id()))?;
         phases.push(phase.finish(Some(&workbook)));
         check_invariants(
@@ -298,7 +362,7 @@ mod enabled {
                 );
 
                 let phase = PhaseMetrics::start(format!("phase_recalc_{cycle}"));
-                workbook.evaluate_all().with_context(|| {
+                evaluate_all_with_timeout(&mut workbook, phase_timeout_ms).with_context(|| {
                     format!("evaluate_all recalc cycle {cycle} for {}", scenario.id())
                 })?;
                 phases.push(phase.with_edit(cycle, kind).finish(Some(&workbook)));
