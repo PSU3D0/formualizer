@@ -18,6 +18,7 @@ use crate::formula_plane::producer::{
     AxisProjection, DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
 };
 use crate::formula_plane::region_index::RegionPattern;
+use crate::formula_plane::template_canonical::{is_known_static_function, normalize_function_name};
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
 use crate::traits::FunctionProvider;
@@ -829,7 +830,17 @@ fn compute_read_projections(ast: &ASTNode, placement: CellRef) -> Option<Vec<Dir
                 visit(left, placement, projections)?;
                 visit(right, placement, projections)
             }
-            ASTNodeType::Function { .. } | ASTNodeType::Call { .. } | ASTNodeType::Array(_) => None,
+            ASTNodeType::Function { name, args } => {
+                let canonical_name = normalize_function_name(name);
+                if !is_known_static_function(&canonical_name) {
+                    return None;
+                }
+                for arg in args {
+                    visit(arg, placement, projections)?;
+                }
+                Some(())
+            }
+            ASTNodeType::Call { .. } | ASTNodeType::Array(_) => None,
         }
     }
 

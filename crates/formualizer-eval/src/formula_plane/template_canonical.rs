@@ -787,7 +787,7 @@ fn sheet_binding(sheet: &Option<String>) -> SheetBinding {
     }
 }
 
-fn normalize_function_name(name: &str) -> String {
+pub(crate) fn normalize_function_name(name: &str) -> String {
     let mut normalized = name.trim().to_ascii_uppercase();
     loop {
         let stripped = ["_XLFN.", "_XLL.", "_XLWS."]
@@ -824,7 +824,7 @@ fn is_array_or_spill_function(name: &str) -> bool {
     )
 }
 
-fn is_known_static_function(name: &str) -> bool {
+pub(crate) fn is_known_static_function(name: &str) -> bool {
     matches!(
         name,
         "ABS"

@@ -21,6 +21,7 @@ use super::span_store::{
 use super::template_canonical::{
     AxisRef, CanonicalExpr, CanonicalReference, CanonicalReferenceContext, CanonicalRejectReason,
     CanonicalTemplate, SheetBinding, UnsupportedReferenceKind, canonicalize_template,
+    is_known_static_function,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -624,9 +625,28 @@ impl SummaryAnalyzer {
                 self.analyze_binary(op, left, right, context)
             }
             CanonicalExpr::Function { id, args } => {
+                let mut all_args_supported = true;
                 for (arg_index, arg) in args.iter().enumerate() {
-                    self.analyze_expr(arg, function_arg_context(&id.canonical_name, arg_index));
+                    let arg_supported =
+                        self.analyze_expr(arg, function_arg_context(&id.canonical_name, arg_index));
+                    if !arg_supported {
+                        all_args_supported = false;
+                    }
                 }
+
+                if self.has_function_specific_rejection(&id.canonical_name) {
+                    return false;
+                }
+
+                if is_known_static_function(&id.canonical_name) {
+                    if all_args_supported && matches!(context, AnalyzerContext::Value) {
+                        return true;
+                    }
+                    if !all_args_supported && !self.reasons.is_empty() {
+                        return false;
+                    }
+                }
+
                 self.reject_function(&id.canonical_name);
                 false
             }
@@ -2299,6 +2319,40 @@ mod tests {
     }
 
     #[test]
+    fn formula_plane_dependency_summary_accepts_pure_scalar_function_with_cell_arg() {
+        let summary = summary("=ISNUMBER(A1)", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.precedent_patterns.len(), 1);
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_nested_pure_scalar_functions() {
+        let summary = summary("=IF(ISNUMBER(A1), A1*2, 0)", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.precedent_patterns.len(), 1);
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_pure_scalar_function_with_no_refs() {
+        let summary = summary("=ROUND(1.234, 2)", 1, 1);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert!(summary.precedent_patterns.is_empty());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_abs_with_cell_arg() {
+        let summary = summary("=ABS(A1)", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+    }
+
+    #[test]
     fn formula_plane_dependency_summary_rejects_sum_range_not_pointwise_authority() {
         let summary = summary("=SUM(A1:A10)", 1, 2);
 
@@ -2309,7 +2363,7 @@ mod tests {
                 context: AnalyzerContext::Value
             }
         ));
-        assert!(has_reason(
+        assert!(!has_reason(
             &summary,
             &DependencyRejectReason::FunctionUnsupported {
                 name: "SUM".to_string()
@@ -2461,7 +2515,7 @@ mod tests {
             report
                 .fallback_reason_histogram
                 .get("function_unsupported:SUM"),
-            Some(&1)
+            None
         );
         assert_eq!(
             report
