@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::SheetId;
 use crate::engine::{
     Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
 };
@@ -60,6 +61,128 @@ fn build_single_formula_column_family(rows: u32) -> Engine<TestWorkbook> {
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
     engine
+}
+
+fn build_cross_sheet_span_engine(rows: u32) -> (Engine<TestWorkbook>, SheetId, SheetId) {
+    let mut engine = authoritative_engine();
+    let data_a_sheet_id = engine.add_sheet("DataA").unwrap();
+    let data_b_sheet_id = engine.add_sheet("DataB").unwrap();
+    let mut formulas = Vec::with_capacity(rows as usize);
+    for row in 1..=rows {
+        engine
+            .set_cell_value("DataA", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        engine
+            .set_cell_value("DataB", row, 1, LiteralValue::Number(row as f64 * 2.0))
+            .unwrap();
+        formulas.push(record(
+            &mut engine,
+            row,
+            1,
+            &format!("=DataA!A{row}+DataB!A{row}"),
+        ));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    let stats = engine.baseline_stats();
+    assert_eq!(stats.graph_formula_vertex_count, 0);
+    assert_eq!(stats.formula_plane_active_span_count, 1);
+    assert_eq!(stats.formula_plane_consumer_read_entries, 2);
+    (engine, data_a_sheet_id, data_b_sheet_id)
+}
+
+#[test]
+fn formula_plane_authoritative_sheet_rename_is_metadata_only_for_cross_sheet_span() {
+    let (mut engine, data_a_sheet_id, _) = build_cross_sheet_span_engine(100);
+    engine.evaluate_all().unwrap();
+
+    let sample_rows = [1, 50, 100];
+    let before: Vec<_> = sample_rows
+        .iter()
+        .map(|row| engine.get_cell_value("Sheet1", *row, 1))
+        .collect();
+
+    engine.rename_sheet(data_a_sheet_id, "DataAA").unwrap();
+    let data_aa_sheet_id = engine.sheet_id("DataAA").unwrap();
+    assert_eq!(data_aa_sheet_id, data_a_sheet_id);
+    let result = engine.evaluate_all().unwrap();
+    assert_eq!(result.computed_vertices, 0);
+    for (row, value) in sample_rows.iter().zip(before.iter()) {
+        assert_eq!(engine.get_cell_value("Sheet1", *row, 1), value.clone());
+    }
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    engine.rename_sheet(data_aa_sheet_id, "DataA").unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert_eq!(result.computed_vertices, 0);
+    for (row, value) in sample_rows.iter().zip(before.iter()) {
+        assert_eq!(engine.get_cell_value("Sheet1", *row, 1), value.clone());
+    }
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+}
+
+#[test]
+fn formula_plane_authoritative_value_edit_after_sheet_rename_dirties_bounded_span_work() {
+    let (mut engine, data_a_sheet_id, _) = build_cross_sheet_span_engine(100);
+    engine.evaluate_all().unwrap();
+
+    let row_49_before = engine.get_cell_value("Sheet1", 49, 1);
+    let row_51_before = engine.get_cell_value("Sheet1", 51, 1);
+
+    engine.rename_sheet(data_a_sheet_id, "DataAA").unwrap();
+    assert_eq!(engine.evaluate_all().unwrap().computed_vertices, 0);
+    let data_aa_sheet_id = engine.sheet_id("DataAA").unwrap();
+    engine.rename_sheet(data_aa_sheet_id, "DataA").unwrap();
+    assert_eq!(engine.evaluate_all().unwrap().computed_vertices, 0);
+
+    engine
+        .set_cell_value("DataA", 50, 1, LiteralValue::Number(10_000.0))
+        .unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert_eq!(result.computed_vertices, 1);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 1),
+        Some(LiteralValue::Number(10_100.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 49, 1), row_49_before);
+    assert_eq!(engine.get_cell_value("Sheet1", 51, 1), row_51_before);
+}
+
+#[test]
+fn formula_plane_authoritative_sheet_rename_preserves_sheet_id_read_summaries() {
+    let (mut engine, data_a_sheet_id, _) = build_cross_sheet_span_engine(100);
+    engine.evaluate_all().unwrap();
+
+    let row_9_before = engine.get_cell_value("Sheet1", 9, 1);
+    let row_11_before = engine.get_cell_value("Sheet1", 11, 1);
+
+    assert_eq!(
+        engine.baseline_stats().formula_plane_consumer_read_entries,
+        2
+    );
+    engine.rename_sheet(data_a_sheet_id, "DataAA").unwrap();
+    assert_eq!(engine.evaluate_all().unwrap().computed_vertices, 0);
+    assert_eq!(
+        engine.baseline_stats().formula_plane_consumer_read_entries,
+        2
+    );
+
+    engine
+        .set_cell_value("DataAA", 10, 1, LiteralValue::Number(999.0))
+        .unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert_eq!(result.computed_vertices, 1);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 10, 1),
+        Some(LiteralValue::Number(1_019.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 9, 1), row_9_before);
+    assert_eq!(engine.get_cell_value("Sheet1", 11, 1), row_11_before);
+    assert_eq!(
+        engine.baseline_stats().formula_plane_consumer_read_entries,
+        2
+    );
 }
 
 #[test]

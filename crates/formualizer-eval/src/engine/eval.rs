@@ -1641,7 +1641,9 @@ where
                 for v_id in sheet_vertices {
                     self.graph.mark_vertex_dirty(v_id);
                 }
-                self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
+                // Sheet rename is metadata-only and preserves SheetId. References resolve by
+                // SheetId, so no FormulaPlane changed region is required. Removing this avoids
+                // re-evaluating every span that reads the renamed sheet.
                 self.mark_topology_edited();
                 Ok(())
             }
