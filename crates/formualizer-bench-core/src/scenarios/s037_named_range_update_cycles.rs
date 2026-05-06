@@ -5,8 +5,8 @@ use formualizer_workbook::{Workbook, traits::NamedRangeScope};
 
 use super::common::{ScaleState, completed_cycles, fixture_path, has_evaluated_formulas, numeric};
 use super::{
-    EditPlan, ExpectedFailure, ExpectedFailureMode, FixtureMetadata, Scenario, ScenarioBuildCtx,
-    ScenarioFixture, ScenarioInvariant, ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, ExpectedFailure, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture,
+    ScenarioInvariant, ScenarioPhase, ScenarioScale, ScenarioTag,
 };
 
 const DATA_ROWS: u32 = 1_000;
@@ -51,16 +51,7 @@ impl Scenario for S037NamedRangeUpdateCycles {
     }
 
     fn expected_to_fail_under(&self) -> &'static [ExpectedFailure] {
-        &[
-            ExpectedFailure {
-                mode: ExpectedFailureMode::OffOnly,
-                reason: "Workbook::update_named_range updates the first redefinition, but subsequent DataRange redefinitions leave dependent formulas using the prior range. Reproduced by dispatch-4 smoke: cycle 1 remains at SUM(Data!A1:A200) instead of Data!A50:A150.",
-            },
-            ExpectedFailure {
-                mode: ExpectedFailureMode::AuthOnly,
-                reason: "Workbook::update_named_range updates the first redefinition, but subsequent DataRange redefinitions leave dependent formulas using the prior range. Reproduced by dispatch-4 smoke: cycle 1 remains at SUM(Data!A1:A200) instead of Data!A50:A150.",
-            },
-        ]
+        &[]
     }
 
     fn build_fixture(&self, ctx: &ScenarioBuildCtx) -> Result<ScenarioFixture> {
