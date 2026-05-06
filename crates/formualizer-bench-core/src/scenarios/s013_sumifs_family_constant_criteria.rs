@@ -47,6 +47,9 @@ impl Scenario for S013SumifsFamilyConstantCriteria {
     }
 
     fn tags(&self) -> &'static [ScenarioTag] {
+        // All SUMIFS precedents are absolute, so every placement computes the
+        // same value. FormulaPlane should promote this family (spans=1) and
+        // evaluate once with the planner enabled, then broadcast the result.
         &[ScenarioTag::AggregationHeavy, ScenarioTag::SingleCellEdit]
     }
 

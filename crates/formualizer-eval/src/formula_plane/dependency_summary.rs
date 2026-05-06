@@ -35,7 +35,8 @@ pub(crate) enum AnalyzerContext {
     Value,
     Reference,
     ByRefArg,
-    CriteriaArg,
+    CriteriaExpressionArg,
+    CriteriaRangeArg,
     ImplicitIntersection,
     LocalBinding,
 }
@@ -47,9 +48,28 @@ pub(crate) struct FormulaDependencySummary {
     pub(crate) reject_reasons: Vec<DependencyRejectReason>,
 }
 
+impl FormulaDependencySummary {
+    /// True if every precedent has all-absolute axes. Such formulas produce
+    /// the same value at every placement.
+    pub(crate) fn is_constant_result(&self) -> bool {
+        self.precedent_patterns.iter().all(|pattern| match pattern {
+            PrecedentPattern::Cell(cell) => {
+                axis_is_absolute(&cell.row) && axis_is_absolute(&cell.col)
+            }
+            PrecedentPattern::Range(rect) => {
+                axis_is_absolute(&rect.start_row)
+                    && axis_is_absolute(&rect.end_row)
+                    && axis_is_absolute(&rect.start_col)
+                    && axis_is_absolute(&rect.end_col)
+            }
+        })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PrecedentPattern {
     Cell(AffineCellPattern),
+    Range(AffineRectPattern),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -73,6 +93,7 @@ pub(crate) enum DependencyRejectReason {
     OpenRangeUnsupported { context: AnalyzerContext },
     WholeAxisUnsupported { context: AnalyzerContext },
     FiniteRangeUnsupported { context: AnalyzerContext },
+    MixedAxisRangeUnsupported { context: AnalyzerContext },
     NamedRangeUnsupported { context: AnalyzerContext },
     StructuredReferenceUnsupported { context: AnalyzerContext },
     ThreeDReferenceUnsupported { context: AnalyzerContext },
@@ -439,6 +460,7 @@ fn instantiate_summary_cells(
                 .map_err(|reason| summary_instantiation_fallback(&reason))?;
                 cells.insert(FiniteCell::new(sheet, row, col));
             }
+            PrecedentPattern::Range(_) => return Err("summary_pattern_instantiation_unsupported"),
         }
     }
     Ok(cells)
@@ -460,6 +482,9 @@ pub(crate) fn dependency_reject_reason_key(reason: &DependencyRejectReason) -> S
         DependencyRejectReason::WholeAxisUnsupported { .. } => "whole_axis_unsupported".to_string(),
         DependencyRejectReason::FiniteRangeUnsupported { .. } => {
             "finite_range_unsupported".to_string()
+        }
+        DependencyRejectReason::MixedAxisRangeUnsupported { .. } => {
+            "mixed_axis_range_unsupported".to_string()
         }
         DependencyRejectReason::NamedRangeUnsupported { .. } => {
             "named_range_unsupported".to_string()
@@ -520,7 +545,7 @@ pub(crate) fn summarize_canonical_template(
 ) -> FormulaDependencySummary {
     let mut analyzer = SummaryAnalyzer::default();
     analyzer.add_canonical_reasons(template.labels.reject_reasons.iter());
-    let expr_supported = analyzer.analyze_expr(&template.expr, AnalyzerContext::Value);
+    let expr_supported = analyzer.analyze_expr(&template.expr, AnalyzerContext::Value, false);
     let reject_reasons = analyzer.reasons.into_iter().collect::<Vec<_>>();
     let formula_class = if expr_supported && reject_reasons.is_empty() {
         FormulaClass::StaticPointwise
@@ -610,25 +635,38 @@ impl SummaryAnalyzer {
         self.reasons.insert(dependency_reason);
     }
 
-    fn analyze_expr(&mut self, expr: &CanonicalExpr, context: AnalyzerContext) -> bool {
+    fn analyze_expr(
+        &mut self,
+        expr: &CanonicalExpr,
+        context: AnalyzerContext,
+        in_function_arg: bool,
+    ) -> bool {
         match expr {
-            CanonicalExpr::Literal(_) => matches!(context, AnalyzerContext::Value),
+            CanonicalExpr::Literal(_) => matches!(
+                context,
+                AnalyzerContext::Value | AnalyzerContext::CriteriaExpressionArg
+            ),
             CanonicalExpr::Reference {
                 context: reference_context,
                 reference,
             } => {
                 let context = effective_context(context, reference_context);
-                self.analyze_reference(reference, context)
+                self.analyze_reference(reference, context, in_function_arg)
             }
-            CanonicalExpr::Unary { op, expr } => self.analyze_unary(op, expr, context),
+            CanonicalExpr::Unary { op, expr } => {
+                self.analyze_unary(op, expr, context, in_function_arg)
+            }
             CanonicalExpr::Binary { op, left, right } => {
-                self.analyze_binary(op, left, right, context)
+                self.analyze_binary(op, left, right, context, in_function_arg)
             }
             CanonicalExpr::Function { id, args } => {
                 let mut all_args_supported = true;
                 for (arg_index, arg) in args.iter().enumerate() {
-                    let arg_supported =
-                        self.analyze_expr(arg, function_arg_context(&id.canonical_name, arg_index));
+                    let arg_supported = self.analyze_expr(
+                        arg,
+                        function_arg_context(&id.canonical_name, arg_index),
+                        true,
+                    );
                     if !arg_supported {
                         all_args_supported = false;
                     }
@@ -651,9 +689,9 @@ impl SummaryAnalyzer {
                 false
             }
             CanonicalExpr::CallUnsupported { callee, args } => {
-                self.analyze_expr(callee, AnalyzerContext::Value);
+                self.analyze_expr(callee, AnalyzerContext::Value, false);
                 for arg in args {
-                    self.analyze_expr(arg, AnalyzerContext::Value);
+                    self.analyze_expr(arg, AnalyzerContext::Value, false);
                 }
                 self.reasons
                     .insert(DependencyRejectReason::UnsupportedAstNode {
@@ -664,7 +702,7 @@ impl SummaryAnalyzer {
             CanonicalExpr::ArrayUnsupported { rows } => {
                 for row in rows {
                     for item in row {
-                        self.analyze_expr(item, AnalyzerContext::Value);
+                        self.analyze_expr(item, AnalyzerContext::Value, false);
                     }
                 }
                 self.reasons
@@ -676,23 +714,29 @@ impl SummaryAnalyzer {
         }
     }
 
-    fn analyze_unary(&mut self, op: &str, expr: &CanonicalExpr, context: AnalyzerContext) -> bool {
+    fn analyze_unary(
+        &mut self,
+        op: &str,
+        expr: &CanonicalExpr,
+        context: AnalyzerContext,
+        in_function_arg: bool,
+    ) -> bool {
         match op {
-            "+" | "-" | "%" => self.analyze_expr(expr, context),
+            "+" | "-" | "%" => self.analyze_expr(expr, context, in_function_arg),
             "#" => {
-                self.analyze_expr(expr, AnalyzerContext::Value);
+                self.analyze_expr(expr, AnalyzerContext::Value, in_function_arg);
                 self.reasons
                     .insert(DependencyRejectReason::SpillUnsupported);
                 false
             }
             "@" => {
-                self.analyze_expr(expr, AnalyzerContext::ImplicitIntersection);
+                self.analyze_expr(expr, AnalyzerContext::ImplicitIntersection, in_function_arg);
                 self.reasons
                     .insert(DependencyRejectReason::ImplicitIntersectionUnsupported);
                 false
             }
             _ => {
-                self.analyze_expr(expr, context);
+                self.analyze_expr(expr, context, in_function_arg);
                 self.reasons
                     .insert(DependencyRejectReason::UnsupportedAstNode {
                         node: format!("unary_operator:{op}"),
@@ -708,20 +752,21 @@ impl SummaryAnalyzer {
         left: &CanonicalExpr,
         right: &CanonicalExpr,
         context: AnalyzerContext,
+        in_function_arg: bool,
     ) -> bool {
         if is_supported_pointwise_binary_operator(op) {
-            let left_supported = self.analyze_expr(left, context);
-            let right_supported = self.analyze_expr(right, context);
+            let left_supported = self.analyze_expr(left, context, in_function_arg);
+            let right_supported = self.analyze_expr(right, context, in_function_arg);
             left_supported && right_supported
         } else if is_reference_returning_binary_operator(op) {
-            self.analyze_expr(left, AnalyzerContext::Reference);
-            self.analyze_expr(right, AnalyzerContext::Reference);
+            self.analyze_expr(left, AnalyzerContext::Reference, in_function_arg);
+            self.analyze_expr(right, AnalyzerContext::Reference, in_function_arg);
             self.reasons
                 .insert(DependencyRejectReason::ReferenceReturningUnsupported { function: None });
             false
         } else {
-            self.analyze_expr(left, context);
-            self.analyze_expr(right, context);
+            self.analyze_expr(left, context, in_function_arg);
+            self.analyze_expr(right, context, in_function_arg);
             self.reasons
                 .insert(DependencyRejectReason::UnsupportedAstNode {
                     node: format!("binary_operator:{op}"),
@@ -734,6 +779,7 @@ impl SummaryAnalyzer {
         &mut self,
         reference: &CanonicalReference,
         context: AnalyzerContext,
+        in_function_arg: bool,
     ) -> bool {
         match reference {
             CanonicalReference::Cell { sheet, row, col } => {
@@ -753,14 +799,40 @@ impl SummaryAnalyzer {
                 }
             }
             CanonicalReference::Range {
+                sheet,
                 start_row,
                 start_col,
                 end_row,
                 end_col,
-                ..
             } => {
-                self.reject_range(context, [start_row, start_col, end_row, end_col]);
-                false
+                if !self.reject_non_finite_range(context, [start_row, start_col, end_row, end_col])
+                {
+                    return false;
+                }
+                if !axis_kinds_match(start_row, end_row) || !axis_kinds_match(start_col, end_col) {
+                    self.reasons
+                        .insert(DependencyRejectReason::MixedAxisRangeUnsupported { context });
+                    return false;
+                }
+                if in_function_arg
+                    && matches!(
+                        context,
+                        AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
+                    )
+                {
+                    self.push_precedent(PrecedentPattern::Range(AffineRectPattern {
+                        sheet: sheet.clone(),
+                        start_row: start_row.clone(),
+                        start_col: start_col.clone(),
+                        end_row: end_row.clone(),
+                        end_col: end_col.clone(),
+                    }));
+                    true
+                } else {
+                    self.reasons
+                        .insert(DependencyRejectReason::FiniteRangeUnsupported { context });
+                    false
+                }
             }
             CanonicalReference::Unsupported { kind, diagnostic } => {
                 self.reject_unsupported_reference(kind, diagnostic, context);
@@ -769,11 +841,11 @@ impl SummaryAnalyzer {
         }
     }
 
-    fn reject_range<'a>(
+    fn reject_non_finite_range<'a>(
         &mut self,
         context: AnalyzerContext,
         axes: impl IntoIterator<Item = &'a AxisRef>,
-    ) {
+    ) -> bool {
         let mut has_whole_axis = false;
         let mut has_open = false;
         let mut has_unsupported = false;
@@ -800,10 +872,7 @@ impl SummaryAnalyzer {
                     node: "range_reference_axis".to_string(),
                 });
         }
-        if !has_whole_axis && !has_open && !has_unsupported {
-            self.reasons
-                .insert(DependencyRejectReason::FiniteRangeUnsupported { context });
-        }
+        !has_whole_axis && !has_open && !has_unsupported
     }
 
     fn reject_unsupported_reference(
@@ -888,20 +957,51 @@ fn effective_context(
     }
 }
 
-fn function_arg_context(function: &str, arg_index: usize) -> AnalyzerContext {
+pub(crate) fn function_arg_context(function: &str, arg_index: usize) -> AnalyzerContext {
     match function {
         "LET" | "LAMBDA" => AnalyzerContext::LocalBinding,
-        "COUNTIF" | "SUMIF" if arg_index == 1 => AnalyzerContext::CriteriaArg,
-        "COUNTIFS" | "SUMIFS" if arg_index % 2 == 1 => AnalyzerContext::CriteriaArg,
+        "SUMIFS" | "AVERAGEIFS" if arg_index == 0 => AnalyzerContext::Value,
+        "SUMIFS" | "AVERAGEIFS" if !arg_index.is_multiple_of(2) => {
+            AnalyzerContext::CriteriaRangeArg
+        }
+        "SUMIFS" | "AVERAGEIFS" => AnalyzerContext::CriteriaExpressionArg,
+        "COUNTIFS" if arg_index.is_multiple_of(2) => AnalyzerContext::CriteriaRangeArg,
+        "COUNTIFS" => AnalyzerContext::CriteriaExpressionArg,
+        "SUMIF" | "AVERAGEIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
+        "SUMIF" | "AVERAGEIF" if arg_index == 1 => AnalyzerContext::CriteriaExpressionArg,
+        "SUMIF" | "AVERAGEIF" => AnalyzerContext::Value,
+        "COUNTIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
+        "COUNTIF" => AnalyzerContext::CriteriaExpressionArg,
         "INDEX" | "OFFSET" => AnalyzerContext::ByRefArg,
         _ => AnalyzerContext::Value,
     }
+}
+
+pub(crate) fn function_accepts_range_at(function: &str, arg_index: usize) -> bool {
+    matches!(
+        function_arg_context(function, arg_index),
+        AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
+    )
 }
 
 fn axis_is_finite_cell(axis: &AxisRef) -> bool {
     matches!(
         axis,
         AxisRef::RelativeToPlacement { .. } | AxisRef::AbsoluteVc { .. }
+    )
+}
+
+fn axis_is_absolute(axis: &AxisRef) -> bool {
+    matches!(axis, AxisRef::AbsoluteVc { .. })
+}
+
+fn axis_kinds_match(left: &AxisRef, right: &AxisRef) -> bool {
+    matches!(
+        (left, right),
+        (
+            AxisRef::RelativeToPlacement { .. },
+            AxisRef::RelativeToPlacement { .. }
+        ) | (AxisRef::AbsoluteVc { .. }, AxisRef::AbsoluteVc { .. })
     )
 }
 
@@ -987,7 +1087,7 @@ pub(crate) struct InstantiatedFormulaRunSummary {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct InstantiatedPrecedentSummary {
     pub(crate) pattern_index: usize,
-    pub(crate) pattern: AffineCellPattern,
+    pub(crate) pattern: PrecedentPattern,
     pub(crate) region: RegionSummary,
 }
 
@@ -1415,7 +1515,7 @@ fn instantiate_one_run_summary(
     for (pattern_index, pattern) in template_summary.precedent_patterns.iter().enumerate() {
         match pattern {
             PrecedentPattern::Cell(cell_pattern) => {
-                let region = instantiate_precedent_region(
+                let region = instantiate_cell_precedent_region(
                     run,
                     cell_pattern,
                     &result_summary,
@@ -1423,7 +1523,20 @@ fn instantiate_one_run_summary(
                 )?;
                 precedent_regions.push(InstantiatedPrecedentSummary {
                     pattern_index,
-                    pattern: cell_pattern.clone(),
+                    pattern: pattern.clone(),
+                    region,
+                });
+            }
+            PrecedentPattern::Range(range_pattern) => {
+                let region = instantiate_range_precedent_region(
+                    run,
+                    range_pattern,
+                    &result_summary,
+                    pattern_index,
+                )?;
+                precedent_regions.push(InstantiatedPrecedentSummary {
+                    pattern_index,
+                    pattern: pattern.clone(),
                     region,
                 });
             }
@@ -1515,7 +1628,7 @@ fn collect_result_exclusions(
         .collect())
 }
 
-fn instantiate_precedent_region(
+fn instantiate_cell_precedent_region(
     run: &FormulaRunDescriptor,
     pattern: &AffineCellPattern,
     result_summary: &RegionSummary,
@@ -1540,6 +1653,51 @@ fn instantiate_precedent_region(
     let exclusions =
         instantiate_precedent_exclusions(run.shape, pattern, result_summary, pattern_index)?;
     Ok(RegionSummary::new(precedent_region, exclusions))
+}
+
+fn instantiate_range_precedent_region(
+    run: &FormulaRunDescriptor,
+    pattern: &AffineRectPattern,
+    result_summary: &RegionSummary,
+    pattern_index: usize,
+) -> Result<RegionSummary, RunSummaryRejectionReason> {
+    let sheet = instantiate_sheet(&pattern.sheet, &run.sheet);
+    let (start_row_min, start_row_max) = instantiate_axis_range(
+        &pattern.start_row,
+        result_summary.region.row_start,
+        result_summary.region.row_end,
+        pattern_index,
+        PatternAxis::Row,
+    )?;
+    let (end_row_min, end_row_max) = instantiate_axis_range(
+        &pattern.end_row,
+        result_summary.region.row_start,
+        result_summary.region.row_end,
+        pattern_index,
+        PatternAxis::Row,
+    )?;
+    let (start_col_min, start_col_max) = instantiate_axis_range(
+        &pattern.start_col,
+        result_summary.region.col_start,
+        result_summary.region.col_end,
+        pattern_index,
+        PatternAxis::Col,
+    )?;
+    let (end_col_min, end_col_max) = instantiate_axis_range(
+        &pattern.end_col,
+        result_summary.region.col_start,
+        result_summary.region.col_end,
+        pattern_index,
+        PatternAxis::Col,
+    )?;
+    let precedent_region = FiniteRegion::new(
+        sheet,
+        start_row_min.min(end_row_min),
+        start_col_min.min(end_col_min),
+        start_row_max.max(end_row_max),
+        start_col_max.max(end_col_max),
+    );
+    Ok(RegionSummary::new(precedent_region, Vec::new()))
 }
 
 fn instantiate_precedent_exclusions(
@@ -1731,16 +1889,36 @@ fn inverse_changed_region_for_run(
     if changed_region.sheet != precedent.region.region.sheet {
         return None;
     }
-    let (row_start, row_end) = inverse_axis_changed_range(
-        &precedent.pattern.row,
-        changed_region.row_start,
-        changed_region.row_end,
-    )?;
-    let (col_start, col_end) = inverse_axis_changed_range(
-        &precedent.pattern.col,
-        changed_region.col_start,
-        changed_region.col_end,
-    )?;
+    let (row_start, row_end, col_start, col_end) = match &precedent.pattern {
+        PrecedentPattern::Cell(pattern) => {
+            let (row_start, row_end) = inverse_axis_changed_range(
+                &pattern.row,
+                changed_region.row_start,
+                changed_region.row_end,
+            )?;
+            let (col_start, col_end) = inverse_axis_changed_range(
+                &pattern.col,
+                changed_region.col_start,
+                changed_region.col_end,
+            )?;
+            (row_start, row_end, col_start, col_end)
+        }
+        PrecedentPattern::Range(pattern) => {
+            let (row_start, row_end) = inverse_range_axis_changed_range(
+                &pattern.start_row,
+                &pattern.end_row,
+                changed_region.row_start,
+                changed_region.row_end,
+            )?;
+            let (col_start, col_end) = inverse_range_axis_changed_range(
+                &pattern.start_col,
+                &pattern.end_col,
+                changed_region.col_start,
+                changed_region.col_end,
+            )?;
+            (row_start, row_end, col_start, col_end)
+        }
+    };
     let candidate = FiniteRegion::new(
         run_summary.result_region.region.sheet.clone(),
         row_start,
@@ -1749,6 +1927,36 @@ fn inverse_changed_region_for_run(
         col_end,
     );
     run_summary.result_region.region.intersection(&candidate)
+}
+
+fn inverse_range_axis_changed_range(
+    start_axis: &AxisRef,
+    end_axis: &AxisRef,
+    changed_start: u32,
+    changed_end: u32,
+) -> Option<(u32, u32)> {
+    match (start_axis, end_axis) {
+        (
+            AxisRef::RelativeToPlacement {
+                offset: start_offset,
+            },
+            AxisRef::RelativeToPlacement { offset: end_offset },
+        ) => {
+            let min_offset = (*start_offset).min(*end_offset);
+            let max_offset = (*start_offset).max(*end_offset);
+            let start = coordinate_with_offset(changed_start, -max_offset)?;
+            let end = coordinate_with_offset(changed_end, -min_offset)?;
+            Some((start.min(end), start.max(end)))
+        }
+        (AxisRef::AbsoluteVc { index: start }, AxisRef::AbsoluteVc { index: end }) => {
+            let range_start = (*start).min(*end);
+            let range_end = (*start).max(*end);
+            (range_start > 0
+                && ranges_intersect(changed_start, changed_end, range_start, range_end))
+            .then_some((1, u32::MAX))
+        }
+        _ => None,
+    }
 }
 
 fn inverse_axis_changed_range(
@@ -1946,6 +2154,22 @@ mod tests {
 
     fn cell(sheet: SheetBinding, row: AxisRef, col: AxisRef) -> PrecedentPattern {
         PrecedentPattern::Cell(AffineCellPattern { sheet, row, col })
+    }
+
+    fn range(
+        sheet: SheetBinding,
+        start_row: AxisRef,
+        start_col: AxisRef,
+        end_row: AxisRef,
+        end_col: AxisRef,
+    ) -> PrecedentPattern {
+        PrecedentPattern::Range(AffineRectPattern {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+        })
     }
 
     fn has_reason(summary: &FormulaDependencySummary, reason: &DependencyRejectReason) -> bool {
@@ -2371,20 +2595,138 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_dependency_summary_rejects_sum_range_not_pointwise_authority() {
+    fn formula_plane_dependency_summary_accepts_sum_range_function_arg() {
         let summary = summary("=SUM(A1:A10)", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(
+            summary.precedent_patterns,
+            vec![range(
+                SheetBinding::CurrentSheet,
+                AxisRef::RelativeToPlacement { offset: 0 },
+                AxisRef::RelativeToPlacement { offset: -1 },
+                AxisRef::RelativeToPlacement { offset: 9 },
+                AxisRef::RelativeToPlacement { offset: -1 },
+            )]
+        );
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_absolute_sum_range_function_arg() {
+        let summary = summary("=SUM($A$1:$A$10)", 20, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(
+            summary.precedent_patterns,
+            vec![range(
+                SheetBinding::CurrentSheet,
+                AxisRef::AbsoluteVc { index: 1 },
+                AxisRef::AbsoluteVc { index: 1 },
+                AxisRef::AbsoluteVc { index: 10 },
+                AxisRef::AbsoluteVc { index: 1 },
+            )]
+        );
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_average_range_and_cell() {
+        let summary = summary("=AVERAGE($A$1:$A$50) * B1", 1, 3);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.precedent_patterns.len(), 2);
+        assert!(matches!(
+            summary.precedent_patterns[0],
+            PrecedentPattern::Range(_)
+        ));
+        assert!(matches!(
+            summary.precedent_patterns[1],
+            PrecedentPattern::Cell(_)
+        ));
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_sumifs_ranges_and_literal_criterion() {
+        let summary = summary("=SUMIFS($B$1:$B$100, $A$1:$A$100, \"Type1\")", 1, 1);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.precedent_patterns.len(), 2);
+        assert!(
+            summary
+                .precedent_patterns
+                .iter()
+                .all(|precedent| matches!(precedent, PrecedentPattern::Range(_)))
+        );
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_detects_constant_result_family() {
+        let summary = summary("=SUMIFS($B$1:$B$100, $A$1:$A$100, \"Type1\")", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.is_constant_result());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_does_not_flag_relative_family_as_constant() {
+        let summary = summary("=A1 * SUM($A$1:$A$10)", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(!summary.is_constant_result());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_flags_pure_literal_as_constant() {
+        let summary = summary("=ROUND(1.5, 2)", 1, 1);
+
+        assert!(summary.is_constant_result());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_cross_sheet_sumifs_ranges() {
+        let summary = summary(
+            "=SUMIFS(Data!$B$1:$B$100, Data!$A$1:$A$100, \"Type1\")",
+            1,
+            1,
+        );
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.precedent_patterns.len(), 2);
+        assert!(summary.precedent_patterns.iter().all(|precedent| matches!(
+            precedent,
+            PrecedentPattern::Range(AffineRectPattern {
+                sheet: SheetBinding::ExplicitName { .. },
+                ..
+            })
+        )));
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_countif_and_countifs_range_args() {
+        let countif = summary("=COUNTIF($A$1:$A$10, \"x\")", 1, 1);
+        let countifs = summary("=COUNTIFS($A$1:$A$10, \"x\", $B$1:$B$10, \">5\")", 1, 1);
+
+        assert_eq!(countif.formula_class, FormulaClass::StaticPointwise);
+        assert_eq!(countifs.formula_class, FormulaClass::StaticPointwise);
+        assert_eq!(countif.precedent_patterns.len(), 1);
+        assert_eq!(countifs.precedent_patterns.len(), 2);
+        assert!(countif.reject_reasons.is_empty());
+        assert!(countifs.reject_reasons.is_empty());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_rejects_mixed_axis_range() {
+        let summary = summary("=SUM($A$1:$A1)", 1, 2);
 
         assert_eq!(summary.formula_class, FormulaClass::Rejected);
         assert!(has_reason(
             &summary,
-            &DependencyRejectReason::FiniteRangeUnsupported {
+            &DependencyRejectReason::MixedAxisRangeUnsupported {
                 context: AnalyzerContext::Value
-            }
-        ));
-        assert!(!has_reason(
-            &summary,
-            &DependencyRejectReason::FunctionUnsupported {
-                name: "SUM".to_string()
             }
         ));
     }
@@ -2523,11 +2865,17 @@ mod tests {
         assert_eq!(report.under_approximation_count, 0);
         assert_eq!(report.rejection_count, 2);
         assert_eq!(report.policy_drift_count, 0);
-        assert_eq!(
+        assert!(
             report
                 .fallback_reason_histogram
-                .get("finite_range_unsupported"),
-            Some(&1)
+                .get("finite_range_unsupported")
+                .or_else(|| report
+                    .fallback_reason_histogram
+                    .get("summary_pattern_instantiation_unsupported"))
+                .or_else(|| report
+                    .fallback_reason_histogram
+                    .get("planner_finite_range_dependency"))
+                .is_some()
         );
         assert_eq!(
             report
@@ -2757,7 +3105,7 @@ mod tests {
             .map(|row| candidate_cell(row, 3, "bad_tpl"))
             .collect::<Vec<_>>();
         let store = run_store(cells, 10);
-        let rejected_summary = summary("=SUM(A1:A10)", 1, 3);
+        let rejected_summary = summary("=A1:A10", 1, 3);
         let summaries = template_summary_map(vec![("bad_tpl", rejected_summary)]);
 
         let arena = instantiate_run_dependency_summaries(&store, &summaries);

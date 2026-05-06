@@ -1786,7 +1786,7 @@ mod tests {
 
     #[test]
     fn dependency_summaries_reject_unsupported_templates_without_mapping() {
-        let scanned = classify_formulas(vec![raw_formula("B1", 1, 2, "SUM(A1:A10)")]);
+        let scanned = classify_formulas(vec![raw_formula("B1", 1, 2, "A1:A10")]);
         let output = summarize(PathBuf::from("unsupported.xlsx"), scanned, None)
             .expect("summarize unsupported workbook");
 

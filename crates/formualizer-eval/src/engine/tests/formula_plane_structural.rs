@@ -141,6 +141,38 @@ fn formula_plane_authoritative_row_insert_on_cross_sheet_read_sheet_demotes_span
 }
 
 #[test]
+fn formula_plane_authoritative_range_precedent_dirty_propagation_through_structural_op() {
+    let mut engine = authoritative_engine();
+    engine.add_sheet("Data").unwrap();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Data", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+    }
+    let mut formulas = Vec::new();
+    for row in 1..=10 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(
+            &mut engine,
+            row,
+            2,
+            &format!("=SUM(Data!$A$1:$A$100)+A{row}"),
+        ));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.insert_rows("Data", 50, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+}
+
+#[test]
 fn formula_plane_authoritative_row_insert_shifts_span_outputs_correctly() {
     let mut engine = build_single_formula_column_family(5);
 

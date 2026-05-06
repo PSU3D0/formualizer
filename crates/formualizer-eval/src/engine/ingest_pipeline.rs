@@ -14,6 +14,9 @@ use crate::engine::graph::DependencyGraph;
 use crate::engine::plan::{DependencyPlan, F_HAS_NAMES, F_HAS_RANGES, F_HAS_TABLES, F_VOLATILE};
 use crate::engine::sheet_registry::SheetRegistry;
 use crate::engine::vertex::VertexId;
+use crate::formula_plane::dependency_summary::{
+    AnalyzerContext, function_accepts_range_at, function_arg_context,
+};
 use crate::formula_plane::producer::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
     SpanReadDependency, SpanReadSummary,
@@ -777,66 +780,138 @@ fn compute_read_projections(
     placement: CellRef,
     sheet_registry: &SheetRegistry,
 ) -> Result<Vec<ReadProjection>, ProjectionFallbackReason> {
+    fn axis_projection(index: u32, is_abs: bool, anchor: i64) -> AxisProjection {
+        if is_abs {
+            AxisProjection::Absolute {
+                index: index.saturating_sub(1),
+            }
+        } else {
+            AxisProjection::Relative {
+                offset: i64::from(index) - anchor,
+            }
+        }
+    }
+
+    fn push_projection(projections: &mut Vec<ReadProjection>, read_projection: ReadProjection) {
+        if !projections.contains(&read_projection) {
+            projections.push(read_projection);
+        }
+    }
+
     fn visit(
         ast: &ASTNode,
         placement: CellRef,
         sheet_registry: &SheetRegistry,
         projections: &mut Vec<ReadProjection>,
+        context: AnalyzerContext,
+        in_function_arg: bool,
     ) -> Result<(), ProjectionFallbackReason> {
         match &ast.node_type {
-            ASTNodeType::Literal(_) => Ok(()),
+            ASTNodeType::Literal(_) => {
+                if matches!(
+                    context,
+                    AnalyzerContext::Value | AnalyzerContext::CriteriaExpressionArg
+                ) {
+                    Ok(())
+                } else {
+                    Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+                }
+            }
             ASTNodeType::Reference { reference, .. } => {
-                let ReferenceType::Cell {
-                    sheet,
-                    row,
-                    col,
-                    row_abs,
-                    col_abs,
-                } = reference
-                else {
-                    return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                };
-                let target_sheet_id = match sheet {
-                    Some(name) => sheet_registry
-                        .get_id(name)
-                        .ok_or(ProjectionFallbackReason::UnsupportedSheetBinding)?,
-                    None => placement.sheet_id,
+                let target_sheet_id = match reference {
+                    ReferenceType::Cell { sheet, .. } | ReferenceType::Range { sheet, .. } => {
+                        match sheet {
+                            Some(name) => sheet_registry
+                                .get_id(name)
+                                .ok_or(ProjectionFallbackReason::UnsupportedSheetBinding)?,
+                            None => placement.sheet_id,
+                        }
+                    }
+                    _ => return Err(ProjectionFallbackReason::UnsupportedDependencySummary),
                 };
                 let anchor_row = placement.coord.row() as i64 + 1;
                 let anchor_col = placement.coord.col() as i64 + 1;
-                let row_projection = if *row_abs {
-                    AxisProjection::Absolute {
-                        index: row.saturating_sub(1),
+                match reference {
+                    ReferenceType::Cell {
+                        row,
+                        col,
+                        row_abs,
+                        col_abs,
+                        ..
+                    } => {
+                        push_projection(
+                            projections,
+                            ReadProjection {
+                                target_sheet_id,
+                                rule: DirtyProjectionRule::AffineCell {
+                                    row: axis_projection(*row, *row_abs, anchor_row),
+                                    col: axis_projection(*col, *col_abs, anchor_col),
+                                },
+                            },
+                        );
+                        Ok(())
                     }
-                } else {
-                    AxisProjection::Relative {
-                        offset: i64::from(*row) - anchor_row,
+                    ReferenceType::Range {
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                        start_row_abs,
+                        start_col_abs,
+                        end_row_abs,
+                        end_col_abs,
+                        ..
+                    } => {
+                        if !in_function_arg
+                            || !matches!(
+                                context,
+                                AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
+                            )
+                        {
+                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                        }
+                        let (Some(start_row), Some(start_col), Some(end_row), Some(end_col)) =
+                            (start_row, start_col, end_row, end_col)
+                        else {
+                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                        };
+                        if start_row_abs != end_row_abs || start_col_abs != end_col_abs {
+                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                        }
+                        push_projection(
+                            projections,
+                            ReadProjection {
+                                target_sheet_id,
+                                rule: DirtyProjectionRule::AffineRange {
+                                    row_start: axis_projection(
+                                        *start_row,
+                                        *start_row_abs,
+                                        anchor_row,
+                                    ),
+                                    row_end: axis_projection(*end_row, *end_row_abs, anchor_row),
+                                    col_start: axis_projection(
+                                        *start_col,
+                                        *start_col_abs,
+                                        anchor_col,
+                                    ),
+                                    col_end: axis_projection(*end_col, *end_col_abs, anchor_col),
+                                },
+                            },
+                        );
+                        Ok(())
                     }
-                };
-                let col_projection = if *col_abs {
-                    AxisProjection::Absolute {
-                        index: col.saturating_sub(1),
-                    }
-                } else {
-                    AxisProjection::Relative {
-                        offset: i64::from(*col) - anchor_col,
-                    }
-                };
-                let projection = DirtyProjectionRule::AffineCell {
-                    row: row_projection,
-                    col: col_projection,
-                };
-                let read_projection = ReadProjection {
-                    target_sheet_id,
-                    rule: projection,
-                };
-                if !projections.contains(&read_projection) {
-                    projections.push(read_projection);
+                    _ => Err(ProjectionFallbackReason::UnsupportedDependencySummary),
                 }
-                Ok(())
             }
             ASTNodeType::UnaryOp { op, expr } => match op.as_str() {
-                "+" | "-" | "%" => visit(expr, placement, sheet_registry, projections),
+                "+" | "-" | "%" => visit(
+                    expr,
+                    placement,
+                    sheet_registry,
+                    projections,
+                    context,
+                    in_function_arg,
+                ),
                 _ => Err(ProjectionFallbackReason::UnsupportedDependencySummary),
             },
             ASTNodeType::BinaryOp { op, left, right } => {
@@ -846,18 +921,44 @@ fn compute_read_projections(
                 ) {
                     return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                 }
-                visit(left, placement, sheet_registry, projections)?;
-                visit(right, placement, sheet_registry, projections)
+                visit(
+                    left,
+                    placement,
+                    sheet_registry,
+                    projections,
+                    context,
+                    in_function_arg,
+                )?;
+                visit(
+                    right,
+                    placement,
+                    sheet_registry,
+                    projections,
+                    context,
+                    in_function_arg,
+                )
             }
             ASTNodeType::Function { name, args } => {
                 let canonical_name = normalize_function_name(name);
                 if !is_known_static_function(&canonical_name) {
                     return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                 }
-                for arg in args {
-                    visit(arg, placement, sheet_registry, projections)?;
+                for (arg_index, arg) in args.iter().enumerate() {
+                    let arg_context = function_arg_context(&canonical_name, arg_index);
+                    visit(
+                        arg,
+                        placement,
+                        sheet_registry,
+                        projections,
+                        arg_context,
+                        function_accepts_range_at(&canonical_name, arg_index),
+                    )?;
                 }
-                Ok(())
+                if matches!(context, AnalyzerContext::Value) {
+                    Ok(())
+                } else {
+                    Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+                }
             }
             ASTNodeType::Call { .. } | ASTNodeType::Array(_) => {
                 Err(ProjectionFallbackReason::UnsupportedDependencySummary)
@@ -866,7 +967,14 @@ fn compute_read_projections(
     }
 
     let mut projections = Vec::new();
-    visit(ast, placement, sheet_registry, &mut projections)?;
+    visit(
+        ast,
+        placement,
+        sheet_registry,
+        &mut projections,
+        AnalyzerContext::Value,
+        false,
+    )?;
     Ok(projections)
 }
 
@@ -1325,6 +1433,54 @@ mod tests {
     use crate::engine::{Engine, EvalConfig};
     use crate::test_workbook::TestWorkbook;
     use formualizer_parse::parser::parse;
+
+    fn read_projections_for(formula: &str, row: u32, col: u32) -> Vec<ReadProjection> {
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet = sheet_registry.id_for("Sheet1");
+        let ast = parse(formula).unwrap();
+        compute_read_projections(
+            &ast,
+            CellRef::new(sheet, Coord::from_excel(row, col, true, true)),
+            &sheet_registry,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn formula_plane_ingest_read_projections_accept_function_arg_range() {
+        let projections = read_projections_for("=SUM(A1:A10)", 1, 2);
+
+        assert_eq!(
+            projections,
+            vec![ReadProjection {
+                target_sheet_id: 0,
+                rule: DirtyProjectionRule::AffineRange {
+                    row_start: AxisProjection::Relative { offset: 0 },
+                    row_end: AxisProjection::Relative { offset: 9 },
+                    col_start: AxisProjection::Relative { offset: -1 },
+                    col_end: AxisProjection::Relative { offset: -1 },
+                },
+            }]
+        );
+    }
+
+    #[test]
+    fn formula_plane_ingest_read_projections_reject_top_level_and_mixed_ranges() {
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet = sheet_registry.id_for("Sheet1");
+        let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
+        let top_level = parse("=A1:A10").unwrap();
+        let mixed = parse("=SUM($A$1:$A1)").unwrap();
+
+        assert_eq!(
+            compute_read_projections(&top_level, placement, &sheet_registry),
+            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+        );
+        assert_eq!(
+            compute_read_projections(&mixed, placement, &sheet_registry),
+            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+        );
+    }
 
     #[test]
     fn engine_constructs_and_runs_ingest_pipeline() {

@@ -287,6 +287,7 @@ pub(crate) struct FormulaSpan {
     pub(crate) result_region: ResultRegion,
     pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
     pub(crate) read_summary_id: Option<SpanReadSummaryId>,
+    pub(crate) is_constant_result: bool,
     pub(crate) state: SpanState,
     pub(crate) version: u32,
 }
@@ -299,6 +300,7 @@ pub(crate) struct NewFormulaSpan {
     pub(crate) result_region: ResultRegion,
     pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
     pub(crate) read_summary_id: Option<SpanReadSummaryId>,
+    pub(crate) is_constant_result: bool,
 }
 
 #[derive(Debug)]
@@ -338,6 +340,7 @@ impl SpanStore {
             result_region: new_span.result_region,
             intrinsic_mask_id: new_span.intrinsic_mask_id,
             read_summary_id: new_span.read_summary_id,
+            is_constant_result: new_span.is_constant_result,
             state: SpanState::Active,
             version,
         };
@@ -733,6 +736,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            is_constant_result: false,
         }
     }
 
@@ -834,6 +838,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            is_constant_result: false,
         });
     }
 

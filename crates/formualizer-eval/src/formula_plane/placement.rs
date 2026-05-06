@@ -18,7 +18,8 @@ use crate::engine::sheet_registry::SheetRegistry;
 use super::dependency_summary::{FormulaClass, summarize_canonical_template};
 use super::ids::FormulaTemplateId;
 use super::producer::{
-    ProjectionFallbackReason, ReadProjection, SpanReadDependency, SpanReadSummary,
+    AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
+    SpanReadDependency, SpanReadSummary,
 };
 use super::region_index::RegionPattern;
 use super::runtime::{
@@ -147,6 +148,7 @@ pub(crate) struct CandidateAnalysis {
     canonical_hash: u64,
     canonical_key: Arc<str>,
     read_projections: Vec<ReadProjection>,
+    is_constant_result: bool,
 }
 
 impl CandidateAnalysis {
@@ -170,6 +172,9 @@ impl CandidateAnalysis {
                 PlacementFallbackReason::UnsupportedDependencySummary
             }
         })?;
+        let is_constant_result = read_projections
+            .iter()
+            .all(|read_projection| is_constant_projection(&read_projection.rule));
         Ok(Self {
             sheet_id: candidate.sheet_id,
             row: candidate.row,
@@ -177,8 +182,33 @@ impl CandidateAnalysis {
             canonical_hash: ingested.canonical_hash,
             canonical_key: Arc::<str>::from(format!("fp8:{:016x}", ingested.canonical_hash)),
             read_projections,
+            is_constant_result,
         })
     }
+}
+
+fn is_constant_projection(rule: &DirtyProjectionRule) -> bool {
+    match rule {
+        DirtyProjectionRule::AffineCell { row, col } => {
+            axis_projection_is_absolute(row) && axis_projection_is_absolute(col)
+        }
+        DirtyProjectionRule::AffineRange {
+            row_start,
+            row_end,
+            col_start,
+            col_end,
+        } => {
+            axis_projection_is_absolute(row_start)
+                && axis_projection_is_absolute(row_end)
+                && axis_projection_is_absolute(col_start)
+                && axis_projection_is_absolute(col_end)
+        }
+        DirtyProjectionRule::WholeResult => false,
+    }
+}
+
+fn axis_projection_is_absolute(projection: &AxisProjection) -> bool {
+    matches!(projection, AxisProjection::Absolute { .. })
 }
 
 pub(crate) fn analyze_candidate(
@@ -243,6 +273,7 @@ pub(crate) fn analyze_candidate(
         canonical_hash: hasher.finish(),
         canonical_key: Arc::<str>::from(payload),
         read_projections,
+        is_constant_result: summary.is_constant_result(),
     })
 }
 
@@ -391,6 +422,7 @@ fn place_analyzed_family(
         domain,
         intrinsic_mask_id: None,
         read_summary_id: Some(read_summary_id),
+        is_constant_result: first.is_constant_result,
     });
 
     report.counters.spans_created = 1;
@@ -558,8 +590,10 @@ mod tests {
 
     use super::super::runtime::FormulaResolution;
     use super::*;
-    use crate::engine::arena::DataStore;
+    use crate::engine::arena::{CanonicalLabels, DataStore};
+    use crate::engine::ingest_pipeline::DependencyPlanRow;
     use crate::engine::sheet_registry::SheetRegistry;
+    use crate::reference::CellRef;
 
     fn candidate(
         data_store: &mut DataStore,
@@ -708,18 +742,19 @@ mod tests {
 
     #[test]
     fn rect_anchored_external_reads_promotes_to_span() {
-        // 2x2 rect of `=$A$1+1` cells. Reads are anchored to a single cell
-        // outside the rect, so no internal dependency.
+        // 2x2 rect of `=$A<row>+1` cells. Reads use a relative row but an
+        // absolute column outside the rect, so there is no internal dependency
+        // and the result varies by placement.
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=$A$1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A$1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=$A$1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=$A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=$A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A3+1"),
             ],
             &data_store,
             &sheet_registry,
@@ -734,6 +769,57 @@ mod tests {
             plane.spans.get(span).unwrap().domain,
             PlacementDomain::Rect { .. }
         ));
+    }
+
+    #[test]
+    fn placement_promotes_constant_result_family_and_marks_span() {
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let report = place_candidate_family(
+            &mut plane,
+            vec![
+                candidate(&mut data_store, &sheet_registry, 0, 0, 0, "=$Z$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 0, "=$Z$1+1"),
+            ],
+            &data_store,
+            &sheet_registry,
+        );
+
+        assert_eq!(report.counters.accepted_span_cells, 2);
+        assert_eq!(report.counters.spans_created, 1);
+        let FormulaPlacementResult::Span { span, .. } = report.results[0] else {
+            panic!("expected span result");
+        };
+        assert!(plane.spans.get(span).unwrap().is_constant_result);
+    }
+
+    #[test]
+    fn placement_from_ingested_marks_constant_result_family() {
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let candidate = candidate(&mut data_store, &sheet_registry, 0, 0, 0, "=$Z$1+1");
+        let ingested = IngestedFormula {
+            ast_id: candidate.ast_id,
+            placement: CellRef::new_absolute(0, 1, 1),
+            canonical_hash: 0x1234,
+            labels: CanonicalLabels::default(),
+            dep_plan: DependencyPlanRow::default(),
+            read_summary: None,
+            read_projections: Some(vec![ReadProjection {
+                target_sheet_id: 0,
+                rule: DirtyProjectionRule::AffineCell {
+                    row: AxisProjection::Absolute { index: 0 },
+                    col: AxisProjection::Absolute { index: 0 },
+                },
+            }]),
+            read_projection_fallback: None,
+            formula_text: None,
+        };
+
+        let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested).unwrap();
+
+        assert!(analysis.is_constant_result);
     }
 
     #[test]
@@ -766,8 +852,8 @@ mod tests {
         let report = place_candidate_family(
             &mut plane,
             vec![
-                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=SUM(A1:A2)"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=SUM(A2:A3)"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 2, "=A1:A2"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=A2:A3"),
             ],
             &data_store,
             &sheet_registry,

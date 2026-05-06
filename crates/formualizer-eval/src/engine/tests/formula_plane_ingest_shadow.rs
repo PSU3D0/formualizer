@@ -183,6 +183,176 @@ fn formula_plane_authoritative_cross_sheet_family_promotes_and_dirty_propagates(
 }
 
 #[test]
+fn formula_plane_authoritative_sum_static_range_family_promotes() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    for row in 1..=10 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+    }
+
+    let mut formulas = Vec::new();
+    for row in 1..=20 {
+        formulas.push(record(
+            &mut engine,
+            row,
+            2,
+            &format!("=A{row} * SUM($A$1:$A$10)"),
+        ));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .expect("authoritative ingest");
+    assert!(engine.baseline_stats().formula_plane_active_span_count > 0);
+
+    engine.evaluate_all().expect("initial range evaluate");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 2),
+        Some(LiteralValue::Number(5.0 * 55.0))
+    );
+
+    engine
+        .set_cell_value("Sheet1", 5, 1, LiteralValue::Number(100.0))
+        .unwrap();
+    engine.evaluate_all().expect("dirty range evaluate");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 2),
+        Some(LiteralValue::Number(100.0 * 150.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 10, 2),
+        Some(LiteralValue::Number(10.0 * 150.0))
+    );
+}
+
+#[test]
+fn formula_plane_authoritative_sumifs_family_promotes() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.add_sheet("Data").unwrap();
+    let mut expected = 0.0;
+    for row in 1..=100 {
+        let category = if row % 3 == 1 { "Type1" } else { "Type0" };
+        let value = row as f64;
+        if category == "Type1" {
+            expected += value;
+        }
+        engine
+            .set_cell_value("Data", row, 1, LiteralValue::Text(category.to_string()))
+            .unwrap();
+        engine
+            .set_cell_value("Data", row, 2, LiteralValue::Number(value))
+            .unwrap();
+    }
+
+    let mut formulas = Vec::new();
+    for row in 1..=50 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(
+            &mut engine,
+            row,
+            2,
+            &format!("=SUMIFS(Data!$B$1:$B$100, Data!$A$1:$A$100, \"Type1\") + A{row}"),
+        ));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .expect("authoritative ingest");
+    let stats = engine.baseline_stats();
+    assert!(stats.formula_plane_active_span_count > 0);
+
+    engine.evaluate_all().expect("initial sumifs evaluate");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(expected + 1.0))
+    );
+
+    engine
+        .set_cell_value("Data", 4, 2, LiteralValue::Number(1000.0))
+        .unwrap();
+    let updated_expected = expected - 4.0 + 1000.0;
+    engine.evaluate_all().expect("dirty sumifs evaluate");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(updated_expected + 50.0))
+    );
+}
+
+#[test]
+fn formula_plane_authoritative_constant_sumifs_family_promotes_via_broadcast() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.add_sheet("Data").unwrap();
+    let mut expected = 0.0;
+    for row in 1..=100 {
+        let category = if row % 3 == 1 { "Type1" } else { "Type0" };
+        let value = row as f64;
+        if category == "Type1" {
+            expected += value;
+        }
+        engine
+            .set_cell_value("Data", row, 1, LiteralValue::Text(category.to_string()))
+            .unwrap();
+        engine
+            .set_cell_value("Data", row, 2, LiteralValue::Number(value))
+            .unwrap();
+    }
+
+    let mut formulas = Vec::new();
+    for row in 1..=50 {
+        formulas.push(record(
+            &mut engine,
+            row,
+            2,
+            "=SUMIFS(Data!$B$1:$B$100, Data!$A$1:$A$100, \"Type1\")",
+        ));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .expect("authoritative ingest");
+    let stats = engine.baseline_stats();
+    assert_eq!(stats.formula_plane_active_span_count, 1);
+
+    engine
+        .evaluate_all()
+        .expect("initial constant sumifs evaluate");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(expected))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 25, 2),
+        Some(LiteralValue::Number(expected))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(expected))
+    );
+
+    engine
+        .set_cell_value("Data", 4, 2, LiteralValue::Number(1000.0))
+        .unwrap();
+    let updated_expected = expected - 4.0 + 1000.0;
+    engine
+        .evaluate_all()
+        .expect("dirty constant sumifs evaluate");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(updated_expected))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(updated_expected))
+    );
+}
+
+#[test]
 fn formula_plane_authoritative_evaluate_all_orders_span_chain() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -292,13 +462,16 @@ fn formula_plane_authoritative_mixed_legacy_to_span_evaluates() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
 
     let batches = vec![FormulaIngestBatch::new(
         "Sheet1",
         vec![
             record(&mut engine, 1, 1, "=1+1"),
-            record(&mut engine, 1, 2, "=$A$1+1"),
-            record(&mut engine, 2, 2, "=$A$1+1"),
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
         ],
     )];
     let report = engine
@@ -421,12 +594,15 @@ fn formula_plane_source_invalidation_uses_conservative_whole_span_dirty() {
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
         .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(5.0))
+        .unwrap();
 
     let batches = vec![FormulaIngestBatch::new(
         "Sheet1",
         vec![
-            record(&mut engine, 1, 2, "=$A$1+1"),
-            record(&mut engine, 2, 2, "=$A$1+1"),
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
         ],
     )];
     let report = engine.ingest_formula_batches(batches).unwrap();
@@ -453,12 +629,15 @@ fn formula_plane_row_visibility_change_redirties_absolute_anchor_span() {
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
         .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(5.0))
+        .unwrap();
 
     let batches = vec![FormulaIngestBatch::new(
         "Sheet1",
         vec![
-            record(&mut engine, 1, 2, "=$A$1+1"),
-            record(&mut engine, 2, 2, "=$A$1+1"),
+            record(&mut engine, 1, 2, "=$A$1+A1*0+1"),
+            record(&mut engine, 2, 2, "=$A$1+A2*0+1"),
         ],
     )];
     engine.ingest_formula_batches(batches).unwrap();
@@ -486,12 +665,15 @@ fn formula_plane_insert_rows_conservatively_redirties_sheet_spans() {
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
         .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(5.0))
+        .unwrap();
 
     let batches = vec![FormulaIngestBatch::new(
         "Sheet1",
         vec![
-            record(&mut engine, 1, 2, "=$A$1+1"),
-            record(&mut engine, 2, 2, "=$A$1+1"),
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
         ],
     )];
     engine.ingest_formula_batches(batches).unwrap();
@@ -514,12 +696,15 @@ fn formula_plane_remove_sheet_redirties_surviving_spans() {
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.0))
         .unwrap();
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(5.0))
+        .unwrap();
 
     let batches = vec![FormulaIngestBatch::new(
         "Sheet1",
         vec![
-            record(&mut engine, 1, 2, "=$A$1+1"),
-            record(&mut engine, 2, 2, "=$A$1+1"),
+            record(&mut engine, 1, 2, "=A1+1"),
+            record(&mut engine, 2, 2, "=A2+1"),
         ],
     )];
     let report = engine.ingest_formula_batches(batches).unwrap();

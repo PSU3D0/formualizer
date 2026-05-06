@@ -124,6 +124,56 @@ impl<'a> SpanEvaluator<'a> {
             span_eval_task_count: 1,
             ..SpanEvalReport::default()
         };
+
+        if span.is_constant_result {
+            let first_writable_placement = placements
+                .iter()
+                .copied()
+                .find(|placement| self.plane.formula_overlay.find_at(*placement).is_none());
+            let Some(first_writable_placement) = first_writable_placement else {
+                report.skipped_overlay_punchout_count = report
+                    .skipped_overlay_punchout_count
+                    .saturating_add(placements.len() as u64);
+                report.computed_write_buffer_push_count =
+                    sink.push_count().saturating_sub(push_count_before);
+                return Ok(report);
+            };
+
+            // Constant-result spans have only all-absolute precedents, so
+            // placement offsets cannot affect their value. Materialize the
+            // template once and evaluate through `evaluate_ast`, which keeps
+            // the AST planner enabled for chunked reductions such as SUMIFS.
+            report.transient_ast_relocation_count =
+                report.transient_ast_relocation_count.saturating_add(1);
+            let ast_tree = self
+                .data_store
+                .retrieve_ast(template.ast_id, self.sheet_registry)
+                .ok_or(SpanEvalError::MissingTemplate)?;
+            let interpreter = base_interpreter.with_current_cell(CellRef::new_absolute(
+                first_writable_placement.sheet_id,
+                first_writable_placement.row,
+                first_writable_placement.col,
+            ));
+            let value = match interpreter.evaluate_ast(&ast_tree) {
+                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+            };
+
+            for placement in placements {
+                if self.plane.formula_overlay.find_at(placement).is_some() {
+                    report.skipped_overlay_punchout_count =
+                        report.skipped_overlay_punchout_count.saturating_add(1);
+                    continue;
+                }
+                sink.push_cell(placement, value.clone());
+                report.span_eval_placement_count =
+                    report.span_eval_placement_count.saturating_add(1);
+            }
+            report.computed_write_buffer_push_count =
+                sink.push_count().saturating_sub(push_count_before);
+            return Ok(report);
+        }
+
         for placement in placements {
             if self.plane.formula_overlay.find_at(placement).is_some() {
                 report.skipped_overlay_punchout_count =
@@ -585,18 +635,21 @@ mod tests {
     #[test]
     fn span_eval_rect_matches_legacy_outputs() {
         // Use externally-anchored reads so the rect family has no internal
-        // dependency: every cell reads $A$1, none of which is in the rect.
-        let workbook = TestWorkbook::new().with_cell("Sheet1", 1, 1, LiteralValue::Number(10.0));
+        // dependency: every cell reads column A on its own row, none of which
+        // is in the rect, and the relative row keeps the family non-constant.
+        let workbook = TestWorkbook::new()
+            .with_cell("Sheet1", 2, 1, LiteralValue::Number(10.0))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Number(10.0));
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=$A$1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A$1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=$A$1+1"),
-                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A$1+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=$A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 2, "=$A2+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 1, "=$A3+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 2, 2, "=$A3+1"),
             ],
             &data_store,
             &sheet_registry,
@@ -650,6 +703,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            is_constant_result: false,
         });
         let workbook = TestWorkbook::new();
         let mut buffer = ComputedWriteBuffer::default();
@@ -845,8 +899,8 @@ mod tests {
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1*0+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A2*0+1"),
             ],
             &data_store,
             &sheet_registry,
@@ -880,8 +934,8 @@ mod tests {
         let placement = place_candidate_family(
             &mut plane,
             vec![
-                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=1"),
-                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=1"),
+                candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1*0+1"),
+                candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=A2*0+1"),
             ],
             &data_store,
             &sheet_registry,
@@ -1085,14 +1139,25 @@ mod tests {
 
     #[test]
     fn span_eval_constant_outputs_emit_run_fragment() {
-        let workbook = TestWorkbook::new();
+        let workbook = (1..=8).fold(TestWorkbook::new(), |workbook, row| {
+            workbook.with_cell("Sheet1", row, 1, LiteralValue::Number(row as f64))
+        });
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             (0..8)
-                .map(|row| candidate(&mut data_store, &sheet_registry, 0, row, 0, "=7"))
+                .map(|row| {
+                    candidate(
+                        &mut data_store,
+                        &sheet_registry,
+                        0,
+                        row,
+                        1,
+                        &format!("=A{}*0+7", row + 1),
+                    )
+                })
                 .collect(),
             &data_store,
             &sheet_registry,
@@ -1112,25 +1177,36 @@ mod tests {
         );
         engine.flush_computed_write_buffer(&mut buffer).unwrap();
 
-        let stats = computed_overlay_stats(&engine, "Sheet1", 0, 0);
+        let stats = computed_overlay_stats(&engine, "Sheet1", 1, 0);
         assert_eq!(stats.run_fragments, 1);
         assert_eq!(stats.dense_fragments, 0);
         assert_eq!(
-            range_number_values(&engine, "Sheet1", 1, 1, 8, 1),
+            range_number_values(&engine, "Sheet1", 1, 2, 8, 2),
             vec![7.0; 8]
         );
     }
 
     #[test]
     fn span_eval_sparse_dirty_domain_emits_sparse_fragment() {
-        let workbook = TestWorkbook::new();
+        let workbook = (1..=128).fold(TestWorkbook::new(), |workbook, row| {
+            workbook.with_cell("Sheet1", row, 1, LiteralValue::Number(row as f64))
+        });
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
         let placement = place_candidate_family(
             &mut plane,
             (0..128)
-                .map(|row| candidate(&mut data_store, &sheet_registry, 0, row, 0, "=1"))
+                .map(|row| {
+                    candidate(
+                        &mut data_store,
+                        &sheet_registry,
+                        0,
+                        row,
+                        1,
+                        &format!("=A{}*0+1", row + 1),
+                    )
+                })
                 .collect(),
             &data_store,
             &sheet_registry,
@@ -1140,7 +1216,7 @@ mod tests {
         assert_eq!(engine.graph.sheet_id_mut("Sheet1"), 0);
         let dirty_cells = (0..128)
             .step_by(2)
-            .map(|row| RegionKey::new(0, row, 0))
+            .map(|row| RegionKey::new(0, row, 1))
             .collect();
         let task = cells_task(&plane, span, dirty_cells);
         let mut buffer = ComputedWriteBuffer::default();
@@ -1156,18 +1232,18 @@ mod tests {
         engine.flush_computed_write_buffer(&mut buffer).unwrap();
 
         assert_eq!(report.span_eval_placement_count, 64);
-        let stats = computed_overlay_stats(&engine, "Sheet1", 0, 0);
+        let stats = computed_overlay_stats(&engine, "Sheet1", 1, 0);
         assert_eq!(stats.sparse_fragments, 1);
         assert_eq!(
-            engine.get_cell_value("Sheet1", 1, 1),
+            engine.get_cell_value("Sheet1", 1, 2),
             Some(LiteralValue::Number(1.0))
         );
-        assert_eq!(engine.get_cell_value("Sheet1", 2, 1), None);
+        assert_eq!(engine.get_cell_value("Sheet1", 2, 2), None);
         assert_eq!(
-            engine.get_cell_value("Sheet1", 127, 1),
+            engine.get_cell_value("Sheet1", 127, 2),
             Some(LiteralValue::Number(1.0))
         );
-        assert_eq!(engine.get_cell_value("Sheet1", 128, 1), None);
+        assert_eq!(engine.get_cell_value("Sheet1", 128, 2), None);
     }
 
     #[test]
@@ -1264,6 +1340,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            is_constant_result: false,
         });
         let workbook = TestWorkbook::new();
         let mut buffer = ComputedWriteBuffer::default();

@@ -837,6 +837,8 @@ pub(crate) fn is_known_static_function(name: &str) -> bool {
             | "ATAN2"
             | "ATANH"
             | "AVERAGE"
+            | "AVERAGEIF"
+            | "AVERAGEIFS"
             | "CEILING"
             | "CONCAT"
             | "CONCATENATE"
