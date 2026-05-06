@@ -155,7 +155,9 @@ mod enabled {
                     mode.as_str(),
                     scale.as_str()
                 );
-                let phase_timeout_ms = cli.phase_timeout_ms.unwrap_or(default_phase_timeout_ms(scale));
+                let phase_timeout_ms = cli
+                    .phase_timeout_ms
+                    .unwrap_or(default_phase_timeout_ms(scale));
                 let report = match run_tuple(
                     scenario.as_ref(),
                     *mode,
@@ -282,6 +284,7 @@ mod enabled {
         result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn run_tuple(
         scenario: &dyn Scenario,
         mode: Mode,

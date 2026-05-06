@@ -1172,22 +1172,20 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.get_formula_ast(id) {
-                let adjusted = adjuster.adjust_ast(&ast, &op);
-                // Only update if the formula actually changed
-                if format!("{ast:?}") != format!("{adjusted:?}") {
-                    if self.has_logger() {
-                        self.log_change(ChangeEvent::FormulaAdjusted {
-                            id,
-                            addr: self.graph.get_cell_ref_for_vertex(id),
-                            old_ast: ast.clone(),
-                            new_ast: adjusted.clone(),
-                        });
-                    }
-                    self.graph.update_vertex_formula(id, adjusted)?;
-                    self.graph.mark_vertex_dirty(id);
-                    summary.formulas_updated += 1;
+            if let Some(ast) = self.get_formula_ast(id)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+            {
+                if self.has_logger() {
+                    self.log_change(ChangeEvent::FormulaAdjusted {
+                        id,
+                        addr: self.graph.get_cell_ref_for_vertex(id),
+                        old_ast: ast.clone(),
+                        new_ast: adjusted.clone(),
+                    });
                 }
+                self.graph.update_vertex_formula(id, adjusted)?;
+                self.graph.mark_vertex_dirty(id);
+                summary.formulas_updated += 1;
             }
         }
 
@@ -1298,21 +1296,20 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.get_formula_ast(id) {
-                let adjusted = adjuster.adjust_ast(&ast, &op);
-                if format!("{ast:?}") != format!("{adjusted:?}") {
-                    if self.has_logger() {
-                        self.log_change(ChangeEvent::FormulaAdjusted {
-                            id,
-                            addr: self.graph.get_cell_ref_for_vertex(id),
-                            old_ast: ast.clone(),
-                            new_ast: adjusted.clone(),
-                        });
-                    }
-                    self.graph.update_vertex_formula(id, adjusted)?;
-                    self.graph.mark_vertex_dirty(id);
-                    summary.formulas_updated += 1;
+            if let Some(ast) = self.get_formula_ast(id)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+            {
+                if self.has_logger() {
+                    self.log_change(ChangeEvent::FormulaAdjusted {
+                        id,
+                        addr: self.graph.get_cell_ref_for_vertex(id),
+                        old_ast: ast.clone(),
+                        new_ast: adjusted.clone(),
+                    });
                 }
+                self.graph.update_vertex_formula(id, adjusted)?;
+                self.graph.mark_vertex_dirty(id);
+                summary.formulas_updated += 1;
             }
         }
 

@@ -243,6 +243,34 @@ mod tests {
     }
 
     #[test]
+    fn update_coord_uses_vertex_position_index() {
+        let mut edges = CsrMutableEdges::new();
+        let items: Vec<_> = (0..20_000u32)
+            .map(|id| (AbsCoord::new(id, id % 17), id))
+            .collect();
+        edges.add_vertices_batch(&items);
+
+        let started = std::time::Instant::now();
+        for id in 15_000..20_000u32 {
+            edges.update_coord(VertexId(id), AbsCoord::new(id + 1, (id + 2) % 100));
+        }
+        let elapsed = started.elapsed();
+
+        if !cfg!(debug_assertions) {
+            assert!(
+                elapsed < std::time::Duration::from_millis(50),
+                "update_coord took {elapsed:?}"
+            );
+        }
+
+        for id in 15_000..20_000u32 {
+            let pos = edges.vertex_pos[&id];
+            assert_eq!(edges.vertex_ids[pos], id);
+            assert_eq!(edges.coords[pos], AbsCoord::new(id + 1, (id + 2) % 100));
+        }
+    }
+
+    #[test]
     fn test_last_op_wins_add_then_remove() {
         let csr = CsrEdges::from_adjacency(vec![(0u32, vec![])], &[AbsCoord::new(0, 0)]);
         let mut delta = DeltaEdgeSlab::new();
@@ -437,8 +465,11 @@ pub struct CsrMutableEdges {
     /// Vertex IDs corresponding to coords array
     vertex_ids: Vec<u32>,
 
-    /// Batch mode flag - when true, skip automatic rebuilds
-    batch_mode: bool,
+    /// Position of each vertex id in the coords and vertex_ids arrays.
+    vertex_pos: FxHashMap<u32, usize>,
+
+    /// Nested batch depth; non-zero defers automatic rebuilds.
+    batch_depth: usize,
 }
 
 impl CsrMutableEdges {
@@ -449,7 +480,8 @@ impl CsrMutableEdges {
             delta: DeltaEdgeSlab::new(),
             coords: Vec::new(),
             vertex_ids: Vec::new(),
-            batch_mode: false,
+            vertex_pos: FxHashMap::default(),
+            batch_depth: 0,
         }
     }
 
@@ -458,13 +490,19 @@ impl CsrMutableEdges {
         let num_vertices = coords.len();
         let vertex_ids: Vec<u32> = (0..num_vertices as u32).collect();
         let adjacency: Vec<_> = vertex_ids.iter().map(|&id| (id, Vec::new())).collect();
+        let vertex_pos = vertex_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, &id)| (id, idx))
+            .collect();
 
         Self {
             base: CsrEdges::from_adjacency(adjacency, &coords),
             delta: DeltaEdgeSlab::new(),
             coords,
             vertex_ids,
-            batch_mode: false,
+            vertex_pos,
+            batch_depth: 0,
         }
     }
 
@@ -553,20 +591,20 @@ impl CsrMutableEdges {
 
     /// Check and perform rebuild if threshold reached
     fn maybe_rebuild(&mut self) {
-        if !self.batch_mode && self.delta.needs_rebuild() {
+        if self.batch_depth == 0 && self.delta.needs_rebuild() {
             self.rebuild();
         }
     }
 
-    /// Enter batch mode - defer rebuilds until end_batch() is called
+    /// Enter batch mode - defer rebuilds until the outer end_batch() call.
     pub fn begin_batch(&mut self) {
-        self.batch_mode = true;
+        self.batch_depth = self.batch_depth.saturating_add(1);
     }
 
-    /// Exit batch mode and rebuild if needed
+    /// Exit batch mode and rebuild if needed.
     pub fn end_batch(&mut self) {
-        self.batch_mode = false;
-        if self.delta.op_count() > 0 || self.delta.needs_rebuild() {
+        self.batch_depth = self.batch_depth.saturating_sub(1);
+        if self.batch_depth == 0 && (self.delta.op_count() > 0 || self.delta.needs_rebuild()) {
             self.rebuild();
         }
     }
@@ -576,6 +614,7 @@ impl CsrMutableEdges {
         let idx = self.coords.len();
         self.coords.push(coord);
         self.vertex_ids.push(vertex_id);
+        self.vertex_pos.insert(vertex_id, idx);
 
         // Rebuild base to include new vertex
         // This is necessary to maintain CSR structure consistency
@@ -593,8 +632,10 @@ impl CsrMutableEdges {
         self.coords.reserve(items.len());
         self.vertex_ids.reserve(items.len());
         for (coord, vid) in items {
+            let idx = self.coords.len();
             self.coords.push(*coord);
             self.vertex_ids.push(*vid);
+            self.vertex_pos.insert(*vid, idx);
         }
         // Single rebuild to incorporate all new vertices.
         self.rebuild();
@@ -604,8 +645,11 @@ impl CsrMutableEdges {
     /// Update coordinate for a vertex in the cache
     /// Marks for rebuild to maintain sort order
     pub fn update_coord(&mut self, vertex_id: VertexId, new_coord: AbsCoord) {
-        // Find vertex in vertex_ids array
-        if let Some(pos) = self.vertex_ids.iter().position(|&id| id == vertex_id.0) {
+        if let Some(&pos) = self.vertex_pos.get(&vertex_id.0) {
+            debug_assert_eq!(
+                self.vertex_ids[pos], vertex_id.0,
+                "vertex_pos out of sync with vertex_ids at position {pos}"
+            );
             self.coords[pos] = new_coord;
             // Force rebuild on next access to maintain sort invariants
             self.delta.mark_dirty();
@@ -623,6 +667,12 @@ impl CsrMutableEdges {
         self.base = CsrEdges::from_adjacency(adjacency, &coords);
         self.coords = coords;
         self.vertex_ids = vertex_ids;
+        self.vertex_pos = self
+            .vertex_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, &id)| (id, idx))
+            .collect();
         self.delta.clear();
     }
 }
