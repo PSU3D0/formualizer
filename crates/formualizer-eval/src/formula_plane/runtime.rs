@@ -1,6 +1,6 @@
 //! Internal FormulaPlane runtime store vocabulary for FP6.1.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rustc_hash::FxHashMap;
 
@@ -230,46 +230,137 @@ impl PlacementDomain {
         }
     }
 
-    pub(crate) fn iter(&self) -> std::vec::IntoIter<PlacementCoord> {
-        let mut coords = Vec::new();
-        match self {
-            Self::RowRun {
+    pub(crate) fn iter(&self) -> PlacementDomainIter {
+        PlacementDomainIter::new(self)
+    }
+}
+
+pub(crate) struct PlacementDomainIter {
+    sheet_id: SheetId,
+    row: u32,
+    row_end: u32,
+    col: u32,
+    col_start: u32,
+    col_end: u32,
+    mode: PlacementDomainIterMode,
+    done: bool,
+}
+
+#[derive(Clone, Copy)]
+enum PlacementDomainIterMode {
+    RowRun,
+    ColRun,
+    Rect,
+}
+
+impl PlacementDomainIter {
+    fn new(domain: &PlacementDomain) -> Self {
+        match domain {
+            PlacementDomain::RowRun {
                 sheet_id,
                 row_start,
                 row_end,
                 col,
-            } => {
-                for row in *row_start..=*row_end {
-                    coords.push(PlacementCoord::new(*sheet_id, row, *col));
-                }
-            }
-            Self::ColRun {
+            } => Self {
+                sheet_id: *sheet_id,
+                row: *row_start,
+                row_end: *row_end,
+                col: *col,
+                col_start: *col,
+                col_end: *col,
+                mode: PlacementDomainIterMode::RowRun,
+                done: *row_start > *row_end,
+            },
+            PlacementDomain::ColRun {
                 sheet_id,
                 row,
                 col_start,
                 col_end,
-            } => {
-                for col in *col_start..=*col_end {
-                    coords.push(PlacementCoord::new(*sheet_id, *row, col));
-                }
-            }
-            Self::Rect {
+            } => Self {
+                sheet_id: *sheet_id,
+                row: *row,
+                row_end: *row,
+                col: *col_start,
+                col_start: *col_start,
+                col_end: *col_end,
+                mode: PlacementDomainIterMode::ColRun,
+                done: *col_start > *col_end,
+            },
+            PlacementDomain::Rect {
                 sheet_id,
                 row_start,
                 row_end,
                 col_start,
                 col_end,
-            } => {
-                for row in *row_start..=*row_end {
-                    for col in *col_start..=*col_end {
-                        coords.push(PlacementCoord::new(*sheet_id, row, col));
-                    }
+            } => Self {
+                sheet_id: *sheet_id,
+                row: *row_start,
+                row_end: *row_end,
+                col: *col_start,
+                col_start: *col_start,
+                col_end: *col_end,
+                mode: PlacementDomainIterMode::Rect,
+                done: *row_start > *row_end || *col_start > *col_end,
+            },
+        }
+    }
+}
+
+impl Iterator for PlacementDomainIter {
+    type Item = PlacementCoord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        let coord = PlacementCoord::new(self.sheet_id, self.row, self.col);
+        match self.mode {
+            PlacementDomainIterMode::RowRun => {
+                if self.row == self.row_end {
+                    self.done = true;
+                } else {
+                    self.row = self.row.saturating_add(1);
+                }
+            }
+            PlacementDomainIterMode::ColRun => {
+                if self.col == self.col_end {
+                    self.done = true;
+                } else {
+                    self.col = self.col.saturating_add(1);
+                }
+            }
+            PlacementDomainIterMode::Rect => {
+                if self.col < self.col_end {
+                    self.col = self.col.saturating_add(1);
+                } else if self.row < self.row_end {
+                    self.row = self.row.saturating_add(1);
+                    self.col = self.col_start;
+                } else {
+                    self.done = true;
                 }
             }
         }
-        coords.into_iter()
+        Some(coord)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.done {
+            return (0, Some(0));
+        }
+        let remaining = match self.mode {
+            PlacementDomainIterMode::RowRun => self.row_end.saturating_sub(self.row) + 1,
+            PlacementDomainIterMode::ColRun => self.col_end.saturating_sub(self.col) + 1,
+            PlacementDomainIterMode::Rect => {
+                let width = self.col_end - self.col_start + 1;
+                (self.row_end - self.row) * width + (self.col_end - self.col + 1)
+            }
+        } as usize;
+        (remaining, Some(remaining))
     }
 }
+
+impl ExactSizeIterator for PlacementDomainIter {}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ResultRegion {
@@ -383,6 +474,9 @@ pub(crate) struct TemplateRecord {
     pub(crate) exact_canonical_key: Arc<str>,
     pub(crate) parameterized_canonical_key: Arc<str>,
     pub(crate) formula_text: Option<Arc<str>>,
+    /// Relocatability validation is template-stable because templates are
+    /// immutable after interning. The evaluator fills this cache on first use.
+    pub(crate) relocatable_ast_validated: OnceLock<bool>,
 }
 
 impl TemplateStore {
@@ -432,6 +526,7 @@ impl TemplateStore {
             exact_canonical_key,
             parameterized_canonical_key: Arc::clone(&parameterized_canonical_key),
             formula_text,
+            relocatable_ast_validated: OnceLock::new(),
         });
         self.intern.insert(intern_key, id);
         self.epoch = self.epoch.saturating_add(1);

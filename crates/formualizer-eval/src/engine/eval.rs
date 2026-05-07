@@ -6951,51 +6951,95 @@ where
         }
         for layer in schedule.layers {
             let mut buffer = ComputedWriteBuffer::default();
-            for work in layer.work {
-                match work.producer {
+            let mut sink = SpanComputedWriteSink::new(&mut buffer);
+            let work_items = layer.work;
+            let mut work_index = 0usize;
+            while work_index < work_items.len() {
+                match work_items[work_index].producer {
                     FormulaProducerId::Span(span_id) => {
                         let span_ref = *span_refs_by_id.get(&span_id).ok_or_else(|| {
                             ExcelError::new(ExcelErrorKind::NImpl)
                                 .with_message("FormulaPlane schedule referenced a stale span")
                         })?;
-                        let dirty = producer_dirty_to_span_dirty(work.dirty, span_ref);
-                        let task = SpanEvalTask {
-                            span: span_ref,
-                            dirty,
-                            plane_epoch,
-                        };
-                        let current_sheet = {
+                        let sheet_id = {
                             let authority = self.graph.formula_authority();
                             let span = authority.plane.spans.get(span_ref).ok_or_else(|| {
                                 ExcelError::new(ExcelErrorKind::NImpl)
                                     .with_message("FormulaPlane schedule referenced a stale span")
                             })?;
-                            self.graph.sheet_name(span.sheet_id).to_string()
+                            span.sheet_id
                         };
+                        let current_sheet = self.graph.sheet_name(sheet_id);
                         let authority = self.graph.formula_authority();
                         let evaluator = SpanEvaluator::new(
                             &authority.plane,
                             self,
-                            &current_sheet,
+                            current_sheet,
                             self.graph.data_store(),
                             self.graph.sheet_reg(),
                         );
-                        let mut sink = SpanComputedWriteSink::new(&mut buffer);
-                        let report = evaluator.evaluate_task(&task, &mut sink).map_err(|err| {
-                            ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
-                                "FormulaPlane span evaluation failed: {err:?}"
-                            ))
-                        })?;
+                        #[cfg(test)]
+                        let mut last_group_report = None;
+                        while work_index < work_items.len() {
+                            let FormulaProducerId::Span(group_span_id) =
+                                work_items[work_index].producer
+                            else {
+                                break;
+                            };
+                            let group_span_ref =
+                                *span_refs_by_id.get(&group_span_id).ok_or_else(|| {
+                                    ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                        "FormulaPlane schedule referenced a stale span",
+                                    )
+                                })?;
+                            let group_sheet_id = {
+                                let authority = self.graph.formula_authority();
+                                let span =
+                                    authority.plane.spans.get(group_span_ref).ok_or_else(|| {
+                                        ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                            "FormulaPlane schedule referenced a stale span",
+                                        )
+                                    })?;
+                                span.sheet_id
+                            };
+                            if group_sheet_id != sheet_id {
+                                break;
+                            }
+
+                            let dirty = producer_dirty_to_span_dirty(
+                                work_items[work_index].dirty.clone(),
+                                group_span_ref,
+                            );
+                            let task = SpanEvalTask {
+                                span: group_span_ref,
+                                dirty,
+                                plane_epoch,
+                            };
+                            let report =
+                                evaluator.evaluate_task(&task, &mut sink).map_err(|err| {
+                                    ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                                        "FormulaPlane span evaluation failed: {err:?}"
+                                    ))
+                                })?;
+                            #[cfg(test)]
+                            {
+                                last_group_report = Some(report.clone());
+                            }
+                            computed_vertices = computed_vertices
+                                .saturating_add(report.span_eval_placement_count as usize);
+                            work_index = work_index.saturating_add(1);
+                        }
                         #[cfg(test)]
                         {
-                            self.last_formula_plane_span_eval_report = Some(report.clone());
+                            if let Some(report) = last_group_report {
+                                self.last_formula_plane_span_eval_report = Some(report);
+                            }
                         }
-                        computed_vertices = computed_vertices
-                            .saturating_add(report.span_eval_placement_count as usize);
                     }
                     FormulaProducerId::Legacy(vertex_id) => {
                         let _ = self.evaluate_vertex_impl(vertex_id, None)?;
                         computed_vertices = computed_vertices.saturating_add(1);
+                        work_index = work_index.saturating_add(1);
                     }
                 }
             }

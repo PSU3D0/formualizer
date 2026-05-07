@@ -18,7 +18,10 @@ use crate::traits::EvaluationContext;
 use formualizer_common::{ExcelErrorExtra, ExcelErrorKind, LiteralValue};
 
 use super::region_index::{DirtyDomain, RegionKey, RegionPattern};
-use super::runtime::{FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord, SpanBindingSet};
+use super::runtime::{
+    FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord, PlacementDomain,
+    PlacementDomainIter, SpanBindingSet, TemplateRecord,
+};
 use super::template_canonical::{AxisRef, CanonicalReference, SheetBinding};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +79,28 @@ impl<'a> SpanComputedWriteSink<'a> {
     pub(crate) fn push_count(&self) -> u64 {
         self.push_count
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    static RELOCATABLE_VALIDATION_WALK_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_span_eval_test_counters() {
+    RELOCATABLE_VALIDATION_WALK_COUNT.set(0);
+    DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn relocatable_validation_walk_count() -> usize {
+    RELOCATABLE_VALIDATION_WALK_COUNT.get()
+}
+
+#[cfg(test)]
+pub(crate) fn dirty_placement_vec_materialization_count() -> usize {
+    DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT.get()
 }
 
 const MEMO_SAMPLE_LIMIT: usize = 64;
@@ -173,7 +198,7 @@ impl<'a> SpanEvaluator<'a> {
             .templates
             .get(span.template_id)
             .ok_or(SpanEvalError::MissingTemplate)?;
-        validate_relocatable_arena_ast(template.ast_id, self.data_store)?;
+        ensure_template_relocatable(template, self.data_store)?;
         let placements = placements_for_dirty(span, &task.dirty)?;
         let push_count_before = sink.push_count();
         let base_interpreter = Interpreter::new(self.context, self.current_sheet);
@@ -186,7 +211,6 @@ impl<'a> SpanEvaluator<'a> {
         if span.is_constant_result {
             let first_writable_placement = placements
                 .iter()
-                .copied()
                 .find(|placement| self.plane.formula_overlay.find_at(*placement).is_none());
             let Some(first_writable_placement) = first_writable_placement else {
                 report.skipped_overlay_punchout_count = report
@@ -217,7 +241,7 @@ impl<'a> SpanEvaluator<'a> {
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             };
 
-            for placement in placements {
+            for placement in placements.iter() {
                 if self.plane.formula_overlay.find_at(placement).is_some() {
                     report.skipped_overlay_punchout_count =
                         report.skipped_overlay_punchout_count.saturating_add(1);
@@ -250,7 +274,7 @@ impl<'a> SpanEvaluator<'a> {
             return Ok(memo_report);
         }
 
-        for placement in placements {
+        for placement in placements.iter() {
             if self.plane.formula_overlay.find_at(placement).is_some() {
                 report.skipped_overlay_punchout_count =
                     report.skipped_overlay_punchout_count.saturating_add(1);
@@ -290,7 +314,7 @@ impl<'a> SpanEvaluator<'a> {
         &self,
         span: &FormulaSpan,
         binding_set: &SpanBindingSet,
-        placements: &[PlacementCoord],
+        placements: &PlacementSelection<'_>,
         report: &mut SpanEvalReport,
     ) -> bool {
         if self.reads_formula_plane_result(span) {
@@ -298,7 +322,6 @@ impl<'a> SpanEvaluator<'a> {
         }
         let writable: Vec<_> = placements
             .iter()
-            .copied()
             .filter(|placement| self.plane.formula_overlay.find_at(*placement).is_none())
             .collect();
         if writable.len() < 2 {
@@ -349,18 +372,18 @@ impl<'a> SpanEvaluator<'a> {
         origin_row: u32,
         origin_col: u32,
         binding_set: &SpanBindingSet,
-        placements: &[PlacementCoord],
+        placements: &PlacementSelection<'_>,
         base_interpreter: &Interpreter<'a>,
         sink: &mut SpanComputedWriteSink<'_>,
         push_count_before: u64,
     ) -> Result<Option<SpanEvalReport>, SpanEvalError> {
         let writable_count = placements
             .iter()
-            .filter(|placement| self.plane.formula_overlay.find_at(**placement).is_none())
+            .filter(|placement| self.plane.formula_overlay.find_at(*placement).is_none())
             .count();
         let mut groups: FxHashMap<ParameterKey, MemoGroup> = FxHashMap::default();
         let mut skipped_overlay = 0u64;
-        for placement in placements.iter().copied() {
+        for placement in placements.iter() {
             if self.plane.formula_overlay.find_at(placement).is_some() {
                 skipped_overlay = skipped_overlay.saturating_add(1);
                 continue;
@@ -584,37 +607,121 @@ fn parameter_atom_from_literal(value: &LiteralValue) -> ParameterAtom {
     }
 }
 
-fn placements_for_dirty(
-    span: &FormulaSpan,
+enum PlacementSelection<'a> {
+    Whole(&'a PlacementDomain),
+    Vec(Vec<PlacementCoord>),
+}
+
+impl PlacementSelection<'_> {
+    fn iter(&self) -> PlacementSelectionIter<'_> {
+        match self {
+            Self::Whole(domain) => PlacementSelectionIter::Whole(domain.iter()),
+            Self::Vec(coords) => PlacementSelectionIter::Vec(coords.iter().copied()),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Whole(domain) => domain.cell_count() as usize,
+            Self::Vec(coords) => coords.len(),
+        }
+    }
+}
+
+enum PlacementSelectionIter<'a> {
+    Whole(PlacementDomainIter),
+    Vec(std::iter::Copied<std::slice::Iter<'a, PlacementCoord>>),
+}
+
+impl Iterator for PlacementSelectionIter<'_> {
+    type Item = PlacementCoord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Whole(iter) => iter.next(),
+            Self::Vec(iter) => iter.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Whole(iter) => iter.size_hint(),
+            Self::Vec(iter) => iter.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for PlacementSelectionIter<'_> {}
+
+fn placements_for_dirty<'a>(
+    span: &'a FormulaSpan,
     dirty: &DirtyDomain,
-) -> Result<Vec<PlacementCoord>, SpanEvalError> {
+) -> Result<PlacementSelection<'a>, SpanEvalError> {
     match dirty {
         DirtyDomain::WholeSpan(span_ref) => {
             if span_ref.id != span.id || span_ref.generation != span.generation {
                 return Err(SpanEvalError::StaleSpan);
             }
-            Ok(span.domain.iter().collect())
+            Ok(PlacementSelection::Whole(&span.domain))
         }
-        DirtyDomain::Cells(keys) => Ok(keys
-            .iter()
-            .copied()
-            .map(PlacementCoord::from)
-            .filter(|coord| span.domain.contains(*coord))
-            .collect()),
-        DirtyDomain::Regions(regions) => Ok(span
-            .domain
-            .iter()
-            .filter(|coord| {
-                let key = RegionKey::from(*coord);
-                regions.iter().any(|region| region.contains_key(key))
-            })
-            .collect()),
+        DirtyDomain::Cells(keys) => {
+            #[cfg(test)]
+            DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT
+                .set(DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT.get() + 1);
+            Ok(PlacementSelection::Vec(
+                keys.iter()
+                    .copied()
+                    .map(PlacementCoord::from)
+                    .filter(|coord| span.domain.contains(*coord))
+                    .collect(),
+            ))
+        }
+        DirtyDomain::Regions(regions) => {
+            #[cfg(test)]
+            DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT
+                .set(DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT.get() + 1);
+            Ok(PlacementSelection::Vec(
+                span.domain
+                    .iter()
+                    .filter(|coord| {
+                        let key = RegionKey::from(*coord);
+                        regions.iter().any(|region| region.contains_key(key))
+                    })
+                    .collect(),
+            ))
+        }
     }
 }
 
 impl From<RegionKey> for PlacementCoord {
     fn from(key: RegionKey) -> Self {
         PlacementCoord::new(key.sheet_id, key.row, key.col)
+    }
+}
+
+fn ensure_template_relocatable(
+    template: &TemplateRecord,
+    data_store: &DataStore,
+) -> Result<(), SpanEvalError> {
+    if let Some(validated) = template.relocatable_ast_validated.get() {
+        return if *validated {
+            Ok(())
+        } else {
+            Err(SpanEvalError::UnsupportedReferenceRelocation)
+        };
+    }
+
+    #[cfg(test)]
+    RELOCATABLE_VALIDATION_WALK_COUNT.set(RELOCATABLE_VALIDATION_WALK_COUNT.get() + 1);
+    match validate_relocatable_arena_ast(template.ast_id, data_store) {
+        Ok(()) => {
+            let _ = template.relocatable_ast_validated.set(true);
+            Ok(())
+        }
+        Err(err) => {
+            let _ = template.relocatable_ast_validated.set(false);
+            Err(err)
+        }
     }
 }
 

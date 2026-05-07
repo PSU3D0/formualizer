@@ -53,6 +53,9 @@ mod s039_undo_redo_of_bulk_edit;
 mod s040_undo_redo_of_row_insert;
 mod s041_table_grow_by_row_append;
 mod s042_external_source_version_bump;
+mod s043_if_short_circuit_with_erroring_else;
+mod s044_ifs_chain_short_circuit;
+mod s045_iferror_mixed_with_actual_errors;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -96,6 +99,9 @@ pub use s039_undo_redo_of_bulk_edit::S039UndoRedoOfBulkEdit;
 pub use s040_undo_redo_of_row_insert::S040UndoRedoOfRowInsert;
 pub use s041_table_grow_by_row_append::S041TableGrowByRowAppend;
 pub use s042_external_source_version_bump::S042ExternalSourceVersionBump;
+pub use s043_if_short_circuit_with_erroring_else::S043IfShortCircuitWithErroringElse;
+pub use s044_ifs_chain_short_circuit::S044IfsChainShortCircuit;
+pub use s045_iferror_mixed_with_actual_errors::S045IferrorMixedWithActualErrors;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -192,6 +198,7 @@ pub enum ScenarioTag {
     ErrorPropagation,
     WholeColumnRefs,
     LargeArrayLiteral,
+    ShortCircuit,
 
     /// Edit shapes
     SingleCellEdit,
@@ -302,6 +309,9 @@ impl ScenarioRegistry {
             Box::new(S040UndoRedoOfRowInsert::new()),
             Box::new(S041TableGrowByRowAppend::new()),
             Box::new(S042ExternalSourceVersionBump::new()),
+            Box::new(S043IfShortCircuitWithErroringElse::new()),
+            Box::new(S044IfsChainShortCircuit::new()),
+            Box::new(S045IferrorMixedWithActualErrors::new()),
         ]
     }
 }
