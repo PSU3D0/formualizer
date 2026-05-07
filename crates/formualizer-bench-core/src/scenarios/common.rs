@@ -137,6 +137,21 @@ pub fn completed_cycles(phase: ScenarioPhase) -> usize {
     }
 }
 
+pub fn sample_rows(rows: u32) -> [u32; 3] {
+    [1, (rows / 2).max(1), rows.max(1)]
+}
+
+pub fn col_name(col: u32) -> String {
+    let mut n = col;
+    let mut chars = Vec::new();
+    while n > 0 {
+        n -= 1;
+        chars.push((b'A' + (n % 26) as u8) as char);
+        n /= 26;
+    }
+    chars.iter().rev().collect()
+}
+
 pub fn detect_nonempty_rows(wb: &Workbook, sheet: &str, col: u32) -> u32 {
     const MAX_EXCEL_ROW: u32 = 1_048_576;
     let mut high = 1u32;

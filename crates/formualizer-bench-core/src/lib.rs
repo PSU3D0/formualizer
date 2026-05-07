@@ -7,6 +7,8 @@ pub mod corpus;
 #[cfg(feature = "formualizer_runner")]
 pub mod instrumentation;
 #[cfg(feature = "formualizer_runner")]
+pub mod parity_harness;
+#[cfg(feature = "formualizer_runner")]
 pub mod scenarios;
 
 pub use result::{BenchmarkResult, CorrectnessResult, MetricsResult};

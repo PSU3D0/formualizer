@@ -56,6 +56,21 @@ mod s042_external_source_version_bump;
 mod s043_if_short_circuit_with_erroring_else;
 mod s044_ifs_chain_short_circuit;
 mod s045_iferror_mixed_with_actual_errors;
+mod s046_giant_ast_formula_200_deps;
+mod s047_very_deep_chain;
+mod s048_many_disjoint_families;
+mod s049_vlookup_with_relative_key;
+mod s050_vlookup_with_absolute_key;
+mod s051_mixed_error_cascade;
+mod s052_deeply_nested_if_chain;
+mod s053_text_heavy_concatenation;
+mod s054_recalc_after_add_then_delete_sheet;
+mod s055_undo_after_mixed_edits;
+mod s056_criteria_aggregates_with_array_criteria;
+mod s057_named_range_redefined;
+mod s058_volatile_non_volatile_mix;
+mod s059_empty_sheet_with_cross_sheet_refs;
+mod s060_self_referencing_table_row;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -102,6 +117,21 @@ pub use s042_external_source_version_bump::S042ExternalSourceVersionBump;
 pub use s043_if_short_circuit_with_erroring_else::S043IfShortCircuitWithErroringElse;
 pub use s044_ifs_chain_short_circuit::S044IfsChainShortCircuit;
 pub use s045_iferror_mixed_with_actual_errors::S045IferrorMixedWithActualErrors;
+pub use s046_giant_ast_formula_200_deps::S046GiantAstFormula200Deps;
+pub use s047_very_deep_chain::S047VeryDeepChain;
+pub use s048_many_disjoint_families::S048ManyDisjointFamilies;
+pub use s049_vlookup_with_relative_key::S049VlookupWithRelativeKey;
+pub use s050_vlookup_with_absolute_key::S050VlookupWithAbsoluteKey;
+pub use s051_mixed_error_cascade::S051MixedErrorCascade;
+pub use s052_deeply_nested_if_chain::S052DeeplyNestedIfChain;
+pub use s053_text_heavy_concatenation::S053TextHeavyConcatenation;
+pub use s054_recalc_after_add_then_delete_sheet::S054RecalcAfterAddThenDeleteSheet;
+pub use s055_undo_after_mixed_edits::S055UndoAfterMixedEdits;
+pub use s056_criteria_aggregates_with_array_criteria::S056CriteriaAggregatesWithArrayCriteria;
+pub use s057_named_range_redefined::S057NamedRangeRedefined;
+pub use s058_volatile_non_volatile_mix::S058VolatileNonVolatileMix;
+pub use s059_empty_sheet_with_cross_sheet_refs::S059EmptySheetWithCrossSheetRefs;
+pub use s060_self_referencing_table_row::S060SelfReferencingTableRow;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -135,6 +165,33 @@ pub trait Scenario: Send + Sync {
     fn expected_to_fail_under(&self) -> &'static [ExpectedFailure] {
         &[]
     }
+
+    /// Off↔Auth full-cell parity divergences that are expected for this scenario.
+    fn expected_divergences(&self) -> Vec<ExpectedDivergence> {
+        Vec::new()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpectedDivergence {
+    pub phase: ExpectedDivergencePhase,
+    pub reason: &'static str,
+    pub action: ExpectedDivergenceAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedDivergencePhase {
+    Any,
+    AfterLoad,
+    AfterFirstEval,
+    AfterEdit,
+    AfterRecalc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedDivergenceAction {
+    Skip,
+    RunAndNote,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,6 +256,8 @@ pub enum ScenarioTag {
     WholeColumnRefs,
     LargeArrayLiteral,
     ShortCircuit,
+    GiantAst,
+    TextHeavy,
 
     /// Edit shapes
     SingleCellEdit,
@@ -312,6 +371,21 @@ impl ScenarioRegistry {
             Box::new(S043IfShortCircuitWithErroringElse::new()),
             Box::new(S044IfsChainShortCircuit::new()),
             Box::new(S045IferrorMixedWithActualErrors::new()),
+            Box::new(S046GiantAstFormula200Deps::new()),
+            Box::new(S047VeryDeepChain::new()),
+            Box::new(S048ManyDisjointFamilies::new()),
+            Box::new(S049VlookupWithRelativeKey::new()),
+            Box::new(S050VlookupWithAbsoluteKey::new()),
+            Box::new(S051MixedErrorCascade::new()),
+            Box::new(S052DeeplyNestedIfChain::new()),
+            Box::new(S053TextHeavyConcatenation::new()),
+            Box::new(S054RecalcAfterAddThenDeleteSheet::new()),
+            Box::new(S055UndoAfterMixedEdits::new()),
+            Box::new(S056CriteriaAggregatesWithArrayCriteria::new()),
+            Box::new(S057NamedRangeRedefined::new()),
+            Box::new(S058VolatileNonVolatileMix::new()),
+            Box::new(S059EmptySheetWithCrossSheetRefs::new()),
+            Box::new(S060SelfReferencingTableRow::new()),
         ]
     }
 }

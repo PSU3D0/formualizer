@@ -8,8 +8,9 @@ use super::common::{
     numeric,
 };
 use super::{
-    EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
-    ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, ExpectedDivergence, ExpectedDivergenceAction, ExpectedDivergencePhase,
+    FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant, ScenarioPhase,
+    ScenarioScale, ScenarioTag,
 };
 
 pub struct S021VolatileFunctionsSprinkled {
@@ -87,6 +88,14 @@ impl Scenario for S021VolatileFunctionsSprinkled {
             cycles: 5,
             apply: apply_edit,
         })
+    }
+
+    fn expected_divergences(&self) -> Vec<ExpectedDivergence> {
+        vec![ExpectedDivergence {
+            phase: ExpectedDivergencePhase::Any,
+            reason: "RAND/NOW/TODAY volatile values differ between separate Off and Auth runs",
+            action: ExpectedDivergenceAction::Skip,
+        }]
     }
 
     fn invariants(&self, phase: ScenarioPhase) -> Vec<ScenarioInvariant> {

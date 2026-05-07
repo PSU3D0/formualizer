@@ -8,8 +8,9 @@ use super::common::{
     numeric,
 };
 use super::{
-    EditPlan, FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
-    ScenarioPhase, ScenarioScale, ScenarioTag,
+    EditPlan, ExpectedDivergence, ExpectedDivergenceAction, ExpectedDivergencePhase,
+    FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant, ScenarioPhase,
+    ScenarioScale, ScenarioTag,
 };
 
 pub struct S022DynamicFunctionsOffsetIndirect {
@@ -86,6 +87,14 @@ impl Scenario for S022DynamicFunctionsOffsetIndirect {
             cycles: 5,
             apply: apply_edit,
         })
+    }
+
+    fn expected_divergences(&self) -> Vec<ExpectedDivergence> {
+        vec![ExpectedDivergence {
+            phase: ExpectedDivergencePhase::Any,
+            reason: "OFFSET and INDIRECT runtime-determined references can differ between engines",
+            action: ExpectedDivergenceAction::RunAndNote,
+        }]
     }
 
     fn invariants(&self, phase: ScenarioPhase) -> Vec<ScenarioInvariant> {
