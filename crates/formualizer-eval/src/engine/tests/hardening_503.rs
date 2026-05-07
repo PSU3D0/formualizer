@@ -62,7 +62,7 @@ fn bulk_spill_clear_dirties_dependents_without_delta_scan_fallback() {
                 let col0 = &asheet.columns[0];
 
                 // Chunking-agnostic: locate the chunk for a given absolute row.
-                let at_row = |row0: usize| -> Option<&crate::arrow_store::OverlayValue> {
+                let at_row = |row0: usize| -> Option<crate::arrow_store::OverlayValue> {
                     let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
                     let ch = col0.chunk(ch_idx)?;
                     ch.computed_overlay.get(in_off)
@@ -70,19 +70,19 @@ fn bulk_spill_clear_dirties_dependents_without_delta_scan_fallback() {
 
                 match at_row(0) {
                     Some(crate::arrow_store::OverlayValue::Number(n)) => {
-                        assert!((*n - 1.0).abs() < 1e-6)
+                        assert!((n - 1.0).abs() < 1e-6)
                     }
                     other => panic!("expected computed overlay number at row0=0, got {other:?}"),
                 }
                 match at_row(9) {
                     Some(crate::arrow_store::OverlayValue::Number(n)) => {
-                        assert!((*n - 10.0).abs() < 1e-6)
+                        assert!((n - 10.0).abs() < 1e-6)
                     }
                     other => panic!("expected computed overlay number at row0=9, got {other:?}"),
                 }
                 match at_row(4999) {
                     Some(crate::arrow_store::OverlayValue::Number(n)) => {
-                        assert!((*n - 5000.0).abs() < 1e-6)
+                        assert!((n - 5000.0).abs() < 1e-6)
                     }
                     other => {
                         panic!("expected computed overlay number at row0=4999, got {other:?}")

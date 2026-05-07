@@ -1,5 +1,5 @@
 use crate::SheetId;
-use crate::arrow_store::SheetStore;
+use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
@@ -20,6 +20,7 @@ use formualizer_parse::parser::ReferenceType;
 use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind, LiteralValue};
 use rayon::ThreadPoolBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -28,6 +29,262 @@ type ParsedFormulaEntry = (u32, u32, ASTNode);
 type StagedFormulaMap = std::collections::HashMap<String, Vec<StagedFormulaEntry>>;
 type PreparedFormulaBatches = Vec<(String, Vec<ParsedFormulaEntry>)>;
 type StagedFormulaBatches = Vec<(String, Vec<StagedFormulaEntry>)>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ComputedWrite {
+    Cell {
+        seq: u64,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        value: OverlayValue,
+    },
+    Rect {
+        seq: u64,
+        sheet_id: SheetId,
+        sr0: u32,
+        sc0: u32,
+        values: Vec<Vec<OverlayValue>>,
+    },
+}
+
+impl ComputedWrite {
+    #[inline]
+    pub(crate) fn seq(&self) -> u64 {
+        match self {
+            ComputedWrite::Cell { seq, .. } | ComputedWrite::Rect { seq, .. } => *seq,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ComputedWriteBuffer {
+    writes: Vec<ComputedWrite>,
+    next_seq: u64,
+    estimated_bytes: usize,
+}
+
+impl ComputedWriteBuffer {
+    const ENTRY_BASE_BYTES: usize = 32;
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.writes.len()
+    }
+
+    #[inline]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        self.estimated_bytes
+    }
+
+    #[inline]
+    pub(crate) fn writes(&self) -> &[ComputedWrite] {
+        &self.writes
+    }
+
+    pub(crate) fn push_cell(
+        &mut self,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        value: OverlayValue,
+    ) {
+        let seq = self.next_sequence();
+        self.estimated_bytes = self
+            .estimated_bytes
+            .saturating_add(Self::estimate_value_bytes(&value));
+        self.writes.push(ComputedWrite::Cell {
+            seq,
+            sheet_id,
+            row0,
+            col0,
+            value,
+        });
+    }
+
+    pub(crate) fn push_rect(
+        &mut self,
+        sheet_id: SheetId,
+        sr0: u32,
+        sc0: u32,
+        values: Vec<Vec<OverlayValue>>,
+    ) {
+        let seq = self.next_sequence();
+        let added = values
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(Self::estimate_value_bytes)
+            .fold(0usize, usize::saturating_add);
+        self.estimated_bytes = self.estimated_bytes.saturating_add(added);
+        self.writes.push(ComputedWrite::Rect {
+            seq,
+            sheet_id,
+            sr0,
+            sc0,
+            values,
+        });
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.writes.clear();
+        self.estimated_bytes = 0;
+    }
+
+    fn take_writes(&mut self) -> Vec<ComputedWrite> {
+        self.estimated_bytes = 0;
+        std::mem::take(&mut self.writes)
+    }
+
+    fn next_sequence(&mut self) -> u64 {
+        let seq = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        seq
+    }
+
+    #[inline]
+    fn estimate_value_bytes(value: &OverlayValue) -> usize {
+        Self::ENTRY_BASE_BYTES.saturating_add(value.estimated_payload_bytes())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ComputedWriteChunkKey {
+    sheet_id: SheetId,
+    col0: u32,
+    chunk_idx: usize,
+    chunk_start_row0: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ComputedWriteChunkEntryPlan {
+    pub(crate) row_in_chunk: usize,
+    pub(crate) seq: u64,
+    pub(crate) value: OverlayValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ComputedWriteChunkPlanShape {
+    Point,
+    SparseOffsets {
+        entries: usize,
+        span_len: usize,
+    },
+    DenseRange {
+        start: usize,
+        len: usize,
+    },
+    RunRange {
+        start: usize,
+        len: usize,
+        runs: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ComputedWriteChunkPlan {
+    pub(crate) sheet_id: SheetId,
+    pub(crate) col0: u32,
+    pub(crate) chunk_idx: usize,
+    pub(crate) chunk_start_row0: u32,
+    pub(crate) entries: Vec<ComputedWriteChunkEntryPlan>,
+    pub(crate) shape: ComputedWriteChunkPlanShape,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ComputedWriteCoalescingPlan {
+    pub(crate) chunks: Vec<ComputedWriteChunkPlan>,
+    pub(crate) input_cells: usize,
+    pub(crate) coalesced_cells: usize,
+    pub(crate) overwritten_cells: usize,
+}
+
+impl ComputedWriteCoalescingPlan {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+}
+
+impl ComputedWriteChunkPlan {
+    fn from_group(
+        key: ComputedWriteChunkKey,
+        mut entries: Vec<ComputedWriteChunkEntryPlan>,
+    ) -> (Self, usize) {
+        entries.sort_by_key(|entry| (entry.row_in_chunk, entry.seq));
+        let input_len = entries.len();
+        let mut coalesced: Vec<ComputedWriteChunkEntryPlan> = Vec::with_capacity(input_len);
+        for entry in entries {
+            if let Some(prev) = coalesced.last_mut()
+                && prev.row_in_chunk == entry.row_in_chunk
+            {
+                *prev = entry;
+                continue;
+            }
+            coalesced.push(entry);
+        }
+        let overwritten = input_len.saturating_sub(coalesced.len());
+        let shape = Self::classify_shape(&coalesced);
+        (
+            Self {
+                sheet_id: key.sheet_id,
+                col0: key.col0,
+                chunk_idx: key.chunk_idx,
+                chunk_start_row0: key.chunk_start_row0,
+                entries: coalesced,
+                shape,
+            },
+            overwritten,
+        )
+    }
+
+    fn classify_shape(entries: &[ComputedWriteChunkEntryPlan]) -> ComputedWriteChunkPlanShape {
+        debug_assert!(!entries.is_empty());
+        if entries.len() == 1 {
+            return ComputedWriteChunkPlanShape::Point;
+        }
+
+        let start = entries[0].row_in_chunk;
+        let end = entries[entries.len() - 1].row_in_chunk;
+        let span_len = end.saturating_sub(start).saturating_add(1);
+        if span_len != entries.len() {
+            return ComputedWriteChunkPlanShape::SparseOffsets {
+                entries: entries.len(),
+                span_len,
+            };
+        }
+
+        let runs = Self::run_count(entries);
+        if runs < entries.len() {
+            ComputedWriteChunkPlanShape::RunRange {
+                start,
+                len: entries.len(),
+                runs,
+            }
+        } else {
+            ComputedWriteChunkPlanShape::DenseRange {
+                start,
+                len: entries.len(),
+            }
+        }
+    }
+
+    fn run_count(entries: &[ComputedWriteChunkEntryPlan]) -> usize {
+        let mut runs = 0usize;
+        let mut prev: Option<&OverlayValue> = None;
+        for entry in entries {
+            if prev != Some(&entry.value) {
+                runs = runs.saturating_add(1);
+                prev = Some(&entry.value);
+            }
+        }
+        runs
+    }
+}
 
 pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
@@ -3196,16 +3453,16 @@ where
                     formualizer_common::ExcelErrorKind::Value,
                 )),
             };
-            if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
+            let computed_delta = if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
                 let _ = ch.overlay.set(in_off, ov);
                 // A user edit must invalidate any computed (formula/spill) overlay entry at
                 // this cell. Otherwise, if the delta overlay later compacts into the base lanes
                 // (clearing `overlay`), a stale `computed_overlay=Empty` could incorrectly mask
                 // the edited base value under the read cascade.
-                let _ = ch.computed_overlay.remove(in_off);
+                ch.computed_overlay.remove(in_off)
             } else {
                 return;
-            }
+            };
             // Heuristic compaction: > len/50 or > 1024
             let abs_threshold = 1024usize;
             let frac_den = 50usize;
@@ -3213,6 +3470,7 @@ where
             if freed > 0 {
                 self.overlay_compactions = self.overlay_compactions.saturating_add(1);
             }
+            self.adjust_computed_overlay_bytes(computed_delta);
         }
     }
 
@@ -3240,28 +3498,6 @@ where
         };
         if let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) {
             let _ = ch.overlay.remove(in_off);
-        }
-    }
-
-    #[inline]
-    fn overlay_value_to_literal(&self, ov: &crate::arrow_store::OverlayValue) -> LiteralValue {
-        use crate::arrow_store::OverlayValue;
-        match ov {
-            OverlayValue::Empty => LiteralValue::Empty,
-            OverlayValue::Number(n) => LiteralValue::Number(*n),
-            OverlayValue::DateTime(serial) => LiteralValue::from_serial_number(*serial),
-            OverlayValue::Duration(serial) => {
-                let nanos_f = *serial * 86_400.0 * 1_000_000_000.0;
-                let nanos = nanos_f.round().clamp(i64::MIN as f64, i64::MAX as f64) as i64;
-                LiteralValue::Duration(chrono::Duration::nanoseconds(nanos))
-            }
-            OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
-            OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
-            OverlayValue::Error(code) => {
-                let kind = crate::arrow_store::unmap_error_code(*code);
-                LiteralValue::Error(formualizer_common::ExcelError::new(kind))
-            }
-            OverlayValue::Pending => LiteralValue::Pending,
         }
     }
 
@@ -3317,9 +3553,7 @@ where
         }
         let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
         let ch = asheet.columns[col0].chunk(ch_idx)?;
-        ch.overlay
-            .get(in_off)
-            .map(|ov| self.overlay_value_to_literal(ov))
+        ch.overlay.get_scalar(in_off).map(|ov| ov.to_literal())
     }
 
     /// Read a single cell's computed overlay entry (if present), preserving the distinction
@@ -3340,8 +3574,8 @@ where
         let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
         let ch = asheet.columns[col0].chunk(ch_idx)?;
         ch.computed_overlay
-            .get(in_off)
-            .map(|ov| self.overlay_value_to_literal(ov))
+            .get_scalar(in_off)
+            .map(|ov| ov.to_literal())
     }
 
     fn set_delta_overlay_cell_raw(
@@ -3600,8 +3834,7 @@ where
     /// Mirror a value into the computed overlay (formula/spill outputs).
     ///
     /// This path is subject to `EvalConfig.max_overlay_memory_bytes`.
-    /// If the cap is exceeded, we deterministically stop mirroring additional computed overlay
-    /// values and force RangeView resolution to materialize from graph values for correctness.
+    /// If the cap is exceeded, computed overlays are compacted into base lanes.
     fn mirror_value_to_computed_overlay(
         &mut self,
         sheet: &str,
@@ -3619,21 +3852,36 @@ where
             return;
         }
 
-        if self.arrow_sheets.sheet(sheet).is_none() {
-            self.arrow_sheets
-                .sheets
-                .push(crate::arrow_store::ArrowSheet {
-                    name: std::sync::Arc::<str>::from(sheet),
-                    columns: Vec::new(),
-                    nrows: 0,
-                    chunk_starts: Vec::new(),
-                    chunk_rows: 32 * 1024,
-                });
+        let ov = self.literal_to_overlay_value(value);
+        self.write_computed_overlay_value_0based(
+            sheet,
+            row.saturating_sub(1),
+            col.saturating_sub(1),
+            ov,
+        );
+    }
+
+    fn write_computed_overlay_value_0based(
+        &mut self,
+        sheet: &str,
+        row0: u32,
+        col0: u32,
+        value: OverlayValue,
+    ) {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+        {
+            return;
+        }
+        if self.computed_overlay_mirroring_disabled {
+            return;
         }
 
-        let row0 = row.saturating_sub(1) as usize;
-        let col0 = col.saturating_sub(1) as usize;
+        self.ensure_arrow_sheet(sheet);
 
+        let row0 = row0 as usize;
+        let col0 = col0 as usize;
         let asheet = self
             .arrow_sheets
             .sheet_mut(sheet)
@@ -3651,58 +3899,396 @@ where
             asheet.ensure_row_capacity(row0 + 1);
         }
 
-        if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
-            use crate::arrow_store::OverlayValue;
-            let ov = match value {
-                LiteralValue::Empty => OverlayValue::Empty,
-                LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
-                LiteralValue::Number(n) => OverlayValue::Number(*n),
-                LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
-                LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
-                LiteralValue::Error(e) => {
-                    OverlayValue::Error(crate::arrow_store::map_error_code(e.kind))
-                }
-                LiteralValue::Date(d) => {
-                    let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                    let serial = crate::builtins::datetime::datetime_to_serial_for(
-                        self.config.date_system,
-                        &dt,
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) else {
+            return;
+        };
+
+        let delta = ch.computed_overlay.set_scalar(in_off, value);
+        self.adjust_computed_overlay_bytes(delta);
+
+        if let Some(cap) = self.config.max_overlay_memory_bytes
+            && self.computed_overlay_bytes_estimate > cap
+        {
+            self.disable_computed_overlay_mirroring_due_to_budget(cap);
+        }
+    }
+
+    pub(crate) fn plan_computed_write_coalescing(
+        &self,
+        buffer: &ComputedWriteBuffer,
+    ) -> ComputedWriteCoalescingPlan {
+        self.plan_computed_write_coalescing_from_writes(buffer.writes().iter().cloned())
+    }
+
+    fn plan_owned_computed_write_coalescing(
+        &self,
+        writes: Vec<ComputedWrite>,
+    ) -> ComputedWriteCoalescingPlan {
+        self.plan_computed_write_coalescing_from_writes(writes)
+    }
+
+    fn plan_computed_write_coalescing_from_writes(
+        &self,
+        writes: impl IntoIterator<Item = ComputedWrite>,
+    ) -> ComputedWriteCoalescingPlan {
+        let mut groups: BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>> =
+            BTreeMap::new();
+        let mut input_cells = 0usize;
+
+        for write in writes {
+            match write {
+                ComputedWrite::Cell {
+                    seq,
+                    sheet_id,
+                    row0,
+                    col0,
+                    value,
+                } => {
+                    input_cells = input_cells.saturating_add(1);
+                    self.push_computed_write_plan_entry(
+                        &mut groups,
+                        seq,
+                        sheet_id,
+                        row0,
+                        col0,
+                        value,
                     );
-                    OverlayValue::DateTime(serial)
                 }
-                LiteralValue::DateTime(dt) => {
-                    let serial = crate::builtins::datetime::datetime_to_serial_for(
-                        self.config.date_system,
-                        dt,
-                    );
-                    OverlayValue::DateTime(serial)
+                ComputedWrite::Rect {
+                    seq,
+                    sheet_id,
+                    sr0,
+                    sc0,
+                    values,
+                } => {
+                    for (r_off, row) in values.into_iter().enumerate() {
+                        for (c_off, value) in row.into_iter().enumerate() {
+                            input_cells = input_cells.saturating_add(1);
+                            self.push_computed_write_plan_entry(
+                                &mut groups,
+                                seq,
+                                sheet_id,
+                                sr0.saturating_add(r_off as u32),
+                                sc0.saturating_add(c_off as u32),
+                                value,
+                            );
+                        }
+                    }
                 }
-                LiteralValue::Time(t) => {
-                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::DateTime(serial)
-                }
-                LiteralValue::Duration(d) => {
-                    let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Duration(serial)
-                }
-                LiteralValue::Pending => OverlayValue::Pending,
-                LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
-                    formualizer_common::ExcelErrorKind::Value,
-                )),
-            };
-
-            let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) else {
-                return;
-            };
-
-            let delta = ch.computed_overlay.set(in_off, ov);
-            self.adjust_computed_overlay_bytes(delta);
-
-            if let Some(cap) = self.config.max_overlay_memory_bytes
-                && self.computed_overlay_bytes_estimate > cap
-            {
-                self.disable_computed_overlay_mirroring_due_to_budget(cap);
             }
+        }
+
+        let mut plan = ComputedWriteCoalescingPlan {
+            chunks: Vec::with_capacity(groups.len()),
+            input_cells,
+            coalesced_cells: 0,
+            overwritten_cells: 0,
+        };
+        for (key, entries) in groups {
+            let (chunk_plan, overwritten) = ComputedWriteChunkPlan::from_group(key, entries);
+            plan.coalesced_cells = plan
+                .coalesced_cells
+                .saturating_add(chunk_plan.entries.len());
+            plan.overwritten_cells = plan.overwritten_cells.saturating_add(overwritten);
+            plan.chunks.push(chunk_plan);
+        }
+        debug_assert_eq!(
+            plan.input_cells,
+            plan.coalesced_cells.saturating_add(plan.overwritten_cells)
+        );
+        plan
+    }
+
+    fn push_computed_write_plan_entry(
+        &self,
+        groups: &mut BTreeMap<ComputedWriteChunkKey, Vec<ComputedWriteChunkEntryPlan>>,
+        seq: u64,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        value: OverlayValue,
+    ) {
+        let (chunk_idx, chunk_start_row0, row_in_chunk) =
+            self.locate_computed_write_chunk(sheet_id, row0);
+        let key = ComputedWriteChunkKey {
+            sheet_id,
+            col0,
+            chunk_idx,
+            chunk_start_row0,
+        };
+        groups
+            .entry(key)
+            .or_default()
+            .push(ComputedWriteChunkEntryPlan {
+                row_in_chunk,
+                seq,
+                value,
+            });
+    }
+
+    fn locate_computed_write_chunk(&self, sheet_id: SheetId, row0: u32) -> (usize, u32, usize) {
+        let sheet_name = self.graph.sheet_name(sheet_id);
+        if let Some(sheet) = self.arrow_sheets.sheet(sheet_name) {
+            return Self::locate_row_in_sheet_for_computed_write_plan(sheet, row0 as usize);
+        }
+        Self::locate_row_in_empty_sheet_for_computed_write_plan(row0 as usize, 32 * 1024)
+    }
+
+    fn locate_row_in_sheet_for_computed_write_plan(
+        sheet: &crate::arrow_store::ArrowSheet,
+        row0: usize,
+    ) -> (usize, u32, usize) {
+        if row0 < sheet.nrows as usize
+            && let Some((chunk_idx, row_in_chunk)) = sheet.chunk_of_row(row0)
+        {
+            let chunk_start = sheet.chunk_starts.get(chunk_idx).copied().unwrap_or(0);
+            return (chunk_idx, chunk_start as u32, row_in_chunk);
+        }
+
+        let chunk_rows = sheet.chunk_rows.max(1);
+        if sheet.chunk_starts.is_empty() {
+            return Self::locate_row_in_empty_sheet_for_computed_write_plan(row0, chunk_rows);
+        }
+
+        let mut chunk_idx = sheet.chunk_starts.len().saturating_sub(1);
+        let mut chunk_start = sheet.chunk_starts[chunk_idx];
+        while chunk_start.saturating_add(chunk_rows) <= row0 {
+            chunk_idx = chunk_idx.saturating_add(1);
+            chunk_start = chunk_start.saturating_add(chunk_rows);
+        }
+        (
+            chunk_idx,
+            chunk_start as u32,
+            row0.saturating_sub(chunk_start),
+        )
+    }
+
+    fn locate_row_in_empty_sheet_for_computed_write_plan(
+        row0: usize,
+        chunk_rows: usize,
+    ) -> (usize, u32, usize) {
+        let chunk_rows = chunk_rows.max(1);
+        let chunk_idx = row0 / chunk_rows;
+        let chunk_start = chunk_idx.saturating_mul(chunk_rows);
+        (
+            chunk_idx,
+            chunk_start as u32,
+            row0.saturating_sub(chunk_start),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_plan_computed_write_coalescing(
+        &self,
+        buffer: &ComputedWriteBuffer,
+    ) -> ComputedWriteCoalescingPlan {
+        self.plan_computed_write_coalescing(buffer)
+    }
+
+    pub(crate) fn flush_computed_write_buffer(
+        &mut self,
+        buffer: &mut ComputedWriteBuffer,
+    ) -> Result<(), ExcelError> {
+        if buffer.is_empty() {
+            return Ok(());
+        }
+
+        let plan = self.plan_owned_computed_write_coalescing(buffer.take_writes());
+        self.flush_computed_write_plan(plan);
+
+        Ok(())
+    }
+
+    fn flush_computed_write_plan(&mut self, plan: ComputedWriteCoalescingPlan) {
+        for chunk in plan.chunks {
+            self.flush_computed_write_chunk_plan(chunk);
+        }
+    }
+
+    fn flush_computed_write_chunk_plan(&mut self, chunk: ComputedWriteChunkPlan) {
+        match &chunk.shape {
+            ComputedWriteChunkPlanShape::Point => {
+                self.flush_computed_write_chunk_plan_as_points(chunk);
+            }
+            ComputedWriteChunkPlanShape::SparseOffsets { .. } => {
+                self.flush_computed_write_chunk_plan_as_sparse_fragment_or_points(chunk);
+            }
+            ComputedWriteChunkPlanShape::DenseRange { .. } => {
+                self.flush_computed_write_chunk_plan_as_dense_fragment(chunk);
+            }
+            ComputedWriteChunkPlanShape::RunRange { len, runs, .. } => {
+                if Self::should_emit_computed_run_fragment(*len, *runs) {
+                    self.flush_computed_write_chunk_plan_as_run_fragment(chunk);
+                } else {
+                    self.flush_computed_write_chunk_plan_as_dense_fragment(chunk);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn should_emit_computed_run_fragment(len: usize, runs: usize) -> bool {
+        runs <= len / 2
+    }
+
+    fn flush_computed_write_chunk_plan_as_points(&mut self, chunk: ComputedWriteChunkPlan) {
+        let sheet_name = self.graph.sheet_name(chunk.sheet_id).to_string();
+        for entry in chunk.entries {
+            let row0 = chunk
+                .chunk_start_row0
+                .saturating_add(entry.row_in_chunk as u32);
+            self.write_computed_overlay_value_0based(&sheet_name, row0, chunk.col0, entry.value);
+        }
+    }
+
+    fn flush_computed_write_chunk_plan_as_sparse_fragment_or_points(
+        &mut self,
+        chunk: ComputedWriteChunkPlan,
+    ) {
+        let point_estimate = Self::computed_write_chunk_plan_point_estimate(&chunk);
+        let sheet_id = chunk.sheet_id;
+        let col0 = chunk.col0;
+        let chunk_idx = chunk.chunk_idx;
+        let chunk_start_row0 = chunk.chunk_start_row0;
+        let items: Vec<(usize, OverlayValue)> = chunk
+            .entries
+            .into_iter()
+            .map(|entry| (entry.row_in_chunk, entry.value))
+            .collect();
+        match OverlayFragment::sparse_offsets_if_estimated_smaller_than_points(
+            items,
+            point_estimate,
+        ) {
+            Some(Ok(fragment)) => {
+                self.apply_computed_overlay_fragment(sheet_id, col0, chunk_idx, fragment);
+            }
+            Some(Err(cells)) => {
+                self.flush_computed_overlay_cells_as_points(
+                    sheet_id,
+                    col0,
+                    chunk_start_row0,
+                    cells,
+                );
+            }
+            None => {}
+        }
+    }
+
+    #[inline]
+    fn computed_write_chunk_plan_point_estimate(chunk: &ComputedWriteChunkPlan) -> usize {
+        chunk
+            .entries
+            .iter()
+            .map(|entry| ComputedWriteBuffer::estimate_value_bytes(&entry.value))
+            .fold(0usize, usize::saturating_add)
+    }
+
+    fn flush_computed_overlay_cells_as_points(
+        &mut self,
+        sheet_id: SheetId,
+        col0: u32,
+        chunk_start_row0: u32,
+        cells: Vec<(usize, OverlayValue)>,
+    ) {
+        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        for (row_in_chunk, value) in cells {
+            let row0 = chunk_start_row0.saturating_add(row_in_chunk as u32);
+            self.write_computed_overlay_value_0based(&sheet_name, row0, col0, value);
+        }
+    }
+
+    fn flush_computed_write_chunk_plan_as_dense_fragment(&mut self, chunk: ComputedWriteChunkPlan) {
+        if chunk.entries.is_empty() {
+            return;
+        }
+        let start = chunk.entries[0].row_in_chunk;
+        let values: Vec<OverlayValue> =
+            chunk.entries.into_iter().map(|entry| entry.value).collect();
+        if let Some(fragment) = OverlayFragment::dense_range(start, values) {
+            self.apply_computed_overlay_fragment(
+                chunk.sheet_id,
+                chunk.col0,
+                chunk.chunk_idx,
+                fragment,
+            );
+        }
+    }
+
+    fn flush_computed_write_chunk_plan_as_run_fragment(&mut self, chunk: ComputedWriteChunkPlan) {
+        if chunk.entries.is_empty() {
+            return;
+        }
+        let start = chunk.entries[0].row_in_chunk;
+        let values: Vec<OverlayValue> =
+            chunk.entries.into_iter().map(|entry| entry.value).collect();
+        if let Some(fragment) = OverlayFragment::run_range(start, values) {
+            self.apply_computed_overlay_fragment(
+                chunk.sheet_id,
+                chunk.col0,
+                chunk.chunk_idx,
+                fragment,
+            );
+        }
+    }
+
+    fn apply_computed_overlay_fragment(
+        &mut self,
+        sheet_id: SheetId,
+        col0: u32,
+        chunk_idx: usize,
+        fragment: OverlayFragment,
+    ) {
+        if !(self.config.arrow_storage_enabled
+            && self.config.delta_overlay_enabled
+            && self.config.write_formula_overlay_enabled)
+        {
+            return;
+        }
+        if self.computed_overlay_mirroring_disabled {
+            return;
+        }
+
+        let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+        self.ensure_arrow_sheet(&sheet_name);
+
+        let col0 = col0 as usize;
+        let asheet = self
+            .arrow_sheets
+            .sheet_mut(&sheet_name)
+            .expect("ArrowSheet must exist");
+
+        let cur_cols = asheet.columns.len();
+        if col0 >= cur_cols {
+            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
+        }
+
+        let start_row0 = asheet
+            .chunk_starts
+            .get(chunk_idx)
+            .copied()
+            .unwrap_or_else(|| chunk_idx.saturating_mul(asheet.chunk_rows.max(1)));
+        let required_rows =
+            start_row0.saturating_add(fragment.max_covered_offset().saturating_add(1));
+        if required_rows > asheet.nrows as usize {
+            if asheet.columns.is_empty() {
+                asheet.insert_columns(0, 1);
+            }
+            asheet.ensure_row_capacity(required_rows);
+        }
+
+        let Some(ch) = asheet.ensure_column_chunk_mut(col0, chunk_idx) else {
+            return;
+        };
+        let delta = ch.computed_overlay.apply_fragment(fragment);
+        self.adjust_computed_overlay_bytes(delta);
+
+        if let Some(cap) = self.config.max_overlay_memory_bytes
+            && self.computed_overlay_bytes_estimate > cap
+        {
+            self.disable_computed_overlay_mirroring_due_to_budget(cap);
         }
     }
 
@@ -3771,33 +4357,88 @@ where
     }
 
     fn mirror_vertex_value_to_overlay(&mut self, vertex_id: VertexId, value: &LiteralValue) {
+        let _ = self.record_vertex_value_to_overlay(vertex_id, value, None);
+    }
+
+    fn record_vertex_value_to_overlay(
+        &mut self,
+        vertex_id: VertexId,
+        value: &LiteralValue,
+        computed_writes: Option<&mut ComputedWriteBuffer>,
+    ) -> Result<(), ExcelError> {
         if !(self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
             && self.config.write_formula_overlay_enabled)
         {
-            return;
+            return Ok(());
+        }
+        if self.computed_overlay_mirroring_disabled {
+            return Ok(());
         }
         if !matches!(
             self.graph.get_vertex_kind(vertex_id),
             VertexKind::FormulaScalar | VertexKind::FormulaArray
         ) {
-            return;
+            return Ok(());
         }
         let Some(cell) = self.graph.get_cell_ref(vertex_id) else {
-            return;
+            return Ok(());
         };
-        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-        self.mirror_value_to_computed_overlay(
-            &sheet_name,
-            cell.coord.row() + 1,
-            cell.coord.col() + 1,
-            value,
-        );
+        let ov = self.literal_to_overlay_value(value);
+        if let Some(buffer) = computed_writes {
+            buffer.push_cell(cell.sheet_id, cell.coord.row(), cell.coord.col(), ov);
+            if self.should_flush_computed_write_buffer(buffer) {
+                self.flush_computed_write_buffer(buffer)?;
+            }
+        } else {
+            let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+            self.write_computed_overlay_value_0based(
+                &sheet_name,
+                cell.coord.row(),
+                cell.coord.col(),
+                ov,
+            );
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn should_flush_computed_write_buffer(&self, buffer: &ComputedWriteBuffer) -> bool {
+        self.config.max_overlay_memory_bytes.is_some_and(|cap| {
+            if cap == 0 {
+                return false;
+            }
+            self.computed_overlay_bytes_estimate
+                .saturating_add(buffer.estimated_bytes())
+                > cap
+        })
     }
 
     /// Estimated memory usage for computed overlays (formula/spill mirroring).
     pub fn overlay_memory_usage(&self) -> usize {
         self.computed_overlay_bytes_estimate
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_overlay_compactions(&self) -> u64 {
+        self.overlay_compactions
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_recompute_computed_overlay_bytes(&mut self) -> usize {
+        let mut total = 0usize;
+        for sheet in &self.arrow_sheets.sheets {
+            for column in &sheet.columns {
+                for chunk in &column.chunks {
+                    total = total.saturating_add(chunk.computed_overlay.estimated_bytes());
+                }
+                for chunk in column.sparse_chunks.values() {
+                    total = total.saturating_add(chunk.computed_overlay.estimated_bytes());
+                }
+            }
+        }
+        self.computed_overlay_bytes_estimate = total;
+        total
     }
 
     fn resolve_sheet_locator_for_write(
@@ -8160,12 +8801,22 @@ where
         delta: Option<&mut DeltaCollector>,
         log: Option<&mut ChangeLog>,
     ) -> Result<(), ExcelError> {
+        self.apply_effect_with_computed_writes(effect, delta, log, None)
+    }
+
+    fn apply_effect_with_computed_writes(
+        &mut self,
+        effect: &Effect,
+        delta: Option<&mut DeltaCollector>,
+        log: Option<&mut ChangeLog>,
+        computed_writes: Option<&mut ComputedWriteBuffer>,
+    ) -> Result<(), ExcelError> {
         match effect {
             Effect::WriteCell { vertex_id, value } => {
-                self.apply_write_cell(*vertex_id, value, delta);
+                self.apply_write_cell(*vertex_id, value, delta, computed_writes)?;
             }
             Effect::SpillClear { anchor_vertex } => {
-                self.apply_spill_clear(*anchor_vertex, delta, log);
+                self.apply_spill_clear(*anchor_vertex, delta, log, computed_writes)?;
             }
             Effect::SpillCommit {
                 anchor_vertex,
@@ -8173,7 +8824,14 @@ where
                 target_cells,
                 values,
             } => {
-                self.apply_spill_commit(*anchor_vertex, target_cells, values.clone(), delta, log)?;
+                self.apply_spill_commit(
+                    *anchor_vertex,
+                    target_cells,
+                    values.clone(),
+                    delta,
+                    log,
+                    computed_writes,
+                )?;
             }
         }
         Ok(())
@@ -8185,21 +8843,27 @@ where
         vertex_id: VertexId,
         value: &LiteralValue,
         delta: Option<&mut DeltaCollector>,
-    ) {
+        mut computed_writes: Option<&mut ComputedWriteBuffer>,
+    ) -> Result<(), ExcelError> {
         if let Some(d) = delta
             && d.mode != DeltaMode::Off
-            && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
         {
-            let sheet_name = self.graph.sheet_name(cell.sheet_id);
-            let old = self
-                .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                .unwrap_or(LiteralValue::Empty);
-            if old != *value {
-                d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            if let Some(buffer) = computed_writes.as_deref_mut() {
+                self.flush_computed_write_buffer(buffer)?;
+            }
+            if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id) {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                let old = self
+                    .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    .unwrap_or(LiteralValue::Empty);
+                if old != *value {
+                    d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                }
             }
         }
         self.graph.update_vertex_value(vertex_id, value.clone());
-        self.mirror_vertex_value_to_overlay(vertex_id, value);
+        self.record_vertex_value_to_overlay(vertex_id, value, computed_writes)?;
+        Ok(())
     }
 
     /// Apply a SpillClear effect.
@@ -8208,14 +8872,19 @@ where
         anchor_vertex: VertexId,
         delta: Option<&mut DeltaCollector>,
         log: Option<&mut ChangeLog>,
-    ) {
+        computed_writes: Option<&mut ComputedWriteBuffer>,
+    ) -> Result<(), ExcelError> {
+        if let Some(buffer) = computed_writes {
+            self.flush_computed_write_buffer(buffer)?;
+        }
+
         let spill_cells = self
             .graph
             .spill_cells_for_anchor(anchor_vertex)
             .map(|cells| cells.to_vec())
             .unwrap_or_default();
         if spill_cells.is_empty() {
-            return;
+            return Ok(());
         }
 
         // Snapshot for ChangeLog before clearing.
@@ -8269,6 +8938,7 @@ where
                 old,
             });
         }
+        Ok(())
     }
 
     /// Apply a SpillCommit effect.
@@ -8279,7 +8949,12 @@ where
         values: Vec<Vec<LiteralValue>>,
         delta: Option<&mut DeltaCollector>,
         log: Option<&mut ChangeLog>,
+        computed_writes: Option<&mut ComputedWriteBuffer>,
     ) -> Result<(), ExcelError> {
+        if let Some(buffer) = computed_writes {
+            self.flush_computed_write_buffer(buffer)?;
+        }
+
         // Snapshot for ChangeLog before commit.
         let old_snapshot = if log.is_some() {
             self.snapshot_spill_for_anchor(anchor_vertex)
@@ -8365,6 +9040,30 @@ where
         })
     }
 
+    fn flush_before_range_dependent_vertex(
+        &mut self,
+        vertex_id: VertexId,
+        computed_writes: &mut ComputedWriteBuffer,
+    ) -> Result<(), ExcelError> {
+        if self.graph.get_range_dependencies(vertex_id).is_some() {
+            self.flush_computed_write_buffer(computed_writes)?;
+        }
+        Ok(())
+    }
+
+    fn plan_vertex_effects_with_computed_flush(
+        &mut self,
+        vertex_id: VertexId,
+        computed_value: LiteralValue,
+        overwritable_formulas: Option<&rustc_hash::FxHashSet<VertexId>>,
+        computed_writes: &mut ComputedWriteBuffer,
+    ) -> Result<Vec<Effect>, ExcelError> {
+        if matches!(&computed_value, LiteralValue::Array(_)) {
+            self.flush_computed_write_buffer(computed_writes)?;
+        }
+        self.plan_vertex_effects(vertex_id, computed_value, overwritable_formulas)
+    }
+
     // ── Layer evaluation via effects pipeline ──────────────────────────────
 
     /// Evaluate a layer sequentially using the effects pipeline.
@@ -8372,16 +9071,38 @@ where
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
+        let mut computed_writes = ComputedWriteBuffer::default();
         for &vertex_id in &layer.vertices {
+            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
             let value = match self.evaluate_vertex_immutable(vertex_id) {
                 Ok(v) => v,
                 Err(e) => LiteralValue::Error(e),
             };
-            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            let effects = match self.plan_vertex_effects_with_computed_flush(
+                vertex_id,
+                value,
+                None,
+                &mut computed_writes,
+            ) {
+                Ok(effects) => effects,
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
+            };
             for effect in &effects {
-                self.apply_effect(effect, None, None)?;
+                if let Err(e) = self.apply_effect_with_computed_writes(
+                    effect,
+                    None,
+                    None,
+                    Some(&mut computed_writes),
+                ) {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
+        self.flush_computed_write_buffer(&mut computed_writes)?;
         Ok(layer.vertices.len())
     }
 
@@ -8391,16 +9112,38 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
+        let mut computed_writes = ComputedWriteBuffer::default();
         for &vertex_id in &layer.vertices {
+            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
             let value = match self.evaluate_vertex_immutable(vertex_id) {
                 Ok(v) => v,
                 Err(e) => LiteralValue::Error(e),
             };
-            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            let effects = match self.plan_vertex_effects_with_computed_flush(
+                vertex_id,
+                value,
+                None,
+                &mut computed_writes,
+            ) {
+                Ok(effects) => effects,
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
+            };
             for effect in &effects {
-                self.apply_effect(effect, Some(delta), None)?;
+                if let Err(e) = self.apply_effect_with_computed_writes(
+                    effect,
+                    Some(delta),
+                    None,
+                    Some(&mut computed_writes),
+                ) {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
+        self.flush_computed_write_buffer(&mut computed_writes)?;
         Ok(layer.vertices.len())
     }
 
@@ -8410,20 +9153,43 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
+        let mut computed_writes = ComputedWriteBuffer::default();
         for (i, &vertex_id) in layer.vertices.iter().enumerate() {
             if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                self.flush_computed_write_buffer(&mut computed_writes)?;
                 return Err(ExcelError::new(ExcelErrorKind::Cancelled)
                     .with_message("Evaluation cancelled within layer".to_string()));
             }
+            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
             let value = match self.evaluate_vertex_immutable(vertex_id) {
                 Ok(v) => v,
                 Err(e) => LiteralValue::Error(e),
             };
-            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            let effects = match self.plan_vertex_effects_with_computed_flush(
+                vertex_id,
+                value,
+                None,
+                &mut computed_writes,
+            ) {
+                Ok(effects) => effects,
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
+            };
             for effect in &effects {
-                self.apply_effect(effect, None, None)?;
+                if let Err(e) = self.apply_effect_with_computed_writes(
+                    effect,
+                    None,
+                    None,
+                    Some(&mut computed_writes),
+                ) {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
+        self.flush_computed_write_buffer(&mut computed_writes)?;
         Ok(layer.vertices.len())
     }
 
@@ -8433,20 +9199,43 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
+        let mut computed_writes = ComputedWriteBuffer::default();
         for (i, &vertex_id) in layer.vertices.iter().enumerate() {
             if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
+                self.flush_computed_write_buffer(&mut computed_writes)?;
                 return Err(ExcelError::new(ExcelErrorKind::Cancelled)
                     .with_message("Demand-driven evaluation cancelled within layer".to_string()));
             }
+            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
             let value = match self.evaluate_vertex_immutable(vertex_id) {
                 Ok(v) => v,
                 Err(e) => LiteralValue::Error(e),
             };
-            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            let effects = match self.plan_vertex_effects_with_computed_flush(
+                vertex_id,
+                value,
+                None,
+                &mut computed_writes,
+            ) {
+                Ok(effects) => effects,
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
+            };
             for effect in &effects {
-                self.apply_effect(effect, None, None)?;
+                if let Err(e) = self.apply_effect_with_computed_writes(
+                    effect,
+                    None,
+                    None,
+                    Some(&mut computed_writes),
+                ) {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
+        self.flush_computed_write_buffer(&mut computed_writes)?;
         Ok(layer.vertices.len())
     }
 
@@ -8476,6 +9265,7 @@ where
             if group.is_empty() {
                 continue;
             }
+            let mut computed_writes = ComputedWriteBuffer::default();
 
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
                 thread_pool.install(|| {
@@ -8504,23 +9294,66 @@ where
                         }
                     }
                     for (vertex_id, result) in arrays {
-                        let effects =
-                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        let effects = match self.plan_vertex_effects_with_computed_flush(
+                            vertex_id,
+                            result,
+                            Some(&inflight),
+                            &mut computed_writes,
+                        ) {
+                            Ok(effects) => effects,
+                            Err(e) => {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
+                        };
                         for effect in &effects {
-                            self.apply_effect(effect, None, None)?;
+                            if let Err(e) = self.apply_effect_with_computed_writes(
+                                effect,
+                                None,
+                                None,
+                                Some(&mut computed_writes),
+                            ) {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
                         }
                         applied = applied.saturating_add(1);
                     }
+                    // Make all array spill/top-left writes visible before scalar effects in this group.
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
                     for (vertex_id, result) in others {
-                        let effects =
-                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        let effects = match self.plan_vertex_effects_with_computed_flush(
+                            vertex_id,
+                            result,
+                            Some(&inflight),
+                            &mut computed_writes,
+                        ) {
+                            Ok(effects) => effects,
+                            Err(e) => {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
+                        };
                         for effect in &effects {
-                            self.apply_effect(effect, None, None)?;
+                            if let Err(e) = self.apply_effect_with_computed_writes(
+                                effect,
+                                None,
+                                None,
+                                Some(&mut computed_writes),
+                            ) {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
                         }
                         applied = applied.saturating_add(1);
                     }
+                    // Flush at the group boundary; phase1 must be visible before phase2.
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
 
@@ -8554,6 +9387,7 @@ where
             if group.is_empty() {
                 continue;
             }
+            let mut computed_writes = ComputedWriteBuffer::default();
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
                 thread_pool.install(|| {
                     group
@@ -8579,23 +9413,64 @@ where
                         }
                     }
                     for (vertex_id, result) in arrays {
-                        let effects =
-                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        let effects = match self.plan_vertex_effects_with_computed_flush(
+                            vertex_id,
+                            result,
+                            Some(&inflight),
+                            &mut computed_writes,
+                        ) {
+                            Ok(effects) => effects,
+                            Err(e) => {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
+                        };
                         for effect in &effects {
-                            self.apply_effect(effect, Some(delta), None)?;
+                            if let Err(e) = self.apply_effect_with_computed_writes(
+                                effect,
+                                Some(delta),
+                                None,
+                                Some(&mut computed_writes),
+                            ) {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
                         }
                         applied = applied.saturating_add(1);
                     }
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
                     for (vertex_id, result) in others {
-                        let effects =
-                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        let effects = match self.plan_vertex_effects_with_computed_flush(
+                            vertex_id,
+                            result,
+                            Some(&inflight),
+                            &mut computed_writes,
+                        ) {
+                            Ok(effects) => effects,
+                            Err(e) => {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
+                        };
                         for effect in &effects {
-                            self.apply_effect(effect, Some(delta), None)?;
+                            if let Err(e) = self.apply_effect_with_computed_writes(
+                                effect,
+                                Some(delta),
+                                None,
+                                Some(&mut computed_writes),
+                            ) {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
                         }
                         applied = applied.saturating_add(1);
                     }
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
 
@@ -8634,6 +9509,7 @@ where
             if group.is_empty() {
                 continue;
             }
+            let mut computed_writes = ComputedWriteBuffer::default();
 
             let results: Result<Vec<(VertexId, LiteralValue)>, ExcelError> =
                 thread_pool.install(|| {
@@ -8667,23 +9543,64 @@ where
                         }
                     }
                     for (vertex_id, result) in arrays {
-                        let effects =
-                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        let effects = match self.plan_vertex_effects_with_computed_flush(
+                            vertex_id,
+                            result,
+                            Some(&inflight),
+                            &mut computed_writes,
+                        ) {
+                            Ok(effects) => effects,
+                            Err(e) => {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
+                        };
                         for effect in &effects {
-                            self.apply_effect(effect, None, None)?;
+                            if let Err(e) = self.apply_effect_with_computed_writes(
+                                effect,
+                                None,
+                                None,
+                                Some(&mut computed_writes),
+                            ) {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
                         }
                         applied = applied.saturating_add(1);
                     }
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
                     for (vertex_id, result) in others {
-                        let effects =
-                            self.plan_vertex_effects(vertex_id, result, Some(&inflight))?;
+                        let effects = match self.plan_vertex_effects_with_computed_flush(
+                            vertex_id,
+                            result,
+                            Some(&inflight),
+                            &mut computed_writes,
+                        ) {
+                            Ok(effects) => effects,
+                            Err(e) => {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
+                        };
                         for effect in &effects {
-                            self.apply_effect(effect, None, None)?;
+                            if let Err(e) = self.apply_effect_with_computed_writes(
+                                effect,
+                                None,
+                                None,
+                                Some(&mut computed_writes),
+                            ) {
+                                self.flush_computed_write_buffer(&mut computed_writes)?;
+                                return Err(e);
+                            }
                         }
                         applied = applied.saturating_add(1);
                     }
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
 
@@ -8798,16 +9715,38 @@ where
         layer: &super::scheduler::Layer,
         log: &mut ChangeLog,
     ) -> Result<usize, ExcelError> {
+        let mut computed_writes = ComputedWriteBuffer::default();
         for &vertex_id in &layer.vertices {
+            self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
             let value = match self.evaluate_vertex_immutable(vertex_id) {
                 Ok(v) => v,
                 Err(e) => LiteralValue::Error(e),
             };
-            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            let effects = match self.plan_vertex_effects_with_computed_flush(
+                vertex_id,
+                value,
+                None,
+                &mut computed_writes,
+            ) {
+                Ok(effects) => effects,
+                Err(e) => {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
+            };
             for effect in &effects {
-                self.apply_effect(effect, None, Some(log))?;
+                if let Err(e) = self.apply_effect_with_computed_writes(
+                    effect,
+                    None,
+                    Some(log),
+                    Some(&mut computed_writes),
+                ) {
+                    self.flush_computed_write_buffer(&mut computed_writes)?;
+                    return Err(e);
+                }
             }
         }
+        self.flush_computed_write_buffer(&mut computed_writes)?;
         Ok(layer.vertices.len())
     }
 }
