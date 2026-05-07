@@ -22,7 +22,7 @@ use crate::formula_plane::producer::{
     FormulaProducerWork, ProducerDirtyDomain,
 };
 use crate::formula_plane::region_index::{DirtyDomain, RegionPattern};
-use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef};
+use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef, PlacementCoord};
 use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
 #[cfg(test)]
 use crate::formula_plane::span_eval::SpanEvalReport;
@@ -443,7 +443,7 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         if self.log.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
-            let old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             let addr = self.addr_for(sheet, row, col);
             let Some(log_ptr) = self.log else {
                 return Err(crate::engine::EditorError::TransactionFailed {
@@ -458,6 +458,15 @@ where
             } else {
                 None
             };
+
+            self.engine.demote_span_containing_cell_for_write(
+                addr.sheet_id,
+                addr.coord.row(),
+                addr.coord.col(),
+            )?;
+            if old_formula.is_none() {
+                old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            }
 
             let delta_old_sem = if old_formula.is_some() {
                 None
@@ -508,7 +517,7 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         if self.log.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
-            let old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             let addr = self.addr_for(sheet, row, col);
             let Some(log_ptr) = self.log else {
                 return Err(crate::engine::EditorError::TransactionFailed {
@@ -516,6 +525,14 @@ where
                 });
             };
 
+            self.engine.demote_span_containing_cell_for_write(
+                addr.sheet_id,
+                addr.coord.row(),
+                addr.coord.col(),
+            )?;
+            if old_formula.is_none() {
+                old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            }
             let delta_old = if self.arrow_undo.is_some() {
                 if old_formula.is_some() {
                     None
@@ -1590,6 +1607,8 @@ where
     }
 
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
+        self.demote_all_spans()
+            .map_err(Self::editor_error_to_excel)?;
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
         self.record_formula_plane_structural_change(StructuralScope::AllSheets);
@@ -1614,6 +1633,8 @@ where
 
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         let name = self.graph.sheet_name(sheet_id).to_string();
+        self.demote_all_spans()
+            .map_err(Self::editor_error_to_excel)?;
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
         self.staged_formulas.remove(&name);
@@ -3646,6 +3667,67 @@ where
         Some(mask)
     }
 
+    fn editor_error_to_excel(error: crate::engine::EditorError) -> ExcelError {
+        match error {
+            crate::engine::EditorError::Excel(error) => error,
+            other => ExcelError::new(ExcelErrorKind::Value).with_message(other.to_string()),
+        }
+    }
+
+    fn demote_span_containing_cell_for_write(
+        &mut self,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+    ) -> Result<(), crate::engine::EditorError> {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return Ok(());
+        }
+        let placement = PlacementCoord::new(sheet_id, row0, col0);
+        let inside_active_span = self
+            .graph
+            .formula_authority()
+            .plane
+            .spans
+            .find_at(placement)
+            .is_some();
+        if inside_active_span {
+            self.demote_spans_preserving_computed_overlays(sheet_id)?;
+        }
+        Ok(())
+    }
+
+    fn demote_all_spans(&mut self) -> Result<(), crate::engine::EditorError> {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return Ok(());
+        }
+        let sheet_ids: FxHashSet<SheetId> = {
+            let authority = self.graph.formula_authority();
+            authority
+                .active_span_refs()
+                .into_iter()
+                .filter_map(|span_ref| {
+                    authority
+                        .plane
+                        .spans
+                        .get(span_ref)
+                        .map(|span| span.sheet_id)
+                })
+                .collect()
+        };
+        for sheet_id in sheet_ids {
+            self.demote_spans_preserving_computed_overlays(sheet_id)?;
+        }
+        Ok(())
+    }
+
+    fn demote_spans_preserving_computed_overlays(
+        &mut self,
+        sheet_id: SheetId,
+    ) -> Result<(), crate::engine::EditorError> {
+        self.demote_spans_for_structural_op_impl(sheet_id, false)
+    }
+
     /// Demote active FormulaPlane spans affected by a structural edit on `sheet_id`.
     ///
     /// This is the conservative Option-A correctness path for structural edits: rather than
@@ -3658,6 +3740,14 @@ where
     fn demote_spans_for_structural_op(
         &mut self,
         sheet_id: SheetId,
+    ) -> Result<(), crate::engine::EditorError> {
+        self.demote_spans_for_structural_op_impl(sheet_id, true)
+    }
+
+    fn demote_spans_for_structural_op_impl(
+        &mut self,
+        sheet_id: SheetId,
+        clear_computed_overlays: bool,
     ) -> Result<(), crate::engine::EditorError> {
         struct SpanPlan {
             span_ref: FormulaSpanRef,
@@ -3871,9 +3961,11 @@ where
             authority.rebuild_indexes();
         }
 
-        for (formula_sheet_id, row, col) in placement_cells {
-            let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
-            self.clear_computed_overlay_cell(&sheet_name, row, col);
+        if clear_computed_overlays {
+            for (formula_sheet_id, row, col) in placement_cells {
+                let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
+                self.clear_computed_overlay_cell(&sheet_name, row, col);
+            }
         }
 
         for (formula_sheet_id, planned) in planned_by_sheet {
@@ -5520,6 +5612,13 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
+        let sheet_id = self.graph.sheet_id_mut(sheet);
+        self.demote_span_containing_cell_for_write(
+            sheet_id,
+            row.saturating_sub(1),
+            col.saturating_sub(1),
+        )
+        .map_err(Self::editor_error_to_excel)?;
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
         self.record_formula_plane_changed_cell(sheet, row, col);
         // Mirror into Arrow overlay when enabled
@@ -5760,6 +5859,12 @@ where
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
         let sheet_id = self.graph.sheet_id_mut(sheet);
+        self.demote_span_containing_cell_for_write(
+            sheet_id,
+            row.saturating_sub(1),
+            col.saturating_sub(1),
+        )
+        .map_err(Self::editor_error_to_excel)?;
         let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
         let ingested = {
             let mut pipeline = self.ingest_pipeline();
@@ -5795,6 +5900,20 @@ where
         let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
         let edited_cells: Vec<(u32, u32)> = collected.iter().map(|(r, c, _)| (*r, *c)).collect();
         let sheet_id = self.graph.sheet_id_mut(sheet);
+        let writes_inside_active_span = edited_cells.iter().any(|(row, col)| {
+            let placement =
+                PlacementCoord::new(sheet_id, row.saturating_sub(1), col.saturating_sub(1));
+            self.graph
+                .formula_authority()
+                .plane
+                .spans
+                .find_at(placement)
+                .is_some()
+        });
+        if writes_inside_active_span {
+            self.demote_spans_preserving_computed_overlays(sheet_id)
+                .map_err(Self::editor_error_to_excel)?;
+        }
         let ingested = {
             let mut pipeline = self.ingest_pipeline();
             let inputs = collected.into_iter().map(|(row, col, ast)| {
