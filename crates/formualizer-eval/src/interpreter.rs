@@ -12,6 +12,7 @@ use std::{borrow::Cow, sync::Arc};
 use crate::engine::arena::ast::SheetKey;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
+use crate::formula_plane::template_canonical::LiteralSlotId;
 
 #[derive(Clone)]
 pub enum LocalBinding {
@@ -65,6 +66,12 @@ impl LocalEnv {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct InterpreterParameterBindings<'a> {
+    pub(crate) literal_slots_by_node: &'a FxHashMap<AstNodeId, LiteralSlotId>,
+    pub(crate) literal_values: &'a [LiteralValue],
+}
+
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
     current_sheet: &'a str,
@@ -73,6 +80,7 @@ pub struct Interpreter<'a> {
     reference_row_delta: i64,
     reference_col_delta: i64,
     disable_ast_planner: bool,
+    parameter_bindings: Option<InterpreterParameterBindings<'a>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -85,6 +93,7 @@ impl<'a> Interpreter<'a> {
             reference_row_delta: 0,
             reference_col_delta: 0,
             disable_ast_planner: false,
+            parameter_bindings: None,
         }
     }
 
@@ -101,6 +110,7 @@ impl<'a> Interpreter<'a> {
             reference_row_delta: 0,
             reference_col_delta: 0,
             disable_ast_planner: false,
+            parameter_bindings: None,
         }
     }
 
@@ -121,6 +131,7 @@ impl<'a> Interpreter<'a> {
             reference_row_delta: self.reference_row_delta,
             reference_col_delta: self.reference_col_delta,
             disable_ast_planner: self.disable_ast_planner,
+            parameter_bindings: self.parameter_bindings,
         }
     }
 
@@ -133,6 +144,23 @@ impl<'a> Interpreter<'a> {
             reference_row_delta: self.reference_row_delta,
             reference_col_delta: self.reference_col_delta,
             disable_ast_planner: self.disable_ast_planner,
+            parameter_bindings: self.parameter_bindings,
+        }
+    }
+
+    pub(crate) fn with_parameter_bindings(
+        &self,
+        bindings: InterpreterParameterBindings<'a>,
+    ) -> Self {
+        Self {
+            context: self.context,
+            current_sheet: self.current_sheet,
+            current_cell: self.current_cell,
+            local_env: self.local_env.clone(),
+            reference_row_delta: self.reference_row_delta,
+            reference_col_delta: self.reference_col_delta,
+            disable_ast_planner: self.disable_ast_planner,
+            parameter_bindings: Some(bindings),
         }
     }
 
@@ -317,6 +345,7 @@ impl<'a> Interpreter<'a> {
             reference_row_delta: row_delta,
             reference_col_delta: col_delta,
             disable_ast_planner: true,
+            parameter_bindings: self.parameter_bindings,
         };
         offset.evaluate_ast_uncached(node)
     }
@@ -345,6 +374,7 @@ impl<'a> Interpreter<'a> {
             reference_row_delta: row_delta,
             reference_col_delta: col_delta,
             disable_ast_planner: true,
+            parameter_bindings: self.parameter_bindings,
         };
         offset.evaluate_arena_ast(node_id, data_store, sheet_registry)
     }
@@ -360,9 +390,17 @@ impl<'a> Interpreter<'a> {
         })?;
 
         match node {
-            AstNodeData::Literal(vref) => Ok(crate::traits::CalcValue::Scalar(
-                data_store.retrieve_value(*vref),
-            )),
+            AstNodeData::Literal(vref) => {
+                if let Some(bindings) = self.parameter_bindings
+                    && let Some(slot_id) = bindings.literal_slots_by_node.get(&node_id)
+                    && let Some(value) = bindings.literal_values.get(slot_id.0 as usize)
+                {
+                    return Ok(crate::traits::CalcValue::Scalar(value.clone()));
+                }
+                Ok(crate::traits::CalcValue::Scalar(
+                    data_store.retrieve_value(*vref),
+                ))
+            }
             AstNodeData::Reference { ref_type, .. } => {
                 if self.local_env.is_empty()
                     && let CompactRefType::Cell {

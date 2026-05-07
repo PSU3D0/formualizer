@@ -17,12 +17,16 @@ use crate::engine::vertex::VertexId;
 use crate::formula_plane::dependency_summary::{
     AnalyzerContext, function_accepts_range_at, function_arg_context,
 };
+use crate::formula_plane::placement::{build_template_slot_map, value_ref_slot_descriptors};
 use crate::formula_plane::producer::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
     SpanReadDependency, SpanReadSummary,
 };
 use crate::formula_plane::region_index::RegionPattern;
-use crate::formula_plane::template_canonical::{is_known_static_function, normalize_function_name};
+use crate::formula_plane::runtime::{TemplateSlotMap, ValueRefSlotDescriptor};
+use crate::formula_plane::template_canonical::{
+    LiteralSlotDescriptor, canonicalize_template, is_known_static_function, normalize_function_name,
+};
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
 use crate::traits::FunctionProvider;
@@ -208,6 +212,9 @@ impl<'a> IngestPipeline<'a> {
             self.function_provider,
             placement,
         );
+        let anchor_row = placement.coord.row().saturating_add(1);
+        let anchor_col = placement.coord.col().saturating_add(1);
+        let canonical_template = canonicalize_template(&ast_for_oracles, anchor_row, anchor_col);
         let mut dep_plan = DependencyPlanRow::default();
         let mut local_scopes = Vec::new();
         self.collect_dependencies_tree(
@@ -233,6 +240,22 @@ impl<'a> IngestPipeline<'a> {
             ast_id,
             placement,
             canonical_hash: metadata.canonical_hash,
+            exact_canonical_hash: canonical_template.key.stable_hash(),
+            exact_canonical_key: Arc::<str>::from(canonical_template.key.payload()),
+            parameterized_canonical_hash: canonical_template.parameterized_key.stable_hash(),
+            parameterized_canonical_key: Arc::<str>::from(
+                canonical_template.parameterized_key.payload(),
+            ),
+            literal_slot_descriptors: canonical_template.literal_slot_descriptors.clone(),
+            literal_bindings: canonical_template.literal_bindings.clone(),
+            value_ref_slot_descriptors: Arc::from(
+                value_ref_slot_descriptors(&canonical_template.expr).into_boxed_slice(),
+            ),
+            template_slot_map: build_template_slot_map(
+                ast_id,
+                self.data_store,
+                &canonical_template.expr,
+            ),
             labels: metadata.labels,
             dep_plan,
             read_summary,
@@ -703,6 +726,14 @@ pub(crate) struct IngestedFormula {
     pub(crate) ast_id: AstNodeId,
     pub(crate) placement: CellRef,
     pub(crate) canonical_hash: u64,
+    pub(crate) exact_canonical_hash: u64,
+    pub(crate) exact_canonical_key: Arc<str>,
+    pub(crate) parameterized_canonical_hash: u64,
+    pub(crate) parameterized_canonical_key: Arc<str>,
+    pub(crate) literal_slot_descriptors: Arc<[LiteralSlotDescriptor]>,
+    pub(crate) literal_bindings: Box<[LiteralValue]>,
+    pub(crate) value_ref_slot_descriptors: Arc<[ValueRefSlotDescriptor]>,
+    pub(crate) template_slot_map: TemplateSlotMap,
     pub(crate) labels: CanonicalLabels,
     pub(crate) dep_plan: DependencyPlanRow,
     pub(crate) read_summary: Option<SpanReadSummary>,

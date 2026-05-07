@@ -6,17 +6,20 @@
 
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
+
 use crate::arrow_store::{OverlayValue, map_error_code};
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::eval::ComputedWriteBuffer;
 use crate::engine::sheet_registry::SheetRegistry;
-use crate::interpreter::Interpreter;
+use crate::interpreter::{Interpreter, InterpreterParameterBindings};
 use crate::reference::CellRef;
 use crate::traits::EvaluationContext;
-use formualizer_common::LiteralValue;
+use formualizer_common::{ExcelErrorExtra, ExcelErrorKind, LiteralValue};
 
-use super::region_index::{DirtyDomain, RegionKey};
-use super::runtime::{FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord};
+use super::region_index::{DirtyDomain, RegionKey, RegionPattern};
+use super::runtime::{FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord, SpanBindingSet};
+use super::template_canonical::{AxisRef, CanonicalReference, SheetBinding};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpanEvalTask {
@@ -36,6 +39,10 @@ pub(crate) struct SpanEvalReport {
     /// canonical AST in place and applies offsets at reference leaves.
     pub(crate) transient_ast_relocation_count: u64,
     pub(crate) fallback_count: u64,
+    pub(crate) memo_eval_count: u64,
+    pub(crate) memo_broadcast_count: u64,
+    pub(crate) memo_fallback_count: u64,
+    pub(crate) sample_only_key_build_count: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +76,57 @@ impl<'a> SpanComputedWriteSink<'a> {
     pub(crate) fn push_count(&self) -> u64 {
         self.push_count
     }
+}
+
+const MEMO_SAMPLE_LIMIT: usize = 64;
+const MEMO_MAX_UNIQUE_RATIO_NUM: usize = 3;
+const MEMO_MAX_UNIQUE_RATIO_DEN: usize = 4;
+const MEMO_MAX_ENTRIES_PER_TASK: usize = 16_384;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ParameterKey {
+    pub(crate) atoms: Box<[ParameterAtom]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ParameterAtom {
+    Int(i64),
+    NumberBits(u64),
+    Text(Arc<str>),
+    Boolean(bool),
+    Date(String),
+    DateTime(String),
+    Time(String),
+    Duration(String),
+    Empty,
+    Pending,
+    Error {
+        kind: ExcelErrorKind,
+        message: Option<Arc<str>>,
+        context_row: Option<u32>,
+        context_col: Option<u32>,
+        origin_row: Option<u32>,
+        origin_col: Option<u32>,
+        origin_sheet: Option<Arc<str>>,
+        extra: ErrorExtraAtom,
+    },
+    ResidualRowDelta(i64),
+    ResidualColDelta(i64),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum ErrorExtraAtom {
+    None,
+    Spill {
+        expected_rows: u32,
+        expected_cols: u32,
+    },
+}
+
+struct MemoGroup {
+    representative: PlacementCoord,
+    placements: Vec<PlacementCoord>,
+    binding_id: u32,
 }
 
 pub(crate) struct SpanEvaluator<'a> {
@@ -174,6 +232,24 @@ impl<'a> SpanEvaluator<'a> {
             return Ok(report);
         }
 
+        if let Some(binding_set_id) = span.binding_set_id
+            && let Some(binding_set) = self.plane.binding_sets.get(binding_set_id)
+            && self.should_try_memoization(span, binding_set, &placements, &mut report)
+            && let Some(memo_report) = self.evaluate_memoized(
+                span,
+                template.ast_id,
+                template.origin_row,
+                template.origin_col,
+                binding_set,
+                &placements,
+                &base_interpreter,
+                sink,
+                push_count_before,
+            )?
+        {
+            return Ok(memo_report);
+        }
+
         for placement in placements {
             if self.plane.formula_overlay.find_at(placement).is_some() {
                 report.skipped_overlay_punchout_count =
@@ -208,6 +284,303 @@ impl<'a> SpanEvaluator<'a> {
         report.computed_write_buffer_push_count =
             sink.push_count().saturating_sub(push_count_before);
         Ok(report)
+    }
+
+    fn should_try_memoization(
+        &self,
+        span: &FormulaSpan,
+        binding_set: &SpanBindingSet,
+        placements: &[PlacementCoord],
+        report: &mut SpanEvalReport,
+    ) -> bool {
+        if self.reads_formula_plane_result(span) {
+            return false;
+        }
+        let writable: Vec<_> = placements
+            .iter()
+            .copied()
+            .filter(|placement| self.plane.formula_overlay.find_at(*placement).is_none())
+            .collect();
+        if writable.len() < 2 {
+            return false;
+        }
+        if binding_set.value_ref_slots.is_empty()
+            && binding_set.unique_literal_bindings.len() == writable.len()
+        {
+            return false;
+        }
+        let sample_len = writable.len().min(MEMO_SAMPLE_LIMIT);
+        let mut unique = FxHashMap::<ParameterKey, ()>::default();
+        for placement in writable.iter().take(sample_len) {
+            let Ok(key) = self.parameter_key(binding_set, *placement, 0, 0) else {
+                return false;
+            };
+            unique.insert(key, ());
+            report.sample_only_key_build_count =
+                report.sample_only_key_build_count.saturating_add(1);
+        }
+        let unique_count = unique.len();
+        unique_count < sample_len
+            && unique_count * MEMO_MAX_UNIQUE_RATIO_DEN <= sample_len * MEMO_MAX_UNIQUE_RATIO_NUM
+    }
+
+    fn reads_formula_plane_result(&self, span: &FormulaSpan) -> bool {
+        let Some(read_summary_id) = span.read_summary_id else {
+            return false;
+        };
+        let Some(summary) = self.plane.span_read_summaries.get(read_summary_id) else {
+            return false;
+        };
+        self.plane.spans.active_spans().any(|other| {
+            other.id != span.id
+                && summary.dependencies.iter().any(|dependency| {
+                    dependency
+                        .read_region
+                        .intersects(&RegionPattern::from_domain(other.result_region.domain()))
+                })
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_memoized(
+        &self,
+        span: &FormulaSpan,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        binding_set: &SpanBindingSet,
+        placements: &[PlacementCoord],
+        base_interpreter: &Interpreter<'a>,
+        sink: &mut SpanComputedWriteSink<'_>,
+        push_count_before: u64,
+    ) -> Result<Option<SpanEvalReport>, SpanEvalError> {
+        let writable_count = placements
+            .iter()
+            .filter(|placement| self.plane.formula_overlay.find_at(**placement).is_none())
+            .count();
+        let mut groups: FxHashMap<ParameterKey, MemoGroup> = FxHashMap::default();
+        let mut skipped_overlay = 0u64;
+        for placement in placements.iter().copied() {
+            if self.plane.formula_overlay.find_at(placement).is_some() {
+                skipped_overlay = skipped_overlay.saturating_add(1);
+                continue;
+            }
+            let row_delta = i64::from(placement.row) + 1 - i64::from(origin_row);
+            let col_delta = i64::from(placement.col) + 1 - i64::from(origin_col);
+            let key = self.parameter_key(binding_set, placement, row_delta, col_delta)?;
+            if !groups.contains_key(&key) && groups.len() >= MEMO_MAX_ENTRIES_PER_TASK {
+                return Ok(None);
+            }
+            let binding_id = binding_id_for_placement(span, binding_set, placement)?;
+            groups
+                .entry(key)
+                .and_modify(|group| group.placements.push(placement))
+                .or_insert_with(|| MemoGroup {
+                    representative: placement,
+                    placements: vec![placement],
+                    binding_id,
+                });
+            if groups.len() * MEMO_MAX_UNIQUE_RATIO_DEN > writable_count * MEMO_MAX_UNIQUE_RATIO_NUM
+            {
+                return Ok(None);
+            }
+        }
+
+        let mut report = SpanEvalReport {
+            span_eval_task_count: 1,
+            skipped_overlay_punchout_count: skipped_overlay,
+            ..SpanEvalReport::default()
+        };
+        for group in groups.values() {
+            let placement = group.representative;
+            let row_delta = i64::from(placement.row) + 1 - i64::from(origin_row);
+            let col_delta = i64::from(placement.col) + 1 - i64::from(origin_col);
+            report.transient_ast_relocation_count =
+                report.transient_ast_relocation_count.saturating_add(1);
+            report.memo_eval_count = report.memo_eval_count.saturating_add(1);
+            let binding = binding_set
+                .unique_literal_bindings
+                .get(group.binding_id as usize)
+                .ok_or(SpanEvalError::StaleSpan)?;
+            let interpreter = base_interpreter
+                .with_current_cell(CellRef::new_absolute(
+                    placement.sheet_id,
+                    placement.row,
+                    placement.col,
+                ))
+                .with_parameter_bindings(InterpreterParameterBindings {
+                    literal_slots_by_node: &binding_set
+                        .template_slot_map
+                        .literal_slots_by_arena_node,
+                    literal_values: binding,
+                });
+            let value = match interpreter.evaluate_arena_ast_with_offset(
+                ast_id,
+                row_delta,
+                col_delta,
+                self.data_store,
+                self.sheet_registry,
+            ) {
+                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+            };
+            for placement in &group.placements {
+                sink.push_cell(*placement, value.clone());
+                report.span_eval_placement_count =
+                    report.span_eval_placement_count.saturating_add(1);
+            }
+            report.memo_broadcast_count = report
+                .memo_broadcast_count
+                .saturating_add(group.placements.len().saturating_sub(1) as u64);
+        }
+        report.computed_write_buffer_push_count =
+            sink.push_count().saturating_sub(push_count_before);
+        Ok(Some(report))
+    }
+
+    fn parameter_key(
+        &self,
+        binding_set: &SpanBindingSet,
+        placement: PlacementCoord,
+        row_delta: i64,
+        col_delta: i64,
+    ) -> Result<ParameterKey, SpanEvalError> {
+        let binding_id = binding_id_for_domain(
+            &binding_set.placement_literal_binding_ids,
+            placement,
+            binding_set,
+            self.plane,
+        )?;
+        let binding = binding_set
+            .unique_literal_bindings
+            .get(binding_id as usize)
+            .ok_or(SpanEvalError::StaleSpan)?;
+        let mut atoms = Vec::with_capacity(binding.len() + binding_set.value_ref_slots.len() + 2);
+        for value in binding.iter() {
+            atoms.push(parameter_atom_from_literal(value));
+        }
+        for slot in binding_set.value_ref_slots.iter() {
+            let value = self.resolve_value_ref_slot(&slot.reference_pattern, placement)?;
+            atoms.push(parameter_atom_from_literal(&value));
+        }
+        if residual_has_row(binding_set) {
+            atoms.push(ParameterAtom::ResidualRowDelta(row_delta));
+        }
+        if residual_has_col(binding_set) {
+            atoms.push(ParameterAtom::ResidualColDelta(col_delta));
+        }
+        Ok(ParameterKey {
+            atoms: atoms.into_boxed_slice(),
+        })
+    }
+
+    fn resolve_value_ref_slot(
+        &self,
+        reference: &CanonicalReference,
+        placement: PlacementCoord,
+    ) -> Result<LiteralValue, SpanEvalError> {
+        let CanonicalReference::Cell { sheet, row, col } = reference else {
+            return Err(SpanEvalError::UnsupportedReferenceRelocation);
+        };
+        let row = instantiate_axis(row, placement.row)?;
+        let col = instantiate_axis(col, placement.col)?;
+        let sheet_name = match sheet {
+            SheetBinding::CurrentSheet => None,
+            SheetBinding::ExplicitName { name } => Some(name.as_str()),
+        };
+        self.context
+            .resolve_cell_reference_value(sheet_name, row, col, self.current_sheet)
+            .map_err(|_| SpanEvalError::UnsupportedReferenceRelocation)
+    }
+}
+
+fn binding_id_for_placement(
+    span: &FormulaSpan,
+    binding_set: &SpanBindingSet,
+    placement: PlacementCoord,
+) -> Result<u32, SpanEvalError> {
+    let ordinal = span
+        .domain
+        .ordinal_of(placement)
+        .ok_or(SpanEvalError::StaleSpan)?;
+    binding_set
+        .placement_literal_binding_ids
+        .get(ordinal)
+        .copied()
+        .ok_or(SpanEvalError::StaleSpan)
+}
+
+fn binding_id_for_domain(
+    ids: &[u32],
+    placement: PlacementCoord,
+    binding_set: &SpanBindingSet,
+    plane: &FormulaPlane,
+) -> Result<u32, SpanEvalError> {
+    let span = plane
+        .spans
+        .get(binding_set.span_ref)
+        .ok_or(SpanEvalError::StaleSpan)?;
+    let ordinal = span
+        .domain
+        .ordinal_of(placement)
+        .ok_or(SpanEvalError::StaleSpan)?;
+    ids.get(ordinal).copied().ok_or(SpanEvalError::StaleSpan)
+}
+
+fn residual_has_row(binding_set: &SpanBindingSet) -> bool {
+    binding_set.template_slot_map.residual_relative_row
+}
+
+fn residual_has_col(binding_set: &SpanBindingSet) -> bool {
+    binding_set.template_slot_map.residual_relative_col
+}
+
+fn instantiate_axis(axis: &AxisRef, placement_zero_based_axis: u32) -> Result<u32, SpanEvalError> {
+    match axis {
+        AxisRef::RelativeToPlacement { offset } => {
+            let one_based = i64::from(placement_zero_based_axis) + 1 + *offset;
+            u32::try_from(one_based).map_err(|_| SpanEvalError::UnsupportedReferenceRelocation)
+        }
+        AxisRef::AbsoluteVc { index } => Ok(*index),
+        _ => Err(SpanEvalError::UnsupportedReferenceRelocation),
+    }
+}
+
+fn parameter_atom_from_literal(value: &LiteralValue) -> ParameterAtom {
+    match value {
+        LiteralValue::Int(value) => ParameterAtom::Int(*value),
+        LiteralValue::Number(value) => ParameterAtom::NumberBits(value.to_bits()),
+        LiteralValue::Text(value) => ParameterAtom::Text(Arc::from(value.as_str())),
+        LiteralValue::Boolean(value) => ParameterAtom::Boolean(*value),
+        LiteralValue::Date(value) => ParameterAtom::Date(value.to_string()),
+        LiteralValue::DateTime(value) => ParameterAtom::DateTime(value.to_string()),
+        LiteralValue::Time(value) => ParameterAtom::Time(value.to_string()),
+        LiteralValue::Duration(value) => ParameterAtom::Duration(format!("{value:?}")),
+        LiteralValue::Empty => ParameterAtom::Empty,
+        LiteralValue::Pending => ParameterAtom::Pending,
+        LiteralValue::Error(err) => ParameterAtom::Error {
+            kind: err.kind,
+            message: err.message.as_deref().map(Arc::from),
+            context_row: err.context.as_ref().and_then(|context| context.row),
+            context_col: err.context.as_ref().and_then(|context| context.col),
+            origin_row: err.context.as_ref().and_then(|context| context.origin_row),
+            origin_col: err.context.as_ref().and_then(|context| context.origin_col),
+            origin_sheet: err
+                .context
+                .as_ref()
+                .and_then(|context| context.origin_sheet.as_deref().map(Arc::from)),
+            extra: match err.extra {
+                ExcelErrorExtra::None => ErrorExtraAtom::None,
+                ExcelErrorExtra::Spill {
+                    expected_rows,
+                    expected_cols,
+                } => ErrorExtraAtom::Spill {
+                    expected_rows,
+                    expected_cols,
+                },
+            },
+        },
+        LiteralValue::Array(rows) => ParameterAtom::Text(Arc::from(format!("{rows:?}"))),
     }
 }
 
@@ -740,6 +1113,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            binding_set_id: None,
             is_constant_result: false,
         });
         let workbook = TestWorkbook::new();
@@ -1451,6 +1825,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            binding_set_id: None,
             is_constant_result: false,
         });
         let workbook = TestWorkbook::new();

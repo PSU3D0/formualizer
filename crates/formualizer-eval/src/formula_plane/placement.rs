@@ -8,10 +8,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
+
+use formualizer_common::LiteralValue;
 use formualizer_parse::parser::ASTNode;
 
 use crate::SheetId;
-use crate::engine::arena::{AstNodeId, DataStore};
+use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
 use crate::engine::ingest_pipeline::IngestedFormula;
 use crate::engine::sheet_registry::SheetRegistry;
 
@@ -24,8 +27,12 @@ use super::producer::{
 use super::region_index::RegionPattern;
 use super::runtime::{
     FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
+    SpanBindingSet, TemplateSlotMap, ValueRefSlotDescriptor, ValueRefSlotId,
 };
-use super::template_canonical::canonicalize_template;
+use super::template_canonical::{
+    AxisRef, CanonicalExpr, CanonicalReference, LiteralSlotDescriptor, SlotContext,
+    canonicalize_template, function_arg_slot_context,
+};
 
 /// Minimum cell count for a non-constant span to be promoted. Below this
 /// threshold the per-span overhead (template intern, scheduler edge,
@@ -35,6 +42,7 @@ use super::template_canonical::canonicalize_template;
 /// 3.3x slower than legacy. Constant-result spans bypass this threshold
 /// because broadcast cost is amortized regardless of cell count.
 const MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS: u64 = 100;
+const MAX_BINDING_SET_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub(crate) struct FormulaPlacementCandidate {
@@ -101,6 +109,7 @@ pub(crate) enum PlacementFallbackReason {
     /// recompute on every change, producing O(N²) edit recalc on chains.
     InternalDependency,
     SmallDomain,
+    BindingMemoryCapExceeded,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -155,10 +164,16 @@ pub(crate) struct CandidateAnalysis {
     sheet_id: SheetId,
     row: u32,
     col: u32,
-    canonical_hash: u64,
-    canonical_key: Arc<str>,
+    exact_canonical_hash: u64,
+    exact_canonical_key: Arc<str>,
+    parameterized_canonical_hash: u64,
+    parameterized_canonical_key: Arc<str>,
+    literal_slot_descriptors: Arc<[LiteralSlotDescriptor]>,
+    literal_bindings: Box<[LiteralValue]>,
+    value_ref_slot_descriptors: Arc<[ValueRefSlotDescriptor]>,
+    template_slot_map: TemplateSlotMap,
     read_projections: Vec<ReadProjection>,
-    is_constant_result: bool,
+    read_projections_constant: bool,
 }
 
 impl CandidateAnalysis {
@@ -189,10 +204,16 @@ impl CandidateAnalysis {
             sheet_id: candidate.sheet_id,
             row: candidate.row,
             col: candidate.col,
-            canonical_hash: ingested.canonical_hash,
-            canonical_key: Arc::<str>::from(format!("fp8:{:016x}", ingested.canonical_hash)),
+            exact_canonical_hash: ingested.exact_canonical_hash,
+            exact_canonical_key: ingested.exact_canonical_key.clone(),
+            parameterized_canonical_hash: ingested.parameterized_canonical_hash,
+            parameterized_canonical_key: ingested.parameterized_canonical_key.clone(),
+            literal_slot_descriptors: ingested.literal_slot_descriptors.clone(),
+            literal_bindings: ingested.literal_bindings.clone(),
+            value_ref_slot_descriptors: ingested.value_ref_slot_descriptors.clone(),
+            template_slot_map: ingested.template_slot_map.clone(),
             read_projections,
-            is_constant_result,
+            read_projections_constant: is_constant_result,
         })
     }
 }
@@ -227,6 +248,7 @@ fn axis_projection_is_absolute(projection: &AxisProjection) -> bool {
 pub(crate) fn analyze_candidate(
     candidate: &FormulaPlacementCandidate,
     ast: &ASTNode,
+    data_store: &DataStore,
     sheet_registry: &SheetRegistry,
 ) -> Result<CandidateAnalysis, PlacementFallbackReason> {
     let anchor_row = candidate
@@ -276,17 +298,28 @@ pub(crate) fn analyze_candidate(
             read_projections.push(read_projection);
         }
     }
-    let payload = template.key.payload();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    payload.hash(&mut hasher);
+    let exact_payload = template.key.payload();
+    let mut exact_hasher = std::collections::hash_map::DefaultHasher::new();
+    exact_payload.hash(&mut exact_hasher);
+    let parameterized_payload = template.parameterized_key.payload();
+    let mut parameterized_hasher = std::collections::hash_map::DefaultHasher::new();
+    parameterized_payload.hash(&mut parameterized_hasher);
     Ok(CandidateAnalysis {
         sheet_id: candidate.sheet_id,
         row: candidate.row,
         col: candidate.col,
-        canonical_hash: hasher.finish(),
-        canonical_key: Arc::<str>::from(payload),
+        exact_canonical_hash: exact_hasher.finish(),
+        exact_canonical_key: Arc::<str>::from(exact_payload),
+        parameterized_canonical_hash: parameterized_hasher.finish(),
+        parameterized_canonical_key: Arc::<str>::from(parameterized_payload),
+        literal_slot_descriptors: template.literal_slot_descriptors.clone(),
+        literal_bindings: template.literal_bindings.clone(),
+        value_ref_slot_descriptors: Arc::from(
+            value_ref_slot_descriptors(&template.expr).into_boxed_slice(),
+        ),
+        template_slot_map: build_template_slot_map(candidate.ast_id, data_store, &template.expr),
         read_projections,
-        is_constant_result: summary.is_constant_result(),
+        read_projections_constant: summary.is_constant_result(),
     })
 }
 
@@ -301,7 +334,7 @@ fn analyze_candidates(
             let ast = data_store
                 .retrieve_ast(candidate.ast_id, sheet_registry)
                 .ok_or(PlacementFallbackReason::UnsupportedCanonicalTemplate)?;
-            analyze_candidate(candidate, &ast, sheet_registry)
+            analyze_candidate(candidate, &ast, data_store, sheet_registry)
         })
         .collect()
 }
@@ -334,10 +367,10 @@ fn place_analyzed_family(
         return report;
     }
 
-    if analyses
-        .iter()
-        .any(|analysis| analysis.canonical_hash != first.canonical_hash)
-    {
+    if analyses.iter().any(|analysis| {
+        analysis.parameterized_canonical_hash != first.parameterized_canonical_hash
+            || analysis.parameterized_canonical_key != first.parameterized_canonical_key
+    }) {
         mark_all_legacy(
             &mut report,
             candidates,
@@ -354,7 +387,13 @@ fn place_analyzed_family(
         }
     };
 
-    if !first.is_constant_result && domain.cell_count() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
+    let is_constant_result = first.read_projections_constant
+        && first.value_ref_slot_descriptors.is_empty()
+        && analyses
+            .iter()
+            .all(|analysis| analysis.literal_bindings.as_ref() == first.literal_bindings.as_ref());
+
+    if !is_constant_result && domain.cell_count() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
         mark_all_legacy(
             &mut report,
             candidates,
@@ -425,8 +464,9 @@ fn place_analyzed_family(
     };
 
     let template_count_before = plane.templates.len();
-    let template_id = plane.intern_template(
-        first.canonical_key.clone(),
+    let template_id = plane.intern_template_parameterized(
+        first.exact_canonical_key.clone(),
+        first.parameterized_canonical_key.clone(),
         origin_candidate.ast_id,
         origin_candidate.row + 1,
         origin_candidate.col + 1,
@@ -436,6 +476,24 @@ fn place_analyzed_family(
         report.counters.templates_interned = 1;
     }
 
+    let binding_set = match build_span_binding_set(
+        FormulaSpanRef {
+            id: super::runtime::FormulaSpanId(0),
+            generation: 0,
+            version: 0,
+        },
+        &domain,
+        candidates,
+        analyses,
+    ) {
+        Ok(binding_set) => binding_set,
+        Err(reason) => {
+            mark_all_legacy(&mut report, candidates, reason);
+            return report;
+        }
+    };
+    let binding_set_id = plane.insert_binding_set(binding_set);
+
     let read_summary_id = plane.insert_span_read_summary(read_summary);
     let span = plane.insert_span(NewFormulaSpan {
         sheet_id,
@@ -444,8 +502,10 @@ fn place_analyzed_family(
         domain,
         intrinsic_mask_id: None,
         read_summary_id: Some(read_summary_id),
-        is_constant_result: first.is_constant_result,
+        binding_set_id: Some(binding_set_id),
+        is_constant_result,
     });
+    plane.set_binding_span_ref(binding_set_id, span);
 
     report.counters.spans_created = 1;
     report.counters.accepted_span_cells = candidates.len() as u64;
@@ -461,6 +521,316 @@ fn place_analyzed_family(
         })
         .collect();
     report
+}
+
+pub(crate) fn value_ref_slot_descriptors(expr: &CanonicalExpr) -> Vec<ValueRefSlotDescriptor> {
+    fn walk(expr: &CanonicalExpr, out: &mut Vec<ValueRefSlotDescriptor>, preorder: &mut u32) {
+        match expr {
+            CanonicalExpr::Literal(_) => {}
+            CanonicalExpr::Reference { context, reference } => {
+                let slot_context = match context {
+                    super::template_canonical::CanonicalReferenceContext::Value => {
+                        SlotContext::Value
+                    }
+                    super::template_canonical::CanonicalReferenceContext::Reference => {
+                        SlotContext::Reference
+                    }
+                    super::template_canonical::CanonicalReferenceContext::CallArgument {
+                        ..
+                    } => SlotContext::CallArgument,
+                    super::template_canonical::CanonicalReferenceContext::FunctionArgument {
+                        function,
+                        arg_index,
+                    } => function_arg_slot_context(function, *arg_index),
+                };
+                if matches!(
+                    slot_context,
+                    SlotContext::Value | SlotContext::CriteriaExpressionArg
+                ) && finite_relative_cell(reference)
+                {
+                    out.push(ValueRefSlotDescriptor {
+                        slot_id: ValueRefSlotId(u16::try_from(out.len()).unwrap_or(u16::MAX)),
+                        preorder_index: *preorder,
+                        context: slot_context,
+                        reference_pattern: reference.clone(),
+                    });
+                }
+                *preorder = preorder.saturating_add(1);
+            }
+            CanonicalExpr::Unary { expr, .. } => walk(expr, out, preorder),
+            CanonicalExpr::Binary { left, right, .. } => {
+                walk(left, out, preorder);
+                walk(right, out, preorder);
+            }
+            CanonicalExpr::Function { args, .. } | CanonicalExpr::CallUnsupported { args, .. } => {
+                if let CanonicalExpr::CallUnsupported { callee, .. } = expr {
+                    walk(callee, out, preorder);
+                }
+                for arg in args {
+                    walk(arg, out, preorder);
+                }
+            }
+            CanonicalExpr::ArrayUnsupported { rows } => {
+                for row in rows {
+                    for expr in row {
+                        walk(expr, out, preorder);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    let mut preorder = 0u32;
+    walk(expr, &mut out, &mut preorder);
+    out
+}
+
+fn finite_relative_cell(reference: &CanonicalReference) -> bool {
+    matches!(
+        reference,
+        CanonicalReference::Cell {
+            row: AxisRef::RelativeToPlacement { .. } | AxisRef::AbsoluteVc { .. },
+            col: AxisRef::RelativeToPlacement { .. } | AxisRef::AbsoluteVc { .. },
+            ..
+        }
+    ) && match reference {
+        CanonicalReference::Cell { row, col, .. } => {
+            matches!(row, AxisRef::RelativeToPlacement { .. })
+                || matches!(col, AxisRef::RelativeToPlacement { .. })
+        }
+        _ => false,
+    }
+}
+
+fn build_span_binding_set(
+    span_ref: FormulaSpanRef,
+    domain: &PlacementDomain,
+    candidates: &[FormulaPlacementCandidate],
+    analyses: &[CandidateAnalysis],
+) -> Result<SpanBindingSet, PlacementFallbackReason> {
+    let first = &analyses[0];
+    for analysis in analyses {
+        if analysis.literal_slot_descriptors.as_ref() != first.literal_slot_descriptors.as_ref()
+            || analysis.value_ref_slot_descriptors.as_ref()
+                != first.value_ref_slot_descriptors.as_ref()
+        {
+            return Err(PlacementFallbackReason::NonEquivalentTemplate);
+        }
+    }
+
+    let mut by_placement = BTreeMap::new();
+    for (candidate, analysis) in candidates.iter().zip(analyses) {
+        by_placement.insert(
+            (candidate.sheet_id, candidate.row, candidate.col),
+            analysis.literal_bindings.clone(),
+        );
+    }
+
+    let mut unique_literal_bindings: Vec<Box<[LiteralValue]>> = Vec::new();
+    let mut unique_keys: FxHashMap<String, u32> = FxHashMap::default();
+    let mut placement_ids = Vec::with_capacity(domain.cell_count() as usize);
+    for placement in domain.iter() {
+        let Some(binding) = by_placement.get(&(placement.sheet_id, placement.row, placement.col))
+        else {
+            return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+        };
+        let key = literal_binding_key(binding);
+        let id = if let Some(id) = unique_keys.get(&key).copied() {
+            id
+        } else {
+            let id = u32::try_from(unique_literal_bindings.len())
+                .map_err(|_| PlacementFallbackReason::BindingMemoryCapExceeded)?;
+            unique_keys.insert(key, id);
+            unique_literal_bindings.push(binding.clone());
+            id
+        };
+        placement_ids.push(id);
+    }
+
+    let bytes: usize = unique_literal_bindings
+        .iter()
+        .map(|binding| literal_binding_bytes(binding))
+        .sum();
+    if bytes > MAX_BINDING_SET_BYTES {
+        return Err(PlacementFallbackReason::BindingMemoryCapExceeded);
+    }
+
+    Ok(SpanBindingSet {
+        span_ref,
+        literal_slots: first.literal_slot_descriptors.clone(),
+        unique_literal_bindings,
+        placement_literal_binding_ids: placement_ids.into_boxed_slice(),
+        value_ref_slots: first.value_ref_slot_descriptors.clone(),
+        template_slot_map: first.template_slot_map.clone(),
+    })
+}
+
+pub(crate) fn build_template_slot_map(
+    origin_ast_id: AstNodeId,
+    data_store: &DataStore,
+    expr: &CanonicalExpr,
+) -> TemplateSlotMap {
+    fn walk(
+        node_id: AstNodeId,
+        data_store: &DataStore,
+        next: &mut u16,
+        out: &mut FxHashMap<AstNodeId, super::template_canonical::LiteralSlotId>,
+    ) {
+        let Some(node) = data_store.get_node(node_id) else {
+            return;
+        };
+        match node {
+            AstNodeData::Literal(vref) => {
+                let value = data_store.retrieve_value(*vref);
+                if !matches!(value, LiteralValue::Array(_)) {
+                    out.insert(node_id, super::template_canonical::LiteralSlotId(*next));
+                    *next = next.saturating_add(1);
+                }
+            }
+            AstNodeData::Reference { .. } => {}
+            AstNodeData::UnaryOp { expr_id, .. } => walk(*expr_id, data_store, next, out),
+            AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            } => {
+                walk(*left_id, data_store, next, out);
+                walk(*right_id, data_store, next, out);
+            }
+            AstNodeData::Function { .. } => {
+                if let Some(args) = data_store.get_args(node_id) {
+                    for arg in args {
+                        walk(*arg, data_store, next, out);
+                    }
+                }
+            }
+            AstNodeData::Array { .. } => {}
+        }
+    }
+    let mut map = FxHashMap::default();
+    let mut next = 0u16;
+    walk(origin_ast_id, data_store, &mut next, &mut map);
+    let (residual_relative_row, residual_relative_col) = residual_relative_axes(expr);
+    TemplateSlotMap {
+        literal_slots_by_arena_node: map,
+        residual_relative_row,
+        residual_relative_col,
+    }
+}
+
+fn residual_relative_axes(expr: &CanonicalExpr) -> (bool, bool) {
+    fn reference_axes(reference: &CanonicalReference) -> (bool, bool) {
+        match reference {
+            CanonicalReference::Cell { row, col, .. } => (
+                matches!(row, AxisRef::RelativeToPlacement { .. }),
+                matches!(col, AxisRef::RelativeToPlacement { .. }),
+            ),
+            CanonicalReference::Range {
+                start_row,
+                end_row,
+                start_col,
+                end_col,
+                ..
+            } => (
+                matches!(start_row, AxisRef::RelativeToPlacement { .. })
+                    || matches!(end_row, AxisRef::RelativeToPlacement { .. }),
+                matches!(start_col, AxisRef::RelativeToPlacement { .. })
+                    || matches!(end_col, AxisRef::RelativeToPlacement { .. }),
+            ),
+            CanonicalReference::Unsupported { .. } => (false, false),
+        }
+    }
+
+    fn walk(expr: &CanonicalExpr, row: &mut bool, col: &mut bool) {
+        match expr {
+            CanonicalExpr::Literal(_) => {}
+            CanonicalExpr::Reference { context, reference } => {
+                let slot_context = match context {
+                    super::template_canonical::CanonicalReferenceContext::Value => {
+                        SlotContext::Value
+                    }
+                    super::template_canonical::CanonicalReferenceContext::Reference => {
+                        SlotContext::Reference
+                    }
+                    super::template_canonical::CanonicalReferenceContext::CallArgument {
+                        ..
+                    } => SlotContext::CallArgument,
+                    super::template_canonical::CanonicalReferenceContext::FunctionArgument {
+                        function,
+                        arg_index,
+                    } => function_arg_slot_context(function, *arg_index),
+                };
+                let captured_as_value_slot = matches!(
+                    slot_context,
+                    SlotContext::Value | SlotContext::CriteriaExpressionArg
+                ) && finite_relative_cell(reference);
+                if !captured_as_value_slot {
+                    let (has_row, has_col) = reference_axes(reference);
+                    *row |= has_row;
+                    *col |= has_col;
+                }
+            }
+            CanonicalExpr::Unary { expr, .. } => walk(expr, row, col),
+            CanonicalExpr::Binary { left, right, .. } => {
+                walk(left, row, col);
+                walk(right, row, col);
+            }
+            CanonicalExpr::Function { args, .. } => {
+                for arg in args {
+                    walk(arg, row, col);
+                }
+            }
+            CanonicalExpr::CallUnsupported { callee, args } => {
+                walk(callee, row, col);
+                for arg in args {
+                    walk(arg, row, col);
+                }
+            }
+            CanonicalExpr::ArrayUnsupported { rows } => {
+                for cells in rows {
+                    for cell in cells {
+                        walk(cell, row, col);
+                    }
+                }
+            }
+        }
+    }
+
+    let mut row = false;
+    let mut col = false;
+    walk(expr, &mut row, &mut col);
+    (row, col)
+}
+
+fn literal_binding_key(binding: &[LiteralValue]) -> String {
+    let mut out = String::new();
+    for value in binding {
+        match value {
+            LiteralValue::Int(v) => out.push_str(&format!("i:{v};")),
+            LiteralValue::Number(v) => out.push_str(&format!("n:{:016x};", v.to_bits())),
+            LiteralValue::Text(v) => out.push_str(&format!("t:{}:{v};", v.len())),
+            LiteralValue::Boolean(v) => out.push_str(if *v { "b:1;" } else { "b:0;" }),
+            LiteralValue::Error(v) => out.push_str(&format!("e:{v:?};")),
+            LiteralValue::Array(_) => out.push_str("array;"),
+            LiteralValue::Date(v) => out.push_str(&format!("d:{v};")),
+            LiteralValue::DateTime(v) => out.push_str(&format!("dt:{v};")),
+            LiteralValue::Time(v) => out.push_str(&format!("tm:{v};")),
+            LiteralValue::Duration(v) => out.push_str(&format!("du:{v:?};")),
+            LiteralValue::Empty => out.push_str("empty;"),
+            LiteralValue::Pending => out.push_str("pending;"),
+        }
+    }
+    out
+}
+
+fn literal_binding_bytes(binding: &[LiteralValue]) -> usize {
+    binding
+        .iter()
+        .map(|value| match value {
+            LiteralValue::Text(v) => v.len(),
+            LiteralValue::Error(v) => format!("{v:?}").len(),
+            _ => std::mem::size_of::<LiteralValue>(),
+        })
+        .sum()
 }
 
 fn span_read_summary_for_domain(
@@ -870,6 +1240,14 @@ mod tests {
             ast_id: candidate.ast_id,
             placement: CellRef::new_absolute(0, 1, 1),
             canonical_hash: 0x1234,
+            exact_canonical_hash: 0x1234,
+            exact_canonical_key: Arc::<str>::from("exact"),
+            parameterized_canonical_hash: 0x1234,
+            parameterized_canonical_key: Arc::<str>::from("param"),
+            literal_slot_descriptors: Arc::from(Vec::new().into_boxed_slice()),
+            literal_bindings: Vec::new().into_boxed_slice(),
+            value_ref_slot_descriptors: Arc::from(Vec::new().into_boxed_slice()),
+            template_slot_map: TemplateSlotMap::default(),
             labels: CanonicalLabels::default(),
             dep_plan: DependencyPlanRow::default(),
             read_summary: None,
@@ -886,7 +1264,7 @@ mod tests {
 
         let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested).unwrap();
 
-        assert!(analysis.is_constant_result);
+        assert!(analysis.read_projections_constant);
     }
 
     #[test]
@@ -898,6 +1276,14 @@ mod tests {
             ast_id: candidate.ast_id,
             placement: CellRef::new_absolute(0, 1, 2),
             canonical_hash: 0x5678,
+            exact_canonical_hash: 0x5678,
+            exact_canonical_key: Arc::<str>::from("exact"),
+            parameterized_canonical_hash: 0x5678,
+            parameterized_canonical_key: Arc::<str>::from("param"),
+            literal_slot_descriptors: Arc::from(Vec::new().into_boxed_slice()),
+            literal_bindings: Vec::new().into_boxed_slice(),
+            value_ref_slot_descriptors: Arc::from(Vec::new().into_boxed_slice()),
+            template_slot_map: TemplateSlotMap::default(),
             labels: CanonicalLabels::default(),
             dep_plan: DependencyPlanRow::default(),
             read_summary: None,
@@ -914,7 +1300,7 @@ mod tests {
 
         let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested).unwrap();
 
-        assert!(analysis.is_constant_result);
+        assert!(analysis.read_projections_constant);
     }
 
     #[test]

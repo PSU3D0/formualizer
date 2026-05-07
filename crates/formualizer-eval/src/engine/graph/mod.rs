@@ -2145,14 +2145,16 @@ impl DependencyGraph {
         let mut result: Vec<VertexId> = combined
             .into_iter()
             .filter(|&id| {
-                // Only include formula vertices
-                matches!(
-                    self.store.kind(id),
-                    VertexKind::FormulaScalar
-                        | VertexKind::FormulaArray
-                        | VertexKind::NamedScalar
-                        | VertexKind::NamedArray
-                )
+                // Only include active formula/name vertices; tombstoned vertices can retain stable
+                // IDs in the store, but must never be scheduled for evaluation.
+                self.store.vertex_exists_active(id)
+                    && matches!(
+                        self.store.kind(id),
+                        VertexKind::FormulaScalar
+                            | VertexKind::FormulaArray
+                            | VertexKind::NamedScalar
+                            | VertexKind::NamedArray
+                    )
             })
             .collect();
         result.sort_unstable();

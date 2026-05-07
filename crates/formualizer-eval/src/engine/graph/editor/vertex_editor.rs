@@ -700,6 +700,16 @@ impl<'g> VertexEditor<'g> {
             self.graph.remove_cell_mapping(&cell_ref);
         }
 
+        // Remove all formula/value payloads owned by this vertex.  Tombstoned vertices remain in
+        // the SoA store for stable IDs/debugging, but they must not continue to participate in
+        // formula evaluation through `vertex_formulas`.
+        self.graph.vertex_formulas.remove(&id);
+        self.graph.vertex_values.remove(&id);
+        self.graph.dirty_vertices.remove(&id);
+        self.graph.mark_volatile(id, false);
+        self.graph.store.set_kind(id, VertexKind::Empty);
+        self.graph.store.set_dynamic(id, false);
+
         // Remove all edges
         self.graph.remove_all_edges(id);
 

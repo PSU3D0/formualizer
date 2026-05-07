@@ -199,6 +199,7 @@ mod tests {
                 domain,
                 intrinsic_mask_id: None,
                 read_summary_id: Some(read_summary_id),
+                binding_set_id: None,
                 is_constant_result: false,
             })
             .id
@@ -284,6 +285,7 @@ mod tests {
                 domain,
                 intrinsic_mask_id: None,
                 read_summary_id: None,
+                binding_set_id: None,
                 is_constant_result: false,
             })
             .id;
@@ -409,6 +411,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: Some(read_summary_id),
+            binding_set_id: None,
             is_constant_result: false,
         });
         let first = authority.rebuild_indexes();

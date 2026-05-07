@@ -12,6 +12,7 @@
 //! future ingest-side rewrite cannot silently give a different authority answer.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{
@@ -22,8 +23,11 @@ use formualizer_parse::parser::{
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanonicalTemplate {
     pub(crate) key: FormulaTemplateKey,
+    pub(crate) parameterized_key: FormulaTemplateKey,
     pub(crate) expr: CanonicalExpr,
     pub(crate) labels: CanonicalTemplateLabels,
+    pub(crate) literal_slot_descriptors: Arc<[LiteralSlotDescriptor]>,
+    pub(crate) literal_bindings: Box<[LiteralValue]>,
 }
 
 /// Stable authority key payload for a canonical template.
@@ -38,9 +42,21 @@ pub(crate) struct FormulaTemplateKey {
 
 impl FormulaTemplateKey {
     fn new(expr: &CanonicalExpr, labels: &CanonicalTemplateLabels) -> Self {
+        Self::from_writer(expr, labels, write_expr_key)
+    }
+
+    fn new_parameterized(expr: &CanonicalExpr, labels: &CanonicalTemplateLabels) -> Self {
+        Self::from_writer(expr, labels, write_parameterized_expr_key)
+    }
+
+    fn from_writer(
+        expr: &CanonicalExpr,
+        labels: &CanonicalTemplateLabels,
+        writer: fn(&CanonicalExpr, &mut String),
+    ) -> Self {
         let mut payload = String::new();
         payload.push_str("fp4a1:");
-        write_expr_key(expr, &mut payload);
+        writer(expr, &mut payload);
         payload.push_str("|labels=");
         write_labels_key(labels, &mut payload);
         let stable_hash = stable_fnv1a64(payload.as_bytes());
@@ -106,6 +122,46 @@ pub(crate) enum CanonicalLiteral {
     DateTime(String),
     Time(String),
     Duration(String),
+    Empty,
+    Pending,
+}
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct LiteralSlotId(pub(crate) u16);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct LiteralSlotDescriptor {
+    pub(crate) slot_id: LiteralSlotId,
+    pub(crate) preorder_index: u32,
+    pub(crate) context: SlotContext,
+    pub(crate) original_kind: LiteralKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SlotContext {
+    Value,
+    CriteriaExpressionArg,
+    CriteriaRangeArg,
+    Reference,
+    ByRefArg,
+    LocalBinding,
+    ImplicitIntersection,
+    CallArgument,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum LiteralKind {
+    Int,
+    Number,
+    Text,
+    Boolean,
+    Error,
+    Date,
+    DateTime,
+    Time,
+    Duration,
     Empty,
     Pending,
 }
@@ -335,6 +391,9 @@ pub(crate) fn canonicalize_template(
         anchor_row,
         anchor_col,
         labels: CanonicalTemplateLabels::default(),
+        literal_slot_descriptors: Vec::new(),
+        literal_bindings: Vec::new(),
+        preorder_index: 0,
     };
 
     if anchor_row == 0 || anchor_col == 0 {
@@ -370,14 +429,27 @@ pub(crate) fn canonicalize_template(
     }
     let labels = canonicalizer.labels;
     let key = FormulaTemplateKey::new(&expr, &labels);
+    let parameterized_key = FormulaTemplateKey::new_parameterized(&expr, &labels);
 
-    CanonicalTemplate { key, expr, labels }
+    CanonicalTemplate {
+        key,
+        parameterized_key,
+        expr,
+        labels,
+        literal_slot_descriptors: Arc::from(
+            canonicalizer.literal_slot_descriptors.into_boxed_slice(),
+        ),
+        literal_bindings: canonicalizer.literal_bindings.into_boxed_slice(),
+    }
 }
 
 struct Canonicalizer {
     anchor_row: u32,
     anchor_col: u32,
     labels: CanonicalTemplateLabels,
+    literal_slot_descriptors: Vec<LiteralSlotDescriptor>,
+    literal_bindings: Vec<LiteralValue>,
+    preorder_index: u32,
 }
 
 impl Canonicalizer {
@@ -386,8 +458,22 @@ impl Canonicalizer {
         ast: &ASTNode,
         context: CanonicalReferenceContext,
     ) -> CanonicalExpr {
+        self.canonicalize_expr_inner(ast, context, true)
+    }
+
+    fn canonicalize_expr_inner(
+        &mut self,
+        ast: &ASTNode,
+        context: CanonicalReferenceContext,
+        emit_literal_slots: bool,
+    ) -> CanonicalExpr {
         match &ast.node_type {
-            ASTNodeType::Literal(value) => CanonicalExpr::Literal(self.canonicalize_literal(value)),
+            ASTNodeType::Literal(value) => {
+                if emit_literal_slots {
+                    self.record_literal_slot(value, &context);
+                }
+                CanonicalExpr::Literal(self.canonicalize_literal(value))
+            }
             ASTNodeType::Reference {
                 original,
                 reference,
@@ -463,7 +549,11 @@ impl Canonicalizer {
                     .map(|row| {
                         row.iter()
                             .map(|expr| {
-                                self.canonicalize_expr(expr, CanonicalReferenceContext::Value)
+                                self.canonicalize_expr_inner(
+                                    expr,
+                                    CanonicalReferenceContext::Value,
+                                    false,
+                                )
                             })
                             .collect()
                     })
@@ -471,6 +561,22 @@ impl Canonicalizer {
                 CanonicalExpr::ArrayUnsupported { rows }
             }
         }
+    }
+
+    fn record_literal_slot(&mut self, value: &LiteralValue, context: &CanonicalReferenceContext) {
+        let Some(original_kind) = literal_kind(value) else {
+            return;
+        };
+        let slot_index = self.literal_bindings.len();
+        let slot_id = LiteralSlotId(u16::try_from(slot_index).unwrap_or(u16::MAX));
+        self.literal_slot_descriptors.push(LiteralSlotDescriptor {
+            slot_id,
+            preorder_index: self.preorder_index,
+            context: slot_context_from_canonical(context),
+            original_kind,
+        });
+        self.literal_bindings.push(value.clone());
+        self.preorder_index = self.preorder_index.saturating_add(1);
     }
 
     fn canonicalize_literal(&mut self, value: &LiteralValue) -> CanonicalLiteral {
@@ -915,6 +1021,53 @@ pub(crate) fn is_known_static_function(name: &str) -> bool {
     )
 }
 
+fn literal_kind(value: &LiteralValue) -> Option<LiteralKind> {
+    match value {
+        LiteralValue::Int(_) => Some(LiteralKind::Int),
+        LiteralValue::Number(_) => Some(LiteralKind::Number),
+        LiteralValue::Text(_) => Some(LiteralKind::Text),
+        LiteralValue::Boolean(_) => Some(LiteralKind::Boolean),
+        LiteralValue::Error(_) => Some(LiteralKind::Error),
+        LiteralValue::Array(_) => None,
+        LiteralValue::Date(_) => Some(LiteralKind::Date),
+        LiteralValue::DateTime(_) => Some(LiteralKind::DateTime),
+        LiteralValue::Time(_) => Some(LiteralKind::Time),
+        LiteralValue::Duration(_) => Some(LiteralKind::Duration),
+        LiteralValue::Empty => Some(LiteralKind::Empty),
+        LiteralValue::Pending => Some(LiteralKind::Pending),
+    }
+}
+
+fn slot_context_from_canonical(context: &CanonicalReferenceContext) -> SlotContext {
+    match context {
+        CanonicalReferenceContext::Value => SlotContext::Value,
+        CanonicalReferenceContext::Reference => SlotContext::Reference,
+        CanonicalReferenceContext::CallArgument { .. } => SlotContext::CallArgument,
+        CanonicalReferenceContext::FunctionArgument {
+            function,
+            arg_index,
+        } => function_arg_slot_context(function, *arg_index),
+    }
+}
+
+pub(crate) fn function_arg_slot_context(function: &str, arg_index: usize) -> SlotContext {
+    match function {
+        "LET" | "LAMBDA" => SlotContext::LocalBinding,
+        "SUMIFS" | "AVERAGEIFS" if arg_index == 0 => SlotContext::Value,
+        "SUMIFS" | "AVERAGEIFS" if !arg_index.is_multiple_of(2) => SlotContext::CriteriaRangeArg,
+        "SUMIFS" | "AVERAGEIFS" => SlotContext::CriteriaExpressionArg,
+        "COUNTIFS" if arg_index.is_multiple_of(2) => SlotContext::CriteriaRangeArg,
+        "COUNTIFS" => SlotContext::CriteriaExpressionArg,
+        "SUMIF" | "AVERAGEIF" if arg_index == 0 => SlotContext::CriteriaRangeArg,
+        "SUMIF" | "AVERAGEIF" if arg_index == 1 => SlotContext::CriteriaExpressionArg,
+        "SUMIF" | "AVERAGEIF" => SlotContext::Value,
+        "COUNTIF" if arg_index == 0 => SlotContext::CriteriaRangeArg,
+        "COUNTIF" => SlotContext::CriteriaExpressionArg,
+        "INDEX" | "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => SlotContext::ByRefArg,
+        _ => SlotContext::Value,
+    }
+}
+
 fn table_has_current_row(specifier: Option<&TableSpecifier>) -> bool {
     fn contains_current_row(specifier: &TableSpecifier) -> bool {
         match specifier {
@@ -935,6 +1088,96 @@ fn table_has_current_row(specifier: Option<&TableSpecifier>) -> bool {
     }
 
     specifier.is_some_and(contains_current_row)
+}
+
+fn write_parameterized_expr_key(expr: &CanonicalExpr, out: &mut String) {
+    let mut next_slot = 0u16;
+    write_parameterized_expr_key_inner(expr, out, &mut next_slot, true);
+}
+
+fn write_parameterized_expr_key_inner(
+    expr: &CanonicalExpr,
+    out: &mut String,
+    next_slot: &mut u16,
+    parameterize_literals: bool,
+) {
+    match expr {
+        CanonicalExpr::Literal(value)
+            if parameterize_literals && !matches!(value, CanonicalLiteral::Array(_)) =>
+        {
+            out.push_str("lit_slot(");
+            out.push_str(&next_slot.to_string());
+            out.push(')');
+            *next_slot = next_slot.saturating_add(1);
+        }
+        CanonicalExpr::Literal(value) => {
+            out.push_str("lit(");
+            write_literal_key(value, out);
+            out.push(')');
+        }
+        CanonicalExpr::Reference { context, reference } => {
+            out.push_str("ref(");
+            write_reference_context_key(context, out);
+            out.push(';');
+            write_reference_key(reference, out);
+            out.push(')');
+        }
+        CanonicalExpr::Unary { op, expr } => {
+            out.push_str("unary(");
+            write_string_key(op, out);
+            out.push(';');
+            write_parameterized_expr_key_inner(expr, out, next_slot, parameterize_literals);
+            out.push(')');
+        }
+        CanonicalExpr::Binary { op, left, right } => {
+            out.push_str("binary(");
+            write_string_key(op, out);
+            out.push(';');
+            write_parameterized_expr_key_inner(left, out, next_slot, parameterize_literals);
+            out.push(';');
+            write_parameterized_expr_key_inner(right, out, next_slot, parameterize_literals);
+            out.push(')');
+        }
+        CanonicalExpr::Function { id, args } => {
+            out.push_str("fn(");
+            write_string_key(&id.canonical_name, out);
+            out.push(';');
+            out.push_str(&args.len().to_string());
+            out.push(':');
+            for arg in args {
+                write_parameterized_expr_key_inner(arg, out, next_slot, parameterize_literals);
+                out.push(',');
+            }
+            out.push(')');
+        }
+        CanonicalExpr::CallUnsupported { callee, args } => {
+            out.push_str("call(");
+            write_parameterized_expr_key_inner(callee, out, next_slot, parameterize_literals);
+            out.push(';');
+            out.push_str(&args.len().to_string());
+            out.push(':');
+            for arg in args {
+                write_parameterized_expr_key_inner(arg, out, next_slot, parameterize_literals);
+                out.push(',');
+            }
+            out.push(')');
+        }
+        CanonicalExpr::ArrayUnsupported { rows } => {
+            out.push_str("array(");
+            out.push_str(&rows.len().to_string());
+            out.push(':');
+            for row in rows {
+                out.push_str(&row.len().to_string());
+                out.push(':');
+                for expr in row {
+                    write_parameterized_expr_key_inner(expr, out, next_slot, false);
+                    out.push(',');
+                }
+                out.push(';');
+            }
+            out.push(')');
+        }
+    }
 }
 
 fn write_expr_key(expr: &CanonicalExpr, out: &mut String) {

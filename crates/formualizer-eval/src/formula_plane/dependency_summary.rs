@@ -968,7 +968,7 @@ pub(crate) fn function_arg_context(function: &str, arg_index: usize) -> Analyzer
         "SUMIF" | "AVERAGEIF" => AnalyzerContext::Value,
         "COUNTIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
         "COUNTIF" => AnalyzerContext::CriteriaExpressionArg,
-        "INDEX" | "OFFSET" => AnalyzerContext::ByRefArg,
+        "INDEX" | "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => AnalyzerContext::ByRefArg,
         _ => AnalyzerContext::Value,
     }
 }

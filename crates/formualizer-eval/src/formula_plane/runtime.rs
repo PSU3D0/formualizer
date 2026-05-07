@@ -4,12 +4,17 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
+use formualizer_common::LiteralValue;
+
 use crate::SheetId;
 use crate::engine::VertexId;
 use crate::engine::arena::AstNodeId;
 
 use super::ids::FormulaTemplateId;
 use super::producer::{SpanReadSummary, SpanReadSummaryId, SpanReadSummaryStore};
+use super::template_canonical::{
+    CanonicalReference, LiteralSlotDescriptor, LiteralSlotId, SlotContext,
+};
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -170,6 +175,61 @@ impl PlacementDomain {
         }
     }
 
+    pub(crate) fn ordinal_of(&self, placement: PlacementCoord) -> Option<usize> {
+        if self.sheet_id() != placement.sheet_id {
+            return None;
+        }
+        match self {
+            Self::RowRun {
+                row_start,
+                row_end,
+                col,
+                ..
+            } => {
+                if placement.col == *col && placement.row >= *row_start && placement.row <= *row_end
+                {
+                    Some((placement.row - *row_start) as usize)
+                } else {
+                    None
+                }
+            }
+            Self::ColRun {
+                row,
+                col_start,
+                col_end,
+                ..
+            } => {
+                if placement.row == *row && placement.col >= *col_start && placement.col <= *col_end
+                {
+                    Some((placement.col - *col_start) as usize)
+                } else {
+                    None
+                }
+            }
+            Self::Rect {
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+                ..
+            } => {
+                if placement.row >= *row_start
+                    && placement.row <= *row_end
+                    && placement.col >= *col_start
+                    && placement.col <= *col_end
+                {
+                    let width = *col_end - *col_start + 1;
+                    Some(
+                        ((placement.row - *row_start) * width + (placement.col - *col_start))
+                            as usize,
+                    )
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
     pub(crate) fn iter(&self) -> std::vec::IntoIter<PlacementCoord> {
         let mut coords = Vec::new();
         match self {
@@ -226,6 +286,85 @@ impl ResultRegion {
     }
 }
 
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct SpanBindingSetId(pub(crate) u32);
+
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct ValueRefSlotId(pub(crate) u16);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct ValueRefSlotDescriptor {
+    pub(crate) slot_id: ValueRefSlotId,
+    pub(crate) preorder_index: u32,
+    pub(crate) context: SlotContext,
+    pub(crate) reference_pattern: CanonicalReference,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct TemplateSlotMap {
+    pub(crate) literal_slots_by_arena_node: FxHashMap<AstNodeId, LiteralSlotId>,
+    pub(crate) residual_relative_row: bool,
+    pub(crate) residual_relative_col: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SpanBindingSet {
+    pub(crate) span_ref: FormulaSpanRef,
+    pub(crate) literal_slots: Arc<[LiteralSlotDescriptor]>,
+    pub(crate) unique_literal_bindings: Vec<Box<[LiteralValue]>>,
+    pub(crate) placement_literal_binding_ids: Box<[u32]>,
+    pub(crate) value_ref_slots: Arc<[ValueRefSlotDescriptor]>,
+    pub(crate) template_slot_map: TemplateSlotMap,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct BindingStore {
+    records: Vec<Option<SpanBindingSet>>,
+    epoch: u64,
+}
+
+impl BindingStore {
+    pub(crate) fn insert(&mut self, set: SpanBindingSet) -> SpanBindingSetId {
+        let id = SpanBindingSetId(self.records.len() as u32);
+        self.records.push(Some(set));
+        self.epoch = self.epoch.saturating_add(1);
+        id
+    }
+
+    pub(crate) fn get(&self, id: SpanBindingSetId) -> Option<&SpanBindingSet> {
+        self.records.get(id.0 as usize)?.as_ref()
+    }
+
+    pub(crate) fn remove(&mut self, id: SpanBindingSetId) -> bool {
+        let Some(slot) = self.records.get_mut(id.0 as usize) else {
+            return false;
+        };
+        let removed = slot.take().is_some();
+        if removed {
+            self.epoch = self.epoch.saturating_add(1);
+        }
+        removed
+    }
+
+    pub(crate) fn set_span_ref(&mut self, id: SpanBindingSetId, span_ref: FormulaSpanRef) {
+        if let Some(Some(set)) = self.records.get_mut(id.0 as usize) {
+            set.span_ref = span_ref;
+            self.epoch = self.epoch.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unique_vector_count(&self, id: SpanBindingSetId) -> Option<usize> {
+        self.get(id).map(|set| set.unique_literal_bindings.len())
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct TemplateStore {
     records: Vec<TemplateRecord>,
@@ -241,7 +380,8 @@ pub(crate) struct TemplateRecord {
     pub(crate) ast_id: AstNodeId,
     pub(crate) origin_row: u32,
     pub(crate) origin_col: u32,
-    pub(crate) canonical_key: Arc<str>,
+    pub(crate) exact_canonical_key: Arc<str>,
+    pub(crate) parameterized_canonical_key: Arc<str>,
     pub(crate) formula_text: Option<Arc<str>>,
 }
 
@@ -254,7 +394,30 @@ impl TemplateStore {
         origin_col: u32,
         formula_text: Option<Arc<str>>,
     ) -> (FormulaTemplateId, bool) {
-        if let Some(id) = self.intern.get(canonical_key.as_ref()).copied() {
+        self.intern_template_parameterized(
+            Arc::clone(&canonical_key),
+            canonical_key,
+            ast_id,
+            origin_row,
+            origin_col,
+            formula_text,
+        )
+    }
+
+    pub(crate) fn intern_template_parameterized(
+        &mut self,
+        exact_canonical_key: Arc<str>,
+        parameterized_canonical_key: Arc<str>,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        formula_text: Option<Arc<str>>,
+    ) -> (FormulaTemplateId, bool) {
+        let intern_key = Arc::<str>::from(format!(
+            "{}|origin_col={origin_col}",
+            parameterized_canonical_key
+        ));
+        if let Some(id) = self.intern.get(intern_key.as_ref()).copied() {
             return (id, false);
         }
 
@@ -266,10 +429,11 @@ impl TemplateStore {
             ast_id,
             origin_row,
             origin_col,
-            canonical_key: Arc::clone(&canonical_key),
+            exact_canonical_key,
+            parameterized_canonical_key: Arc::clone(&parameterized_canonical_key),
             formula_text,
         });
-        self.intern.insert(canonical_key, id);
+        self.intern.insert(intern_key, id);
         self.epoch = self.epoch.saturating_add(1);
         (id, true)
     }
@@ -305,6 +469,7 @@ pub(crate) struct FormulaSpan {
     pub(crate) result_region: ResultRegion,
     pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
     pub(crate) read_summary_id: Option<SpanReadSummaryId>,
+    pub(crate) binding_set_id: Option<SpanBindingSetId>,
     pub(crate) is_constant_result: bool,
     pub(crate) state: SpanState,
     pub(crate) version: u32,
@@ -318,6 +483,7 @@ pub(crate) struct NewFormulaSpan {
     pub(crate) result_region: ResultRegion,
     pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
     pub(crate) read_summary_id: Option<SpanReadSummaryId>,
+    pub(crate) binding_set_id: Option<SpanBindingSetId>,
     pub(crate) is_constant_result: bool,
 }
 
@@ -358,6 +524,7 @@ impl SpanStore {
             result_region: new_span.result_region,
             intrinsic_mask_id: new_span.intrinsic_mask_id,
             read_summary_id: new_span.read_summary_id,
+            binding_set_id: new_span.binding_set_id,
             is_constant_result: new_span.is_constant_result,
             state: SpanState::Active,
             version,
@@ -591,6 +758,7 @@ pub(crate) struct FormulaPlane {
     pub(crate) templates: TemplateStore,
     pub(crate) spans: SpanStore,
     pub(crate) span_read_summaries: SpanReadSummaryStore,
+    pub(crate) binding_sets: BindingStore,
     pub(crate) formula_overlay: FormulaOverlay,
     pub(crate) projection_cache: SpanProjectionCache,
     pub(crate) dirty: SpanDirtyStore,
@@ -610,8 +778,28 @@ impl FormulaPlane {
         origin_col: u32,
         formula_text: Option<Arc<str>>,
     ) -> FormulaTemplateId {
-        let (id, inserted) = self.templates.intern_template(
+        self.intern_template_parameterized(
+            Arc::clone(&canonical_key),
             canonical_key,
+            ast_id,
+            origin_row,
+            origin_col,
+            formula_text,
+        )
+    }
+
+    pub(crate) fn intern_template_parameterized(
+        &mut self,
+        exact_canonical_key: Arc<str>,
+        parameterized_canonical_key: Arc<str>,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        formula_text: Option<Arc<str>>,
+    ) -> FormulaTemplateId {
+        let (id, inserted) = self.templates.intern_template_parameterized(
+            exact_canonical_key,
+            parameterized_canonical_key,
             ast_id,
             origin_row,
             origin_col,
@@ -632,6 +820,17 @@ impl FormulaPlane {
         id
     }
 
+    pub(crate) fn insert_binding_set(&mut self, set: SpanBindingSet) -> SpanBindingSetId {
+        let id = self.binding_sets.insert(set);
+        self.bump_epoch();
+        id
+    }
+
+    pub(crate) fn set_binding_span_ref(&mut self, id: SpanBindingSetId, span_ref: FormulaSpanRef) {
+        self.binding_sets.set_span_ref(id, span_ref);
+        self.bump_epoch();
+    }
+
     pub(crate) fn insert_span(&mut self, new_span: NewFormulaSpan) -> FormulaSpanRef {
         let span = self.spans.insert(new_span);
         self.bump_epoch();
@@ -639,8 +838,15 @@ impl FormulaPlane {
     }
 
     pub(crate) fn remove_span(&mut self, span_ref: FormulaSpanRef) -> bool {
+        let binding_set_id = self
+            .spans
+            .get(span_ref)
+            .and_then(|span| span.binding_set_id);
         let removed = self.spans.remove(span_ref);
         if removed {
+            if let Some(binding_set_id) = binding_set_id {
+                self.binding_sets.remove(binding_set_id);
+            }
             self.bump_epoch();
         }
         removed
@@ -754,6 +960,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            binding_set_id: None,
             is_constant_result: false,
         }
     }
@@ -856,6 +1063,7 @@ mod tests {
             domain,
             intrinsic_mask_id: None,
             read_summary_id: None,
+            binding_set_id: None,
             is_constant_result: false,
         });
     }

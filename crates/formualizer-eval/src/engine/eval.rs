@@ -24,6 +24,8 @@ use crate::formula_plane::producer::{
 use crate::formula_plane::region_index::{DirtyDomain, RegionPattern};
 use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef};
 use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
+#[cfg(test)]
+use crate::formula_plane::span_eval::SpanEvalReport;
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
 use crate::formula_plane::structural::relocate_ast_for_template_placement;
 use crate::interpreter::Interpreter;
@@ -31,9 +33,11 @@ use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
-use formualizer_common::{CoordBuildHasher, col_letters_from_1based, parse_a1_1based};
+use formualizer_common::{
+    CoordBuildHasher, LiteralValue, col_letters_from_1based, parse_a1_1based,
+};
 use formualizer_parse::parser::ReferenceType;
-use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind};
 use rayon::ThreadPoolBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -382,6 +386,9 @@ pub struct Engine<R> {
     /// any active span the engine has not yet evaluated under the current
     /// indexes generation; subsequent passes use bounded dirty closures.
     formula_plane_indexes_epoch_seen: u64,
+
+    #[cfg(test)]
+    last_formula_plane_span_eval_report: Option<SpanEvalReport>,
 }
 
 /// Minimal edit surface used by `Engine::action`.
@@ -1257,6 +1264,8 @@ where
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
             formula_plane_indexes_epoch_seen: 0,
+            #[cfg(test)]
+            last_formula_plane_span_eval_report: None,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -1321,6 +1330,8 @@ where
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
             formula_plane_indexes_epoch_seen: 0,
+            #[cfg(test)]
+            last_formula_plane_span_eval_report: None,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -2552,6 +2563,11 @@ where
         &self.formula_ingest_report_total
     }
 
+    #[cfg(test)]
+    pub(crate) fn last_formula_plane_span_eval_report(&self) -> Option<&SpanEvalReport> {
+        self.last_formula_plane_span_eval_report.as_ref()
+    }
+
     fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
         self.formula_ingest_report_total.mode = report.mode;
         self.formula_ingest_report_total.accumulate(&report);
@@ -2574,7 +2590,7 @@ where
             .map(|batch| self.graph.sheet_id_mut(&batch.sheet_name))
             .collect();
         let mut groups: BTreeMap<
-            (SheetId, u64),
+            (SheetId, u64, u32),
             Vec<(FormulaPlacementCandidate, CandidateAnalysis)>,
         > = BTreeMap::new();
         {
@@ -2636,7 +2652,11 @@ where
                         }
                     };
                     groups
-                        .entry((sheet_id, ingested.canonical_hash))
+                        .entry((
+                            sheet_id,
+                            ingested.parameterized_canonical_hash,
+                            candidate.col,
+                        ))
                         .or_default()
                         .push((candidate, analysis));
                 }
@@ -2745,7 +2765,7 @@ where
             }
         }
 
-        let mut groups: BTreeMap<(SheetId, u64), Vec<usize>> = BTreeMap::new();
+        let mut groups: BTreeMap<(SheetId, u64, u32), Vec<usize>> = BTreeMap::new();
         let mut analyses_by_index: Vec<Option<CandidateAnalysis>> =
             (0..pending_candidates.len()).map(|_| None).collect();
         let mut plans_by_index: Vec<Option<DependencyPlanRow>> =
@@ -2770,12 +2790,12 @@ where
                 match ingested {
                     Ok(ingested) => {
                         candidate.ast_id = ingested.ast_id;
-                        let canonical_hash = ingested.canonical_hash;
+                        let canonical_hash = ingested.parameterized_canonical_hash;
                         let dep_plan = ingested.dep_plan.clone();
                         match CandidateAnalysis::from_ingested(candidate, &ingested) {
                             Ok(analysis) => {
                                 groups
-                                    .entry((candidate.sheet_id, canonical_hash))
+                                    .entry((candidate.sheet_id, canonical_hash, candidate.col))
                                     .or_default()
                                     .push(idx);
                                 analyses_by_index[idx] = Some(analysis);
@@ -2822,7 +2842,7 @@ where
             }
         }
 
-        for ((_sheet_id, _canonical_hash), candidate_indices) in groups {
+        for ((_sheet_id, _canonical_hash, _col), candidate_indices) in groups {
             let sheet_name = pending_candidates[candidate_indices[0]].0.clone();
             let mut plans_by_coord: BTreeMap<(u32, u32), Vec<DependencyPlanRow>> = BTreeMap::new();
             for idx in &candidate_indices {
@@ -3645,7 +3665,71 @@ where
             ast: ASTNode,
             origin_row: u32,
             origin_col: u32,
+            binding_set_id: Option<crate::formula_plane::runtime::SpanBindingSetId>,
             placements: Vec<(u32, u32)>,
+        }
+
+        fn substitute_literal_slots_for_template_placement(
+            ast: &ASTNode,
+            binding: &[LiteralValue],
+        ) -> ASTNode {
+            fn clone_with_slots(
+                ast: &ASTNode,
+                binding: &[LiteralValue],
+                next: &mut usize,
+                in_array: bool,
+            ) -> ASTNode {
+                let node_type = match &ast.node_type {
+                    ASTNodeType::Literal(_) if !in_array => {
+                        let value = binding.get(*next).cloned().unwrap_or(LiteralValue::Empty);
+                        *next = next.saturating_add(1);
+                        ASTNodeType::Literal(value)
+                    }
+                    ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
+                    ASTNodeType::Reference {
+                        original,
+                        reference,
+                    } => ASTNodeType::Reference {
+                        original: original.clone(),
+                        reference: reference.clone(),
+                    },
+                    ASTNodeType::UnaryOp { op, expr } => ASTNodeType::UnaryOp {
+                        op: op.clone(),
+                        expr: Box::new(clone_with_slots(expr, binding, next, in_array)),
+                    },
+                    ASTNodeType::BinaryOp { op, left, right } => ASTNodeType::BinaryOp {
+                        op: op.clone(),
+                        left: Box::new(clone_with_slots(left, binding, next, in_array)),
+                        right: Box::new(clone_with_slots(right, binding, next, in_array)),
+                    },
+                    ASTNodeType::Function { name, args } => ASTNodeType::Function {
+                        name: name.clone(),
+                        args: args
+                            .iter()
+                            .map(|arg| clone_with_slots(arg, binding, next, in_array))
+                            .collect(),
+                    },
+                    ASTNodeType::Call { callee, args } => ASTNodeType::Call {
+                        callee: Box::new(clone_with_slots(callee, binding, next, in_array)),
+                        args: args
+                            .iter()
+                            .map(|arg| clone_with_slots(arg, binding, next, in_array))
+                            .collect(),
+                    },
+                    ASTNodeType::Array(rows) => ASTNodeType::Array(
+                        rows.iter()
+                            .map(|row| {
+                                row.iter()
+                                    .map(|cell| clone_with_slots(cell, binding, next, true))
+                                    .collect()
+                            })
+                            .collect(),
+                    ),
+                };
+                ASTNode::new(node_type, ast.source_token.clone())
+            }
+            let mut next = 0usize;
+            clone_with_slots(ast, binding, &mut next, false)
         }
 
         let span_refs = self.graph.formula_authority().active_span_refs();
@@ -3697,6 +3781,7 @@ where
                 ast,
                 origin_row: template.origin_row,
                 origin_col: template.origin_col,
+                binding_set_id: span.binding_set_id,
                 placements,
             });
         }
@@ -3711,7 +3796,44 @@ where
             for &(row, col) in &plan.placements {
                 let row_delta = i64::from(row) - i64::from(plan.origin_row);
                 let col_delta = i64::from(col) - i64::from(plan.origin_col);
-                let ast = relocate_ast_for_template_placement(&plan.ast, row_delta, col_delta)?;
+                let bound_ast = if let Some(binding_set_id) = plan.binding_set_id {
+                    let authority = self.graph.formula_authority();
+                    if let Some(binding_set) = authority.plane.binding_sets.get(binding_set_id) {
+                        if binding_set.unique_literal_bindings.len() <= 1 {
+                            plan.ast.clone()
+                        } else {
+                            let placement = crate::formula_plane::runtime::PlacementCoord::new(
+                                plan.sheet_id,
+                                row.saturating_sub(1),
+                                col.saturating_sub(1),
+                            );
+                            let binding = authority
+                                .plane
+                                .spans
+                                .get(plan.span_ref)
+                                .and_then(|span| span.domain.ordinal_of(placement))
+                                .and_then(|ordinal| {
+                                    binding_set
+                                        .placement_literal_binding_ids
+                                        .get(ordinal)
+                                        .copied()
+                                })
+                                .and_then(|binding_id| {
+                                    binding_set.unique_literal_bindings.get(binding_id as usize)
+                                });
+                            if let Some(binding) = binding {
+                                substitute_literal_slots_for_template_placement(&plan.ast, binding)
+                            } else {
+                                plan.ast.clone()
+                            }
+                        }
+                    } else {
+                        plan.ast.clone()
+                    }
+                } else {
+                    plan.ast.clone()
+                };
+                let ast = relocate_ast_for_template_placement(&bound_ast, row_delta, col_delta)?;
                 relocated.push((plan.sheet_id, row, col, ast));
                 placement_cells.push((plan.sheet_id, row, col));
             }
@@ -6787,6 +6909,10 @@ where
         // when no spans are active, execute through the private legacy primitive
         // rather than the public legacy entry path.
         if self.graph.formula_authority().active_span_count() == 0 {
+            #[cfg(test)]
+            {
+                self.last_formula_plane_span_eval_report = None;
+            }
             return self.evaluate_all_legacy_impl();
         }
 
@@ -6819,6 +6945,10 @@ where
         }
 
         let mut computed_vertices = 0usize;
+        #[cfg(test)]
+        {
+            self.last_formula_plane_span_eval_report = None;
+        }
         for layer in schedule.layers {
             let mut buffer = ComputedWriteBuffer::default();
             for work in layer.work {
@@ -6856,6 +6986,10 @@ where
                                 "FormulaPlane span evaluation failed: {err:?}"
                             ))
                         })?;
+                        #[cfg(test)]
+                        {
+                            self.last_formula_plane_span_eval_report = Some(report.clone());
+                        }
                         computed_vertices = computed_vertices
                             .saturating_add(report.span_eval_placement_count as usize);
                     }
