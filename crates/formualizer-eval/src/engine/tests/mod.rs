@@ -35,6 +35,7 @@ mod sources;
 mod stripe_streaming_integration;
 mod stripe_tests;
 mod striped_dirty_propagation;
+mod structural_op_clears_computed_values;
 mod tables;
 mod tarjan_scc;
 mod topo_layers;

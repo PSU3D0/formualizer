@@ -1726,6 +1726,8 @@ where
             .map_err(Self::editor_error_to_excel)?;
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
+        self.clear_all_computed_overlays();
+        self.mark_all_formula_vertices_dirty();
         self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(id)
@@ -1752,6 +1754,8 @@ where
             .map_err(Self::editor_error_to_excel)?;
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
+        self.clear_all_computed_overlays();
+        self.mark_all_formula_vertices_dirty();
         self.staged_formulas.remove(&name);
         if self.row_visibility.remove(&sheet_id).is_some() {
             self.invalidate_row_visibility_mask_cache();
@@ -2582,6 +2586,24 @@ where
         self.topology_epoch = self.topology_epoch.wrapping_add(1);
         self.clear_cached_static_schedule();
         self.has_edited = true;
+    }
+
+    fn mark_all_formula_vertices_dirty(&mut self) {
+        let vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+        for vertex in vertices {
+            self.graph.mark_vertex_dirty(vertex);
+        }
+    }
+
+    fn mark_moved_formula_vertices_dirty(
+        &mut self,
+        summary: &crate::engine::graph::editor::vertex_editor::ShiftSummary,
+    ) {
+        for vertex in &summary.vertices_moved {
+            if self.graph.get_formula_id(*vertex).is_some() {
+                self.graph.mark_vertex_dirty(*vertex);
+            }
+        }
     }
 
     /// Access Arrow sheet store (read-only)
@@ -4102,8 +4124,9 @@ where
     {
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
-        self.demote_spans_for_structural_op(sheet_id)?;
         let before0 = before.saturating_sub(1);
+        let preserved = self.collect_computed_overlay_before_row(sheet, before0 as usize);
+        self.demote_spans_for_structural_op(sheet_id)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_rows(sheet_id, before0, count)?
@@ -4112,6 +4135,9 @@ where
             let before0 = before0 as usize;
             asheet.insert_rows(before0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_row(sheet, before0 as usize);
+        self.restore_computed_overlay_cells(sheet, preserved);
         self.shift_row_visibility_insert(sheet_id, before0, count);
         self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
@@ -4128,8 +4154,9 @@ where
     {
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
-        self.demote_spans_for_structural_op(sheet_id)?;
         let start0 = start.saturating_sub(1);
+        let preserved = self.collect_computed_overlay_before_row(sheet, start0 as usize);
+        self.demote_spans_for_structural_op(sheet_id)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_rows(sheet_id, start0, count)?
@@ -4138,6 +4165,9 @@ where
             let start0 = start0 as usize;
             asheet.delete_rows(start0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_row(sheet, start0 as usize);
+        self.restore_computed_overlay_cells(sheet, preserved);
         self.shift_row_visibility_delete(sheet_id, start0, count);
         self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
@@ -4159,8 +4189,9 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        self.demote_spans_for_structural_op(sheet_id)?;
         let before0 = before.saturating_sub(1);
+        let preserved = self.collect_computed_overlay_before_col(sheet, before0 as usize);
+        self.demote_spans_for_structural_op(sheet_id)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_columns(sheet_id, before0, count)?
@@ -4169,6 +4200,9 @@ where
             let before0 = before0 as usize;
             asheet.insert_columns(before0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_col(sheet, before0 as usize);
+        self.restore_computed_overlay_cells(sheet, preserved);
         self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
         Ok(summary)
@@ -4189,8 +4223,9 @@ where
                 reason: "Unknown sheet".to_string(),
             },
         )?;
-        self.demote_spans_for_structural_op(sheet_id)?;
         let start0 = start.saturating_sub(1);
+        let preserved = self.collect_computed_overlay_before_col(sheet, start0 as usize);
+        self.demote_spans_for_structural_op(sheet_id)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_columns(sheet_id, start0, count)?
@@ -4199,6 +4234,9 @@ where
             let start0 = start0 as usize;
             asheet.delete_columns(start0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_col(sheet, start0 as usize);
+        self.restore_computed_overlay_cells(sheet, preserved);
         self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
         self.mark_topology_edited();
         Ok(summary)
@@ -4746,6 +4784,181 @@ where
             return;
         };
         let delta = ch.computed_overlay.remove(in_off);
+        self.adjust_computed_overlay_bytes(delta);
+    }
+
+    fn collect_computed_overlay_before_row(
+        &self,
+        sheet: &str,
+        start_row0: usize,
+    ) -> Vec<(u32, u32, LiteralValue)> {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return Vec::new();
+        }
+
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return Vec::new();
+        };
+        let starts = &asheet.chunk_starts;
+        let mut cells = Vec::new();
+        for (col_idx, col) in asheet.columns.iter().enumerate() {
+            for (chunk_idx, ch) in col.chunks.iter().enumerate() {
+                let Some(&chunk_start) = starts.get(chunk_idx) else {
+                    continue;
+                };
+                for (offset, value) in ch.computed_overlay.iter() {
+                    let row0 = chunk_start.saturating_add(offset);
+                    if row0 < start_row0 {
+                        cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
+                    }
+                }
+            }
+            for (chunk_idx, ch) in &col.sparse_chunks {
+                let Some(&chunk_start) = starts.get(*chunk_idx) else {
+                    continue;
+                };
+                for (offset, value) in ch.computed_overlay.iter() {
+                    let row0 = chunk_start.saturating_add(offset);
+                    if row0 < start_row0 {
+                        cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
+                    }
+                }
+            }
+        }
+        cells
+    }
+
+    fn collect_computed_overlay_before_col(
+        &self,
+        sheet: &str,
+        start_col0: usize,
+    ) -> Vec<(u32, u32, LiteralValue)> {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return Vec::new();
+        }
+
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return Vec::new();
+        };
+        let starts = &asheet.chunk_starts;
+        let mut cells = Vec::new();
+        for (col_idx, col) in asheet.columns.iter().enumerate().take(start_col0) {
+            for (chunk_idx, ch) in col.chunks.iter().enumerate() {
+                let Some(&chunk_start) = starts.get(chunk_idx) else {
+                    continue;
+                };
+                for (offset, value) in ch.computed_overlay.iter() {
+                    let row0 = chunk_start.saturating_add(offset);
+                    cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
+                }
+            }
+            for (chunk_idx, ch) in &col.sparse_chunks {
+                let Some(&chunk_start) = starts.get(*chunk_idx) else {
+                    continue;
+                };
+                for (offset, value) in ch.computed_overlay.iter() {
+                    let row0 = chunk_start.saturating_add(offset);
+                    cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
+                }
+            }
+        }
+        cells
+    }
+
+    fn restore_computed_overlay_cells(
+        &mut self,
+        sheet: &str,
+        cells: Vec<(u32, u32, LiteralValue)>,
+    ) {
+        for (row, col, value) in cells {
+            self.set_computed_overlay_cell_raw(sheet, row, col, Some(value));
+        }
+    }
+
+    fn clear_computed_overlay_after_row(&mut self, sheet: &str, start_row0: usize) {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return;
+        }
+
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        if start_row0 >= asheet.nrows as usize {
+            return;
+        }
+
+        let starts = asheet.chunk_starts.clone();
+        let nrows = asheet.nrows as usize;
+        let mut delta = 0isize;
+        for col in &mut asheet.columns {
+            for (chunk_idx, ch) in col.chunks.iter_mut().enumerate() {
+                let Some(&chunk_start) = starts.get(chunk_idx) else {
+                    continue;
+                };
+                let chunk_end = starts
+                    .get(chunk_idx + 1)
+                    .copied()
+                    .unwrap_or(nrows)
+                    .min(chunk_start.saturating_add(ch.len()));
+                if chunk_end <= start_row0 {
+                    continue;
+                }
+                if chunk_start >= start_row0 {
+                    delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+                } else {
+                    let start_in_chunk = start_row0.saturating_sub(chunk_start).min(ch.len());
+                    for offset in start_in_chunk..ch.len() {
+                        delta = delta.saturating_add(ch.computed_overlay.remove(offset));
+                    }
+                }
+            }
+
+            for (chunk_idx, ch) in &mut col.sparse_chunks {
+                let Some(&chunk_start) = starts.get(*chunk_idx) else {
+                    continue;
+                };
+                let chunk_end = starts
+                    .get(*chunk_idx + 1)
+                    .copied()
+                    .unwrap_or(nrows)
+                    .min(chunk_start.saturating_add(ch.len()));
+                if chunk_end <= start_row0 {
+                    continue;
+                }
+                if chunk_start >= start_row0 {
+                    delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+                } else {
+                    let start_in_chunk = start_row0.saturating_sub(chunk_start).min(ch.len());
+                    for offset in start_in_chunk..ch.len() {
+                        delta = delta.saturating_add(ch.computed_overlay.remove(offset));
+                    }
+                }
+            }
+        }
+        self.adjust_computed_overlay_bytes(delta);
+    }
+
+    fn clear_computed_overlay_after_col(&mut self, sheet: &str, start_col0: usize) {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return;
+        }
+
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        if start_col0 >= asheet.columns.len() {
+            return;
+        }
+
+        let mut delta = 0isize;
+        for col in asheet.columns.iter_mut().skip(start_col0) {
+            for ch in &mut col.chunks {
+                delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+            }
+            for ch in col.sparse_chunks.values_mut() {
+                delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+            }
+        }
         self.adjust_computed_overlay_bytes(delta);
     }
 
