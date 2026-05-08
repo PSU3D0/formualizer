@@ -274,6 +274,9 @@ impl<'a> SpanEvaluator<'a> {
             return Ok(memo_report);
         }
 
+        let per_placement_binding_set = span
+            .binding_set_id
+            .and_then(|binding_set_id| self.plane.binding_sets.get(binding_set_id));
         for placement in placements.iter() {
             if self.plane.formula_overlay.find_at(placement).is_some() {
                 report.skipped_overlay_punchout_count =
@@ -292,15 +295,40 @@ impl<'a> SpanEvaluator<'a> {
                 placement.row,
                 placement.col,
             ));
-            let value = match interpreter.evaluate_arena_ast_with_offset(
-                template.ast_id,
-                row_delta,
-                col_delta,
-                self.data_store,
-                self.sheet_registry,
-            ) {
-                Ok(calc) => literal_to_overlay(calc.into_literal()),
-                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+            let value = if let Some(binding_set) = per_placement_binding_set {
+                let binding_id = binding_id_for_placement(span, binding_set, placement)?;
+                let binding = binding_set
+                    .unique_literal_bindings
+                    .get(binding_id as usize)
+                    .ok_or(SpanEvalError::StaleSpan)?;
+                let interpreter =
+                    interpreter.with_parameter_bindings(InterpreterParameterBindings {
+                        literal_slots_by_node: &binding_set
+                            .template_slot_map
+                            .literal_slots_by_arena_node,
+                        literal_values: binding,
+                    });
+                match interpreter.evaluate_arena_ast_with_offset(
+                    template.ast_id,
+                    row_delta,
+                    col_delta,
+                    self.data_store,
+                    self.sheet_registry,
+                ) {
+                    Ok(calc) => literal_to_overlay(calc.into_literal()),
+                    Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+                }
+            } else {
+                match interpreter.evaluate_arena_ast_with_offset(
+                    template.ast_id,
+                    row_delta,
+                    col_delta,
+                    self.data_store,
+                    self.sheet_registry,
+                ) {
+                    Ok(calc) => literal_to_overlay(calc.into_literal()),
+                    Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+                }
             };
             sink.push_cell(placement, value);
             report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);

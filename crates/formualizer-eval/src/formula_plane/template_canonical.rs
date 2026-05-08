@@ -960,6 +960,7 @@ pub(crate) fn is_known_static_function(name: &str) -> bool {
             | "FALSE"
             | "FIND"
             | "FLOOR"
+            | "HLOOKUP"
             | "IF"
             | "IFERROR"
             | "IFNA"
@@ -982,6 +983,7 @@ pub(crate) fn is_known_static_function(name: &str) -> bool {
             | "LOG"
             | "LOG10"
             | "LOWER"
+            | "MATCH"
             | "MAX"
             | "MID"
             | "MIN"
@@ -1018,7 +1020,9 @@ pub(crate) fn is_known_static_function(name: &str) -> bool {
             | "TRUNC"
             | "UPPER"
             | "VALUE"
+            | "VLOOKUP"
             | "YEAR"
+            | "XLOOKUP"
     )
 }
 

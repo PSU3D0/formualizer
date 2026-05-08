@@ -74,6 +74,12 @@ mod s060_self_referencing_table_row;
 mod s061_index_with_constant_table;
 mod s062_index_deeply_nested_in_if;
 mod s063_index_with_table_edit;
+mod s064_hlookup_family_horizontal_table;
+mod s065_xlookup_exact_with_if_not_found_ref;
+mod s066_xlookup_search_mode_2_exact;
+mod s067_index_match_approximate_chain;
+mod s068_vlookup_approximate_sorted_table;
+mod s069_xlookup_wildcard_deeply_nested_if;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -138,6 +144,12 @@ pub use s060_self_referencing_table_row::S060SelfReferencingTableRow;
 pub use s061_index_with_constant_table::S061IndexWithConstantTable;
 pub use s062_index_deeply_nested_in_if::S062IndexDeeplyNestedInIf;
 pub use s063_index_with_table_edit::S063IndexWithTableEdit;
+pub use s064_hlookup_family_horizontal_table::S064HlookupFamilyHorizontalTable;
+pub use s065_xlookup_exact_with_if_not_found_ref::S065XlookupExactWithIfNotFoundRef;
+pub use s066_xlookup_search_mode_2_exact::S066XlookupSearchMode2Exact;
+pub use s067_index_match_approximate_chain::S067IndexMatchApproximateChain;
+pub use s068_vlookup_approximate_sorted_table::S068VlookupApproximateSortedTable;
+pub use s069_xlookup_wildcard_deeply_nested_if::S069XlookupWildcardDeeplyNestedIf;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -396,6 +408,12 @@ impl ScenarioRegistry {
             Box::new(S061IndexWithConstantTable::new()),
             Box::new(S062IndexDeeplyNestedInIf::new()),
             Box::new(S063IndexWithTableEdit::new()),
+            Box::new(S064HlookupFamilyHorizontalTable::new()),
+            Box::new(S065XlookupExactWithIfNotFoundRef::new()),
+            Box::new(S066XlookupSearchMode2Exact::new()),
+            Box::new(S067IndexMatchApproximateChain::new()),
+            Box::new(S068VlookupApproximateSortedTable::new()),
+            Box::new(S069XlookupWildcardDeeplyNestedIf::new()),
         ]
     }
 }

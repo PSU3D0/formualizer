@@ -466,6 +466,7 @@ fn is_known_static_function(name: &str) -> bool {
             | "FALSE"
             | "FIND"
             | "FLOOR"
+            | "HLOOKUP"
             | "IF"
             | "IFERROR"
             | "IFNA"
@@ -488,6 +489,7 @@ fn is_known_static_function(name: &str) -> bool {
             | "LOG"
             | "LOG10"
             | "LOWER"
+            | "MATCH"
             | "MAX"
             | "MID"
             | "MIN"
@@ -524,7 +526,9 @@ fn is_known_static_function(name: &str) -> bool {
             | "TRUNC"
             | "UPPER"
             | "VALUE"
+            | "VLOOKUP"
             | "YEAR"
+            | "XLOOKUP"
     )
 }
 

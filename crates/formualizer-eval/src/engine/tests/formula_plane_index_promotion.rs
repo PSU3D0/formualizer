@@ -178,7 +178,8 @@ fn index_match_classic_pattern_promotes() {
     }
     ingest(&mut engine, formulas);
 
-    assert_span_count(&engine, 0);
+    // MATCH is allowlisted, so the classic INDEX/MATCH family now promotes.
+    assert_span_count(&engine, 1);
     engine.evaluate_all().unwrap();
 
     for row in [1, 50, 100, 200] {
