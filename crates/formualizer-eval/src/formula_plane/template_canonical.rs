@@ -916,7 +916,7 @@ fn is_volatile_function(name: &str) -> bool {
 }
 
 fn is_reference_returning_function(name: &str) -> bool {
-    matches!(name, "CHOOSE" | "INDEX")
+    matches!(name, "CHOOSE")
 }
 
 fn is_array_or_spill_function(name: &str) -> bool {
@@ -964,6 +964,7 @@ pub(crate) fn is_known_static_function(name: &str) -> bool {
             | "IFERROR"
             | "IFNA"
             | "IFS"
+            | "INDEX"
             | "INT"
             | "ISBLANK"
             | "ISERR"
@@ -1063,7 +1064,11 @@ pub(crate) fn function_arg_slot_context(function: &str, arg_index: usize) -> Slo
         "SUMIF" | "AVERAGEIF" => SlotContext::Value,
         "COUNTIF" if arg_index == 0 => SlotContext::CriteriaRangeArg,
         "COUNTIF" => SlotContext::CriteriaExpressionArg,
-        "INDEX" | "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => SlotContext::ByRefArg,
+        // INDEX: arg 0 is the table (Value context so range gets recorded as
+        // precedent); args 1+2 are scalar position/col_index (Value context
+        // so relative refs become value-ref slots).
+        "INDEX" => SlotContext::Value,
+        "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => SlotContext::ByRefArg,
         _ => SlotContext::Value,
     }
 }

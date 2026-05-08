@@ -424,7 +424,7 @@ fn is_volatile_function(name: &str) -> bool {
 }
 
 fn is_reference_returning_function(name: &str) -> bool {
-    matches!(name, "CHOOSE" | "INDEX")
+    matches!(name, "CHOOSE")
 }
 
 fn is_array_or_spill_function(name: &str) -> bool {
@@ -470,6 +470,7 @@ fn is_known_static_function(name: &str) -> bool {
             | "IFERROR"
             | "IFNA"
             | "IFS"
+            | "INDEX"
             | "INT"
             | "ISBLANK"
             | "ISERR"

@@ -94,6 +94,7 @@ mod formula_edit_propagation;
 mod formula_error_propagation;
 mod formula_overlay_writeback;
 mod formula_plane_demotion_correctness;
+mod formula_plane_index_promotion;
 mod formula_plane_ingest_shadow;
 mod formula_plane_literal_param_memo;
 mod formula_plane_per_span_overhead;

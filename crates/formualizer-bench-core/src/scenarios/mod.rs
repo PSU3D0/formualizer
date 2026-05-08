@@ -71,6 +71,9 @@ mod s057_named_range_redefined;
 mod s058_volatile_non_volatile_mix;
 mod s059_empty_sheet_with_cross_sheet_refs;
 mod s060_self_referencing_table_row;
+mod s061_index_with_constant_table;
+mod s062_index_deeply_nested_in_if;
+mod s063_index_with_table_edit;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -132,6 +135,9 @@ pub use s057_named_range_redefined::S057NamedRangeRedefined;
 pub use s058_volatile_non_volatile_mix::S058VolatileNonVolatileMix;
 pub use s059_empty_sheet_with_cross_sheet_refs::S059EmptySheetWithCrossSheetRefs;
 pub use s060_self_referencing_table_row::S060SelfReferencingTableRow;
+pub use s061_index_with_constant_table::S061IndexWithConstantTable;
+pub use s062_index_deeply_nested_in_if::S062IndexDeeplyNestedInIf;
+pub use s063_index_with_table_edit::S063IndexWithTableEdit;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -258,6 +264,7 @@ pub enum ScenarioTag {
     ShortCircuit,
     GiantAst,
     TextHeavy,
+    ReferenceForwarding,
 
     /// Edit shapes
     SingleCellEdit,
@@ -386,6 +393,9 @@ impl ScenarioRegistry {
             Box::new(S058VolatileNonVolatileMix::new()),
             Box::new(S059EmptySheetWithCrossSheetRefs::new()),
             Box::new(S060SelfReferencingTableRow::new()),
+            Box::new(S061IndexWithConstantTable::new()),
+            Box::new(S062IndexDeeplyNestedInIf::new()),
+            Box::new(S063IndexWithTableEdit::new()),
         ]
     }
 }

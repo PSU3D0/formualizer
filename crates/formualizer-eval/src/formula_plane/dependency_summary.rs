@@ -968,7 +968,8 @@ pub(crate) fn function_arg_context(function: &str, arg_index: usize) -> Analyzer
         "SUMIF" | "AVERAGEIF" => AnalyzerContext::Value,
         "COUNTIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
         "COUNTIF" => AnalyzerContext::CriteriaExpressionArg,
-        "INDEX" | "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => AnalyzerContext::ByRefArg,
+        "INDEX" => AnalyzerContext::Value,
+        "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => AnalyzerContext::ByRefArg,
         _ => AnalyzerContext::Value,
     }
 }
@@ -2538,23 +2539,24 @@ mod tests {
 
     #[test]
     fn formula_plane_dependency_summary_rejects_reference_returning_functions() {
-        let index = summary("=INDEX(A1:A3,1)", 1, 1);
         let choose = summary("=CHOOSE(1,A1,B1)", 1, 1);
 
-        assert_eq!(index.formula_class, FormulaClass::Rejected);
         assert_eq!(choose.formula_class, FormulaClass::Rejected);
-        assert!(has_reason(
-            &index,
-            &DependencyRejectReason::ReferenceReturningUnsupported {
-                function: Some("INDEX".to_string())
-            }
-        ));
         assert!(has_reason(
             &choose,
             &DependencyRejectReason::ReferenceReturningUnsupported {
                 function: Some("CHOOSE".to_string())
             }
         ));
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_index_with_static_range() {
+        let summary = summary("=INDEX(A1:A3,1)", 1, 1);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.precedent_patterns.len(), 1);
     }
 
     #[test]
