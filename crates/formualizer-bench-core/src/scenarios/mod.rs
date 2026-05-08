@@ -80,6 +80,15 @@ mod s066_xlookup_search_mode_2_exact;
 mod s067_index_match_approximate_chain;
 mod s068_vlookup_approximate_sorted_table;
 mod s069_xlookup_wildcard_deeply_nested_if;
+mod s070_vlookup_cache_k_much_less_than_n;
+mod s071_vlookup_cache_k_equals_n;
+mod s072_hlookup_cache_horizontal;
+mod s073_match_then_index_cache;
+mod s074_mixed_lookup_and_arithmetic;
+mod s075_lookup_with_edit_cycles;
+mod s076_lookup_against_volatile_table;
+mod s077_lookup_with_sparse_empty_cells;
+mod s078_multiple_tables_cache_isolation;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -150,6 +159,15 @@ pub use s066_xlookup_search_mode_2_exact::S066XlookupSearchMode2Exact;
 pub use s067_index_match_approximate_chain::S067IndexMatchApproximateChain;
 pub use s068_vlookup_approximate_sorted_table::S068VlookupApproximateSortedTable;
 pub use s069_xlookup_wildcard_deeply_nested_if::S069XlookupWildcardDeeplyNestedIf;
+pub use s070_vlookup_cache_k_much_less_than_n::S070VlookupCacheKMuchLessThanN;
+pub use s071_vlookup_cache_k_equals_n::S071VlookupCacheKEqualsN;
+pub use s072_hlookup_cache_horizontal::S072HlookupCacheHorizontal;
+pub use s073_match_then_index_cache::S073MatchThenIndexCache;
+pub use s074_mixed_lookup_and_arithmetic::S074MixedLookupAndArithmetic;
+pub use s075_lookup_with_edit_cycles::S075LookupWithEditCycles;
+pub use s076_lookup_against_volatile_table::S076LookupAgainstVolatileTable;
+pub use s077_lookup_with_sparse_empty_cells::S077LookupWithSparseEmptyCells;
+pub use s078_multiple_tables_cache_isolation::S078MultipleTablesCacheIsolation;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -260,6 +278,7 @@ pub enum ScenarioTag {
     LongChain,
     InternalDependency,
     LookupHeavy,
+    LookupCacheHeavy,
     AggregationHeavy,
     Mixed,
     MultiSheet,
@@ -414,6 +433,15 @@ impl ScenarioRegistry {
             Box::new(S067IndexMatchApproximateChain::new()),
             Box::new(S068VlookupApproximateSortedTable::new()),
             Box::new(S069XlookupWildcardDeeplyNestedIf::new()),
+            Box::new(S070VlookupCacheKMuchLessThanN::new()),
+            Box::new(S071VlookupCacheKEqualsN::new()),
+            Box::new(S072HlookupCacheHorizontal::new()),
+            Box::new(S073MatchThenIndexCache::new()),
+            Box::new(S074MixedLookupAndArithmetic::new()),
+            Box::new(S075LookupWithEditCycles::new()),
+            Box::new(S076LookupAgainstVolatileTable::new()),
+            Box::new(S077LookupWithSparseEmptyCells::new()),
+            Box::new(S078MultipleTablesCacheIsolation::new()),
         ]
     }
 }

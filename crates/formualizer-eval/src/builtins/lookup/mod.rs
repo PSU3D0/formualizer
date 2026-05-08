@@ -10,7 +10,7 @@ mod choose;
 mod core;
 mod dynamic;
 mod legacy; // classic LOOKUP function (vector & array forms)
-mod lookup_utils; // shared helper utilities for lookup family
+pub(crate) mod lookup_utils; // shared helper utilities for lookup family
 mod reference_info; // modern lookup & dynamic array subset (XLOOKUP, FILTER, UNIQUE)
 mod stack; // stacking & concatenation functions (HSTACK, VSTACK)
 

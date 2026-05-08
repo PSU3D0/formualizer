@@ -3,6 +3,10 @@ use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
+use crate::engine::lookup_index_cache::{
+    BuildOutcome, LookupAxis, LookupIndex, LookupIndexCache, LookupIndexCacheReport,
+    LookupIndexKey, estimate_bytes,
+};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::row_visibility::RowVisibilityState;
@@ -353,6 +357,7 @@ pub struct Engine<R> {
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
     // Snapshot-scoped final used-axis bounds for open-ended references.
     used_axis_bounds_cache: std::sync::RwLock<Option<UsedAxisBoundsCache>>,
+    lookup_index_cache: LookupIndexCache,
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: StagedFormulaMap,
@@ -1249,6 +1254,7 @@ where
             None
         };
 
+        let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1269,6 +1275,7 @@ where
             force_materialize_range_views: false,
             row_bounds_cache: std::sync::RwLock::new(None),
             used_axis_bounds_cache: std::sync::RwLock::new(None),
+            lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
@@ -1315,6 +1322,7 @@ where
                 ))
             }
         });
+        let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1335,6 +1343,7 @@ where
             force_materialize_range_views: false,
             row_bounds_cache: std::sync::RwLock::new(None),
             used_axis_bounds_cache: std::sync::RwLock::new(None),
+            lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
@@ -1379,6 +1388,112 @@ where
 
     pub fn virtual_dep_fallback_activations(&self) -> u64 {
         self.virtual_dep_fallback_activations
+    }
+
+    pub(crate) fn last_lookup_index_cache_report(&self) -> LookupIndexCacheReport {
+        self.lookup_index_cache.report()
+    }
+
+    fn lookup_view_contains_volatile(&self, view: &RangeView<'_>, sheet_id: SheetId) -> bool {
+        let start_row = view.start_row();
+        let end_row = view.end_row();
+        let start_col = view.start_col();
+        let end_col = view.end_col();
+        for row in start_row..=end_row {
+            let Ok(row_u32) = u32::try_from(row) else {
+                return true;
+            };
+            for col in start_col..=end_col {
+                let Ok(col_u32) = u32::try_from(col) else {
+                    return true;
+                };
+                let cell_ref = self
+                    .graph
+                    .make_cell_ref_internal(sheet_id, row_u32, col_u32);
+                if let Some(vertex_id) = self.graph.get_vertex_id_for_address(&cell_ref)
+                    && self.graph.is_volatile(*vertex_id)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn build_lookup_index_impl(
+        &self,
+        view: &RangeView<'_>,
+        axis: LookupAxis,
+    ) -> Option<Arc<LookupIndex>> {
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
+            self.lookup_index_cache.note_skipped_tiny();
+            return None;
+        }
+        let len = match axis {
+            LookupAxis::ColumnInView(col) => {
+                if col >= cols {
+                    self.lookup_index_cache.note_skipped_tiny();
+                    return None;
+                }
+                rows
+            }
+            LookupAxis::RowInView(row) => {
+                if row >= rows {
+                    self.lookup_index_cache.note_skipped_tiny();
+                    return None;
+                }
+                cols
+            }
+        };
+        if len < 64 {
+            self.lookup_index_cache.note_skipped_tiny();
+            return None;
+        }
+
+        let sheet_id = self.graph.sheet_id(view.sheet_name())?;
+        let key = LookupIndexKey {
+            sheet_id,
+            start_row: u32::try_from(view.start_row()).ok()?,
+            start_col: u32::try_from(view.start_col()).ok()?,
+            end_row: u32::try_from(view.end_row()).ok()?,
+            end_col: u32::try_from(view.end_col()).ok()?,
+            axis,
+            snapshot_id: self.data_snapshot_id(),
+        };
+        if let Some(index) = self.lookup_index_cache.get(&key) {
+            return Some(index);
+        }
+        if self
+            .lookup_index_cache
+            .would_exceed_cap(estimate_bytes(len, 0))
+        {
+            self.lookup_index_cache.note_skipped_cap();
+            return None;
+        }
+        if !self.lookup_index_cache.should_build(key) {
+            return None;
+        }
+        if self.lookup_index_cache.is_known_volatile(&key) {
+            self.lookup_index_cache.note_skipped_volatile();
+            return None;
+        }
+        if self.lookup_view_contains_volatile(view, sheet_id) {
+            self.lookup_index_cache.note_volatile_key(key);
+            self.lookup_index_cache.note_skipped_volatile();
+            return None;
+        }
+        match LookupIndex::build(view, axis).ok()? {
+            BuildOutcome::Built(index) => self.lookup_index_cache.insert_if_room(key, index),
+            BuildOutcome::ErrorInLookupAxis => {
+                self.lookup_index_cache.note_skipped_error();
+                None
+            }
+            BuildOutcome::Degenerate => {
+                self.lookup_index_cache.note_skipped_tiny();
+                None
+            }
+        }
     }
 
     fn reset_virtual_dep_telemetry_if_disabled(&mut self) {
@@ -7395,6 +7510,7 @@ where
 
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        self.lookup_index_cache.reset_counters();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
@@ -9848,6 +9964,14 @@ where
             tables: false,
             async_stream: false,
         }
+    }
+
+    fn build_lookup_index(
+        &self,
+        view: &RangeView<'_>,
+        axis: LookupAxis,
+    ) -> Option<Arc<LookupIndex>> {
+        self.build_lookup_index_impl(view, axis)
     }
 
     // Flats removed

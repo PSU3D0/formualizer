@@ -1,3 +1,4 @@
+use crate::engine::lookup_index_cache::{LookupAxis, LookupIndex};
 use crate::engine::range_view::RangeView;
 use crate::engine::row_visibility::VisibilityMaskMode;
 pub use crate::function::Function;
@@ -1301,6 +1302,16 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         crate::engine::DateSystem::Excel1900
     }
 
+    /// Optional: Build or fetch an exact-match lookup index over an Arrow-backed view.
+    /// Implementations should return None if not supported or unsafe.
+    fn build_lookup_index(
+        &self,
+        _view: &RangeView<'_>,
+        _axis: LookupAxis,
+    ) -> Option<std::sync::Arc<LookupIndex>> {
+        None
+    }
+
     /// Optional: Build or fetch a cached boolean mask for a criterion over an Arrow-backed view.
     /// Implementations should return None if not supported.
     fn build_criteria_mask(
@@ -1395,6 +1406,16 @@ pub trait FunctionContext<'ctx> {
     /// Workbook date system selection (1900 vs 1904).
     fn date_system(&self) -> crate::engine::DateSystem {
         crate::engine::DateSystem::Excel1900
+    }
+
+    /// Optional: Build or fetch an exact-match lookup index over an Arrow-backed view.
+    /// Returns None if not supported by the underlying context.
+    fn get_lookup_index(
+        &self,
+        _view: &RangeView<'_>,
+        _axis: LookupAxis,
+    ) -> Option<std::sync::Arc<LookupIndex>> {
+        None
     }
 
     /// Optional: Build or fetch a cached boolean mask for a criterion over an Arrow-backed view.
@@ -1497,6 +1518,14 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
 
     fn date_system(&self) -> crate::engine::DateSystem {
         self.base.date_system()
+    }
+
+    fn get_lookup_index(
+        &self,
+        view: &RangeView<'_>,
+        axis: LookupAxis,
+    ) -> Option<std::sync::Arc<LookupIndex>> {
+        self.base.build_lookup_index(view, axis)
     }
 
     fn get_criteria_mask(

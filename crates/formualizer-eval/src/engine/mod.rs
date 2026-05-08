@@ -12,6 +12,7 @@ pub mod ingest;
 pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;
 pub mod journal;
+pub mod lookup_index_cache;
 pub mod plan;
 pub mod range_view;
 pub mod row_visibility;
@@ -653,6 +654,9 @@ pub struct EvalConfig {
     /// `Shadow` may report candidate span opportunities but must still materialize
     /// every formula via the legacy graph path.
     pub formula_plane_mode: FormulaPlaneMode,
+
+    /// Maximum bytes for the engine-side lookup-index cache.
+    pub lookup_index_cache_max_bytes: usize,
 }
 
 impl Default for EvalConfig {
@@ -706,6 +710,7 @@ impl Default for EvalConfig {
             defer_graph_building: false,
             enable_virtual_dep_telemetry: false,
             formula_plane_mode: FormulaPlaneMode::AuthoritativeExperimental,
+            lookup_index_cache_max_bytes: 64 * 1024 * 1024,
         }
     }
 }
