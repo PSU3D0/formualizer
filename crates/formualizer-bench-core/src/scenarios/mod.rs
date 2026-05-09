@@ -90,6 +90,7 @@ mod s076_lookup_against_volatile_table;
 mod s077_lookup_with_sparse_empty_cells;
 mod s078_multiple_tables_cache_isolation;
 mod s079_after_edit_contract;
+mod s080_sheet_duplication_named_range;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -170,6 +171,7 @@ pub use s076_lookup_against_volatile_table::S076LookupAgainstVolatileTable;
 pub use s077_lookup_with_sparse_empty_cells::S077LookupWithSparseEmptyCells;
 pub use s078_multiple_tables_cache_isolation::S078MultipleTablesCacheIsolation;
 pub use s079_after_edit_contract::S079AfterEditContract;
+pub use s080_sheet_duplication_named_range::S080SheetDuplicationNamedRange;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -446,6 +448,7 @@ impl ScenarioRegistry {
             Box::new(S077LookupWithSparseEmptyCells::new()),
             Box::new(S078MultipleTablesCacheIsolation::new()),
             Box::new(S079AfterEditContract::new()),
+            Box::new(S080SheetDuplicationNamedRange::new()),
         ]
     }
 }

@@ -2001,6 +2001,10 @@ impl Workbook {
         self.ensure_arrow_sheet_capacity(name, 0, 0);
         Ok(())
     }
+    pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<(), ExcelError> {
+        self.engine.duplicate_sheet(source, new_name)?;
+        Ok(())
+    }
     pub fn delete_sheet(&mut self, name: &str) -> Result<(), ExcelError> {
         if let Some(id) = self.engine.sheet_id(name) {
             self.engine.remove_sheet(id)?;

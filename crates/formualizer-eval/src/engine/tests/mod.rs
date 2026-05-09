@@ -1,3 +1,4 @@
+mod active_span_gate_audit;
 mod arena_debug;
 mod cancellation;
 mod change_log;
@@ -30,6 +31,7 @@ mod dynamic_topo;
 mod named_ranges;
 mod range_operations;
 mod row_operations;
+mod sheet_duplication_named_range_dependents;
 mod sheet_management;
 mod sources;
 mod stripe_streaming_integration;

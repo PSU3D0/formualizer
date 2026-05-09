@@ -1733,6 +1733,29 @@ where
         Ok(id)
     }
 
+    pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<SheetId, ExcelError> {
+        self.demote_all_spans()
+            .map_err(Self::editor_error_to_excel)?;
+        let source_id = self.graph.sheet_id(source).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value).with_message("Source sheet does not exist")
+        })?;
+        let new_id = self.graph.duplicate_sheet(source_id, new_name)?;
+
+        if let Some(source_sheet) = self.arrow_sheets.sheet(source).cloned() {
+            let mut copied_sheet = source_sheet;
+            copied_sheet.name = Arc::<str>::from(new_name);
+            self.arrow_sheets.sheets.push(copied_sheet);
+        } else {
+            self.ensure_arrow_sheet(new_name);
+        }
+
+        self.clear_all_computed_overlays();
+        self.mark_all_formula_vertices_dirty();
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        self.mark_topology_edited();
+        Ok(new_id)
+    }
+
     fn ensure_arrow_sheet(&mut self, name: &str) {
         if self.arrow_sheets.sheet(name).is_some() {
             return;

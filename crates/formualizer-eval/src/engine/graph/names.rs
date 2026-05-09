@@ -89,7 +89,7 @@ fn adjust_named_definition(
 
 impl DependencyGraph {
     #[inline]
-    fn name_lookup_key(&self, name: &str) -> String {
+    pub(crate) fn name_lookup_key(&self, name: &str) -> String {
         if self.config.case_sensitive_names {
             name.to_string()
         } else {
