@@ -4,6 +4,7 @@
   "description": "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks in the browser. 320+ functions, Arrow-powered.",
   "homepage": "https://github.com/psu3d0/formualizer",
   "type": "module",
+  "packageManager": "pnpm@11.0.9",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
