@@ -32,6 +32,8 @@ mod enabled {
         #[arg(long)]
         phase_timeout_ms: Option<u64>,
         #[arg(long)]
+        enable_parallel: Option<bool>,
+        #[arg(long)]
         fail_fast: bool,
         #[arg(long, default_value_t = 10)]
         max_divergences_per_phase: usize,
@@ -79,6 +81,7 @@ mod enabled {
                 .phase_timeout_ms
                 .unwrap_or(default_phase_timeout_ms(scale)),
             max_divergences_per_phase: cli.max_divergences_per_phase,
+            enable_parallel: cli.enable_parallel.unwrap_or(false),
         };
         let mut reports = Vec::new();
         for scenario in scenarios {
@@ -199,6 +202,17 @@ mod enabled {
         }
         regex.push('$');
         Ok(Regex::new(&regex)?)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn probe_corpus_parity_default_disables_parallel() {
+            let cli = Cli::try_parse_from(["probe-corpus-parity"]).expect("parse cli");
+            assert!(!cli.enable_parallel.unwrap_or(false));
+        }
     }
 }
 

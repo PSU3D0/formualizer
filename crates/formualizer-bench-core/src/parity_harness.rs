@@ -53,6 +53,7 @@ pub struct ParityScenarioReport {
 pub struct ParityOptions {
     pub phase_timeout_ms: u64,
     pub max_divergences_per_phase: usize,
+    pub enable_parallel: bool,
 }
 
 impl Default for ParityOptions {
@@ -60,6 +61,7 @@ impl Default for ParityOptions {
         Self {
             phase_timeout_ms: 5_000,
             max_divergences_per_phase: 10,
+            enable_parallel: false,
         }
     }
 }
@@ -214,8 +216,9 @@ fn run_scenario_parity_inner(
         );
     }
 
-    let (mut off, off_load_ms) = open_workbook(&fixture.path, Mode::Off)?;
-    let (mut auth, auth_load_ms) = open_workbook(&fixture.path, Mode::Auth)?;
+    let (mut off, off_load_ms) = open_workbook(&fixture.path, Mode::Off, options.enable_parallel)?;
+    let (mut auth, auth_load_ms) =
+        open_workbook(&fixture.path, Mode::Auth, options.enable_parallel)?;
 
     let mut phases = Vec::new();
     phases.push(compare_phase(
@@ -337,12 +340,11 @@ fn finish_report(
     }
 }
 
-fn open_workbook(path: &Path, mode: Mode) -> Result<(Workbook, f64)> {
+fn open_workbook(path: &Path, mode: Mode, enable_parallel: bool) -> Result<(Workbook, f64)> {
     let start = Instant::now();
     let mut config = WorkbookConfig::ephemeral();
-    config.eval = EvalConfig::default()
-        .with_formula_plane_mode(mode.eval_mode())
-        .with_parallel(false);
+    config.eval = EvalConfig::default().with_formula_plane_mode(mode.eval_mode());
+    config.eval.enable_parallel = enable_parallel;
     let backend =
         UmyaAdapter::open_path(path).with_context(|| format!("open fixture {}", path.display()))?;
     let workbook = Workbook::from_reader(backend, LoadStrategy::EagerAll, config)

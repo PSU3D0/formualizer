@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+#[cfg(not(target_arch = "wasm32"))]
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::arrow_store::{OverlayValue, map_error_code};
@@ -46,6 +48,10 @@ pub(crate) struct SpanEvalReport {
     pub(crate) memo_broadcast_count: u64,
     pub(crate) memo_fallback_count: u64,
     pub(crate) sample_only_key_build_count: u64,
+    pub(crate) parallel_per_placement_invocations: u64,
+    pub(crate) parallel_memoized_invocations: u64,
+    pub(crate) sequential_per_placement_invocations: u64,
+    pub(crate) sequential_memoized_invocations: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,6 +109,8 @@ pub(crate) fn dirty_placement_vec_materialization_count() -> usize {
     DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT.get()
 }
 
+const PARALLEL_PLACEMENT_THRESHOLD: usize = 256;
+const PARALLEL_MEMO_GROUP_THRESHOLD: usize = 64;
 const MEMO_SAMPLE_LIMIT: usize = 64;
 const MEMO_MAX_UNIQUE_RATIO_NUM: usize = 3;
 const MEMO_MAX_UNIQUE_RATIO_DEN: usize = 4;
@@ -277,65 +285,189 @@ impl<'a> SpanEvaluator<'a> {
         let per_placement_binding_set = span
             .binding_set_id
             .and_then(|binding_set_id| self.plane.binding_sets.get(binding_set_id));
-        for placement in placements.iter() {
-            if self.plane.formula_overlay.find_at(placement).is_some() {
-                report.skipped_overlay_punchout_count =
-                    report.skipped_overlay_punchout_count.saturating_add(1);
-                continue;
-            }
+        let (writable_placements, skipped_overlay) = self.collect_writable_placements(&placements);
+        report.skipped_overlay_punchout_count = report
+            .skipped_overlay_punchout_count
+            .saturating_add(skipped_overlay);
 
-            // Placement coordinates are 0-indexed; template origins are stored
-            // in 1-indexed Excel coordinates to match canonicalization anchors.
-            let row_delta = i64::from(placement.row) + 1 - i64::from(template.origin_row);
-            let col_delta = i64::from(placement.col) + 1 - i64::from(template.origin_col);
-            report.transient_ast_relocation_count =
-                report.transient_ast_relocation_count.saturating_add(1);
-            let interpreter = base_interpreter.with_current_cell(CellRef::new_absolute(
-                placement.sheet_id,
-                placement.row,
-                placement.col,
-            ));
-            let value = if let Some(binding_set) = per_placement_binding_set {
-                let binding_id = binding_id_for_placement(span, binding_set, placement)?;
-                let binding = binding_set
-                    .unique_literal_bindings
-                    .get(binding_id as usize)
-                    .ok_or(SpanEvalError::StaleSpan)?;
-                let interpreter =
-                    interpreter.with_parameter_bindings(InterpreterParameterBindings {
-                        literal_slots_by_node: &binding_set
-                            .template_slot_map
-                            .literal_slots_by_arena_node,
-                        literal_values: binding,
-                    });
-                match interpreter.evaluate_arena_ast_with_offset(
-                    template.ast_id,
-                    row_delta,
-                    col_delta,
-                    self.data_store,
-                    self.sheet_registry,
-                ) {
-                    Ok(calc) => literal_to_overlay(calc.into_literal()),
-                    Err(err) => OverlayValue::Error(map_error_code(err.kind)),
-                }
-            } else {
-                match interpreter.evaluate_arena_ast_with_offset(
-                    template.ast_id,
-                    row_delta,
-                    col_delta,
-                    self.data_store,
-                    self.sheet_registry,
-                ) {
-                    Ok(calc) => literal_to_overlay(calc.into_literal()),
-                    Err(err) => OverlayValue::Error(map_error_code(err.kind)),
-                }
-            };
-            sink.push_cell(placement, value);
-            report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(thread_pool) = self.thread_pool()
+            && writable_placements.len() >= PARALLEL_PLACEMENT_THRESHOLD
+        {
+            self.evaluate_per_placement_parallel(
+                thread_pool.as_ref(),
+                span,
+                template.ast_id,
+                template.origin_row,
+                template.origin_col,
+                per_placement_binding_set,
+                &writable_placements,
+                sink,
+                &mut report,
+            )?;
+            report.computed_write_buffer_push_count =
+                sink.push_count().saturating_sub(push_count_before);
+            return Ok(report);
         }
+
+        self.evaluate_per_placement_sequential(
+            span,
+            template.ast_id,
+            template.origin_row,
+            template.origin_col,
+            per_placement_binding_set,
+            &writable_placements,
+            sink,
+            &mut report,
+        )?;
         report.computed_write_buffer_push_count =
             sink.push_count().saturating_sub(push_count_before);
         Ok(report)
+    }
+
+    fn thread_pool(&self) -> Option<Arc<rayon::ThreadPool>> {
+        self.context.thread_pool().cloned()
+    }
+
+    fn collect_writable_placements(
+        &self,
+        placements: &PlacementSelection<'_>,
+    ) -> (Vec<PlacementCoord>, u64) {
+        let mut writable = Vec::with_capacity(placements.len());
+        let mut skipped = 0u64;
+        for placement in placements.iter() {
+            if self.plane.formula_overlay.find_at(placement).is_some() {
+                skipped = skipped.saturating_add(1);
+            } else {
+                writable.push(placement);
+            }
+        }
+        (writable, skipped)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_placement_value(
+        &self,
+        span: &FormulaSpan,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        binding_set: Option<&SpanBindingSet>,
+        placement: PlacementCoord,
+    ) -> Result<OverlayValue, SpanEvalError> {
+        let row_delta = i64::from(placement.row) + 1 - i64::from(origin_row);
+        let col_delta = i64::from(placement.col) + 1 - i64::from(origin_col);
+        let interpreter = Interpreter::new(self.context, self.current_sheet).with_current_cell(
+            CellRef::new_absolute(placement.sheet_id, placement.row, placement.col),
+        );
+        let value = if let Some(binding_set) = binding_set {
+            let binding_id = binding_id_for_placement(span, binding_set, placement)?;
+            let binding = binding_set
+                .unique_literal_bindings
+                .get(binding_id as usize)
+                .ok_or(SpanEvalError::StaleSpan)?;
+            let interpreter = interpreter.with_parameter_bindings(InterpreterParameterBindings {
+                literal_slots_by_node: &binding_set.template_slot_map.literal_slots_by_arena_node,
+                literal_values: binding,
+            });
+            match interpreter.evaluate_arena_ast_with_offset(
+                ast_id,
+                row_delta,
+                col_delta,
+                self.data_store,
+                self.sheet_registry,
+            ) {
+                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+            }
+        } else {
+            match interpreter.evaluate_arena_ast_with_offset(
+                ast_id,
+                row_delta,
+                col_delta,
+                self.data_store,
+                self.sheet_registry,
+            ) {
+                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+            }
+        };
+        Ok(value)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_per_placement_sequential(
+        &self,
+        span: &FormulaSpan,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        binding_set: Option<&SpanBindingSet>,
+        writable_placements: &[PlacementCoord],
+        sink: &mut SpanComputedWriteSink<'_>,
+        report: &mut SpanEvalReport,
+    ) -> Result<(), SpanEvalError> {
+        report.sequential_per_placement_invocations = report
+            .sequential_per_placement_invocations
+            .saturating_add(1);
+        for placement in writable_placements.iter().copied() {
+            let value = self.evaluate_placement_value(
+                span,
+                ast_id,
+                origin_row,
+                origin_col,
+                binding_set,
+                placement,
+            )?;
+            sink.push_cell(placement, value);
+        }
+        let count = writable_placements.len() as u64;
+        report.transient_ast_relocation_count =
+            report.transient_ast_relocation_count.saturating_add(count);
+        report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(count);
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_per_placement_parallel(
+        &self,
+        thread_pool: &rayon::ThreadPool,
+        span: &FormulaSpan,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        binding_set: Option<&SpanBindingSet>,
+        writable_placements: &[PlacementCoord],
+        sink: &mut SpanComputedWriteSink<'_>,
+        report: &mut SpanEvalReport,
+    ) -> Result<(), SpanEvalError> {
+        report.parallel_per_placement_invocations =
+            report.parallel_per_placement_invocations.saturating_add(1);
+        let values = thread_pool.install(|| {
+            writable_placements
+                .par_iter()
+                .map(|placement| {
+                    self.evaluate_placement_value(
+                        span,
+                        ast_id,
+                        origin_row,
+                        origin_col,
+                        binding_set,
+                        *placement,
+                    )
+                    .map(|value| (*placement, value))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        for (placement, value) in values {
+            sink.push_cell(placement, value);
+        }
+        let count = writable_placements.len() as u64;
+        report.transient_ast_relocation_count =
+            report.transient_ast_relocation_count.saturating_add(count);
+        report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(count);
+        Ok(())
     }
 
     fn should_try_memoization(
@@ -442,51 +574,177 @@ impl<'a> SpanEvaluator<'a> {
             skipped_overlay_punchout_count: skipped_overlay,
             ..SpanEvalReport::default()
         };
-        for group in groups.values() {
-            let placement = group.representative;
-            let row_delta = i64::from(placement.row) + 1 - i64::from(origin_row);
-            let col_delta = i64::from(placement.col) + 1 - i64::from(origin_col);
-            report.transient_ast_relocation_count =
-                report.transient_ast_relocation_count.saturating_add(1);
-            report.memo_eval_count = report.memo_eval_count.saturating_add(1);
-            let binding = binding_set
-                .unique_literal_bindings
-                .get(group.binding_id as usize)
-                .ok_or(SpanEvalError::StaleSpan)?;
-            let interpreter = base_interpreter
-                .with_current_cell(CellRef::new_absolute(
-                    placement.sheet_id,
-                    placement.row,
-                    placement.col,
-                ))
-                .with_parameter_bindings(InterpreterParameterBindings {
-                    literal_slots_by_node: &binding_set
-                        .template_slot_map
-                        .literal_slots_by_arena_node,
-                    literal_values: binding,
-                });
-            let value = match interpreter.evaluate_arena_ast_with_offset(
+        let groups = groups.values().collect::<Vec<_>>();
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(thread_pool) = self.thread_pool()
+            && groups.len() >= PARALLEL_MEMO_GROUP_THRESHOLD
+        {
+            self.evaluate_memoized_parallel(
+                thread_pool.as_ref(),
                 ast_id,
-                row_delta,
-                col_delta,
-                self.data_store,
-                self.sheet_registry,
-            ) {
-                Ok(calc) => literal_to_overlay(calc.into_literal()),
-                Err(err) => OverlayValue::Error(map_error_code(err.kind)),
-            };
-            for placement in &group.placements {
-                sink.push_cell(*placement, value.clone());
-                report.span_eval_placement_count =
-                    report.span_eval_placement_count.saturating_add(1);
-            }
-            report.memo_broadcast_count = report
-                .memo_broadcast_count
-                .saturating_add(group.placements.len().saturating_sub(1) as u64);
+                origin_row,
+                origin_col,
+                binding_set,
+                &groups,
+                sink,
+                &mut report,
+            )?;
+            report.computed_write_buffer_push_count =
+                sink.push_count().saturating_sub(push_count_before);
+            return Ok(Some(report));
         }
+
+        self.evaluate_memoized_sequential(
+            ast_id,
+            origin_row,
+            origin_col,
+            binding_set,
+            &groups,
+            base_interpreter,
+            sink,
+            &mut report,
+        )?;
         report.computed_write_buffer_push_count =
             sink.push_count().saturating_sub(push_count_before);
         Ok(Some(report))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_memo_group_value(
+        &self,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        binding_set: &SpanBindingSet,
+        group: &MemoGroup,
+        base_interpreter: Option<&Interpreter<'a>>,
+    ) -> Result<OverlayValue, SpanEvalError> {
+        let placement = group.representative;
+        let row_delta = i64::from(placement.row) + 1 - i64::from(origin_row);
+        let col_delta = i64::from(placement.col) + 1 - i64::from(origin_col);
+        let binding = binding_set
+            .unique_literal_bindings
+            .get(group.binding_id as usize)
+            .ok_or(SpanEvalError::StaleSpan)?;
+        let local_interpreter;
+        let interpreter_source = if let Some(base_interpreter) = base_interpreter {
+            base_interpreter
+        } else {
+            local_interpreter = Interpreter::new(self.context, self.current_sheet);
+            &local_interpreter
+        };
+        let interpreter = interpreter_source
+            .with_current_cell(CellRef::new_absolute(
+                placement.sheet_id,
+                placement.row,
+                placement.col,
+            ))
+            .with_parameter_bindings(InterpreterParameterBindings {
+                literal_slots_by_node: &binding_set.template_slot_map.literal_slots_by_arena_node,
+                literal_values: binding,
+            });
+        let value = match interpreter.evaluate_arena_ast_with_offset(
+            ast_id,
+            row_delta,
+            col_delta,
+            self.data_store,
+            self.sheet_registry,
+        ) {
+            Ok(calc) => literal_to_overlay(calc.into_literal()),
+            Err(err) => OverlayValue::Error(map_error_code(err.kind)),
+        };
+        Ok(value)
+    }
+
+    fn push_memo_group_value(
+        &self,
+        group: &MemoGroup,
+        value: OverlayValue,
+        sink: &mut SpanComputedWriteSink<'_>,
+        report: &mut SpanEvalReport,
+    ) {
+        for placement in &group.placements {
+            sink.push_cell(*placement, value.clone());
+            report.span_eval_placement_count = report.span_eval_placement_count.saturating_add(1);
+        }
+        report.memo_broadcast_count = report
+            .memo_broadcast_count
+            .saturating_add(group.placements.len().saturating_sub(1) as u64);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_memoized_sequential(
+        &self,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        binding_set: &SpanBindingSet,
+        groups: &[&MemoGroup],
+        base_interpreter: &Interpreter<'a>,
+        sink: &mut SpanComputedWriteSink<'_>,
+        report: &mut SpanEvalReport,
+    ) -> Result<(), SpanEvalError> {
+        report.sequential_memoized_invocations =
+            report.sequential_memoized_invocations.saturating_add(1);
+        for group in groups.iter().copied() {
+            let value = self.evaluate_memo_group_value(
+                ast_id,
+                origin_row,
+                origin_col,
+                binding_set,
+                group,
+                Some(base_interpreter),
+            )?;
+            self.push_memo_group_value(group, value, sink, report);
+        }
+        let group_count = groups.len() as u64;
+        report.transient_ast_relocation_count = report
+            .transient_ast_relocation_count
+            .saturating_add(group_count);
+        report.memo_eval_count = report.memo_eval_count.saturating_add(group_count);
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_memoized_parallel(
+        &self,
+        thread_pool: &rayon::ThreadPool,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+        binding_set: &SpanBindingSet,
+        groups: &[&MemoGroup],
+        sink: &mut SpanComputedWriteSink<'_>,
+        report: &mut SpanEvalReport,
+    ) -> Result<(), SpanEvalError> {
+        report.parallel_memoized_invocations =
+            report.parallel_memoized_invocations.saturating_add(1);
+        let values = thread_pool.install(|| {
+            groups
+                .par_iter()
+                .map(|group| {
+                    self.evaluate_memo_group_value(
+                        ast_id,
+                        origin_row,
+                        origin_col,
+                        binding_set,
+                        group,
+                        None,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        for (group, value) in groups.iter().copied().zip(values) {
+            self.push_memo_group_value(group, value, sink, report);
+        }
+        let group_count = groups.len() as u64;
+        report.transient_ast_relocation_count = report
+            .transient_ast_relocation_count
+            .saturating_add(group_count);
+        report.memo_eval_count = report.memo_eval_count.saturating_add(group_count);
+        Ok(())
     }
 
     fn parameter_key(

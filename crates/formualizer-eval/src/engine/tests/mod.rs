@@ -102,6 +102,7 @@ mod formula_plane_ingest_shadow;
 mod formula_plane_literal_param_memo;
 mod formula_plane_lookup_family_promotion;
 mod formula_plane_lookup_semantics;
+mod formula_plane_parallel_span_eval;
 mod formula_plane_per_placement_literal_bindings;
 mod formula_plane_per_span_overhead;
 mod formula_plane_structural;

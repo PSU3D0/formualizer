@@ -59,6 +59,9 @@ mod enabled {
         /// Measure only load + first-eval.
         #[arg(long)]
         skip_edit_cycles: bool,
+        /// Enable engine parallel evaluation.
+        #[arg(long)]
+        enable_parallel: Option<bool>,
         /// Per-evaluation phase timeout in milliseconds (load/first_eval/recalc).
         /// 0 disables. Defaults: small=5000, medium=15000, large=60000.
         #[arg(long)]
@@ -167,6 +170,7 @@ mod enabled {
                     cli.skip_fixture_rebuild,
                     cli.skip_edit_cycles,
                     phase_timeout_ms,
+                    cli.enable_parallel.unwrap_or(false),
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -294,6 +298,7 @@ mod enabled {
         skip_fixture_rebuild: bool,
         skip_edit_cycles: bool,
         phase_timeout_ms: u64,
+        enable_parallel: bool,
     ) -> Result<ScenarioSummaryReport> {
         set_invariant_scale(scale);
         let ctx = ScenarioBuildCtx {
@@ -323,6 +328,7 @@ mod enabled {
         let phase = PhaseMetrics::start("phase_load");
         let mut config = WorkbookConfig::ephemeral();
         config.eval = EvalConfig::default().with_formula_plane_mode(mode.eval_mode());
+        config.eval.enable_parallel = enable_parallel;
         let backend = UmyaAdapter::open_path(&fixture.path)
             .with_context(|| format!("open fixture {}", fixture.path.display()))?;
         let mut workbook = Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
@@ -826,6 +832,18 @@ mod enabled {
             other => bail!("no fixture metadata helper registered for {other}"),
         };
         Ok(metadata)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn probe_corpus_default_disables_parallel() {
+            let cli = Cli::try_parse_from(["probe-corpus", "--label", "default-parallel"])
+                .expect("parse cli");
+            assert!(!cli.enable_parallel.unwrap_or(false));
+        }
     }
 }
 
