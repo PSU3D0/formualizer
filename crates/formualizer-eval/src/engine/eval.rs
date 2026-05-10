@@ -487,6 +487,12 @@ where
                 editor.set_cell_value(addr, value.clone());
             });
             log.patch_last_cell_event_old_state(addr, old_value.clone(), old_formula.clone());
+            self.engine
+                .record_formula_plane_structural_change(StructuralScope::Cell {
+                    sheet: addr.sheet_id,
+                    row: addr.coord.row(),
+                    col: addr.coord.col(),
+                });
 
             if let Some(undo_ptr) = self.arrow_undo {
                 // 1) Spill snapshot operations (computed overlay rect restore).
@@ -555,6 +561,12 @@ where
                 editor.set_cell_formula(addr, ast.clone());
             });
             log.patch_last_cell_event_old_state(addr, old_value, old_formula);
+            self.engine
+                .record_formula_plane_structural_change(StructuralScope::Cell {
+                    sheet: addr.sheet_id,
+                    row: addr.coord.row(),
+                    col: addr.coord.col(),
+                });
 
             if let Some(undo_ptr) = self.arrow_undo {
                 let new_events = &unsafe { (&*log_ptr).events() }[start_len..];
@@ -2178,7 +2190,9 @@ where
         match res {
             Ok(v) => {
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() {
-                    self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+                    for event in &journal.graph.events {
+                        self.record_formula_plane_change_for_event(event);
+                    }
                     self.mark_data_edited();
                 }
                 Ok((v, journal))
@@ -2192,7 +2206,9 @@ where
                     });
                 }
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() {
-                    self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+                    for event in &journal.graph.events {
+                        self.record_formula_plane_change_for_event(event);
+                    }
                 }
                 Err(e)
             }
@@ -2381,7 +2397,9 @@ where
         }
         self.mirror_undo_batch_to_arrow(&batch);
         if !batch.is_empty() {
-            self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+            for item in &batch {
+                self.record_formula_plane_change_for_event(&item.event);
+            }
         }
         Ok(())
     }
@@ -2398,7 +2416,9 @@ where
         }
         self.mirror_redo_batch_to_arrow(&batch);
         if !batch.is_empty() {
-            self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+            for item in &batch {
+                self.record_formula_plane_change_for_event(&item.event);
+            }
         }
         Ok(())
     }
@@ -2417,7 +2437,12 @@ where
         journal.graph.undo(&mut self.graph)?;
         self.apply_inverse_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
-        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+            for event in &journal.graph.events {
+                self.record_formula_plane_change_for_event(event);
+            }
+            self.mark_data_edited();
+        }
 
         undo.push_redo_action(journal);
         Ok(())
@@ -2437,7 +2462,12 @@ where
         journal.graph.redo(&mut self.graph)?;
         self.apply_forward_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
-        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+            for event in &journal.graph.events {
+                self.record_formula_plane_change_for_event(event);
+            }
+            self.mark_data_edited();
+        }
 
         undo.push_done_action(journal);
         Ok(())
@@ -2753,6 +2783,11 @@ where
     #[cfg(test)]
     pub(crate) fn last_formula_plane_span_eval_report(&self) -> Option<&SpanEvalReport> {
         self.last_formula_plane_span_eval_report.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn formula_plane_indexes_epoch(&self) -> u64 {
+        self.graph.formula_authority().indexes_epoch()
     }
 
     fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
@@ -3961,6 +3996,111 @@ where
             })
     }
 
+    fn insert_formula_plane_dirty_coords_for_span(
+        &self,
+        span_ref: FormulaSpanRef,
+        dirty: ProducerDirtyDomain,
+        out: &mut FxHashSet<(SheetId, u32, u32)>,
+    ) -> Result<(), crate::engine::EditorError> {
+        let authority = self.graph.formula_authority();
+        let span = authority.plane.spans.get(span_ref).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("FormulaPlane dirty transfer referenced a stale span")
+        })?;
+        match dirty {
+            ProducerDirtyDomain::Whole => {
+                out.extend(
+                    span.domain
+                        .iter()
+                        .map(|coord| (coord.sheet_id, coord.row, coord.col)),
+                );
+            }
+            ProducerDirtyDomain::Cells(cells) => {
+                out.extend(cells.into_iter().filter_map(|key| {
+                    let coord = PlacementCoord::new(key.sheet_id, key.row, key.col);
+                    span.domain
+                        .contains(coord)
+                        .then_some((coord.sheet_id, coord.row, coord.col))
+                }));
+            }
+            ProducerDirtyDomain::Regions(regions) => {
+                out.extend(span.domain.iter().filter_map(|coord| {
+                    let key = crate::formula_plane::region_index::RegionKey::from(coord);
+                    regions
+                        .iter()
+                        .any(|region| region.contains_key(key))
+                        .then_some((coord.sheet_id, coord.row, coord.col))
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    fn compute_current_formula_plane_dirty_result_coords(
+        &self,
+    ) -> Result<FxHashSet<(SheetId, u32, u32)>, crate::engine::EditorError> {
+        use crate::formula_plane::producer::compute_dirty_closure;
+
+        let authority = self.graph.formula_authority();
+        let span_refs = authority.active_span_refs();
+        let span_refs_by_id = span_refs
+            .iter()
+            .copied()
+            .map(|span_ref| (span_ref.id, span_ref))
+            .collect::<BTreeMap<_, _>>();
+        let mut dirty_coords = FxHashSet::default();
+
+        if self.formula_plane_indexes_epoch_seen != authority.indexes_epoch() {
+            for span_ref in span_refs {
+                self.insert_formula_plane_dirty_coords_for_span(
+                    span_ref,
+                    ProducerDirtyDomain::Whole,
+                    &mut dirty_coords,
+                )?;
+            }
+            return Ok(dirty_coords);
+        }
+
+        let pending_changed_regions = authority.pending_changed_regions();
+        if pending_changed_regions.is_empty() {
+            return Ok(dirty_coords);
+        }
+
+        let closure = compute_dirty_closure(
+            &authority.consumer_reads,
+            pending_changed_regions.iter().copied(),
+            |producer| authority.producer_results.producer_result_region(producer),
+        );
+        for work in closure.work {
+            let FormulaProducerId::Span(span_id) = work.producer else {
+                continue;
+            };
+            let Some(span_ref) = span_refs_by_id.get(&span_id).copied() else {
+                continue;
+            };
+            self.insert_formula_plane_dirty_coords_for_span(
+                span_ref,
+                work.dirty,
+                &mut dirty_coords,
+            )?;
+        }
+        for fallback in closure.fallbacks {
+            let FormulaProducerId::Span(span_id) = fallback.consumer else {
+                continue;
+            };
+            let Some(span_ref) = span_refs_by_id.get(&span_id).copied() else {
+                continue;
+            };
+            self.insert_formula_plane_dirty_coords_for_span(
+                span_ref,
+                ProducerDirtyDomain::Whole,
+                &mut dirty_coords,
+            )?;
+        }
+
+        Ok(dirty_coords)
+    }
+
     /// Demote active FormulaPlane spans affected by a structural edit on `sheet_id`.
     ///
     /// This is the conservative Option-A correctness path for structural edits: rather than
@@ -4061,6 +4201,11 @@ where
         if span_refs.is_empty() {
             return Ok(());
         }
+        let dirty_span_coords = if clear_computed_overlays {
+            FxHashSet::default()
+        } else {
+            self.compute_current_formula_plane_dirty_result_coords()?
+        };
 
         let mut span_plans = Vec::new();
         for span_ref in span_refs {
@@ -4199,18 +4344,18 @@ where
             // call honors that. Demoting a span whose footprint straddles the
             // boundary still must not clear cells before the boundary, even
             // though the span as a whole is demoted.
-            for (formula_sheet_id, row, col) in placement_cells {
+            for (formula_sheet_id, row, col) in &placement_cells {
                 // 1-based -> 0-based for region intersection.
                 let placement_region = RegionPattern::point(
-                    formula_sheet_id,
+                    *formula_sheet_id,
                     row.saturating_sub(1),
                     col.saturating_sub(1),
                 );
                 if !placement_region.intersects(&affected_region) {
                     continue;
                 }
-                let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
-                self.clear_computed_overlay_cell(&sheet_name, row, col);
+                let sheet_name = self.graph.sheet_name(*formula_sheet_id).to_string();
+                self.clear_computed_overlay_cell(&sheet_name, *row, *col);
             }
         }
 
@@ -4218,6 +4363,20 @@ where
             let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
             self.graph
                 .bulk_set_formulas_with_plans(&sheet_name, planned)?;
+        }
+        if !clear_computed_overlays {
+            for (formula_sheet_id, row, col) in &placement_cells {
+                let row0 = row.saturating_sub(1);
+                let col0 = col.saturating_sub(1);
+                if dirty_span_coords.contains(&(*formula_sheet_id, row0, col0)) {
+                    continue;
+                }
+                let cell =
+                    CellRef::new(*formula_sheet_id, Coord::from_excel(*row, *col, true, true));
+                if let Some(&vertex_id) = self.graph.get_vertex_id_for_address(&cell) {
+                    self.graph.set_dirty(vertex_id, false);
+                }
+            }
         }
         self.formula_plane_indexes_epoch_seen = 0;
         Ok(())
