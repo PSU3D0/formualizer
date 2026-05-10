@@ -23,11 +23,12 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+          target: wasm32-unknown-unknown
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -43,7 +44,52 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build WASM (bundler target)
+      - name: Check portable-wasm facade
+        run: |
+          cargo check \
+            -p formualizer \
+            --no-default-features \
+            --features portable-wasm \
+            --target wasm32-unknown-unknown
+
+      - name: Check core crates individually (portable no-default-features)
+        run: |
+          for crate in formualizer-eval formualizer-workbook formualizer-sheetport; do
+            echo "--- checking $crate ---"
+            cargo check -p "$crate" --no-default-features --target wasm32-unknown-unknown
+          done
+
+      - name: Verify portable-wasm dependency profile
+        run: scripts/check-wasm-profiles.sh portable
+
+      - name: Build portable wasm probe artifact
+        run: |
+          cargo build \
+            --manifest-path tools/wasm-portable-probe/Cargo.toml \
+            --target wasm32-unknown-unknown \
+            --release
+
+      - name: Verify portable wasm probe has no JS/browser imports
+        run: |
+          python3 scripts/check-wasm-artifact-imports.py \
+            portable \
+            tools/wasm-portable-probe/target/wasm32-unknown-unknown/release/formualizer_wasm_portable_probe.wasm
+
+      - name: Check wasm-js facade
+        run: |
+          cargo check \
+            -p formualizer \
+            --no-default-features \
+            --features wasm-js \
+            --target wasm32-unknown-unknown
+
+      - name: Check formualizer-wasm binding (browser profile)
+        run: cargo check -p formualizer-wasm --target wasm32-unknown-unknown
+
+      - name: Verify wasm-js dependency profile
+        run: scripts/check-wasm-profiles.sh wasm-js
+
+      - name: Build WASM package (bundler target)
         working-directory: bindings/wasm
         run: |
           wasm-pack build --target bundler --out-dir pkg --release
