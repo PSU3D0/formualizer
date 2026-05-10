@@ -399,7 +399,9 @@ fn formula_plane_authoritative_column_insert_shifts_span_outputs_correctly() {
     let mut engine = build_three_formula_column_family(100);
 
     engine.insert_columns("Sheet1", 3, 1).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    // Affected-region scoped demotion: insert before col 3 only affects spans
+    // at col >= 3 (col C and col D). Col B's span survives unaffected.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -426,7 +428,10 @@ fn formula_plane_authoritative_column_delete_shifts_span_outputs_correctly() {
     let mut engine = build_three_formula_column_family(100);
 
     engine.delete_columns("Sheet1", 3, 1).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    // Affected-region scoped demotion: delete col 3 only affects spans at
+    // col >= 3 (col C is deleted, col D shifts into col C). Col B's span
+    // survives unaffected since its result region is col 2.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
 
     assert_eq!(

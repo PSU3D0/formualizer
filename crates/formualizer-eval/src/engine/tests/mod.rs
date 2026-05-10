@@ -106,6 +106,7 @@ mod formula_plane_parallel_span_eval;
 mod formula_plane_per_placement_literal_bindings;
 mod formula_plane_per_span_overhead;
 mod formula_plane_structural;
+mod formula_plane_structural_affected_region;
 mod indirect;
 mod let_lambda;
 mod offset_dynamic;

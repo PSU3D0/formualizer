@@ -246,7 +246,10 @@ fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
     engine.evaluate_all().unwrap();
     engine.delete_columns("Sheet1", 3, 1).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    // Affected-region scoped demotion: deleting col 3 only demotes spans
+    // whose result/read region intersects cols >= 3. Col B's span at col 2
+    // survives unaffected.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 5, 2),

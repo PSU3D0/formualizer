@@ -687,8 +687,11 @@ where
             };
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
-            self.engine.demote_spans_for_structural_op(sheet_id)?;
             let before0 = before.saturating_sub(1);
+            self.engine.demote_spans_for_structural_op(
+                sheet_id,
+                Engine::<R>::structural_row_region(sheet_id, before0),
+            )?;
 
             // Graph structural insert (logged) - no snapshot bump.
             let summary = {
@@ -749,8 +752,11 @@ where
             };
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
-            self.engine.demote_spans_for_structural_op(sheet_id)?;
             let before0 = before.saturating_sub(1);
+            self.engine.demote_spans_for_structural_op(
+                sheet_id,
+                Engine::<R>::structural_col_region(sheet_id, before0),
+            )?;
 
             let summary = {
                 let log = unsafe { &mut *log_ptr };
@@ -3852,7 +3858,10 @@ where
             .find_at(placement)
             .is_some();
         if inside_active_span {
-            self.demote_spans_preserving_computed_overlays(sheet_id)?;
+            self.demote_spans_preserving_computed_overlays(
+                sheet_id,
+                RegionPattern::point(sheet_id, row0, col0),
+            )?;
         }
         Ok(())
     }
@@ -3876,7 +3885,10 @@ where
                 .collect()
         };
         for sheet_id in sheet_ids {
-            self.demote_spans_preserving_computed_overlays(sheet_id)?;
+            self.demote_spans_preserving_computed_overlays(
+                sheet_id,
+                RegionPattern::whole_sheet(sheet_id),
+            )?;
         }
         Ok(())
     }
@@ -3884,8 +3896,69 @@ where
     fn demote_spans_preserving_computed_overlays(
         &mut self,
         sheet_id: SheetId,
+        affected_region: RegionPattern,
     ) -> Result<(), crate::engine::EditorError> {
-        self.demote_spans_for_structural_op_impl(sheet_id, false)
+        self.demote_spans_for_structural_op_impl(sheet_id, affected_region, false)
+    }
+
+    /// Affected region for a row-axis structural op. The region semantically
+    /// covers `start_row0 .. u32::MAX` rows across all columns, but using a
+    /// `Rect` with `u32::MAX` bounds explodes downstream `SheetRegionIndex`
+    /// bucket materialization (the rect-bucket grid would emit 2^54+ tuples
+    /// at default bucket size). Used only for the demotion-path `intersects`
+    /// predicate, which evaluates correctly on the unbounded extent.
+    fn structural_row_region(sheet_id: SheetId, start_row0: u32) -> RegionPattern {
+        RegionPattern::rect(sheet_id, start_row0, u32::MAX, 0, u32::MAX)
+    }
+
+    /// Affected region for a column-axis structural op. Same caveats as
+    /// `structural_row_region`.
+    fn structural_col_region(sheet_id: SheetId, start_col0: u32) -> RegionPattern {
+        RegionPattern::rect(sheet_id, 0, u32::MAX, start_col0, u32::MAX)
+    }
+
+    /// Convert a structural-op affected region into a scope safe to record
+    /// via `record_formula_plane_structural_change`. Unbounded rects are
+    /// broadened to `WholeSheet` because the rect-bucket grid materialization
+    /// in `SheetRegionIndex` cannot handle `u32::MAX` extents.
+    ///
+    /// This is a v0.6.0 workaround. The architectural fix lands in v0.6.x as
+    /// Phase 0 of the AxisRange migration: introducing `RegionPattern::RowsFrom`
+    /// and `RegionPattern::ColsFrom` half-open variants. Full Option E
+    /// completion (unified `AxisRange` model) lands across v0.7-v0.8.
+    ///
+    /// See:
+    /// - `docs/design/formula-plane/dispatch/sheet-region-index-tail-extent-precision.md`
+    /// - `docs/design/formula-plane/dispatch/option-e-execution-plan.md`
+    fn structural_change_scope_for_region(region: RegionPattern) -> StructuralScope {
+        match region {
+            RegionPattern::Rect(rect) if rect.row_end == u32::MAX || rect.col_end == u32::MAX => {
+                StructuralScope::Sheet(rect.sheet_id)
+            }
+            other => StructuralScope::Region(other),
+        }
+    }
+
+    fn span_result_region_intersects_affected(
+        span: &crate::formula_plane::runtime::FormulaSpan,
+        affected_region: &RegionPattern,
+    ) -> bool {
+        RegionPattern::from_domain(span.result_region.domain()).intersects(affected_region)
+    }
+
+    fn span_any_read_region_intersects_affected(
+        plane: &FormulaPlane,
+        span: &crate::formula_plane::runtime::FormulaSpan,
+        affected_region: &RegionPattern,
+    ) -> bool {
+        span.read_summary_id
+            .and_then(|read_summary_id| plane.span_read_summaries.get(read_summary_id))
+            .is_some_and(|summary| {
+                summary
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.read_region.intersects(affected_region))
+            })
     }
 
     /// Demote active FormulaPlane spans affected by a structural edit on `sheet_id`.
@@ -3900,13 +3973,15 @@ where
     fn demote_spans_for_structural_op(
         &mut self,
         sheet_id: SheetId,
+        affected_region: RegionPattern,
     ) -> Result<(), crate::engine::EditorError> {
-        self.demote_spans_for_structural_op_impl(sheet_id, true)
+        self.demote_spans_for_structural_op_impl(sheet_id, affected_region, true)
     }
 
     fn demote_spans_for_structural_op_impl(
         &mut self,
-        sheet_id: SheetId,
+        _sheet_id: SheetId,
+        affected_region: RegionPattern,
         clear_computed_overlays: bool,
     ) -> Result<(), crate::engine::EditorError> {
         struct SpanPlan {
@@ -3993,18 +4068,14 @@ where
             let Some(span) = authority.plane.spans.get(span_ref) else {
                 continue;
             };
-            let read_region_on_affected_sheet = span
-                .read_summary_id
-                .and_then(|read_summary_id| {
-                    authority.plane.span_read_summaries.get(read_summary_id)
-                })
-                .is_some_and(|summary| {
-                    summary
-                        .dependencies
-                        .iter()
-                        .any(|dependency| dependency.read_region.sheet_id() == sheet_id)
-                });
-            if span.sheet_id != sheet_id && !read_region_on_affected_sheet {
+            let result_region_affected =
+                Self::span_result_region_intersects_affected(span, &affected_region);
+            let read_region_affected = Self::span_any_read_region_intersects_affected(
+                &authority.plane,
+                span,
+                &affected_region,
+            );
+            if !result_region_affected && !read_region_affected {
                 continue;
             }
             let Some(template) = authority.plane.templates.get(span.template_id) else {
@@ -4148,8 +4219,8 @@ where
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let before0 = before.saturating_sub(1);
-        let preserved = self.collect_computed_overlay_before_row(sheet, before0 as usize);
-        self.demote_spans_for_structural_op(sheet_id)?;
+        let affected_region = Self::structural_row_region(sheet_id, before0);
+        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_rows(sheet_id, before0, count)?
@@ -4160,9 +4231,10 @@ where
         }
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, before0 as usize);
-        self.restore_computed_overlay_cells(sheet, preserved);
         self.shift_row_visibility_insert(sheet_id, before0, count);
-        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
+        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
+            affected_region,
+        ));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -4178,8 +4250,8 @@ where
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let start0 = start.saturating_sub(1);
-        let preserved = self.collect_computed_overlay_before_row(sheet, start0 as usize);
-        self.demote_spans_for_structural_op(sheet_id)?;
+        let affected_region = Self::structural_row_region(sheet_id, start0);
+        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_rows(sheet_id, start0, count)?
@@ -4190,9 +4262,10 @@ where
         }
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, start0 as usize);
-        self.restore_computed_overlay_cells(sheet, preserved);
         self.shift_row_visibility_delete(sheet_id, start0, count);
-        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
+        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
+            affected_region,
+        ));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -4213,8 +4286,8 @@ where
             },
         )?;
         let before0 = before.saturating_sub(1);
-        let preserved = self.collect_computed_overlay_before_col(sheet, before0 as usize);
-        self.demote_spans_for_structural_op(sheet_id)?;
+        let affected_region = Self::structural_col_region(sheet_id, before0);
+        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_columns(sheet_id, before0, count)?
@@ -4225,8 +4298,9 @@ where
         }
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, before0 as usize);
-        self.restore_computed_overlay_cells(sheet, preserved);
-        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
+        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
+            affected_region,
+        ));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -4247,8 +4321,8 @@ where
             },
         )?;
         let start0 = start.saturating_sub(1);
-        let preserved = self.collect_computed_overlay_before_col(sheet, start0 as usize);
-        self.demote_spans_for_structural_op(sheet_id)?;
+        let affected_region = Self::structural_col_region(sheet_id, start0);
+        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_columns(sheet_id, start0, count)?
@@ -4259,8 +4333,9 @@ where
         }
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, start0 as usize);
-        self.restore_computed_overlay_cells(sheet, preserved);
-        self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
+        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
+            affected_region,
+        ));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -4808,94 +4883,6 @@ where
         };
         let delta = ch.computed_overlay.remove(in_off);
         self.adjust_computed_overlay_bytes(delta);
-    }
-
-    fn collect_computed_overlay_before_row(
-        &self,
-        sheet: &str,
-        start_row0: usize,
-    ) -> Vec<(u32, u32, LiteralValue)> {
-        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
-            return Vec::new();
-        }
-
-        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
-            return Vec::new();
-        };
-        let starts = &asheet.chunk_starts;
-        let mut cells = Vec::new();
-        for (col_idx, col) in asheet.columns.iter().enumerate() {
-            for (chunk_idx, ch) in col.chunks.iter().enumerate() {
-                let Some(&chunk_start) = starts.get(chunk_idx) else {
-                    continue;
-                };
-                for (offset, value) in ch.computed_overlay.iter() {
-                    let row0 = chunk_start.saturating_add(offset);
-                    if row0 < start_row0 {
-                        cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
-                    }
-                }
-            }
-            for (chunk_idx, ch) in &col.sparse_chunks {
-                let Some(&chunk_start) = starts.get(*chunk_idx) else {
-                    continue;
-                };
-                for (offset, value) in ch.computed_overlay.iter() {
-                    let row0 = chunk_start.saturating_add(offset);
-                    if row0 < start_row0 {
-                        cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
-                    }
-                }
-            }
-        }
-        cells
-    }
-
-    fn collect_computed_overlay_before_col(
-        &self,
-        sheet: &str,
-        start_col0: usize,
-    ) -> Vec<(u32, u32, LiteralValue)> {
-        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
-            return Vec::new();
-        }
-
-        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
-            return Vec::new();
-        };
-        let starts = &asheet.chunk_starts;
-        let mut cells = Vec::new();
-        for (col_idx, col) in asheet.columns.iter().enumerate().take(start_col0) {
-            for (chunk_idx, ch) in col.chunks.iter().enumerate() {
-                let Some(&chunk_start) = starts.get(chunk_idx) else {
-                    continue;
-                };
-                for (offset, value) in ch.computed_overlay.iter() {
-                    let row0 = chunk_start.saturating_add(offset);
-                    cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
-                }
-            }
-            for (chunk_idx, ch) in &col.sparse_chunks {
-                let Some(&chunk_start) = starts.get(*chunk_idx) else {
-                    continue;
-                };
-                for (offset, value) in ch.computed_overlay.iter() {
-                    let row0 = chunk_start.saturating_add(offset);
-                    cells.push((row0 as u32 + 1, col_idx as u32 + 1, value.to_literal()));
-                }
-            }
-        }
-        cells
-    }
-
-    fn restore_computed_overlay_cells(
-        &mut self,
-        sheet: &str,
-        cells: Vec<(u32, u32, LiteralValue)>,
-    ) {
-        for (row, col, value) in cells {
-            self.set_computed_overlay_cell_raw(sheet, row, col, Some(value));
-        }
     }
 
     fn clear_computed_overlay_after_row(&mut self, sheet: &str, start_row0: usize) {
@@ -6262,8 +6249,11 @@ where
                 .is_some()
         });
         if writes_inside_active_span {
-            self.demote_spans_preserving_computed_overlays(sheet_id)
-                .map_err(Self::editor_error_to_excel)?;
+            self.demote_spans_preserving_computed_overlays(
+                sheet_id,
+                RegionPattern::whole_sheet(sheet_id),
+            )
+            .map_err(Self::editor_error_to_excel)?;
         }
         let ingested = {
             let mut pipeline = self.ingest_pipeline();
