@@ -3,6 +3,8 @@
 //! This module is internal FormulaPlane substrate only. It does not wire dirty
 //! routing into the engine, graph, scheduler, or evaluator.
 
+use std::collections::BTreeMap;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::SheetId;
@@ -86,6 +88,14 @@ pub(crate) enum RegionPattern {
         col_end: u32,
     },
     Rect(RectRegion),
+    RowsFrom {
+        sheet_id: SheetId,
+        row_start: u32,
+    },
+    ColsFrom {
+        sheet_id: SheetId,
+        col_start: u32,
+    },
     WholeRow {
         sheet_id: SheetId,
         row: u32,
@@ -136,6 +146,20 @@ impl RegionPattern {
         ))
     }
 
+    pub(crate) fn rows_from(sheet_id: SheetId, row_start: u32) -> Self {
+        Self::RowsFrom {
+            sheet_id,
+            row_start,
+        }
+    }
+
+    pub(crate) fn cols_from(sheet_id: SheetId, col_start: u32) -> Self {
+        Self::ColsFrom {
+            sheet_id,
+            col_start,
+        }
+    }
+
     pub(crate) fn whole_row(sheet_id: SheetId, row: u32) -> Self {
         Self::WholeRow { sheet_id, row }
     }
@@ -178,6 +202,8 @@ impl RegionPattern {
             Self::ColInterval { sheet_id, .. }
             | Self::RowInterval { sheet_id, .. }
             | Self::Rect(RectRegion { sheet_id, .. })
+            | Self::RowsFrom { sheet_id, .. }
+            | Self::ColsFrom { sheet_id, .. }
             | Self::WholeRow { sheet_id, .. }
             | Self::WholeCol { sheet_id, .. }
             | Self::WholeSheet { sheet_id } => *sheet_id,
@@ -225,6 +251,8 @@ impl RegionPattern {
                 AxisExtent::Span(rect.row_start, rect.row_end),
                 AxisExtent::Span(rect.col_start, rect.col_end),
             ),
+            Self::RowsFrom { row_start, .. } => (AxisExtent::From(row_start), AxisExtent::All),
+            Self::ColsFrom { col_start, .. } => (AxisExtent::All, AxisExtent::From(col_start)),
             Self::WholeRow { row, .. } => (AxisExtent::Span(row, row), AxisExtent::All),
             Self::WholeCol { col, .. } => (AxisExtent::All, AxisExtent::Span(col, col)),
             Self::WholeSheet { .. } => (AxisExtent::All, AxisExtent::All),
@@ -235,6 +263,7 @@ impl RegionPattern {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AxisExtent {
     Span(u32, u32),
+    From(u32),
     All,
 }
 
@@ -242,6 +271,7 @@ impl AxisExtent {
     fn contains(self, coord: u32) -> bool {
         match self {
             Self::Span(start, end) => coord >= start && coord <= end,
+            Self::From(start) => coord >= start,
             Self::All => true,
         }
     }
@@ -249,6 +279,9 @@ impl AxisExtent {
     fn intersects(self, other: Self) -> bool {
         match (self, other) {
             (Self::All, _) | (_, Self::All) => true,
+            (Self::From(_), Self::From(_)) => true,
+            (Self::From(start), Self::Span(_, other_end))
+            | (Self::Span(_, other_end), Self::From(start)) => other_end >= start,
             (Self::Span(a_start, a_end), Self::Span(b_start, b_end)) => {
                 a_start <= b_end && b_start <= a_end
             }
@@ -258,7 +291,15 @@ impl AxisExtent {
     fn query_bounds(self) -> (u32, u32) {
         match self {
             Self::Span(start, end) => (start, end),
+            Self::From(start) => (start, u32::MAX),
             Self::All => (0, u32::MAX),
+        }
+    }
+
+    fn query_max(self) -> u32 {
+        match self {
+            Self::Span(_, end) => end,
+            Self::From(_) | Self::All => u32::MAX,
         }
     }
 }
@@ -309,6 +350,8 @@ pub(crate) struct SheetRegionIndex<T: Clone> {
     col_intervals: FxHashMap<(SheetId, u32), IntervalTree<usize>>,
     row_intervals: FxHashMap<(SheetId, u32), IntervalTree<usize>>,
     rect_buckets: FxHashMap<(SheetId, u32, u32), Vec<usize>>,
+    rows_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>,
+    cols_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>,
     whole_rows: FxHashMap<(SheetId, u32), Vec<usize>>,
     whole_cols: FxHashMap<(SheetId, u32), Vec<usize>>,
     whole_sheets: FxHashMap<SheetId, Vec<usize>>,
@@ -345,6 +388,8 @@ impl<T: Clone> SheetRegionIndex<T> {
             col_intervals: FxHashMap::default(),
             row_intervals: FxHashMap::default(),
             rect_buckets: FxHashMap::default(),
+            rows_from: FxHashMap::default(),
+            cols_from: FxHashMap::default(),
             whole_rows: FxHashMap::default(),
             whole_cols: FxHashMap::default(),
             whole_sheets: FxHashMap::default(),
@@ -370,6 +415,8 @@ impl<T: Clone> SheetRegionIndex<T> {
         self.col_intervals.clear();
         self.row_intervals.clear();
         self.rect_buckets.clear();
+        self.rows_from.clear();
+        self.cols_from.clear();
         self.whole_rows.clear();
         self.whole_cols.clear();
         self.whole_sheets.clear();
@@ -447,6 +494,28 @@ impl<T: Clone> SheetRegionIndex<T> {
                     self.rect_buckets.entry(bucket).or_default().push(id);
                 }
             }
+            RegionPattern::RowsFrom {
+                sheet_id,
+                row_start,
+            } => {
+                self.rows_from
+                    .entry(sheet_id)
+                    .or_default()
+                    .entry(row_start)
+                    .or_default()
+                    .push(id);
+            }
+            RegionPattern::ColsFrom {
+                sheet_id,
+                col_start,
+            } => {
+                self.cols_from
+                    .entry(sheet_id)
+                    .or_default()
+                    .entry(col_start)
+                    .or_default()
+                    .push(id);
+            }
             RegionPattern::WholeRow { sheet_id, row } => {
                 self.whole_rows.entry((sheet_id, row)).or_default().push(id);
             }
@@ -464,6 +533,7 @@ impl<T: Clone> SheetRegionIndex<T> {
         self.collect_col_interval_candidates(query, out);
         self.collect_row_interval_candidates(query, out);
         self.collect_rect_candidates(query, out);
+        self.collect_tail_axis_candidates(query, out);
         self.collect_whole_axis_candidates(query, out);
     }
 
@@ -522,6 +592,23 @@ impl<T: Clone> SheetRegionIndex<T> {
                         out.extend(ids.iter().copied());
                     }
                 }
+            }
+        }
+    }
+
+    fn collect_tail_axis_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
+        let sheet_id = query.sheet_id();
+        let (row_extent, col_extent) = query.axis_extents();
+
+        if let Some(rows_from) = self.rows_from.get(&sheet_id) {
+            for (_row_start, ids) in rows_from.range(..=row_extent.query_max()) {
+                out.extend(ids.iter().copied());
+            }
+        }
+
+        if let Some(cols_from) = self.cols_from.get(&sheet_id) {
+            for (_col_start, ids) in cols_from.range(..=col_extent.query_max()) {
+                out.extend(ids.iter().copied());
             }
         }
     }
@@ -795,6 +882,12 @@ impl FormulaOverlayIndex {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
+    use crate::formula_plane::producer::{
+        AxisProjection, DirtyProjectionRule, ProducerDirtyDomain, ProjectionResult,
+    };
+
     use super::super::runtime::{FormulaOverlayEntryId, FormulaSpanId};
     use super::*;
 
@@ -812,6 +905,103 @@ mod tests {
             generation: 0,
             overlay_epoch: 0,
         }
+    }
+
+    #[test]
+    fn rows_from_intersection_arithmetic() {
+        let tail = RegionPattern::rows_from(1, 5);
+
+        assert!(tail.intersects(&RegionPattern::rect(1, 3, 10, 0, 5)));
+        assert!(!tail.intersects(&RegionPattern::rect(1, 0, 4, 0, 5)));
+        assert!(tail.intersects(&RegionPattern::whole_sheet(1)));
+        assert!(tail.intersects(&RegionPattern::point(1, 7, 3)));
+        assert!(!tail.intersects(&RegionPattern::point(1, 2, 3)));
+        assert!(tail.intersects(&RegionPattern::rows_from(1, 8)));
+        assert!(tail.intersects(&RegionPattern::rows_from(1, 2)));
+    }
+
+    #[test]
+    fn cols_from_intersection_arithmetic() {
+        let tail = RegionPattern::cols_from(1, 5);
+
+        assert!(tail.intersects(&RegionPattern::rect(1, 0, 5, 3, 10)));
+        assert!(!tail.intersects(&RegionPattern::rect(1, 0, 5, 0, 4)));
+        assert!(tail.intersects(&RegionPattern::whole_sheet(1)));
+        assert!(tail.intersects(&RegionPattern::point(1, 3, 7)));
+        assert!(!tail.intersects(&RegionPattern::point(1, 3, 2)));
+        assert!(tail.intersects(&RegionPattern::cols_from(1, 8)));
+        assert!(tail.intersects(&RegionPattern::cols_from(1, 2)));
+    }
+
+    #[test]
+    fn rows_from_index_does_not_explode() {
+        let start = Instant::now();
+        let mut index = SheetRegionIndex::with_rect_bucket_size(64, 16);
+        index.insert(RegionPattern::rows_from(1, 0), "rows_from_zero");
+        index.insert(RegionPattern::rows_from(1, u32::MAX), "rows_from_max");
+
+        let all_tail = index.query(RegionPattern::rows_from(1, 0));
+        let max_point = index.query(RegionPattern::point(1, u32::MAX, 3));
+        let before_max = index.query(RegionPattern::point(1, u32::MAX - 1, 3));
+        let elapsed = start.elapsed();
+
+        let all_values: FxHashSet<_> = all_tail.matches.iter().map(|m| m.value).collect();
+        assert!(all_values.contains("rows_from_zero"));
+        assert!(all_values.contains("rows_from_max"));
+        assert_eq!(max_point.matches.len(), 2);
+        assert_eq!(before_max.matches.len(), 1);
+        assert!(elapsed.as_millis() < 100, "elapsed={elapsed:?}");
+    }
+
+    #[test]
+    fn cols_from_index_does_not_explode() {
+        let start = Instant::now();
+        let mut index = SheetRegionIndex::with_rect_bucket_size(64, 16);
+        index.insert(RegionPattern::cols_from(1, 0), "cols_from_zero");
+        index.insert(RegionPattern::cols_from(1, u32::MAX), "cols_from_max");
+
+        let all_tail = index.query(RegionPattern::cols_from(1, 0));
+        let max_point = index.query(RegionPattern::point(1, 3, u32::MAX));
+        let before_max = index.query(RegionPattern::point(1, 3, u32::MAX - 1));
+        let elapsed = start.elapsed();
+
+        let all_values: FxHashSet<_> = all_tail.matches.iter().map(|m| m.value).collect();
+        assert!(all_values.contains("cols_from_zero"));
+        assert!(all_values.contains("cols_from_max"));
+        assert_eq!(max_point.matches.len(), 2);
+        assert_eq!(before_max.matches.len(), 1);
+        assert!(elapsed.as_millis() < 100, "elapsed={elapsed:?}");
+    }
+
+    #[test]
+    fn from_axis_projection_no_overflow() {
+        let changed = RegionPattern::rows_from(1, u32::MAX - 10);
+        let read = RegionPattern::rows_from(1, u32::MAX - 10);
+        let result = RegionPattern::rect(1, u32::MAX - 30, u32::MAX, 0, 0);
+        let positive_offset = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 20 },
+            col: AxisProjection::Relative { offset: 0 },
+        };
+        assert!(matches!(
+            positive_offset.project_changed_region(changed, read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(_))
+                | ProjectionResult::Exact(ProducerDirtyDomain::Cells(_))
+                | ProjectionResult::NoIntersection
+        ));
+
+        let overflowing_offset = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: -20 },
+            col: AxisProjection::Relative { offset: 0 },
+        };
+        let projected = overflowing_offset.project_changed_region(changed, read, result);
+        assert_eq!(
+            projected,
+            ProjectionResult::Exact(ProducerDirtyDomain::Cells(vec![RegionKey::new(
+                1,
+                u32::MAX,
+                0,
+            )]))
+        );
     }
 
     #[test]
@@ -894,6 +1084,8 @@ mod tests {
             (RegionPattern::rect(1, 3, 5, 3, 5), "s1_rect_cross_bucket"),
             (RegionPattern::whole_row(1, 9), "s1_whole_row"),
             (RegionPattern::whole_col(1, 10), "s1_whole_col"),
+            (RegionPattern::rows_from(1, 8), "s1_rows_from"),
+            (RegionPattern::cols_from(1, 8), "s1_cols_from"),
             (RegionPattern::whole_sheet(1), "s1_whole_sheet"),
             (RegionPattern::point(2, 0, 0), "s2_point_origin"),
             (RegionPattern::rect(2, 3, 5, 3, 5), "s2_rect_cross_bucket"),
@@ -908,6 +1100,8 @@ mod tests {
             RegionPattern::rect(1, 4, 6, 4, 6),
             RegionPattern::whole_row(1, 5),
             RegionPattern::whole_col(1, 2),
+            RegionPattern::rows_from(1, 8),
+            RegionPattern::cols_from(1, 8),
             RegionPattern::whole_sheet(1),
             RegionPattern::point(2, 4, 4),
             RegionPattern::whole_sheet(2),

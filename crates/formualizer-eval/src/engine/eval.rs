@@ -3936,42 +3936,12 @@ where
         self.demote_spans_for_structural_op_impl(sheet_id, affected_region, false)
     }
 
-    /// Affected region for a row-axis structural op. The region semantically
-    /// covers `start_row0 .. u32::MAX` rows across all columns, but using a
-    /// `Rect` with `u32::MAX` bounds explodes downstream `SheetRegionIndex`
-    /// bucket materialization (the rect-bucket grid would emit 2^54+ tuples
-    /// at default bucket size). Used only for the demotion-path `intersects`
-    /// predicate, which evaluates correctly on the unbounded extent.
     fn structural_row_region(sheet_id: SheetId, start_row0: u32) -> RegionPattern {
-        RegionPattern::rect(sheet_id, start_row0, u32::MAX, 0, u32::MAX)
+        RegionPattern::rows_from(sheet_id, start_row0)
     }
 
-    /// Affected region for a column-axis structural op. Same caveats as
-    /// `structural_row_region`.
     fn structural_col_region(sheet_id: SheetId, start_col0: u32) -> RegionPattern {
-        RegionPattern::rect(sheet_id, 0, u32::MAX, start_col0, u32::MAX)
-    }
-
-    /// Convert a structural-op affected region into a scope safe to record
-    /// via `record_formula_plane_structural_change`. Unbounded rects are
-    /// broadened to `WholeSheet` because the rect-bucket grid materialization
-    /// in `SheetRegionIndex` cannot handle `u32::MAX` extents.
-    ///
-    /// This is a v0.6.0 workaround. The architectural fix lands in v0.6.x as
-    /// Phase 0 of the AxisRange migration: introducing `RegionPattern::RowsFrom`
-    /// and `RegionPattern::ColsFrom` half-open variants. Full Option E
-    /// completion (unified `AxisRange` model) lands across v0.7-v0.8.
-    ///
-    /// See:
-    /// - `docs/design/formula-plane/dispatch/sheet-region-index-tail-extent-precision.md`
-    /// - `docs/design/formula-plane/dispatch/option-e-execution-plan.md`
-    fn structural_change_scope_for_region(region: RegionPattern) -> StructuralScope {
-        match region {
-            RegionPattern::Rect(rect) if rect.row_end == u32::MAX || rect.col_end == u32::MAX => {
-                StructuralScope::Sheet(rect.sheet_id)
-            }
-            other => StructuralScope::Region(other),
-        }
+        RegionPattern::cols_from(sheet_id, start_col0)
     }
 
     fn span_result_region_intersects_affected(
@@ -4406,9 +4376,7 @@ where
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, before0 as usize);
         self.shift_row_visibility_insert(sheet_id, before0, count);
-        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
-            affected_region,
-        ));
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -4437,9 +4405,7 @@ where
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, start0 as usize);
         self.shift_row_visibility_delete(sheet_id, start0, count);
-        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
-            affected_region,
-        ));
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -4472,9 +4438,7 @@ where
         }
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, before0 as usize);
-        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
-            affected_region,
-        ));
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -4507,9 +4471,7 @@ where
         }
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, start0 as usize);
-        self.record_formula_plane_structural_change(Self::structural_change_scope_for_region(
-            affected_region,
-        ));
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }

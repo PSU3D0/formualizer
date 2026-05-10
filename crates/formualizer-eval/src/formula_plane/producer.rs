@@ -613,6 +613,10 @@ impl AxisProjection {
                         add_offset(start, -offset).ok()?,
                         add_offset(end, -offset).ok()?,
                     ),
+                    QueryAxisExtent::From(start) => {
+                        let projected_start = lower_bound_after_subtracting_offset(start, offset);
+                        BoundedAxisExtent::new(projected_start, u32::MAX)
+                    }
                 };
                 dirty.intersect(result)
             }
@@ -662,6 +666,10 @@ fn project_changed_range_axis(
                     add_offset(start, -max_offset).ok()?,
                     add_offset(end, -min_offset).ok()?,
                 ),
+                QueryAxisExtent::From(start) => {
+                    let projected_start = lower_bound_after_subtracting_offset(start, max_offset);
+                    BoundedAxisExtent::new(projected_start, u32::MAX)
+                }
             };
             dirty.intersect(result)
         }
@@ -676,6 +684,7 @@ fn project_changed_range_axis(
                 QueryAxisExtent::Span(start, end) => source
                     .intersect(BoundedAxisExtent::new(start, end))
                     .map(|_| result),
+                QueryAxisExtent::From(start) => (source.end >= start).then_some(result),
             }
         }
         _ => None,
@@ -929,6 +938,7 @@ impl BoundedAxisExtent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum QueryAxisExtent {
     Span(u32, u32),
+    From(u32),
     All,
 }
 
@@ -936,6 +946,7 @@ impl QueryAxisExtent {
     fn contains(self, coord: u32) -> bool {
         match self {
             Self::Span(start, end) => coord >= start && coord <= end,
+            Self::From(start) => coord >= start,
             Self::All => true,
         }
     }
@@ -969,7 +980,9 @@ fn bounded_extents(pattern: RegionPattern) -> Option<(BoundedAxisExtent, Bounded
             BoundedAxisExtent::new(rect.row_start, rect.row_end),
             BoundedAxisExtent::new(rect.col_start, rect.col_end),
         )),
-        RegionPattern::WholeRow { .. }
+        RegionPattern::RowsFrom { .. }
+        | RegionPattern::ColsFrom { .. }
+        | RegionPattern::WholeRow { .. }
         | RegionPattern::WholeCol { .. }
         | RegionPattern::WholeSheet { .. } => None,
     }
@@ -1003,6 +1016,12 @@ fn query_extents(pattern: RegionPattern) -> Option<(QueryAxisExtent, QueryAxisEx
             QueryAxisExtent::Span(rect.row_start, rect.row_end),
             QueryAxisExtent::Span(rect.col_start, rect.col_end),
         )),
+        RegionPattern::RowsFrom { row_start, .. } => {
+            Some((QueryAxisExtent::From(row_start), QueryAxisExtent::All))
+        }
+        RegionPattern::ColsFrom { col_start, .. } => {
+            Some((QueryAxisExtent::All, QueryAxisExtent::From(col_start)))
+        }
         RegionPattern::WholeRow { row, .. } => {
             Some((QueryAxisExtent::Span(row, row), QueryAxisExtent::All))
         }
@@ -1039,6 +1058,16 @@ fn add_offset(value: u32, offset: i64) -> Result<u32, ProjectionFallbackReason> 
         .checked_add(offset)
         .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
     u32::try_from(shifted).map_err(|_| ProjectionFallbackReason::CoordinateOverflow)
+}
+
+fn lower_bound_after_subtracting_offset(value: u32, offset: i64) -> u32 {
+    if offset >= 0 {
+        let offset = u32::try_from(offset).unwrap_or(u32::MAX);
+        value.checked_sub(offset).unwrap_or(0)
+    } else {
+        let magnitude = u32::try_from(offset.unsigned_abs()).unwrap_or(u32::MAX);
+        value.checked_add(magnitude).unwrap_or(u32::MAX)
+    }
 }
 
 #[cfg(test)]
