@@ -69,6 +69,10 @@ impl FormulaAuthority {
         std::mem::take(&mut self.pending_changed_regions)
     }
 
+    pub(crate) fn pending_changed_regions(&self) -> &[RegionPattern] {
+        &self.pending_changed_regions
+    }
+
     pub(crate) fn pending_changed_region_count(&self) -> usize {
         self.pending_changed_regions.len()
     }

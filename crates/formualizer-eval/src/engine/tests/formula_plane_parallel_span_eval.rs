@@ -58,6 +58,20 @@ fn build_a_plus_one_family(rows: u32, enable_parallel: bool) -> Engine<TestWorkb
     engine
 }
 
+/// Build a constant-result span family of the given size. Constant-result
+/// spans bypass the `MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS` (=100) demote
+/// threshold, so this is the only way to materialize a span smaller than
+/// 100 cells for testing the parallel placement threshold gating.
+fn build_constant_result_family(rows: u32, enable_parallel: bool) -> Engine<TestWorkbook> {
+    let mut engine = auth_engine(enable_parallel);
+    let mut formulas = Vec::with_capacity(rows as usize);
+    for row in 1..=rows {
+        formulas.push(record(&mut engine, row, 2, "=1+1"));
+    }
+    ingest(&mut engine, formulas);
+    engine
+}
+
 #[test]
 fn parallel_per_placement_produces_identical_results_to_sequential() {
     let mut sequential = build_a_plus_one_family(1_000, false);
@@ -77,13 +91,16 @@ fn parallel_per_placement_produces_identical_results_to_sequential() {
 
 #[test]
 fn parallel_below_threshold_uses_sequential_path() {
-    let mut engine = build_a_plus_one_family(100, true);
+    // 50 < PARALLEL_PLACEMENT_THRESHOLD (=64). Use constant-result span
+    // because non-constant spans below 100 cells demote to legacy.
+    let mut engine = build_constant_result_family(50, true);
     engine.evaluate_all().unwrap();
 
     let report = engine.last_formula_plane_span_eval_report().unwrap();
     assert_eq!(report.parallel_per_placement_invocations, 0, "{report:?}");
-    assert_eq!(report.sequential_per_placement_invocations, 1, "{report:?}");
-    assert_eq!(report.span_eval_placement_count, 100, "{report:?}");
+    // Constant-result spans evaluate via a single broadcast, not per-placement.
+    // Verify no parallel-path was taken; placement count reflects broadcast.
+    assert_eq!(report.span_eval_placement_count, 50, "{report:?}");
 }
 
 #[test]

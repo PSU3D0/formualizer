@@ -109,7 +109,7 @@ pub(crate) fn dirty_placement_vec_materialization_count() -> usize {
     DIRTY_PLACEMENT_VEC_MATERIALIZATION_COUNT.get()
 }
 
-const PARALLEL_PLACEMENT_THRESHOLD: usize = 256;
+const PARALLEL_PLACEMENT_THRESHOLD: usize = 64;
 const PARALLEL_MEMO_GROUP_THRESHOLD: usize = 64;
 const MEMO_SAMPLE_LIMIT: usize = 64;
 const MEMO_MAX_UNIQUE_RATIO_NUM: usize = 3;
