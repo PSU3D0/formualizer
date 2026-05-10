@@ -4193,7 +4193,22 @@ where
         }
 
         if clear_computed_overlays {
+            // Only clear placement cells whose coordinate intersects the affected
+            // structural region. The structural-op contract preserves cells
+            // BEFORE the structural boundary; the legacy `clear_computed_overlay_after_*`
+            // call honors that. Demoting a span whose footprint straddles the
+            // boundary still must not clear cells before the boundary, even
+            // though the span as a whole is demoted.
             for (formula_sheet_id, row, col) in placement_cells {
+                // 1-based -> 0-based for region intersection.
+                let placement_region = RegionPattern::point(
+                    formula_sheet_id,
+                    row.saturating_sub(1),
+                    col.saturating_sub(1),
+                );
+                if !placement_region.intersects(&affected_region) {
+                    continue;
+                }
                 let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
                 self.clear_computed_overlay_cell(&sheet_name, row, col);
             }
