@@ -15,7 +15,7 @@ use crate::engine::sheet_registry::SheetRegistry;
 
 use super::dependency_summary::{FormulaClass, FormulaDependencySummary, PrecedentPattern};
 use super::region_index::{
-    RegionKey, RegionMatch, RegionPattern, RegionQueryResult, SheetRegionIndex,
+    AxisRange, RegionKey, RegionMatch, RegionPattern, RegionQueryResult, SheetRegionIndex,
 };
 use super::runtime::{FormulaSpanId, ResultRegion};
 use super::template_canonical::{AxisRef, SheetBinding};
@@ -474,14 +474,14 @@ impl DirtyProjectionRule {
                     .ok_or(ProjectionFallbackReason::UnboundedResultRegion)?;
                 let source_cols = range_source_extent_for_result(col_start, col_end, result_cols)?;
                 let col_count = source_cols
-                    .end
-                    .checked_sub(source_cols.start)
+                    .high
+                    .checked_sub(source_cols.low)
                     .and_then(|width| width.checked_add(1))
                     .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
                 if col_count > 256 {
                     return Err(ProjectionFallbackReason::UnsupportedAxis);
                 }
-                Ok((source_cols.start..=source_cols.end)
+                Ok((source_cols.low..=source_cols.high)
                     .map(|col| RegionPattern::whole_col(sheet_id, col))
                     .collect())
             }
@@ -581,14 +581,14 @@ impl AxisProjection {
 
     fn source_extent_for_result(
         self,
-        result: BoundedAxisExtent,
-    ) -> Result<BoundedAxisExtent, ProjectionFallbackReason> {
+        result: BoundedRange,
+    ) -> Result<BoundedRange, ProjectionFallbackReason> {
         match self {
-            Self::Relative { offset } => Ok(BoundedAxisExtent::new(
-                add_offset(result.start, offset)?,
-                add_offset(result.end, offset)?,
+            Self::Relative { offset } => Ok(BoundedRange::new(
+                add_offset(result.low, offset)?,
+                add_offset(result.high, offset)?,
             )),
-            Self::Absolute { index } => Ok(BoundedAxisExtent::new(index, index)),
+            Self::Absolute { index } => Ok(BoundedRange::new(index, index)),
         }
     }
 
@@ -602,20 +602,28 @@ impl AxisProjection {
 
     fn project_changed_axis(
         self,
-        changed: QueryAxisExtent,
-        result: BoundedAxisExtent,
-    ) -> Option<BoundedAxisExtent> {
+        changed: AxisRange,
+        result: BoundedRange,
+    ) -> Option<BoundedRange> {
         match self {
             Self::Relative { offset } => {
                 let dirty = match changed {
-                    QueryAxisExtent::All => result,
-                    QueryAxisExtent::Span(start, end) => BoundedAxisExtent::new(
+                    AxisRange::All => result,
+                    AxisRange::Point(point) => BoundedRange::new(
+                        add_offset(point, -offset).ok()?,
+                        add_offset(point, -offset).ok()?,
+                    ),
+                    AxisRange::Span(start, end) => BoundedRange::new(
                         add_offset(start, -offset).ok()?,
                         add_offset(end, -offset).ok()?,
                     ),
-                    QueryAxisExtent::From(start) => {
+                    AxisRange::From(start) => {
                         let projected_start = lower_bound_after_subtracting_offset(start, offset);
-                        BoundedAxisExtent::new(projected_start, u32::MAX)
+                        BoundedRange::new(projected_start, u32::MAX)
+                    }
+                    AxisRange::To(end) => {
+                        let projected_end = upper_bound_after_subtracting_offset(end, offset)?;
+                        BoundedRange::new(0, projected_end)
                     }
                 };
                 dirty.intersect(result)
@@ -635,8 +643,8 @@ fn axis_ref_is_finite_projection(axis: &AxisRef) -> bool {
 fn range_source_extent_for_result(
     start: AxisProjection,
     end: AxisProjection,
-    result: BoundedAxisExtent,
-) -> Result<BoundedAxisExtent, ProjectionFallbackReason> {
+    result: BoundedRange,
+) -> Result<BoundedRange, ProjectionFallbackReason> {
     if !start.same_kind(end) {
         return Err(ProjectionFallbackReason::UnsupportedAxis);
     }
@@ -648,9 +656,9 @@ fn range_source_extent_for_result(
 fn project_changed_range_axis(
     start: AxisProjection,
     end: AxisProjection,
-    changed: QueryAxisExtent,
-    result: BoundedAxisExtent,
-) -> Option<BoundedAxisExtent> {
+    changed: AxisRange,
+    result: BoundedRange,
+) -> Option<BoundedRange> {
     match (start, end) {
         (
             AxisProjection::Relative {
@@ -661,14 +669,22 @@ fn project_changed_range_axis(
             let min_offset = start_offset.min(end_offset);
             let max_offset = start_offset.max(end_offset);
             let dirty = match changed {
-                QueryAxisExtent::All => result,
-                QueryAxisExtent::Span(start, end) => BoundedAxisExtent::new(
+                AxisRange::All => result,
+                AxisRange::Point(point) => BoundedRange::new(
+                    add_offset(point, -max_offset).ok()?,
+                    add_offset(point, -min_offset).ok()?,
+                ),
+                AxisRange::Span(start, end) => BoundedRange::new(
                     add_offset(start, -max_offset).ok()?,
                     add_offset(end, -min_offset).ok()?,
                 ),
-                QueryAxisExtent::From(start) => {
+                AxisRange::From(start) => {
                     let projected_start = lower_bound_after_subtracting_offset(start, max_offset);
-                    BoundedAxisExtent::new(projected_start, u32::MAX)
+                    BoundedRange::new(projected_start, u32::MAX)
+                }
+                AxisRange::To(end) => {
+                    let projected_end = upper_bound_after_subtracting_offset(end, min_offset)?;
+                    BoundedRange::new(0, projected_end)
                 }
             };
             dirty.intersect(result)
@@ -677,14 +693,17 @@ fn project_changed_range_axis(
             AxisProjection::Absolute { index: start_index },
             AxisProjection::Absolute { index: end_index },
         ) => {
-            let source =
-                BoundedAxisExtent::new(start_index.min(end_index), start_index.max(end_index));
+            let source = BoundedRange::new(start_index.min(end_index), start_index.max(end_index));
             match changed {
-                QueryAxisExtent::All => Some(result),
-                QueryAxisExtent::Span(start, end) => source
-                    .intersect(BoundedAxisExtent::new(start, end))
+                AxisRange::All => Some(result),
+                AxisRange::Point(point) => source
+                    .intersect(BoundedRange::new(point, point))
                     .map(|_| result),
-                QueryAxisExtent::From(start) => (source.end >= start).then_some(result),
+                AxisRange::Span(start, end) => source
+                    .intersect(BoundedRange::new(start, end))
+                    .map(|_| result),
+                AxisRange::From(start) => (source.high >= start).then_some(result),
+                AxisRange::To(end) => (source.low <= end).then_some(result),
             }
         }
         _ => None,
@@ -905,143 +924,82 @@ fn apply_dirty_projection(
     }
 }
 
+/// Finite axis range — guaranteed `Point` or `Span` (not `From`/`To`/`All`).
+/// Invariant: low <= high.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct BoundedAxisExtent {
-    start: u32,
-    end: u32,
+pub(crate) struct BoundedRange {
+    pub(crate) low: u32,
+    pub(crate) high: u32,
 }
 
-impl BoundedAxisExtent {
-    fn new(start: u32, end: u32) -> Self {
-        debug_assert!(start <= end);
-        Self { start, end }
+impl BoundedRange {
+    #[inline]
+    pub(crate) fn new(low: u32, high: u32) -> Self {
+        debug_assert!(low <= high);
+        Self { low, high }
     }
 
+    #[inline]
+    pub(crate) fn from_axis_range(range: AxisRange) -> Option<Self> {
+        match range {
+            AxisRange::Point(point) => Some(Self::new(point, point)),
+            AxisRange::Span(low, high) => Some(Self::new(low, high)),
+            AxisRange::From(_) | AxisRange::To(_) | AxisRange::All => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn to_axis_range(self) -> AxisRange {
+        if self.low == self.high {
+            AxisRange::Point(self.low)
+        } else {
+            AxisRange::Span(self.low, self.high)
+        }
+    }
+
+    #[inline]
     fn is_point(self) -> bool {
-        self.start == self.end
+        self.low == self.high
     }
 
+    #[inline]
     fn intersect(self, other: Self) -> Option<Self> {
-        let start = self.start.max(other.start);
-        let end = self.end.min(other.end);
-        (start <= end).then_some(Self { start, end })
+        let low = self.low.max(other.low);
+        let high = self.high.min(other.high);
+        (low <= high).then_some(Self { low, high })
     }
 
+    #[inline]
     fn union(self, other: Self) -> Self {
         Self {
-            start: self.start.min(other.start),
-            end: self.end.max(other.end),
+            low: self.low.min(other.low),
+            high: self.high.max(other.high),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum QueryAxisExtent {
-    Span(u32, u32),
-    From(u32),
-    All,
+fn bounded_extents(pattern: RegionPattern) -> Option<(BoundedRange, BoundedRange)> {
+    let (rows, cols) = pattern.axis_ranges();
+    Some((
+        BoundedRange::from_axis_range(rows)?,
+        BoundedRange::from_axis_range(cols)?,
+    ))
 }
 
-impl QueryAxisExtent {
-    fn contains(self, coord: u32) -> bool {
-        match self {
-            Self::Span(start, end) => coord >= start && coord <= end,
-            Self::From(start) => coord >= start,
-            Self::All => true,
-        }
-    }
-}
-
-fn bounded_extents(pattern: RegionPattern) -> Option<(BoundedAxisExtent, BoundedAxisExtent)> {
-    match pattern {
-        RegionPattern::Point(key) => Some((
-            BoundedAxisExtent::new(key.row, key.row),
-            BoundedAxisExtent::new(key.col, key.col),
-        )),
-        RegionPattern::ColInterval {
-            row_start,
-            row_end,
-            col,
-            ..
-        } => Some((
-            BoundedAxisExtent::new(row_start, row_end),
-            BoundedAxisExtent::new(col, col),
-        )),
-        RegionPattern::RowInterval {
-            row,
-            col_start,
-            col_end,
-            ..
-        } => Some((
-            BoundedAxisExtent::new(row, row),
-            BoundedAxisExtent::new(col_start, col_end),
-        )),
-        RegionPattern::Rect(rect) => Some((
-            BoundedAxisExtent::new(rect.row_start, rect.row_end),
-            BoundedAxisExtent::new(rect.col_start, rect.col_end),
-        )),
-        RegionPattern::RowsFrom { .. }
-        | RegionPattern::ColsFrom { .. }
-        | RegionPattern::WholeRow { .. }
-        | RegionPattern::WholeCol { .. }
-        | RegionPattern::WholeSheet { .. } => None,
-    }
-}
-
-fn query_extents(pattern: RegionPattern) -> Option<(QueryAxisExtent, QueryAxisExtent)> {
-    match pattern {
-        RegionPattern::Point(key) => Some((
-            QueryAxisExtent::Span(key.row, key.row),
-            QueryAxisExtent::Span(key.col, key.col),
-        )),
-        RegionPattern::ColInterval {
-            row_start,
-            row_end,
-            col,
-            ..
-        } => Some((
-            QueryAxisExtent::Span(row_start, row_end),
-            QueryAxisExtent::Span(col, col),
-        )),
-        RegionPattern::RowInterval {
-            row,
-            col_start,
-            col_end,
-            ..
-        } => Some((
-            QueryAxisExtent::Span(row, row),
-            QueryAxisExtent::Span(col_start, col_end),
-        )),
-        RegionPattern::Rect(rect) => Some((
-            QueryAxisExtent::Span(rect.row_start, rect.row_end),
-            QueryAxisExtent::Span(rect.col_start, rect.col_end),
-        )),
-        RegionPattern::RowsFrom { row_start, .. } => {
-            Some((QueryAxisExtent::From(row_start), QueryAxisExtent::All))
-        }
-        RegionPattern::ColsFrom { col_start, .. } => {
-            Some((QueryAxisExtent::All, QueryAxisExtent::From(col_start)))
-        }
-        RegionPattern::WholeRow { row, .. } => {
-            Some((QueryAxisExtent::Span(row, row), QueryAxisExtent::All))
-        }
-        RegionPattern::WholeCol { col, .. } => {
-            Some((QueryAxisExtent::All, QueryAxisExtent::Span(col, col)))
-        }
-        RegionPattern::WholeSheet { .. } => Some((QueryAxisExtent::All, QueryAxisExtent::All)),
-    }
+fn query_extents(pattern: RegionPattern) -> Option<(AxisRange, AxisRange)> {
+    Some(pattern.axis_ranges())
 }
 
 fn region_from_bounded_extents(
     sheet_id: SheetId,
-    rows: BoundedAxisExtent,
-    cols: BoundedAxisExtent,
+    rows: BoundedRange,
+    cols: BoundedRange,
 ) -> Result<RegionPattern, ProjectionFallbackReason> {
     Ok(match (rows.is_point(), cols.is_point()) {
-        (true, true) => RegionPattern::point(sheet_id, rows.start, cols.start),
-        (false, true) => RegionPattern::col_interval(sheet_id, cols.start, rows.start, rows.end),
-        (true, false) => RegionPattern::row_interval(sheet_id, rows.start, cols.start, cols.end),
-        (false, false) => RegionPattern::rect(sheet_id, rows.start, rows.end, cols.start, cols.end),
+        (true, true) => RegionPattern::point(sheet_id, rows.low, cols.low),
+        (false, true) => RegionPattern::col_interval(sheet_id, cols.low, rows.low, rows.high),
+        (true, false) => RegionPattern::row_interval(sheet_id, rows.low, cols.low, cols.high),
+        (false, false) => RegionPattern::rect(sheet_id, rows.low, rows.high, cols.low, cols.high),
     })
 }
 
@@ -1063,10 +1021,20 @@ fn add_offset(value: u32, offset: i64) -> Result<u32, ProjectionFallbackReason> 
 fn lower_bound_after_subtracting_offset(value: u32, offset: i64) -> u32 {
     if offset >= 0 {
         let offset = u32::try_from(offset).unwrap_or(u32::MAX);
-        value.checked_sub(offset).unwrap_or(0)
+        value.saturating_sub(offset)
     } else {
         let magnitude = u32::try_from(offset.unsigned_abs()).unwrap_or(u32::MAX);
-        value.checked_add(magnitude).unwrap_or(u32::MAX)
+        value.saturating_add(magnitude)
+    }
+}
+
+fn upper_bound_after_subtracting_offset(value: u32, offset: i64) -> Option<u32> {
+    if offset >= 0 {
+        let offset = u32::try_from(offset).unwrap_or(u32::MAX);
+        value.checked_sub(offset)
+    } else {
+        let magnitude = u32::try_from(offset.unsigned_abs()).unwrap_or(u32::MAX);
+        Some(value.saturating_add(magnitude))
     }
 }
 

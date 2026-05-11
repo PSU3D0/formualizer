@@ -210,98 +210,193 @@ impl RegionPattern {
         }
     }
 
+    #[inline]
     pub(crate) fn intersects(&self, other: &Self) -> bool {
         if self.sheet_id() != other.sheet_id() {
             return false;
         }
-        let (self_rows, self_cols) = self.axis_extents();
-        let (other_rows, other_cols) = other.axis_extents();
+        let (self_rows, self_cols) = self.axis_ranges();
+        let (other_rows, other_cols) = other.axis_ranges();
         self_rows.intersects(other_rows) && self_cols.intersects(other_cols)
     }
 
+    #[inline]
     pub(crate) fn contains_key(&self, key: RegionKey) -> bool {
         self.intersects(&Self::Point(key))
     }
 
-    fn axis_extents(&self) -> (AxisExtent, AxisExtent) {
+    #[inline]
+    pub(crate) fn axis_ranges(&self) -> (AxisRange, AxisRange) {
         match *self {
-            Self::Point(key) => (
-                AxisExtent::Span(key.row, key.row),
-                AxisExtent::Span(key.col, key.col),
-            ),
+            Self::Point(key) => (AxisRange::Point(key.row), AxisRange::Point(key.col)),
             Self::ColInterval {
                 row_start,
                 row_end,
                 col,
                 ..
-            } => (
-                AxisExtent::Span(row_start, row_end),
-                AxisExtent::Span(col, col),
-            ),
+            } => (AxisRange::Span(row_start, row_end), AxisRange::Point(col)),
             Self::RowInterval {
                 row,
                 col_start,
                 col_end,
                 ..
-            } => (
-                AxisExtent::Span(row, row),
-                AxisExtent::Span(col_start, col_end),
-            ),
+            } => (AxisRange::Point(row), AxisRange::Span(col_start, col_end)),
             Self::Rect(rect) => (
-                AxisExtent::Span(rect.row_start, rect.row_end),
-                AxisExtent::Span(rect.col_start, rect.col_end),
+                AxisRange::Span(rect.row_start, rect.row_end),
+                AxisRange::Span(rect.col_start, rect.col_end),
             ),
-            Self::RowsFrom { row_start, .. } => (AxisExtent::From(row_start), AxisExtent::All),
-            Self::ColsFrom { col_start, .. } => (AxisExtent::All, AxisExtent::From(col_start)),
-            Self::WholeRow { row, .. } => (AxisExtent::Span(row, row), AxisExtent::All),
-            Self::WholeCol { col, .. } => (AxisExtent::All, AxisExtent::Span(col, col)),
-            Self::WholeSheet { .. } => (AxisExtent::All, AxisExtent::All),
+            Self::RowsFrom { row_start, .. } => (AxisRange::From(row_start), AxisRange::All),
+            Self::ColsFrom { col_start, .. } => (AxisRange::All, AxisRange::From(col_start)),
+            Self::WholeRow { row, .. } => (AxisRange::Point(row), AxisRange::All),
+            Self::WholeCol { col, .. } => (AxisRange::All, AxisRange::Point(col)),
+            Self::WholeSheet { .. } => (AxisRange::All, AxisRange::All),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AxisExtent {
+pub(crate) enum AxisRange {
+    Point(u32),
     Span(u32, u32),
     From(u32),
+    To(u32),
     All,
 }
 
-impl AxisExtent {
-    fn contains(self, coord: u32) -> bool {
+impl AxisRange {
+    #[inline]
+    pub(crate) fn intersects(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Point(p1), Self::Point(p2)) => p1 == p2,
+            (Self::Point(p1), Self::Span(s2, e2)) => s2 <= p1 && p1 <= e2,
+            (Self::Point(p1), Self::From(s2)) => p1 >= s2,
+            (Self::Point(p1), Self::To(e2)) => p1 <= e2,
+            (Self::Point(_), Self::All) => true,
+
+            (Self::Span(s1, e1), Self::Point(p2)) => s1 <= p2 && p2 <= e1,
+            (Self::Span(s1, e1), Self::Span(s2, e2)) => s1 <= e2 && s2 <= e1,
+            (Self::Span(_, e1), Self::From(s2)) => s2 <= e1,
+            (Self::Span(s1, _), Self::To(e2)) => s1 <= e2,
+            (Self::Span(_, _), Self::All) => true,
+
+            (Self::From(s1), Self::Point(p2)) => p2 >= s1,
+            (Self::From(s1), Self::Span(_, e2)) => s1 <= e2,
+            (Self::From(_), Self::From(_)) => true,
+            (Self::From(s1), Self::To(e2)) => s1 <= e2,
+            (Self::From(_), Self::All) => true,
+
+            (Self::To(e1), Self::Point(p2)) => p2 <= e1,
+            (Self::To(e1), Self::Span(s2, _)) => s2 <= e1,
+            (Self::To(e1), Self::From(s2)) => s2 <= e1,
+            (Self::To(_), Self::To(_)) => true,
+            (Self::To(_), Self::All) => true,
+
+            (Self::All, Self::Point(_)) => true,
+            (Self::All, Self::Span(_, _)) => true,
+            (Self::All, Self::From(_)) => true,
+            (Self::All, Self::To(_)) => true,
+            (Self::All, Self::All) => true,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn contains(self, coord: u32) -> bool {
         match self {
-            Self::Span(start, end) => coord >= start && coord <= end,
+            Self::Point(point) => coord == point,
+            Self::Span(start, end) => start <= coord && coord <= end,
             Self::From(start) => coord >= start,
+            Self::To(end) => coord <= end,
             Self::All => true,
         }
     }
 
-    fn intersects(self, other: Self) -> bool {
-        match (self, other) {
-            (Self::All, _) | (_, Self::All) => true,
-            (Self::From(_), Self::From(_)) => true,
-            (Self::From(start), Self::Span(_, other_end))
-            | (Self::Span(_, other_end), Self::From(start)) => other_end >= start,
-            (Self::Span(a_start, a_end), Self::Span(b_start, b_end)) => {
-                a_start <= b_end && b_start <= a_end
-            }
-        }
-    }
-
-    fn query_bounds(self) -> (u32, u32) {
+    #[inline]
+    pub(crate) fn query_bounds(self) -> (u32, u32) {
         match self {
+            Self::Point(point) => (point, point),
             Self::Span(start, end) => (start, end),
             Self::From(start) => (start, u32::MAX),
+            Self::To(end) => (0, end),
             Self::All => (0, u32::MAX),
         }
     }
 
-    fn query_max(self) -> u32 {
+    #[inline]
+    pub(crate) fn is_bounded(self) -> bool {
+        matches!(self, Self::Point(_) | Self::Span(_, _))
+    }
+
+    pub(crate) fn project_through_offset(self, offset: i64) -> Option<Self> {
+        fn shifted(value: u32, offset: i64) -> i64 {
+            i64::from(value).saturating_add(offset)
+        }
+
+        fn clamp_u32(value: i64) -> u32 {
+            if value < 0 {
+                0
+            } else {
+                u32::try_from(value).unwrap_or(u32::MAX)
+            }
+        }
+
         match self {
-            Self::Span(_, end) => end,
-            Self::From(_) | Self::All => u32::MAX,
+            Self::Point(point) => {
+                let projected = shifted(point, offset);
+                (0..=i64::from(u32::MAX))
+                    .contains(&projected)
+                    .then_some(Self::Point(projected as u32))
+            }
+            Self::Span(start, end) => {
+                let projected_start = shifted(start, offset);
+                let projected_end = shifted(end, offset);
+                if projected_end < 0 || projected_start > i64::from(u32::MAX) {
+                    None
+                } else {
+                    Some(Self::Span(
+                        clamp_u32(projected_start),
+                        clamp_u32(projected_end),
+                    ))
+                }
+            }
+            Self::From(start) => {
+                let projected_start = shifted(start, offset);
+                if projected_start < 0 {
+                    Some(Self::All)
+                } else {
+                    Some(Self::From(clamp_u32(projected_start)))
+                }
+            }
+            Self::To(end) => {
+                let projected_end = shifted(end, offset);
+                if projected_end < 0 {
+                    None
+                } else {
+                    Some(Self::To(clamp_u32(projected_end)))
+                }
+            }
+            Self::All => Some(Self::All),
         }
     }
+
+    #[inline]
+    pub(crate) fn kind(self) -> AxisKind {
+        match self {
+            Self::Point(_) => AxisKind::Point,
+            Self::Span(_, _) => AxisKind::Span,
+            Self::From(_) => AxisKind::From,
+            Self::To(_) => AxisKind::To,
+            Self::All => AxisKind::All,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum AxisKind {
+    Point,
+    Span,
+    From,
+    To,
+    All,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -548,7 +643,7 @@ impl<T: Clone> SheetRegionIndex<T> {
 
     fn collect_col_interval_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
         let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_extents();
+        let (row_extent, col_extent) = query.axis_ranges();
         let (row_start, row_end) = row_extent.query_bounds();
         for (&(entry_sheet, col), tree) in &self.col_intervals {
             if entry_sheet != sheet_id || !col_extent.contains(col) {
@@ -562,7 +657,7 @@ impl<T: Clone> SheetRegionIndex<T> {
 
     fn collect_row_interval_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
         let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_extents();
+        let (row_extent, col_extent) = query.axis_ranges();
         let (col_start, col_end) = col_extent.query_bounds();
         for (&(entry_sheet, row), tree) in &self.row_intervals {
             if entry_sheet != sheet_id || !row_extent.contains(row) {
@@ -576,9 +671,9 @@ impl<T: Clone> SheetRegionIndex<T> {
 
     fn collect_rect_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
         let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_extents();
+        let (row_extent, col_extent) = query.axis_ranges();
         match (row_extent, col_extent) {
-            (AxisExtent::Span(row_start, row_end), AxisExtent::Span(col_start, col_end)) => {
+            (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) => {
                 let rect = RectRegion::new(sheet_id, row_start, row_end, col_start, col_end);
                 for bucket in self.rect_buckets_for_rect(rect) {
                     if let Some(ids) = self.rect_buckets.get(&bucket) {
@@ -598,16 +693,16 @@ impl<T: Clone> SheetRegionIndex<T> {
 
     fn collect_tail_axis_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
         let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_extents();
+        let (row_extent, col_extent) = query.axis_ranges();
 
         if let Some(rows_from) = self.rows_from.get(&sheet_id) {
-            for (_row_start, ids) in rows_from.range(..=row_extent.query_max()) {
+            for (_row_start, ids) in rows_from.range(..=row_extent.query_bounds().1) {
                 out.extend(ids.iter().copied());
             }
         }
 
         if let Some(cols_from) = self.cols_from.get(&sheet_id) {
-            for (_col_start, ids) in cols_from.range(..=col_extent.query_max()) {
+            for (_col_start, ids) in cols_from.range(..=col_extent.query_bounds().1) {
                 out.extend(ids.iter().copied());
             }
         }
@@ -615,7 +710,7 @@ impl<T: Clone> SheetRegionIndex<T> {
 
     fn collect_whole_axis_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
         let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_extents();
+        let (row_extent, col_extent) = query.axis_ranges();
 
         if let Some(ids) = self.whole_sheets.get(&sheet_id) {
             out.extend(ids.iter().copied());
@@ -905,6 +1000,170 @@ mod tests {
             generation: 0,
             overlay_epoch: 0,
         }
+    }
+
+    #[test]
+    fn axis_range_intersects_truth_table() {
+        use AxisRange::*;
+
+        assert!(Point(5).intersects(Point(5)));
+        assert!(!Point(5).intersects(Point(6)));
+        assert!(Point(5).intersects(Span(5, 8)));
+        assert!(Point(5).intersects(Span(2, 5)));
+        assert!(!Point(5).intersects(Span(6, 8)));
+        assert!(Point(5).intersects(From(5)));
+        assert!(!Point(5).intersects(From(6)));
+        assert!(Point(5).intersects(To(5)));
+        assert!(!Point(5).intersects(To(4)));
+        assert!(Point(5).intersects(All));
+
+        assert!(Span(3, 7).intersects(Point(3)));
+        assert!(Span(3, 7).intersects(Point(7)));
+        assert!(!Span(3, 7).intersects(Point(8)));
+        assert!(Span(3, 7).intersects(Span(7, 9)));
+        assert!(Span(3, 7).intersects(Span(1, 3)));
+        assert!(!Span(3, 7).intersects(Span(8, 9)));
+        assert!(Span(3, 7).intersects(From(7)));
+        assert!(!Span(3, 7).intersects(From(8)));
+        assert!(Span(3, 7).intersects(To(3)));
+        assert!(!Span(3, 7).intersects(To(2)));
+        assert!(Span(3, 7).intersects(All));
+
+        assert!(From(10).intersects(Point(10)));
+        assert!(!From(10).intersects(Point(9)));
+        assert!(From(10).intersects(Span(8, 10)));
+        assert!(!From(10).intersects(Span(8, 9)));
+        assert!(From(10).intersects(From(20)));
+        assert!(From(10).intersects(To(10)));
+        assert!(!From(10).intersects(To(9)));
+        assert!(From(10).intersects(All));
+
+        assert!(To(10).intersects(Point(10)));
+        assert!(!To(10).intersects(Point(11)));
+        assert!(To(10).intersects(Span(10, 12)));
+        assert!(!To(10).intersects(Span(11, 12)));
+        assert!(To(10).intersects(From(10)));
+        assert!(!To(10).intersects(From(11)));
+        assert!(To(10).intersects(To(0)));
+        assert!(To(10).intersects(All));
+
+        assert!(All.intersects(Point(42)));
+        assert!(All.intersects(Span(2, 3)));
+        assert!(All.intersects(From(42)));
+        assert!(All.intersects(To(42)));
+        assert!(All.intersects(All));
+    }
+
+    #[test]
+    fn axis_range_contains_each_kind() {
+        use AxisRange::*;
+
+        assert!(Point(5).contains(5));
+        assert!(!Point(5).contains(4));
+        assert!(Span(5, 8).contains(5));
+        assert!(Span(5, 8).contains(8));
+        assert!(!Span(5, 8).contains(9));
+        assert!(From(5).contains(5));
+        assert!(From(5).contains(u32::MAX));
+        assert!(!From(5).contains(4));
+        assert!(To(5).contains(5));
+        assert!(To(5).contains(0));
+        assert!(!To(5).contains(6));
+        assert!(All.contains(0));
+        assert!(All.contains(u32::MAX));
+    }
+
+    #[test]
+    fn axis_range_query_bounds_each_kind() {
+        use AxisRange::*;
+
+        assert_eq!(Point(7).query_bounds(), (7, 7));
+        assert_eq!(Span(3, 9).query_bounds(), (3, 9));
+        assert_eq!(From(4).query_bounds(), (4, u32::MAX));
+        assert_eq!(To(4).query_bounds(), (0, 4));
+        assert_eq!(All.query_bounds(), (0, u32::MAX));
+    }
+
+    #[test]
+    fn axis_range_is_bounded_only_for_point_and_span() {
+        use AxisRange::*;
+
+        assert!(Point(7).is_bounded());
+        assert!(Span(3, 9).is_bounded());
+        assert!(!From(4).is_bounded());
+        assert!(!To(4).is_bounded());
+        assert!(!All.is_bounded());
+    }
+
+    #[test]
+    fn axis_range_project_through_offset_cases() {
+        use AxisRange::*;
+
+        for range in [Point(7), Span(10, 20), From(10), To(20), All] {
+            assert_eq!(range.project_through_offset(0), Some(range));
+        }
+
+        assert_eq!(Span(10, 20).project_through_offset(5), Some(Span(15, 25)));
+        assert_eq!(Span(10, 20).project_through_offset(-5), Some(Span(5, 15)));
+        assert_eq!(Span(0, 10).project_through_offset(-5), Some(Span(0, 5)));
+        assert_eq!(
+            From(u32::MAX - 10).project_through_offset(100),
+            Some(From(u32::MAX))
+        );
+        assert_eq!(
+            To(10).project_through_offset(i64::from(u32::MAX)),
+            Some(To(u32::MAX))
+        );
+        assert_eq!(Point(0).project_through_offset(-1), None);
+        assert_eq!(Point(u32::MAX).project_through_offset(1), None);
+        assert!(matches!(
+            From(0).project_through_offset(100),
+            Some(From(100))
+        ));
+    }
+
+    #[test]
+    fn axis_range_kind_tags() {
+        use AxisRange::*;
+
+        assert_eq!(Point(1).kind(), AxisKind::Point);
+        assert_eq!(Span(1, 2).kind(), AxisKind::Span);
+        assert_eq!(From(1).kind(), AxisKind::From);
+        assert_eq!(To(1).kind(), AxisKind::To);
+        assert_eq!(All.kind(), AxisKind::All);
+    }
+
+    #[test]
+    fn region_pattern_axis_ranges_match_conversion_table() {
+        use AxisRange::*;
+
+        assert_eq!(
+            RegionPattern::point(1, 2, 3).axis_ranges(),
+            (Point(2), Point(3))
+        );
+        assert_eq!(
+            RegionPattern::col_interval(1, 4, 5, 6).axis_ranges(),
+            (Span(5, 6), Point(4))
+        );
+        assert_eq!(
+            RegionPattern::row_interval(1, 4, 5, 6).axis_ranges(),
+            (Point(4), Span(5, 6))
+        );
+        assert_eq!(
+            RegionPattern::rect(1, 2, 3, 4, 5).axis_ranges(),
+            (Span(2, 3), Span(4, 5))
+        );
+        assert_eq!(RegionPattern::rows_from(1, 9).axis_ranges(), (From(9), All));
+        assert_eq!(RegionPattern::cols_from(1, 8).axis_ranges(), (All, From(8)));
+        assert_eq!(
+            RegionPattern::whole_row(1, 7).axis_ranges(),
+            (Point(7), All)
+        );
+        assert_eq!(
+            RegionPattern::whole_col(1, 6).axis_ranges(),
+            (All, Point(6))
+        );
+        assert_eq!(RegionPattern::whole_sheet(1).axis_ranges(), (All, All));
     }
 
     #[test]

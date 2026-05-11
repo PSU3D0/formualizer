@@ -4,6 +4,9 @@
 //! FormulaPlane bridge is experimental. They are runtime/planning concepts, not
 //! stable cross-crate common types yet.
 
+#[cfg(test)]
+mod axis_range_proptest;
+
 pub(crate) mod authority;
 pub(crate) mod dependency_summary;
 #[cfg(feature = "formula_plane_diagnostics")]
