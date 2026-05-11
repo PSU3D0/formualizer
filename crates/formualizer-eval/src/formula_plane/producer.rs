@@ -504,28 +504,30 @@ impl DirtyProjectionRule {
             return ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result_region]));
         }
 
-        let Some((changed_rows, changed_cols)) = query_extents(changed) else {
-            return ProjectionResult::Unsupported(
-                ProjectionFallbackReason::UnsupportedChangedRegion,
-            );
-        };
-        let Some((result_rows, result_cols)) = bounded_extents(result_region) else {
-            return ProjectionResult::Unsupported(ProjectionFallbackReason::UnboundedResultRegion);
-        };
+        let (changed_rows, changed_cols) = changed.axis_ranges();
+        let (result_rows, result_cols) = result_region.axis_ranges();
+        let result_is_bounded = bounded_extents(result_region).is_some();
         let sheet_id = result_region.sheet_id();
 
         match self {
             Self::AffineCell { row, col } => {
-                let Some(dirty_rows) = row.project_changed_axis(changed_rows, result_rows) else {
-                    return ProjectionResult::NoIntersection;
+                let dirty_rows = match row.project_changed_axis(changed_rows, result_rows) {
+                    Ok(Some(dirty_rows)) => dirty_rows,
+                    Ok(None) => return ProjectionResult::NoIntersection,
+                    Err(reason) => return ProjectionResult::Unsupported(reason),
                 };
-                let Some(dirty_cols) = col.project_changed_axis(changed_cols, result_cols) else {
-                    return ProjectionResult::NoIntersection;
+                let dirty_cols = match col.project_changed_axis(changed_cols, result_cols) {
+                    Ok(Some(dirty_cols)) => dirty_cols,
+                    Ok(None) => return ProjectionResult::NoIntersection,
+                    Err(reason) => return ProjectionResult::Unsupported(reason),
                 };
-                match region_from_bounded_extents(sheet_id, dirty_rows, dirty_cols) {
-                    Ok(region) => ProjectionResult::Exact(dirty_domain_from_region(region)),
-                    Err(reason) => ProjectionResult::Unsupported(reason),
-                }
+                projection_result_from_axis_ranges(
+                    sheet_id,
+                    dirty_rows,
+                    dirty_cols,
+                    result_region,
+                    result_is_bounded,
+                )
             }
             Self::AffineRange {
                 row_start,
@@ -538,20 +540,27 @@ impl DirtyProjectionRule {
                         ProjectionFallbackReason::UnsupportedAxis,
                     );
                 }
-                let Some(dirty_rows) =
-                    project_changed_range_axis(row_start, row_end, changed_rows, result_rows)
-                else {
-                    return ProjectionResult::NoIntersection;
-                };
-                let Some(dirty_cols) =
-                    project_changed_range_axis(col_start, col_end, changed_cols, result_cols)
-                else {
-                    return ProjectionResult::NoIntersection;
-                };
-                match region_from_bounded_extents(sheet_id, dirty_rows, dirty_cols) {
-                    Ok(region) => ProjectionResult::Exact(dirty_domain_from_region(region)),
-                    Err(reason) => ProjectionResult::Unsupported(reason),
-                }
+                let dirty_rows =
+                    match project_changed_range_axis(row_start, row_end, changed_rows, result_rows)
+                    {
+                        Ok(Some(dirty_rows)) => dirty_rows,
+                        Ok(None) => return ProjectionResult::NoIntersection,
+                        Err(reason) => return ProjectionResult::Unsupported(reason),
+                    };
+                let dirty_cols =
+                    match project_changed_range_axis(col_start, col_end, changed_cols, result_cols)
+                    {
+                        Ok(Some(dirty_cols)) => dirty_cols,
+                        Ok(None) => return ProjectionResult::NoIntersection,
+                        Err(reason) => return ProjectionResult::Unsupported(reason),
+                    };
+                projection_result_from_axis_ranges(
+                    sheet_id,
+                    dirty_rows,
+                    dirty_cols,
+                    result_region,
+                    result_is_bounded,
+                )
             }
             Self::WholeColumnRange { .. } | Self::WholeResult => unreachable!("handled above"),
         }
@@ -603,32 +612,20 @@ impl AxisProjection {
     fn project_changed_axis(
         self,
         changed: AxisRange,
-        result: BoundedRange,
-    ) -> Option<BoundedRange> {
+        result: AxisRange,
+    ) -> Result<Option<AxisRange>, ProjectionFallbackReason> {
         match self {
             Self::Relative { offset } => {
-                let dirty = match changed {
-                    AxisRange::All => result,
-                    AxisRange::Point(point) => BoundedRange::new(
-                        add_offset(point, -offset).ok()?,
-                        add_offset(point, -offset).ok()?,
-                    ),
-                    AxisRange::Span(start, end) => BoundedRange::new(
-                        add_offset(start, -offset).ok()?,
-                        add_offset(end, -offset).ok()?,
-                    ),
-                    AxisRange::From(start) => {
-                        let projected_start = lower_bound_after_subtracting_offset(start, offset);
-                        BoundedRange::new(projected_start, u32::MAX)
-                    }
-                    AxisRange::To(end) => {
-                        let projected_end = upper_bound_after_subtracting_offset(end, offset)?;
-                        BoundedRange::new(0, projected_end)
-                    }
+                let projection_offset = offset
+                    .checked_neg()
+                    .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
+                let Some(dirty) = project_axis_range_through_offset(changed, projection_offset)
+                else {
+                    return Ok(None);
                 };
-                dirty.intersect(result)
+                Ok(intersect_axis_ranges(dirty, result))
             }
-            Self::Absolute { index } => changed.contains(index).then_some(result),
+            Self::Absolute { index } => Ok(changed.contains(index).then_some(result)),
         }
     }
 }
@@ -657,8 +654,8 @@ fn project_changed_range_axis(
     start: AxisProjection,
     end: AxisProjection,
     changed: AxisRange,
-    result: BoundedRange,
-) -> Option<BoundedRange> {
+    result: AxisRange,
+) -> Result<Option<AxisRange>, ProjectionFallbackReason> {
     match (start, end) {
         (
             AxisProjection::Relative {
@@ -669,44 +666,36 @@ fn project_changed_range_axis(
             let min_offset = start_offset.min(end_offset);
             let max_offset = start_offset.max(end_offset);
             let dirty = match changed {
-                AxisRange::All => result,
-                AxisRange::Point(point) => BoundedRange::new(
-                    add_offset(point, -max_offset).ok()?,
-                    add_offset(point, -min_offset).ok()?,
-                ),
-                AxisRange::Span(start, end) => BoundedRange::new(
-                    add_offset(start, -max_offset).ok()?,
-                    add_offset(end, -min_offset).ok()?,
-                ),
+                AxisRange::All => Some(AxisRange::All),
+                AxisRange::Point(point) => {
+                    project_axis_interval_through_offsets(point, point, max_offset, min_offset)?
+                }
+                AxisRange::Span(start, end) => {
+                    project_axis_interval_through_offsets(start, end, max_offset, min_offset)?
+                }
                 AxisRange::From(start) => {
-                    let projected_start = lower_bound_after_subtracting_offset(start, max_offset);
-                    BoundedRange::new(projected_start, u32::MAX)
+                    let projection_offset = max_offset
+                        .checked_neg()
+                        .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
+                    project_axis_range_through_offset(AxisRange::From(start), projection_offset)
                 }
                 AxisRange::To(end) => {
-                    let projected_end = upper_bound_after_subtracting_offset(end, min_offset)?;
-                    BoundedRange::new(0, projected_end)
+                    let projection_offset = min_offset
+                        .checked_neg()
+                        .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
+                    project_axis_range_through_offset(AxisRange::To(end), projection_offset)
                 }
             };
-            dirty.intersect(result)
+            Ok(dirty.and_then(|dirty| intersect_axis_ranges(dirty, result)))
         }
         (
             AxisProjection::Absolute { index: start_index },
             AxisProjection::Absolute { index: end_index },
         ) => {
-            let source = BoundedRange::new(start_index.min(end_index), start_index.max(end_index));
-            match changed {
-                AxisRange::All => Some(result),
-                AxisRange::Point(point) => source
-                    .intersect(BoundedRange::new(point, point))
-                    .map(|_| result),
-                AxisRange::Span(start, end) => source
-                    .intersect(BoundedRange::new(start, end))
-                    .map(|_| result),
-                AxisRange::From(start) => (source.high >= start).then_some(result),
-                AxisRange::To(end) => (source.low <= end).then_some(result),
-            }
+            let source = AxisRange::Span(start_index.min(end_index), start_index.max(end_index));
+            Ok(source.intersects(changed).then_some(result))
         }
-        _ => None,
+        _ => Ok(None),
     }
 }
 
@@ -986,8 +975,61 @@ fn bounded_extents(pattern: RegionPattern) -> Option<(BoundedRange, BoundedRange
     ))
 }
 
-fn query_extents(pattern: RegionPattern) -> Option<(AxisRange, AxisRange)> {
-    Some(pattern.axis_ranges())
+fn projection_result_from_axis_ranges(
+    sheet_id: SheetId,
+    rows: AxisRange,
+    cols: AxisRange,
+    result_region: RegionPattern,
+    result_is_bounded: bool,
+) -> ProjectionResult {
+    if !result_is_bounded && rows.is_bounded() && cols.is_bounded() {
+        return ProjectionResult::Unsupported(ProjectionFallbackReason::UnboundedResultRegion);
+    }
+
+    match region_from_axis_ranges(sheet_id, rows, cols) {
+        Ok(region) => ProjectionResult::Exact(dirty_domain_from_region(region)),
+        Err(reason) => ProjectionResult::Conservative {
+            dirty: ProducerDirtyDomain::Regions(vec![result_region]),
+            reason,
+        },
+    }
+}
+
+fn region_from_axis_ranges(
+    sheet_id: SheetId,
+    rows: AxisRange,
+    cols: AxisRange,
+) -> Result<RegionPattern, ProjectionFallbackReason> {
+    Ok(match (rows, cols) {
+        (AxisRange::Point(row), AxisRange::Point(col)) => RegionPattern::point(sheet_id, row, col),
+        (AxisRange::Span(row_start, row_end), AxisRange::Point(col)) => {
+            RegionPattern::col_interval(sheet_id, col, row_start, row_end)
+        }
+        (AxisRange::Point(row), AxisRange::Span(col_start, col_end)) => {
+            RegionPattern::row_interval(sheet_id, row, col_start, col_end)
+        }
+        (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) => {
+            RegionPattern::rect(sheet_id, row_start, row_end, col_start, col_end)
+        }
+        (AxisRange::From(row_start), AxisRange::All) => {
+            RegionPattern::rows_from(sheet_id, row_start)
+        }
+        (AxisRange::All, AxisRange::From(col_start)) => {
+            RegionPattern::cols_from(sheet_id, col_start)
+        }
+        (AxisRange::Point(row), AxisRange::All) => RegionPattern::whole_row(sheet_id, row),
+        (AxisRange::All, AxisRange::Point(col)) => RegionPattern::whole_col(sheet_id, col),
+        (AxisRange::All, AxisRange::All) => RegionPattern::whole_sheet(sheet_id),
+        (rows, cols) => {
+            let (row_low, row_high) = rows.query_bounds();
+            let (col_low, col_high) = cols.query_bounds();
+            return region_from_bounded_extents(
+                sheet_id,
+                BoundedRange::new(row_low, row_high),
+                BoundedRange::new(col_low, col_high),
+            );
+        }
+    })
 }
 
 fn region_from_bounded_extents(
@@ -1018,23 +1060,122 @@ fn add_offset(value: u32, offset: i64) -> Result<u32, ProjectionFallbackReason> 
     u32::try_from(shifted).map_err(|_| ProjectionFallbackReason::CoordinateOverflow)
 }
 
-fn lower_bound_after_subtracting_offset(value: u32, offset: i64) -> u32 {
-    if offset >= 0 {
-        let offset = u32::try_from(offset).unwrap_or(u32::MAX);
-        value.saturating_sub(offset)
-    } else {
-        let magnitude = u32::try_from(offset.unsigned_abs()).unwrap_or(u32::MAX);
-        value.saturating_add(magnitude)
+fn project_axis_range_through_offset(range: AxisRange, offset: i64) -> Option<AxisRange> {
+    match range {
+        AxisRange::Point(point) => checked_shift_to_u32(point, offset).map(AxisRange::Point),
+        AxisRange::Span(start, end) => axis_range_from_shifted_bounds(
+            shifted_coord_for_clip(start, offset),
+            shifted_coord_for_clip(end, offset),
+        ),
+        AxisRange::From(start) => {
+            let projected_start = shifted_coord_for_clip(start, offset);
+            if projected_start < 0 {
+                Some(AxisRange::All)
+            } else {
+                Some(normalize_axis_range(AxisRange::From(clamp_i64_to_u32(
+                    projected_start,
+                ))))
+            }
+        }
+        AxisRange::To(end) => {
+            let projected_end = shifted_coord_for_clip(end, offset);
+            if projected_end < 0 {
+                None
+            } else {
+                Some(normalize_axis_range(AxisRange::To(clamp_i64_to_u32(
+                    projected_end,
+                ))))
+            }
+        }
+        AxisRange::All => Some(AxisRange::All),
     }
 }
 
-fn upper_bound_after_subtracting_offset(value: u32, offset: i64) -> Option<u32> {
-    if offset >= 0 {
-        let offset = u32::try_from(offset).unwrap_or(u32::MAX);
-        value.checked_sub(offset)
+fn project_axis_interval_through_offsets(
+    start: u32,
+    end: u32,
+    low_source_offset: i64,
+    high_source_offset: i64,
+) -> Result<Option<AxisRange>, ProjectionFallbackReason> {
+    let low_projection_offset = low_source_offset
+        .checked_neg()
+        .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
+    let high_projection_offset = high_source_offset
+        .checked_neg()
+        .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
+    Ok(axis_range_from_shifted_bounds(
+        shifted_coord_for_clip(start, low_projection_offset),
+        shifted_coord_for_clip(end, high_projection_offset),
+    ))
+}
+
+fn intersect_axis_ranges(a: AxisRange, b: AxisRange) -> Option<AxisRange> {
+    match (a, b) {
+        (AxisRange::All, range) | (range, AxisRange::All) => Some(normalize_axis_range(range)),
+        (AxisRange::From(left), AxisRange::From(right)) => {
+            Some(normalize_axis_range(AxisRange::From(left.max(right))))
+        }
+        (AxisRange::To(left), AxisRange::To(right)) => {
+            Some(normalize_axis_range(AxisRange::To(left.min(right))))
+        }
+        (left, right) => {
+            let (left_low, left_high) = left.query_bounds();
+            let (right_low, right_high) = right.query_bounds();
+            let low = left_low.max(right_low);
+            let high = left_high.min(right_high);
+            (low <= high).then(|| axis_range_from_u32_bounds(low, high))
+        }
+    }
+}
+
+fn axis_range_from_shifted_bounds(low: i64, high: i64) -> Option<AxisRange> {
+    if low > high || high < 0 || low > i64::from(u32::MAX) {
+        None
     } else {
-        let magnitude = u32::try_from(offset.unsigned_abs()).unwrap_or(u32::MAX);
-        Some(value.saturating_add(magnitude))
+        Some(axis_range_from_u32_bounds(
+            clamp_i64_to_u32(low),
+            clamp_i64_to_u32(high),
+        ))
+    }
+}
+
+fn axis_range_from_u32_bounds(low: u32, high: u32) -> AxisRange {
+    debug_assert!(low <= high);
+    normalize_axis_range(if low == high {
+        AxisRange::Point(low)
+    } else if low == 0 && high == u32::MAX {
+        AxisRange::All
+    } else if high == u32::MAX {
+        AxisRange::From(low)
+    } else if low == 0 {
+        AxisRange::To(high)
+    } else {
+        AxisRange::Span(low, high)
+    })
+}
+
+fn normalize_axis_range(range: AxisRange) -> AxisRange {
+    match range {
+        AxisRange::Span(start, end) if start == end => AxisRange::Point(start),
+        AxisRange::From(0) | AxisRange::To(u32::MAX) => AxisRange::All,
+        other => other,
+    }
+}
+
+fn shifted_coord_for_clip(value: u32, offset: i64) -> i64 {
+    i64::from(value).checked_add(offset).unwrap_or(i64::MAX)
+}
+
+fn checked_shift_to_u32(value: u32, offset: i64) -> Option<u32> {
+    let shifted = i64::from(value).checked_add(offset)?;
+    u32::try_from(shifted).ok()
+}
+
+fn clamp_i64_to_u32(value: i64) -> u32 {
+    if value < 0 {
+        0
+    } else {
+        u32::try_from(value).unwrap_or(u32::MAX)
     }
 }
 
@@ -1653,6 +1794,125 @@ mod tests {
         assert_eq!(closure.work.len(), 1);
         assert_eq!(closure.changed_result_regions, vec![result]);
         assert_eq!(closure.stats.duplicate_changed_regions_skipped, 1);
+    }
+
+    #[test]
+    fn dirty_closure_propagates_from_changed_region() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: -10 },
+            col: AxisProjection::Relative { offset: 0 },
+        };
+        let result = RegionPattern::whole_sheet(1);
+        index.insert_read(span(1), RegionPattern::rows_from(0, 20), result, projection);
+
+        let closure =
+            compute_dirty_closure(&index, [RegionPattern::rows_from(0, 20)], |producer| {
+                (producer == span(1)).then_some(result)
+            });
+
+        let expected = RegionPattern::rows_from(1, 30);
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 1);
+        assert_eq!(
+            closure.work[0].dirty,
+            ProducerDirtyDomain::Regions(vec![expected])
+        );
+        assert_eq!(closure.changed_result_regions, vec![expected]);
+    }
+
+    #[test]
+    fn from_projection_no_overflow_in_dirty_closure() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: -100 },
+            col: AxisProjection::Relative { offset: 0 },
+        };
+        let result = RegionPattern::whole_sheet(1);
+        let changed = RegionPattern::rows_from(0, u32::MAX - 10);
+        index.insert_read(span(1), changed, result, projection);
+
+        let closure = compute_dirty_closure(&index, [changed], |producer| {
+            (producer == span(1)).then_some(result)
+        });
+
+        let expected = RegionPattern::rows_from(1, u32::MAX);
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 1);
+        assert_eq!(
+            closure.work[0].dirty,
+            ProducerDirtyDomain::Regions(vec![expected])
+        );
+        assert_eq!(closure.changed_result_regions, vec![expected]);
+    }
+
+    #[test]
+    fn compute_dirty_closure_handles_unbounded_changed() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let first_projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: -3 },
+            col: AxisProjection::Relative { offset: 0 },
+        };
+        let second_projection = DirtyProjectionRule::AffineCell {
+            row: AxisProjection::Relative { offset: 0 },
+            col: AxisProjection::Relative { offset: 0 },
+        };
+        let first_result = RegionPattern::whole_sheet(1);
+        let second_result = RegionPattern::whole_sheet(2);
+        index.insert_read(
+            span(1),
+            RegionPattern::rows_from(0, 12),
+            first_result,
+            first_projection,
+        );
+        index.insert_read(
+            span(2),
+            RegionPattern::rows_from(1, 15),
+            second_result,
+            second_projection,
+        );
+
+        let closure =
+            compute_dirty_closure(&index, [RegionPattern::rows_from(0, 12)], |producer| {
+                match producer {
+                    producer if producer == span(1) => Some(first_result),
+                    producer if producer == span(2) => Some(second_result),
+                    _ => None,
+                }
+            });
+
+        assert_eq!(closure.fallbacks, Vec::new());
+        assert_eq!(closure.work.len(), 2);
+        assert_eq!(
+            closure.work[0].dirty,
+            ProducerDirtyDomain::Regions(vec![RegionPattern::rows_from(1, 15)])
+        );
+        assert_eq!(
+            closure.work[1].dirty,
+            ProducerDirtyDomain::Regions(vec![RegionPattern::rows_from(2, 15)])
+        );
+        assert_eq!(
+            closure.changed_result_regions,
+            vec![
+                RegionPattern::rows_from(1, 15),
+                RegionPattern::rows_from(2, 15)
+            ]
+        );
+    }
+
+    #[test]
+    fn dirty_projection_rule_handles_to_axis_range() {
+        let projection = AxisProjection::Relative { offset: -4 };
+        let projected = projection
+            .project_changed_axis(AxisRange::To(10), AxisRange::All)
+            .unwrap();
+        assert_eq!(projected, Some(AxisRange::To(14)));
+
+        let projection = AxisProjection::Relative { offset: 4 };
+        let projected = projection
+            .project_changed_axis(AxisRange::To(3), AxisRange::All)
+            .unwrap();
+        assert_eq!(projected, None);
     }
 
     #[test]

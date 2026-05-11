@@ -17,6 +17,23 @@ fn any_axis_range() -> impl Strategy<Value = AxisRange> {
     ]
 }
 
+fn axis_range_projection_stays_in_bounds(range: AxisRange, offset: i64) -> bool {
+    fn coord_stays_in_bounds(coord: u32, offset: i64) -> bool {
+        let shifted = i128::from(coord) + i128::from(offset);
+        (0..=i128::from(u32::MAX)).contains(&shifted)
+    }
+
+    match range {
+        AxisRange::Point(point) => coord_stays_in_bounds(point, offset),
+        AxisRange::Span(start, end) => {
+            coord_stays_in_bounds(start, offset) && coord_stays_in_bounds(end, offset)
+        }
+        AxisRange::From(start) => coord_stays_in_bounds(start, offset),
+        AxisRange::To(end) => coord_stays_in_bounds(end, offset),
+        AxisRange::All => true,
+    }
+}
+
 fn any_currently_constructible_region() -> impl Strategy<Value = RegionPattern> {
     let small = 0u32..20;
     prop_oneof![
@@ -97,6 +114,36 @@ proptest! {
         let r = AxisRange::To(start);
         let _ = r.project_through_offset(offset);
         let r = AxisRange::Span(start, start.saturating_add(100));
+        let _ = r.project_through_offset(offset);
+    }
+
+    #[test]
+    fn projection_composition_is_offset_sum(
+        r in any_axis_range(),
+        o1 in -1_000_000i64..1_000_000,
+        o2 in -1_000_000i64..1_000_000,
+    ) {
+        let Some(sum) = o1.checked_add(o2) else {
+            return Ok(());
+        };
+        prop_assume!(axis_range_projection_stays_in_bounds(r, o1));
+        prop_assume!(axis_range_projection_stays_in_bounds(r, sum));
+
+        let first = r.project_through_offset(o1);
+        if let Some(first_range) = first {
+            prop_assume!(axis_range_projection_stays_in_bounds(first_range, o2));
+        }
+
+        let composed = first.and_then(|first_range| first_range.project_through_offset(o2));
+        let direct = r.project_through_offset(sum);
+        prop_assert_eq!(composed, direct);
+    }
+
+    #[test]
+    fn projection_no_panic_for_any_axis_range_and_bounded_offset(
+        r in any_axis_range(),
+        offset in -2_147_483_648i64..=2_147_483_647i64,
+    ) {
         let _ = r.project_through_offset(offset);
     }
 
