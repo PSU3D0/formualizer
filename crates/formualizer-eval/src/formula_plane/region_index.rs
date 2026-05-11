@@ -558,41 +558,53 @@ impl<T: Clone> SheetRegionIndex<T> {
     }
 
     fn index_entry(&mut self, id: usize, region: RegionPattern) {
-        match region {
-            RegionPattern::Point(key) => {
-                self.points.entry(key).or_default().push(id);
+        let sheet_id = region.sheet_id();
+        let (rows, cols) = region.axis_ranges();
+        match (rows.kind(), cols.kind()) {
+            (AxisKind::Point, AxisKind::Point) => {
+                let (AxisRange::Point(row), AxisRange::Point(col)) = (rows, cols) else {
+                    unreachable!()
+                };
+                self.points
+                    .entry(RegionKey::new(sheet_id, row, col))
+                    .or_default()
+                    .push(id);
             }
-            RegionPattern::ColInterval {
-                sheet_id,
-                col,
-                row_start,
-                row_end,
-            } => {
+            (AxisKind::Span, AxisKind::Point) => {
+                let (AxisRange::Span(row_start, row_end), AxisRange::Point(col)) = (rows, cols)
+                else {
+                    unreachable!()
+                };
                 self.col_intervals
                     .entry((sheet_id, col))
                     .or_default()
                     .insert(row_start, row_end, id);
             }
-            RegionPattern::RowInterval {
-                sheet_id,
-                row,
-                col_start,
-                col_end,
-            } => {
+            (AxisKind::Point, AxisKind::Span) => {
+                let (AxisRange::Point(row), AxisRange::Span(col_start, col_end)) = (rows, cols)
+                else {
+                    unreachable!()
+                };
                 self.row_intervals
                     .entry((sheet_id, row))
                     .or_default()
                     .insert(col_start, col_end, id);
             }
-            RegionPattern::Rect(rect) => {
+            (AxisKind::Span, AxisKind::Span) => {
+                let (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) =
+                    (rows, cols)
+                else {
+                    unreachable!()
+                };
+                let rect = RectRegion::new(sheet_id, row_start, row_end, col_start, col_end);
                 for bucket in self.rect_buckets_for_rect(rect) {
                     self.rect_buckets.entry(bucket).or_default().push(id);
                 }
             }
-            RegionPattern::RowsFrom {
-                sheet_id,
-                row_start,
-            } => {
+            (AxisKind::From, AxisKind::All) => {
+                let (AxisRange::From(row_start), AxisRange::All) = (rows, cols) else {
+                    unreachable!()
+                };
                 self.rows_from
                     .entry(sheet_id)
                     .or_default()
@@ -600,10 +612,10 @@ impl<T: Clone> SheetRegionIndex<T> {
                     .or_default()
                     .push(id);
             }
-            RegionPattern::ColsFrom {
-                sheet_id,
-                col_start,
-            } => {
+            (AxisKind::All, AxisKind::From) => {
+                let (AxisRange::All, AxisRange::From(col_start)) = (rows, cols) else {
+                    unreachable!()
+                };
                 self.cols_from
                     .entry(sheet_id)
                     .or_default()
@@ -611,121 +623,499 @@ impl<T: Clone> SheetRegionIndex<T> {
                     .or_default()
                     .push(id);
             }
-            RegionPattern::WholeRow { sheet_id, row } => {
+            (AxisKind::Point, AxisKind::All) => {
+                let (AxisRange::Point(row), AxisRange::All) = (rows, cols) else {
+                    unreachable!()
+                };
                 self.whole_rows.entry((sheet_id, row)).or_default().push(id);
             }
-            RegionPattern::WholeCol { sheet_id, col } => {
+            (AxisKind::All, AxisKind::Point) => {
+                let (AxisRange::All, AxisRange::Point(col)) = (rows, cols) else {
+                    unreachable!()
+                };
                 self.whole_cols.entry((sheet_id, col)).or_default().push(id);
             }
-            RegionPattern::WholeSheet { sheet_id } => {
+            (AxisKind::All, AxisKind::All) => {
+                let (AxisRange::All, AxisRange::All) = (rows, cols) else {
+                    unreachable!()
+                };
                 self.whole_sheets.entry(sheet_id).or_default().push(id);
             }
+            _ => panic!(
+                "unsupported SheetRegionIndex insertion kind pair in Phase 2: ({:?}, {:?})",
+                rows.kind(),
+                cols.kind()
+            ),
         }
     }
 
     fn collect_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
-        self.collect_point_candidates(query, out);
-        self.collect_col_interval_candidates(query, out);
-        self.collect_row_interval_candidates(query, out);
-        self.collect_rect_candidates(query, out);
-        self.collect_tail_axis_candidates(query, out);
-        self.collect_whole_axis_candidates(query, out);
-    }
-
-    fn collect_point_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
         let sheet_id = query.sheet_id();
-        for (key, ids) in &self.points {
-            if key.sheet_id == sheet_id && query.contains_key(*key) {
-                out.extend(ids.iter().copied());
+        let (rows, cols) = query.axis_ranges();
+        match (rows.kind(), cols.kind()) {
+            (AxisKind::Point, AxisKind::Point) => {
+                let (AxisRange::Point(row), AxisRange::Point(col)) = (rows, cols) else {
+                    unreachable!()
+                };
+                if let Some(ids) = self.points.get(&RegionKey::new(sheet_id, row, col)) {
+                    Self::extend_ids(out, ids);
+                }
+                self.collect_col_interval_exact_col(sheet_id, col, row, row, out);
+                self.collect_row_interval_exact_row(sheet_id, row, col, col, out);
+                self.collect_rect_bucket_key(
+                    sheet_id,
+                    self.row_bucket(row),
+                    self.col_bucket(col),
+                    out,
+                );
+                self.collect_rows_from_through(sheet_id, row, out);
+                self.collect_cols_from_through(sheet_id, col, out);
+                self.collect_whole_row_exact(sheet_id, row, out);
+                self.collect_whole_col_exact(sheet_id, col, out);
+                self.collect_whole_sheet(sheet_id, out);
             }
-        }
-    }
-
-    fn collect_col_interval_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
-        let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_ranges();
-        let (row_start, row_end) = row_extent.query_bounds();
-        for (&(entry_sheet, col), tree) in &self.col_intervals {
-            if entry_sheet != sheet_id || !col_extent.contains(col) {
-                continue;
+            (AxisKind::Span, AxisKind::Point) => {
+                let (AxisRange::Span(row_start, row_end), AxisRange::Point(col)) = (rows, cols)
+                else {
+                    unreachable!()
+                };
+                self.collect_points_matching(
+                    sheet_id,
+                    |key| row_start <= key.row && key.row <= row_end && key.col == col,
+                    out,
+                );
+                self.collect_col_interval_exact_col(sheet_id, col, row_start, row_end, out);
+                self.collect_row_intervals_matching(
+                    sheet_id,
+                    |row| row_start <= row && row <= row_end,
+                    col,
+                    col,
+                    out,
+                );
+                self.collect_rect_bucket_row_span_point_col(sheet_id, row_start, row_end, col, out);
+                self.collect_rows_from_through(sheet_id, row_end, out);
+                self.collect_cols_from_through(sheet_id, col, out);
+                self.collect_whole_rows_matching(
+                    sheet_id,
+                    |row| row_start <= row && row <= row_end,
+                    out,
+                );
+                self.collect_whole_col_exact(sheet_id, col, out);
+                self.collect_whole_sheet(sheet_id, out);
             }
-            for (_low, _high, values) in tree.query(row_start, row_end) {
-                out.extend(values.into_iter());
+            (AxisKind::Point, AxisKind::Span) => {
+                let (AxisRange::Point(row), AxisRange::Span(col_start, col_end)) = (rows, cols)
+                else {
+                    unreachable!()
+                };
+                self.collect_points_matching(
+                    sheet_id,
+                    |key| key.row == row && col_start <= key.col && key.col <= col_end,
+                    out,
+                );
+                self.collect_col_intervals_matching(
+                    sheet_id,
+                    |col| col_start <= col && col <= col_end,
+                    row,
+                    row,
+                    out,
+                );
+                self.collect_row_interval_exact_row(sheet_id, row, col_start, col_end, out);
+                self.collect_rect_bucket_point_row_col_span(sheet_id, row, col_start, col_end, out);
+                self.collect_rows_from_through(sheet_id, row, out);
+                self.collect_cols_from_through(sheet_id, col_end, out);
+                self.collect_whole_row_exact(sheet_id, row, out);
+                self.collect_whole_cols_matching(
+                    sheet_id,
+                    |col| col_start <= col && col <= col_end,
+                    out,
+                );
+                self.collect_whole_sheet(sheet_id, out);
             }
-        }
-    }
-
-    fn collect_row_interval_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
-        let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_ranges();
-        let (col_start, col_end) = col_extent.query_bounds();
-        for (&(entry_sheet, row), tree) in &self.row_intervals {
-            if entry_sheet != sheet_id || !row_extent.contains(row) {
-                continue;
-            }
-            for (_low, _high, values) in tree.query(col_start, col_end) {
-                out.extend(values.into_iter());
-            }
-        }
-    }
-
-    fn collect_rect_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
-        let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_ranges();
-        match (row_extent, col_extent) {
-            (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) => {
+            (AxisKind::Span, AxisKind::Span) => {
+                let (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) =
+                    (rows, cols)
+                else {
+                    unreachable!()
+                };
+                self.collect_points_matching(
+                    sheet_id,
+                    |key| {
+                        row_start <= key.row
+                            && key.row <= row_end
+                            && col_start <= key.col
+                            && key.col <= col_end
+                    },
+                    out,
+                );
+                self.collect_col_intervals_matching(
+                    sheet_id,
+                    |col| col_start <= col && col <= col_end,
+                    row_start,
+                    row_end,
+                    out,
+                );
+                self.collect_row_intervals_matching(
+                    sheet_id,
+                    |row| row_start <= row && row <= row_end,
+                    col_start,
+                    col_end,
+                    out,
+                );
                 let rect = RectRegion::new(sheet_id, row_start, row_end, col_start, col_end);
                 for bucket in self.rect_buckets_for_rect(rect) {
                     if let Some(ids) = self.rect_buckets.get(&bucket) {
-                        out.extend(ids.iter().copied());
+                        Self::extend_ids(out, ids);
                     }
                 }
+                self.collect_rows_from_through(sheet_id, row_end, out);
+                self.collect_cols_from_through(sheet_id, col_end, out);
+                self.collect_whole_rows_matching(
+                    sheet_id,
+                    |row| row_start <= row && row <= row_end,
+                    out,
+                );
+                self.collect_whole_cols_matching(
+                    sheet_id,
+                    |col| col_start <= col && col <= col_end,
+                    out,
+                );
+                self.collect_whole_sheet(sheet_id, out);
             }
-            _ => {
-                for (&(entry_sheet, _row_bucket, _col_bucket), ids) in &self.rect_buckets {
-                    if entry_sheet == sheet_id {
-                        out.extend(ids.iter().copied());
-                    }
-                }
+            (AxisKind::From, AxisKind::All) => {
+                let (AxisRange::From(row_start), AxisRange::All) = (rows, cols) else {
+                    unreachable!()
+                };
+                self.collect_points_matching(sheet_id, |key| key.row >= row_start, out);
+                self.collect_col_intervals_matching(sheet_id, |_| true, row_start, u32::MAX, out);
+                self.collect_row_intervals_matching(
+                    sheet_id,
+                    |row| row >= row_start,
+                    0,
+                    u32::MAX,
+                    out,
+                );
+                let start_bucket = self.row_bucket(row_start);
+                self.collect_rect_buckets_matching(
+                    sheet_id,
+                    |row_bucket, _col_bucket| row_bucket >= start_bucket,
+                    out,
+                );
+                self.collect_rows_from_through(sheet_id, u32::MAX, out);
+                self.collect_cols_from_through(sheet_id, u32::MAX, out);
+                self.collect_whole_rows_matching(sheet_id, |row| row >= row_start, out);
+                self.collect_whole_cols_matching(sheet_id, |_| true, out);
+                self.collect_whole_sheet(sheet_id, out);
+            }
+            (AxisKind::All, AxisKind::From) => {
+                let (AxisRange::All, AxisRange::From(col_start)) = (rows, cols) else {
+                    unreachable!()
+                };
+                self.collect_points_matching(sheet_id, |key| key.col >= col_start, out);
+                self.collect_col_intervals_matching(
+                    sheet_id,
+                    |col| col >= col_start,
+                    0,
+                    u32::MAX,
+                    out,
+                );
+                self.collect_row_intervals_matching(sheet_id, |_| true, col_start, u32::MAX, out);
+                let start_bucket = self.col_bucket(col_start);
+                self.collect_rect_buckets_matching(
+                    sheet_id,
+                    |_row_bucket, col_bucket| col_bucket >= start_bucket,
+                    out,
+                );
+                self.collect_rows_from_through(sheet_id, u32::MAX, out);
+                self.collect_cols_from_through(sheet_id, u32::MAX, out);
+                self.collect_whole_rows_matching(sheet_id, |_| true, out);
+                self.collect_whole_cols_matching(sheet_id, |col| col >= col_start, out);
+                self.collect_whole_sheet(sheet_id, out);
+            }
+            (AxisKind::Point, AxisKind::All) => {
+                let (AxisRange::Point(row), AxisRange::All) = (rows, cols) else {
+                    unreachable!()
+                };
+                self.collect_points_matching(sheet_id, |key| key.row == row, out);
+                self.collect_col_intervals_matching(sheet_id, |_| true, row, row, out);
+                self.collect_row_interval_exact_row(sheet_id, row, 0, u32::MAX, out);
+                let row_bucket = self.row_bucket(row);
+                self.collect_rect_buckets_matching(
+                    sheet_id,
+                    |entry_row_bucket, _col_bucket| entry_row_bucket == row_bucket,
+                    out,
+                );
+                self.collect_rows_from_through(sheet_id, row, out);
+                self.collect_cols_from_through(sheet_id, u32::MAX, out);
+                self.collect_whole_row_exact(sheet_id, row, out);
+                self.collect_whole_cols_matching(sheet_id, |_| true, out);
+                self.collect_whole_sheet(sheet_id, out);
+            }
+            (AxisKind::All, AxisKind::Point) => {
+                let (AxisRange::All, AxisRange::Point(col)) = (rows, cols) else {
+                    unreachable!()
+                };
+                self.collect_points_matching(sheet_id, |key| key.col == col, out);
+                self.collect_col_interval_exact_col(sheet_id, col, 0, u32::MAX, out);
+                self.collect_row_intervals_matching(sheet_id, |_| true, col, col, out);
+                let col_bucket = self.col_bucket(col);
+                self.collect_rect_buckets_matching(
+                    sheet_id,
+                    |_row_bucket, entry_col_bucket| entry_col_bucket == col_bucket,
+                    out,
+                );
+                self.collect_rows_from_through(sheet_id, u32::MAX, out);
+                self.collect_cols_from_through(sheet_id, col, out);
+                self.collect_whole_rows_matching(sheet_id, |_| true, out);
+                self.collect_whole_col_exact(sheet_id, col, out);
+                self.collect_whole_sheet(sheet_id, out);
+            }
+            (AxisKind::All, AxisKind::All) => {
+                let (AxisRange::All, AxisRange::All) = (rows, cols) else {
+                    unreachable!()
+                };
+                self.collect_points_matching(sheet_id, |_| true, out);
+                self.collect_col_intervals_matching(sheet_id, |_| true, 0, u32::MAX, out);
+                self.collect_row_intervals_matching(sheet_id, |_| true, 0, u32::MAX, out);
+                self.collect_rect_buckets_matching(sheet_id, |_row_bucket, _col_bucket| true, out);
+                self.collect_rows_from_through(sheet_id, u32::MAX, out);
+                self.collect_cols_from_through(sheet_id, u32::MAX, out);
+                self.collect_whole_rows_matching(sheet_id, |_| true, out);
+                self.collect_whole_cols_matching(sheet_id, |_| true, out);
+                self.collect_whole_sheet(sheet_id, out);
+            }
+            _ => panic!(
+                "unsupported SheetRegionIndex query kind pair in Phase 2: ({:?}, {:?})",
+                rows.kind(),
+                cols.kind()
+            ),
+        }
+    }
+
+    fn extend_ids(out: &mut FxHashSet<usize>, ids: &[usize]) {
+        out.extend(ids.iter().copied());
+    }
+
+    fn extend_tree_query(
+        out: &mut FxHashSet<usize>,
+        tree: &IntervalTree<usize>,
+        low: u32,
+        high: u32,
+    ) {
+        for (_low, _high, values) in tree.query(low, high) {
+            out.extend(values.into_iter());
+        }
+    }
+
+    fn row_bucket(&self, row: u32) -> u32 {
+        row / self.rect_bucket_rows
+    }
+
+    fn col_bucket(&self, col: u32) -> u32 {
+        col / self.rect_bucket_cols
+    }
+
+    fn collect_points_matching<F>(
+        &self,
+        sheet_id: SheetId,
+        matches_key: F,
+        out: &mut FxHashSet<usize>,
+    ) where
+        F: Fn(RegionKey) -> bool,
+    {
+        for (&key, ids) in &self.points {
+            if key.sheet_id == sheet_id && matches_key(key) {
+                Self::extend_ids(out, ids);
             }
         }
     }
 
-    fn collect_tail_axis_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
-        let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_ranges();
+    fn collect_col_interval_exact_col(
+        &self,
+        sheet_id: SheetId,
+        col: u32,
+        row_start: u32,
+        row_end: u32,
+        out: &mut FxHashSet<usize>,
+    ) {
+        if let Some(tree) = self.col_intervals.get(&(sheet_id, col)) {
+            Self::extend_tree_query(out, tree, row_start, row_end);
+        }
+    }
 
+    fn collect_col_intervals_matching<F>(
+        &self,
+        sheet_id: SheetId,
+        matches_col: F,
+        row_start: u32,
+        row_end: u32,
+        out: &mut FxHashSet<usize>,
+    ) where
+        F: Fn(u32) -> bool,
+    {
+        for (&(entry_sheet, col), tree) in &self.col_intervals {
+            if entry_sheet == sheet_id && matches_col(col) {
+                Self::extend_tree_query(out, tree, row_start, row_end);
+            }
+        }
+    }
+
+    fn collect_row_interval_exact_row(
+        &self,
+        sheet_id: SheetId,
+        row: u32,
+        col_start: u32,
+        col_end: u32,
+        out: &mut FxHashSet<usize>,
+    ) {
+        if let Some(tree) = self.row_intervals.get(&(sheet_id, row)) {
+            Self::extend_tree_query(out, tree, col_start, col_end);
+        }
+    }
+
+    fn collect_row_intervals_matching<F>(
+        &self,
+        sheet_id: SheetId,
+        matches_row: F,
+        col_start: u32,
+        col_end: u32,
+        out: &mut FxHashSet<usize>,
+    ) where
+        F: Fn(u32) -> bool,
+    {
+        for (&(entry_sheet, row), tree) in &self.row_intervals {
+            if entry_sheet == sheet_id && matches_row(row) {
+                Self::extend_tree_query(out, tree, col_start, col_end);
+            }
+        }
+    }
+
+    fn collect_rect_bucket_key(
+        &self,
+        sheet_id: SheetId,
+        row_bucket: u32,
+        col_bucket: u32,
+        out: &mut FxHashSet<usize>,
+    ) {
+        if let Some(ids) = self.rect_buckets.get(&(sheet_id, row_bucket, col_bucket)) {
+            Self::extend_ids(out, ids);
+        }
+    }
+
+    fn collect_rect_bucket_row_span_point_col(
+        &self,
+        sheet_id: SheetId,
+        row_start: u32,
+        row_end: u32,
+        col: u32,
+        out: &mut FxHashSet<usize>,
+    ) {
+        let col_bucket = self.col_bucket(col);
+        for row_bucket in self.row_bucket(row_start)..=self.row_bucket(row_end) {
+            self.collect_rect_bucket_key(sheet_id, row_bucket, col_bucket, out);
+        }
+    }
+
+    fn collect_rect_bucket_point_row_col_span(
+        &self,
+        sheet_id: SheetId,
+        row: u32,
+        col_start: u32,
+        col_end: u32,
+        out: &mut FxHashSet<usize>,
+    ) {
+        let row_bucket = self.row_bucket(row);
+        for col_bucket in self.col_bucket(col_start)..=self.col_bucket(col_end) {
+            self.collect_rect_bucket_key(sheet_id, row_bucket, col_bucket, out);
+        }
+    }
+
+    fn collect_rect_buckets_matching<F>(
+        &self,
+        sheet_id: SheetId,
+        matches_bucket: F,
+        out: &mut FxHashSet<usize>,
+    ) where
+        F: Fn(u32, u32) -> bool,
+    {
+        for (&(entry_sheet, row_bucket, col_bucket), ids) in &self.rect_buckets {
+            if entry_sheet == sheet_id && matches_bucket(row_bucket, col_bucket) {
+                Self::extend_ids(out, ids);
+            }
+        }
+    }
+
+    fn collect_rows_from_through(
+        &self,
+        sheet_id: SheetId,
+        row_end: u32,
+        out: &mut FxHashSet<usize>,
+    ) {
         if let Some(rows_from) = self.rows_from.get(&sheet_id) {
-            for (_row_start, ids) in rows_from.range(..=row_extent.query_bounds().1) {
-                out.extend(ids.iter().copied());
-            }
-        }
-
-        if let Some(cols_from) = self.cols_from.get(&sheet_id) {
-            for (_col_start, ids) in cols_from.range(..=col_extent.query_bounds().1) {
-                out.extend(ids.iter().copied());
+            for (_row_start, ids) in rows_from.range(..=row_end) {
+                Self::extend_ids(out, ids);
             }
         }
     }
 
-    fn collect_whole_axis_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
-        let sheet_id = query.sheet_id();
-        let (row_extent, col_extent) = query.axis_ranges();
-
-        if let Some(ids) = self.whole_sheets.get(&sheet_id) {
-            out.extend(ids.iter().copied());
+    fn collect_cols_from_through(
+        &self,
+        sheet_id: SheetId,
+        col_end: u32,
+        out: &mut FxHashSet<usize>,
+    ) {
+        if let Some(cols_from) = self.cols_from.get(&sheet_id) {
+            for (_col_start, ids) in cols_from.range(..=col_end) {
+                Self::extend_ids(out, ids);
+            }
         }
+    }
 
+    fn collect_whole_row_exact(&self, sheet_id: SheetId, row: u32, out: &mut FxHashSet<usize>) {
+        if let Some(ids) = self.whole_rows.get(&(sheet_id, row)) {
+            Self::extend_ids(out, ids);
+        }
+    }
+
+    fn collect_whole_col_exact(&self, sheet_id: SheetId, col: u32, out: &mut FxHashSet<usize>) {
+        if let Some(ids) = self.whole_cols.get(&(sheet_id, col)) {
+            Self::extend_ids(out, ids);
+        }
+    }
+
+    fn collect_whole_rows_matching<F>(
+        &self,
+        sheet_id: SheetId,
+        matches_row: F,
+        out: &mut FxHashSet<usize>,
+    ) where
+        F: Fn(u32) -> bool,
+    {
         for (&(entry_sheet, row), ids) in &self.whole_rows {
-            if entry_sheet == sheet_id && row_extent.contains(row) {
-                out.extend(ids.iter().copied());
+            if entry_sheet == sheet_id && matches_row(row) {
+                Self::extend_ids(out, ids);
             }
         }
+    }
 
+    fn collect_whole_cols_matching<F>(
+        &self,
+        sheet_id: SheetId,
+        matches_col: F,
+        out: &mut FxHashSet<usize>,
+    ) where
+        F: Fn(u32) -> bool,
+    {
         for (&(entry_sheet, col), ids) in &self.whole_cols {
-            if entry_sheet == sheet_id && col_extent.contains(col) {
-                out.extend(ids.iter().copied());
+            if entry_sheet == sheet_id && matches_col(col) {
+                Self::extend_ids(out, ids);
             }
+        }
+    }
+
+    fn collect_whole_sheet(&self, sheet_id: SheetId, out: &mut FxHashSet<usize>) {
+        if let Some(ids) = self.whole_sheets.get(&sheet_id) {
+            Self::extend_ids(out, ids);
         }
     }
 
@@ -1383,6 +1773,51 @@ mod tests {
                 .collect();
 
             assert_eq!(actual, expected, "query {query:?}");
+        }
+    }
+
+    #[test]
+    fn axis_kind_dispatch_matrix_returns_correct_intersections() {
+        let inserted_shapes = [
+            ("Point", RegionPattern::point(1, 10, 10)),
+            ("ColInterval", RegionPattern::col_interval(1, 12, 8, 14)),
+            ("RowInterval", RegionPattern::row_interval(1, 12, 8, 14)),
+            ("Rect", RegionPattern::rect(1, 20, 30, 20, 30)),
+            ("RowsFrom", RegionPattern::rows_from(1, 40)),
+            ("ColsFrom", RegionPattern::cols_from(1, 40)),
+            ("WholeRow", RegionPattern::whole_row(1, 50)),
+            ("WholeCol", RegionPattern::whole_col(1, 50)),
+            ("WholeSheet", RegionPattern::whole_sheet(1)),
+        ];
+        let query_shapes = [
+            ("Point", RegionPattern::point(1, 10, 10)),
+            ("ColInterval", RegionPattern::col_interval(1, 12, 13, 15)),
+            ("RowInterval", RegionPattern::row_interval(1, 12, 13, 15)),
+            ("Rect", RegionPattern::rect(1, 25, 26, 25, 26)),
+            ("RowsFrom", RegionPattern::rows_from(1, 45)),
+            ("ColsFrom", RegionPattern::cols_from(1, 45)),
+            ("WholeRow", RegionPattern::whole_row(1, 50)),
+            ("WholeCol", RegionPattern::whole_col(1, 50)),
+            ("WholeSheet", RegionPattern::whole_sheet(1)),
+        ];
+
+        for (insert_name, insert_region) in inserted_shapes {
+            for (query_name, query_region) in query_shapes {
+                let mut index = SheetRegionIndex::with_rect_bucket_size(4, 4);
+                index.insert(insert_region, "inserted");
+
+                let actual = index
+                    .query(query_region)
+                    .matches
+                    .iter()
+                    .any(|matched| matched.value == "inserted");
+                let expected = insert_region.intersects(&query_region);
+
+                assert_eq!(
+                    actual, expected,
+                    "insert={insert_name} query={query_name} insert_region={insert_region:?} query_region={query_region:?}"
+                );
+            }
         }
     }
 

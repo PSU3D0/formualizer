@@ -1,6 +1,8 @@
+use std::collections::HashSet;
+
 use proptest::prelude::*;
 
-use super::region_index::{AxisKind, AxisRange};
+use super::region_index::{AxisKind, AxisRange, RegionPattern, SheetRegionIndex};
 
 fn any_axis_range() -> impl Strategy<Value = AxisRange> {
     prop_oneof![
@@ -12,6 +14,63 @@ fn any_axis_range() -> impl Strategy<Value = AxisRange> {
         any::<u32>().prop_map(AxisRange::From),
         any::<u32>().prop_map(AxisRange::To),
         Just(AxisRange::All),
+    ]
+}
+
+fn any_currently_constructible_region() -> impl Strategy<Value = RegionPattern> {
+    let small = 0u32..20;
+    prop_oneof![
+        (1u16..3, small.clone(), small.clone())
+            .prop_map(|(sheet_id, row, col)| RegionPattern::point(sheet_id, row, col)),
+        (1u16..3, small.clone(), small.clone(), small.clone()).prop_map(
+            |(sheet_id, col, row_start, row_end)| {
+                let (lo, hi) = if row_start <= row_end {
+                    (row_start, row_end)
+                } else {
+                    (row_end, row_start)
+                };
+                RegionPattern::col_interval(sheet_id, col, lo, hi)
+            },
+        ),
+        (1u16..3, small.clone(), small.clone(), small.clone()).prop_map(
+            |(sheet_id, row, col_start, col_end)| {
+                let (lo, hi) = if col_start <= col_end {
+                    (col_start, col_end)
+                } else {
+                    (col_end, col_start)
+                };
+                RegionPattern::row_interval(sheet_id, row, lo, hi)
+            },
+        ),
+        (
+            1u16..3,
+            small.clone(),
+            small.clone(),
+            small.clone(),
+            small.clone(),
+        )
+            .prop_map(|(sheet_id, row_start, row_end, col_start, col_end)| {
+                let (row_lo, row_hi) = if row_start <= row_end {
+                    (row_start, row_end)
+                } else {
+                    (row_end, row_start)
+                };
+                let (col_lo, col_hi) = if col_start <= col_end {
+                    (col_start, col_end)
+                } else {
+                    (col_end, col_start)
+                };
+                RegionPattern::rect(sheet_id, row_lo, row_hi, col_lo, col_hi)
+            }),
+        (1u16..3, small.clone())
+            .prop_map(|(sheet_id, row)| RegionPattern::rows_from(sheet_id, row)),
+        (1u16..3, small.clone())
+            .prop_map(|(sheet_id, col)| RegionPattern::cols_from(sheet_id, col)),
+        (1u16..3, small.clone())
+            .prop_map(|(sheet_id, row)| RegionPattern::whole_row(sheet_id, row)),
+        (1u16..3, small.clone())
+            .prop_map(|(sheet_id, col)| RegionPattern::whole_col(sheet_id, col)),
+        (1u16..3).prop_map(RegionPattern::whole_sheet),
     ]
 }
 
@@ -60,5 +119,27 @@ proptest! {
             AxisRange::All => AxisKind::All,
         };
         prop_assert_eq!(r.kind(), expected);
+    }
+
+    #[test]
+    fn region_index_query_returns_all_intersecting(
+        indexed in proptest::collection::vec(any_currently_constructible_region(), 0..50),
+        query in any_currently_constructible_region(),
+    ) {
+        let mut index = SheetRegionIndex::new();
+        for (value, region) in indexed.iter().enumerate() {
+            index.insert(*region, value);
+        }
+
+        let result = index.query(query);
+        let result_values: HashSet<usize> = result.matches.iter().map(|matched| matched.value).collect();
+        let expected: HashSet<usize> = indexed
+            .iter()
+            .enumerate()
+            .filter(|(_value, region)| region.intersects(&query))
+            .map(|(value, _region)| value)
+            .collect();
+
+        prop_assert_eq!(expected, result_values);
     }
 }
