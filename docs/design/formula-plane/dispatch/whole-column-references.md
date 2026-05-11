@@ -185,13 +185,13 @@ Whole-column refs use `used_rows_for_columns()` (`eval.rs:9322-9343`). Caches mu
 
 ### 6.2 Region vocabulary already supports whole columns
 
-`RegionPattern` has `WholeRow`, `WholeCol`, `WholeSheet` (`region_index.rs:70-88`). Constructors at `:132-142`. Intersection semantics correct (`:220-236, 244-257`).
+`Region` has `WholeRow`, `WholeCol`, `WholeSheet` (`region_index.rs:70-88`). Constructors at `:132-142`. Intersection semantics correct (`:220-236, 244-257`).
 
 So runtime sidecar has the shape vocabulary. **The blocker is dependency summarization/promotion policy and span evaluation kernel support.**
 
 ### 6.3 What FormulaPlane needs for s026
 
-1. Dependency summary support for whole-axis ranges (whole-column produces `RegionPattern::WholeCol` summary; used-region growth dirties span when new value appears beyond prior bounds).
+1. Dependency summary support for whole-axis ranges (whole-column produces `Region::WholeCol` summary; used-region growth dirties span when new value appears beyond prior bounds).
 2. Span template support for invariant range aggregates (SUM($A:$A) shared invariant; A{r} per-placement).
 3. Runtime kernel: compute shared aggregate once + evaluate row-local subtraction + write overlay.
 4. Dirty routing: WholeCol(A) intersects edit cell → mark span dirty; whole-span recompute acceptable.
@@ -330,7 +330,7 @@ E{r} = `=VLOOKUP(D{r}, $A:$B, 2, FALSE)`. Index built once. Duplicate keys → f
 
 After whole-axis summary support:
 - s026 Auth reports spans > 0.
-- Edit in A marks span dirty through `RegionPattern::WholeCol`.
+- Edit in A marks span dirty through `Region::WholeCol`.
 - Span eval uses same aggregate cache provider.
 - Off and Auth results match exactly.
 
@@ -364,7 +364,7 @@ After whole-axis summary support:
 ### Risk 6: FormulaPlane promotion
 
 - Whole-axis dependencies could under-approximate dirty regions.
-- Mitigation: deliver cache in legacy path first. Enable FormulaPlane whole-axis dependency summaries only after `RegionPattern::WholeCol/WholeRow` dirty tests pass.
+- Mitigation: deliver cache in legacy path first. Enable FormulaPlane whole-axis dependency summaries only after `Region::WholeCol/WholeRow` dirty tests pass.
 
 ### Rollback
 
@@ -397,14 +397,14 @@ The `repro_whole_col_vs_finite` example (`crates/formualizer-bench-core/examples
 
 **Effect 2 — Constant-result broadcast for finite-range pure SUM (5800x)**: `=SUM($A$1:$A$10000)` Auth = 0.81ms vs Off 2405ms because all-absolute precedent + no relative deps → constant-result family → broadcast eval-once. Already working. **No action needed.**
 
-**Effect 3 — Whole-axis blocks all FormulaPlane benefit**: `=SUM($A:$A)` Auth = 4773ms (same as Off) because `dependency_summary.rs:786-795, 844-864` rejects whole-axis with `WholeAxisUnsupported`. Lifting that rejection alone would let `=SUM($A:$A)` promote as constant-result and broadcast-eval, matching the 0.81ms finite-range pattern. **Medium-effort, high-value: lift the rejection + verify dirty-region projection works for `RegionPattern::WholeCol`.**
+**Effect 3 — Whole-axis blocks all FormulaPlane benefit**: `=SUM($A:$A)` Auth = 4773ms (same as Off) because `dependency_summary.rs:786-795, 844-864` rejects whole-axis with `WholeAxisUnsupported`. Lifting that rejection alone would let `=SUM($A:$A)` promote as constant-result and broadcast-eval, matching the 0.81ms finite-range pattern. **Medium-effort, high-value: lift the rejection + verify dirty-region projection works for `Region::WholeCol`.**
 
 **Effect 4 — Per-row subtraction defeats broadcast**: `=SUM($A:$A) - A{r}` and `=SUM($A$1:$A$N) - A{r}` both have relative `A{r}` precedents → not constant-result → each placement re-evaluates the full SUM. This is what Phase 1's SUM aggregate cache is for. Even with whole-axis promotion landed, this shape needs cross-formula sub-expression sharing.
 
 ### Revised dispatch ordering
 
 1. **Effect 1 fix** (small, independent investigation — separate dispatch): trace per-call `used_rows_for_columns` and AST resolver overhead for whole-column refs. Targets ~2x speedup in BOTH modes.
-2. **Effect 3 fix** (FormulaPlane whole-axis dependency support): lift the rejection in `dependency_summary.rs`, add `RegionPattern::WholeCol/WholeRow` projection rules, verify dirty propagation. Unlocks broadcast for whole-column constant-result formulas (`=SUM($A:$A)`, `=COUNTA($B:$B)`, `=SUMIFS($B:$B, $A:$A, "literal")`, etc.).
+2. **Effect 3 fix** (FormulaPlane whole-axis dependency support): lift the rejection in `dependency_summary.rs`, add `Region::WholeCol/WholeRow` projection rules, verify dirty propagation. Unlocks broadcast for whole-column constant-result formulas (`=SUM($A:$A)`, `=COUNTA($B:$B)`, `=SUMIFS($B:$B, $A:$A, "literal")`, etc.).
 3. **Effect 4 fix** (Phase 1 SUM aggregate cache as in this memo): handles per-row subtraction shapes that defeat broadcast. Big architectural project.
 
 Fix 2 likely has the biggest real-world impact-per-effort ratio: a huge fraction of business workbooks are full of `=SUMIFS($B:$B, $A:$A, "literal")` shapes that would go from 4.8s to ~1ms with this single fix.

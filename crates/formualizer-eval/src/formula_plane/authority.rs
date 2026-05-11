@@ -9,7 +9,7 @@
 use rustc_hash::FxHashSet;
 
 use super::producer::{FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex};
-use super::region_index::RegionPattern;
+use super::region_index::Region;
 use super::runtime::{FormulaPlane, FormulaSpanRef};
 
 #[derive(Debug, Default)]
@@ -21,8 +21,8 @@ pub(crate) struct FormulaAuthority {
     /// Externally-observed changed regions accumulated since the last
     /// `take_pending_changed_regions` call. Edits that intersect span read
     /// regions drive bounded span dirty work via `compute_dirty_closure`.
-    pending_changed_regions: Vec<RegionPattern>,
-    pending_seen: FxHashSet<RegionPattern>,
+    pending_changed_regions: Vec<Region>,
+    pending_seen: FxHashSet<Region>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -58,18 +58,18 @@ impl FormulaAuthority {
             .collect()
     }
 
-    pub(crate) fn record_changed_region(&mut self, region: RegionPattern) {
+    pub(crate) fn record_changed_region(&mut self, region: Region) {
         if self.pending_seen.insert(region) {
             self.pending_changed_regions.push(region);
         }
     }
 
-    pub(crate) fn take_pending_changed_regions(&mut self) -> Vec<RegionPattern> {
+    pub(crate) fn take_pending_changed_regions(&mut self) -> Vec<Region> {
         self.pending_seen.clear();
         std::mem::take(&mut self.pending_changed_regions)
     }
 
-    pub(crate) fn pending_changed_regions(&self) -> &[RegionPattern] {
+    pub(crate) fn pending_changed_regions(&self) -> &[Region] {
         &self.pending_changed_regions
     }
 
@@ -91,11 +91,11 @@ impl FormulaAuthority {
         // Also publish result regions as changed regions so downstream span
         // consumers can be discovered through the normal dirty-closure path if
         // the caller evaluates before another epoch-bumping rebuild.
-        let regions: Vec<RegionPattern> = self
+        let regions: Vec<Region> = self
             .plane
             .spans
             .active_spans()
-            .map(|span| RegionPattern::from_domain(span.result_region.domain()))
+            .map(|span| Region::from_domain(span.result_region.domain()))
             .collect();
         for region in regions {
             self.record_changed_region(region);
@@ -113,7 +113,7 @@ impl FormulaAuthority {
         for span in self.plane.spans.active_spans() {
             report.spans_seen = report.spans_seen.saturating_add(1);
             let result_region =
-                super::region_index::RegionPattern::from_domain(span.result_region.domain());
+                super::region_index::Region::from_domain(span.result_region.domain());
             let producer = FormulaProducerId::Span(span.id);
             producer_results.insert_producer(producer, result_region);
             report.producer_result_entries = report.producer_result_entries.saturating_add(1);
@@ -167,7 +167,7 @@ mod tests {
         AxisProjection, DirtyProjectionRule, ProducerDirtyDomain, ProjectionResult,
         SpanReadDependency, SpanReadSummary, compute_dirty_closure,
     };
-    use crate::formula_plane::region_index::{RegionKey, RegionPattern};
+    use crate::formula_plane::region_index::{Region, RegionKey};
     use crate::formula_plane::runtime::{
         FormulaSpanId, NewFormulaSpan, PlacementDomain, ResultRegion,
     };
@@ -214,7 +214,7 @@ mod tests {
         let mut authority = FormulaAuthority::default();
         let domain = PlacementDomain::row_run(0, 0, 9, 2);
         let summary = SpanReadSummary {
-            result_region: RegionPattern::from_domain(&domain),
+            result_region: Region::from_domain(&domain),
             dependencies: Vec::new(),
         };
         let span_id = add_span_with_summary(&mut authority, domain, summary);
@@ -231,7 +231,7 @@ mod tests {
             authority
                 .producer_results
                 .producer_result_region(FormulaProducerId::Span(span_id)),
-            Some(RegionPattern::col_interval(0, 2, 0, 9))
+            Some(Region::col_interval(0, 2, 0, 9))
         );
     }
 
@@ -239,7 +239,7 @@ mod tests {
     fn authority_rebuild_indexes_span_read_dependencies() {
         let mut authority = FormulaAuthority::default();
         let domain = PlacementDomain::row_run(0, 0, 9, 2);
-        let result_region = RegionPattern::from_domain(&domain);
+        let result_region = Region::from_domain(&domain);
         let projection = DirtyProjectionRule::AffineCell {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: -1 },
@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(report.consumer_read_entries, 1);
         let dirty = authority
             .consumer_reads
-            .query_changed_region(RegionPattern::point(0, 5, 1));
+            .query_changed_region(Region::point(0, 5, 1));
         assert_eq!(dirty.matches.len(), 1);
         assert_eq!(
             dirty.matches[0].value.consumer,
@@ -305,7 +305,7 @@ mod tests {
             authority
                 .producer_results
                 .producer_result_region(FormulaProducerId::Span(span)),
-            Some(RegionPattern::col_interval(0, 2, 0, 9))
+            Some(Region::col_interval(0, 2, 0, 9))
         );
     }
 
@@ -313,14 +313,14 @@ mod tests {
     fn authority_rebuild_indexes_stale_summary_counts_without_read_entry() {
         let mut authority = FormulaAuthority::default();
         let domain = PlacementDomain::row_run(0, 0, 9, 2);
-        let mismatched_result = RegionPattern::col_interval(0, 3, 0, 9);
+        let mismatched_result = Region::col_interval(0, 3, 0, 9);
         add_span_with_summary(
             &mut authority,
             domain,
             SpanReadSummary {
                 result_region: mismatched_result,
                 dependencies: vec![SpanReadDependency {
-                    read_region: RegionPattern::col_interval(0, 1, 0, 9),
+                    read_region: Region::col_interval(0, 1, 0, 9),
                     projection: DirtyProjectionRule::WholeResult,
                 }],
             },
@@ -346,7 +346,7 @@ mod tests {
             col: AxisProjection::Relative { offset: -1 },
         };
 
-        let b_result = RegionPattern::from_domain(&b_domain);
+        let b_result = Region::from_domain(&b_domain);
         let b_read = projection.read_region_for_result(0, b_result).unwrap();
         let b_span = add_span_with_summary(
             &mut authority,
@@ -360,7 +360,7 @@ mod tests {
             },
         );
 
-        let c_result = RegionPattern::from_domain(&c_domain);
+        let c_result = Region::from_domain(&c_domain);
         let c_read = projection.read_region_for_result(0, c_result).unwrap();
         let c_span = add_span_with_summary(
             &mut authority,
@@ -380,7 +380,7 @@ mod tests {
 
         let closure = compute_dirty_closure(
             &authority.consumer_reads,
-            [RegionPattern::point(0, 5, 0)],
+            [Region::point(0, 5, 0)],
             |producer| authority.producer_results.producer_result_region(producer),
         );
 
@@ -403,7 +403,7 @@ mod tests {
         let mut authority = FormulaAuthority::default();
         let domain = PlacementDomain::row_run(0, 0, 9, 2);
         let summary = SpanReadSummary {
-            result_region: RegionPattern::from_domain(&domain),
+            result_region: Region::from_domain(&domain),
             dependencies: Vec::new(),
         };
         let template_id = template(&mut authority);

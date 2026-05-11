@@ -253,7 +253,7 @@ quickly without per-cell graph edges or deep graph span awareness.
 Deliverables:
 
 ```rust
-RegionKey / RegionSet / RegionPattern helpers, if existing types are insufficient
+RegionKey / RegionSet / Region helpers, if existing types are insufficient
 SheetRegionIndex<T>
 SpanDomainIndex
 SpanDependencyIndex

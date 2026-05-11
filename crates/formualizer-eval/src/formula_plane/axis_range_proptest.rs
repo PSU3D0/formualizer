@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use proptest::prelude::*;
 
-use super::region_index::{AxisKind, AxisRange, RegionPattern, SheetRegionIndex};
+use super::region_index::{AxisKind, AxisRange, Region, SheetRegionIndex};
 
 fn any_axis_range() -> impl Strategy<Value = AxisRange> {
     prop_oneof![
@@ -34,11 +34,11 @@ fn axis_range_projection_stays_in_bounds(range: AxisRange, offset: i64) -> bool 
     }
 }
 
-fn any_currently_constructible_region() -> impl Strategy<Value = RegionPattern> {
+fn any_currently_constructible_region() -> impl Strategy<Value = Region> {
     let small = 0u32..20;
     prop_oneof![
         (1u16..3, small.clone(), small.clone())
-            .prop_map(|(sheet_id, row, col)| RegionPattern::point(sheet_id, row, col)),
+            .prop_map(|(sheet_id, row, col)| Region::point(sheet_id, row, col)),
         (1u16..3, small.clone(), small.clone(), small.clone()).prop_map(
             |(sheet_id, col, row_start, row_end)| {
                 let (lo, hi) = if row_start <= row_end {
@@ -46,7 +46,7 @@ fn any_currently_constructible_region() -> impl Strategy<Value = RegionPattern> 
                 } else {
                     (row_end, row_start)
                 };
-                RegionPattern::col_interval(sheet_id, col, lo, hi)
+                Region::col_interval(sheet_id, col, lo, hi)
             },
         ),
         (1u16..3, small.clone(), small.clone(), small.clone()).prop_map(
@@ -56,7 +56,7 @@ fn any_currently_constructible_region() -> impl Strategy<Value = RegionPattern> 
                 } else {
                     (col_end, col_start)
                 };
-                RegionPattern::row_interval(sheet_id, row, lo, hi)
+                Region::row_interval(sheet_id, row, lo, hi)
             },
         ),
         (
@@ -77,17 +77,13 @@ fn any_currently_constructible_region() -> impl Strategy<Value = RegionPattern> 
                 } else {
                     (col_end, col_start)
                 };
-                RegionPattern::rect(sheet_id, row_lo, row_hi, col_lo, col_hi)
+                Region::rect(sheet_id, row_lo, row_hi, col_lo, col_hi)
             }),
-        (1u16..3, small.clone())
-            .prop_map(|(sheet_id, row)| RegionPattern::rows_from(sheet_id, row)),
-        (1u16..3, small.clone())
-            .prop_map(|(sheet_id, col)| RegionPattern::cols_from(sheet_id, col)),
-        (1u16..3, small.clone())
-            .prop_map(|(sheet_id, row)| RegionPattern::whole_row(sheet_id, row)),
-        (1u16..3, small.clone())
-            .prop_map(|(sheet_id, col)| RegionPattern::whole_col(sheet_id, col)),
-        (1u16..3).prop_map(RegionPattern::whole_sheet),
+        (1u16..3, small.clone()).prop_map(|(sheet_id, row)| Region::rows_from(sheet_id, row)),
+        (1u16..3, small.clone()).prop_map(|(sheet_id, col)| Region::cols_from(sheet_id, col)),
+        (1u16..3, small.clone()).prop_map(|(sheet_id, row)| Region::whole_row(sheet_id, row)),
+        (1u16..3, small.clone()).prop_map(|(sheet_id, col)| Region::whole_col(sheet_id, col)),
+        (1u16..3).prop_map(Region::whole_sheet),
     ]
 }
 

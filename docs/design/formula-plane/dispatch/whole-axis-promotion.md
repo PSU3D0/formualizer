@@ -70,8 +70,8 @@ Five blocker sites identified, four direct + one parallel arena path.
 ## 4. Existing whole-axis infrastructure (already wired on the runtime side)
 
 Region representation:
-- `RegionPattern::{WholeRow, WholeCol, WholeSheet}` exist (`region_index.rs:70-99`).
-- Constructors `RegionPattern::whole_row`, `RegionPattern::whole_col`, `RegionPattern::whole_sheet` (`:139-149`).
+- `Region::{WholeRow, WholeCol, WholeSheet}` exist (`region_index.rs:70-99`).
+- Constructors `Region::whole_row`, `Region::whole_col`, `Region::whole_sheet` (`:139-149`).
 - `axis_extents` maps `WholeRow` to `(Span, All)`, `WholeCol` to `(All, Span)`, `WholeSheet` to `(All, All)` (`:228-230`).
 - `AxisExtent::intersects` treats `All` as intersecting any extent (`:253-260`).
 
@@ -84,8 +84,8 @@ Projection helpers already understand whole-axis:
 - `query_extents` maps whole-axis patterns correctly (`producer.rs:944-952`).
 
 What's wired:
-- Storage and querying of `RegionPattern::WholeCol` ✓
-- Cross-sheet sheet IDs in `RegionPattern` ✓
+- Storage and querying of `Region::WholeCol` ✓
+- Cross-sheet sheet IDs in `Region` ✓
 - Dirty index matching cell edits against whole-column read regions ✓
 
 What's missing:
@@ -109,7 +109,7 @@ What's missing:
 `AxisProjection` represents only finite axes (`producer.rs:505-509`). For whole-column, one axis is unbounded and the other is finite/projectable. Not affine in both axes.
 
 Semantics for whole-column read:
-- Read region: `RegionPattern::WholeCol { sheet_id, col }`.
+- Read region: `Region::WholeCol { sheet_id, col }`.
 - Any change intersecting that read region dirties the entire consumer result region.
 - For `$A:$A`, every placement reads the same source column → constant in placement sense.
 - For `A:A` (relative column), source column shifts with placement → conservatively non-constant.
@@ -130,11 +130,11 @@ For `$A:$D`, emit 4 `WholeCol` read regions rather than adding new index variant
 pub(crate) fn read_regions_for_result(
     self,
     sheet_id: SheetId,
-    result_region: RegionPattern,
-) -> Result<Vec<RegionPattern>, ProjectionFallbackReason>
+    result_region: Region,
+) -> Result<Vec<Region>, ProjectionFallbackReason>
 ```
 
-Existing `AffineCell`/`AffineRange` rules wrap their single result in `vec![...]`. `WholeColumnRange` returns one `RegionPattern::whole_col` per source column.
+Existing `AffineCell`/`AffineRange` rules wrap their single result in `vec![...]`. `WholeColumnRange` returns one `Region::whole_col` per source column.
 
 ### Constant-result classification update
 
@@ -189,15 +189,15 @@ Add new method:
 pub(crate) fn read_regions_for_result(
     self,
     sheet_id: SheetId,
-    result_region: RegionPattern,
-) -> Result<Vec<RegionPattern>, ProjectionFallbackReason>
+    result_region: Region,
+) -> Result<Vec<Region>, ProjectionFallbackReason>
 ```
 
 For `AffineCell`/`AffineRange`: wrap existing `read_region_for_result` result in `vec![...]`.
 
 For `WholeResult`: keep returning `RequiresExplicitReadRegion`.
 
-For `WholeColumnRange`: compute source column extent from `col_start`/`col_end` and bounded result column extent. Use existing `range_source_extent_for_result` logic. Require finite column extent. Emit one `RegionPattern::whole_col(sheet_id, col)` per column. Use `CoordinateOverflow` for invalid shifted relative extents. Use `UnsupportedAxis` if endpoint kinds differ.
+For `WholeColumnRange`: compute source column extent from `col_start`/`col_end` and bounded result column extent. Use existing `range_source_extent_for_result` logic. Require finite column extent. Emit one `Region::whole_col(sheet_id, col)` per column. Use `CoordinateOverflow` for invalid shifted relative extents. Use `UnsupportedAxis` if endpoint kinds differ.
 
 **Bound the projected column count.** Reject if it exceeds a threshold (recommend 256 or similar). Common cases (`$A:$A`, `$A:$D`) are small.
 
@@ -209,7 +209,7 @@ In `project_changed_region`, add `WholeColumnRange` arm. After existing intersec
 
 `SpanReadSummary::from_formula_summary` (`producer.rs:293-340`): in `PrecedentPattern::Range` arm, detect whole-column shape (`start_row == WholeAxis && end_row == WholeAxis && start_col/end_col finite`). Build `WholeColumnRange`. Push one `SpanReadDependency` per returned read region. Reject whole-row for this patch with `UnsupportedAxis`.
 
-Cross-sheet: use existing `sheet_registry.get_id(name)` resolution (`producer.rs:298-323`). Emit `RegionPattern::whole_col(target_sheet_id, col)`.
+Cross-sheet: use existing `sheet_registry.get_id(name)` resolution (`producer.rs:298-323`). Emit `Region::whole_col(target_sheet_id, col)`.
 
 ### Step 8: Structural ingest path
 
@@ -240,7 +240,7 @@ Placement guard at `placement.rs:400-409` rejects spans whose read region inters
 ### Case: `=SUM($A:$A)`
 - One whole-column precedent.
 - Projection: `WholeColumnRange { col_start: Absolute(0), col_end: Absolute(0) }`.
-- Read summary: `RegionPattern::WholeCol { sheet_id, col: 0 }`.
+- Read summary: `Region::WholeCol { sheet_id, col: 0 }`.
 - `is_constant_result == true`.
 - Edit any cell in col A → intersects → whole span dirty → constant-result broadcast.
 
@@ -264,7 +264,7 @@ Placement guard at `placement.rs:400-409` rejects spans whose read region inters
 
 ### Case: cross-sheet `=SUM(DataA!$A:$A)`
 - `SheetBinding::ExplicitName` resolved via `sheet_registry.get_id(name)`.
-- Emits `RegionPattern::whole_col(data_sheet_id, 0)`.
+- Emits `Region::whole_col(data_sheet_id, 0)`.
 - Region-index queries are sheet-id scoped. Cross-sheet dirty propagation composes.
 
 ### Case: `=VLOOKUP("k", $A:$D, 2, FALSE)`
@@ -295,11 +295,11 @@ Placement guard at `placement.rs:400-409` rejects spans whose read region inters
 
 ### Producer tests
 
-- `WholeColumnRange` for `$A:$A` produces exactly `RegionPattern::whole_col(sheet, 0)`.
+- `WholeColumnRange` for `$A:$A` produces exactly `Region::whole_col(sheet, 0)`.
 - For `$A:$D` produces 4 `WholeCol` regions.
-- Edit `RegionPattern::point(sheet, row, 0)` projects to whole consumer result.
+- Edit `Region::point(sheet, row, 0)` projects to whole consumer result.
 - Edit outside read column → `NoIntersection`.
-- Cross-sheet `=Data!$A:$A` resolves to `RegionPattern::whole_col(data_id, 0)`.
+- Cross-sheet `=Data!$A:$A` resolves to `Region::whole_col(data_id, 0)`.
 
 ### Placement tests
 
@@ -366,13 +366,13 @@ Pass condition: s026 medium Auth recalc < 50ms (currently 4827ms; ~96x target co
 
 ## 10. Open questions for PM
 
-1. **Scope to whole-column only, defer whole-row?** Recommendation: yes. Whole-row interval support requires new `RegionPattern::WholeRowInterval` and is not driven by current measurements.
+1. **Scope to whole-column only, defer whole-row?** Recommendation: yes. Whole-row interval support requires new `Region::WholeRowInterval` and is not driven by current measurements.
 
 2. **Add VLOOKUP/MATCH to `is_known_static_function` in this patch?** Recommendation: NO. Independent semantic review needed. Separate dispatch.
 
 3. **Diagnostic flag for "contains whole-axis reference" (non-reject)?** Recommendation: yes if PM wants observability continuity. Today `WholeAxisReference` is visible as a canonical reject reason; after the fix it should be visible as a non-reject diagnostic flag for promoted-formula counting.
 
-4. **`$A:$XFD` (16,384 columns)?** Recommendation: bound projected column count at a reasonable threshold (256 default). Real workloads are 1-4 columns. Beyond threshold: reject with `UnsupportedAxis`. Avoids `RegionPattern::WholeColInterval` in this patch.
+4. **`$A:$XFD` (16,384 columns)?** Recommendation: bound projected column count at a reasonable threshold (256 default). Real workloads are 1-4 columns. Beyond threshold: reject with `UnsupportedAxis`. Avoids `Region::WholeColInterval` in this patch.
 
 5. **`is_constant_projection` for relative `A:A`?** Recommendation: keep conservatively non-constant. Future work could refine if rectangular row-runs are common.
 

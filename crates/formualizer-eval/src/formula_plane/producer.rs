@@ -15,7 +15,7 @@ use crate::engine::sheet_registry::SheetRegistry;
 
 use super::dependency_summary::{FormulaClass, FormulaDependencySummary, PrecedentPattern};
 use super::region_index::{
-    AxisRange, RegionKey, RegionMatch, RegionPattern, RegionQueryResult, SheetRegionIndex,
+    AxisRange, Region, RegionKey, RegionMatch, RegionQueryResult, SheetRegionIndex,
 };
 use super::runtime::{FormulaSpanId, ResultRegion};
 use super::template_canonical::{AxisRef, SheetBinding};
@@ -36,7 +36,7 @@ pub(crate) struct FormulaProducerWork {
 pub(crate) enum ProducerDirtyDomain {
     Whole,
     Cells(Vec<RegionKey>),
-    Regions(Vec<RegionPattern>),
+    Regions(Vec<Region>),
 }
 
 impl ProducerDirtyDomain {
@@ -69,7 +69,7 @@ impl ProducerDirtyDomain {
                 let mut regions = existing_cells
                     .iter()
                     .copied()
-                    .map(RegionPattern::Point)
+                    .map(|key| Region::point(key.sheet_id, key.row, key.col))
                     .collect::<Vec<_>>();
                 append_unique(&mut regions, incoming_regions);
                 *self = Self::Regions(regions);
@@ -77,19 +77,22 @@ impl ProducerDirtyDomain {
             (Self::Regions(existing_regions), Self::Cells(incoming_cells)) => {
                 append_unique(
                     existing_regions,
-                    incoming_cells.into_iter().map(RegionPattern::Point),
+                    incoming_cells
+                        .into_iter()
+                        .map(|key| Region::point(key.sheet_id, key.row, key.col)),
                 );
             }
         }
     }
 
-    pub(crate) fn result_regions(
-        &self,
-        producer_result_region: RegionPattern,
-    ) -> Vec<RegionPattern> {
+    pub(crate) fn result_regions(&self, producer_result_region: Region) -> Vec<Region> {
         match self {
             Self::Whole => vec![producer_result_region],
-            Self::Cells(cells) => cells.iter().copied().map(RegionPattern::Point).collect(),
+            Self::Cells(cells) => cells
+                .iter()
+                .copied()
+                .map(|key| Region::point(key.sheet_id, key.row, key.col))
+                .collect(),
             Self::Regions(regions) => regions.clone(),
         }
     }
@@ -114,14 +117,14 @@ pub(crate) struct FormulaProducerResultEntryId(usize);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FormulaProducerResultEntry {
     pub(crate) producer: FormulaProducerId,
-    pub(crate) result_region: RegionPattern,
+    pub(crate) result_region: Region,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct FormulaProducerResultIndex {
     index: SheetRegionIndex<FormulaProducerResultEntryId>,
     entries: Vec<FormulaProducerResultEntry>,
-    by_producer: FxHashMap<FormulaProducerId, RegionPattern>,
+    by_producer: FxHashMap<FormulaProducerId, Region>,
     epoch: u64,
 }
 
@@ -129,7 +132,7 @@ impl FormulaProducerResultIndex {
     pub(crate) fn insert_producer(
         &mut self,
         producer: FormulaProducerId,
-        result_region: RegionPattern,
+        result_region: Region,
     ) -> FormulaProducerResultEntryId {
         let id = FormulaProducerResultEntryId(self.entries.len());
         self.entries.push(FormulaProducerResultEntry {
@@ -144,7 +147,7 @@ impl FormulaProducerResultIndex {
 
     pub(crate) fn query(
         &self,
-        read_region: RegionPattern,
+        read_region: Region,
     ) -> RegionQueryResult<FormulaProducerResultEntry> {
         let result = self.index.query(read_region);
         RegionQueryResult {
@@ -160,10 +163,7 @@ impl FormulaProducerResultIndex {
         }
     }
 
-    pub(crate) fn producer_result_region(
-        &self,
-        producer: FormulaProducerId,
-    ) -> Option<RegionPattern> {
+    pub(crate) fn producer_result_region(&self, producer: FormulaProducerId) -> Option<Region> {
         self.by_producer.get(&producer).copied()
     }
 
@@ -182,16 +182,16 @@ pub(crate) struct FormulaConsumerReadEntryId(usize);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FormulaConsumerReadEntry {
     pub(crate) consumer: FormulaProducerId,
-    pub(crate) read_region: RegionPattern,
-    pub(crate) consumer_result_region: RegionPattern,
+    pub(crate) read_region: Region,
+    pub(crate) consumer_result_region: Region,
     pub(crate) projection: DirtyProjectionRule,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FormulaConsumerDirtyCandidate {
     pub(crate) consumer: FormulaProducerId,
-    pub(crate) read_region: RegionPattern,
-    pub(crate) consumer_result_region: RegionPattern,
+    pub(crate) read_region: Region,
+    pub(crate) consumer_result_region: Region,
     pub(crate) projection: DirtyProjectionRule,
     pub(crate) dirty: ProjectionResult,
 }
@@ -207,8 +207,8 @@ impl FormulaConsumerReadIndex {
     pub(crate) fn insert_read(
         &mut self,
         consumer: FormulaProducerId,
-        read_region: RegionPattern,
-        consumer_result_region: RegionPattern,
+        read_region: Region,
+        consumer_result_region: Region,
         projection: DirtyProjectionRule,
     ) -> FormulaConsumerReadEntryId {
         let id = FormulaConsumerReadEntryId(self.entries.len());
@@ -232,7 +232,7 @@ impl FormulaConsumerReadIndex {
     /// clipping even when the geometric read-index query over-returned.
     pub(crate) fn query_changed_region(
         &self,
-        changed: RegionPattern,
+        changed: Region,
     ) -> RegionQueryResult<FormulaConsumerDirtyCandidate> {
         let result = self.index.query(changed);
         RegionQueryResult {
@@ -273,7 +273,7 @@ impl FormulaConsumerReadIndex {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpanReadSummary {
-    pub(crate) result_region: RegionPattern,
+    pub(crate) result_region: Region,
     pub(crate) dependencies: Vec<SpanReadDependency>,
 }
 
@@ -290,7 +290,7 @@ impl SpanReadSummary {
             return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
         }
 
-        let result_region_pattern = RegionPattern::from_domain(result_region.domain());
+        let result_region_pattern = Region::from_domain(result_region.domain());
         let mut dependencies = Vec::new();
         for precedent in &summary.precedent_patterns {
             match precedent {
@@ -368,7 +368,7 @@ impl SpanReadSummary {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpanReadDependency {
-    pub(crate) read_region: RegionPattern,
+    pub(crate) read_region: Region,
     pub(crate) projection: DirtyProjectionRule,
 }
 
@@ -432,8 +432,8 @@ impl DirtyProjectionRule {
     pub(crate) fn read_region_for_result(
         self,
         sheet_id: SheetId,
-        result_region: RegionPattern,
-    ) -> Result<RegionPattern, ProjectionFallbackReason> {
+        result_region: Region,
+    ) -> Result<Region, ProjectionFallbackReason> {
         match self {
             Self::WholeResult => Err(ProjectionFallbackReason::RequiresExplicitReadRegion),
             Self::WholeColumnRange { .. } => Err(ProjectionFallbackReason::UnsupportedAxis),
@@ -462,8 +462,8 @@ impl DirtyProjectionRule {
     pub(crate) fn read_regions_for_result(
         self,
         sheet_id: SheetId,
-        result_region: RegionPattern,
-    ) -> Result<Vec<RegionPattern>, ProjectionFallbackReason> {
+        result_region: Region,
+    ) -> Result<Vec<Region>, ProjectionFallbackReason> {
         match self {
             Self::AffineCell { .. } | Self::AffineRange { .. } => {
                 Ok(vec![self.read_region_for_result(sheet_id, result_region)?])
@@ -482,7 +482,7 @@ impl DirtyProjectionRule {
                     return Err(ProjectionFallbackReason::UnsupportedAxis);
                 }
                 Ok((source_cols.low..=source_cols.high)
-                    .map(|col| RegionPattern::whole_col(sheet_id, col))
+                    .map(|col| Region::whole_col(sheet_id, col))
                     .collect())
             }
         }
@@ -490,9 +490,9 @@ impl DirtyProjectionRule {
 
     pub(crate) fn project_changed_region(
         self,
-        changed: RegionPattern,
-        read_region: RegionPattern,
-        result_region: RegionPattern,
+        changed: Region,
+        read_region: Region,
+        result_region: Region,
     ) -> ProjectionResult {
         if !changed.intersects(&read_region) {
             return ProjectionResult::NoIntersection;
@@ -726,7 +726,7 @@ pub(crate) enum ProjectionFallbackReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FormulaDirtyClosure {
     pub(crate) work: Vec<FormulaProducerWork>,
-    pub(crate) changed_result_regions: Vec<RegionPattern>,
+    pub(crate) changed_result_regions: Vec<Region>,
     pub(crate) stats: FormulaDirtyClosureStats,
     pub(crate) fallbacks: Vec<FormulaDirtyFallback>,
 }
@@ -750,7 +750,7 @@ pub(crate) struct FormulaDirtyClosureStats {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FormulaDirtyFallback {
     pub(crate) consumer: FormulaProducerId,
-    pub(crate) changed_region: RegionPattern,
+    pub(crate) changed_region: Region,
     pub(crate) reason: ProjectionFallbackReason,
 }
 
@@ -758,8 +758,8 @@ const DIRTY_CLOSURE_ITERATION_LIMIT: usize = 100_000;
 
 pub(crate) fn compute_dirty_closure(
     consumer_reads: &FormulaConsumerReadIndex,
-    changed_regions: impl IntoIterator<Item = RegionPattern>,
-    result_region: impl Fn(FormulaProducerId) -> Option<RegionPattern>,
+    changed_regions: impl IntoIterator<Item = Region>,
+    result_region: impl Fn(FormulaProducerId) -> Option<Region>,
 ) -> FormulaDirtyClosure {
     let mut stats = FormulaDirtyClosureStats::default();
     let mut queue = VecDeque::new();
@@ -870,13 +870,13 @@ pub(crate) fn compute_dirty_closure(
 #[allow(clippy::too_many_arguments)]
 fn apply_dirty_projection(
     consumer: FormulaProducerId,
-    changed_region: RegionPattern,
+    changed_region: Region,
     dirty: ProducerDirtyDomain,
-    result_region: &impl Fn(FormulaProducerId) -> Option<RegionPattern>,
+    result_region: &impl Fn(FormulaProducerId) -> Option<Region>,
     dirty_by_producer: &mut BTreeMap<FormulaProducerId, ProducerDirtyDomain>,
-    queue: &mut VecDeque<RegionPattern>,
-    seen_changed_regions: &mut FxHashSet<RegionPattern>,
-    changed_result_regions: &mut Vec<RegionPattern>,
+    queue: &mut VecDeque<Region>,
+    seen_changed_regions: &mut FxHashSet<Region>,
+    changed_result_regions: &mut Vec<Region>,
     fallbacks: &mut Vec<FormulaDirtyFallback>,
     stats: &mut FormulaDirtyClosureStats,
 ) {
@@ -967,7 +967,7 @@ impl BoundedRange {
     }
 }
 
-fn bounded_extents(pattern: RegionPattern) -> Option<(BoundedRange, BoundedRange)> {
+fn bounded_extents(pattern: Region) -> Option<(BoundedRange, BoundedRange)> {
     let (rows, cols) = pattern.axis_ranges();
     Some((
         BoundedRange::from_axis_range(rows)?,
@@ -979,7 +979,7 @@ fn projection_result_from_axis_ranges(
     sheet_id: SheetId,
     rows: AxisRange,
     cols: AxisRange,
-    result_region: RegionPattern,
+    result_region: Region,
     result_is_bounded: bool,
 ) -> ProjectionResult {
     if !result_is_bounded && rows.is_bounded() && cols.is_bounded() {
@@ -999,27 +999,23 @@ fn region_from_axis_ranges(
     sheet_id: SheetId,
     rows: AxisRange,
     cols: AxisRange,
-) -> Result<RegionPattern, ProjectionFallbackReason> {
+) -> Result<Region, ProjectionFallbackReason> {
     Ok(match (rows, cols) {
-        (AxisRange::Point(row), AxisRange::Point(col)) => RegionPattern::point(sheet_id, row, col),
+        (AxisRange::Point(row), AxisRange::Point(col)) => Region::point(sheet_id, row, col),
         (AxisRange::Span(row_start, row_end), AxisRange::Point(col)) => {
-            RegionPattern::col_interval(sheet_id, col, row_start, row_end)
+            Region::col_interval(sheet_id, col, row_start, row_end)
         }
         (AxisRange::Point(row), AxisRange::Span(col_start, col_end)) => {
-            RegionPattern::row_interval(sheet_id, row, col_start, col_end)
+            Region::row_interval(sheet_id, row, col_start, col_end)
         }
         (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) => {
-            RegionPattern::rect(sheet_id, row_start, row_end, col_start, col_end)
+            Region::rect(sheet_id, row_start, row_end, col_start, col_end)
         }
-        (AxisRange::From(row_start), AxisRange::All) => {
-            RegionPattern::rows_from(sheet_id, row_start)
-        }
-        (AxisRange::All, AxisRange::From(col_start)) => {
-            RegionPattern::cols_from(sheet_id, col_start)
-        }
-        (AxisRange::Point(row), AxisRange::All) => RegionPattern::whole_row(sheet_id, row),
-        (AxisRange::All, AxisRange::Point(col)) => RegionPattern::whole_col(sheet_id, col),
-        (AxisRange::All, AxisRange::All) => RegionPattern::whole_sheet(sheet_id),
+        (AxisRange::From(row_start), AxisRange::All) => Region::rows_from(sheet_id, row_start),
+        (AxisRange::All, AxisRange::From(col_start)) => Region::cols_from(sheet_id, col_start),
+        (AxisRange::Point(row), AxisRange::All) => Region::whole_row(sheet_id, row),
+        (AxisRange::All, AxisRange::Point(col)) => Region::whole_col(sheet_id, col),
+        (AxisRange::All, AxisRange::All) => Region::whole_sheet(sheet_id),
         (rows, cols) => {
             let (row_low, row_high) = rows.query_bounds();
             let (col_low, col_high) = cols.query_bounds();
@@ -1036,19 +1032,19 @@ fn region_from_bounded_extents(
     sheet_id: SheetId,
     rows: BoundedRange,
     cols: BoundedRange,
-) -> Result<RegionPattern, ProjectionFallbackReason> {
+) -> Result<Region, ProjectionFallbackReason> {
     Ok(match (rows.is_point(), cols.is_point()) {
-        (true, true) => RegionPattern::point(sheet_id, rows.low, cols.low),
-        (false, true) => RegionPattern::col_interval(sheet_id, cols.low, rows.low, rows.high),
-        (true, false) => RegionPattern::row_interval(sheet_id, rows.low, cols.low, cols.high),
-        (false, false) => RegionPattern::rect(sheet_id, rows.low, rows.high, cols.low, cols.high),
+        (true, true) => Region::point(sheet_id, rows.low, cols.low),
+        (false, true) => Region::col_interval(sheet_id, cols.low, rows.low, rows.high),
+        (true, false) => Region::row_interval(sheet_id, rows.low, cols.low, cols.high),
+        (false, false) => Region::rect(sheet_id, rows.low, rows.high, cols.low, cols.high),
     })
 }
 
-fn dirty_domain_from_region(region: RegionPattern) -> ProducerDirtyDomain {
-    match region {
-        RegionPattern::Point(key) => ProducerDirtyDomain::Cells(vec![key]),
-        other => ProducerDirtyDomain::Regions(vec![other]),
+fn dirty_domain_from_region(region: Region) -> ProducerDirtyDomain {
+    match region.as_point() {
+        Some(key) => ProducerDirtyDomain::Cells(vec![key]),
+        None => ProducerDirtyDomain::Regions(vec![region]),
     }
 }
 
@@ -1222,7 +1218,7 @@ mod tests {
         assert_eq!(read_summary.dependencies.len(), 1);
         assert_eq!(
             read_summary.dependencies[0].read_region,
-            RegionPattern::point(data_id, 0, 0)
+            Region::point(data_id, 0, 0)
         );
     }
 
@@ -1248,13 +1244,13 @@ mod tests {
     #[test]
     fn producer_result_index_finds_legacy_and_span_producers() {
         let mut index = FormulaProducerResultIndex::default();
-        index.insert_producer(legacy(1), RegionPattern::point(0, 9, 2));
-        index.insert_producer(span(2), RegionPattern::col_interval(0, 1, 0, 99));
+        index.insert_producer(legacy(1), Region::point(0, 9, 2));
+        index.insert_producer(span(2), Region::col_interval(0, 1, 0, 99));
 
-        let point = index.query(RegionPattern::point(0, 9, 2));
+        let point = index.query(Region::point(0, 9, 2));
         assert!(point.matches.iter().any(|m| m.value.producer == legacy(1)));
 
-        let span_hit = index.query(RegionPattern::point(0, 50, 1));
+        let span_hit = index.query(Region::point(0, 50, 1));
         assert_eq!(span_hit.matches.len(), 1);
         assert_eq!(span_hit.matches[0].value.producer, span(2));
     }
@@ -1265,13 +1261,13 @@ mod tests {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: -1 },
         };
-        let result = RegionPattern::col_interval(0, 2, 0, 99);
+        let result = Region::col_interval(0, 2, 0, 99);
         let read = projection.read_region_for_result(0, result).unwrap();
-        assert_eq!(read, RegionPattern::col_interval(0, 1, 0, 99));
+        assert_eq!(read, Region::col_interval(0, 1, 0, 99));
 
         let mut index = FormulaConsumerReadIndex::default();
         index.insert_read(span(1), read, result, projection);
-        let dirty = index.query_changed_region(RegionPattern::point(0, 50, 1));
+        let dirty = index.query_changed_region(Region::point(0, 50, 1));
         assert_eq!(dirty.matches.len(), 1);
         assert_eq!(dirty.matches[0].value.consumer, span(1));
         assert_eq!(
@@ -1286,11 +1282,11 @@ mod tests {
             row: AxisProjection::Relative { offset: 1 },
             col: AxisProjection::Relative { offset: -1 },
         };
-        let result = RegionPattern::col_interval(0, 2, 0, 99);
+        let result = Region::col_interval(0, 2, 0, 99);
         let read = projection.read_region_for_result(0, result).unwrap();
-        assert_eq!(read, RegionPattern::col_interval(0, 1, 1, 100));
+        assert_eq!(read, Region::col_interval(0, 1, 1, 100));
 
-        let dirty = projection.project_changed_region(RegionPattern::point(0, 50, 1), read, result);
+        let dirty = projection.project_changed_region(Region::point(0, 50, 1), read, result);
         assert_eq!(
             dirty,
             ProjectionResult::Exact(ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 49, 2)]))
@@ -1303,11 +1299,11 @@ mod tests {
             row: AxisProjection::Absolute { index: 0 },
             col: AxisProjection::Absolute { index: 0 },
         };
-        let result = RegionPattern::col_interval(0, 2, 0, 99);
+        let result = Region::col_interval(0, 2, 0, 99);
         let read = projection.read_region_for_result(0, result).unwrap();
-        assert_eq!(read, RegionPattern::point(0, 0, 0));
+        assert_eq!(read, Region::point(0, 0, 0));
 
-        let dirty = projection.project_changed_region(RegionPattern::point(0, 0, 0), read, result);
+        let dirty = projection.project_changed_region(Region::point(0, 0, 0), read, result);
         assert_eq!(
             dirty,
             ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result]))
@@ -1322,30 +1318,30 @@ mod tests {
             col_start: AxisProjection::Absolute { index: 0 },
             col_end: AxisProjection::Absolute { index: 1 },
         };
-        let result = RegionPattern::col_interval(0, 3, 0, 19);
+        let result = Region::col_interval(0, 3, 0, 19);
         let read = projection.read_region_for_result(0, result).unwrap();
-        assert_eq!(read, RegionPattern::rect(0, 0, 9, 0, 1));
+        assert_eq!(read, Region::rect(0, 0, 9, 0, 1));
 
         assert_eq!(
-            projection.project_changed_region(RegionPattern::point(0, 4, 1), read, result),
+            projection.project_changed_region(Region::point(0, 4, 1), read, result),
             ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result]))
         );
         assert_eq!(
-            projection.project_changed_region(RegionPattern::point(0, 10, 1), read, result),
+            projection.project_changed_region(Region::point(0, 10, 1), read, result),
             ProjectionResult::NoIntersection
         );
     }
 
     #[test]
     fn whole_column_range_read_regions_emit_whole_cols() {
-        let result = RegionPattern::col_interval(7, 5, 0, 99);
+        let result = Region::col_interval(7, 5, 0, 99);
         let single_col = DirtyProjectionRule::WholeColumnRange {
             col_start: AxisProjection::Absolute { index: 0 },
             col_end: AxisProjection::Absolute { index: 0 },
         };
         assert_eq!(
             single_col.read_regions_for_result(7, result).unwrap(),
-            vec![RegionPattern::whole_col(7, 0)]
+            vec![Region::whole_col(7, 0)]
         );
         assert_eq!(
             single_col.read_region_for_result(7, result),
@@ -1359,10 +1355,10 @@ mod tests {
         assert_eq!(
             multi_col.read_regions_for_result(7, result).unwrap(),
             vec![
-                RegionPattern::whole_col(7, 0),
-                RegionPattern::whole_col(7, 1),
-                RegionPattern::whole_col(7, 2),
-                RegionPattern::whole_col(7, 3),
+                Region::whole_col(7, 0),
+                Region::whole_col(7, 1),
+                Region::whole_col(7, 2),
+                Region::whole_col(7, 3),
             ]
         );
     }
@@ -1373,7 +1369,7 @@ mod tests {
             col_start: AxisProjection::Absolute { index: 0 },
             col_end: AxisProjection::Absolute { index: 702 },
         };
-        let result = RegionPattern::col_interval(0, 5, 0, 99);
+        let result = Region::col_interval(0, 5, 0, 99);
 
         assert_eq!(
             projection.read_regions_for_result(0, result),
@@ -1387,15 +1383,15 @@ mod tests {
             col_start: AxisProjection::Absolute { index: 0 },
             col_end: AxisProjection::Absolute { index: 0 },
         };
-        let result = RegionPattern::col_interval(0, 2, 0, 99);
+        let result = Region::col_interval(0, 2, 0, 99);
         let read = projection.read_regions_for_result(0, result).unwrap()[0];
 
         assert_eq!(
-            projection.project_changed_region(RegionPattern::point(0, 50, 0), read, result),
+            projection.project_changed_region(Region::point(0, 50, 0), read, result),
             ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result]))
         );
         assert_eq!(
-            projection.project_changed_region(RegionPattern::point(0, 50, 1), read, result),
+            projection.project_changed_region(Region::point(0, 50, 1), read, result),
             ProjectionResult::NoIntersection
         );
     }
@@ -1408,16 +1404,16 @@ mod tests {
             col_start: AxisProjection::Relative { offset: -1 },
             col_end: AxisProjection::Relative { offset: -1 },
         };
-        let result = RegionPattern::col_interval(0, 2, 10, 20);
+        let result = Region::col_interval(0, 2, 10, 20);
         let read = projection.read_region_for_result(0, result).unwrap();
-        assert_eq!(read, RegionPattern::col_interval(0, 1, 10, 25));
+        assert_eq!(read, Region::col_interval(0, 1, 10, 25));
 
-        let dirty = projection.project_changed_region(RegionPattern::point(0, 12, 1), read, result);
+        let dirty = projection.project_changed_region(Region::point(0, 12, 1), read, result);
         assert_eq!(
             dirty,
-            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![
-                RegionPattern::col_interval(0, 2, 10, 12)
-            ]))
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![Region::col_interval(
+                0, 2, 10, 12
+            )]))
         );
     }
 
@@ -1429,7 +1425,7 @@ mod tests {
             col_start: AxisProjection::Absolute { index: 0 },
             col_end: AxisProjection::Absolute { index: 0 },
         };
-        let result = RegionPattern::col_interval(0, 2, 0, 9);
+        let result = Region::col_interval(0, 2, 0, 9);
 
         assert_eq!(
             projection.read_region_for_result(0, result),
@@ -1443,18 +1439,15 @@ mod tests {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Absolute { index: 0 },
         };
-        let result = RegionPattern::rect(0, 0, 9, 2, 4);
+        let result = Region::rect(0, 0, 9, 2, 4);
         let read = projection.read_region_for_result(0, result).unwrap();
-        assert_eq!(read, RegionPattern::col_interval(0, 0, 0, 9));
+        assert_eq!(read, Region::col_interval(0, 0, 0, 9));
 
-        let dirty = projection.project_changed_region(
-            RegionPattern::col_interval(0, 0, 5, 6),
-            read,
-            result,
-        );
+        let dirty =
+            projection.project_changed_region(Region::col_interval(0, 0, 5, 6), read, result);
         assert_eq!(
             dirty,
-            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![RegionPattern::rect(
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![Region::rect(
                 0, 5, 6, 2, 4
             )]))
         );
@@ -1466,7 +1459,7 @@ mod tests {
             row: AxisProjection::Relative { offset: -1 },
             col: AxisProjection::Relative { offset: 0 },
         };
-        let result = RegionPattern::col_interval(0, 2, 0, 9);
+        let result = Region::col_interval(0, 2, 0, 9);
 
         assert_eq!(
             projection.read_region_for_result(0, result),
@@ -1501,19 +1494,19 @@ mod tests {
     #[test]
     fn whole_result_projection_dirties_entire_consumer_result() {
         let projection = DirtyProjectionRule::WholeResult;
-        let read = RegionPattern::col_interval(0, 1, 0, 99);
-        let result = RegionPattern::point(0, 0, 3);
+        let read = Region::col_interval(0, 1, 0, 99);
+        let result = Region::point(0, 0, 3);
 
         assert_eq!(
             projection.read_region_for_result(0, result),
             Err(ProjectionFallbackReason::RequiresExplicitReadRegion)
         );
         assert_eq!(
-            projection.project_changed_region(RegionPattern::point(0, 50, 1), read, result),
+            projection.project_changed_region(Region::point(0, 50, 1), read, result),
             ProjectionResult::Exact(ProducerDirtyDomain::Whole)
         );
         assert_eq!(
-            projection.project_changed_region(RegionPattern::point(0, 50, 2), read, result),
+            projection.project_changed_region(Region::point(0, 50, 2), read, result),
             ProjectionResult::NoIntersection
         );
     }
@@ -1524,12 +1517,12 @@ mod tests {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: -1 },
         };
-        let result = RegionPattern::col_interval(0, 1, 0, 9);
+        let result = Region::col_interval(0, 1, 0, 9);
         let read = projection.read_region_for_result(0, result).unwrap();
         let mut index = FormulaConsumerReadIndex::default();
         index.insert_read(span(1), read, result, projection);
 
-        let closure = compute_dirty_closure(&index, [RegionPattern::point(0, 5, 0)], |producer| {
+        let closure = compute_dirty_closure(&index, [Region::point(0, 5, 0)], |producer| {
             (producer == span(1)).then_some(result)
         });
 
@@ -1540,17 +1533,14 @@ mod tests {
             closure.work[0].dirty,
             ProducerDirtyDomain::Cells(vec![RegionKey::new(0, 5, 1)])
         );
-        assert_eq!(
-            closure.changed_result_regions,
-            vec![RegionPattern::point(0, 5, 1)]
-        );
+        assert_eq!(closure.changed_result_regions, vec![Region::point(0, 5, 1)]);
     }
 
     #[test]
     fn dirty_closure_composes_span_to_span_single_cell() {
         let mut index = FormulaConsumerReadIndex::default();
-        let b_result = RegionPattern::col_interval(0, 1, 0, 9);
-        let c_result = RegionPattern::col_interval(0, 2, 0, 9);
+        let b_result = Region::col_interval(0, 1, 0, 9);
+        let c_result = Region::col_interval(0, 2, 0, 9);
         let projection = DirtyProjectionRule::AffineCell {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: -1 },
@@ -1571,7 +1561,7 @@ mod tests {
         let closure =
             compute_dirty_closure(
                 &index,
-                [RegionPattern::point(0, 5, 0)],
+                [Region::point(0, 5, 0)],
                 |producer| match producer {
                     producer if producer == span(1) => Some(b_result),
                     producer if producer == span(2) => Some(c_result),
@@ -1591,14 +1581,14 @@ mod tests {
         );
         assert_eq!(
             closure.changed_result_regions,
-            vec![RegionPattern::point(0, 5, 1), RegionPattern::point(0, 5, 2)]
+            vec![Region::point(0, 5, 1), Region::point(0, 5, 2)]
         );
     }
 
     #[test]
     fn dirty_closure_reaches_legacy_range_consumer_after_span_cell_dirty() {
         let mut index = FormulaConsumerReadIndex::default();
-        let b_result = RegionPattern::col_interval(0, 1, 0, 99);
+        let b_result = Region::col_interval(0, 1, 0, 99);
         let b_projection = DirtyProjectionRule::AffineCell {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: -1 },
@@ -1609,7 +1599,7 @@ mod tests {
             b_result,
             b_projection,
         );
-        let legacy_result = RegionPattern::point(0, 0, 3);
+        let legacy_result = Region::point(0, 0, 3);
         index.insert_read(
             legacy(10),
             b_result,
@@ -1617,13 +1607,16 @@ mod tests {
             DirtyProjectionRule::WholeResult,
         );
 
-        let closure = compute_dirty_closure(&index, [RegionPattern::point(0, 50, 0)], |producer| {
-            match producer {
-                producer if producer == span(1) => Some(b_result),
-                producer if producer == legacy(10) => Some(legacy_result),
-                _ => None,
-            }
-        });
+        let closure =
+            compute_dirty_closure(
+                &index,
+                [Region::point(0, 50, 0)],
+                |producer| match producer {
+                    producer if producer == span(1) => Some(b_result),
+                    producer if producer == legacy(10) => Some(legacy_result),
+                    _ => None,
+                },
+            );
 
         assert_eq!(closure.fallbacks, Vec::new());
         assert_eq!(closure.work.len(), 2);
@@ -1637,36 +1630,30 @@ mod tests {
         assert!(
             closure
                 .changed_result_regions
-                .contains(&RegionPattern::point(0, 50, 1))
+                .contains(&Region::point(0, 50, 1))
         );
         assert!(
             closure
                 .changed_result_regions
-                .contains(&RegionPattern::point(0, 0, 3))
+                .contains(&Region::point(0, 0, 3))
         );
     }
 
     #[test]
     fn dirty_closure_filters_no_intersection_candidates() {
         let mut index = FormulaConsumerReadIndex::default();
-        let result = RegionPattern::col_interval(0, 1, 0, 9);
+        let result = Region::col_interval(0, 1, 0, 9);
         let projection = DirtyProjectionRule::AffineCell {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: -1 },
         };
         // Deliberately over-broad read region to prove closure honors the
         // projection result rather than treating index candidates as dirty work.
-        index.insert_read(
-            span(1),
-            RegionPattern::WholeSheet { sheet_id: 0 },
-            result,
-            projection,
-        );
+        index.insert_read(span(1), Region::whole_sheet(0), result, projection);
 
-        let closure =
-            compute_dirty_closure(&index, [RegionPattern::point(0, 50, 25)], |producer| {
-                (producer == span(1)).then_some(result)
-            });
+        let closure = compute_dirty_closure(&index, [Region::point(0, 50, 25)], |producer| {
+            (producer == span(1)).then_some(result)
+        });
 
         assert!(closure.work.is_empty());
         assert!(closure.changed_result_regions.is_empty());
@@ -1683,13 +1670,13 @@ mod tests {
         };
         index.insert_read(
             span(1),
-            RegionPattern::WholeSheet { sheet_id: 0 },
-            RegionPattern::WholeSheet { sheet_id: 0 },
+            Region::whole_sheet(0),
+            Region::whole_sheet(0),
             projection,
         );
 
-        let closure = compute_dirty_closure(&index, [RegionPattern::point(0, 5, 5)], |_| {
-            Some(RegionPattern::WholeSheet { sheet_id: 0 })
+        let closure = compute_dirty_closure(&index, [Region::point(0, 5, 5)], |_| {
+            Some(Region::whole_sheet(0))
         });
 
         assert!(closure.work.is_empty());
@@ -1705,25 +1692,17 @@ mod tests {
     #[test]
     fn dirty_closure_whole_col_changed_region_is_producer_bounded_not_value_bounded() {
         let mut index = FormulaConsumerReadIndex::default();
-        let legacy_result = RegionPattern::point(0, 0, 3);
+        let legacy_result = Region::point(0, 0, 3);
         index.insert_read(
             legacy(10),
-            RegionPattern::WholeCol {
-                sheet_id: 0,
-                col: 1,
-            },
+            Region::whole_col(0, 1),
             legacy_result,
             DirtyProjectionRule::WholeResult,
         );
 
-        let closure = compute_dirty_closure(
-            &index,
-            [RegionPattern::WholeCol {
-                sheet_id: 0,
-                col: 1,
-            }],
-            |producer| (producer == legacy(10)).then_some(legacy_result),
-        );
+        let closure = compute_dirty_closure(&index, [Region::whole_col(0, 1)], |producer| {
+            (producer == legacy(10)).then_some(legacy_result)
+        });
 
         assert_eq!(closure.work.len(), 1);
         assert_eq!(closure.work[0].dirty, ProducerDirtyDomain::Whole);
@@ -1735,7 +1714,7 @@ mod tests {
     #[test]
     fn dirty_closure_multi_precedent_summary_merges_sparse_cells_without_widening() {
         let mut index = FormulaConsumerReadIndex::default();
-        let result = RegionPattern::row_interval(0, 5, 0, 9);
+        let result = Region::row_interval(0, 5, 0, 9);
         let near_projection = DirtyProjectionRule::AffineCell {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: 10 },
@@ -1759,10 +1738,7 @@ mod tests {
 
         let closure = compute_dirty_closure(
             &index,
-            [
-                RegionPattern::point(0, 5, 15),
-                RegionPattern::point(0, 5, 26),
-            ],
+            [Region::point(0, 5, 15), Region::point(0, 5, 26)],
             |producer| (producer == span(1)).then_some(result),
         );
 
@@ -1777,17 +1753,17 @@ mod tests {
     #[test]
     fn dirty_closure_dedups_fixed_point_regions() {
         let mut index = FormulaConsumerReadIndex::default();
-        let result = RegionPattern::point(0, 0, 1);
+        let result = Region::point(0, 0, 1);
         index.insert_read(
             span(1),
-            RegionPattern::point(0, 0, 0),
+            Region::point(0, 0, 0),
             result,
             DirtyProjectionRule::WholeResult,
         );
 
         let closure = compute_dirty_closure(
             &index,
-            [RegionPattern::point(0, 0, 0), RegionPattern::point(0, 0, 0)],
+            [Region::point(0, 0, 0), Region::point(0, 0, 0)],
             |producer| (producer == span(1)).then_some(result),
         );
 
@@ -1803,15 +1779,14 @@ mod tests {
             row: AxisProjection::Relative { offset: -10 },
             col: AxisProjection::Relative { offset: 0 },
         };
-        let result = RegionPattern::whole_sheet(1);
-        index.insert_read(span(1), RegionPattern::rows_from(0, 20), result, projection);
+        let result = Region::whole_sheet(1);
+        index.insert_read(span(1), Region::rows_from(0, 20), result, projection);
 
-        let closure =
-            compute_dirty_closure(&index, [RegionPattern::rows_from(0, 20)], |producer| {
-                (producer == span(1)).then_some(result)
-            });
+        let closure = compute_dirty_closure(&index, [Region::rows_from(0, 20)], |producer| {
+            (producer == span(1)).then_some(result)
+        });
 
-        let expected = RegionPattern::rows_from(1, 30);
+        let expected = Region::rows_from(1, 30);
         assert_eq!(closure.fallbacks, Vec::new());
         assert_eq!(closure.work.len(), 1);
         assert_eq!(
@@ -1828,15 +1803,15 @@ mod tests {
             row: AxisProjection::Relative { offset: -100 },
             col: AxisProjection::Relative { offset: 0 },
         };
-        let result = RegionPattern::whole_sheet(1);
-        let changed = RegionPattern::rows_from(0, u32::MAX - 10);
+        let result = Region::whole_sheet(1);
+        let changed = Region::rows_from(0, u32::MAX - 10);
         index.insert_read(span(1), changed, result, projection);
 
         let closure = compute_dirty_closure(&index, [changed], |producer| {
             (producer == span(1)).then_some(result)
         });
 
-        let expected = RegionPattern::rows_from(1, u32::MAX);
+        let expected = Region::rows_from(1, u32::MAX);
         assert_eq!(closure.fallbacks, Vec::new());
         assert_eq!(closure.work.len(), 1);
         assert_eq!(
@@ -1857,46 +1832,45 @@ mod tests {
             row: AxisProjection::Relative { offset: 0 },
             col: AxisProjection::Relative { offset: 0 },
         };
-        let first_result = RegionPattern::whole_sheet(1);
-        let second_result = RegionPattern::whole_sheet(2);
+        let first_result = Region::whole_sheet(1);
+        let second_result = Region::whole_sheet(2);
         index.insert_read(
             span(1),
-            RegionPattern::rows_from(0, 12),
+            Region::rows_from(0, 12),
             first_result,
             first_projection,
         );
         index.insert_read(
             span(2),
-            RegionPattern::rows_from(1, 15),
+            Region::rows_from(1, 15),
             second_result,
             second_projection,
         );
 
         let closure =
-            compute_dirty_closure(&index, [RegionPattern::rows_from(0, 12)], |producer| {
-                match producer {
+            compute_dirty_closure(
+                &index,
+                [Region::rows_from(0, 12)],
+                |producer| match producer {
                     producer if producer == span(1) => Some(first_result),
                     producer if producer == span(2) => Some(second_result),
                     _ => None,
-                }
-            });
+                },
+            );
 
         assert_eq!(closure.fallbacks, Vec::new());
         assert_eq!(closure.work.len(), 2);
         assert_eq!(
             closure.work[0].dirty,
-            ProducerDirtyDomain::Regions(vec![RegionPattern::rows_from(1, 15)])
+            ProducerDirtyDomain::Regions(vec![Region::rows_from(1, 15)])
         );
         assert_eq!(
             closure.work[1].dirty,
-            ProducerDirtyDomain::Regions(vec![RegionPattern::rows_from(2, 15)])
+            ProducerDirtyDomain::Regions(vec![Region::rows_from(2, 15)])
         );
         assert_eq!(
             closure.changed_result_regions,
-            vec![
-                RegionPattern::rows_from(1, 15),
-                RegionPattern::rows_from(2, 15)
-            ]
+            vec![Region::rows_from(1, 15), Region::rows_from(2, 15)]
         );
     }
 
@@ -1923,13 +1897,13 @@ mod tests {
                     row: AxisProjection::Relative { offset: row_offset },
                     col: AxisProjection::Relative { offset: col_offset },
                 };
-                let result = RegionPattern::rect(0, 3, 6, 3, 6);
+                let result = Region::rect(0, 3, 6, 3, 6);
                 let read = projection.read_region_for_result(0, result).unwrap();
 
                 for source_row in 1..=8 {
                     for source_col in 1..=8 {
                         let dirty = projection.project_changed_region(
-                            RegionPattern::point(0, source_row, source_col),
+                            Region::point(0, source_row, source_col),
                             read,
                             result,
                         );

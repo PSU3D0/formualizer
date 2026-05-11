@@ -116,7 +116,7 @@ Direction: `Vec::with_capacity(span_total_placements)` at top of layer.
 - `producer_results`: index + Vec sized to |active_spans| + |formula_vertices|
 - `consumer_reads`: same structure sized to |read_summary_deps_total| + |legacy_dep_edges|
 - `legacy_vertices`: Vec<VertexId> built **twice** (eval.rs:6249, 6262)
-- `seen` FxHashSet<RegionPattern> per legacy vertex (eval.rs:6271). **Per‑legacy‑vertex, per‑pass.**
+- `seen` FxHashSet<Region> per legacy vertex (eval.rs:6271). **Per‑legacy‑vertex, per‑pass.**
 - `span_refs_by_id`: BTreeMap<FormulaSpanId, FormulaSpanRef>
 - `scheduled_legacy_vertices`: Vec<VertexId>
 - `merged_work` inside scheduler: BTreeMap<FormulaProducerId, DirtyAccumulator> sized O(work)

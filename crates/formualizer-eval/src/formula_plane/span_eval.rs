@@ -19,7 +19,7 @@ use crate::reference::CellRef;
 use crate::traits::EvaluationContext;
 use formualizer_common::{ExcelErrorExtra, ExcelErrorKind, LiteralValue};
 
-use super::region_index::{DirtyDomain, RegionKey, RegionPattern};
+use super::region_index::{DirtyDomain, Region, RegionKey};
 use super::runtime::{
     FormulaPlane, FormulaSpan, FormulaSpanRef, PlacementCoord, PlacementDomain,
     PlacementDomainIter, SpanBindingSet, TemplateRecord,
@@ -519,7 +519,7 @@ impl<'a> SpanEvaluator<'a> {
                 && summary.dependencies.iter().any(|dependency| {
                     dependency
                         .read_region
-                        .intersects(&RegionPattern::from_domain(other.result_region.domain()))
+                        .intersects(&Region::from_domain(other.result_region.domain()))
                 })
         })
     }
@@ -1102,7 +1102,7 @@ mod tests {
     use crate::test_workbook::TestWorkbook;
 
     use super::super::placement::{FormulaPlacementCandidate, place_candidate_family};
-    use super::super::region_index::RegionPattern;
+    use super::super::region_index::Region;
     use super::super::runtime::{
         FormulaOverlayEntryKind, NewFormulaSpan, PlacementDomain, ResultRegion,
     };
@@ -1158,7 +1158,7 @@ mod tests {
     fn regions_task(
         plane: &FormulaPlane,
         span: FormulaSpanRef,
-        regions: Vec<RegionPattern>,
+        regions: Vec<Region>,
     ) -> SpanEvalTask {
         SpanEvalTask {
             span,
@@ -1705,7 +1705,7 @@ mod tests {
         );
         let span = span_from_report(&placement);
         let mut buffer = ComputedWriteBuffer::default();
-        let task = regions_task(&plane, span, vec![RegionPattern::rect(0, 1, 2, 1, 1)]);
+        let task = regions_task(&plane, span, vec![Region::rect(0, 1, 2, 1, 1)]);
 
         let report = eval_task(
             &plane,

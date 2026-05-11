@@ -2,7 +2,7 @@
 
 ## 1. Goal restatement
 
-Phase 2 replaces `SheetRegionIndex` insertion and query dispatch that currently matches the nine `RegionPattern` variants with dispatch on the pair `(rows.kind(), cols.kind())`, where each axis has one of five `AxisKind` values: `Point`, `Span`, `From`, `To`, or `All`. The full kind space is 5×5, but Phase 2 implements the nine kind pairs that the current `RegionPattern::axis_ranges()` conversion can construct. The remaining sixteen pairs are unreachable until the region representation is collapsed in Phase 4; observing one in Phase 2 is a programmer error and must panic with a message naming the unsupported kind pair.
+Phase 2 replaces `SheetRegionIndex` insertion and query dispatch that currently matches the nine `Region` variants with dispatch on the pair `(rows.kind(), cols.kind())`, where each axis has one of five `AxisKind` values: `Point`, `Span`, `From`, `To`, or `All`. The full kind space is 5×5, but Phase 2 implements the nine kind pairs that the current `Region::axis_ranges()` conversion can construct. The remaining sixteen pairs are unreachable until the region representation is collapsed in Phase 4; observing one in Phase 2 is a programmer error and must panic with a message naming the unsupported kind pair.
 
 Insertion chooses exactly one index family from the current `SheetRegionIndex` inventory using the inserted region's `(row_kind, col_kind)`. The Phase 2 insertion rewrite is a routing refactor only: `(Point, Point)` still inserts into `points`, `(Span, Point)` into `col_intervals`, `(Point, Span)` into `row_intervals`, `(Span, Span)` into `rect_buckets`, `(From, All)` into `rows_from`, `(All, From)` into `cols_from`, `(Point, All)` into `whole_rows`, `(All, Point)` into `whole_cols`, and `(All, All)` into `whole_sheets`.
 
@@ -28,13 +28,13 @@ Notation: `N_f` is the number of entries in a family, `N_sheet` is the number of
 
 **None.** The existing nine families match the nine currently-constructible kind pairs exactly. Phase 0's `rows_from`/`cols_from` covers tail precision without bucket grids.
 
-The Option E memo's broader `tail_extents` family is for kind pairs like `(From, Span)`, `(Span, From)`, `(From, From)`, `(To, All)`, `(All, To)`. None are constructible by current `RegionPattern`; deferring to Phase 4.
+The Option E memo's broader `tail_extents` family is for kind pairs like `(From, Span)`, `(Span, From)`, `(From, From)`, `(To, All)`, `(All, To)`. None are constructible by current `Region`; deferring to Phase 4.
 
 **Non-negotiable rule:** any kind pair containing `From` or `To` must NEVER route through `rect_buckets_for_rect`. Tail axes turn its returned `Vec<(SheetId, row_bucket, col_bucket)>` into an unbounded grid.
 
 ## 4. The 5×5 INSERTION dispatch table
 
-Phase 2 covers the nine cells produced by `RegionPattern::axis_ranges()`. Other sixteen cells panic.
+Phase 2 covers the nine cells produced by `Region::axis_ranges()`. Other sixteen cells panic.
 
 | rows \ cols | Point | Span | From | To | All |
 |---|---|---|---|---|---|
@@ -111,7 +111,7 @@ Keep small private utilities (e.g. `extend_ids`, bucket arithmetic) for mechanic
 
 ### 9a. Insertion+query matrix tests in `region_index.rs`
 
-81-case table-driven test (9 insert kinds × 9 query kinds). For each combination: insert one region of insert kind on sheet 1, query with a region of query kind, assert the index returns the entry IFF `RegionPattern::intersects` returns true. Cross-sheet query returns nothing.
+81-case table-driven test (9 insert kinds × 9 query kinds). For each combination: insert one region of insert kind on sheet 1, query with a region of query kind, assert the index returns the entry IFF `Region::intersects` returns true. Cross-sheet query returns nothing.
 
 ### 9b. Property tests in `axis_range_proptest.rs`
 
@@ -153,7 +153,7 @@ All 1671 `formualizer-eval` tests continue to pass.
 
 **Risk: over-broad walk for unbounded query.** A `(From, All)` query must include bounded rect entries on the sheet. Mitigation: scan populated `rect_buckets` keys filtered by sheet+predicate; never enumerate theoretical buckets.
 
-**Risk: dispatch table bug producing missed intersections.** Mitigation: 81-case matrix + property test SUPERSET INVARIANT against `RegionPattern::intersects` ground truth.
+**Risk: dispatch table bug producing missed intersections.** Mitigation: 81-case matrix + property test SUPERSET INVARIANT against `Region::intersects` ground truth.
 
 **Risk: NEW index family decision creates rebuild churn.** Mitigation: stick with Phase 0's 9 families; route only the 9 currently-constructible pairs; panic on others until Phase 4 expands the constructible set.
 

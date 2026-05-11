@@ -13,7 +13,7 @@ use super::producer::{
     FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex, FormulaProducerWork,
     ProducerDirtyDomain, ProjectionResult,
 };
-use super::region_index::RegionPattern;
+use super::region_index::Region;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MixedSchedule {
@@ -321,8 +321,8 @@ struct DirtyAccumulator {
     whole: bool,
     cells: Vec<super::region_index::RegionKey>,
     seen_cells: FxHashSet<super::region_index::RegionKey>,
-    regions: Vec<RegionPattern>,
-    seen_regions: FxHashSet<RegionPattern>,
+    regions: Vec<Region>,
+    seen_regions: FxHashSet<Region>,
 }
 
 impl DirtyAccumulator {
@@ -364,7 +364,7 @@ impl DirtyAccumulator {
             let mut regions = self
                 .cells
                 .into_iter()
-                .map(RegionPattern::Point)
+                .map(|key| Region::point(key.sheet_id, key.row, key.col))
                 .collect::<Vec<_>>();
             regions.extend(self.regions);
             ProducerDirtyDomain::Regions(regions)
@@ -374,10 +374,10 @@ impl DirtyAccumulator {
 
 fn edge_derivation_regions(
     dirty: &ProducerDirtyDomain,
-    producer_result_region: RegionPattern,
+    producer_result_region: Region,
     max_precise_regions: usize,
     stats: &mut MixedScheduleStats,
-) -> Vec<RegionPattern> {
+) -> Vec<Region> {
     let regions = dirty.result_regions(producer_result_region);
     if regions.len() > max_precise_regions {
         stats.conservative_edge_derivation_count =
@@ -418,8 +418,8 @@ mod tests {
         FormulaProducerId::Legacy(VertexId(id))
     }
 
-    fn cell(sheet_id: crate::SheetId, row: u32, col: u32) -> RegionPattern {
-        RegionPattern::point(sheet_id, row, col)
+    fn cell(sheet_id: crate::SheetId, row: u32, col: u32) -> Region {
+        Region::point(sheet_id, row, col)
     }
 
     fn work(producer: FormulaProducerId, dirty: ProducerDirtyDomain) -> FormulaProducerWork {
@@ -437,8 +437,8 @@ mod tests {
     fn mixed_schedule_independent_producers_share_layer() {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
-        results.insert_producer(span(1), RegionPattern::col_interval(0, 1, 0, 9));
-        results.insert_producer(span(2), RegionPattern::col_interval(0, 10, 0, 9));
+        results.insert_producer(span(1), Region::col_interval(0, 1, 0, 9));
+        results.insert_producer(span(2), Region::col_interval(0, 10, 0, 9));
 
         let schedule = build_mixed_schedule(
             [
@@ -472,8 +472,8 @@ mod tests {
     fn mixed_schedule_orders_span_to_span_chain() {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
-        let b_result = RegionPattern::col_interval(0, 1, 0, 9);
-        let c_result = RegionPattern::col_interval(0, 2, 0, 9);
+        let b_result = Region::col_interval(0, 1, 0, 9);
+        let c_result = Region::col_interval(0, 2, 0, 9);
         let projection = left_projection();
         results.insert_producer(span(1), b_result);
         results.insert_producer(span(2), c_result);
@@ -505,7 +505,7 @@ mod tests {
     fn mixed_schedule_orders_span_to_legacy() {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
-        let b_result = RegionPattern::col_interval(0, 1, 0, 99);
+        let b_result = Region::col_interval(0, 1, 0, 99);
         let d_result = cell(0, 0, 3);
         results.insert_producer(span(1), b_result);
         results.insert_producer(legacy(10), d_result);
@@ -538,7 +538,7 @@ mod tests {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
         let a_result = cell(0, 0, 0);
-        let b_result = RegionPattern::col_interval(0, 1, 0, 9);
+        let b_result = Region::col_interval(0, 1, 0, 9);
         results.insert_producer(legacy(1), a_result);
         results.insert_producer(span(2), b_result);
         reads.insert_read(
@@ -566,7 +566,7 @@ mod tests {
     fn mixed_schedule_merges_duplicate_dirty_work() {
         let mut results = FormulaProducerResultIndex::default();
         let reads = FormulaConsumerReadIndex::default();
-        results.insert_producer(span(1), RegionPattern::col_interval(0, 1, 0, 99));
+        results.insert_producer(span(1), Region::col_interval(0, 1, 0, 99));
 
         let schedule = build_mixed_schedule(
             [
@@ -596,16 +596,11 @@ mod tests {
     fn mixed_schedule_filters_no_intersection_candidates() {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
-        let b_result = RegionPattern::col_interval(0, 1, 0, 9);
-        let c_result = RegionPattern::col_interval(0, 2, 0, 9);
+        let b_result = Region::col_interval(0, 1, 0, 9);
+        let c_result = Region::col_interval(0, 2, 0, 9);
         results.insert_producer(span(1), b_result);
         results.insert_producer(span(2), c_result);
-        reads.insert_read(
-            span(2),
-            RegionPattern::WholeSheet { sheet_id: 0 },
-            c_result,
-            left_projection(),
-        );
+        reads.insert_read(span(2), Region::whole_sheet(0), c_result, left_projection());
 
         let schedule = build_mixed_schedule(
             [
@@ -630,11 +625,11 @@ mod tests {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
         results.insert_producer(span(1), cell(0, 0, 0));
-        results.insert_producer(span(2), RegionPattern::WholeSheet { sheet_id: 0 });
+        results.insert_producer(span(2), Region::whole_sheet(0));
         reads.insert_read(
             span(2),
-            RegionPattern::WholeSheet { sheet_id: 0 },
-            RegionPattern::WholeSheet { sheet_id: 0 },
+            Region::whole_sheet(0),
+            Region::whole_sheet(0),
             left_projection(),
         );
 
@@ -659,8 +654,8 @@ mod tests {
     fn mixed_schedule_detects_cycles_without_proxy_nodes() {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
-        let b_result = RegionPattern::col_interval(0, 1, 0, 9);
-        let c_result = RegionPattern::col_interval(0, 2, 0, 9);
+        let b_result = Region::col_interval(0, 1, 0, 9);
+        let c_result = Region::col_interval(0, 2, 0, 9);
         results.insert_producer(span(1), b_result);
         results.insert_producer(span(2), c_result);
         reads.insert_read(
@@ -722,8 +717,8 @@ mod tests {
     fn mixed_schedule_conservative_edge_derivation_caps_sparse_queries() {
         let mut results = FormulaProducerResultIndex::default();
         let mut reads = FormulaConsumerReadIndex::default();
-        let b_result = RegionPattern::col_interval(0, 1, 0, 99);
-        let c_result = RegionPattern::col_interval(0, 2, 0, 99);
+        let b_result = Region::col_interval(0, 1, 0, 99);
+        let c_result = Region::col_interval(0, 2, 0, 99);
         results.insert_producer(span(1), b_result);
         results.insert_producer(span(2), c_result);
         reads.insert_read(

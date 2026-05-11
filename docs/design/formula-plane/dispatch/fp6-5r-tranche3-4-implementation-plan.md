@@ -444,7 +444,7 @@ Recommended types:
 ```rust
 pub(crate) struct FormulaDirtyClosure {
     pub(crate) work: Vec<FormulaProducerWork>,
-    pub(crate) changed_result_regions: Vec<RegionPattern>,
+    pub(crate) changed_result_regions: Vec<Region>,
     pub(crate) stats: FormulaDirtyClosureStats,
     pub(crate) fallbacks: Vec<FormulaDirtyFallback>,
 }
@@ -466,7 +466,7 @@ pub(crate) struct FormulaDirtyClosureStats {
 
 pub(crate) struct FormulaDirtyFallback {
     pub(crate) consumer: FormulaProducerId,
-    pub(crate) changed_region: RegionPattern,
+    pub(crate) changed_region: Region,
     pub(crate) reason: ProjectionFallbackReason,
 }
 ```
@@ -478,7 +478,7 @@ Keep this pure with a trait or closure callback:
 
 ```rust
 pub(crate) trait FormulaProducerResultProvider {
-    fn producer_result_region(&self, producer: FormulaProducerId) -> Option<RegionPattern>;
+    fn producer_result_region(&self, producer: FormulaProducerId) -> Option<Region>;
 }
 ```
 
@@ -487,8 +487,8 @@ For tests, implement the trait for a fixture map or use a callback:
 ```rust
 compute_dirty_closure(
     consumer_reads: &FormulaConsumerReadIndex,
-    changed_regions: impl IntoIterator<Item = RegionPattern>,
-    result_region: impl Fn(FormulaProducerId) -> Option<RegionPattern>,
+    changed_regions: impl IntoIterator<Item = Region>,
+    result_region: impl Fn(FormulaProducerId) -> Option<Region>,
 ) -> FormulaDirtyClosure
 ```
 
@@ -571,7 +571,7 @@ No per-cell expansion of whole/open value ranges.
 Output size is producer-bound, not value-range-size-bound.
 ```
 
-Whole/open regions may appear as `RegionPattern::WholeCol`, `WholeRow`, or
+Whole/open regions may appear as `Region::WholeCol`, `WholeRow`, or
 `WholeSheet`; closure should query indexes with those regions, not expand them.
 
 ### 3.9 Tranche 4 tests

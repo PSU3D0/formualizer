@@ -73,64 +73,63 @@ impl RectRegion {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum RegionPattern {
-    Point(RegionKey),
-    ColInterval {
-        sheet_id: SheetId,
-        col: u32,
-        row_start: u32,
-        row_end: u32,
-    },
-    RowInterval {
-        sheet_id: SheetId,
-        row: u32,
-        col_start: u32,
-        col_end: u32,
-    },
-    Rect(RectRegion),
-    RowsFrom {
-        sheet_id: SheetId,
-        row_start: u32,
-    },
-    ColsFrom {
-        sheet_id: SheetId,
-        col_start: u32,
-    },
-    WholeRow {
-        sheet_id: SheetId,
-        row: u32,
-    },
-    WholeCol {
-        sheet_id: SheetId,
-        col: u32,
-    },
-    WholeSheet {
-        sheet_id: SheetId,
-    },
+pub(crate) struct Region {
+    pub(crate) sheet_id: SheetId,
+    pub(crate) rows: AxisRange,
+    pub(crate) cols: AxisRange,
 }
 
-impl RegionPattern {
+impl Region {
+    #[inline]
+    pub(crate) fn sheet_id(self) -> SheetId {
+        self.sheet_id
+    }
+
+    #[inline]
+    pub(crate) fn axis_ranges(self) -> (AxisRange, AxisRange) {
+        (self.rows, self.cols)
+    }
+
+    #[inline]
+    pub(crate) fn kind_pair(self) -> (AxisKind, AxisKind) {
+        (self.rows.kind(), self.cols.kind())
+    }
+
+    #[inline]
+    pub(crate) fn intersects(&self, other: &Self) -> bool {
+        self.sheet_id == other.sheet_id
+            && self.rows.intersects(other.rows)
+            && self.cols.intersects(other.cols)
+    }
+
+    #[inline]
+    pub(crate) fn contains_key(&self, key: RegionKey) -> bool {
+        self.sheet_id == key.sheet_id && self.rows.contains(key.row) && self.cols.contains(key.col)
+    }
+
     pub(crate) fn point(sheet_id: SheetId, row: u32, col: u32) -> Self {
-        Self::Point(RegionKey::new(sheet_id, row, col))
+        Self {
+            sheet_id,
+            rows: AxisRange::Point(row),
+            cols: AxisRange::Point(col),
+        }
     }
 
     pub(crate) fn col_interval(sheet_id: SheetId, col: u32, row_start: u32, row_end: u32) -> Self {
         assert!(row_start <= row_end, "row_start must be <= row_end");
-        Self::ColInterval {
+        Self {
             sheet_id,
-            col,
-            row_start,
-            row_end,
+            rows: AxisRange::Span(row_start, row_end),
+            cols: AxisRange::Point(col),
         }
     }
 
     pub(crate) fn row_interval(sheet_id: SheetId, row: u32, col_start: u32, col_end: u32) -> Self {
         assert!(col_start <= col_end, "col_start must be <= col_end");
-        Self::RowInterval {
+        Self {
             sheet_id,
-            row,
-            col_start,
-            col_end,
+            rows: AxisRange::Point(row),
+            cols: AxisRange::Span(col_start, col_end),
         }
     }
 
@@ -141,35 +140,53 @@ impl RegionPattern {
         col_start: u32,
         col_end: u32,
     ) -> Self {
-        Self::Rect(RectRegion::new(
-            sheet_id, row_start, row_end, col_start, col_end,
-        ))
+        assert!(row_start <= row_end, "row_start must be <= row_end");
+        assert!(col_start <= col_end, "col_start must be <= col_end");
+        Self {
+            sheet_id,
+            rows: AxisRange::Span(row_start, row_end),
+            cols: AxisRange::Span(col_start, col_end),
+        }
     }
 
     pub(crate) fn rows_from(sheet_id: SheetId, row_start: u32) -> Self {
-        Self::RowsFrom {
+        Self {
             sheet_id,
-            row_start,
+            rows: AxisRange::From(row_start),
+            cols: AxisRange::All,
         }
     }
 
     pub(crate) fn cols_from(sheet_id: SheetId, col_start: u32) -> Self {
-        Self::ColsFrom {
+        Self {
             sheet_id,
-            col_start,
+            rows: AxisRange::All,
+            cols: AxisRange::From(col_start),
         }
     }
 
     pub(crate) fn whole_row(sheet_id: SheetId, row: u32) -> Self {
-        Self::WholeRow { sheet_id, row }
+        Self {
+            sheet_id,
+            rows: AxisRange::Point(row),
+            cols: AxisRange::All,
+        }
     }
 
     pub(crate) fn whole_col(sheet_id: SheetId, col: u32) -> Self {
-        Self::WholeCol { sheet_id, col }
+        Self {
+            sheet_id,
+            rows: AxisRange::All,
+            cols: AxisRange::Point(col),
+        }
     }
 
     pub(crate) fn whole_sheet(sheet_id: SheetId) -> Self {
-        Self::WholeSheet { sheet_id }
+        Self {
+            sheet_id,
+            rows: AxisRange::All,
+            cols: AxisRange::All,
+        }
     }
 
     pub(crate) fn from_domain(domain: &PlacementDomain) -> Self {
@@ -196,65 +213,21 @@ impl RegionPattern {
         }
     }
 
-    pub(crate) fn sheet_id(&self) -> SheetId {
-        match self {
-            Self::Point(key) => key.sheet_id,
-            Self::ColInterval { sheet_id, .. }
-            | Self::RowInterval { sheet_id, .. }
-            | Self::Rect(RectRegion { sheet_id, .. })
-            | Self::RowsFrom { sheet_id, .. }
-            | Self::ColsFrom { sheet_id, .. }
-            | Self::WholeRow { sheet_id, .. }
-            | Self::WholeCol { sheet_id, .. }
-            | Self::WholeSheet { sheet_id } => *sheet_id,
-        }
-    }
-
     #[inline]
-    pub(crate) fn intersects(&self, other: &Self) -> bool {
-        if self.sheet_id() != other.sheet_id() {
-            return false;
-        }
-        let (self_rows, self_cols) = self.axis_ranges();
-        let (other_rows, other_cols) = other.axis_ranges();
-        self_rows.intersects(other_rows) && self_cols.intersects(other_cols)
-    }
-
-    #[inline]
-    pub(crate) fn contains_key(&self, key: RegionKey) -> bool {
-        self.intersects(&Self::Point(key))
-    }
-
-    #[inline]
-    pub(crate) fn axis_ranges(&self) -> (AxisRange, AxisRange) {
-        match *self {
-            Self::Point(key) => (AxisRange::Point(key.row), AxisRange::Point(key.col)),
-            Self::ColInterval {
-                row_start,
-                row_end,
-                col,
-                ..
-            } => (AxisRange::Span(row_start, row_end), AxisRange::Point(col)),
-            Self::RowInterval {
+    pub(crate) fn as_point(self) -> Option<RegionKey> {
+        if let (AxisRange::Point(row), AxisRange::Point(col)) = (self.rows, self.cols) {
+            Some(RegionKey {
+                sheet_id: self.sheet_id,
                 row,
-                col_start,
-                col_end,
-                ..
-            } => (AxisRange::Point(row), AxisRange::Span(col_start, col_end)),
-            Self::Rect(rect) => (
-                AxisRange::Span(rect.row_start, rect.row_end),
-                AxisRange::Span(rect.col_start, rect.col_end),
-            ),
-            Self::RowsFrom { row_start, .. } => (AxisRange::From(row_start), AxisRange::All),
-            Self::ColsFrom { col_start, .. } => (AxisRange::All, AxisRange::From(col_start)),
-            Self::WholeRow { row, .. } => (AxisRange::Point(row), AxisRange::All),
-            Self::WholeCol { col, .. } => (AxisRange::All, AxisRange::Point(col)),
-            Self::WholeSheet { .. } => (AxisRange::All, AxisRange::All),
+                col,
+            })
+        } else {
+            None
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum AxisRange {
     Point(u32),
     Span(u32, u32),
@@ -401,15 +374,15 @@ pub(crate) enum AxisKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RegionSet {
-    One(RegionPattern),
-    Many(Vec<RegionPattern>),
+    One(Region),
+    Many(Vec<Region>),
 }
 
 impl RegionSet {
-    pub(crate) fn patterns(&self) -> &[RegionPattern] {
+    pub(crate) fn regions(&self) -> &[Region] {
         match self {
-            Self::One(pattern) => std::slice::from_ref(pattern),
-            Self::Many(patterns) => patterns.as_slice(),
+            Self::One(region) => std::slice::from_ref(region),
+            Self::Many(regions) => regions.as_slice(),
         }
     }
 }
@@ -423,7 +396,7 @@ pub(crate) struct RegionQueryStats {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RegionMatch<T> {
     pub(crate) value: T,
-    pub(crate) indexed_region: RegionPattern,
+    pub(crate) indexed_region: Region,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -435,7 +408,7 @@ pub(crate) struct RegionQueryResult<T> {
 #[derive(Clone, Debug)]
 struct RegionEntry<T> {
     value: T,
-    region: RegionPattern,
+    region: Region,
 }
 
 #[derive(Debug)]
@@ -496,7 +469,7 @@ impl<T: Clone> SheetRegionIndex<T> {
         }
     }
 
-    pub(crate) fn insert(&mut self, region: RegionPattern, value: T) -> usize {
+    pub(crate) fn insert(&mut self, region: Region, value: T) -> usize {
         let id = self.entries.len();
         self.entries.push(RegionEntry { value, region });
         self.index_entry(id, region);
@@ -531,7 +504,7 @@ impl<T: Clone> SheetRegionIndex<T> {
         self.stale_epoch_count
     }
 
-    pub(crate) fn query(&self, query: RegionPattern) -> RegionQueryResult<T> {
+    pub(crate) fn query(&self, query: Region) -> RegionQueryResult<T> {
         let mut candidate_ids = FxHashSet::default();
         self.collect_candidates(query, &mut candidate_ids);
 
@@ -557,7 +530,7 @@ impl<T: Clone> SheetRegionIndex<T> {
         }
     }
 
-    fn index_entry(&mut self, id: usize, region: RegionPattern) {
+    fn index_entry(&mut self, id: usize, region: Region) {
         let sheet_id = region.sheet_id();
         let (rows, cols) = region.axis_ranges();
         match (rows.kind(), cols.kind()) {
@@ -649,7 +622,7 @@ impl<T: Clone> SheetRegionIndex<T> {
         }
     }
 
-    fn collect_candidates(&self, query: RegionPattern, out: &mut FxHashSet<usize>) {
+    fn collect_candidates(&self, query: Region, out: &mut FxHashSet<usize>) {
         let sheet_id = query.sheet_id();
         let (rows, cols) = query.axis_ranges();
         match (rows.kind(), cols.kind()) {
@@ -1140,7 +1113,7 @@ pub(crate) struct SpanDomainEntryId(usize);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpanDomainEntry {
     pub(crate) span: FormulaSpanRef,
-    pub(crate) domain: RegionPattern,
+    pub(crate) domain: Region,
 }
 
 #[derive(Debug, Default)]
@@ -1152,7 +1125,7 @@ pub(crate) struct SpanDomainIndex {
 
 impl SpanDomainIndex {
     pub(crate) fn insert_domain(&mut self, span: FormulaSpanRef, domain: PlacementDomain) {
-        let region = RegionPattern::from_domain(&domain);
+        let region = Region::from_domain(&domain);
         let id = SpanDomainEntryId(self.entries.len());
         self.entries.push(SpanDomainEntry {
             span,
@@ -1163,13 +1136,10 @@ impl SpanDomainIndex {
     }
 
     pub(crate) fn find_at(&self, coord: PlacementCoord) -> RegionQueryResult<SpanDomainEntry> {
-        self.find_intersections(RegionPattern::Point(coord.into()))
+        self.find_intersections(Region::point(coord.sheet_id, coord.row, coord.col))
     }
 
-    pub(crate) fn find_intersections(
-        &self,
-        region: RegionPattern,
-    ) -> RegionQueryResult<SpanDomainEntry> {
+    pub(crate) fn find_intersections(&self, region: Region) -> RegionQueryResult<SpanDomainEntry> {
         let result = self.index.query(region);
         RegionQueryResult {
             matches: result
@@ -1206,7 +1176,7 @@ pub(crate) enum DirtyProjection {
 pub(crate) enum DirtyDomain {
     WholeSpan(FormulaSpanRef),
     Cells(Vec<RegionKey>),
-    Regions(Vec<RegionPattern>),
+    Regions(Vec<Region>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1215,7 +1185,7 @@ pub(crate) struct SpanDependencyEntryId(usize);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpanDependencyEntry {
     pub(crate) span: FormulaSpanRef,
-    pub(crate) precedent_region: RegionPattern,
+    pub(crate) precedent_region: Region,
     pub(crate) projection: DirtyProjection,
     pub(crate) span_version: u32,
 }
@@ -1239,7 +1209,7 @@ impl SpanDependencyIndex {
     pub(crate) fn insert_dependency(
         &mut self,
         span: FormulaSpanRef,
-        precedent_region: RegionPattern,
+        precedent_region: Region,
         projection: DirtyProjection,
     ) -> Option<SpanDependencyEntryId> {
         if projection == DirtyProjection::UnsupportedUnbounded {
@@ -1260,7 +1230,7 @@ impl SpanDependencyIndex {
 
     pub(crate) fn query_changed_region(
         &self,
-        changed: RegionPattern,
+        changed: Region,
     ) -> RegionQueryResult<SpanDirtyCandidate> {
         let result = self.index.query(changed);
         RegionQueryResult {
@@ -1302,7 +1272,7 @@ pub(crate) struct FormulaOverlayIndexEntryId(usize);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FormulaOverlayIndexEntry {
     pub(crate) overlay: FormulaOverlayRef,
-    pub(crate) domain: RegionPattern,
+    pub(crate) domain: Region,
 }
 
 #[derive(Debug, Default)]
@@ -1316,7 +1286,7 @@ pub(crate) struct FormulaOverlayIndex {
 
 impl FormulaOverlayIndex {
     pub(crate) fn insert_overlay(&mut self, overlay: FormulaOverlayRef, domain: PlacementDomain) {
-        let region = RegionPattern::from_domain(&domain);
+        let region = Region::from_domain(&domain);
         let id = FormulaOverlayIndexEntryId(self.entries.len());
         self.entries.push(FormulaOverlayIndexEntry {
             overlay,
@@ -1330,12 +1300,12 @@ impl FormulaOverlayIndex {
         &self,
         coord: PlacementCoord,
     ) -> RegionQueryResult<FormulaOverlayIndexEntry> {
-        self.find_intersections(RegionPattern::Point(coord.into()))
+        self.find_intersections(Region::point(coord.sheet_id, coord.row, coord.col))
     }
 
     pub(crate) fn find_intersections(
         &self,
-        region: RegionPattern,
+        region: Region,
     ) -> RegionQueryResult<FormulaOverlayIndexEntry> {
         let result = self.index.query(region);
         RegionQueryResult {
@@ -1527,71 +1497,140 @@ mod tests {
     fn region_pattern_axis_ranges_match_conversion_table() {
         use AxisRange::*;
 
+        assert_eq!(Region::point(1, 2, 3).axis_ranges(), (Point(2), Point(3)));
         assert_eq!(
-            RegionPattern::point(1, 2, 3).axis_ranges(),
-            (Point(2), Point(3))
-        );
-        assert_eq!(
-            RegionPattern::col_interval(1, 4, 5, 6).axis_ranges(),
+            Region::col_interval(1, 4, 5, 6).axis_ranges(),
             (Span(5, 6), Point(4))
         );
         assert_eq!(
-            RegionPattern::row_interval(1, 4, 5, 6).axis_ranges(),
+            Region::row_interval(1, 4, 5, 6).axis_ranges(),
             (Point(4), Span(5, 6))
         );
         assert_eq!(
-            RegionPattern::rect(1, 2, 3, 4, 5).axis_ranges(),
+            Region::rect(1, 2, 3, 4, 5).axis_ranges(),
             (Span(2, 3), Span(4, 5))
         );
-        assert_eq!(RegionPattern::rows_from(1, 9).axis_ranges(), (From(9), All));
-        assert_eq!(RegionPattern::cols_from(1, 8).axis_ranges(), (All, From(8)));
+        assert_eq!(Region::rows_from(1, 9).axis_ranges(), (From(9), All));
+        assert_eq!(Region::cols_from(1, 8).axis_ranges(), (All, From(8)));
+        assert_eq!(Region::whole_row(1, 7).axis_ranges(), (Point(7), All));
+        assert_eq!(Region::whole_col(1, 6).axis_ranges(), (All, Point(6)));
+        assert_eq!(Region::whole_sheet(1).axis_ranges(), (All, All));
+    }
+
+    #[test]
+    fn region_constructors_produce_expected_axis_ranges() {
+        use AxisRange::*;
+
         assert_eq!(
-            RegionPattern::whole_row(1, 7).axis_ranges(),
-            (Point(7), All)
+            Region::point(1, 2, 3),
+            Region {
+                sheet_id: 1,
+                rows: Point(2),
+                cols: Point(3)
+            }
         );
         assert_eq!(
-            RegionPattern::whole_col(1, 6).axis_ranges(),
-            (All, Point(6))
+            Region::rect(1, 2, 3, 4, 5),
+            Region {
+                sheet_id: 1,
+                rows: Span(2, 3),
+                cols: Span(4, 5)
+            }
         );
-        assert_eq!(RegionPattern::whole_sheet(1).axis_ranges(), (All, All));
+        assert_eq!(
+            Region::rows_from(1, 9),
+            Region {
+                sheet_id: 1,
+                rows: From(9),
+                cols: All
+            }
+        );
+        assert_eq!(
+            Region::cols_from(1, 8),
+            Region {
+                sheet_id: 1,
+                rows: All,
+                cols: From(8)
+            }
+        );
+        assert_eq!(
+            Region::whole_row(1, 7),
+            Region {
+                sheet_id: 1,
+                rows: Point(7),
+                cols: All
+            }
+        );
+        assert_eq!(
+            Region::whole_col(1, 6),
+            Region {
+                sheet_id: 1,
+                rows: All,
+                cols: Point(6)
+            }
+        );
+        assert_eq!(
+            Region::whole_sheet(1),
+            Region {
+                sheet_id: 1,
+                rows: All,
+                cols: All
+            }
+        );
+        assert_eq!(
+            Region::col_interval(1, 4, 5, 6),
+            Region {
+                sheet_id: 1,
+                rows: Span(5, 6),
+                cols: Point(4)
+            }
+        );
+        assert_eq!(
+            Region::row_interval(1, 4, 5, 6),
+            Region {
+                sheet_id: 1,
+                rows: Point(4),
+                cols: Span(5, 6)
+            }
+        );
     }
 
     #[test]
     fn rows_from_intersection_arithmetic() {
-        let tail = RegionPattern::rows_from(1, 5);
+        let tail = Region::rows_from(1, 5);
 
-        assert!(tail.intersects(&RegionPattern::rect(1, 3, 10, 0, 5)));
-        assert!(!tail.intersects(&RegionPattern::rect(1, 0, 4, 0, 5)));
-        assert!(tail.intersects(&RegionPattern::whole_sheet(1)));
-        assert!(tail.intersects(&RegionPattern::point(1, 7, 3)));
-        assert!(!tail.intersects(&RegionPattern::point(1, 2, 3)));
-        assert!(tail.intersects(&RegionPattern::rows_from(1, 8)));
-        assert!(tail.intersects(&RegionPattern::rows_from(1, 2)));
+        assert!(tail.intersects(&Region::rect(1, 3, 10, 0, 5)));
+        assert!(!tail.intersects(&Region::rect(1, 0, 4, 0, 5)));
+        assert!(tail.intersects(&Region::whole_sheet(1)));
+        assert!(tail.intersects(&Region::point(1, 7, 3)));
+        assert!(!tail.intersects(&Region::point(1, 2, 3)));
+        assert!(tail.intersects(&Region::rows_from(1, 8)));
+        assert!(tail.intersects(&Region::rows_from(1, 2)));
     }
 
     #[test]
     fn cols_from_intersection_arithmetic() {
-        let tail = RegionPattern::cols_from(1, 5);
+        let tail = Region::cols_from(1, 5);
 
-        assert!(tail.intersects(&RegionPattern::rect(1, 0, 5, 3, 10)));
-        assert!(!tail.intersects(&RegionPattern::rect(1, 0, 5, 0, 4)));
-        assert!(tail.intersects(&RegionPattern::whole_sheet(1)));
-        assert!(tail.intersects(&RegionPattern::point(1, 3, 7)));
-        assert!(!tail.intersects(&RegionPattern::point(1, 3, 2)));
-        assert!(tail.intersects(&RegionPattern::cols_from(1, 8)));
-        assert!(tail.intersects(&RegionPattern::cols_from(1, 2)));
+        assert!(tail.intersects(&Region::rect(1, 0, 5, 3, 10)));
+        assert!(!tail.intersects(&Region::rect(1, 0, 5, 0, 4)));
+        assert!(tail.intersects(&Region::whole_sheet(1)));
+        assert!(tail.intersects(&Region::point(1, 3, 7)));
+        assert!(!tail.intersects(&Region::point(1, 3, 2)));
+        assert!(tail.intersects(&Region::cols_from(1, 8)));
+        assert!(tail.intersects(&Region::cols_from(1, 2)));
     }
 
     #[test]
     fn rows_from_index_does_not_explode() {
         let start = Instant::now();
         let mut index = SheetRegionIndex::with_rect_bucket_size(64, 16);
-        index.insert(RegionPattern::rows_from(1, 0), "rows_from_zero");
-        index.insert(RegionPattern::rows_from(1, u32::MAX), "rows_from_max");
+        index.insert(Region::rows_from(1, 0), "rows_from_zero");
+        index.insert(Region::rows_from(1, u32::MAX), "rows_from_max");
 
-        let all_tail = index.query(RegionPattern::rows_from(1, 0));
-        let max_point = index.query(RegionPattern::point(1, u32::MAX, 3));
-        let before_max = index.query(RegionPattern::point(1, u32::MAX - 1, 3));
+        let all_tail = index.query(Region::rows_from(1, 0));
+        let max_point = index.query(Region::point(1, u32::MAX, 3));
+        let before_max = index.query(Region::point(1, u32::MAX - 1, 3));
         let elapsed = start.elapsed();
 
         let all_values: FxHashSet<_> = all_tail.matches.iter().map(|m| m.value).collect();
@@ -1606,12 +1645,12 @@ mod tests {
     fn cols_from_index_does_not_explode() {
         let start = Instant::now();
         let mut index = SheetRegionIndex::with_rect_bucket_size(64, 16);
-        index.insert(RegionPattern::cols_from(1, 0), "cols_from_zero");
-        index.insert(RegionPattern::cols_from(1, u32::MAX), "cols_from_max");
+        index.insert(Region::cols_from(1, 0), "cols_from_zero");
+        index.insert(Region::cols_from(1, u32::MAX), "cols_from_max");
 
-        let all_tail = index.query(RegionPattern::cols_from(1, 0));
-        let max_point = index.query(RegionPattern::point(1, 3, u32::MAX));
-        let before_max = index.query(RegionPattern::point(1, 3, u32::MAX - 1));
+        let all_tail = index.query(Region::cols_from(1, 0));
+        let max_point = index.query(Region::point(1, 3, u32::MAX));
+        let before_max = index.query(Region::point(1, 3, u32::MAX - 1));
         let elapsed = start.elapsed();
 
         let all_values: FxHashSet<_> = all_tail.matches.iter().map(|m| m.value).collect();
@@ -1624,9 +1663,9 @@ mod tests {
 
     #[test]
     fn from_axis_projection_no_overflow() {
-        let changed = RegionPattern::rows_from(1, u32::MAX - 10);
-        let read = RegionPattern::rows_from(1, u32::MAX - 10);
-        let result = RegionPattern::rect(1, u32::MAX - 30, u32::MAX, 0, 0);
+        let changed = Region::rows_from(1, u32::MAX - 10);
+        let read = Region::rows_from(1, u32::MAX - 10);
+        let result = Region::rect(1, u32::MAX - 30, u32::MAX, 0, 0);
         let positive_offset = DirtyProjectionRule::AffineCell {
             row: AxisProjection::Relative { offset: 20 },
             col: AxisProjection::Relative { offset: 0 },
@@ -1656,46 +1695,46 @@ mod tests {
     #[test]
     fn sheet_region_index_finds_point_interval_rect_and_whole_axis_entries() {
         let mut index = SheetRegionIndex::with_rect_bucket_size(10, 10);
-        index.insert(RegionPattern::point(1, 3, 4), "point");
-        index.insert(RegionPattern::col_interval(1, 2, 0, 10), "col_interval");
-        index.insert(RegionPattern::row_interval(1, 4, 0, 10), "row_interval");
-        index.insert(RegionPattern::rect(1, 20, 29, 20, 29), "rect");
-        index.insert(RegionPattern::whole_row(1, 7), "whole_row");
-        index.insert(RegionPattern::whole_col(1, 8), "whole_col");
-        index.insert(RegionPattern::whole_sheet(1), "whole_sheet");
+        index.insert(Region::point(1, 3, 4), "point");
+        index.insert(Region::col_interval(1, 2, 0, 10), "col_interval");
+        index.insert(Region::row_interval(1, 4, 0, 10), "row_interval");
+        index.insert(Region::rect(1, 20, 29, 20, 29), "rect");
+        index.insert(Region::whole_row(1, 7), "whole_row");
+        index.insert(Region::whole_col(1, 8), "whole_col");
+        index.insert(Region::whole_sheet(1), "whole_sheet");
 
-        let point = index.query(RegionPattern::point(1, 3, 4));
+        let point = index.query(Region::point(1, 3, 4));
         assert!(point.matches.iter().any(|m| m.value == "point"));
         assert!(point.matches.iter().any(|m| m.value == "whole_sheet"));
 
-        let col = index.query(RegionPattern::point(1, 5, 2));
+        let col = index.query(Region::point(1, 5, 2));
         assert!(col.matches.iter().any(|m| m.value == "col_interval"));
 
-        let row = index.query(RegionPattern::point(1, 4, 5));
+        let row = index.query(Region::point(1, 4, 5));
         assert!(row.matches.iter().any(|m| m.value == "row_interval"));
 
-        let rect = index.query(RegionPattern::point(1, 25, 25));
+        let rect = index.query(Region::point(1, 25, 25));
         assert!(rect.matches.iter().any(|m| m.value == "rect"));
 
-        let whole_row = index.query(RegionPattern::point(1, 7, 99));
+        let whole_row = index.query(Region::point(1, 7, 99));
         assert!(whole_row.matches.iter().any(|m| m.value == "whole_row"));
 
-        let whole_col = index.query(RegionPattern::point(1, 99, 8));
+        let whole_col = index.query(Region::point(1, 99, 8));
         assert!(whole_col.matches.iter().any(|m| m.value == "whole_col"));
     }
 
     #[test]
     fn whole_sheet_query_returns_point_interval_rect_and_axis_entries() {
         let mut index = SheetRegionIndex::with_rect_bucket_size(10, 10);
-        index.insert(RegionPattern::point(1, 3, 4), "point");
-        index.insert(RegionPattern::col_interval(1, 2, 0, 10), "col_interval");
-        index.insert(RegionPattern::row_interval(1, 4, 0, 10), "row_interval");
-        index.insert(RegionPattern::rect(1, 20, 29, 20, 29), "rect");
-        index.insert(RegionPattern::whole_row(1, 7), "whole_row");
-        index.insert(RegionPattern::whole_col(1, 8), "whole_col");
-        index.insert(RegionPattern::whole_sheet(1), "whole_sheet");
+        index.insert(Region::point(1, 3, 4), "point");
+        index.insert(Region::col_interval(1, 2, 0, 10), "col_interval");
+        index.insert(Region::row_interval(1, 4, 0, 10), "row_interval");
+        index.insert(Region::rect(1, 20, 29, 20, 29), "rect");
+        index.insert(Region::whole_row(1, 7), "whole_row");
+        index.insert(Region::whole_col(1, 8), "whole_col");
+        index.insert(Region::whole_sheet(1), "whole_sheet");
 
-        let result = index.query(RegionPattern::whole_sheet(1));
+        let result = index.query(Region::whole_sheet(1));
         let values: FxHashSet<_> = result.matches.iter().map(|m| m.value).collect();
 
         assert_eq!(values.len(), 7);
@@ -1711,13 +1750,13 @@ mod tests {
     #[test]
     fn sheet_region_index_does_not_return_other_sheet_entries() {
         let mut index = SheetRegionIndex::with_rect_bucket_size(10, 10);
-        index.insert(RegionPattern::point(1, 0, 0), "sheet_1_point");
-        index.insert(RegionPattern::col_interval(1, 0, 0, 10), "sheet_1_col");
-        index.insert(RegionPattern::rect(1, 0, 10, 0, 10), "sheet_1_rect");
-        index.insert(RegionPattern::whole_sheet(1), "sheet_1_whole");
-        index.insert(RegionPattern::point(2, 0, 0), "sheet_2_point");
+        index.insert(Region::point(1, 0, 0), "sheet_1_point");
+        index.insert(Region::col_interval(1, 0, 0, 10), "sheet_1_col");
+        index.insert(Region::rect(1, 0, 10, 0, 10), "sheet_1_rect");
+        index.insert(Region::whole_sheet(1), "sheet_1_whole");
+        index.insert(Region::point(2, 0, 0), "sheet_2_point");
 
-        let result = index.query(RegionPattern::whole_sheet(2));
+        let result = index.query(Region::whole_sheet(2));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value, "sheet_2_point");
@@ -1726,34 +1765,34 @@ mod tests {
     #[test]
     fn sheet_region_index_no_under_return_matches_bruteforce_table() {
         let inserted = vec![
-            (RegionPattern::point(1, 0, 0), "s1_point_origin"),
-            (RegionPattern::point(1, 7, 7), "s1_point_far"),
-            (RegionPattern::col_interval(1, 2, 1, 6), "s1_col_interval"),
-            (RegionPattern::row_interval(1, 5, 1, 6), "s1_row_interval"),
-            (RegionPattern::rect(1, 3, 5, 3, 5), "s1_rect_cross_bucket"),
-            (RegionPattern::whole_row(1, 9), "s1_whole_row"),
-            (RegionPattern::whole_col(1, 10), "s1_whole_col"),
-            (RegionPattern::rows_from(1, 8), "s1_rows_from"),
-            (RegionPattern::cols_from(1, 8), "s1_cols_from"),
-            (RegionPattern::whole_sheet(1), "s1_whole_sheet"),
-            (RegionPattern::point(2, 0, 0), "s2_point_origin"),
-            (RegionPattern::rect(2, 3, 5, 3, 5), "s2_rect_cross_bucket"),
-            (RegionPattern::whole_sheet(2), "s2_whole_sheet"),
+            (Region::point(1, 0, 0), "s1_point_origin"),
+            (Region::point(1, 7, 7), "s1_point_far"),
+            (Region::col_interval(1, 2, 1, 6), "s1_col_interval"),
+            (Region::row_interval(1, 5, 1, 6), "s1_row_interval"),
+            (Region::rect(1, 3, 5, 3, 5), "s1_rect_cross_bucket"),
+            (Region::whole_row(1, 9), "s1_whole_row"),
+            (Region::whole_col(1, 10), "s1_whole_col"),
+            (Region::rows_from(1, 8), "s1_rows_from"),
+            (Region::cols_from(1, 8), "s1_cols_from"),
+            (Region::whole_sheet(1), "s1_whole_sheet"),
+            (Region::point(2, 0, 0), "s2_point_origin"),
+            (Region::rect(2, 3, 5, 3, 5), "s2_rect_cross_bucket"),
+            (Region::whole_sheet(2), "s2_whole_sheet"),
         ];
         let queries = vec![
-            RegionPattern::point(1, 0, 0),
-            RegionPattern::point(1, 4, 4),
-            RegionPattern::point(1, 5, 2),
-            RegionPattern::point(1, 9, 99),
-            RegionPattern::point(1, 99, 10),
-            RegionPattern::rect(1, 4, 6, 4, 6),
-            RegionPattern::whole_row(1, 5),
-            RegionPattern::whole_col(1, 2),
-            RegionPattern::rows_from(1, 8),
-            RegionPattern::cols_from(1, 8),
-            RegionPattern::whole_sheet(1),
-            RegionPattern::point(2, 4, 4),
-            RegionPattern::whole_sheet(2),
+            Region::point(1, 0, 0),
+            Region::point(1, 4, 4),
+            Region::point(1, 5, 2),
+            Region::point(1, 9, 99),
+            Region::point(1, 99, 10),
+            Region::rect(1, 4, 6, 4, 6),
+            Region::whole_row(1, 5),
+            Region::whole_col(1, 2),
+            Region::rows_from(1, 8),
+            Region::cols_from(1, 8),
+            Region::whole_sheet(1),
+            Region::point(2, 4, 4),
+            Region::whole_sheet(2),
         ];
         let mut index = SheetRegionIndex::with_rect_bucket_size(4, 4);
         for (region, value) in &inserted {
@@ -1779,26 +1818,26 @@ mod tests {
     #[test]
     fn axis_kind_dispatch_matrix_returns_correct_intersections() {
         let inserted_shapes = [
-            ("Point", RegionPattern::point(1, 10, 10)),
-            ("ColInterval", RegionPattern::col_interval(1, 12, 8, 14)),
-            ("RowInterval", RegionPattern::row_interval(1, 12, 8, 14)),
-            ("Rect", RegionPattern::rect(1, 20, 30, 20, 30)),
-            ("RowsFrom", RegionPattern::rows_from(1, 40)),
-            ("ColsFrom", RegionPattern::cols_from(1, 40)),
-            ("WholeRow", RegionPattern::whole_row(1, 50)),
-            ("WholeCol", RegionPattern::whole_col(1, 50)),
-            ("WholeSheet", RegionPattern::whole_sheet(1)),
+            ("Point", Region::point(1, 10, 10)),
+            ("ColInterval", Region::col_interval(1, 12, 8, 14)),
+            ("RowInterval", Region::row_interval(1, 12, 8, 14)),
+            ("Rect", Region::rect(1, 20, 30, 20, 30)),
+            ("RowsFrom", Region::rows_from(1, 40)),
+            ("ColsFrom", Region::cols_from(1, 40)),
+            ("WholeRow", Region::whole_row(1, 50)),
+            ("WholeCol", Region::whole_col(1, 50)),
+            ("WholeSheet", Region::whole_sheet(1)),
         ];
         let query_shapes = [
-            ("Point", RegionPattern::point(1, 10, 10)),
-            ("ColInterval", RegionPattern::col_interval(1, 12, 13, 15)),
-            ("RowInterval", RegionPattern::row_interval(1, 12, 13, 15)),
-            ("Rect", RegionPattern::rect(1, 25, 26, 25, 26)),
-            ("RowsFrom", RegionPattern::rows_from(1, 45)),
-            ("ColsFrom", RegionPattern::cols_from(1, 45)),
-            ("WholeRow", RegionPattern::whole_row(1, 50)),
-            ("WholeCol", RegionPattern::whole_col(1, 50)),
-            ("WholeSheet", RegionPattern::whole_sheet(1)),
+            ("Point", Region::point(1, 10, 10)),
+            ("ColInterval", Region::col_interval(1, 12, 13, 15)),
+            ("RowInterval", Region::row_interval(1, 12, 13, 15)),
+            ("Rect", Region::rect(1, 25, 26, 25, 26)),
+            ("RowsFrom", Region::rows_from(1, 45)),
+            ("ColsFrom", Region::cols_from(1, 45)),
+            ("WholeRow", Region::whole_row(1, 50)),
+            ("WholeCol", Region::whole_col(1, 50)),
+            ("WholeSheet", Region::whole_sheet(1)),
         ];
 
         for (insert_name, insert_region) in inserted_shapes {
@@ -1824,14 +1863,14 @@ mod tests {
     #[test]
     fn sheet_region_index_rect_bucket_boundary_queries_do_not_under_return() {
         let mut index = SheetRegionIndex::with_rect_bucket_size(4, 4);
-        index.insert(RegionPattern::rect(1, 3, 4, 3, 4), "crossing_rect");
-        index.insert(RegionPattern::rect(1, 0, 2, 0, 2), "unrelated_rect");
+        index.insert(Region::rect(1, 3, 4, 3, 4), "crossing_rect");
+        index.insert(Region::rect(1, 0, 2, 0, 2), "unrelated_rect");
 
         for point in [
-            RegionPattern::point(1, 3, 3),
-            RegionPattern::point(1, 3, 4),
-            RegionPattern::point(1, 4, 3),
-            RegionPattern::point(1, 4, 4),
+            Region::point(1, 3, 3),
+            Region::point(1, 3, 4),
+            Region::point(1, 4, 3),
+            Region::point(1, 4, 4),
         ] {
             let result = index.query(point);
             let values: FxHashSet<_> = result.matches.iter().map(|matched| matched.value).collect();
@@ -1843,10 +1882,10 @@ mod tests {
     #[test]
     fn sheet_region_index_may_overreturn_rect_bucket_but_never_misses_intersection() {
         let mut index = SheetRegionIndex::with_rect_bucket_size(10, 10);
-        index.insert(RegionPattern::rect(1, 0, 0, 0, 0), "hit");
-        index.insert(RegionPattern::rect(1, 9, 9, 9, 9), "same_bucket_drop");
+        index.insert(Region::rect(1, 0, 0, 0, 0), "hit");
+        index.insert(Region::rect(1, 9, 9, 9, 9), "same_bucket_drop");
 
-        let result = index.query(RegionPattern::point(1, 0, 0));
+        let result = index.query(Region::point(1, 0, 0));
 
         assert_eq!(result.stats.candidate_count, 2);
         assert_eq!(result.stats.exact_filter_drop_count, 1);
@@ -1884,7 +1923,7 @@ mod tests {
         let span = span_ref(3);
         index.insert_domain(span, PlacementDomain::rect(2, 10, 12, 20, 22));
 
-        let result = index.find_intersections(RegionPattern::rect(2, 11, 11, 21, 21));
+        let result = index.find_intersections(Region::rect(2, 11, 11, 21, 21));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value.span, span);
@@ -1908,11 +1947,11 @@ mod tests {
         let span = span_ref(5);
         index.insert_dependency(
             span,
-            RegionPattern::col_interval(2, 0, 0, 9),
+            Region::col_interval(2, 0, 0, 9),
             DirtyProjection::SameRow,
         );
 
-        let result = index.query_changed_region(RegionPattern::point(2, 4, 0));
+        let result = index.query_changed_region(Region::point(2, 4, 0));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value.entry.span, span);
@@ -1926,13 +1965,9 @@ mod tests {
     fn span_dependency_index_indexes_absolute_precedent_regions() {
         let mut index = SpanDependencyIndex::default();
         let span = span_ref(6);
-        index.insert_dependency(
-            span,
-            RegionPattern::point(2, 0, 5),
-            DirtyProjection::WholeTarget,
-        );
+        index.insert_dependency(span, Region::point(2, 0, 5), DirtyProjection::WholeTarget);
 
-        let result = index.query_changed_region(RegionPattern::point(2, 0, 5));
+        let result = index.query_changed_region(Region::point(2, 0, 5));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value.entry.span, span);
@@ -1944,11 +1979,11 @@ mod tests {
         let span = span_ref(7);
         index.insert_dependency(
             span,
-            RegionPattern::whole_col(2, 3),
+            Region::whole_col(2, 3),
             DirtyProjection::ConservativeWhole,
         );
 
-        let result = index.query_changed_region(RegionPattern::point(2, 99, 3));
+        let result = index.query_changed_region(Region::point(2, 99, 3));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value.entry.span, span);
@@ -1972,7 +2007,7 @@ mod tests {
         let overlay = overlay_ref(2);
         index.insert_overlay(overlay, PlacementDomain::rect(3, 10, 20, 10, 20));
 
-        let result = index.find_intersections(RegionPattern::rect(3, 15, 16, 15, 16));
+        let result = index.find_intersections(Region::rect(3, 15, 16, 15, 16));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value.overlay, overlay);
@@ -1985,16 +2020,16 @@ mod tests {
         let drop = span_ref(9);
         index.insert_dependency(
             hit,
-            RegionPattern::rect(4, 0, 0, 0, 0),
+            Region::rect(4, 0, 0, 0, 0),
             DirtyProjection::WholeTarget,
         );
         index.insert_dependency(
             drop,
-            RegionPattern::rect(4, 63, 63, 15, 15),
+            Region::rect(4, 63, 63, 15, 15),
             DirtyProjection::WholeTarget,
         );
 
-        let result = index.query_changed_region(RegionPattern::point(4, 0, 0));
+        let result = index.query_changed_region(Region::point(4, 0, 0));
 
         assert_eq!(result.stats.candidate_count, 2);
         assert_eq!(result.stats.exact_filter_drop_count, 1);
@@ -2009,10 +2044,10 @@ mod tests {
 
         let inserted = index.insert_dependency(
             span,
-            RegionPattern::whole_sheet(2),
+            Region::whole_sheet(2),
             DirtyProjection::UnsupportedUnbounded,
         );
-        let result = index.query_changed_region(RegionPattern::point(2, 0, 0));
+        let result = index.query_changed_region(Region::point(2, 0, 0));
 
         assert!(inserted.is_none());
         assert!(result.matches.is_empty());
@@ -2024,11 +2059,11 @@ mod tests {
         let span = span_ref(10);
         index.insert_dependency(
             span,
-            RegionPattern::whole_col(5, 1),
+            Region::whole_col(5, 1),
             DirtyProjection::ConservativeWhole,
         );
 
-        let result = index.query_changed_region(RegionPattern::rect(5, 100, 110, 1, 1));
+        let result = index.query_changed_region(Region::rect(5, 100, 110, 1, 1));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value.entry.span, span);
@@ -2038,13 +2073,9 @@ mod tests {
     fn whole_row_dependency_query_marks_candidate_span() {
         let mut index = SpanDependencyIndex::default();
         let span = span_ref(14);
-        index.insert_dependency(
-            span,
-            RegionPattern::whole_row(2, 7),
-            DirtyProjection::WholeTarget,
-        );
+        index.insert_dependency(span, Region::whole_row(2, 7), DirtyProjection::WholeTarget);
 
-        let result = index.query_changed_region(RegionPattern::point(2, 7, 99));
+        let result = index.query_changed_region(Region::point(2, 7, 99));
 
         assert_eq!(result.matches.len(), 1);
         assert_eq!(result.matches[0].value.entry.span, span);
@@ -2056,11 +2087,11 @@ mod tests {
         let span = span_ref(11);
         index.insert_dependency(
             span,
-            RegionPattern::col_interval(6, 0, 0, 9),
+            Region::col_interval(6, 0, 0, 9),
             DirtyProjection::SameRow,
         );
 
-        let result = index.query_changed_region(RegionPattern::point(6, 4, 1));
+        let result = index.query_changed_region(Region::point(6, 4, 1));
 
         assert!(result.matches.is_empty());
     }

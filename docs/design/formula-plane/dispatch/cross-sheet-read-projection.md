@@ -32,7 +32,7 @@ And the FP8 ingest pipeline's parallel read-projection helper:
 
 The downstream machinery is largely sheet-agnostic and ready:
 
-- `RegionPattern` is sheet-id qualified (region_index.rs).
+- `Region` is sheet-id qualified (region_index.rs).
 - `SheetRegionIndex` buckets entries by sheet (region_index.rs:306).
 - `compute_dirty_closure` queries the consumer-read index per changed
   region; queries are sheet-id sensitive automatically (producer.rs:540).

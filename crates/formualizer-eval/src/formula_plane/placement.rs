@@ -24,7 +24,7 @@ use super::producer::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
     SpanReadDependency, SpanReadSummary,
 };
-use super::region_index::RegionPattern;
+use super::region_index::Region;
 use super::runtime::{
     FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
     SpanBindingSet, TemplateSlotMap, ValueRefSlotDescriptor, ValueRefSlotId,
@@ -416,7 +416,7 @@ fn place_analyzed_family(
     };
 
     let result_region = ResultRegion::scalar_cells(domain.clone());
-    let result_region_pattern = RegionPattern::from_domain(&domain);
+    let result_region_pattern = Region::from_domain(&domain);
     let read_summary = match span_read_summary_for_domain(
         result_region_pattern,
         &origin_analysis.read_projections,
@@ -834,7 +834,7 @@ fn literal_binding_bytes(binding: &[LiteralValue]) -> usize {
 }
 
 fn span_read_summary_for_domain(
-    result_region: RegionPattern,
+    result_region: Region,
     projections: &[ReadProjection],
 ) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
     let mut dependencies = Vec::new();
@@ -1123,7 +1123,7 @@ mod tests {
         assert_eq!(read_summary.dependencies.len(), 1);
         assert_eq!(
             read_summary.dependencies[0].read_region,
-            super::super::region_index::RegionPattern::col_interval(0, 0, 0, 99)
+            super::super::region_index::Region::col_interval(0, 0, 0, 99)
         );
     }
 
@@ -1337,7 +1337,7 @@ mod tests {
         assert_eq!(read_summary.dependencies.len(), 1);
         assert_eq!(
             read_summary.dependencies[0].read_region,
-            super::super::region_index::RegionPattern::whole_col(sheet_id, 0)
+            super::super::region_index::Region::whole_col(sheet_id, 0)
         );
     }
 
@@ -1378,13 +1378,9 @@ mod tests {
             .iter()
             .map(|dependency| dependency.read_region)
             .collect::<Vec<_>>();
+        assert!(read_regions.contains(&super::super::region_index::Region::whole_col(sheet_id, 0)));
         assert!(
-            read_regions.contains(&super::super::region_index::RegionPattern::whole_col(
-                sheet_id, 0
-            ))
-        );
-        assert!(
-            read_regions.contains(&super::super::region_index::RegionPattern::col_interval(
+            read_regions.contains(&super::super::region_index::Region::col_interval(
                 sheet_id, 0, 0, 99
             ))
         );
@@ -1427,16 +1423,8 @@ mod tests {
             .map(|dependency| dependency.read_region)
             .collect::<Vec<_>>();
         assert_eq!(read_regions.len(), 2);
-        assert!(
-            read_regions.contains(&super::super::region_index::RegionPattern::whole_col(
-                sheet_id, 0
-            ))
-        );
-        assert!(
-            read_regions.contains(&super::super::region_index::RegionPattern::whole_col(
-                sheet_id, 1
-            ))
-        );
+        assert!(read_regions.contains(&super::super::region_index::Region::whole_col(sheet_id, 0)));
+        assert!(read_regions.contains(&super::super::region_index::Region::whole_col(sheet_id, 1)));
     }
 
     #[test]
@@ -1473,7 +1461,7 @@ mod tests {
         assert_eq!(read_summary.dependencies.len(), 1);
         assert_eq!(
             read_summary.dependencies[0].read_region,
-            super::super::region_index::RegionPattern::whole_col(data_id, 0)
+            super::super::region_index::Region::whole_col(data_id, 0)
         );
     }
 
@@ -1701,7 +1689,7 @@ mod tests {
         assert_eq!(read_summary.dependencies.len(), 1);
         assert_eq!(
             read_summary.dependencies[0].read_region,
-            super::super::region_index::RegionPattern::col_interval(sheet2_id, 0, 0, 99)
+            super::super::region_index::Region::col_interval(sheet2_id, 0, 0, 99)
         );
     }
 
@@ -1774,11 +1762,11 @@ mod tests {
         read_regions.sort_by_key(|region| format!("{region:?}"));
         assert_eq!(read_regions.len(), 2);
         assert!(
-            read_regions.contains(&super::super::region_index::RegionPattern::col_interval(
+            read_regions.contains(&super::super::region_index::Region::col_interval(
                 0, 0, 0, 99
             ))
         );
-        assert!(read_regions.contains(&super::super::region_index::RegionPattern::point(0, 0, 1)));
+        assert!(read_regions.contains(&super::super::region_index::Region::point(0, 0, 1)));
     }
 
     #[test]

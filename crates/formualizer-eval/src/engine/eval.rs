@@ -25,7 +25,7 @@ use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
     FormulaProducerWork, ProducerDirtyDomain,
 };
-use crate::formula_plane::region_index::{DirtyDomain, RegionPattern};
+use crate::formula_plane::region_index::{DirtyDomain, Region};
 use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef, PlacementCoord};
 use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
 #[cfg(test)]
@@ -858,7 +858,7 @@ struct VisibilityMaskCacheKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StructuralScope {
     Cell { sheet: SheetId, row: u32, col: u32 },
-    Region(RegionPattern),
+    Region(Region),
     Sheet(SheetId),
     RemovedSheet(SheetId),
     AllSheets,
@@ -3739,7 +3739,7 @@ where
         let row0 = Self::normalize_row_1based(row_1based)?;
         if self.set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source) {
             self.record_formula_plane_structural_change(StructuralScope::Region(
-                RegionPattern::whole_row(sheet_id, row0),
+                Region::whole_row(sheet_id, row0),
             ));
             self.mark_data_edited();
         }
@@ -3760,7 +3760,7 @@ where
         if self.set_rows_hidden_by_sheet_id(sheet_id, start_row0, end_row0, hidden, source) {
             if start_row0 == end_row0 {
                 self.record_formula_plane_structural_change(StructuralScope::Region(
-                    RegionPattern::whole_row(sheet_id, start_row0),
+                    Region::whole_row(sheet_id, start_row0),
                 ));
             } else {
                 self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
@@ -3895,7 +3895,7 @@ where
         if inside_active_span {
             self.demote_spans_preserving_computed_overlays(
                 sheet_id,
-                RegionPattern::point(sheet_id, row0, col0),
+                Region::point(sheet_id, row0, col0),
             )?;
         }
         Ok(())
@@ -3922,7 +3922,7 @@ where
         for sheet_id in sheet_ids {
             self.demote_spans_preserving_computed_overlays(
                 sheet_id,
-                RegionPattern::whole_sheet(sheet_id),
+                Region::whole_sheet(sheet_id),
             )?;
         }
         Ok(())
@@ -3931,30 +3931,30 @@ where
     fn demote_spans_preserving_computed_overlays(
         &mut self,
         sheet_id: SheetId,
-        affected_region: RegionPattern,
+        affected_region: Region,
     ) -> Result<(), crate::engine::EditorError> {
         self.demote_spans_for_structural_op_impl(sheet_id, affected_region, false)
     }
 
-    fn structural_row_region(sheet_id: SheetId, start_row0: u32) -> RegionPattern {
-        RegionPattern::rows_from(sheet_id, start_row0)
+    fn structural_row_region(sheet_id: SheetId, start_row0: u32) -> Region {
+        Region::rows_from(sheet_id, start_row0)
     }
 
-    fn structural_col_region(sheet_id: SheetId, start_col0: u32) -> RegionPattern {
-        RegionPattern::cols_from(sheet_id, start_col0)
+    fn structural_col_region(sheet_id: SheetId, start_col0: u32) -> Region {
+        Region::cols_from(sheet_id, start_col0)
     }
 
     fn span_result_region_intersects_affected(
         span: &crate::formula_plane::runtime::FormulaSpan,
-        affected_region: &RegionPattern,
+        affected_region: &Region,
     ) -> bool {
-        RegionPattern::from_domain(span.result_region.domain()).intersects(affected_region)
+        Region::from_domain(span.result_region.domain()).intersects(affected_region)
     }
 
     fn span_any_read_region_intersects_affected(
         plane: &FormulaPlane,
         span: &crate::formula_plane::runtime::FormulaSpan,
-        affected_region: &RegionPattern,
+        affected_region: &Region,
     ) -> bool {
         span.read_summary_id
             .and_then(|read_summary_id| plane.span_read_summaries.get(read_summary_id))
@@ -4083,7 +4083,7 @@ where
     fn demote_spans_for_structural_op(
         &mut self,
         sheet_id: SheetId,
-        affected_region: RegionPattern,
+        affected_region: Region,
     ) -> Result<(), crate::engine::EditorError> {
         self.demote_spans_for_structural_op_impl(sheet_id, affected_region, true)
     }
@@ -4091,7 +4091,7 @@ where
     fn demote_spans_for_structural_op_impl(
         &mut self,
         _sheet_id: SheetId,
-        affected_region: RegionPattern,
+        affected_region: Region,
         clear_computed_overlays: bool,
     ) -> Result<(), crate::engine::EditorError> {
         struct SpanPlan {
@@ -4316,7 +4316,7 @@ where
             // though the span as a whole is demoted.
             for (formula_sheet_id, row, col) in &placement_cells {
                 // 1-based -> 0-based for region intersection.
-                let placement_region = RegionPattern::point(
+                let placement_region = Region::point(
                     *formula_sheet_id,
                     row.saturating_sub(1),
                     col.saturating_sub(1),
@@ -6153,7 +6153,7 @@ where
             }
             ChangeEvent::SetRowVisibility { sheet_id, row0, .. } => {
                 self.record_formula_plane_structural_change(StructuralScope::Region(
-                    RegionPattern::whole_row(*sheet_id, *row0),
+                    Region::whole_row(*sheet_id, *row0),
                 ));
             }
             ChangeEvent::AddVertex { .. }
@@ -6175,7 +6175,7 @@ where
             StructuralScope::Cell { sheet, row, col } => {
                 self.graph
                     .formula_authority_mut()
-                    .record_changed_region(RegionPattern::point(sheet, row, col));
+                    .record_changed_region(Region::point(sheet, row, col));
             }
             StructuralScope::Region(region) => {
                 self.graph
@@ -6185,7 +6185,7 @@ where
             StructuralScope::Sheet(sheet_id) => {
                 self.graph
                     .formula_authority_mut()
-                    .record_changed_region(RegionPattern::whole_sheet(sheet_id));
+                    .record_changed_region(Region::whole_sheet(sheet_id));
             }
             StructuralScope::RemovedSheet(sheet_id) => {
                 let removed_refs = {
@@ -6235,7 +6235,7 @@ where
             col_start = col_start.min(cell.coord.col());
             col_end = col_end.max(cell.coord.col());
         }
-        Some(StructuralScope::Region(RegionPattern::rect(
+        Some(StructuralScope::Region(Region::rect(
             sheet_id, row_start, row_end, col_start, col_end,
         )))
     }
@@ -6385,11 +6385,8 @@ where
                 .is_some()
         });
         if writes_inside_active_span {
-            self.demote_spans_preserving_computed_overlays(
-                sheet_id,
-                RegionPattern::whole_sheet(sheet_id),
-            )
-            .map_err(Self::editor_error_to_excel)?;
+            self.demote_spans_preserving_computed_overlays(sheet_id, Region::whole_sheet(sheet_id))
+                .map_err(Self::editor_error_to_excel)?;
         }
         let ingested = {
             let mut pipeline = self.ingest_pipeline();
@@ -7661,7 +7658,7 @@ where
     fn build_formula_plane_mixed_schedule(
         &self,
         span_seed_mode: SpanSeedMode,
-        pending_changed_regions: &[RegionPattern],
+        pending_changed_regions: &[Region],
     ) -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
         let authority = self.graph.formula_authority();
         let mut producer_results = FormulaProducerResultIndex::default();
@@ -7687,7 +7684,7 @@ where
                 ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message("FormulaPlane active span ref is stale")
             })?;
-            let result_region = RegionPattern::from_domain(span.result_region.domain());
+            let result_region = Region::from_domain(span.result_region.domain());
             producer_results.insert_producer(FormulaProducerId::Span(span.id), result_region);
             let Some(read_summary_id) = span.read_summary_id else {
                 return Err(ExcelError::new(ExcelErrorKind::NImpl)
@@ -7724,8 +7721,7 @@ where
             let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
                 continue;
             };
-            let result_region =
-                RegionPattern::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            let result_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
             producer_results.insert_producer(FormulaProducerId::Legacy(*vertex), result_region);
             if dirty_legacy.contains(vertex) {
                 scheduled_legacy_vertices.push(*vertex);
@@ -7740,14 +7736,13 @@ where
             let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
                 continue;
             };
-            let result_region =
-                RegionPattern::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            let result_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
             let mut seen = rustc_hash::FxHashSet::default();
             for dep in self.graph.get_dependencies(*vertex) {
                 let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
                     continue;
                 };
-                let read_region = RegionPattern::point(
+                let read_region = Region::point(
                     dep_cell.sheet_id,
                     dep_cell.coord.row(),
                     dep_cell.coord.col(),
@@ -7844,7 +7839,7 @@ where
     fn shared_range_to_region_pattern(
         &self,
         range: &crate::reference::SharedRangeRef<'static>,
-    ) -> Result<Option<RegionPattern>, ExcelError> {
+    ) -> Result<Option<Region>, ExcelError> {
         use crate::reference::SharedSheetLocator;
         let sheet_id = match range.sheet {
             SharedSheetLocator::Id(id) => id,
@@ -7857,14 +7852,14 @@ where
             range.start_col,
             range.end_col,
         ) {
-            (Some(sr), Some(er), Some(sc), Some(ec)) => Ok(Some(RegionPattern::rect(
+            (Some(sr), Some(er), Some(sc), Some(ec)) => Ok(Some(Region::rect(
                 sheet_id, sr.index, er.index, sc.index, ec.index,
             ))),
             (None, None, Some(sc), Some(ec)) if sc.index == ec.index => {
-                Ok(Some(RegionPattern::whole_col(sheet_id, sc.index)))
+                Ok(Some(Region::whole_col(sheet_id, sc.index)))
             }
             (Some(sr), Some(er), None, None) if sr.index == er.index => {
-                Ok(Some(RegionPattern::whole_row(sheet_id, sr.index)))
+                Ok(Some(Region::whole_row(sheet_id, sr.index)))
             }
             _ => Ok(None),
         }

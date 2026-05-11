@@ -71,7 +71,7 @@ Auth mode:
 
 ### Why Auth mode pays 3ms per rename
 
-- `record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id))` records `RegionPattern::whole_sheet(sheet_id)` at `eval.rs:5466-5469`.
+- `record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id))` records `Region::whole_sheet(sheet_id)` at `eval.rs:5466-5469`.
 - `FormulaAuthority::record_changed_region` pushes to `pending_changed_regions` at `crates/formualizer-eval/src/formula_plane/authority.rs:61-65`.
 - Auth `evaluate_all` enters `evaluate_authoritative_formula_plane_all` at `eval.rs:6760`. With span_seed_mode=DirtyClosure and pending_changed_regions=[whole_sheet(DataA)]:
   - Build mixed schedule (`:6788`).
@@ -85,7 +85,7 @@ That's the 3ms: 10,000 placement re-evaluations triggered by metadata-only event
 ### Verification answers
 
 1. **Does sheet rename actually invalidate computed results?** No. SheetRegistry preserves SheetId; arena refs are by SheetId; values are unchanged.
-2. **What does `RegionPattern::whole_sheet` mean to the consumer-read index?** Matches every indexed consumer read region whose `sheet_id` matches AND whose extents intersect all rows/cols (`region_index.rs:442-519`). Keyed by SheetId, NOT name.
+2. **What does `Region::whole_sheet` mean to the consumer-read index?** Matches every indexed consumer read region whose `sheet_id` matches AND whose extents intersect all rows/cols (`region_index.rs:442-519`). Keyed by SheetId, NOT name.
 3. **Do any actual span-eval values change in s036 between renames?** No. Same SheetId, same precedents, same values.
 4. **Why does Off mode finish in 0.2ms?** Value vertices dirtied; formulas filtered out by `get_evaluation_vertices`.
 5. **What's the right granularity?** None. Rename is metadata-only.
@@ -95,7 +95,7 @@ That's the 3ms: 10,000 placement re-evaluations triggered by metadata-only event
 
 ### Option A: Don't record any FormulaPlane changed region for sheet rename ✅ recommended
 
-`Engine::rename_sheet` keeps graph/Arrow/staged-formula updates but stops calling `record_formula_plane_structural_change`. No `RegionPattern` recorded. FormulaPlane pending changed regions remain empty after rename.
+`Engine::rename_sheet` keeps graph/Arrow/staged-formula updates but stops calling `record_formula_plane_structural_change`. No `Region` recorded. FormulaPlane pending changed regions remain empty after rename.
 
 **Why correct:**
 - Rename is display metadata only.
@@ -114,7 +114,7 @@ Adds API surface for no current consumer. Existing formula AST reconstruction al
 
 ### Option C: Keep whole-sheet record but add scheduler skip path (rejected)
 
-Treats metadata as data and compensates later. Cannot distinguish rename-only from real whole-sheet edits using `RegionPattern::WholeSheet`. Would preserve avoidable scheduler/closure work.
+Treats metadata as data and compensates later. Cannot distinguish rename-only from real whole-sheet edits using `Region::WholeSheet`. Would preserve avoidable scheduler/closure work.
 
 ## 4. Recommended fix
 

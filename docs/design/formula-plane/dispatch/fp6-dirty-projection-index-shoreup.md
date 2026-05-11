@@ -90,7 +90,7 @@ range_key_whole_row_col_conversion_is_documented_and_tested
 
 Runtime sidecar indexes must use stable `SheetId`, not sheet display names. If a passive summary or loader hint references a sheet name, promotion to runtime authority requires name resolution to `SheetId` and a sheet-generation/epoch dependency. Sheet rename/delete must invalidate or demote affected span/index entries.
 
-## 3. RegionSet And RegionPattern Vocabulary
+## 3. RegionSet And Region Vocabulary
 
 ### 3.1 RegionSet
 
@@ -99,20 +99,20 @@ Use a small region set for query/event boundaries:
 ```rust
 pub(crate) enum RegionSet {
     Empty,
-    One(RegionPattern),
-    Many(SmallVec<[RegionPattern; 4]>),
+    One(Region),
+    Many(SmallVec<[Region; 4]>),
     WholeWorkbook, // structural/global fallback only, not normal dirty authority
 }
 ```
 
 `RegionSet` queries should dedupe payloads after querying each member. `WholeWorkbook` must be counted and should generally force legacy/global fallback or full FormulaPlane rebuild; it is not an acceptable representation for routine span dependency authority.
 
-### 3.2 RegionPattern
+### 3.2 Region
 
 Use shape-specific patterns so indexes do not encode every region as a rectangle:
 
 ```rust
-pub(crate) enum RegionPattern {
+pub(crate) enum Region {
     Cell(RegionKey),
     RowInterval { sheet_id: SheetId, row: u32, col_start: u32, col_end: u32 },
     ColInterval { sheet_id: SheetId, col: u32, row_start: u32, row_end: u32 },
@@ -260,7 +260,7 @@ pub(crate) struct SpanDomainEntryRef {
     span_generation: u32,
     span_version: u32,
     domain_kind: SpanDomainKind, // Placement or Result
-    indexed_region: RegionPattern,
+    indexed_region: Region,
     plane_epoch: u64,
 }
 ```
@@ -278,7 +278,7 @@ Primary APIs:
 
 ```rust
 find_span_at(cell: RegionKey) -> Vec<SpanDomainHit>
-find_spans_intersecting(region: &RegionPattern) -> Vec<SpanDomainHit>
+find_spans_intersecting(region: &Region) -> Vec<SpanDomainHit>
 ```
 
 A `find_span_at` query may return multiple hits only during transitional/overlap states; steady-state authority should reject overlapping active spans unless the overlay/resolution layer has an explicit disambiguation rule.
@@ -302,7 +302,7 @@ pub(crate) struct SpanDependencyEntryRef {
     template_id: FormulaTemplateId,
     template_version: u32,
     dependency_summary_version: u32,
-    precedent_region: RegionPattern,
+    precedent_region: Region,
     projection: DirtyProjection,
     plane_epoch: u64,
 }
@@ -320,7 +320,7 @@ Contract:
 Primary APIs:
 
 ```rust
-query_changed_region(changed: &RegionPattern) -> SpanDependencyQueryResult
+query_changed_region(changed: &Region) -> SpanDependencyQueryResult
 project_hits(changed: &RegionSet, hits: &[SpanDependencyHit]) -> DirtyDomainDelta
 ```
 
@@ -339,7 +339,7 @@ pub(crate) struct FormulaOverlayEntryRef {
     entry_id: FormulaOverlayEntryId,
     overlay_generation: u32,
     overlay_epoch: u64,
-    region: RegionPattern,
+    region: Region,
     kind: FormulaOverlayEntryKind,
 }
 ```
@@ -356,7 +356,7 @@ Primary APIs:
 
 ```rust
 find_entry_at(cell: RegionKey) -> Vec<FormulaOverlayHit>
-find_entries_intersecting(region: &RegionPattern) -> Vec<FormulaOverlayHit>
+find_entries_intersecting(region: &Region) -> Vec<FormulaOverlayHit>
 ```
 
 ## 6. DirtyProjection Contract
@@ -749,7 +749,7 @@ Stop and replan if an implementation:
 First build agents should implement only:
 
 ```text
-RegionKey / RegionPattern conversion tests
+RegionKey / Region conversion tests
 SheetRegionIndex<T> unit tests and substrate
 role-specific wrapper types with exact-filter tests
 DirtyProjection pure unit tests

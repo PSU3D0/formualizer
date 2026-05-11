@@ -4,7 +4,7 @@
 
 ## Goals & non-goals
 
-**Goal:** Replace the current `RegionPattern` enum + parallel `AxisExtent` / `QueryAxisExtent` / `BoundedAxisExtent` types with a unified per-axis `AxisRange = Point | Span | From | To | All` model. Eliminate sentinel `u32::MAX` as a tail carrier. Restore full structural-tail precision.
+**Goal:** Replace the current `Region` enum + parallel `AxisExtent` / `QueryAxisExtent` / `BoundedAxisExtent` types with a unified per-axis `AxisRange = Point | Span | From | To | All` model. Eliminate sentinel `u32::MAX` as a tail carrier. Restore full structural-tail precision.
 
 **Non-goals:** Don't change FormulaPlane semantics. Don't change span eval. Don't reorganize crate structure. Don't expand to v0.7 lookup-cache work or lazy-reads (Position 3). Each phase is independently revertible without losing earlier-phase work.
 
@@ -22,7 +22,7 @@ Each phase ships in its own branch/worktree, gets its own dispatch, has its own 
 | 1 | `AxisRange` type internal-only | `formula-plane/axis-range-internal` | ~400 | 2-3d | Phase 0 | v0.7 (or .8 dev) |
 | 2 | `SheetRegionIndex` axis-range dispatch | `formula-plane/region-index-axis-range` | ~600 | 4-5d | Phase 1 | v0.8 dev |
 | 3 | Producer / dirty-closure axis-range propagation | `formula-plane/dirty-closure-axis-range` | ~400 | 3-4d | Phase 2 | v0.8 dev |
-| 4 | `RegionPattern` variant collapse | `formula-plane/region-variant-collapse` | ~250 | 2-3d | Phase 3 | v0.8 dev |
+| 4 | `Region` variant collapse | `formula-plane/region-variant-collapse` | ~250 | 2-3d | Phase 3 | v0.8 dev |
 | 5 | Test consolidation + benchmark hardening | `formula-plane/region-axis-test-pass` | ~450 | 2-3d | Phase 4 | v0.8 release |
 
 **Total: 6 phases, ~2,600 LOC, ~3 weeks of focused build dispatch.**
@@ -32,7 +32,7 @@ The cumulative work is a single coherent migration but no two phases conflict at
 ## Phase 0 — Option A: half-open variants (proving step)
 
 ### Scope
-- Add `RegionPattern::RowsFrom { sheet_id, row_start }` and `RegionPattern::ColsFrom { sheet_id, col_start }` variants.
+- Add `Region::RowsFrom { sheet_id, row_start }` and `Region::ColsFrom { sheet_id, col_start }` variants.
 - Add dedicated `rows_from`/`cols_from` HashMap-keyed indexes in `SheetRegionIndex` mirroring the existing `whole_rows`/`whole_cols` precedent.
 - Replace the s035 workaround `structural_change_scope_for_region` with precise tail-extent recording.
 - Update `intersects()`, `axis_extents()`, `query_extents()`, `bounded_extents()`, `project_changed_region()` to handle the new variants.
@@ -47,7 +47,7 @@ The cumulative work is a single coherent migration but no two phases conflict at
 ### Subagent dispatch
 - Single build agent, model `openai-codex/gpt-5.5`.
 - Brief: cite this document and `sheet-region-index-tail-extent-precision.md` (Phase 0 scope = Option A).
-- Hard-scoped: don't touch `AxisExtent`/`QueryAxisExtent`/`BoundedAxisExtent` internals beyond adding `From` arms. Keep `RegionPattern` enum stable except for the 2 new variants.
+- Hard-scoped: don't touch `AxisExtent`/`QueryAxisExtent`/`BoundedAxisExtent` internals beyond adding `From` arms. Keep `Region` enum stable except for the 2 new variants.
 
 ### Acceptance gate
 - All existing 209 + 15 (formula_plane + engine/tests) tests pass.
@@ -80,9 +80,9 @@ The cumulative work is a single coherent migration but no two phases conflict at
   ```
 - Implement `AxisRange::intersects`, `AxisRange::contains`, `AxisRange::query_bounds`, `AxisRange::project_through_offset`, `AxisRange::is_bounded`.
 - Replace `enum AxisExtent` (currently `Span | All` in `region_index.rs:236`) and the parallel `QueryAxisExtent` / `BoundedAxisExtent` (in `producer.rs:930+`) with internal use of `AxisRange`. Keep adapter functions for now where producer.rs's `bounded_extents()` returns `None` for tails — i.e., the API shape returned by producer helpers stays compatible at the boundary.
-- `RegionPattern::axis_extents()` returns `(AxisRange, AxisRange)` instead of `(AxisExtent, AxisExtent)`.
+- `Region::axis_extents()` returns `(AxisRange, AxisRange)` instead of `(AxisExtent, AxisExtent)`.
 - All `intersects`/projection logic is keyed off `AxisRange` arithmetic.
-- **No public API change.** `RegionPattern` enum, constructors, and pattern-matching call sites unchanged.
+- **No public API change.** `Region` enum, constructors, and pattern-matching call sites unchanged.
 
 ### Branch & worktree
 - Branch: `formula-plane/axis-range-internal`
@@ -92,11 +92,11 @@ The cumulative work is a single coherent migration but no two phases conflict at
 ### Subagent dispatch
 - Single build agent.
 - Brief includes:
-  - `AxisRange` is an internal-only type; the public `RegionPattern` enum stays stable.
+  - `AxisRange` is an internal-only type; the public `Region` enum stays stable.
   - Replace `AxisExtent` (`region_index.rs:236-258`) and the parallel `QueryAxisExtent`/`BoundedAxisExtent` types in producer.rs with `AxisRange`-based logic.
   - Keep `query_extents()` / `bounded_extents()` API signatures stable (they return `Option<(AxisRange, AxisRange)>` instead of the current parallel types). The function behavior is preserved; only return types change.
   - Mathematical equivalence test: existing axis-extent intersection arithmetic must produce identical results pre/post.
-- Hard scope: don't change `RegionPattern` variants; don't change index data structures; don't touch `compute_dirty_closure` semantics.
+- Hard scope: don't change `Region` variants; don't change index data structures; don't touch `compute_dirty_closure` semantics.
 
 ### Acceptance gate
 - All existing tests pass.
@@ -117,10 +117,10 @@ The cumulative work is a single coherent migration but no two phases conflict at
 ## Phase 2 — `SheetRegionIndex` axis-range dispatch
 
 ### Scope
-This is the biggest phase. Rewrite `SheetRegionIndex` to dispatch insertion and query by `AxisRange` kind pairs instead of `RegionPattern` variant matches.
+This is the biggest phase. Rewrite `SheetRegionIndex` to dispatch insertion and query by `AxisRange` kind pairs instead of `Region` variant matches.
 
 **Insertion path:**
-- `insert_entry(region: RegionPattern, value: T) -> usize` — keep the public signature.
+- `insert_entry(region: Region, value: T) -> usize` — keep the public signature.
 - Internally: extract `(rows: AxisRange, cols: AxisRange) = region.axis_ranges()`.
 - Dispatch to one of these index families based on the `AxisRange` kind pair:
   - `(Point, Point)` → `points` map
@@ -134,7 +134,7 @@ This is the biggest phase. Rewrite `SheetRegionIndex` to dispatch insertion and 
   - `(From, All)` / `(All, From)` → `tail_extents` family
 
 **Query path:**
-- `query(query: RegionPattern) -> RegionQueryResult<T>` — keep the public signature.
+- `query(query: Region) -> RegionQueryResult<T>` — keep the public signature.
 - Internally: dispatch by query's `AxisRange` kind pair, walking only the index families that could possibly contain matches.
 - The 5 current `collect_*_candidates` functions consolidate into one `collect_candidates` that uses axis-range kind dispatch.
 
@@ -189,7 +189,7 @@ This is the biggest phase. Rewrite `SheetRegionIndex` to dispatch insertion and 
 ### Subagent dispatch
 - Single build agent.
 - Brief: focus on `producer.rs:413+` (`DirtyProjectionRule`) and `producer.rs:944-1014` (`bounded_extents` / `query_extents`).
-- Hard scope: don't change `SheetRegionIndex` (Phase 2's territory). Don't change `RegionPattern` shape (Phase 4).
+- Hard scope: don't change `SheetRegionIndex` (Phase 2's territory). Don't change `Region` shape (Phase 4).
 - Critical: overflow-safe arithmetic for `From(N)` projections. Add `u32::checked_add`/`checked_sub` everywhere; explicit overflow tests.
 
 ### Acceptance gate
@@ -208,10 +208,10 @@ This is the biggest phase. Rewrite `SheetRegionIndex` to dispatch insertion and 
 - Run the complete validation gate: full medium parity, full small parity, all scenarios.
 - Run probe-corpus perf benchmarks: confirm s034/s035 phase_recalc precision matches Phase 0; confirm no regression elsewhere.
 
-## Phase 4 — `RegionPattern` variant collapse
+## Phase 4 — `Region` variant collapse
 
 ### Scope
-This is the cohesion payoff. Collapse `RegionPattern` from 7 variants + 2 from Phase 0 (= 9 total) into the canonical form:
+This is the cohesion payoff. Collapse `Region` from 7 variants + 2 from Phase 0 (= 9 total) into the canonical form:
 
 ```rust
 pub(crate) struct Region {
@@ -221,7 +221,7 @@ pub(crate) struct Region {
 }
 ```
 
-- Keep `RegionPattern` as a type alias for `Region` (backward-compat sugar) for one minor release.
+- Keep `Region` as a type alias for `Region` (backward-compat sugar) for one minor release.
 - All 9 constructor methods now build `Region` with the appropriate axis-range pair:
   - `Region::point(sheet, row, col)` → `Region { sheet, rows: Point(row), cols: Point(col) }`
   - `Region::rect(sheet, rs, re, cs, ce)` → `Region { sheet, rows: Span(rs, re), cols: Span(cs, ce) }`
@@ -245,7 +245,7 @@ pub(crate) struct Region {
 - Brief includes:
   - This is a mechanical refactor; the compiler guides each call site.
   - Add accessor methods on `Region` (`is_point()`, `is_whole_row()`, `is_whole_col()`, `is_whole_sheet()`, `is_rows_from()`, `is_cols_from()`, `as_rect()`, `as_point()`, etc.) to simplify the call-site updates.
-  - Keep the `RegionPattern` constructor sugar functions as static methods on `Region`.
+  - Keep the `Region` constructor sugar functions as static methods on `Region`.
   - Update test fixtures and assertions; the test surface is mechanical updates.
 - Hard scope: don't change semantics; don't change index families; don't change projection.
 
@@ -258,12 +258,12 @@ pub(crate) struct Region {
 - Single revert. Phases 1, 2, 3 stay intact. Variant enum is restored.
 
 ### What's committed
-- Title: `refactor(formula-plane): collapse RegionPattern variants into Region { axes }`.
+- Title: `refactor(formula-plane): collapse Region variants into Region { axes }`.
 
 ### PM checkpoint after Phase 4
 - Architectural cleanup is essentially complete.
 - Run the full benchmark + parity sweep.
-- Update internal documentation referring to `RegionPattern` to reference `Region`.
+- Update internal documentation referring to `Region` to reference `Region`.
 
 ## Phase 5 — Test consolidation + benchmark hardening
 
@@ -377,7 +377,7 @@ Exception: Phase 5 (test consolidation) is independent enough that it could be d
 - **v0.6.x point release:** Phase 0 (Option A: half-open variants, precision recovery).
 - **v0.7 (optional):** Phases 1-2 if PM chooses to land internal refactor early. v0.7 still has user-facing deliverables: Phase 2c lookup cache, native parallel refinements, s029/s039/s055 dirty-closure fixes.
 - **v0.8:** Phases 3-5 (or Phases 1-5 if v0.7 doesn't take 1-2). Full Option E completion.
-- **v0.9:** Stable post-Option-E; reassess `RegionPattern` → `Region` typedef removal (final cleanup of backward-compat sugar).
+- **v0.9:** Stable post-Option-E; reassess `Region` → `Region` typedef removal (final cleanup of backward-compat sugar).
 
 ### Risk per phase
 

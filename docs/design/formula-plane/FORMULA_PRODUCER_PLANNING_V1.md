@@ -149,7 +149,7 @@ V1 dirty domains must express subsets of producer result space:
 pub(crate) enum ProducerDirtyDomain {
     Whole,
     Cells(Vec<RegionKey>),
-    Regions(Vec<RegionPattern>),
+    Regions(Vec<Region>),
 }
 ```
 
@@ -177,7 +177,7 @@ pub(crate) struct FormulaProducerResultIndex {
 
 pub(crate) struct FormulaProducerResultEntry {
     pub(crate) producer: FormulaProducerId,
-    pub(crate) result_region: RegionPattern,
+    pub(crate) result_region: Region,
 }
 ```
 
@@ -203,7 +203,7 @@ pub(crate) struct FormulaConsumerReadIndex {
 
 pub(crate) struct FormulaConsumerReadEntry {
     pub(crate) consumer: FormulaProducerId,
-    pub(crate) read_region: RegionPattern,
+    pub(crate) read_region: Region,
     pub(crate) projection: DirtyProjectionRule,
 }
 ```
@@ -621,7 +621,7 @@ formula_plane/dependency_summary.rs
   affine static pointwise summaries and rejection reasons
 
 formula_plane/region_index.rs
-  SheetRegionIndex, RegionPattern, DirtyDomain, DirtyProjection vocabulary
+  SheetRegionIndex, Region, DirtyDomain, DirtyProjection vocabulary
 
 formula_plane/span_eval.rs
   dirty-domain-aware direct/test-only scalar evaluator

@@ -22,7 +22,7 @@ use crate::formula_plane::producer::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
     SpanReadDependency, SpanReadSummary,
 };
-use crate::formula_plane::region_index::RegionPattern;
+use crate::formula_plane::region_index::Region;
 use crate::formula_plane::runtime::{TemplateSlotMap, ValueRefSlotDescriptor};
 use crate::formula_plane::template_canonical::{
     LiteralSlotDescriptor, canonicalize_template, is_known_static_function, normalize_function_name,
@@ -1052,7 +1052,7 @@ pub(crate) fn span_read_summary_from_projections(
     placement: CellRef,
     projections: &[ReadProjection],
 ) -> Result<SpanReadSummary, crate::formula_plane::producer::ProjectionFallbackReason> {
-    let result_region = RegionPattern::col_interval(
+    let result_region = Region::col_interval(
         placement.sheet_id,
         placement.coord.col(),
         placement.coord.row(),

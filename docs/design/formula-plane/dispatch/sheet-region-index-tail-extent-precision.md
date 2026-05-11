@@ -6,11 +6,11 @@
 
 ## 1. The architectural gap, restated precisely
 
-`RegionPattern::Rect(sheet_id, 0, u32::MAX, c, u32::MAX)` currently means an inclusive rectangle on one sheet: every row from `0` through `u32::MAX`, and every column from `c` through `u32::MAX`. The code treats `RectRegion` bounds as inclusive (`RectRegion::new` asserts `start <= end`, and `contains_key` uses `<=` on both ends; `region_index.rs:41-66`). `Engine::structural_col_region` constructs exactly that shape for column structural edits, and `structural_row_region` constructs the row-tail analog (`eval.rs:3904-3918`).
+`Region::Rect(sheet_id, 0, u32::MAX, c, u32::MAX)` currently means an inclusive rectangle on one sheet: every row from `0` through `u32::MAX`, and every column from `c` through `u32::MAX`. The code treats `RectRegion` bounds as inclusive (`RectRegion::new` asserts `start <= end`, and `contains_key` uses `<=` on both ends; `region_index.rs:41-66`). `Engine::structural_col_region` constructs exactly that shape for column structural edits, and `structural_row_region` constructs the row-tail analog (`eval.rs:3904-3918`).
 
-The existing whole-axis variants do not represent this shape. `WholeRow` is one row across all columns, `WholeCol` is all rows at one column, and `WholeSheet` is all rows and all columns (`RegionPattern` variants at `region_index.rs:74-96`; `axis_extents` maps them at `region_index.rs:227-229`). They are point-axis collapses, not range-axis tails. There is no current representation for "all columns from N onward" or "all rows from N onward" except a `Rect` with a sentinel high bound.
+The existing whole-axis variants do not represent this shape. `WholeRow` is one row across all columns, `WholeCol` is all rows at one column, and `WholeSheet` is all rows and all columns (`Region` variants at `region_index.rs:74-96`; `axis_extents` maps them at `region_index.rs:227-229`). They are point-axis collapses, not range-axis tails. There is no current representation for "all columns from N onward" or "all rows from N onward" except a `Rect` with a sentinel high bound.
 
-The predicate layer handles this because `RegionPattern::intersects` delegates to per-axis extent arithmetic (`region_index.rs:187-197`), and `AxisExtent::Span` intersection is pure `a_start <= b_end && b_start <= a_end` (`region_index.rs:249-256`). A `Span(c, u32::MAX)` is cheap there.
+The predicate layer handles this because `Region::intersects` delegates to per-axis extent arithmetic (`region_index.rs:187-197`), and `AxisExtent::Span` intersection is pure `a_start <= b_end && b_start <= a_end` (`region_index.rs:249-256`). A `Span(c, u32::MAX)` is cheap there.
 
 The index layer does not handle it. `SheetRegionIndex::index_entry` routes every `Rect` through `rect_buckets_for_rect` (`region_index.rs:440-447`), and bounded rect queries do the same in `collect_rect_candidates` (`region_index.rs:507-523`). `rect_buckets_for_rect` materializes a `Vec` containing every `(sheet_id, row_bucket, col_bucket)` pair from start bucket through end bucket (`region_index.rs:550-562`). With default bucket sizes `64 × 16` (`region_index.rs:324-325`), a `u32::MAX` tail creates an astronomically large bucket grid. **OOM observed at 87 GB anon-rss before completion.**
 
@@ -24,7 +24,7 @@ That broadening is correct because `WholeSheet` intersects every read region on 
 
 **Description.** Add explicit `RowsFrom { sheet_id, row_start }` and `ColsFrom { sheet_id, col_start }` region variants for structural tails.
 
-**Representation.** Extend `RegionPattern` beyond the current seven variants (`region_index.rs:74-96`). Add `AxisExtent::From(u32)` or equivalent so `axis_extents` does not encode tails as `Span(_, u32::MAX)`. Add dedicated maps in `SheetRegionIndex`, e.g. `rows_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>` and `cols_from: ...`, following the precedent of `whole_rows`, `whole_cols`, and `whole_sheets` (`region_index.rs:306-314`).
+**Representation.** Extend `Region` beyond the current seven variants (`region_index.rs:74-96`). Add `AxisExtent::From(u32)` or equivalent so `axis_extents` does not encode tails as `Span(_, u32::MAX)`. Add dedicated maps in `SheetRegionIndex`, e.g. `rows_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>` and `cols_from: ...`, following the precedent of `whole_rows`, `whole_cols`, and `whole_sheets` (`region_index.rs:306-314`).
 
 **Insertion.** Insert a `RowsFrom`/`ColsFrom` entry once, keyed by sheet and boundary. No bucket grid.
 
@@ -124,7 +124,7 @@ That broadening is correct because `WholeSheet` intersects every read region on 
 
 **Performance.** Best long-term performance envelope: O(1) tail insertion, bounded query by indexed-entry population, no bucket explosion.
 
-**Sharp edges.** Migration risk is high because `RegionPattern` is used by producer/result indexes, authority pending changes, engine structural scopes, and tests (`producer.rs:119-153`; `authority.rs:61-73`; `eval.rs:6026-6043`). 211 constructor call sites, 134 + 96 + 32 + 25 + 21 + 13 + 5 = 326 `RegionPattern` references across the codebase.
+**Sharp edges.** Migration risk is high because `Region` is used by producer/result indexes, authority pending changes, engine structural scopes, and tests (`producer.rs:119-153`; `authority.rs:61-73`; `eval.rs:6026-6043`). 211 constructor call sites, 134 + 96 + 32 + 25 + 21 + 13 + 5 = 326 `Region` references across the codebase.
 
 ### F. Separate unbounded-changes log
 
@@ -150,7 +150,7 @@ That broadening is correct because `WholeSheet` intersects every read region on 
 
 **Description.** Continue indexing/querying `WholeSheet`, but carry the original tail rect as projection metadata.
 
-**Representation.** Replace pending `Vec<RegionPattern>` with a changed-region record: `{ query_region: RegionPattern, projection_region: RegionPattern }`. For structural tails, `query_region = WholeSheet`, `projection_region = precise Rect`.
+**Representation.** Replace pending `Vec<Region>` with a changed-region record: `{ query_region: Region, projection_region: Region }`. For structural tails, `query_region = WholeSheet`, `projection_region = precise Rect`.
 
 **Insertion.** No index insertion changes. Recording still uses `WholeSheet`, which is already safe (`eval.rs:3920-3933`; `eval.rs:6026-6043`).
 
@@ -205,8 +205,8 @@ That broadening is correct because `WholeSheet` intersects every read region on 
 
 - **v0.6.0-rc1 (current):** WholeSheet broadening at the recording boundary. Workaround explicit, documented, gated by `structural_change_scope_for_region`. Parity preserved; structural-edit perf wins (~89s → ~30s) preserved at the cost of ~50-200ms recompute per structural cycle.
 - **v0.6.x:** Phase 0 = Option A (half-open `RowsFrom`/`ColsFrom` variants). Restores precision for structural tails. ~500 LOC. Validates the AxisRange design space at small scope.
-- **v0.7-v0.8:** Phases 1-5 of Option E. Internal `AxisRange` introduction, `SheetRegionIndex` axis-range dispatch, producer / dirty-closure propagation, `RegionPattern` variant collapse, test consolidation.
-- **v0.9+:** `RegionPattern` typedef removal. Final cleanup of backward-compat sugar.
+- **v0.7-v0.8:** Phases 1-5 of Option E. Internal `AxisRange` introduction, `SheetRegionIndex` axis-range dispatch, producer / dirty-closure propagation, `Region` variant collapse, test consolidation.
+- **v0.9+:** `Region` typedef removal. Final cleanup of backward-compat sugar.
 
 ## 5. What we pushed back on
 
