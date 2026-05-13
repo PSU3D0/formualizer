@@ -4608,6 +4608,21 @@ where
                         .with_message("FormulaPlane shift could not clone template origin")
                         .into());
                 };
+                if let Some(binding_set_id) = plan.binding_set_id {
+                    let Some(template) = authority.plane.templates.get(template_id) else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift could not find shifted template")
+                            .into());
+                    };
+                    let (ast_id, origin_row, origin_col) =
+                        (template.ast_id, template.origin_row, template.origin_col);
+                    authority.plane.set_binding_template_anchor(
+                        binding_set_id,
+                        ast_id,
+                        origin_row,
+                        origin_col,
+                    );
+                }
                 let read_summary_id = plan
                     .new_read_summary
                     .map(|summary| authority.plane.insert_span_read_summary(summary));

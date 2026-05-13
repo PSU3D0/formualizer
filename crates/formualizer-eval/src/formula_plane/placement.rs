@@ -688,14 +688,25 @@ fn build_span_binding_set(
         }
     };
 
+    let origin = domain_origin(domain);
+    let origin_index = candidates
+        .iter()
+        .position(|candidate| candidate.placement() == origin)
+        .ok_or(PlacementFallbackReason::UnsupportedShapeOrGaps)?;
+    let origin_candidate = &candidates[origin_index];
+    let origin_analysis = &analyses[origin_index];
+
     Ok(SpanBindingSet {
         span_ref,
+        template_ast_id: origin_candidate.ast_id,
+        template_origin_row: origin_candidate.row + 1,
+        template_origin_col: origin_candidate.col + 1,
         literal_slots: first.literal_slot_descriptors.clone(),
         unique_literal_bindings,
         placement_literal_binding_ids,
         literal_binding_encoding,
         value_ref_slots: first.value_ref_slot_descriptors.clone(),
-        template_slot_map: first.template_slot_map.clone(),
+        template_slot_map: origin_analysis.template_slot_map.clone(),
     })
 }
 

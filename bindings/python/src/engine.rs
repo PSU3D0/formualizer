@@ -129,9 +129,8 @@ impl PyEvaluationConfig {
         self.inner.case_sensitive_tables
     }
 
-    /// Opt in to experimental FormulaPlane span evaluation.
-    ///
-    /// Disabled by default. When enabled, copied formula spans may be evaluated
+    /// Opt in to experimental FormulaPlane span evaluation. Disabled by default.
+    /// When enabled, copied formula spans may be evaluated
     /// by the experimental FormulaPlane runtime instead of materialized as
     /// per-cell graph formulas.
     #[setter]

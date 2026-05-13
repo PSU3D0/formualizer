@@ -206,6 +206,19 @@ impl<'a> SpanEvaluator<'a> {
             .get(span.template_id)
             .ok_or(SpanEvalError::MissingTemplate)?;
         ensure_template_relocatable(template, self.data_store)?;
+        let span_binding_set = span
+            .binding_set_id
+            .and_then(|binding_set_id| self.plane.binding_sets.get(binding_set_id));
+        let (eval_ast_id, eval_origin_row, eval_origin_col) =
+            if let Some(binding_set) = span_binding_set {
+                (
+                    binding_set.template_ast_id,
+                    binding_set.template_origin_row,
+                    binding_set.template_origin_col,
+                )
+            } else {
+                (template.ast_id, template.origin_row, template.origin_col)
+            };
         let placements = placements_for_dirty(span, &task.dirty)?;
         let push_count_before = sink.push_count();
         let base_interpreter = Interpreter::new(self.context, self.current_sheet);
@@ -236,7 +249,7 @@ impl<'a> SpanEvaluator<'a> {
                 report.transient_ast_relocation_count.saturating_add(1);
             let ast_tree = self
                 .data_store
-                .retrieve_ast(template.ast_id, self.sheet_registry)
+                .retrieve_ast(eval_ast_id, self.sheet_registry)
                 .ok_or(SpanEvalError::MissingTemplate)?;
             let interpreter = base_interpreter.with_current_cell(CellRef::new_absolute(
                 first_writable_placement.sheet_id,
@@ -263,14 +276,13 @@ impl<'a> SpanEvaluator<'a> {
             return Ok(report);
         }
 
-        if let Some(binding_set_id) = span.binding_set_id
-            && let Some(binding_set) = self.plane.binding_sets.get(binding_set_id)
+        if let Some(binding_set) = span_binding_set
             && self.should_try_memoization(span, binding_set, &placements, &mut report)
             && let Some(memo_report) = self.evaluate_memoized(
                 span,
-                template.ast_id,
-                template.origin_row,
-                template.origin_col,
+                eval_ast_id,
+                eval_origin_row,
+                eval_origin_col,
                 binding_set,
                 &placements,
                 &base_interpreter,
@@ -281,9 +293,7 @@ impl<'a> SpanEvaluator<'a> {
             return Ok(memo_report);
         }
 
-        let per_placement_binding_set = span
-            .binding_set_id
-            .and_then(|binding_set_id| self.plane.binding_sets.get(binding_set_id));
+        let per_placement_binding_set = span_binding_set;
         let (writable_placements, skipped_overlay) = self.collect_writable_placements(&placements);
         report.skipped_overlay_punchout_count = report
             .skipped_overlay_punchout_count
@@ -296,9 +306,9 @@ impl<'a> SpanEvaluator<'a> {
             self.evaluate_per_placement_parallel(
                 thread_pool.as_ref(),
                 span,
-                template.ast_id,
-                template.origin_row,
-                template.origin_col,
+                eval_ast_id,
+                eval_origin_row,
+                eval_origin_col,
                 per_placement_binding_set,
                 &writable_placements,
                 sink,
@@ -311,9 +321,9 @@ impl<'a> SpanEvaluator<'a> {
 
         self.evaluate_per_placement_sequential(
             span,
-            template.ast_id,
-            template.origin_row,
-            template.origin_col,
+            eval_ast_id,
+            eval_origin_row,
+            eval_origin_col,
             per_placement_binding_set,
             &writable_placements,
             sink,

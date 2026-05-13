@@ -596,6 +596,9 @@ fn test_register_array_mapping_behavior() {
     wb.evaluate_all().unwrap();
 
     let sheet = wb.sheet("Sheet1".to_string()).unwrap();
+    // Exercise the demand path as well so the JS-backed array result is
+    // committed to the spill grid before reading the projected cells.
+    wb.evaluate_cell("Sheet1".to_string(), 1, 3).unwrap();
     assert_eq!(sheet.get_value(1, 3).unwrap().as_f64().unwrap(), 12.0);
     assert_eq!(sheet.get_value(1, 4).unwrap().as_f64().unwrap(), 14.0);
     assert_eq!(sheet.get_value(2, 3).unwrap().as_f64().unwrap(), 24.0);

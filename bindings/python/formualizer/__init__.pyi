@@ -206,7 +206,10 @@ class EvaluationConfig:
     @span_evaluation.setter
     def span_evaluation(self, value: builtins.bool) -> None:
         r"""
-        Opt in to experimental FormulaPlane span evaluation.
+        Opt in to experimental FormulaPlane span evaluation. Disabled by default.
+        When enabled, copied formula spans may be evaluated
+        by the experimental FormulaPlane runtime instead of materialized as
+        per-cell graph formulas.
         """
     @property
     def warmup_enabled(self) -> builtins.bool: ...

@@ -474,6 +474,9 @@ pub(crate) enum LiteralBindingEncoding {
 #[derive(Clone, Debug)]
 pub(crate) struct SpanBindingSet {
     pub(crate) span_ref: FormulaSpanRef,
+    pub(crate) template_ast_id: AstNodeId,
+    pub(crate) template_origin_row: u32,
+    pub(crate) template_origin_col: u32,
     pub(crate) literal_slots: Arc<[LiteralSlotDescriptor]>,
     pub(crate) unique_literal_bindings: Vec<Box<[LiteralValue]>>,
     pub(crate) placement_literal_binding_ids: Box<[u32]>,
@@ -644,6 +647,21 @@ impl BindingStore {
         }
     }
 
+    pub(crate) fn set_template_anchor(
+        &mut self,
+        id: SpanBindingSetId,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+    ) {
+        if let Some(Some(set)) = self.records.get_mut(id.0 as usize) {
+            set.template_ast_id = ast_id;
+            set.template_origin_row = origin_row;
+            set.template_origin_col = origin_col;
+            self.epoch = self.epoch.saturating_add(1);
+        }
+    }
+
     pub(crate) fn force_residual_axes(&mut self, id: SpanBindingSetId) {
         if let Some(Some(set)) = self.records.get_mut(id.0 as usize)
             && (!set.template_slot_map.residual_relative_row
@@ -716,10 +734,7 @@ impl TemplateStore {
         origin_col: u32,
         formula_text: Option<Arc<str>>,
     ) -> (FormulaTemplateId, bool) {
-        let intern_key = Arc::<str>::from(format!(
-            "{}|origin_row={origin_row}|origin_col={origin_col}",
-            parameterized_canonical_key
-        ));
+        let intern_key = Arc::clone(&parameterized_canonical_key);
         if let Some(id) = self.intern.get(intern_key.as_ref()).copied() {
             return (id, false);
         }
@@ -781,15 +796,10 @@ impl TemplateStore {
             origin_row,
             origin_col,
             exact_canonical_key,
-            parameterized_canonical_key: Arc::clone(&parameterized_canonical_key),
+            parameterized_canonical_key,
             formula_text,
             relocatable_ast_validated: OnceLock::new(),
         });
-        let intern_key = Arc::<str>::from(format!(
-            "{}|origin_row={origin_row}|origin_col={origin_col}",
-            parameterized_canonical_key
-        ));
-        self.intern.insert(intern_key, new_id);
         self.epoch = self.epoch.saturating_add(1);
         Some((new_id, true))
     }
@@ -1244,6 +1254,18 @@ impl FormulaPlane {
 
     pub(crate) fn force_binding_residual_axes(&mut self, id: SpanBindingSetId) {
         self.binding_sets.force_residual_axes(id);
+        self.bump_epoch();
+    }
+
+    pub(crate) fn set_binding_template_anchor(
+        &mut self,
+        id: SpanBindingSetId,
+        ast_id: AstNodeId,
+        origin_row: u32,
+        origin_col: u32,
+    ) {
+        self.binding_sets
+            .set_template_anchor(id, ast_id, origin_row, origin_col);
         self.bump_epoch();
     }
 
