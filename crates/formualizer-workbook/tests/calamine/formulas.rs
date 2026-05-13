@@ -4,7 +4,7 @@ use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_workbook::{CalamineAdapter, LiteralValue, SpreadsheetReader};
 use std::io::{Cursor, Read, Write};
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 fn inject_external_link_rels(bytes: Vec<u8>, idx: u32, target: &str) -> Vec<u8> {
@@ -12,7 +12,7 @@ fn inject_external_link_rels(bytes: Vec<u8>, idx: u32, target: &str) -> Vec<u8> 
     let mut archive = ZipArchive::new(reader).unwrap();
 
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).unwrap();

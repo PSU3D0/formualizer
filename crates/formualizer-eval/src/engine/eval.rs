@@ -19,19 +19,22 @@ use crate::engine::{
 };
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
-    place_candidate_family_with_analyses,
+    place_candidate_family_with_analyses, split_candidate_affine_literal_runs,
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
-    FormulaProducerWork, ProducerDirtyDomain,
+    FormulaProducerWork, ProducerDirtyDomain, SpanReadSummary,
 };
 use crate::formula_plane::region_index::{DirtyDomain, Region};
-use crate::formula_plane::runtime::{FormulaPlane, FormulaSpanRef, PlacementCoord};
+use crate::formula_plane::runtime::{
+    FormulaPlane, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
+};
 use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
 #[cfg(test)]
 use crate::formula_plane::span_eval::SpanEvalReport;
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
 use crate::formula_plane::structural::relocate_ast_for_template_placement;
+use crate::formula_plane::structural_shift::{SpanShiftPlan, StructuralOp, classify_span_for_op};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
@@ -700,8 +703,13 @@ where
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
-            self.engine.demote_spans_for_structural_op(
+            let op = StructuralOp::InsertRows {
                 sheet_id,
+                before: before0,
+                count,
+            };
+            self.engine.demote_spans_for_structural_op(
+                op,
                 Engine::<R>::structural_row_region(sheet_id, before0),
             )?;
 
@@ -765,8 +773,13 @@ where
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
-            self.engine.demote_spans_for_structural_op(
+            let op = StructuralOp::InsertColumns {
                 sheet_id,
+                before: before0,
+                count,
+            };
+            self.engine.demote_spans_for_structural_op(
+                op,
                 Engine::<R>::structural_col_region(sheet_id, before0),
             )?;
 
@@ -3124,46 +3137,50 @@ where
                 };
 
             for (component, component_analyses) in analyzed_components {
-                let placement_report = {
-                    let authority = self.graph.formula_authority_mut();
-                    place_candidate_family_with_analyses(
-                        &mut authority.plane,
-                        component.clone(),
-                        component_analyses,
-                    )
-                };
-                Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
-
-                for result in &placement_report.results {
-                    let FormulaPlacementResult::Legacy { placement, .. } = result else {
-                        continue;
+                for (component, component_analyses) in
+                    split_candidate_affine_literal_runs(component, component_analyses)
+                {
+                    let placement_report = {
+                        let authority = self.graph.formula_authority_mut();
+                        place_candidate_family_with_analyses(
+                            &mut authority.plane,
+                            component.clone(),
+                            component_analyses,
+                        )
                     };
-                    if let Some(candidate) = component
-                        .iter()
-                        .find(|candidate| candidate.placement() == *placement)
-                    {
-                        let plan = plans_by_coord
-                            .get_mut(&(candidate.row, candidate.col))
-                            .and_then(Vec::pop);
-                        if let Some(plan) = plan {
-                            planned_fallback
-                                .entry(sheet_name.clone())
-                                .or_default()
-                                .push((
-                                    candidate.row.saturating_add(1),
-                                    candidate.col.saturating_add(1),
-                                    candidate.ast_id,
-                                    plan,
-                                ));
-                        } else {
-                            fallback.entry(sheet_name.clone()).or_default().push(
-                                FormulaIngestRecord::new(
-                                    candidate.row.saturating_add(1),
-                                    candidate.col.saturating_add(1),
-                                    candidate.ast_id,
-                                    candidate.formula_text.clone(),
-                                ),
-                            );
+                    Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
+
+                    for result in &placement_report.results {
+                        let FormulaPlacementResult::Legacy { placement, .. } = result else {
+                            continue;
+                        };
+                        if let Some(candidate) = component
+                            .iter()
+                            .find(|candidate| candidate.placement() == *placement)
+                        {
+                            let plan = plans_by_coord
+                                .get_mut(&(candidate.row, candidate.col))
+                                .and_then(Vec::pop);
+                            if let Some(plan) = plan {
+                                planned_fallback
+                                    .entry(sheet_name.clone())
+                                    .or_default()
+                                    .push((
+                                        candidate.row.saturating_add(1),
+                                        candidate.col.saturating_add(1),
+                                        candidate.ast_id,
+                                        plan,
+                                    ));
+                            } else {
+                                fallback.entry(sheet_name.clone()).or_default().push(
+                                    FormulaIngestRecord::new(
+                                        candidate.row.saturating_add(1),
+                                        candidate.col.saturating_add(1),
+                                        candidate.ast_id,
+                                        candidate.formula_text.clone(),
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
@@ -3227,7 +3244,7 @@ where
         }
         components
             .into_iter()
-            .map(|component| {
+            .flat_map(|component| {
                 let mut component_analyses = Vec::with_capacity(component.len());
                 for candidate in &component {
                     let analysis = analysis_by_coord
@@ -3236,7 +3253,7 @@ where
                         .expect("component candidate must have a precomputed analysis");
                     component_analyses.push(analysis);
                 }
-                (component, component_analyses)
+                split_candidate_affine_literal_runs(component, component_analyses)
             })
             .collect()
     }
@@ -3930,10 +3947,13 @@ where
 
     fn demote_spans_preserving_computed_overlays(
         &mut self,
-        sheet_id: SheetId,
+        _sheet_id: SheetId,
         affected_region: Region,
     ) -> Result<(), crate::engine::EditorError> {
-        self.demote_spans_for_structural_op_impl(sheet_id, affected_region, false)
+        // Per-cell write inside a span (or whole-sheet demote via remove_sheet):
+        // not a structural axis shift. Demote every span whose result or read
+        // region intersects `affected_region`; leave disjoint spans untouched.
+        self.demote_spans_for_structural_op_impl(None, affected_region, false)
     }
 
     fn structural_row_region(sheet_id: SheetId, start_row0: u32) -> Region {
@@ -4082,15 +4102,18 @@ where
     /// `sheet_id`, because those read-region coordinates become stale after row/column shifts.
     fn demote_spans_for_structural_op(
         &mut self,
-        sheet_id: SheetId,
+        op: StructuralOp,
         affected_region: Region,
     ) -> Result<(), crate::engine::EditorError> {
-        self.demote_spans_for_structural_op_impl(sheet_id, affected_region, true)
+        if op.count() == 0 {
+            return Ok(());
+        }
+        self.demote_spans_for_structural_op_impl(Some(op), affected_region, true)
     }
 
     fn demote_spans_for_structural_op_impl(
         &mut self,
-        _sheet_id: SheetId,
+        op: Option<StructuralOp>,
         affected_region: Region,
         clear_computed_overlays: bool,
     ) -> Result<(), crate::engine::EditorError> {
@@ -4177,22 +4200,453 @@ where
             self.compute_current_formula_plane_dirty_result_coords()?
         };
 
-        let mut span_plans = Vec::new();
+        struct ShiftPlan {
+            span_ref: FormulaSpanRef,
+            template_id: crate::formula_plane::ids::FormulaTemplateId,
+            new_origin_row: u32,
+            new_origin_col: u32,
+            new_domain: crate::formula_plane::runtime::PlacementDomain,
+            new_read_summary: Option<SpanReadSummary>,
+            binding_set_id: Option<crate::formula_plane::runtime::SpanBindingSetId>,
+            force_binding_residual_axes: bool,
+        }
+
+        fn checked_shift_u32(value: u32, delta: i64) -> Option<u32> {
+            u32::try_from(i64::from(value).checked_add(delta)?).ok()
+        }
+
+        fn shifted_read_summary(
+            read_summary: &SpanReadSummary,
+            new_result_region: Region,
+            op: StructuralOp,
+            row_delta: i64,
+            col_delta: i64,
+        ) -> Option<SpanReadSummary> {
+            let mut dependencies = Vec::with_capacity(read_summary.dependencies.len());
+            for dependency in &read_summary.dependencies {
+                let read_region = match op.classify_region(dependency.read_region) {
+                    crate::formula_plane::structural_shift::AxisShiftCase::OtherSheet
+                    | crate::formula_plane::structural_shift::AxisShiftCase::EntirelyBelow => {
+                        dependency.read_region
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::EntirelyAboveShift {
+                        ..
+                    } => dependency
+                        .read_region
+                        .project_through_axis_shift(row_delta, col_delta)?,
+                    crate::formula_plane::structural_shift::AxisShiftCase::Straddles
+                    | crate::formula_plane::structural_shift::AxisShiftCase::DeleteFullyContains => {
+                        return None;
+                    }
+                };
+                dependencies.push(crate::formula_plane::producer::SpanReadDependency {
+                    read_region,
+                    projection: dependency.projection,
+                });
+            }
+            Some(SpanReadSummary {
+                result_region: new_result_region,
+                dependencies,
+            })
+        }
+
+        fn compact_axis_through_delete(
+            min: u32,
+            max: u32,
+            start: u32,
+            count: u32,
+        ) -> Option<(u32, u32)> {
+            let end = start.saturating_add(count);
+            if max < start || min >= end {
+                return Some((min.saturating_sub(count), max.saturating_sub(count)));
+            }
+            let keeps_left = min < start;
+            let keeps_right = max >= end;
+            match (keeps_left, keeps_right) {
+                (false, false) => None,
+                (true, false) => Some((min, start.checked_sub(1)?)),
+                (false, true) => Some((start, max.checked_sub(count)?)),
+                (true, true) => Some((min, max.checked_sub(count)?)),
+            }
+        }
+
+        fn compact_domain_through_delete(
+            domain: &PlacementDomain,
+            op: StructuralOp,
+        ) -> Option<PlacementDomain> {
+            match (domain, op) {
+                (
+                    PlacementDomain::RowRun {
+                        sheet_id,
+                        row_start,
+                        row_end,
+                        col,
+                    },
+                    StructuralOp::DeleteRows { start, count, .. },
+                ) => {
+                    let (row_start, row_end) =
+                        compact_axis_through_delete(*row_start, *row_end, start, count)?;
+                    Some(PlacementDomain::row_run(
+                        *sheet_id, row_start, row_end, *col,
+                    ))
+                }
+                (
+                    PlacementDomain::Rect {
+                        sheet_id,
+                        row_start,
+                        row_end,
+                        col_start,
+                        col_end,
+                    },
+                    StructuralOp::DeleteRows { start, count, .. },
+                ) => {
+                    let (row_start, row_end) =
+                        compact_axis_through_delete(*row_start, *row_end, start, count)?;
+                    Some(PlacementDomain::rect(
+                        *sheet_id, row_start, row_end, *col_start, *col_end,
+                    ))
+                }
+                (
+                    PlacementDomain::ColRun {
+                        sheet_id,
+                        row,
+                        col_start,
+                        col_end,
+                    },
+                    StructuralOp::DeleteColumns { start, count, .. },
+                ) => {
+                    let (col_start, col_end) =
+                        compact_axis_through_delete(*col_start, *col_end, start, count)?;
+                    Some(PlacementDomain::col_run(
+                        *sheet_id, *row, col_start, col_end,
+                    ))
+                }
+                (
+                    PlacementDomain::Rect {
+                        sheet_id,
+                        row_start,
+                        row_end,
+                        col_start,
+                        col_end,
+                    },
+                    StructuralOp::DeleteColumns { start, count, .. },
+                ) => {
+                    let (col_start, col_end) =
+                        compact_axis_through_delete(*col_start, *col_end, start, count)?;
+                    Some(PlacementDomain::rect(
+                        *sheet_id, *row_start, *row_end, col_start, col_end,
+                    ))
+                }
+                _ => None,
+            }
+        }
+
+        fn compact_axis_range_through_delete(
+            axis: crate::formula_plane::region_index::AxisRange,
+            start: u32,
+            count: u32,
+        ) -> Option<crate::formula_plane::region_index::AxisRange> {
+            use crate::formula_plane::region_index::AxisRange;
+            match axis {
+                AxisRange::Point(point) => compact_axis_through_delete(point, point, start, count)
+                    .map(|(point, _)| AxisRange::Point(point)),
+                AxisRange::Span(min, max) => compact_axis_through_delete(min, max, start, count)
+                    .map(|(min, max)| AxisRange::Span(min, max)),
+                AxisRange::All => Some(AxisRange::All),
+                AxisRange::From(_) | AxisRange::To(_) => None,
+            }
+        }
+
+        fn compact_region_through_delete(region: Region, op: StructuralOp) -> Option<Region> {
+            let (rows, cols) = region.axis_ranges();
+            match op {
+                StructuralOp::DeleteRows {
+                    sheet_id,
+                    start,
+                    count,
+                } if region.sheet_id() == sheet_id => Some(Region {
+                    sheet_id,
+                    rows: compact_axis_range_through_delete(rows, start, count)?,
+                    cols,
+                }),
+                StructuralOp::DeleteColumns {
+                    sheet_id,
+                    start,
+                    count,
+                } if region.sheet_id() == sheet_id => Some(Region {
+                    sheet_id,
+                    rows,
+                    cols: compact_axis_range_through_delete(cols, start, count)?,
+                }),
+                _ => Some(region),
+            }
+        }
+
+        fn compact_read_summary_through_delete(
+            read_summary: &SpanReadSummary,
+            new_result_region: Region,
+            op: StructuralOp,
+        ) -> Option<SpanReadSummary> {
+            let mut dependencies = Vec::with_capacity(read_summary.dependencies.len());
+            for dependency in &read_summary.dependencies {
+                let read_region = match op.classify_region(dependency.read_region) {
+                    crate::formula_plane::structural_shift::AxisShiftCase::OtherSheet
+                    | crate::formula_plane::structural_shift::AxisShiftCase::EntirelyBelow => {
+                        dependency.read_region
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::EntirelyAboveShift {
+                        ..
+                    } => {
+                        let (row_delta, col_delta) = op.axis_shift_delta();
+                        dependency
+                            .read_region
+                            .project_through_axis_shift(row_delta, col_delta)?
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::Straddles => {
+                        compact_region_through_delete(dependency.read_region, op)?
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::DeleteFullyContains => {
+                        return None;
+                    }
+                };
+                dependencies.push(crate::formula_plane::producer::SpanReadDependency {
+                    read_region,
+                    projection: dependency.projection,
+                });
+            }
+            Some(SpanReadSummary {
+                result_region: new_result_region,
+                dependencies,
+            })
+        }
+
+        fn domain_origin_1_based(domain: &PlacementDomain) -> (u32, u32) {
+            match domain {
+                PlacementDomain::RowRun { row_start, col, .. } => (row_start + 1, col + 1),
+                PlacementDomain::ColRun { row, col_start, .. } => (row + 1, col_start + 1),
+                PlacementDomain::Rect {
+                    row_start,
+                    col_start,
+                    ..
+                } => (row_start + 1, col_start + 1),
+            }
+        }
+
+        let mut shift_plans = Vec::new();
+        let mut remove_refs = Vec::new();
+        let mut demote_refs = Vec::new();
         for span_ref in span_refs {
             let authority = self.graph.formula_authority();
             let Some(span) = authority.plane.spans.get(span_ref) else {
                 continue;
             };
-            let result_region_affected =
-                Self::span_result_region_intersects_affected(span, &affected_region);
-            let read_region_affected = Self::span_any_read_region_intersects_affected(
-                &authority.plane,
-                span,
-                &affected_region,
-            );
-            if !result_region_affected && !read_region_affected {
+            let read_summary = span
+                .read_summary_id
+                .and_then(|id| authority.plane.span_read_summaries.get(id));
+            let Some(op) = op else {
+                // Non-structural demote path (per-cell write into span, or
+                // remove_sheet's whole-sheet sweep). Only demote spans whose
+                // result or read region intersects affected_region; leave
+                // disjoint spans untouched.
+                let result_region_affected =
+                    Self::span_result_region_intersects_affected(span, &affected_region);
+                let read_region_affected = Self::span_any_read_region_intersects_affected(
+                    &authority.plane,
+                    span,
+                    &affected_region,
+                );
+                if result_region_affected || read_region_affected {
+                    demote_refs.push(span_ref);
+                }
                 continue;
+            };
+            match classify_span_for_op(span, read_summary, op) {
+                SpanShiftPlan::NoOp => {}
+                SpanShiftPlan::Remove => {
+                    remove_refs.push(span_ref);
+                }
+                SpanShiftPlan::Demote {
+                    reason:
+                        crate::formula_plane::structural_shift::SpanDemoteReason::DeletePartiallyOverlaps,
+                } => {
+                    let binding_compaction_safe = span
+                        .binding_set_id
+                        .and_then(|id| authority.plane.binding_sets.get(id))
+                        .is_none_or(|binding_set| binding_set.is_single_literal_binding());
+                    if binding_compaction_safe
+                        && let Some(new_domain) = compact_domain_through_delete(&span.domain, op)
+                    {
+                        let new_result_region = Region::from_domain(&new_domain);
+                        let new_read_summary = if let Some(summary) = read_summary {
+                            compact_read_summary_through_delete(summary, new_result_region, op)
+                        } else {
+                            None
+                        };
+                        if read_summary.is_none() || new_read_summary.is_some() {
+                            let (new_origin_row, new_origin_col) = domain_origin_1_based(&new_domain);
+                            let Some(template) = authority.plane.templates.get(span.template_id)
+                            else {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref)
+                                    .with_message(
+                                        "FormulaPlane delete compaction found a span with a missing template",
+                                    )
+                                    .into());
+                            };
+                            let force_binding_residual_axes = span
+                                .binding_set_id
+                                .and_then(|id| authority.plane.binding_sets.get(id))
+                                .is_some_and(|binding_set| {
+                                    !binding_set.value_ref_slots.is_empty()
+                                        && (new_origin_row != template.origin_row
+                                            || new_origin_col != template.origin_col)
+                                });
+                            shift_plans.push(ShiftPlan {
+                                span_ref,
+                                template_id: span.template_id,
+                                new_origin_row,
+                                new_origin_col,
+                                new_domain,
+                                new_read_summary,
+                                binding_set_id: span.binding_set_id,
+                                force_binding_residual_axes,
+                            });
+                        } else {
+                            demote_refs.push(span_ref);
+                        }
+                    } else {
+                        demote_refs.push(span_ref);
+                    }
+                }
+                SpanShiftPlan::Demote { .. } => {
+                    demote_refs.push(span_ref);
+                }
+                SpanShiftPlan::Shift {
+                    row_delta,
+                    col_delta,
+                    origin_row_delta,
+                    origin_col_delta,
+                } => {
+                    let Some(template) = authority.plane.templates.get(span.template_id) else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift found a span with a missing template")
+                            .into());
+                    };
+                    let Some(new_origin_row) =
+                        checked_shift_u32(template.origin_row, origin_row_delta)
+                    else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift overflowed template origin row")
+                            .into());
+                    };
+                    let Some(new_origin_col) =
+                        checked_shift_u32(template.origin_col, origin_col_delta)
+                    else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift overflowed template origin column")
+                            .into());
+                    };
+                    let Some(new_domain) =
+                        span.domain.project_through_axis_shift(row_delta, col_delta)
+                    else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift overflowed span domain")
+                            .into());
+                    };
+                    let new_result_region = Region::from_domain(&new_domain);
+                    let new_read_summary = if let Some(summary) = read_summary {
+                        Some(
+                            shifted_read_summary(
+                                summary,
+                                new_result_region,
+                                op,
+                                row_delta,
+                                col_delta,
+                            )
+                            .ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                    "FormulaPlane shift could not project read summary",
+                                )
+                            })?,
+                        )
+                    } else {
+                        None
+                    };
+                    let force_binding_residual_axes = span
+                        .binding_set_id
+                        .and_then(|id| authority.plane.binding_sets.get(id))
+                        .is_some_and(|binding_set| {
+                            !binding_set.value_ref_slots.is_empty()
+                                && (origin_row_delta != 0 || origin_col_delta != 0)
+                        });
+                    shift_plans.push(ShiftPlan {
+                        span_ref,
+                        template_id: span.template_id,
+                        new_origin_row,
+                        new_origin_col,
+                        new_domain,
+                        new_read_summary,
+                        binding_set_id: span.binding_set_id,
+                        force_binding_residual_axes,
+                    });
+                }
             }
+        }
+
+        if !shift_plans.is_empty() || !remove_refs.is_empty() {
+            let authority = self.graph.formula_authority_mut();
+            for span_ref in remove_refs {
+                authority.plane.remove_overlays_for_source_span(span_ref);
+                authority.plane.remove_span(span_ref);
+            }
+            for plan in shift_plans {
+                let Some(template_id) = authority.plane.intern_shifted_template_origin(
+                    plan.template_id,
+                    plan.new_origin_row,
+                    plan.new_origin_col,
+                ) else {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane shift could not clone template origin")
+                        .into());
+                };
+                let read_summary_id = plan
+                    .new_read_summary
+                    .map(|summary| authority.plane.insert_span_read_summary(summary));
+                let result_region = ResultRegion::scalar_cells(plan.new_domain.clone());
+                if !authority.plane.replace_span_geometry(
+                    plan.span_ref,
+                    template_id,
+                    plan.new_domain,
+                    result_region,
+                    read_summary_id,
+                ) {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane shift could not update span geometry")
+                        .into());
+                }
+                if plan.force_binding_residual_axes
+                    && let Some(binding_set_id) = plan.binding_set_id
+                {
+                    // Value-ref memoization keys are placement-relative. When a
+                    // structural op moves the formula origin while keeping some
+                    // precedents fixed (e.g. insert a column before a formula
+                    // family that reads column A), those keys no longer name
+                    // the same producer cells. Keep correctness by forcing
+                    // placement offsets into the key so memoization falls back
+                    // to per-placement work rather than broadcasting stale
+                    // representative values.
+                    authority.plane.force_binding_residual_axes(binding_set_id);
+                }
+            }
+            authority.rebuild_indexes();
+            self.formula_plane_indexes_epoch_seen = 0;
+        }
+
+        let mut span_plans = Vec::new();
+        for span_ref in demote_refs {
+            let authority = self.graph.formula_authority();
+            let Some(span) = authority.plane.spans.get(span_ref) else {
+                continue;
+            };
             let Some(template) = authority.plane.templates.get(span.template_id) else {
                 return Err(ExcelError::new(ExcelErrorKind::Ref)
                     .with_message("FormulaPlane demotion found a span with a missing template")
@@ -4235,7 +4689,7 @@ where
                 let bound_ast = if let Some(binding_set_id) = plan.binding_set_id {
                     let authority = self.graph.formula_authority();
                     if let Some(binding_set) = authority.plane.binding_sets.get(binding_set_id) {
-                        if binding_set.unique_literal_bindings.len() <= 1 {
+                        if binding_set.is_single_literal_binding() {
                             plan.ast.clone()
                         } else {
                             let placement = crate::formula_plane::runtime::PlacementCoord::new(
@@ -4243,22 +4697,16 @@ where
                                 row.saturating_sub(1),
                                 col.saturating_sub(1),
                             );
-                            let binding = authority
-                                .plane
-                                .spans
-                                .get(plan.span_ref)
-                                .and_then(|span| span.domain.ordinal_of(placement))
-                                .and_then(|ordinal| {
+                            let binding =
+                                authority.plane.spans.get(plan.span_ref).and_then(|span| {
                                     binding_set
-                                        .placement_literal_binding_ids
-                                        .get(ordinal)
-                                        .copied()
-                                })
-                                .and_then(|binding_id| {
-                                    binding_set.unique_literal_bindings.get(binding_id as usize)
+                                        .literal_bindings_for_placement(&span.domain, placement)
                                 });
                             if let Some(binding) = binding {
-                                substitute_literal_slots_for_template_placement(&plan.ast, binding)
+                                substitute_literal_slots_for_template_placement(
+                                    &plan.ast,
+                                    binding.as_ref(),
+                                )
                             } else {
                                 plan.ast.clone()
                             }
@@ -4364,7 +4812,12 @@ where
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let before0 = before.saturating_sub(1);
         let affected_region = Self::structural_row_region(sheet_id, before0);
-        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
+        let op = StructuralOp::InsertRows {
+            sheet_id,
+            before: before0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_rows(sheet_id, before0, count)?
@@ -4393,7 +4846,12 @@ where
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let start0 = start.saturating_sub(1);
         let affected_region = Self::structural_row_region(sheet_id, start0);
-        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
+        let op = StructuralOp::DeleteRows {
+            sheet_id,
+            start: start0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_rows(sheet_id, start0, count)?
@@ -4427,7 +4885,12 @@ where
         )?;
         let before0 = before.saturating_sub(1);
         let affected_region = Self::structural_col_region(sheet_id, before0);
-        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
+        let op = StructuralOp::InsertColumns {
+            sheet_id,
+            before: before0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_columns(sheet_id, before0, count)?
@@ -4460,7 +4923,12 @@ where
         )?;
         let start0 = start.saturating_sub(1);
         let affected_region = Self::structural_col_region(sheet_id, start0);
-        self.demote_spans_for_structural_op(sheet_id, affected_region)?;
+        let op = StructuralOp::DeleteColumns {
+            sheet_id,
+            start: start0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_columns(sheet_id, start0, count)?

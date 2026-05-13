@@ -26,8 +26,9 @@ use super::producer::{
 };
 use super::region_index::Region;
 use super::runtime::{
-    FormulaPlane, FormulaSpanRef, NewFormulaSpan, PlacementCoord, PlacementDomain, ResultRegion,
-    SpanBindingSet, TemplateSlotMap, ValueRefSlotDescriptor, ValueRefSlotId,
+    FormulaPlane, FormulaSpanRef, LiteralBindingEncoding, NewFormulaSpan, PlacementCoord,
+    PlacementDomain, ResultRegion, SpanBindingSet, TemplateSlotMap, ValueRefSlotDescriptor,
+    ValueRefSlotId,
 };
 use super::template_canonical::{
     AxisRef, CanonicalExpr, CanonicalReference, LiteralSlotDescriptor, SlotContext,
@@ -160,6 +161,7 @@ pub(crate) fn place_candidate_family_with_analyses(
     place_analyzed_family(plane, &candidates, &analyses)
 }
 
+#[derive(Clone)]
 pub(crate) struct CandidateAnalysis {
     sheet_id: SheetId,
     row: u32,
@@ -648,22 +650,358 @@ fn build_span_binding_set(
         placement_ids.push(id);
     }
 
-    let bytes: usize = unique_literal_bindings
+    let dictionary_bytes: usize = unique_literal_bindings
         .iter()
         .map(|binding| literal_binding_bytes(binding))
         .sum();
-    if bytes > MAX_BINDING_SET_BYTES {
+    let literal_binding_encoding = detect_affine_literal_encoding(domain, &by_placement)
+        .unwrap_or(LiteralBindingEncoding::Dictionary);
+    let encoded_bytes = match &literal_binding_encoding {
+        LiteralBindingEncoding::Dictionary => dictionary_bytes,
+        LiteralBindingEncoding::AffineByRow { base, steps, .. }
+        | LiteralBindingEncoding::AffineByCol { base, steps, .. } => {
+            literal_binding_bytes(base) + std::mem::size_of_val(steps.as_ref())
+        }
+        LiteralBindingEncoding::AffineRect {
+            base,
+            row_steps,
+            col_steps,
+            ..
+        } => {
+            literal_binding_bytes(base)
+                + std::mem::size_of_val(row_steps.as_ref())
+                + std::mem::size_of_val(col_steps.as_ref())
+        }
+    };
+    if encoded_bytes > MAX_BINDING_SET_BYTES {
         return Err(PlacementFallbackReason::BindingMemoryCapExceeded);
     }
+
+    let (unique_literal_bindings, placement_literal_binding_ids) = match &literal_binding_encoding {
+        LiteralBindingEncoding::Dictionary => {
+            (unique_literal_bindings, placement_ids.into_boxed_slice())
+        }
+        LiteralBindingEncoding::AffineByRow { base, .. }
+        | LiteralBindingEncoding::AffineByCol { base, .. }
+        | LiteralBindingEncoding::AffineRect { base, .. } => {
+            (vec![base.clone()], Box::<[u32]>::default())
+        }
+    };
 
     Ok(SpanBindingSet {
         span_ref,
         literal_slots: first.literal_slot_descriptors.clone(),
         unique_literal_bindings,
-        placement_literal_binding_ids: placement_ids.into_boxed_slice(),
+        placement_literal_binding_ids,
+        literal_binding_encoding,
         value_ref_slots: first.value_ref_slot_descriptors.clone(),
         template_slot_map: first.template_slot_map.clone(),
     })
+}
+
+fn detect_affine_literal_encoding(
+    domain: &PlacementDomain,
+    by_placement: &BTreeMap<(SheetId, u32, u32), Box<[LiteralValue]>>,
+) -> Option<LiteralBindingEncoding> {
+    let origin = domain_origin(domain);
+    let base = by_placement
+        .get(&(origin.sheet_id, origin.row, origin.col))?
+        .clone();
+    if base.is_empty() || !base.iter().all(is_affine_numeric_literal) {
+        return None;
+    }
+
+    match domain {
+        PlacementDomain::RowRun { .. } => {
+            let steps = detect_affine_steps(domain, by_placement, &base, |placement, origin| {
+                i64::from(placement.row) - i64::from(origin.row)
+            })?;
+            Some(LiteralBindingEncoding::AffineByRow {
+                origin_row: origin.row,
+                base,
+                steps: steps.into_boxed_slice(),
+            })
+        }
+        PlacementDomain::ColRun { .. } => {
+            let steps = detect_affine_steps(domain, by_placement, &base, |placement, origin| {
+                i64::from(placement.col) - i64::from(origin.col)
+            })?;
+            Some(LiteralBindingEncoding::AffineByCol {
+                origin_col: origin.col,
+                base,
+                steps: steps.into_boxed_slice(),
+            })
+        }
+        PlacementDomain::Rect { .. } => detect_affine_rect_encoding(domain, by_placement, base),
+    }
+}
+
+fn is_affine_numeric_literal(value: &LiteralValue) -> bool {
+    match value {
+        LiteralValue::Int(_) => true,
+        LiteralValue::Number(value) => f64_to_exact_i64(*value).is_some(),
+        _ => false,
+    }
+}
+
+fn f64_to_exact_i64(value: f64) -> Option<i64> {
+    if !value.is_finite() || value.fract() != 0.0 {
+        return None;
+    }
+    if value < i64::MIN as f64 || value > i64::MAX as f64 {
+        return None;
+    }
+    let int = value as i64;
+    ((int as f64) == value).then_some(int)
+}
+
+fn literal_as_exact_i64(value: &LiteralValue) -> Option<i64> {
+    match value {
+        LiteralValue::Int(value) => Some(*value),
+        LiteralValue::Number(value) => f64_to_exact_i64(*value),
+        _ => None,
+    }
+}
+
+fn exact_i64_to_like(value: i64, like: &LiteralValue) -> Option<LiteralValue> {
+    match like {
+        LiteralValue::Int(_) => Some(LiteralValue::Int(value)),
+        LiteralValue::Number(_) => {
+            let value_f64 = value as f64;
+            ((value_f64 as i64) == value).then_some(LiteralValue::Number(value_f64))
+        }
+        _ => None,
+    }
+}
+
+fn affine_step_between(
+    base_value: &LiteralValue,
+    value: &LiteralValue,
+    delta: i64,
+) -> Option<Option<i64>> {
+    let base = literal_as_exact_i64(base_value)?;
+    let value = literal_as_exact_i64(value)?;
+    let diff = value.checked_sub(base)?;
+    if delta == 0 {
+        return (diff == 0).then_some(None);
+    }
+    if diff % delta != 0 {
+        return None;
+    }
+    Some(Some(diff / delta))
+}
+
+fn detect_affine_steps(
+    domain: &PlacementDomain,
+    by_placement: &BTreeMap<(SheetId, u32, u32), Box<[LiteralValue]>>,
+    base: &[LiteralValue],
+    axis_delta: impl Fn(PlacementCoord, PlacementCoord) -> i64,
+) -> Option<Vec<i64>> {
+    let origin = domain_origin(domain);
+    let mut steps: Vec<Option<i64>> = vec![None; base.len()];
+    for placement in domain.iter() {
+        let delta = axis_delta(placement, origin);
+        let binding = by_placement.get(&(placement.sheet_id, placement.row, placement.col))?;
+        if binding.len() != base.len() {
+            return None;
+        }
+        for (slot, (base_value, value)) in base.iter().zip(binding.iter()).enumerate() {
+            let step = affine_step_between(base_value, value, delta)?;
+            if let Some(step) = step {
+                match &steps[slot] {
+                    Some(existing) if existing != &step => return None,
+                    Some(_) => {}
+                    None => steps[slot] = Some(step),
+                }
+            }
+        }
+    }
+    Some(steps.into_iter().map(|step| step.unwrap_or(0)).collect())
+}
+
+fn detect_affine_rect_encoding(
+    domain: &PlacementDomain,
+    by_placement: &BTreeMap<(SheetId, u32, u32), Box<[LiteralValue]>>,
+    base: Box<[LiteralValue]>,
+) -> Option<LiteralBindingEncoding> {
+    let PlacementDomain::Rect {
+        row_start,
+        col_start,
+        col_end,
+        ..
+    } = domain
+    else {
+        return None;
+    };
+    let origin = domain_origin(domain);
+    let right = if *col_start < *col_end {
+        by_placement.get(&(origin.sheet_id, origin.row, origin.col + 1))?
+    } else {
+        &base
+    };
+    let down = by_placement
+        .get(&(origin.sheet_id, row_start.saturating_add(1), origin.col))
+        .unwrap_or(&base);
+    if right.len() != base.len() || down.len() != base.len() {
+        return None;
+    }
+    let mut row_steps = Vec::with_capacity(base.len());
+    let mut col_steps = Vec::with_capacity(base.len());
+    for ((base_value, down_value), right_value) in base.iter().zip(down.iter()).zip(right.iter()) {
+        row_steps.push(affine_step_between(base_value, down_value, 1)??);
+        col_steps.push(affine_step_between(base_value, right_value, 1)??);
+    }
+
+    for placement in domain.iter() {
+        let binding = by_placement.get(&(placement.sheet_id, placement.row, placement.col))?;
+        if binding.len() != base.len() {
+            return None;
+        }
+        let row_delta = i64::from(placement.row) - i64::from(origin.row);
+        let col_delta = i64::from(placement.col) - i64::from(origin.col);
+        for (((base_value, row_step), col_step), value) in base
+            .iter()
+            .zip(row_steps.iter())
+            .zip(col_steps.iter())
+            .zip(binding.iter())
+        {
+            let expected_i64 = literal_as_exact_i64(base_value)?
+                .checked_add(row_step.checked_mul(row_delta)?)?
+                .checked_add(col_step.checked_mul(col_delta)?)?;
+            let expected = exact_i64_to_like(expected_i64, base_value)?;
+            if &expected != value {
+                return None;
+            }
+        }
+    }
+
+    Some(LiteralBindingEncoding::AffineRect {
+        origin_row: origin.row,
+        origin_col: origin.col,
+        base,
+        row_steps: row_steps.into_boxed_slice(),
+        col_steps: col_steps.into_boxed_slice(),
+    })
+}
+
+pub(crate) fn split_candidate_affine_literal_runs(
+    candidates: Vec<FormulaPlacementCandidate>,
+    analyses: Vec<CandidateAnalysis>,
+) -> Vec<(Vec<FormulaPlacementCandidate>, Vec<CandidateAnalysis>)> {
+    if candidates.len() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS as usize {
+        return vec![(candidates, analyses)];
+    }
+    debug_assert_eq!(candidates.len(), analyses.len());
+
+    let is_row_run = candidates.windows(2).all(|w| {
+        w[0].sheet_id == w[1].sheet_id && w[0].col == w[1].col && w[0].row + 1 == w[1].row
+    });
+    let is_col_run = candidates.windows(2).all(|w| {
+        w[0].sheet_id == w[1].sheet_id && w[0].row == w[1].row && w[0].col + 1 == w[1].col
+    });
+    if !is_row_run && !is_col_run {
+        return vec![(candidates, analyses)];
+    }
+    if analyses.iter().any(|analysis| {
+        analysis.literal_bindings.is_empty()
+            || analysis
+                .literal_bindings
+                .iter()
+                .any(|value| !is_affine_numeric_literal(value))
+    }) {
+        return vec![(candidates, analyses)];
+    }
+
+    let mut edge_steps = Vec::with_capacity(analyses.len().saturating_sub(1));
+    for pair in analyses.windows(2) {
+        let Some(step) = literal_binding_step(
+            pair[0].literal_bindings.as_ref(),
+            pair[1].literal_bindings.as_ref(),
+        ) else {
+            return vec![(candidates, analyses)];
+        };
+        edge_steps.push(step);
+    }
+
+    if edge_steps.windows(2).all(|w| w[0] == w[1]) {
+        return vec![(candidates, analyses)];
+    }
+
+    let min_cells = MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS as usize;
+    let mut kept = Vec::<(usize, usize)>::new();
+    let mut edge_start = 0usize;
+    for idx in 1..edge_steps.len() {
+        if edge_steps[idx] != edge_steps[edge_start] {
+            let start = edge_start;
+            let end = idx;
+            if end + 1 - start >= min_cells {
+                kept.push((start, end));
+            }
+            edge_start = idx;
+        }
+    }
+    if !edge_steps.is_empty() {
+        let start = edge_start;
+        let end = edge_steps.len();
+        if end + 1 - start >= min_cells {
+            kept.push((start, end));
+        }
+    }
+
+    if kept.is_empty() {
+        return vec![(candidates, analyses)];
+    }
+
+    let mut result = Vec::new();
+    let mut cursor = 0usize;
+    for (mut start, end) in kept {
+        if start < cursor {
+            start = cursor;
+        }
+        if start > cursor {
+            push_component_slice(&candidates, &analyses, cursor, start, &mut result);
+        }
+        if end + 1 > start {
+            push_component_slice(&candidates, &analyses, start, end + 1, &mut result);
+        }
+        cursor = end + 1;
+    }
+    if cursor < candidates.len() {
+        push_component_slice(
+            &candidates,
+            &analyses,
+            cursor,
+            candidates.len(),
+            &mut result,
+        );
+    }
+    result
+}
+
+fn push_component_slice(
+    candidates: &[FormulaPlacementCandidate],
+    analyses: &[CandidateAnalysis],
+    start: usize,
+    end: usize,
+    out: &mut Vec<(Vec<FormulaPlacementCandidate>, Vec<CandidateAnalysis>)>,
+) {
+    if start >= end {
+        return;
+    }
+    out.push((
+        candidates[start..end].to_vec(),
+        analyses[start..end].to_vec(),
+    ));
+}
+
+fn literal_binding_step(left: &[LiteralValue], right: &[LiteralValue]) -> Option<Vec<i64>> {
+    if left.len() != right.len() {
+        return None;
+    }
+    left.iter()
+        .zip(right.iter())
+        .map(|(left, right)| literal_as_exact_i64(right)?.checked_sub(literal_as_exact_i64(left)?))
+        .collect()
 }
 
 pub(crate) fn build_template_slot_map(

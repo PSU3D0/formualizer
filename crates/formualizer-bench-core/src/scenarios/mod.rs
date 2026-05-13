@@ -91,6 +91,12 @@ mod s077_lookup_with_sparse_empty_cells;
 mod s078_multiple_tables_cache_isolation;
 mod s079_after_edit_contract;
 mod s080_sheet_duplication_named_range;
+mod s081_affine_row_literals;
+mod s082_affine_col_literals;
+mod s083_affine_row_literals_single_outlier;
+mod s084_affine_row_literals_periodic_outliers;
+mod s085_affine_row_literals_gap;
+mod s086_non_integer_literal_dictionary;
 
 pub use s001_no_formulas_static_grid::S001NoFormulasStaticGrid;
 pub use s002_single_column_trivial_family::S002SingleColumnTrivialFamily;
@@ -172,6 +178,12 @@ pub use s077_lookup_with_sparse_empty_cells::S077LookupWithSparseEmptyCells;
 pub use s078_multiple_tables_cache_isolation::S078MultipleTablesCacheIsolation;
 pub use s079_after_edit_contract::S079AfterEditContract;
 pub use s080_sheet_duplication_named_range::S080SheetDuplicationNamedRange;
+pub use s081_affine_row_literals::S081AffineRowLiterals;
+pub use s082_affine_col_literals::S082AffineColLiterals;
+pub use s083_affine_row_literals_single_outlier::S083AffineRowLiteralsSingleOutlier;
+pub use s084_affine_row_literals_periodic_outliers::S084AffineRowLiteralsPeriodicOutliers;
+pub use s085_affine_row_literals_gap::S085AffineRowLiteralsGap;
+pub use s086_non_integer_literal_dictionary::S086NonIntegerLiteralDictionary;
 
 pub trait Scenario: Send + Sync {
     /// Stable, immutable identifier. Format: "sNNN-name".
@@ -362,6 +374,19 @@ pub enum ScenarioInvariant {
     NoErrorCells {
         sheet: String,
     },
+    EngineStats {
+        mode: Option<ScenarioInvariantMode>,
+        formula_plane_active_span_count: Option<u64>,
+        graph_formula_vertex_count: Option<u64>,
+        graph_edge_count: Option<u64>,
+        formula_ast_root_count: Option<u64>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScenarioInvariantMode {
+    Off,
+    Auth,
 }
 
 pub struct ScenarioRegistry;
@@ -449,6 +474,12 @@ impl ScenarioRegistry {
             Box::new(S078MultipleTablesCacheIsolation::new()),
             Box::new(S079AfterEditContract::new()),
             Box::new(S080SheetDuplicationNamedRange::new()),
+            Box::new(S081AffineRowLiterals::new()),
+            Box::new(S082AffineColLiterals::new()),
+            Box::new(S083AffineRowLiteralsSingleOutlier::new()),
+            Box::new(S084AffineRowLiteralsPeriodicOutliers::new()),
+            Box::new(S085AffineRowLiteralsGap::new()),
+            Box::new(S086NonIntegerLiteralDictionary::new()),
         ]
     }
 }

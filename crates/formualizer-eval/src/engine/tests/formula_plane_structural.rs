@@ -387,7 +387,8 @@ fn formula_plane_authoritative_repeated_column_insert_after_demotion_15k_vertice
                 };
                 assert_eq!(
                     engine.get_cell_value("Sheet1", row, col),
-                    Some(LiteralValue::Number(expected))
+                    Some(LiteralValue::Number(expected)),
+                    "edit_idx={edit_idx} before={before} row={row} col={col} kind={formula_kind}"
                 );
             }
         }
@@ -399,9 +400,9 @@ fn formula_plane_authoritative_column_insert_shifts_span_outputs_correctly() {
     let mut engine = build_three_formula_column_family(100);
 
     engine.insert_columns("Sheet1", 3, 1).unwrap();
-    // Affected-region scoped demotion: insert before col 3 only affects spans
-    // at col >= 3 (col C and col D). Col B's span survives unaffected.
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    // Span shifting preserves all three column-family spans: col B stays put,
+    // while col C and col D shift right without materializing per-cell formulas.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -428,10 +429,9 @@ fn formula_plane_authoritative_column_delete_shifts_span_outputs_correctly() {
     let mut engine = build_three_formula_column_family(100);
 
     engine.delete_columns("Sheet1", 3, 1).unwrap();
-    // Affected-region scoped demotion: delete col 3 only affects spans at
-    // col >= 3 (col C is deleted, col D shifts into col C). Col B's span
-    // survives unaffected since its result region is col 2.
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    // Span shifting preserves col B and shifts col D into col C. The deleted
+    // col C span is removed without materializing per-cell formulas.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -541,7 +541,9 @@ fn formula_plane_authoritative_row_delete_shifts_span_outputs_correctly() {
     let mut engine = build_single_formula_column_family(100);
 
     engine.delete_rows("Sheet1", 3, 1).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    // Row deletes compact a vertical span in place instead of demoting all
+    // remaining placements to graph formulas.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -561,4 +563,212 @@ fn formula_plane_authoritative_row_delete_shifts_span_outputs_correctly() {
         Some(LiteralValue::Number(10.0))
     );
     assert_eq!(engine.get_cell_value("Sheet1", 100, 2), None);
+}
+
+#[test]
+fn formula_plane_row_delete_demotes_unique_literal_bindings_instead_of_miscompacting() {
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+{row}")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.delete_rows("Sheet1", 3, 1).unwrap();
+    // Per-placement literal bindings need their binding-id vector compacted.
+    // Until that exists, demote rather than keeping a shifted span with stale
+    // ordinal-to-binding mappings.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(4.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 3, 2),
+        Some(LiteralValue::Number(8.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 4, 2),
+        Some(LiteralValue::Number(10.0))
+    );
+}
+
+#[test]
+fn formula_plane_column_delete_with_unique_literal_bindings_shifts_without_stale_memoization() {
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 3, &format!("=A{row}+{row}")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.delete_columns("Sheet1", 2, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(100.0))
+    );
+}
+
+#[test]
+fn formula_plane_adjacent_constant_spans_row_delete_compacts_surviving_rows() {
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        formulas.push(record(&mut engine, row, 2, "=1+1"));
+        formulas.push(record(&mut engine, row, 3, "=1+1"));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    engine.evaluate_all().unwrap();
+
+    engine.delete_rows("Sheet1", 5, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 2),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 99, 3),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 100, 2), None);
+}
+
+#[test]
+fn formula_plane_adjacent_constant_spans_column_delete_removes_deleted_column_span() {
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        formulas.push(record(&mut engine, row, 2, "=1+1"));
+        formulas.push(record(&mut engine, row, 3, "=1+1"));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    engine.evaluate_all().unwrap();
+
+    engine.delete_columns("Sheet1", 2, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 2),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 5, 3), None);
+}
+
+#[test]
+fn formula_plane_delete_on_read_range_sheet_straddles_and_demotes() {
+    let mut engine = authoritative_engine();
+    engine.add_sheet("Data").unwrap();
+    for row in 1..=20 {
+        engine
+            .set_cell_value("Data", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+    }
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        formulas.push(record(&mut engine, row, 1, "=SUM(Data!$A$1:$A$10)"));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.delete_rows("Data", 5, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(61.0))
+    );
+}
+
+#[test]
+fn formula_plane_delete_fully_contains_span_removes_it_and_clears_overlays() {
+    let mut engine = build_single_formula_column_family(100);
+
+    engine.delete_columns("Sheet1", 2, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 1),
+        Some(LiteralValue::Number(5.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 5, 2), None);
+}
+
+#[test]
+fn formula_plane_zero_count_structural_ops_are_noops() {
+    let mut engine = build_single_formula_column_family(100);
+
+    engine.insert_rows("Sheet1", 3, 0).unwrap();
+    engine.delete_rows("Sheet1", 3, 0).unwrap();
+    engine.insert_columns("Sheet1", 2, 0).unwrap();
+    engine.delete_columns("Sheet1", 2, 0).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(100.0))
+    );
+}
+
+#[test]
+fn formula_plane_origin_shift_with_stationary_value_ref_does_not_memo_broadcast_stale_value() {
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.insert_columns("Sheet1", 2, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 3),
+        Some(LiteralValue::Number(51.0))
+    );
 }

@@ -24,6 +24,7 @@ pub mod span_counters;
 pub(crate) mod span_eval;
 pub mod span_store;
 pub(crate) mod structural;
+pub(crate) mod structural_shift;
 pub(crate) mod template_canonical;
 pub mod virtual_ref;
 

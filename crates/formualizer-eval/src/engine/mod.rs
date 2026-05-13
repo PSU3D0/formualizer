@@ -512,11 +512,13 @@ pub struct FormulaParseDiagnostic {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FormulaPlaneMode {
+    /// Disable FormulaPlane promotion/evaluation. This is the stable default;
+    /// span evaluation is explicitly opt-in through configuration.
+    #[default]
     Off,
     Shadow,
     /// Experimental mode: accepted FormulaPlane spans are installed into
     /// graph-owned authority and are not materialized as per-cell graph formulas.
-    #[default]
     AuthoritativeExperimental,
 }
 
@@ -650,7 +652,8 @@ pub struct EvalConfig {
     /// When disabled, the engine avoids per-pass timing/edge-count bookkeeping.
     pub enable_virtual_dep_telemetry: bool,
 
-    /// FormulaPlane ingest/planning mode. Defaults to `AuthoritativeExperimental`;
+    /// FormulaPlane ingest/planning mode. Defaults to `Off`; span evaluation is
+    /// explicitly opt-in while `AuthoritativeExperimental` remains experimental.
     /// `Shadow` may report candidate span opportunities but must still materialize
     /// every formula via the legacy graph path.
     pub formula_plane_mode: FormulaPlaneMode,
@@ -709,7 +712,7 @@ impl Default for EvalConfig {
             formula_parse_policy: FormulaParsePolicy::Strict,
             defer_graph_building: false,
             enable_virtual_dep_telemetry: false,
-            formula_plane_mode: FormulaPlaneMode::AuthoritativeExperimental,
+            formula_plane_mode: FormulaPlaneMode::Off,
             lookup_index_cache_max_bytes: 64 * 1024 * 1024,
         }
     }

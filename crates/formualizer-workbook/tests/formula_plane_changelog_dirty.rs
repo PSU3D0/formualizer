@@ -1,5 +1,9 @@
 use formualizer_common::LiteralValue;
-use formualizer_workbook::Workbook;
+use formualizer_workbook::{Workbook, WorkbookConfig};
+
+fn formula_plane_workbook() -> Workbook {
+    Workbook::new_with_config(WorkbookConfig::interactive().with_span_evaluation(true))
+}
 
 fn assert_number(actual: Option<LiteralValue>, expected: f64) {
     match actual {
@@ -13,7 +17,7 @@ fn assert_number(actual: Option<LiteralValue>, expected: f64) {
 
 #[test]
 fn formula_plane_changelog_set_value_redirties_promoted_span() {
-    let mut wb = Workbook::new();
+    let mut wb = formula_plane_workbook();
     wb.add_sheet("S").unwrap();
 
     const ROWS: u32 = 128;
@@ -42,7 +46,7 @@ fn formula_plane_changelog_set_value_redirties_promoted_span() {
 
 #[test]
 fn formula_plane_changelog_set_formula_redirties_promoted_span_reads() {
-    let mut wb = Workbook::new();
+    let mut wb = formula_plane_workbook();
     wb.add_sheet("S").unwrap();
 
     const ROWS: u32 = 128;

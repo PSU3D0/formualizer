@@ -4,6 +4,33 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added experimental opt-in FormulaPlane span evaluation for large copied-formula families. The default workbook path remains the stable dependency graph; span evaluation must be enabled explicitly through Rust, Python, WASM/JS, or C FFI configuration.
+- Added sparse initial ingest paths for JSON, Umya, and Calamine loaders to avoid materializing formatting-only worksheet extent as populated cells.
+- Added publishable Calamine-backed XLSX loading improvements that preserve sparse-friendly engine ingest while remaining compatible with the crates.io Calamine API.
+- Added benchmark corpus tooling and structural invariants for Off/Auth parity, backend comparison, and FormulaPlane promotion metrics.
+
+### Improved
+
+- Improved FormulaPlane promotion and evaluation for arithmetic, lookup, criteria aggregate, whole-axis, cross-sheet, and affine literal formula families.
+- Improved structural edit handling for promoted spans, including row/column insert/delete shifting, bounded dirty projection, and conservative demotion when required.
+- Reduced FormulaPlane memory usage for integer-like affine literal families by encoding literal bindings compactly instead of retaining one dictionary entry per placement.
+- Aligned direct XLSX helper dependencies with the newer Calamine/`zip` stack where possible.
+
+### Fixed
+
+- Preserved default stable semantics by keeping FormulaPlane/span evaluation disabled unless explicitly requested.
+- Preserved Off/Auth parity across the validated benchmark corpus while falling back to the legacy graph for unsupported span shapes.
+
+### Known limitations
+
+- FormulaPlane span evaluation remains experimental and opt-in in this release.
+- Internal dependency chains such as running balances and cumulative schedules remain on the legacy dependency graph.
+- Array-literal formula families are not span-promoted.
+- Calamine-backed structured table metadata is still incomplete for some table-reference workloads; Umya remains the fuller XLSX compatibility path for those cases.
+- Calamine formula-record streaming is deferred until the upstream API is available in a crates.io release.
+
 ## [0.5.8] - 2026-04-27
 
 ### Breaking changes

@@ -1040,6 +1040,32 @@ impl WorkbookConfig {
         self.ingest_limits = ingest_limits;
         self
     }
+
+    /// Opt in/out of experimental FormulaPlane span evaluation.
+    ///
+    /// The default is disabled to preserve stable workbook semantics and load
+    /// costs. Enabling this selects `FormulaPlaneMode::AuthoritativeExperimental`.
+    pub fn with_span_evaluation(mut self, enabled: bool) -> Self {
+        self.eval.formula_plane_mode = if enabled {
+            formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
+        } else {
+            formualizer_eval::engine::FormulaPlaneMode::Off
+        };
+        self
+    }
+
+    pub fn with_formula_plane_mode(
+        mut self,
+        mode: formualizer_eval::engine::FormulaPlaneMode,
+    ) -> Self {
+        self.eval.formula_plane_mode = mode;
+        self
+    }
+
+    pub fn span_evaluation_enabled(&self) -> bool {
+        self.eval.formula_plane_mode
+            == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
+    }
 }
 
 impl Default for Workbook {

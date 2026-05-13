@@ -15,19 +15,19 @@ mod enabled {
     use std::path::{Path, PathBuf};
 
     use anyhow::{Context, Result, bail};
-    use clap::Parser;
+    use clap::{Parser, ValueEnum};
     use formualizer_bench_core::instrumentation::{
         PhaseMetrics, PhaseReport, Reporter, introspection_notes,
     };
     use formualizer_bench_core::scenarios::common::{fixture_path, set_invariant_scale};
     use formualizer_bench_core::scenarios::{
         FixtureMetadata, Scenario, ScenarioBuildCtx, ScenarioFixture, ScenarioInvariant,
-        ScenarioPhase, ScenarioRegistry, ScenarioScale,
+        ScenarioInvariantMode, ScenarioPhase, ScenarioRegistry, ScenarioScale,
     };
     use formualizer_common::LiteralValue;
     use formualizer_eval::engine::{EvalConfig, FormulaPlaneMode};
     use formualizer_workbook::{
-        LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+        CalamineAdapter, LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
     };
     use regex::Regex;
     use serde::Serialize;
@@ -62,10 +62,28 @@ mod enabled {
         /// Enable engine parallel evaluation.
         #[arg(long)]
         enable_parallel: Option<bool>,
+        /// Workbook loading backend.
+        #[arg(long, value_enum, default_value_t = BackendMode::Umya)]
+        backend: BackendMode,
         /// Per-evaluation phase timeout in milliseconds (load/first_eval/recalc).
         /// 0 disables. Defaults: small=5000, medium=15000, large=60000.
         #[arg(long)]
         phase_timeout_ms: Option<u64>,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+    enum BackendMode {
+        Umya,
+        Calamine,
+    }
+
+    impl BackendMode {
+        fn as_str(self) -> &'static str {
+            match self {
+                Self::Umya => "umya",
+                Self::Calamine => "calamine",
+            }
+        }
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,10 +171,11 @@ mod enabled {
         for scenario in &scenarios {
             for mode in &modes {
                 eprintln!(
-                    "[probe-corpus] {} mode={} scale={}",
+                    "[probe-corpus] {} mode={} scale={} backend={}",
                     scenario.id(),
                     mode.as_str(),
-                    scale.as_str()
+                    scale.as_str(),
+                    cli.backend.as_str()
                 );
                 let phase_timeout_ms = cli
                     .phase_timeout_ms
@@ -171,6 +190,7 @@ mod enabled {
                     cli.skip_edit_cycles,
                     phase_timeout_ms,
                     cli.enable_parallel.unwrap_or(false),
+                    cli.backend,
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -299,6 +319,7 @@ mod enabled {
         skip_edit_cycles: bool,
         phase_timeout_ms: u64,
         enable_parallel: bool,
+        backend: BackendMode,
     ) -> Result<ScenarioSummaryReport> {
         set_invariant_scale(scale);
         let ctx = ScenarioBuildCtx {
@@ -329,10 +350,20 @@ mod enabled {
         let mut config = WorkbookConfig::ephemeral();
         config.eval = EvalConfig::default().with_formula_plane_mode(mode.eval_mode());
         config.eval.enable_parallel = enable_parallel;
-        let backend = UmyaAdapter::open_path(&fixture.path)
-            .with_context(|| format!("open fixture {}", fixture.path.display()))?;
-        let mut workbook = Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
-            .with_context(|| format!("load fixture {}", fixture.path.display()))?;
+        let mut workbook = match backend {
+            BackendMode::Umya => {
+                let backend = UmyaAdapter::open_path(&fixture.path)
+                    .with_context(|| format!("open fixture {}", fixture.path.display()))?;
+                Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
+                    .with_context(|| format!("load fixture {}", fixture.path.display()))?
+            }
+            BackendMode::Calamine => {
+                let backend = CalamineAdapter::open_path(&fixture.path)
+                    .with_context(|| format!("open fixture {}", fixture.path.display()))?;
+                Workbook::from_reader(backend, LoadStrategy::EagerAll, config)
+                    .with_context(|| format!("load fixture {}", fixture.path.display()))?
+            }
+        };
         phases.push(phase.finish(Some(&workbook)));
 
         let mut invariant_failures = Vec::new();
@@ -483,7 +514,56 @@ mod enabled {
                 }
                 Ok(())
             }
+            ScenarioInvariant::EngineStats {
+                mode,
+                formula_plane_active_span_count,
+                graph_formula_vertex_count,
+                graph_edge_count,
+                formula_ast_root_count,
+            } => {
+                if let Some(mode) = mode {
+                    let actual_mode = match workbook.eval_config().formula_plane_mode {
+                        FormulaPlaneMode::Off => ScenarioInvariantMode::Off,
+                        FormulaPlaneMode::AuthoritativeExperimental => ScenarioInvariantMode::Auth,
+                        FormulaPlaneMode::Shadow => return Ok(()),
+                    };
+                    if actual_mode != mode {
+                        return Ok(());
+                    }
+                }
+                let stats = workbook.engine().baseline_stats();
+                check_stat(
+                    "formula_plane_active_span_count",
+                    stats.formula_plane_active_span_count as u64,
+                    formula_plane_active_span_count,
+                )?;
+                check_stat(
+                    "graph_formula_vertex_count",
+                    stats.graph_formula_vertex_count as u64,
+                    graph_formula_vertex_count,
+                )?;
+                check_stat(
+                    "graph_edge_count",
+                    stats.graph_edge_count as u64,
+                    graph_edge_count,
+                )?;
+                check_stat(
+                    "formula_ast_root_count",
+                    stats.formula_ast_root_count as u64,
+                    formula_ast_root_count,
+                )?;
+                Ok(())
+            }
         }
+    }
+
+    fn check_stat(name: &str, actual: u64, expected: Option<u64>) -> Result<()> {
+        if let Some(expected) = expected
+            && actual != expected
+        {
+            bail!("{name} mismatch: got {actual}, expected {expected}");
+        }
+        Ok(())
     }
 
     fn literal_equals(actual: &LiteralValue, expected: &LiteralValue) -> bool {

@@ -185,4 +185,18 @@ proptest! {
 
         prop_assert_eq!(expected, result_values);
     }
+
+    #[test]
+    fn shifted_region_intersects_consistently(
+        region in any_currently_constructible_region(),
+        row_delta in -1000i64..1000,
+        col_delta in -1000i64..1000,
+    ) {
+        if let Some(shifted) = region.project_through_axis_shift(row_delta, col_delta) {
+            prop_assert_eq!(shifted.sheet_id, region.sheet_id);
+            if row_delta == 0 && col_delta == 0 {
+                prop_assert_eq!(shifted, region);
+            }
+        }
+    }
 }

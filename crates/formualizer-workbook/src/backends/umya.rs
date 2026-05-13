@@ -1,4 +1,4 @@
-use crate::load_limits::enforce_sheet_load_limits;
+use crate::load_limits::{enforce_sheet_load_limits, use_sparse_initial_ingest};
 use crate::traits::{
     AccessGranularity, AdapterLoadStats, BackendCaps, CellData, NamedRange, NamedRangeScope,
     SheetData, SpreadsheetReader, SpreadsheetWriter,
@@ -1144,7 +1144,7 @@ where
         engine: &mut formualizer_eval::engine::Engine<R>,
     ) -> Result<(), Self::Error> {
         use crate::error::IoError;
-        use formualizer_eval::arrow_store::IngestBuilder;
+        use formualizer_eval::arrow_store::{ArrowSheet, IngestBuilder, OverlayValue};
         use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
         use formualizer_eval::reference::{CellRef, Coord};
 
@@ -1236,19 +1236,49 @@ where
                 .count();
 
             let t_arrow = Instant::now();
-            let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
-            for r in 1..=rows {
-                let mut row_vals = vec![LiteralValue::Empty; cols];
-                for c in 1..=cols {
-                    if let Some(cd) = sheet_data.cells.get(&(r as u32, c as u32))
-                        && let Some(v) = &cd.value
-                    {
-                        row_vals[c - 1] = v.clone();
+            let sparse_initial = use_sparse_initial_ingest(
+                dims.0,
+                dims.1,
+                sheet_data.cells.len(),
+                engine.workbook_load_limits(),
+            );
+            let asheet = if sparse_initial {
+                let mut asheet = ArrowSheet::new_sparse(n, cols, rows, chunk_rows);
+                for ((row, col), cd) in &sheet_data.cells {
+                    if cd.formula.is_some() {
+                        continue;
                     }
+                    let Some(value) = &cd.value else {
+                        continue;
+                    };
+                    asheet.set_sparse_overlay_value(
+                        row.saturating_sub(1) as usize,
+                        col.saturating_sub(1) as usize,
+                        OverlayValue::from_literal_value(value, engine.config.date_system),
+                    );
                 }
-                aib.append_row(&row_vals).map_err(IoError::Engine)?;
-            }
-            let asheet = aib.finish();
+                total_value_slots += sheet_data
+                    .cells
+                    .values()
+                    .filter(|cd| cd.value.is_some())
+                    .count();
+                asheet
+            } else {
+                let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
+                for r in 1..=rows {
+                    let mut row_vals = vec![LiteralValue::Empty; cols];
+                    for c in 1..=cols {
+                        if let Some(cd) = sheet_data.cells.get(&(r as u32, c as u32))
+                            && let Some(v) = &cd.value
+                        {
+                            row_vals[c - 1] = v.clone();
+                        }
+                    }
+                    aib.append_row(&row_vals).map_err(IoError::Engine)?;
+                }
+                total_value_slots += rows.saturating_mul(cols);
+                aib.finish()
+            };
             let store = engine.sheet_store_mut();
             if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
                 store.sheets[pos] = asheet;
@@ -1256,13 +1286,17 @@ where
                 store.sheets.push(asheet);
             }
             let arrow_ms = t_arrow.elapsed().as_secs_f64() * 1000.0;
-            total_value_slots += rows.saturating_mul(cols);
             if debug {
                 eprintln!(
-                    "[fz][load]    arrow: rows={} cols={} value_slots={} in {:.1} ms",
+                    "[fz][load]    arrow: rows={} cols={} sparse_initial={} value_slots={} in {:.1} ms",
                     rows,
                     cols,
-                    rows.saturating_mul(cols),
+                    sparse_initial,
+                    if sparse_initial {
+                        sheet_data.cells.len()
+                    } else {
+                        rows.saturating_mul(cols)
+                    },
                     arrow_ms,
                 );
             }

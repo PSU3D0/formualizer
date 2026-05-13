@@ -159,7 +159,6 @@ pub(crate) enum ErrorExtraAtom {
 struct MemoGroup {
     representative: PlacementCoord,
     placements: Vec<PlacementCoord>,
-    binding_id: u32,
 }
 
 pub(crate) struct SpanEvaluator<'a> {
@@ -361,14 +360,12 @@ impl<'a> SpanEvaluator<'a> {
             CellRef::new_absolute(placement.sheet_id, placement.row, placement.col),
         );
         let value = if let Some(binding_set) = binding_set {
-            let binding_id = binding_id_for_placement(span, binding_set, placement)?;
             let binding = binding_set
-                .unique_literal_bindings
-                .get(binding_id as usize)
+                .literal_bindings_for_placement(&span.domain, placement)
                 .ok_or(SpanEvalError::StaleSpan)?;
             let interpreter = interpreter.with_parameter_bindings(InterpreterParameterBindings {
                 literal_slots_by_node: &binding_set.template_slot_map.literal_slots_by_arena_node,
-                literal_values: binding,
+                literal_values: binding.as_ref(),
             });
             match interpreter.evaluate_arena_ast_with_offset(
                 ast_id,
@@ -488,6 +485,10 @@ impl<'a> SpanEvaluator<'a> {
             return false;
         }
         if binding_set.value_ref_slots.is_empty()
+            && matches!(
+                binding_set.literal_binding_encoding,
+                crate::formula_plane::runtime::LiteralBindingEncoding::Dictionary
+            )
             && binding_set.unique_literal_bindings.len() == writable.len()
         {
             return false;
@@ -554,14 +555,12 @@ impl<'a> SpanEvaluator<'a> {
             if !groups.contains_key(&key) && groups.len() >= MEMO_MAX_ENTRIES_PER_TASK {
                 return Ok(None);
             }
-            let binding_id = binding_id_for_placement(span, binding_set, placement)?;
             groups
                 .entry(key)
                 .and_modify(|group| group.placements.push(placement))
                 .or_insert_with(|| MemoGroup {
                     representative: placement,
                     placements: vec![placement],
-                    binding_id,
                 });
             if groups.len() * MEMO_MAX_UNIQUE_RATIO_DEN > writable_count * MEMO_MAX_UNIQUE_RATIO_NUM
             {
@@ -623,9 +622,13 @@ impl<'a> SpanEvaluator<'a> {
         let placement = group.representative;
         let row_delta = i64::from(placement.row) + 1 - i64::from(origin_row);
         let col_delta = i64::from(placement.col) + 1 - i64::from(origin_col);
+        let span = self
+            .plane
+            .spans
+            .get(binding_set.span_ref)
+            .ok_or(SpanEvalError::StaleSpan)?;
         let binding = binding_set
-            .unique_literal_bindings
-            .get(group.binding_id as usize)
+            .literal_bindings_for_placement(&span.domain, placement)
             .ok_or(SpanEvalError::StaleSpan)?;
         let local_interpreter;
         let interpreter_source = if let Some(base_interpreter) = base_interpreter {
@@ -642,7 +645,7 @@ impl<'a> SpanEvaluator<'a> {
             ))
             .with_parameter_bindings(InterpreterParameterBindings {
                 literal_slots_by_node: &binding_set.template_slot_map.literal_slots_by_arena_node,
-                literal_values: binding,
+                literal_values: binding.as_ref(),
             });
         let value = match interpreter.evaluate_arena_ast_with_offset(
             ast_id,
@@ -754,15 +757,13 @@ impl<'a> SpanEvaluator<'a> {
         row_delta: i64,
         col_delta: i64,
     ) -> Result<ParameterKey, SpanEvalError> {
-        let binding_id = binding_id_for_domain(
-            &binding_set.placement_literal_binding_ids,
-            placement,
-            binding_set,
-            self.plane,
-        )?;
+        let span = self
+            .plane
+            .spans
+            .get(binding_set.span_ref)
+            .ok_or(SpanEvalError::StaleSpan)?;
         let binding = binding_set
-            .unique_literal_bindings
-            .get(binding_id as usize)
+            .literal_bindings_for_placement(&span.domain, placement)
             .ok_or(SpanEvalError::StaleSpan)?;
         let mut atoms = Vec::with_capacity(binding.len() + binding_set.value_ref_slots.len() + 2);
         for value in binding.iter() {
@@ -801,39 +802,6 @@ impl<'a> SpanEvaluator<'a> {
             .resolve_cell_reference_value(sheet_name, row, col, self.current_sheet)
             .map_err(|_| SpanEvalError::UnsupportedReferenceRelocation)
     }
-}
-
-fn binding_id_for_placement(
-    span: &FormulaSpan,
-    binding_set: &SpanBindingSet,
-    placement: PlacementCoord,
-) -> Result<u32, SpanEvalError> {
-    let ordinal = span
-        .domain
-        .ordinal_of(placement)
-        .ok_or(SpanEvalError::StaleSpan)?;
-    binding_set
-        .placement_literal_binding_ids
-        .get(ordinal)
-        .copied()
-        .ok_or(SpanEvalError::StaleSpan)
-}
-
-fn binding_id_for_domain(
-    ids: &[u32],
-    placement: PlacementCoord,
-    binding_set: &SpanBindingSet,
-    plane: &FormulaPlane,
-) -> Result<u32, SpanEvalError> {
-    let span = plane
-        .spans
-        .get(binding_set.span_ref)
-        .ok_or(SpanEvalError::StaleSpan)?;
-    let ordinal = span
-        .domain
-        .ordinal_of(placement)
-        .ok_or(SpanEvalError::StaleSpan)?;
-    ids.get(ordinal).copied().ok_or(SpanEvalError::StaleSpan)
 }
 
 fn residual_has_row(binding_set: &SpanBindingSet) -> bool {

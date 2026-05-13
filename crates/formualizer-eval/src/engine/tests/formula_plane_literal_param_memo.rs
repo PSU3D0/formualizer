@@ -9,7 +9,7 @@ use crate::engine::{
 };
 use crate::formula_plane::placement::{FormulaPlacementCandidate, PlacementFallbackReason};
 use crate::formula_plane::placement::{place_candidate_family, value_ref_slot_descriptors};
-use crate::formula_plane::runtime::FormulaSpanRef;
+use crate::formula_plane::runtime::{FormulaSpanRef, LiteralBindingEncoding};
 use crate::formula_plane::span_eval::{ErrorExtraAtom, ParameterAtom, ParameterKey};
 use crate::formula_plane::template_canonical::{
     CanonicalRejectKind, SlotContext, canonicalize_template,
@@ -53,6 +53,24 @@ fn span_binding_unique_count(engine: &Engine<TestWorkbook>) -> usize {
         .binding_sets
         .unique_vector_count(binding_set_id)
         .unwrap()
+}
+
+fn first_binding_encoding(engine: &Engine<TestWorkbook>) -> LiteralBindingEncoding {
+    let authority = engine.graph.formula_authority();
+    let span = authority
+        .plane
+        .spans
+        .active_spans()
+        .next()
+        .expect("active span");
+    let binding_set_id = span.binding_set_id.expect("binding set");
+    authority
+        .plane
+        .binding_sets
+        .get(binding_set_id)
+        .unwrap()
+        .literal_binding_encoding
+        .clone()
 }
 
 fn first_template_keys(engine: &Engine<TestWorkbook>) -> (String, String) {
@@ -119,6 +137,71 @@ fn formula_plane_parameterized_literals_fold_same_structure() {
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(34.0))
+    );
+}
+
+#[test]
+fn formula_plane_affine_row_literal_numbers_avoid_graph_materialization() {
+    let mut engine = literal_formula_family(120, |row| row.to_string());
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, 120);
+    assert_eq!(report.graph_formula_cells_materialized, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert!(matches!(
+        first_binding_encoding(&engine),
+        LiteralBindingEncoding::AffineByRow { .. }
+    ));
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 120, 2),
+        Some(LiteralValue::Number(240.0))
+    );
+}
+
+#[test]
+fn formula_plane_non_integer_number_literals_remain_dictionary_encoded() {
+    let mut engine = literal_formula_family(120, |row| format!("{row}.5"));
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert!(matches!(
+        first_binding_encoding(&engine),
+        LiteralBindingEncoding::Dictionary
+    ));
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 10, 2),
+        Some(LiteralValue::Number(20.5))
+    );
+}
+
+#[test]
+fn formula_plane_affine_literal_run_segmentation_isolates_outlier() {
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=260 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(1.0))
+            .unwrap();
+        let literal = if row == 130 { 999 } else { row };
+        formulas.push(record(&mut engine, row, 2, &format!("=A$1*{literal}")));
+    }
+    ingest(&mut engine, formulas);
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, 259);
+    assert_eq!(report.graph_formula_cells_materialized, 1);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 129, 2),
+        Some(LiteralValue::Number(129.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 130, 2),
+        Some(LiteralValue::Number(999.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 260, 2),
+        Some(LiteralValue::Number(260.0))
     );
 }
 
@@ -246,10 +329,9 @@ fn formula_plane_demoted_parameterized_span_materializes_bound_literals() {
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 3);
     engine.evaluate_all().unwrap();
     engine.delete_columns("Sheet1", 3, 1).unwrap();
-    // Affected-region scoped demotion: deleting col 3 only demotes spans
-    // whose result/read region intersects cols >= 3. Col B's span at col 2
-    // survives unaffected.
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    // Span shifting preserves col B and shifts col D into col C. The deleted
+    // col C span is removed without materializing per-cell formulas.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 5, 2),

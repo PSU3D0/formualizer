@@ -37,6 +37,7 @@ A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-com
 | **File I/O** | Load and write XLSX (calamine, umya), CSV, JSON — all behind feature flags |
 | **SheetPort** | Treat any spreadsheet as a typed API with YAML manifests, schema validation, and batch evaluation |
 | **Deterministic mode** | Inject clock, timezone, and RNG seed for reproducible evaluation (built for AI agents) |
+| **Experimental span evaluation** | Opt-in FormulaPlane runtime for accelerating eligible large copied-formula families |
 
 ## Documentation
 
@@ -46,7 +47,8 @@ A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-com
 - [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 320+ built-in functions with examples
 - [Formula Parser](https://www.formualizer.dev/formula-parser) — interactive browser-based formula parser and AST inspector
 - [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — treat spreadsheets as typed, deterministic APIs
-- [Core Concepts](https://www.formualizer.dev/docs/core-concepts) — dependency graph, evaluation pipeline, coercion rules
+- [Core Concepts](https://www.formualizer.dev/docs/core-concepts) — dependency graph, FormulaPlane span evaluation, evaluation pipeline, coercion rules
+- [Large Workbook Performance](https://www.formualizer.dev/docs/guides/large-workbook-performance) — loading, sparse ingest, and opt-in span acceleration guidance
 
 ## Who is this for?
 
@@ -80,7 +82,7 @@ let payment = wb.evaluate_cell("Sheet1", 1, 2)?;
 ```toml
 # Cargo.toml
 [dependencies]
-formualizer = "0.3"
+formualizer = "0.6"
 ```
 
 ### Python
@@ -129,6 +131,21 @@ wb.setFormula('Pricing', 1, 2, '=A1*(1-A2)');
 
 console.log(await wb.evaluateCell('Pricing', 1, 2)); // 85
 ```
+
+## Performance and experimental span evaluation
+
+Formualizer's default execution path is the stable dependency graph. For large read-heavy XLSX workloads, the Calamine backend provides a sparse-compatible loading path. Formualizer 0.6 also includes **experimental, opt-in** FormulaPlane span evaluation for eligible copied-formula families.
+
+Span evaluation is disabled by default:
+
+```rust
+use formualizer_workbook::{Workbook, WorkbookConfig};
+
+let cfg = WorkbookConfig::interactive().with_span_evaluation(true);
+let mut wb = Workbook::new_with_config(cfg);
+```
+
+Use it when you can validate critical workbooks against your own regression corpus. Unsupported formulas fall back to the legacy graph path; internal chains/running balances and array-literal families are not span-promoted in 0.6.
 
 ## Custom functions (workbook-local)
 

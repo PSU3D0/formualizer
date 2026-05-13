@@ -1,5 +1,6 @@
 //! Internal FormulaPlane runtime store vocabulary for FP6.1.
 
+use std::borrow::Cow;
 use std::sync::{Arc, OnceLock};
 
 use rustc_hash::FxHashMap;
@@ -233,6 +234,54 @@ impl PlacementDomain {
     pub(crate) fn iter(&self) -> PlacementDomainIter {
         PlacementDomainIter::new(self)
     }
+
+    pub(crate) fn project_through_axis_shift(
+        &self,
+        row_delta: i64,
+        col_delta: i64,
+    ) -> Option<Self> {
+        fn shift(value: u32, delta: i64) -> Option<u32> {
+            u32::try_from(i64::from(value).checked_add(delta)?).ok()
+        }
+
+        match self {
+            Self::RowRun {
+                sheet_id,
+                row_start,
+                row_end,
+                col,
+            } => Some(Self::RowRun {
+                sheet_id: *sheet_id,
+                row_start: shift(*row_start, row_delta)?,
+                row_end: shift(*row_end, row_delta)?,
+                col: shift(*col, col_delta)?,
+            }),
+            Self::ColRun {
+                sheet_id,
+                row,
+                col_start,
+                col_end,
+            } => Some(Self::ColRun {
+                sheet_id: *sheet_id,
+                row: shift(*row, row_delta)?,
+                col_start: shift(*col_start, col_delta)?,
+                col_end: shift(*col_end, col_delta)?,
+            }),
+            Self::Rect {
+                sheet_id,
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+            } => Some(Self::Rect {
+                sheet_id: *sheet_id,
+                row_start: shift(*row_start, row_delta)?,
+                row_end: shift(*row_end, row_delta)?,
+                col_start: shift(*col_start, col_delta)?,
+                col_end: shift(*col_end, col_delta)?,
+            }),
+        }
+    }
 }
 
 pub(crate) struct PlacementDomainIter {
@@ -401,13 +450,162 @@ pub(crate) struct TemplateSlotMap {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) enum LiteralBindingEncoding {
+    Dictionary,
+    AffineByRow {
+        origin_row: u32,
+        base: Box<[LiteralValue]>,
+        steps: Box<[i64]>,
+    },
+    AffineByCol {
+        origin_col: u32,
+        base: Box<[LiteralValue]>,
+        steps: Box<[i64]>,
+    },
+    AffineRect {
+        origin_row: u32,
+        origin_col: u32,
+        base: Box<[LiteralValue]>,
+        row_steps: Box<[i64]>,
+        col_steps: Box<[i64]>,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct SpanBindingSet {
     pub(crate) span_ref: FormulaSpanRef,
     pub(crate) literal_slots: Arc<[LiteralSlotDescriptor]>,
     pub(crate) unique_literal_bindings: Vec<Box<[LiteralValue]>>,
     pub(crate) placement_literal_binding_ids: Box<[u32]>,
+    pub(crate) literal_binding_encoding: LiteralBindingEncoding,
     pub(crate) value_ref_slots: Arc<[ValueRefSlotDescriptor]>,
     pub(crate) template_slot_map: TemplateSlotMap,
+}
+
+impl SpanBindingSet {
+    pub(crate) fn is_single_literal_binding(&self) -> bool {
+        match &self.literal_binding_encoding {
+            LiteralBindingEncoding::Dictionary => self.unique_literal_bindings.len() <= 1,
+            LiteralBindingEncoding::AffineByRow { steps, .. }
+            | LiteralBindingEncoding::AffineByCol { steps, .. } => {
+                steps.iter().all(|step| *step == 0)
+            }
+            LiteralBindingEncoding::AffineRect {
+                row_steps,
+                col_steps,
+                ..
+            } => row_steps.iter().all(|step| *step == 0) && col_steps.iter().all(|step| *step == 0),
+        }
+    }
+
+    pub(crate) fn literal_bindings_for_placement(
+        &self,
+        domain: &PlacementDomain,
+        placement: PlacementCoord,
+    ) -> Option<Cow<'_, [LiteralValue]>> {
+        match &self.literal_binding_encoding {
+            LiteralBindingEncoding::Dictionary => {
+                let ordinal = domain.ordinal_of(placement)?;
+                let binding_id = *self.placement_literal_binding_ids.get(ordinal)?;
+                self.unique_literal_bindings
+                    .get(binding_id as usize)
+                    .map(|binding| Cow::Borrowed(binding.as_ref()))
+            }
+            LiteralBindingEncoding::AffineByRow {
+                origin_row,
+                base,
+                steps,
+            } => affine_bindings(
+                base,
+                steps,
+                i64::from(placement.row) - i64::from(*origin_row),
+            )
+            .map(Cow::Owned),
+            LiteralBindingEncoding::AffineByCol {
+                origin_col,
+                base,
+                steps,
+            } => affine_bindings(
+                base,
+                steps,
+                i64::from(placement.col) - i64::from(*origin_col),
+            )
+            .map(Cow::Owned),
+            LiteralBindingEncoding::AffineRect {
+                origin_row,
+                origin_col,
+                base,
+                row_steps,
+                col_steps,
+            } => affine_rect_bindings(
+                base,
+                row_steps,
+                col_steps,
+                i64::from(placement.row) - i64::from(*origin_row),
+                i64::from(placement.col) - i64::from(*origin_col),
+            )
+            .map(Cow::Owned),
+        }
+    }
+}
+
+fn affine_bindings(base: &[LiteralValue], steps: &[i64], delta: i64) -> Option<Vec<LiteralValue>> {
+    if base.len() != steps.len() {
+        return None;
+    }
+    base.iter()
+        .zip(steps.iter().copied())
+        .map(|(value, step)| apply_integer_affine_step(value, step, delta, 0))
+        .collect()
+}
+
+fn affine_rect_bindings(
+    base: &[LiteralValue],
+    row_steps: &[i64],
+    col_steps: &[i64],
+    row_delta: i64,
+    col_delta: i64,
+) -> Option<Vec<LiteralValue>> {
+    if base.len() != row_steps.len() || base.len() != col_steps.len() {
+        return None;
+    }
+    base.iter()
+        .zip(row_steps.iter().copied())
+        .zip(col_steps.iter().copied())
+        .map(|((value, row_step), col_step)| {
+            apply_integer_affine_step(value, row_step, row_delta, col_step.checked_mul(col_delta)?)
+        })
+        .collect()
+}
+
+fn apply_integer_affine_step(
+    value: &LiteralValue,
+    step: i64,
+    delta: i64,
+    extra_delta: i64,
+) -> Option<LiteralValue> {
+    let offset = step.checked_mul(delta)?.checked_add(extra_delta)?;
+    match value {
+        LiteralValue::Int(base) => base.checked_add(offset).map(LiteralValue::Int),
+        LiteralValue::Number(base) => {
+            let base = f64_to_exact_i64(*base)?;
+            let value = base.checked_add(offset)?;
+            let value_f64 = value as f64;
+            ((value_f64 as i64) == value).then_some(LiteralValue::Number(value_f64))
+        }
+        _ => None,
+    }
+}
+
+fn f64_to_exact_i64(value: f64) -> Option<i64> {
+    if !value.is_finite() || value.fract() != 0.0 {
+        return None;
+    }
+    if value < i64::MIN as f64 || value > i64::MAX as f64 {
+        return None;
+    }
+    let int = value as i64;
+    ((int as f64) == value).then_some(int)
 }
 
 #[derive(Debug, Default)]
@@ -442,6 +640,17 @@ impl BindingStore {
     pub(crate) fn set_span_ref(&mut self, id: SpanBindingSetId, span_ref: FormulaSpanRef) {
         if let Some(Some(set)) = self.records.get_mut(id.0 as usize) {
             set.span_ref = span_ref;
+            self.epoch = self.epoch.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn force_residual_axes(&mut self, id: SpanBindingSetId) {
+        if let Some(Some(set)) = self.records.get_mut(id.0 as usize)
+            && (!set.template_slot_map.residual_relative_row
+                || !set.template_slot_map.residual_relative_col)
+        {
+            set.template_slot_map.residual_relative_row = true;
+            set.template_slot_map.residual_relative_col = true;
             self.epoch = self.epoch.saturating_add(1);
         }
     }
@@ -508,7 +717,7 @@ impl TemplateStore {
         formula_text: Option<Arc<str>>,
     ) -> (FormulaTemplateId, bool) {
         let intern_key = Arc::<str>::from(format!(
-            "{}|origin_col={origin_col}",
+            "{}|origin_row={origin_row}|origin_col={origin_col}",
             parameterized_canonical_key
         ));
         if let Some(id) = self.intern.get(intern_key.as_ref()).copied() {
@@ -537,6 +746,52 @@ impl TemplateStore {
         self.records
             .get(id.0 as usize)
             .filter(|record| record.id == id)
+    }
+
+    pub(crate) fn intern_shifted_origin_clone(
+        &mut self,
+        id: FormulaTemplateId,
+        origin_row: u32,
+        origin_col: u32,
+    ) -> Option<(FormulaTemplateId, bool)> {
+        let source = self.get(id)?;
+        if source.origin_row == origin_row && source.origin_col == origin_col {
+            return Some((id, false));
+        }
+        if let Some(existing) = self.records.iter().find(|record| {
+            record.ast_id == source.ast_id
+                && record.exact_canonical_key == source.exact_canonical_key
+                && record.parameterized_canonical_key == source.parameterized_canonical_key
+                && record.origin_row == origin_row
+                && record.origin_col == origin_col
+        }) {
+            return Some((existing.id, false));
+        }
+
+        let new_id = FormulaTemplateId(self.records.len() as u32);
+        let exact_canonical_key = Arc::clone(&source.exact_canonical_key);
+        let parameterized_canonical_key = Arc::clone(&source.parameterized_canonical_key);
+        let formula_text = source.formula_text.clone();
+        let ast_id = source.ast_id;
+        self.records.push(TemplateRecord {
+            id: new_id,
+            generation: 0,
+            version: 0,
+            ast_id,
+            origin_row,
+            origin_col,
+            exact_canonical_key,
+            parameterized_canonical_key: Arc::clone(&parameterized_canonical_key),
+            formula_text,
+            relocatable_ast_validated: OnceLock::new(),
+        });
+        let intern_key = Arc::<str>::from(format!(
+            "{}|origin_row={origin_row}|origin_col={origin_col}",
+            parameterized_canonical_key
+        ));
+        self.intern.insert(intern_key, new_id);
+        self.epoch = self.epoch.saturating_add(1);
+        Some((new_id, true))
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -657,6 +912,31 @@ impl SpanStore {
         }
         slot.span = None;
         slot.generation = slot.generation.saturating_add(1);
+        self.epoch = self.epoch.saturating_add(1);
+        true
+    }
+
+    pub(crate) fn replace_geometry(
+        &mut self,
+        span_ref: FormulaSpanRef,
+        template_id: FormulaTemplateId,
+        domain: PlacementDomain,
+        result_region: ResultRegion,
+        read_summary_id: Option<SpanReadSummaryId>,
+    ) -> bool {
+        let Some(slot) = self.slots.get_mut(span_ref.id.0 as usize) else {
+            return false;
+        };
+        let Some(span) = slot.span.as_mut() else {
+            return false;
+        };
+        if slot.generation != span_ref.generation || span.version != span_ref.version {
+            return false;
+        }
+        span.template_id = template_id;
+        span.domain = domain;
+        span.result_region = result_region;
+        span.read_summary_id = read_summary_id;
         self.epoch = self.epoch.saturating_add(1);
         true
     }
@@ -915,6 +1195,42 @@ impl FormulaPlane {
         id
     }
 
+    pub(crate) fn intern_shifted_template_origin(
+        &mut self,
+        template_id: FormulaTemplateId,
+        origin_row: u32,
+        origin_col: u32,
+    ) -> Option<FormulaTemplateId> {
+        let (id, inserted) =
+            self.templates
+                .intern_shifted_origin_clone(template_id, origin_row, origin_col)?;
+        if inserted {
+            self.bump_epoch();
+        }
+        Some(id)
+    }
+
+    pub(crate) fn replace_span_geometry(
+        &mut self,
+        span_ref: FormulaSpanRef,
+        template_id: FormulaTemplateId,
+        domain: PlacementDomain,
+        result_region: ResultRegion,
+        read_summary_id: Option<SpanReadSummaryId>,
+    ) -> bool {
+        let replaced = self.spans.replace_geometry(
+            span_ref,
+            template_id,
+            domain,
+            result_region,
+            read_summary_id,
+        );
+        if replaced {
+            self.bump_epoch();
+        }
+        replaced
+    }
+
     pub(crate) fn insert_binding_set(&mut self, set: SpanBindingSet) -> SpanBindingSetId {
         let id = self.binding_sets.insert(set);
         self.bump_epoch();
@@ -923,6 +1239,11 @@ impl FormulaPlane {
 
     pub(crate) fn set_binding_span_ref(&mut self, id: SpanBindingSetId, span_ref: FormulaSpanRef) {
         self.binding_sets.set_span_ref(id, span_ref);
+        self.bump_epoch();
+    }
+
+    pub(crate) fn force_binding_residual_axes(&mut self, id: SpanBindingSetId) {
+        self.binding_sets.force_residual_axes(id);
         self.bump_epoch();
     }
 

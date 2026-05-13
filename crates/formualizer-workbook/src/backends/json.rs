@@ -1,5 +1,5 @@
 use crate::IoError;
-use crate::load_limits::enforce_sheet_load_limits;
+use crate::load_limits::{enforce_sheet_load_limits, use_sparse_initial_ingest};
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, MergedRange, NamedRange, SaveDestination, SheetData,
     SpreadsheetReader, SpreadsheetWriter, TableDefinition,
@@ -731,38 +731,75 @@ where
                 engine.workbook_load_limits(),
             )?;
 
-            let mut aib = formualizer_eval::arrow_store::IngestBuilder::new(
-                name,
-                cols,
-                chunk_rows,
-                engine.config.date_system,
+            let sparse_initial = use_sparse_initial_ingest(
+                dims.0,
+                dims.1,
+                sheet.cells.len(),
+                engine.workbook_load_limits(),
             );
-            // Build a map for quick lookup
-            let mut cell_map: BTreeMap<(u32, u32), &JsonCell> = BTreeMap::new();
-            for c in &sheet.cells {
-                cell_map.insert((c.row, c.col), c);
-            }
-            for r in 1..=rows {
-                let mut row_vals: Vec<formualizer_common::LiteralValue> =
-                    vec![formualizer_common::LiteralValue::Empty; cols];
-                for c in 1..=cols {
-                    if let Some(cell) = cell_map.get(&(r as u32, c as u32))
-                        && let Some(v) = &cell.value
-                    {
-                        row_vals[c - 1] = json_to_literal(
-                            v,
-                            &self.read_options,
-                            &format!(
-                                "sheets.{name}.cells[row={},col={}].value",
-                                r as u32, c as u32
-                            ),
-                        )?;
+            let asheet = if sparse_initial {
+                let mut asheet = formualizer_eval::arrow_store::ArrowSheet::new_sparse(
+                    name, cols, rows, chunk_rows,
+                );
+                for cell in &sheet.cells {
+                    if cell.formula.is_some() {
+                        continue;
                     }
+                    let Some(v) = &cell.value else {
+                        continue;
+                    };
+                    let literal = json_to_literal(
+                        v,
+                        &self.read_options,
+                        &format!(
+                            "sheets.{name}.cells[row={},col={}].value",
+                            cell.row, cell.col
+                        ),
+                    )?;
+                    asheet.set_sparse_overlay_value(
+                        cell.row.saturating_sub(1) as usize,
+                        cell.col.saturating_sub(1) as usize,
+                        formualizer_eval::arrow_store::OverlayValue::from_literal_value(
+                            &literal,
+                            engine.config.date_system,
+                        ),
+                    );
                 }
-                aib.append_row(&row_vals)
-                    .map_err(|e| IoError::from_backend("json", e))?;
-            }
-            let asheet = aib.finish();
+                asheet
+            } else {
+                let mut aib = formualizer_eval::arrow_store::IngestBuilder::new(
+                    name,
+                    cols,
+                    chunk_rows,
+                    engine.config.date_system,
+                );
+                // Build a map for quick lookup
+                let mut cell_map: BTreeMap<(u32, u32), &JsonCell> = BTreeMap::new();
+                for c in &sheet.cells {
+                    cell_map.insert((c.row, c.col), c);
+                }
+                for r in 1..=rows {
+                    let mut row_vals: Vec<formualizer_common::LiteralValue> =
+                        vec![formualizer_common::LiteralValue::Empty; cols];
+                    for c in 1..=cols {
+                        if let Some(cell) = cell_map.get(&(r as u32, c as u32))
+                            && let Some(v) = &cell.value
+                        {
+                            row_vals[c - 1] = json_to_literal(
+                                v,
+                                &self.read_options,
+                                &format!(
+                                    "sheets.{name}.cells[row={},col={}].value",
+                                    r as u32, c as u32
+                                ),
+                            )?;
+                        }
+                    }
+                    aib.append_row(&row_vals)
+                        .map_err(|e| IoError::from_backend("json", e))?;
+                }
+                aib.finish()
+            };
             let store = engine.sheet_store_mut();
             if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == name) {
                 store.sheets[pos] = asheet;

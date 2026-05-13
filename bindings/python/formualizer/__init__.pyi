@@ -202,6 +202,13 @@ class EvaluationConfig:
         Enable case-sensitive table-name resolution.
         """
     @property
+    def span_evaluation(self) -> builtins.bool: ...
+    @span_evaluation.setter
+    def span_evaluation(self, value: builtins.bool) -> None:
+        r"""
+        Opt in to experimental FormulaPlane span evaluation.
+        """
+    @property
     def warmup_enabled(self) -> builtins.bool: ...
     @warmup_enabled.setter
     def warmup_enabled(self, value: builtins.bool) -> None:
@@ -954,9 +961,9 @@ class Workbook:
     """
     @property
     def sheet_names(self) -> builtins.list[builtins.str]: ...
-    def __new__(cls, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None) -> Workbook: ...
+    def __new__(cls, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
     @classmethod
-    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None) -> Workbook:
+    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
         r"""
         Class method: load an XLSX workbook from a file path.
         
@@ -995,9 +1002,9 @@ class Workbook:
         ```
         """
     @classmethod
-    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None) -> Workbook: ...
+    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
     @classmethod
-    def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None) -> Workbook:
+    def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
         r"""
         Class method: load an XLSX workbook from in-memory bytes.
         
@@ -1197,7 +1204,7 @@ class WorkbookConfig:
         wb = fz.Workbook(config=cfg)
     ```
     """
-    def __new__(cls, *, mode: WorkbookMode = ..., eval_config: typing.Optional[EvaluationConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None) -> WorkbookConfig: ...
+    def __new__(cls, *, mode: WorkbookMode = ..., eval_config: typing.Optional[EvaluationConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> WorkbookConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -1260,7 +1267,7 @@ class WorkbookMode(enum.Enum):
     def __str__(self) -> builtins.str: ...
     def __repr__(self) -> builtins.str: ...
 
-def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None) -> Workbook:
+def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
     r"""
     Load an XLSX workbook from a filesystem path.
     
@@ -1280,7 +1287,7 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
     ```
     """
 
-def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None) -> Workbook:
+def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
     r"""
     Load an XLSX workbook from in-memory bytes.
     

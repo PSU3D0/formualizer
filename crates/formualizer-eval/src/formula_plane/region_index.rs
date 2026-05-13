@@ -225,6 +225,15 @@ impl Region {
             None
         }
     }
+
+    #[inline]
+    pub(crate) fn project_through_axis_shift(self, row_delta: i64, col_delta: i64) -> Option<Self> {
+        Some(Self {
+            sheet_id: self.sheet_id,
+            rows: self.rows.project_through_offset(row_delta)?,
+            cols: self.cols.project_through_offset(col_delta)?,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

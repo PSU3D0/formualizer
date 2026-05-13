@@ -25,7 +25,7 @@ regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-zip = "0.6"
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
 formualizer-testkit = { path = "../formualizer-testkit", optional = true }
 formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya", "calamine"] }
 umya-spreadsheet = { version = "=2.3.2", optional = true }

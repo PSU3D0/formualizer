@@ -1345,7 +1345,7 @@ fn normalize_xlsx_styles_for_cross_engine(path: &Path) -> Result<()> {
     {
         let mut writer = zip::ZipWriter::new(&mut out_buf);
         for (name, method, data) in files {
-            let options = zip::write::FileOptions::default().compression_method(method);
+            let options = zip::write::SimpleFileOptions::default().compression_method(method);
             writer.start_file(name, options)?;
             writer.write_all(&data)?;
         }

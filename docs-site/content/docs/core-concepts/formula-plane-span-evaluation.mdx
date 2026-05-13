@@ -1,0 +1,102 @@
+---
+title: FormulaPlane Span Evaluation
+description: Experimental opt-in acceleration for large copied-formula families.
+---
+
+FormulaPlane is Formualizer's experimental span runtime for evaluating repeated formula families without materializing every formula as an independent graph vertex.
+
+In Formualizer 0.6, FormulaPlane span evaluation is **off by default**. Enable it only when you want to test the experimental accelerated path on large workbooks and have regression coverage for your models.
+
+## What it accelerates
+
+FormulaPlane is designed for copied formulas with regular structure:
+
+```text
+B2 = A2 * 2
+B3 = A3 * 2
+B4 = A4 * 2
+...
+```
+
+Instead of storing one formula node and dependency edge per cell, the engine can represent the family as a compact span:
+
+```text
+B2:B100000 = A[row] * 2
+```
+
+That enables lower graph-materialization cost and faster evaluation for eligible families.
+
+## Opt-in surfaces
+
+Rust workbook API:
+
+```rust
+use formualizer_workbook::{Workbook, WorkbookConfig};
+
+let cfg = WorkbookConfig::interactive().with_span_evaluation(true);
+let mut wb = Workbook::new_with_config(cfg);
+```
+
+Python:
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook(span_evaluation=True)
+# or when loading a file
+wb = fz.Workbook.from_path("model.xlsx", span_evaluation=True)
+```
+
+JavaScript/WASM:
+
+```ts
+import init, { Workbook } from "formualizer";
+
+await init();
+const wb = new Workbook({ spanEvaluation: true });
+```
+
+If span evaluation is not enabled, Formualizer uses the stable dependency-graph path.
+
+## Eligibility and fallback
+
+FormulaPlane promotes only formula families whose dependencies and execution semantics are currently supported. Unsupported formulas remain on the legacy graph path.
+
+Common reasons a family may remain legacy:
+
+- volatile or dynamic references
+- array literals and dynamic spill-producing forms not yet supported by spans
+- internal dependency chains such as running balances (`B3 = B2 + A3`)
+- small or irregular families where span overhead is not worthwhile
+- unsupported function or dependency shapes
+
+Fallback is intentional: FormulaPlane is an acceleration path, not a semantic replacement for the graph evaluator.
+
+## Internal chains
+
+Internal chains read from their own result region:
+
+```text
+B2 = B1 + A2
+B3 = B2 + A3
+B4 = B3 + A4
+```
+
+These are important for finance and operations workbooks, but they require ordered span-local execution and suffix dirtying. In 0.6 they remain on the legacy dependency graph. Future work may add dedicated chain/prefix-scan span execution.
+
+## Performance posture
+
+FormulaPlane can materially improve load, evaluation, and recalculation times for large regular families. The best wins appear in copied arithmetic, lookup, criteria aggregate, whole-axis, and affine literal families.
+
+Because the mode is experimental, benchmark results should distinguish:
+
+- default graph mode vs opt-in span mode
+- load/topology construction vs formula evaluation
+- full recalculation vs warmed incremental recalculation
+- backend differences such as Umya vs Calamine XLSX loading
+
+## Related
+
+- [Dependency Graph and Recalculation](/docs/core-concepts/dependency-graph-and-recalc)
+- [Large Workbook Performance](/docs/guides/large-workbook-performance)
+- [Versioning and Stability](/docs/introduction/versioning-and-stability)

@@ -7,7 +7,7 @@ use js_sys::{Function, Object, Reflect};
 use std::io::{Cursor, Write};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 fn js_get(obj: &js_sys::Object, key: &str) -> JsValue {
@@ -32,7 +32,7 @@ fn set_prop(obj: &Object, key: &str, value: JsValue) {
 
 fn build_fixture_xlsx_bytes() -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     for (path, contents) in [
         (

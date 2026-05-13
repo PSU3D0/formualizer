@@ -9,7 +9,7 @@ use formualizer_workbook::{
 };
 use std::fs::File;
 use std::io::{Read, Write};
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 
 fn rewrite_sheet_formula(path: &std::path::Path, sheet_xml: &str, from: &str, to: &str) {
     let in_file = File::open(path).expect("open input xlsx");
@@ -18,7 +18,7 @@ fn rewrite_sheet_formula(path: &std::path::Path, sheet_xml: &str, from: &str, to
     let out_path = path.with_file_name("fixture-formula-rewrite.xlsx");
     let out_file = File::create(&out_path).expect("create output xlsx");
     let mut zout = zip::ZipWriter::new(out_file);
-    let options = FileOptions::default();
+    let options = SimpleFileOptions::default();
 
     let mut replaced = false;
 

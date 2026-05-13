@@ -43,6 +43,9 @@ struct Cli {
     reuse_recalc_plan: bool,
     #[arg(long, value_enum, default_value_t = BackendMode::Umya)]
     backend: BackendMode,
+    /// Opt into experimental FormulaPlane span evaluation for this run.
+    #[arg(long)]
+    span_evaluation: bool,
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -84,6 +87,12 @@ fn run() -> Result<()> {
         );
     }
 
+    let workbook_config = || {
+        WorkbookConfig::ephemeral().with_span_evaluation(
+            cli.span_evaluation || cli.mode.contains("span") || cli.mode.contains("formula_plane"),
+        )
+    };
+
     let load_start = Instant::now();
     let (mut wb, open_read_ms, workbook_ingest_ms, adapter_load_stats) = match cli.backend {
         BackendMode::Umya => {
@@ -95,7 +104,7 @@ fn run() -> Result<()> {
             let (wb, stats) = Workbook::from_reader_with_adapter_stats(
                 backend,
                 LoadStrategy::EagerAll,
-                WorkbookConfig::ephemeral(),
+                workbook_config(),
             )
             .map_err(|e| anyhow::anyhow!("load workbook into engine via umya: {e}"))?;
             let workbook_ingest_ms = ingest_start.elapsed().as_secs_f64() * 1000.0;
@@ -110,7 +119,7 @@ fn run() -> Result<()> {
             let (wb, stats) = Workbook::from_reader_with_adapter_stats(
                 backend,
                 LoadStrategy::EagerAll,
-                WorkbookConfig::ephemeral(),
+                workbook_config(),
             )
             .map_err(|e| anyhow::anyhow!("load workbook into engine via calamine: {e}"))?;
             let workbook_ingest_ms = ingest_start.elapsed().as_secs_f64() * 1000.0;
