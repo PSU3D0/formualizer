@@ -1,5 +1,5 @@
 use crate::IoError;
-use crate::load_limits::enforce_sheet_load_limits;
+use crate::load_limits::{enforce_sheet_load_limits, use_sparse_initial_ingest};
 use crate::traits::{
     AccessGranularity, BackendCaps, CellData, MergedRange, NamedRange, SaveDestination, SheetData,
     SpreadsheetReader, SpreadsheetWriter, TableDefinition,
@@ -10,6 +10,9 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use formualizer_eval::engine::{FormulaIngestBatch, FormulaIngestRecord};
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct JsonWorkbook {
@@ -27,7 +30,7 @@ struct JsonWorkbook {
     sheets: BTreeMap<String, JsonSheet>,
 }
 
-type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+type FormulaBatch = FormulaIngestBatch;
 
 #[derive(Clone, Copy, Debug)]
 pub struct JsonReadOptions {
@@ -728,38 +731,75 @@ where
                 engine.workbook_load_limits(),
             )?;
 
-            let mut aib = formualizer_eval::arrow_store::IngestBuilder::new(
-                name,
-                cols,
-                chunk_rows,
-                engine.config.date_system,
+            let sparse_initial = use_sparse_initial_ingest(
+                dims.0,
+                dims.1,
+                sheet.cells.len(),
+                engine.workbook_load_limits(),
             );
-            // Build a map for quick lookup
-            let mut cell_map: BTreeMap<(u32, u32), &JsonCell> = BTreeMap::new();
-            for c in &sheet.cells {
-                cell_map.insert((c.row, c.col), c);
-            }
-            for r in 1..=rows {
-                let mut row_vals: Vec<formualizer_common::LiteralValue> =
-                    vec![formualizer_common::LiteralValue::Empty; cols];
-                for c in 1..=cols {
-                    if let Some(cell) = cell_map.get(&(r as u32, c as u32))
-                        && let Some(v) = &cell.value
-                    {
-                        row_vals[c - 1] = json_to_literal(
-                            v,
-                            &self.read_options,
-                            &format!(
-                                "sheets.{name}.cells[row={},col={}].value",
-                                r as u32, c as u32
-                            ),
-                        )?;
+            let asheet = if sparse_initial {
+                let mut asheet = formualizer_eval::arrow_store::ArrowSheet::new_sparse(
+                    name, cols, rows, chunk_rows,
+                );
+                for cell in &sheet.cells {
+                    if cell.formula.is_some() {
+                        continue;
                     }
+                    let Some(v) = &cell.value else {
+                        continue;
+                    };
+                    let literal = json_to_literal(
+                        v,
+                        &self.read_options,
+                        &format!(
+                            "sheets.{name}.cells[row={},col={}].value",
+                            cell.row, cell.col
+                        ),
+                    )?;
+                    asheet.set_sparse_overlay_value(
+                        cell.row.saturating_sub(1) as usize,
+                        cell.col.saturating_sub(1) as usize,
+                        formualizer_eval::arrow_store::OverlayValue::from_literal_value(
+                            &literal,
+                            engine.config.date_system,
+                        ),
+                    );
                 }
-                aib.append_row(&row_vals)
-                    .map_err(|e| IoError::from_backend("json", e))?;
-            }
-            let asheet = aib.finish();
+                asheet
+            } else {
+                let mut aib = formualizer_eval::arrow_store::IngestBuilder::new(
+                    name,
+                    cols,
+                    chunk_rows,
+                    engine.config.date_system,
+                );
+                // Build a map for quick lookup
+                let mut cell_map: BTreeMap<(u32, u32), &JsonCell> = BTreeMap::new();
+                for c in &sheet.cells {
+                    cell_map.insert((c.row, c.col), c);
+                }
+                for r in 1..=rows {
+                    let mut row_vals: Vec<formualizer_common::LiteralValue> =
+                        vec![formualizer_common::LiteralValue::Empty; cols];
+                    for c in 1..=cols {
+                        if let Some(cell) = cell_map.get(&(r as u32, c as u32))
+                            && let Some(v) = &cell.value
+                        {
+                            row_vals[c - 1] = json_to_literal(
+                                v,
+                                &self.read_options,
+                                &format!(
+                                    "sheets.{name}.cells[row={},col={}].value",
+                                    r as u32, c as u32
+                                ),
+                            )?;
+                        }
+                    }
+                    aib.append_row(&row_vals)
+                        .map_err(|e| IoError::from_backend("json", e))?;
+                }
+                aib.finish()
+            };
             let store = engine.sheet_store_mut();
             if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == name) {
                 store.sheets[pos] = asheet;
@@ -805,7 +845,7 @@ where
                     }
                 }
             } else {
-                let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
+                let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
                 for c in &sheet.cells {
                     if let Some(f) = &c.formula {
                         if f.is_empty() {
@@ -817,7 +857,15 @@ where
                             format!("={f}")
                         };
                         match formualizer_parse::parser::parse(&with_eq) {
-                            Ok(parsed) => formulas.push((c.row, c.col, parsed)),
+                            Ok(parsed) => {
+                                let ast_id = engine.intern_formula_ast(&parsed);
+                                formulas.push(FormulaIngestRecord::new(
+                                    c.row,
+                                    c.col,
+                                    ast_id,
+                                    Some(Arc::<str>::from(with_eq.clone())),
+                                ));
+                            }
                             Err(e) => {
                                 if let Some(recovered) = engine
                                     .handle_formula_parse_error(
@@ -829,14 +877,20 @@ where
                                     )
                                     .map_err(IoError::Engine)?
                                 {
-                                    formulas.push((c.row, c.col, recovered));
+                                    let ast_id = engine.intern_formula_ast(&recovered);
+                                    formulas.push(FormulaIngestRecord::new(
+                                        c.row,
+                                        c.col,
+                                        ast_id,
+                                        Some(Arc::<str>::from(with_eq.clone())),
+                                    ));
                                 }
                             }
                         }
                     }
                 }
                 if !formulas.is_empty() {
-                    eager_formula_batches.push((name.clone(), formulas));
+                    eager_formula_batches.push(FormulaIngestBatch::new(name.clone(), formulas));
                 }
             }
 
@@ -863,12 +917,9 @@ where
         }
 
         if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
-            let mut builder = engine.begin_bulk_ingest();
-            for (sheet_name, formulas) in eager_formula_batches {
-                let sid = builder.add_sheet(&sheet_name);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            builder.finish().map_err(IoError::Engine)?;
+            engine
+                .ingest_formula_batches(eager_formula_batches)
+                .map_err(IoError::Engine)?;
         }
 
         // Register defined names into the dependency graph.

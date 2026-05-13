@@ -1,7 +1,7 @@
-use crate::load_limits::enforce_sheet_load_limits;
+use crate::load_limits::enforce_sheet_dimension_limits;
 use crate::traits::{
-    AccessGranularity, BackendCaps, CellData, DefinedName, DefinedNameDefinition, DefinedNameScope,
-    MergedRange, SheetData, SpreadsheetReader,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CellData, DefinedName, DefinedNameDefinition,
+    DefinedNameScope, MergedRange, SheetData, SpreadsheetReader,
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
@@ -9,12 +9,13 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Read, Seek};
 use std::path::Path;
+use std::sync::Arc;
 
 use calamine::{Data, Range, Reader, Xlsx, open_workbook, open_workbook_from_rs};
 use formualizer_common::RangeAddress;
-use formualizer_eval::arrow_store::{CellIngest, IngestBuilder, map_error_code};
-use formualizer_eval::engine::Engine as EvalEngine;
+use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
+use formualizer_eval::engine::{Engine as EvalEngine, FormulaIngestBatch, FormulaIngestRecord};
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::ReferenceType;
 use quick_xml::Reader as XmlReader;
@@ -22,7 +23,7 @@ use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::QName;
 use zip::ZipArchive;
 
-type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+type FormulaBatch = FormulaIngestBatch;
 
 enum CalamineWorkbook {
     File(Xlsx<BufReader<File>>),
@@ -76,6 +77,7 @@ pub struct CalamineAdapter {
     cached_names: Option<Vec<String>>,
     defined_names: Vec<DefinedName>,
     external_link_targets: BTreeMap<u32, String>,
+    load_stats: AdapterLoadStats,
 }
 
 impl CalamineAdapter {
@@ -438,7 +440,7 @@ impl CalamineAdapter {
                     };
                     Some(LiteralValue::Error(ExcelError::new(kind)))
                 }
-                Data::DateTime(dt) => Some(LiteralValue::Number(dt.as_f64())),
+                Data::DateTime(dt) => Some(LiteralValue::from_serial_number(dt.as_f64())),
                 Data::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
                 Data::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
             };
@@ -521,6 +523,10 @@ impl SpreadsheetReader for CalamineAdapter {
         Ok(self.cached_names.clone().unwrap_or_default())
     }
 
+    fn load_stats(&self) -> Option<AdapterLoadStats> {
+        Some(self.load_stats.clone())
+    }
+
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
         Ok(self.defined_names.clone())
     }
@@ -557,6 +563,7 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            load_stats: AdapterLoadStats::default(),
         })
     }
 
@@ -595,6 +602,7 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            load_stats: AdapterLoadStats::default(),
         })
     }
 
@@ -663,9 +671,18 @@ where
         use formualizer_eval::reference::{CellRef, Coord};
 
         #[cfg(feature = "tracing")]
-        let _span_load =
-            tracing::info_span!("io_stream_into_engine", backend = "calamine").entered();
-        // Simple eager load: iterate sheets, add, bulk insert values, then formulas
+        let _span_load = tracing::info_span!(
+            "io_stream_into_engine",
+            backend = "calamine",
+            formula_records = false,
+        )
+        .entered();
+
+        // Publishable Calamine path: crates.io Calamine currently exposes values
+        // and formulas as separate ranges. Keep this path compatible with that API
+        // while preserving the same sparse/dense engine ingest semantics used by
+        // the FormulaPlane-aware loaders. Once Calamine publishes XLSX formula
+        // record streaming, this seam can switch back to a single-pass reader.
         let debug = std::env::var("FZ_DEBUG_LOAD")
             .ok()
             .is_some_and(|v| v != "0");
@@ -681,23 +698,74 @@ where
                 .add_sheet(n.as_str())
                 .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
         }
-        // Speed up load: lazy sheet index + no range expansion during ingestion
+
         let prev_index_mode = engine.config.sheet_index_mode;
         engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);
         let prev_range_limit = engine.config.range_expansion_limit;
-        engine.config.range_expansion_limit = 0; // keep ranges compressed while loading
-
-        // Use builders: Arrow for base values; graph builder for formulas/edges
-        // Hint the graph to assume new cells during this initial ingest
+        engine.config.range_expansion_limit = 0;
         engine.set_first_load_assume_new(true);
         engine.reset_ensure_touched();
-        let mut total_values = 0usize;
-        let mut total_formulas = 0usize;
-        let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
-        // Route formula ingest through the engine's bulk ingest builder for optimal edge construction
-        // Arrow bulk ingest for base values (Phase A) is built per-sheet without borrowing the engine
-        // Default Arrow chunk rows
+
         let chunk_rows: usize = 32 * 1024;
+        let mut total_values = 0usize;
+        let mut total_value_cells_observed = 0usize;
+        let mut total_formulas = 0usize;
+        let mut total_formula_handed_to_engine = 0usize;
+        let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
+
+        #[inline]
+        fn data_to_literal(value: &Data) -> Option<LiteralValue> {
+            match value {
+                Data::Empty => None,
+                Data::String(s) if s.is_empty() => None,
+                Data::String(s) => Some(LiteralValue::Text(s.clone())),
+                Data::Float(f) => Some(LiteralValue::Number(*f)),
+                Data::Int(i) => Some(LiteralValue::Number(*i as f64)),
+                Data::Bool(b) => Some(LiteralValue::Boolean(*b)),
+                Data::Error(e) => Some(LiteralValue::Error(ExcelError::new(
+                    match CalamineAdapter::calamine_error_code(e) {
+                        1 => ExcelErrorKind::Null,
+                        2 => ExcelErrorKind::Ref,
+                        3 => ExcelErrorKind::Name,
+                        4 => ExcelErrorKind::Value,
+                        5 => ExcelErrorKind::Div,
+                        6 => ExcelErrorKind::Na,
+                        7 => ExcelErrorKind::Num,
+                        _ => ExcelErrorKind::Error,
+                    },
+                ))),
+                Data::DateTime(dt) => Some(LiteralValue::from_serial_number(dt.as_f64())),
+                Data::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
+                Data::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
+            }
+        }
+
+        #[inline]
+        fn data_to_overlay(value: &Data) -> Option<OverlayValue> {
+            match value {
+                Data::Empty => None,
+                Data::String(s) if s.is_empty() => None,
+                Data::String(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+                Data::Float(f) => Some(OverlayValue::Number(*f)),
+                Data::Int(i) => Some(OverlayValue::Number(*i as f64)),
+                Data::Bool(b) => Some(OverlayValue::Boolean(*b)),
+                Data::Error(e) => {
+                    Some(OverlayValue::Error(CalamineAdapter::calamine_error_code(e)))
+                }
+                Data::DateTime(dt) => Some(OverlayValue::DateTime(dt.as_f64())),
+                Data::DateTimeIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+                Data::DurationIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+            }
+        }
+
+        struct DenseState {
+            aib: IngestBuilder,
+            row_vals: Vec<LiteralValue>,
+            current_row0: usize,
+            rows_appended: usize,
+            row_started: bool,
+        }
+
         for n in &names {
             let t_sheet = DebugTimer::start();
             if debug {
@@ -706,280 +774,68 @@ where
             #[cfg(feature = "tracing")]
             let _span_sheet =
                 tracing::info_span!("io_populate_sheet", sheet = n.as_str()).entered();
-            // Read directly from calamine ranges to avoid building a BTreeMap
-            let (range, formulas_range, dims);
-            {
-                let mut wb = self.workbook.write();
-                let r = wb.worksheet_range(n)?;
-                let f = wb.worksheet_formula(n).ok();
-                // Respect potential non-(1,1) starts in calamine ranges
-                let value_sr0 = r.start().unwrap_or_default().0; // 0-based
-                let value_sc0 = r.start().unwrap_or_default().1; // 0-based
-                let mut max_rows = r.height() as u32 + value_sr0;
-                let mut max_cols = r.width() as u32 + value_sc0;
-                if let Some(frm_range) = f.as_ref() {
-                    let formula_sr0 = frm_range.start().unwrap_or_default().0;
-                    let formula_sc0 = frm_range.start().unwrap_or_default().1;
-                    max_rows = max_rows.max(frm_range.height() as u32 + formula_sr0);
-                    max_cols = max_cols.max(frm_range.width() as u32 + formula_sc0);
-                }
-                dims = (max_rows, max_cols);
-                range = r;
-                formulas_range = f;
-            }
-            if debug {
-                eprintln!("[fz][load]    dims={}x{}", dims.0, dims.1);
-            }
-            let populated_cells = range.used_cells().count()
-                + formulas_range
-                    .as_ref()
-                    .map(|frm_range| frm_range.used_cells().count())
-                    .unwrap_or(0);
-            enforce_sheet_load_limits(
-                "calamine",
-                n,
-                dims.0,
-                dims.1,
-                populated_cells,
-                engine.workbook_load_limits(),
-            )
-            .map_err(|err| calamine::Error::Io(std::io::Error::other(err.to_string())))?;
-            // Local Arrow ingest builder for this sheet
-            // Compute absolute alignment from range start offsets.
-            let sr0 = range.start().unwrap_or_default().0 as usize; // top padding (rows)
-            let sc0 = range.start().unwrap_or_default().1 as usize; // left padding (cols)
-            let width = range.width();
-            let height = range.height();
-            let abs_cols = sc0 + width;
 
-            let mut aib: IngestBuilder =
-                IngestBuilder::new(n, abs_cols, chunk_rows, engine.config.date_system);
-            // Helpers: streaming empty-row and used-cells row emitters
-            struct RepeatEmptyRow {
-                len: usize,
-                emitted: usize,
-            }
-            impl Iterator for RepeatEmptyRow {
-                type Item = CellIngest<'static>;
-                fn next(&mut self) -> Option<Self::Item> {
-                    if self.emitted >= self.len {
-                        None
-                    } else {
-                        self.emitted += 1;
-                        Some(CellIngest::Empty)
-                    }
-                }
-                fn size_hint(&self) -> (usize, Option<usize>) {
-                    let rem = self.len - self.emitted;
-                    (rem, Some(rem))
-                }
-            }
-            impl ExactSizeIterator for RepeatEmptyRow {}
+            let (range, formula_range) = {
+                let mut wb_guard = self.workbook.write();
+                let range = wb_guard.worksheet_range(n)?;
+                let formula_range = wb_guard.worksheet_formula(n).ok();
+                (range, formula_range)
+            };
 
-            #[inline]
-            fn data_to_cell<'a>(d: &'a Data) -> CellIngest<'a> {
-                match d {
-                    Data::Empty => CellIngest::Empty,
-                    Data::String(s) if s.is_empty() => CellIngest::Empty,
-                    Data::String(s) => CellIngest::Text(s.as_str()),
-                    Data::Float(f) => CellIngest::Number(*f),
-                    Data::Int(i) => CellIngest::Number(*i as f64),
-                    Data::Bool(b) => CellIngest::Boolean(*b),
-                    Data::Error(e) => {
-                        CellIngest::ErrorCode(CalamineAdapter::calamine_error_code(e))
-                    }
-                    Data::DateTime(dt) => CellIngest::DateSerial(dt.as_f64()),
-                    Data::DateTimeIso(s) => CellIngest::Text(s.as_str()),
-                    Data::DurationIso(s) => CellIngest::Text(s.as_str()),
-                }
+            let mut dims_rows = range.end().map(|end| end.0 + 1).unwrap_or(1) as usize;
+            let mut abs_cols = range.end().map(|end| end.1 + 1).unwrap_or(1) as usize;
+            if let Some(frm_range) = formula_range.as_ref()
+                && let Some(end) = frm_range.end()
+            {
+                dims_rows = dims_rows.max(end.0 as usize + 1);
+                abs_cols = abs_cols.max(end.1 as usize + 1);
             }
+            dims_rows = dims_rows.max(1);
+            abs_cols = abs_cols.max(1);
 
-            struct RowEmit<'a, 'b, I>
-            where
-                I: Iterator<Item = (usize, usize, &'a Data)>,
-            {
-                sc0: usize,
-                abs_cols: usize,
-                row_rel: usize,
-                cur_col: usize,
-                used_iter: I,
-                carry: &'b mut Option<(usize, usize, &'a Data)>,
-            }
-            impl<'a, 'b, I> RowEmit<'a, 'b, I>
-            where
-                I: Iterator<Item = (usize, usize, &'a Data)>,
-            {
-                #[inline]
-                fn pull_next(&mut self) -> Option<(usize, usize, &'a Data)> {
-                    if let Some(c) = self.carry.take() {
-                        Some(c)
-                    } else {
-                        self.used_iter.next()
-                    }
-                }
-            }
-            impl<'a, 'b, I> Iterator for RowEmit<'a, 'b, I>
-            where
-                I: Iterator<Item = (usize, usize, &'a Data)>,
-            {
-                type Item = CellIngest<'a>;
-                fn next(&mut self) -> Option<Self::Item> {
-                    if self.cur_col >= self.abs_cols {
-                        return None;
-                    }
-                    // Left pad region yields empties
-                    if self.cur_col < self.sc0 {
-                        self.cur_col += 1;
-                        return Some(CellIngest::Empty);
-                    }
-                    // Consume used cells for this row at the correct columns; fill gaps with empties
-                    loop {
-                        let peek = self.pull_next();
-                        match peek {
-                            None => {
-                                // No more used cells globally: fill remainder with empties
-                                self.cur_col += 1;
-                                return Some(CellIngest::Empty);
-                            }
-                            Some((r, c, v)) => {
-                                if r > self.row_rel {
-                                    // next used cell is for a future row: emit empty here and keep carry
-                                    *self.carry = Some((r, c, v));
-                                    self.cur_col += 1;
-                                    return Some(CellIngest::Empty);
-                                } else if r < self.row_rel {
-                                    // advance used cells until we reach this row
-                                    continue;
-                                } else {
-                                    // same row
-                                    let target_col_abs = self.sc0 + c;
-                                    if self.cur_col < target_col_abs {
-                                        // gap before next used cell in this row
-                                        *self.carry = Some((r, c, v));
-                                        self.cur_col += 1;
-                                        return Some(CellIngest::Empty);
-                                    } else if self.cur_col == target_col_abs {
-                                        // consume this cell and emit value (empty strings turn into Empty)
-                                        self.cur_col += 1;
-                                        return Some(data_to_cell(v));
-                                    } else {
-                                        // we somehow passed the target; keep scanning (shouldn't happen)
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                fn size_hint(&self) -> (usize, Option<usize>) {
-                    let rem = self.abs_cols - self.cur_col;
-                    (rem, Some(rem))
-                }
-            }
-            impl<'a, 'b, I> ExactSizeIterator for RowEmit<'a, 'b, I> where
-                I: Iterator<Item = (usize, usize, &'a Data)>
-            {
-            }
-
-            // Values: iterate rows and append to Arrow builder with absolute row/col alignment
-            let tv0 = DebugTimer::start();
-            let mut row_count = 0usize;
-            // Prepend top padding rows (absolute alignment)
-            for _ in 0..sr0 {
-                aib.append_row_cells_iter(RepeatEmptyRow {
-                    len: abs_cols,
-                    emitted: 0,
-                })
-                .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-                row_count += 1;
-            }
-
-            // Stream rows using used_cells() with per-row gap filling
-            let mut used_iter = range.used_cells();
-            let mut carry: Option<(usize, usize, &Data)> = None;
-            for rr in 0..height {
-                let iter = RowEmit {
-                    sc0,
-                    abs_cols,
-                    row_rel: rr,
-                    cur_col: 0,
-                    used_iter: used_iter.by_ref(),
-                    carry: &mut carry,
-                };
-                // Append row; RowEmit consumes iterator until end-of-row
-                aib.append_row_cells_iter(iter)
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-                row_count += 1;
-            }
-            // Install Arrow sheet into the engine store now
-            {
-                let asheet = aib.finish();
-                let store = engine.sheet_store_mut();
-                if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
-                    store.sheets[pos] = asheet;
-                } else {
-                    store.sheets.push(asheet);
-                }
-            }
-            // Defer adding values until after formulas staging below
-            total_values += row_count * abs_cols;
-            if debug {
-                eprintln!(
-                    "[fz][load]    rows={} → arrow in {} ms",
-                    row_count,
-                    tv0.elapsed_millis()
-                );
-            }
-
-            // Formulas: iterate formulas_range and either stage or parse with caching
             let tf0 = DebugTimer::start();
             let mut parsed_n = 0usize;
-            if let Some(frm_range) = &formulas_range {
+            let mut formula_handed_to_engine = 0usize;
+            let mut parse_cache: rustc_hash::FxHashMap<
+                String,
+                Option<formualizer_eval::engine::AstNodeId>,
+            > = rustc_hash::FxHashMap::default();
+            parse_cache.reserve(4096);
+            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
+            let mut formula_coords: rustc_hash::FxHashSet<(usize, usize)> =
+                rustc_hash::FxHashSet::default();
+
+            if let Some(frm_range) = formula_range.as_ref() {
                 let start_row = frm_range.start().unwrap_or_default().0 as usize;
                 let start_col = frm_range.start().unwrap_or_default().1 as usize;
-                // cache to reuse parsed AST for shared formulas text
-                if engine.config.defer_graph_building {
-                    for (row, col, formula) in frm_range.used_cells() {
-                        if formula.is_empty() {
-                            continue;
-                        }
-                        let excel_row = (row + start_row + 1) as u32;
-                        let excel_col = (col + start_col + 1) as u32;
-                        if debug && parsed_n < 16 {
-                            eprintln!("[fz][load] formula R{excel_row}C{excel_col} = {formula:?}");
-                        }
-                        engine.stage_formula_text(n, excel_row, excel_col, formula.clone());
-                        parsed_n += 1;
+                for (row, col, formula) in frm_range.used_cells() {
+                    if formula.is_empty() {
+                        continue;
                     }
-                } else {
-                    let mut cache: rustc_hash::FxHashMap<String, formualizer_parse::ASTNode> =
-                        rustc_hash::FxHashMap::default();
-                    cache.reserve(4096);
-                    let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
-                    for (row, col, formula) in frm_range.used_cells() {
-                        if formula.is_empty() {
-                            continue;
-                        }
-                        let excel_row = (row + start_row + 1) as u32;
-                        let excel_col = (col + start_col + 1) as u32;
-                        let key_owned: String = if formula.starts_with('=') {
-                            formula.clone()
+                    let row0 = row + start_row;
+                    let col0 = col + start_col;
+                    formula_coords.insert((row0, col0));
+                    dims_rows = dims_rows.max(row0 + 1);
+                    abs_cols = abs_cols.max(col0 + 1);
+                    let excel_row = (row0 + 1) as u32;
+                    let excel_col = (col0 + 1) as u32;
+                    let key_owned: String = if formula.starts_with('=') {
+                        formula.clone()
+                    } else {
+                        format!("={formula}")
+                    };
+                    if debug && parsed_n < 16 {
+                        eprintln!("[fz][load] formula R{excel_row}C{excel_col} = {key_owned:?}");
+                    }
+                    if engine.config.defer_graph_building {
+                        engine.stage_formula_text(n, excel_row, excel_col, key_owned);
+                        formula_handed_to_engine += 1;
+                    } else {
+                        let ast_id = if let Some(cached) = parse_cache.get(&key_owned) {
+                            *cached
                         } else {
-                            format!("={formula}")
-                        };
-                        if debug && parsed_n < 16 {
-                            eprintln!(
-                                "[fz][load] formula R{excel_row}C{excel_col} = {key_owned:?}"
-                            );
-                        }
-                        let ast = if let Some(ast) = cache.get(&key_owned) {
-                            Some(ast.clone())
-                        } else {
-                            match formualizer_parse::parser::parse(&key_owned) {
-                                Ok(parsed) => {
-                                    cache.insert(key_owned.clone(), parsed.clone());
-                                    Some(parsed)
-                                }
+                            let parsed = match formualizer_parse::parser::parse(&key_owned) {
+                                Ok(parsed) => Some(parsed),
                                 Err(e) => engine
                                     .handle_formula_parse_error(
                                         n,
@@ -991,23 +847,209 @@ where
                                     .map_err(|e| {
                                         calamine::Error::Io(std::io::Error::other(e.to_string()))
                                     })?,
-                            }
+                            };
+                            let ast_id = parsed.as_ref().map(|ast| engine.intern_formula_ast(ast));
+                            parse_cache.insert(key_owned.clone(), ast_id);
+                            ast_id
                         };
-                        if let Some(ast) = ast {
-                            formulas.push((excel_row, excel_col, ast));
-                        }
-                        parsed_n += 1;
-                        if debug && parsed_n.is_multiple_of(5000) {
-                            eprintln!("[fz][load]    parsed formulas: {parsed_n}");
+                        if let Some(ast_id) = ast_id {
+                            formulas.push(FormulaIngestRecord::new(
+                                excel_row,
+                                excel_col,
+                                ast_id,
+                                Some(Arc::<str>::from(key_owned.clone())),
+                            ));
+                            formula_handed_to_engine += 1;
                         }
                     }
-                    if !formulas.is_empty() {
-                        eager_formula_batches.push((n.clone(), formulas));
+                    parsed_n += 1;
+                    if debug && parsed_n.is_multiple_of(5000) {
+                        eprintln!("[fz][load]    parsed formulas: {parsed_n}");
                     }
                 }
             }
-            total_formulas += parsed_n;
+
             if debug {
+                eprintln!("[fz][load]    dims={}x{}", dims_rows, abs_cols);
+            }
+            enforce_sheet_dimension_limits(
+                "calamine",
+                n,
+                dims_rows as u32,
+                abs_cols as u32,
+                engine.workbook_load_limits(),
+            )
+            .map_err(|err| calamine::Error::Io(std::io::Error::other(err.to_string())))?;
+
+            let logical_cells = (dims_rows as u64).saturating_mul(abs_cols as u64);
+            let force_sparse_from_start =
+                logical_cells > engine.workbook_load_limits().max_sheet_logical_cells;
+
+            let tv0 = DebugTimer::start();
+            let mut dense = (!force_sparse_from_start).then(|| DenseState {
+                aib: IngestBuilder::new(n, abs_cols, chunk_rows, engine.config.date_system),
+                row_vals: vec![LiteralValue::Empty; abs_cols],
+                current_row0: 0,
+                rows_appended: 0,
+                row_started: false,
+            });
+            let mut sparse: Option<formualizer_eval::arrow_store::ArrowSheet> =
+                force_sparse_from_start.then(|| {
+                    formualizer_eval::arrow_store::ArrowSheet::new_sparse(
+                        n, abs_cols, dims_rows, chunk_rows,
+                    )
+                });
+            let mut used_sparse_fallback = force_sparse_from_start;
+            let mut max_row_seen = 0usize;
+            let mut max_col_seen = 0usize;
+            let mut sheet_value_cells_observed = 0usize;
+
+            let start_row = range.start().unwrap_or_default().0 as usize;
+            let start_col = range.start().unwrap_or_default().1 as usize;
+            for (row, col, val) in range.used_cells() {
+                let row0 = row + start_row;
+                let col0 = col + start_col;
+                if formula_coords.contains(&(row0, col0)) {
+                    continue;
+                }
+                let Some(literal) = data_to_literal(val) else {
+                    continue;
+                };
+                max_row_seen = max_row_seen.max(row0);
+                max_col_seen = max_col_seen.max(col0);
+                dims_rows = dims_rows.max(row0 + 1);
+                abs_cols = abs_cols.max(col0 + 1);
+
+                total_value_cells_observed += 1;
+                sheet_value_cells_observed += 1;
+                if sheet_value_cells_observed.saturating_add(parsed_n)
+                    > engine.workbook_load_limits().max_sheet_logical_cells as usize
+                {
+                    return Err(calamine::Error::Io(std::io::Error::other(format!(
+                        "Workbook load budget exceeded in calamine for sheet {n}: observed populated cell count exceeds configured logical-cell budget of {}",
+                        engine.workbook_load_limits().max_sheet_logical_cells
+                    ))));
+                }
+
+                if let Some(asheet) = sparse.as_mut() {
+                    if let Some(value) = data_to_overlay(val) {
+                        asheet.set_sparse_overlay_value(row0, col0, value);
+                        total_values += 1;
+                    }
+                    continue;
+                }
+
+                let state = dense.as_mut().expect("dense or sparse ingest mode");
+                let non_monotonic = state.row_started && row0 < state.current_row0;
+                let col_overflow = col0 >= state.row_vals.len();
+                let gap_rows = if state.row_started {
+                    row0.saturating_sub(state.current_row0)
+                } else {
+                    row0
+                };
+                let large_gap = gap_rows > 128;
+                let would_exceed_dense_budget =
+                    state.rows_appended.saturating_mul(state.row_vals.len())
+                        > engine.workbook_load_limits().max_sheet_logical_cells as usize;
+
+                if non_monotonic || col_overflow || large_gap || would_exceed_dense_budget {
+                    let mut state = dense.take().expect("dense state present");
+                    if state.row_started && state.current_row0 == state.rows_appended {
+                        state.aib.append_row(&state.row_vals).map_err(|e| {
+                            calamine::Error::Io(std::io::Error::other(e.to_string()))
+                        })?;
+                        state.rows_appended += 1;
+                    }
+                    let mut asheet = state.aib.finish();
+                    asheet.ensure_row_capacity(dims_rows.max(row0 + 1));
+                    if col0 >= asheet.columns.len() {
+                        asheet.insert_columns(
+                            asheet.columns.len(),
+                            (col0 + 1) - asheet.columns.len(),
+                        );
+                    }
+                    if let Some(value) = data_to_overlay(val) {
+                        asheet.set_sparse_overlay_value(row0, col0, value);
+                        total_values += 1;
+                    }
+                    sparse = Some(asheet);
+                    used_sparse_fallback = true;
+                    continue;
+                }
+
+                if !state.row_started {
+                    while state.rows_appended < row0 {
+                        state
+                            .aib
+                            .append_row(&vec![LiteralValue::Empty; state.row_vals.len()])
+                            .map_err(|e| {
+                                calamine::Error::Io(std::io::Error::other(e.to_string()))
+                            })?;
+                        state.rows_appended += 1;
+                    }
+                    state.current_row0 = row0;
+                    state.row_started = true;
+                } else if row0 > state.current_row0 {
+                    state
+                        .aib
+                        .append_row(&state.row_vals)
+                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                    state.rows_appended += 1;
+                    state.row_vals.fill(LiteralValue::Empty);
+                    while state.rows_appended < row0 {
+                        state
+                            .aib
+                            .append_row(&vec![LiteralValue::Empty; state.row_vals.len()])
+                            .map_err(|e| {
+                                calamine::Error::Io(std::io::Error::other(e.to_string()))
+                            })?;
+                        state.rows_appended += 1;
+                    }
+                    state.current_row0 = row0;
+                }
+
+                state.row_vals[col0] = literal;
+                total_values += 1;
+            }
+
+            let asheet = if let Some(mut asheet) = sparse {
+                asheet.ensure_row_capacity(dims_rows.max(max_row_seen + 1));
+                asheet
+            } else {
+                let mut state = dense.take().expect("dense state present");
+                if state.row_started {
+                    state
+                        .aib
+                        .append_row(&state.row_vals)
+                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                }
+                let mut asheet = state.aib.finish();
+                asheet.ensure_row_capacity(dims_rows.max(max_row_seen + 1));
+                asheet
+            };
+
+            let store = engine.sheet_store_mut();
+            if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
+                store.sheets[pos] = asheet;
+            } else {
+                store.sheets.push(asheet);
+            }
+
+            if !engine.config.defer_graph_building && !formulas.is_empty() {
+                eager_formula_batches.push(FormulaIngestBatch::new(n.clone(), formulas));
+            }
+
+            total_formulas += parsed_n;
+            total_formula_handed_to_engine += formula_handed_to_engine;
+            if debug {
+                eprintln!(
+                    "[fz][load]    rows={} cols={} sparse_fallback={} values={} → arrow in {} ms",
+                    dims_rows,
+                    max_col_seen + 1,
+                    used_sparse_fallback,
+                    sheet_value_cells_observed,
+                    tv0.elapsed_millis()
+                );
                 eprintln!(
                     "[fz][load]    formulas={} in {} ms",
                     parsed_n,
@@ -1019,11 +1061,8 @@ where
                     t_sheet.elapsed_millis()
                 );
             }
-            // Mark as loaded for API parity
             self.loaded_sheets.insert(n.to_string());
 
-            // Explicit fallback: calamine cannot currently read row visibility metadata,
-            // so we intentionally seed no hidden rows.
             let row_hidden_manual: &[u32] = &[];
             let row_hidden_filter: &[u32] = &[];
             for row in row_hidden_manual {
@@ -1049,17 +1088,11 @@ where
         }
 
         if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
-            let mut builder = engine.begin_bulk_ingest();
-            for (sheet_name, formulas) in eager_formula_batches {
-                let sid = builder.add_sheet(&sheet_name);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            builder
-                .finish()
+            engine
+                .ingest_formula_batches(eager_formula_batches)
                 .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
         }
 
-        // Register defined names into the dependency graph.
         {
             use rustc_hash::FxHashSet;
 
@@ -1127,26 +1160,14 @@ where
             }
         }
 
-        let tend0 = DebugTimer::start();
-        // Finish builder and finalize ingestion
-        let tcommit0 = DebugTimer::start();
-        // (graph ingest finished per-sheet above)
-        // Finish Arrow ingest after formulas are staged (stores ArrowSheets into engine)
-        // (Arrow sheets are installed per-sheet above)
         if debug {
             eprintln!(
-                "[fz][load] commit: builder finish in {} ms",
-                tcommit0.elapsed_millis()
-            );
-            eprintln!(
-                "[fz][load] done: values={}, formulas={}, batch_close={} ms, total={} ms",
+                "[fz][load] done: values={}, formulas={}, total={} ms",
                 total_values,
                 total_formulas,
-                tend0.elapsed_millis(),
                 t0.elapsed_millis(),
             );
         }
-        // Build sheet indexes after load to accelerate used-region queries
         for n in &names {
             engine.finalize_sheet_index(n);
         }
@@ -1155,15 +1176,13 @@ where
         engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
-        if debug {
-            eprintln!(
-                "[fz][load] done: values={}, formulas={}, batch_close={} ms, total={} ms",
-                total_values,
-                total_formulas,
-                tend0.elapsed_millis(),
-                t0.elapsed_millis(),
-            );
-        }
+        self.load_stats = AdapterLoadStats {
+            formula_cells_observed: Some(total_formulas as u64),
+            value_cells_observed: Some(total_value_cells_observed as u64),
+            value_slots_handed_to_engine: Some(total_values as u64),
+            formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
+            shared_formula_tags_observed: None,
+        };
         Ok(())
     }
 }

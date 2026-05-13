@@ -7,7 +7,7 @@ use js_sys::{Function, Object, Reflect};
 use std::io::{Cursor, Write};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::*;
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
 fn js_get(obj: &js_sys::Object, key: &str) -> JsValue {
@@ -32,7 +32,7 @@ fn set_prop(obj: &Object, key: &str, value: JsValue) {
 
 fn build_fixture_xlsx_bytes() -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
-    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
     for (path, contents) in [
         (
@@ -596,6 +596,9 @@ fn test_register_array_mapping_behavior() {
     wb.evaluate_all().unwrap();
 
     let sheet = wb.sheet("Sheet1".to_string()).unwrap();
+    // Exercise the demand path as well so the JS-backed array result is
+    // committed to the spill grid before reading the projected cells.
+    wb.evaluate_cell("Sheet1".to_string(), 1, 3).unwrap();
     assert_eq!(sheet.get_value(1, 3).unwrap().as_f64().unwrap(), 12.0);
     assert_eq!(sheet.get_value(1, 4).unwrap().as_f64().unwrap(), 14.0);
     assert_eq!(sheet.get_value(2, 3).unwrap().as_f64().unwrap(), 24.0);

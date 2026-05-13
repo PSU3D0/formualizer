@@ -700,6 +700,16 @@ impl<'g> VertexEditor<'g> {
             self.graph.remove_cell_mapping(&cell_ref);
         }
 
+        // Remove all formula/value payloads owned by this vertex.  Tombstoned vertices remain in
+        // the SoA store for stable IDs/debugging, but they must not continue to participate in
+        // formula evaluation through `vertex_formulas`.
+        self.graph.vertex_formulas.remove(&id);
+        self.graph.vertex_values.remove(&id);
+        self.graph.dirty_vertices.remove(&id);
+        self.graph.mark_volatile(id, false);
+        self.graph.store.set_kind(id, VertexKind::Empty);
+        self.graph.store.set_dynamic(id, false);
+
         // Remove all edges
         self.graph.remove_all_edges(id);
 
@@ -1172,22 +1182,20 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.get_formula_ast(id) {
-                let adjusted = adjuster.adjust_ast(&ast, &op);
-                // Only update if the formula actually changed
-                if format!("{ast:?}") != format!("{adjusted:?}") {
-                    if self.has_logger() {
-                        self.log_change(ChangeEvent::FormulaAdjusted {
-                            id,
-                            addr: self.graph.get_cell_ref_for_vertex(id),
-                            old_ast: ast.clone(),
-                            new_ast: adjusted.clone(),
-                        });
-                    }
-                    self.graph.update_vertex_formula(id, adjusted)?;
-                    self.graph.mark_vertex_dirty(id);
-                    summary.formulas_updated += 1;
+            if let Some(ast) = self.get_formula_ast(id)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+            {
+                if self.has_logger() {
+                    self.log_change(ChangeEvent::FormulaAdjusted {
+                        id,
+                        addr: self.graph.get_cell_ref_for_vertex(id),
+                        old_ast: ast.clone(),
+                        new_ast: adjusted.clone(),
+                    });
                 }
+                self.graph.update_vertex_formula(id, adjusted)?;
+                self.graph.mark_vertex_dirty(id);
+                summary.formulas_updated += 1;
             }
         }
 
@@ -1298,21 +1306,20 @@ impl<'g> VertexEditor<'g> {
         let formula_vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
 
         for id in formula_vertices {
-            if let Some(ast) = self.get_formula_ast(id) {
-                let adjusted = adjuster.adjust_ast(&ast, &op);
-                if format!("{ast:?}") != format!("{adjusted:?}") {
-                    if self.has_logger() {
-                        self.log_change(ChangeEvent::FormulaAdjusted {
-                            id,
-                            addr: self.graph.get_cell_ref_for_vertex(id),
-                            old_ast: ast.clone(),
-                            new_ast: adjusted.clone(),
-                        });
-                    }
-                    self.graph.update_vertex_formula(id, adjusted)?;
-                    self.graph.mark_vertex_dirty(id);
-                    summary.formulas_updated += 1;
+            if let Some(ast) = self.get_formula_ast(id)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+            {
+                if self.has_logger() {
+                    self.log_change(ChangeEvent::FormulaAdjusted {
+                        id,
+                        addr: self.graph.get_cell_ref_for_vertex(id),
+                        old_ast: ast.clone(),
+                        new_ast: adjusted.clone(),
+                    });
                 }
+                self.graph.update_vertex_formula(id, adjusted)?;
+                self.graph.mark_vertex_dirty(id);
+                summary.formulas_updated += 1;
             }
         }
 
@@ -1534,23 +1541,15 @@ impl<'g> VertexEditor<'g> {
             for (col_offset, value) in row_values.iter().enumerate() {
                 let row = start_row + row_offset as u32;
                 let col = start_col + col_offset as u32;
-
-                // Check if cell already exists
                 let cell_ref = self.graph.make_cell_ref_internal(sheet_id, row, col);
+                let existing_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
 
-                if let Some(&existing_id) = self.graph.get_vertex_id_for_address(&cell_ref) {
-                    // Update existing vertex
-                    self.graph.update_vertex_value(existing_id, value.clone());
-                    self.graph.mark_vertex_dirty(existing_id);
-                    summary.vertices_updated.push(existing_id);
-                } else {
-                    // Create new vertex
-                    let meta = VertexMeta::new(row, col, sheet_id, VertexKind::Cell);
-                    let id = self.add_vertex(meta);
-                    self.graph.update_vertex_value(id, value.clone());
-                    summary.vertices_created.push(id);
+                let id = self.set_cell_value(cell_ref, value.clone());
+                match existing_id {
+                    Some(existing_id) => summary.vertices_updated.push(existing_id),
+                    None if id.0 != 0 => summary.vertices_created.push(id),
+                    None => {}
                 }
-
                 summary.cells_affected += 1;
             }
         }

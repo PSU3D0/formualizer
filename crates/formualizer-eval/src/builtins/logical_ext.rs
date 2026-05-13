@@ -1,6 +1,7 @@
 use super::utils::ARG_ANY_ONE;
 use crate::args::ArgSchema;
 use crate::function::Function;
+use crate::function_contract::FunctionDependencyContract;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
@@ -59,6 +60,9 @@ impl Function for NotFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]

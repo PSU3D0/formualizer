@@ -83,6 +83,88 @@ impl ReferenceAdjuster {
         }
     }
 
+    /// Adjust an AST against a structural shift, returning Some(adjusted) only
+    /// if at least one reference actually changed. Avoids cloning when no work
+    /// is needed.
+    pub fn adjust_ast_if_changed(&self, ast: &ASTNode, op: &ShiftOperation) -> Option<ASTNode> {
+        match &ast.node_type {
+            ASTNodeType::Reference {
+                original,
+                reference,
+            } => {
+                let adjusted = self.adjust_reference(reference, op);
+                if adjusted == *reference {
+                    return None;
+                }
+                Some(ASTNode {
+                    node_type: ASTNodeType::Reference {
+                        original: original.clone(),
+                        reference: adjusted,
+                    },
+                    source_token: ast.source_token.clone(),
+                    contains_volatile: ast.contains_volatile,
+                })
+            }
+            ASTNodeType::BinaryOp {
+                op: bin_op,
+                left,
+                right,
+            } => {
+                let adjusted_left = self.adjust_ast_if_changed(left, op);
+                let adjusted_right = self.adjust_ast_if_changed(right, op);
+                if adjusted_left.is_none() && adjusted_right.is_none() {
+                    return None;
+                }
+                Some(ASTNode {
+                    node_type: ASTNodeType::BinaryOp {
+                        op: bin_op.clone(),
+                        left: Box::new(adjusted_left.unwrap_or_else(|| (**left).clone())),
+                        right: Box::new(adjusted_right.unwrap_or_else(|| (**right).clone())),
+                    },
+                    source_token: ast.source_token.clone(),
+                    contains_volatile: ast.contains_volatile,
+                })
+            }
+            ASTNodeType::UnaryOp { op: un_op, expr } => {
+                let adjusted_expr = self.adjust_ast_if_changed(expr, op)?;
+                Some(ASTNode {
+                    node_type: ASTNodeType::UnaryOp {
+                        op: un_op.clone(),
+                        expr: Box::new(adjusted_expr),
+                    },
+                    source_token: ast.source_token.clone(),
+                    contains_volatile: ast.contains_volatile,
+                })
+            }
+            ASTNodeType::Function { name, args } => {
+                let mut changed = false;
+                let adjusted_args = args
+                    .iter()
+                    .map(|arg| {
+                        if let Some(adjusted) = self.adjust_ast_if_changed(arg, op) {
+                            changed = true;
+                            adjusted
+                        } else {
+                            arg.clone()
+                        }
+                    })
+                    .collect();
+                if !changed {
+                    return None;
+                }
+                Some(ASTNode {
+                    node_type: ASTNodeType::Function {
+                        name: name.clone(),
+                        args: adjusted_args,
+                    },
+                    source_token: ast.source_token.clone(),
+                    contains_volatile: ast.contains_volatile,
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Adjust a cell reference for a shift operation
     /// Returns None if the cell is deleted
     pub fn adjust_cell_ref(&self, cell_ref: &CellRef, op: &ShiftOperation) -> Option<CellRef> {
@@ -851,6 +933,53 @@ mod tests {
         // TODO: Use the actual formualizer_parse::parser::to_string when available
         // For now, a simple representation
         format!("{ast:?}")
+    }
+
+    #[test]
+    fn adjust_ast_if_changed_returns_none_for_unaffected_column_insert() {
+        let adjuster = ReferenceAdjuster::new();
+        let ast = parse("=A1+1").unwrap();
+
+        let adjusted = adjuster.adjust_ast_if_changed(
+            &ast,
+            &ShiftOperation::InsertColumns {
+                sheet_id: 0,
+                before: 3,
+                count: 1,
+            },
+        );
+
+        assert!(adjusted.is_none());
+    }
+
+    #[test]
+    fn adjust_ast_if_changed_returns_adjusted_for_insert_before_a() {
+        let adjuster = ReferenceAdjuster::new();
+        let ast = parse("=A1+1").unwrap();
+
+        let adjusted = adjuster
+            .adjust_ast_if_changed(
+                &ast,
+                &ShiftOperation::InsertColumns {
+                    sheet_id: 0,
+                    before: 0,
+                    count: 1,
+                },
+            )
+            .expect("A1 reference should shift");
+
+        if let ASTNodeType::BinaryOp { left, .. } = &adjusted.node_type
+            && let ASTNodeType::Reference {
+                reference: formualizer_parse::parser::ReferenceType::Cell { row, col, .. },
+                ..
+            } = &left.node_type
+        {
+            assert_eq!(*row, 1);
+            assert_eq!(*col, 2);
+            return;
+        }
+
+        panic!("expected adjusted A1 reference to become B1");
     }
 
     #[test]

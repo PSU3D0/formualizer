@@ -89,6 +89,15 @@ pub unsafe extern "C" fn fz_workbook_open_xlsx(
     path: *const c_char,
     status: *mut fz_status,
 ) -> fz_workbook_h {
+    unsafe { fz_workbook_open_xlsx_with_span_evaluation(path, false, status) }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fz_workbook_open_xlsx_with_span_evaluation(
+    path: *const c_char,
+    span_evaluation: bool,
+    status: *mut fz_status,
+) -> fz_workbook_h {
     if path.is_null() {
         if !status.is_null() {
             unsafe {
@@ -111,7 +120,7 @@ pub unsafe extern "C" fn fz_workbook_open_xlsx(
         }
     };
 
-    let cfg = WorkbookConfig::interactive();
+    let cfg = WorkbookConfig::interactive().with_span_evaluation(span_evaluation);
     let wb = match Workbook::from_reader(backend, LoadStrategy::EagerAll, cfg) {
         Ok(wb) => wb,
         Err(e) => {

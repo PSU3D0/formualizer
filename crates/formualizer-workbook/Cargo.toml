@@ -23,7 +23,7 @@ parking_lot = "0.12"
 chrono = { workspace = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
-zip = { version = "0.6.6", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
 quick-xml = { version = "0.39", features = ["encoding"], optional = true }
 
 [features]
@@ -51,7 +51,7 @@ wasm_plugins = ["dep:wasmparser", "dep:serde_json", "formualizer-common/serde"]
 wasm_runtime_wasmtime = ["wasm_plugins", "dep:wasmtime"]
 
 [dependencies.calamine]
-version = "0.34"
+version = "0.35"
 optional = true
 
 [dependencies.memmap2]

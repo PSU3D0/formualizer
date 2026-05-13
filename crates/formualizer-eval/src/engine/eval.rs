@@ -1,34 +1,79 @@
 use crate::SheetId;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
+use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
+use crate::engine::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
+use crate::engine::lookup_index_cache::{
+    BuildOutcome, LookupAxis, LookupIndex, LookupIndexCache, LookupIndexCacheReport,
+    LookupIndexKey, estimate_bytes,
+};
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::row_visibility::RowVisibilityState;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
-    DependencyGraph, EvalConfig, FormulaParseDiagnostic, FormulaParsePolicy, RowVisibilitySource,
-    Scheduler, VertexId, VertexKind, VisibilityMaskMode,
+    DependencyGraph, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport,
+    FormulaParseDiagnostic, FormulaParsePolicy, FormulaPlaneMode, RowVisibilitySource, Scheduler,
+    VertexId, VertexKind, VisibilityMaskMode,
 };
+use crate::formula_plane::placement::{
+    CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
+    place_candidate_family_with_analyses, split_candidate_affine_literal_runs,
+};
+use crate::formula_plane::producer::{
+    DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
+    FormulaProducerWork, ProducerDirtyDomain, SpanReadSummary,
+};
+use crate::formula_plane::region_index::{DirtyDomain, Region};
+use crate::formula_plane::runtime::{
+    FormulaPlane, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
+};
+use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
+#[cfg(test)]
+use crate::formula_plane::span_eval::SpanEvalReport;
+use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
+use crate::formula_plane::structural::relocate_ast_for_template_placement;
+use crate::formula_plane::structural_shift::{SpanShiftPlan, StructuralOp, classify_span_for_op};
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, Resolver};
 use chrono::Timelike;
-use formualizer_common::{CoordBuildHasher, col_letters_from_1based, parse_a1_1based};
+use formualizer_common::{
+    CoordBuildHasher, LiteralValue, col_letters_from_1based, parse_a1_1based,
+};
 use formualizer_parse::parser::ReferenceType;
-use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_parse::{ASTNode, ASTNodeType, ExcelError, ExcelErrorKind};
 use rayon::ThreadPoolBuilder;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 type StagedFormulaEntry = (u32, u32, String);
-type ParsedFormulaEntry = (u32, u32, ASTNode);
 type StagedFormulaMap = std::collections::HashMap<String, Vec<StagedFormulaEntry>>;
-type PreparedFormulaBatches = Vec<(String, Vec<ParsedFormulaEntry>)>;
+
+fn producer_dirty_to_span_dirty(
+    dirty: ProducerDirtyDomain,
+    span_ref: FormulaSpanRef,
+) -> DirtyDomain {
+    match dirty {
+        ProducerDirtyDomain::Whole => DirtyDomain::WholeSpan(span_ref),
+        ProducerDirtyDomain::Cells(cells) => DirtyDomain::Cells(cells),
+        ProducerDirtyDomain::Regions(regions) => DirtyDomain::Regions(regions),
+    }
+}
+type PreparedFormulaBatches = Vec<FormulaIngestBatch>;
 type StagedFormulaBatches = Vec<(String, Vec<StagedFormulaEntry>)>;
+type FormulaPlaneMixedScheduleBuild = (
+    MixedSchedule,
+    BTreeMap<crate::formula_plane::runtime::FormulaSpanId, FormulaSpanRef>,
+    u64,
+    Vec<VertexId>,
+);
+
+type PlannedFormulaMaterialize = BTreeMap<String, Vec<(u32, u32, AstNodeId, DependencyPlanRow)>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
@@ -313,6 +358,9 @@ pub struct Engine<R> {
     pub(crate) force_materialize_range_views: bool,
     // Pass-scoped cache for Arrow used-row bounds per column
     row_bounds_cache: std::sync::RwLock<Option<RowBoundsCache>>,
+    // Snapshot-scoped final used-axis bounds for open-ended references.
+    used_axis_bounds_cache: std::sync::RwLock<Option<UsedAxisBoundsCache>>,
+    lookup_index_cache: LookupIndexCache,
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: StagedFormulaMap,
@@ -324,6 +372,10 @@ pub struct Engine<R> {
     >,
     /// Non-fatal malformed formula diagnostics captured during ingest/graph-build.
     formula_parse_diagnostics: Vec<FormulaParseDiagnostic>,
+    /// Last centralized formula ingest report.
+    last_formula_ingest_report: Option<FormulaIngestReport>,
+    /// Aggregate centralized formula ingest report for this engine.
+    formula_ingest_report_total: FormulaIngestReport,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
 
@@ -336,12 +388,27 @@ pub struct Engine<R> {
     // Phase 3b virtual-dependency convergence telemetry
     last_virtual_dep_telemetry: VirtualDepTelemetry,
     virtual_dep_fallback_activations: u64,
+
+    /// FormulaPlane authority `indexes_epoch` observed by the most recent
+    /// successful `evaluate_all` pass. Used to schedule whole-span work for
+    /// any active span the engine has not yet evaluated under the current
+    /// indexes generation; subsequent passes use bounded dirty closures.
+    formula_plane_indexes_epoch_seen: u64,
+
+    #[cfg(test)]
+    last_formula_plane_span_eval_report: Option<SpanEvalReport>,
 }
 
 /// Minimal edit surface used by `Engine::action`.
 ///
 /// This wrapper is intentionally thin for ticket 614 (commit-only): it delegates to existing
 /// `Engine` edit methods and does not create changelog boundaries or implement rollback.
+impl<R: EvaluationContext> Engine<R> {
+    pub(crate) fn ingest_pipeline(&mut self) -> crate::engine::ingest_pipeline::IngestPipeline<'_> {
+        self.graph.ingest_pipeline(&self.resolver)
+    }
+}
+
 pub struct EngineAction<'a, R>
 where
     R: EvaluationContext,
@@ -384,7 +451,7 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         if self.log.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
-            let old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             let addr = self.addr_for(sheet, row, col);
             let Some(log_ptr) = self.log else {
                 return Err(crate::engine::EditorError::TransactionFailed {
@@ -400,6 +467,15 @@ where
                 None
             };
 
+            self.engine.demote_span_containing_cell_for_write(
+                addr.sheet_id,
+                addr.coord.row(),
+                addr.coord.col(),
+            )?;
+            if old_formula.is_none() {
+                old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            }
+
             let delta_old_sem = if old_formula.is_some() {
                 None
             } else {
@@ -414,6 +490,12 @@ where
                 editor.set_cell_value(addr, value.clone());
             });
             log.patch_last_cell_event_old_state(addr, old_value.clone(), old_formula.clone());
+            self.engine
+                .record_formula_plane_structural_change(StructuralScope::Cell {
+                    sheet: addr.sheet_id,
+                    row: addr.coord.row(),
+                    col: addr.coord.col(),
+                });
 
             if let Some(undo_ptr) = self.arrow_undo {
                 // 1) Spill snapshot operations (computed overlay rect restore).
@@ -449,7 +531,7 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         if self.log.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
-            let old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             let addr = self.addr_for(sheet, row, col);
             let Some(log_ptr) = self.log else {
                 return Err(crate::engine::EditorError::TransactionFailed {
@@ -457,6 +539,14 @@ where
                 });
             };
 
+            self.engine.demote_span_containing_cell_for_write(
+                addr.sheet_id,
+                addr.coord.row(),
+                addr.coord.col(),
+            )?;
+            if old_formula.is_none() {
+                old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
+            }
             let delta_old = if self.arrow_undo.is_some() {
                 if old_formula.is_some() {
                     None
@@ -474,6 +564,12 @@ where
                 editor.set_cell_formula(addr, ast.clone());
             });
             log.patch_last_cell_event_old_state(addr, old_value, old_formula);
+            self.engine
+                .record_formula_plane_structural_change(StructuralScope::Cell {
+                    sheet: addr.sheet_id,
+                    row: addr.coord.row(),
+                    col: addr.coord.col(),
+                });
 
             if let Some(undo_ptr) = self.arrow_undo {
                 let new_events = &unsafe { (&*log_ptr).events() }[start_len..];
@@ -607,6 +703,15 @@ where
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
+            let op = StructuralOp::InsertRows {
+                sheet_id,
+                before: before0,
+                count,
+            };
+            self.engine.demote_spans_for_structural_op(
+                op,
+                Engine::<R>::structural_row_region(sheet_id, before0),
+            )?;
 
             // Graph structural insert (logged) - no snapshot bump.
             let summary = {
@@ -668,6 +773,15 @@ where
 
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let before0 = before.saturating_sub(1);
+            let op = StructuralOp::InsertColumns {
+                sheet_id,
+                before: before0,
+                count,
+            };
+            self.engine.demote_spans_for_structural_op(
+                op,
+                Engine::<R>::structural_col_region(sheet_id, before0),
+            )?;
 
             let summary = {
                 let log = unsafe { &mut *log_ptr };
@@ -754,6 +868,15 @@ struct VisibilityMaskCacheKey {
     version: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructuralScope {
+    Cell { sheet: SheetId, row: u32, col: u32 },
+    Region(Region),
+    Sheet(SheetId),
+    RemovedSheet(SheetId),
+    AllSheets,
+}
+
 struct SourceCacheSession {
     cache: Arc<std::sync::RwLock<SourceCache>>,
 }
@@ -771,6 +894,25 @@ pub struct EvalResult {
     pub computed_vertices: usize,
     pub cycle_errors: usize,
     pub elapsed: std::time::Duration,
+}
+
+/// Read-only engine counters used by benchmark/instrumentation tooling.
+///
+/// These counters are deliberately observational: collecting them must not mutate engine state or
+/// alter formula evaluation semantics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EngineBaselineStats {
+    pub graph_vertex_count: usize,
+    pub graph_formula_vertex_count: usize,
+    pub graph_edge_count: usize,
+    pub dirty_vertex_count: usize,
+    pub evaluation_vertex_count: usize,
+    pub formula_ast_root_count: usize,
+    pub formula_ast_node_count: usize,
+    pub staged_formula_count: usize,
+    pub formula_plane_active_span_count: usize,
+    pub formula_plane_producer_result_entries: usize,
+    pub formula_plane_consumer_read_entries: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1143,6 +1285,7 @@ where
             None
         };
 
+        let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1162,15 +1305,22 @@ where
             computed_overlay_mirroring_disabled: false,
             force_materialize_range_views: false,
             row_bounds_cache: std::sync::RwLock::new(None),
+            used_axis_bounds_cache: std::sync::RwLock::new(None),
+            lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
+            last_formula_ingest_report: None,
+            formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
+            formula_plane_indexes_epoch_seen: 0,
+            #[cfg(test)]
+            last_formula_plane_span_eval_report: None,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -1203,6 +1353,7 @@ where
                 ))
             }
         });
+        let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1222,15 +1373,22 @@ where
             computed_overlay_mirroring_disabled: false,
             force_materialize_range_views: false,
             row_bounds_cache: std::sync::RwLock::new(None),
+            used_axis_bounds_cache: std::sync::RwLock::new(None),
+            lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
+            last_formula_ingest_report: None,
+            formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
+            formula_plane_indexes_epoch_seen: 0,
+            #[cfg(test)]
+            last_formula_plane_span_eval_report: None,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -1261,6 +1419,112 @@ where
 
     pub fn virtual_dep_fallback_activations(&self) -> u64 {
         self.virtual_dep_fallback_activations
+    }
+
+    pub(crate) fn last_lookup_index_cache_report(&self) -> LookupIndexCacheReport {
+        self.lookup_index_cache.report()
+    }
+
+    fn lookup_view_contains_volatile(&self, view: &RangeView<'_>, sheet_id: SheetId) -> bool {
+        let start_row = view.start_row();
+        let end_row = view.end_row();
+        let start_col = view.start_col();
+        let end_col = view.end_col();
+        for row in start_row..=end_row {
+            let Ok(row_u32) = u32::try_from(row) else {
+                return true;
+            };
+            for col in start_col..=end_col {
+                let Ok(col_u32) = u32::try_from(col) else {
+                    return true;
+                };
+                let cell_ref = self
+                    .graph
+                    .make_cell_ref_internal(sheet_id, row_u32, col_u32);
+                if let Some(vertex_id) = self.graph.get_vertex_id_for_address(&cell_ref)
+                    && self.graph.is_volatile(*vertex_id)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn build_lookup_index_impl(
+        &self,
+        view: &RangeView<'_>,
+        axis: LookupAxis,
+    ) -> Option<Arc<LookupIndex>> {
+        let (rows, cols) = view.dims();
+        if rows == 0 || cols == 0 {
+            self.lookup_index_cache.note_skipped_tiny();
+            return None;
+        }
+        let len = match axis {
+            LookupAxis::ColumnInView(col) => {
+                if col >= cols {
+                    self.lookup_index_cache.note_skipped_tiny();
+                    return None;
+                }
+                rows
+            }
+            LookupAxis::RowInView(row) => {
+                if row >= rows {
+                    self.lookup_index_cache.note_skipped_tiny();
+                    return None;
+                }
+                cols
+            }
+        };
+        if len < 64 {
+            self.lookup_index_cache.note_skipped_tiny();
+            return None;
+        }
+
+        let sheet_id = self.graph.sheet_id(view.sheet_name())?;
+        let key = LookupIndexKey {
+            sheet_id,
+            start_row: u32::try_from(view.start_row()).ok()?,
+            start_col: u32::try_from(view.start_col()).ok()?,
+            end_row: u32::try_from(view.end_row()).ok()?,
+            end_col: u32::try_from(view.end_col()).ok()?,
+            axis,
+            snapshot_id: self.data_snapshot_id(),
+        };
+        if let Some(index) = self.lookup_index_cache.get(&key) {
+            return Some(index);
+        }
+        if self
+            .lookup_index_cache
+            .would_exceed_cap(estimate_bytes(len, 0))
+        {
+            self.lookup_index_cache.note_skipped_cap();
+            return None;
+        }
+        if !self.lookup_index_cache.should_build(key) {
+            return None;
+        }
+        if self.lookup_index_cache.is_known_volatile(&key) {
+            self.lookup_index_cache.note_skipped_volatile();
+            return None;
+        }
+        if self.lookup_view_contains_volatile(view, sheet_id) {
+            self.lookup_index_cache.note_volatile_key(key);
+            self.lookup_index_cache.note_skipped_volatile();
+            return None;
+        }
+        match LookupIndex::build(view, axis).ok()? {
+            BuildOutcome::Built(index) => self.lookup_index_cache.insert_if_room(key, index),
+            BuildOutcome::ErrorInLookupAxis => {
+                self.lookup_index_cache.note_skipped_error();
+                None
+            }
+            BuildOutcome::Degenerate => {
+                self.lookup_index_cache.note_skipped_tiny();
+                None
+            }
+        }
     }
 
     fn reset_virtual_dep_telemetry_if_disabled(&mut self) {
@@ -1489,10 +1753,38 @@ where
     }
 
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
+        self.demote_all_spans()
+            .map_err(Self::editor_error_to_excel)?;
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
+        self.clear_all_computed_overlays();
+        self.mark_all_formula_vertices_dirty();
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(id)
+    }
+
+    pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<SheetId, ExcelError> {
+        self.demote_all_spans()
+            .map_err(Self::editor_error_to_excel)?;
+        let source_id = self.graph.sheet_id(source).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value).with_message("Source sheet does not exist")
+        })?;
+        let new_id = self.graph.duplicate_sheet(source_id, new_name)?;
+
+        if let Some(source_sheet) = self.arrow_sheets.sheet(source).cloned() {
+            let mut copied_sheet = source_sheet;
+            copied_sheet.name = Arc::<str>::from(new_name);
+            self.arrow_sheets.sheets.push(copied_sheet);
+        } else {
+            self.ensure_arrow_sheet(new_name);
+        }
+
+        self.clear_all_computed_overlays();
+        self.mark_all_formula_vertices_dirty();
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        self.mark_topology_edited();
+        Ok(new_id)
     }
 
     fn ensure_arrow_sheet(&mut self, name: &str) {
@@ -1512,12 +1804,18 @@ where
 
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         let name = self.graph.sheet_name(sheet_id).to_string();
+        self.demote_all_spans()
+            .map_err(Self::editor_error_to_excel)?;
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
+        self.clear_all_computed_overlays();
+        self.mark_all_formula_vertices_dirty();
         self.staged_formulas.remove(&name);
         if self.row_visibility.remove(&sheet_id).is_some() {
             self.invalidate_row_visibility_mask_cache();
         }
+        self.record_formula_plane_structural_change(StructuralScope::RemovedSheet(sheet_id));
+        self.mark_topology_edited();
         Ok(())
     }
 
@@ -1552,6 +1850,9 @@ where
                 for v_id in sheet_vertices {
                     self.graph.mark_vertex_dirty(v_id);
                 }
+                // Sheet rename is metadata-only and preserves SheetId. References resolve by
+                // SheetId, so no FormulaPlane changed region is required. Removing this avoids
+                // re-evaluating every span that reads the renamed sheet.
                 self.mark_topology_edited();
                 Ok(())
             }
@@ -1637,6 +1938,7 @@ where
         scope: NameScope,
     ) -> Result<(), ExcelError> {
         self.graph.define_name(name, definition, scope)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1648,12 +1950,14 @@ where
         scope: NameScope,
     ) -> Result<(), ExcelError> {
         self.graph.update_name(name, definition, scope)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
 
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
         self.graph.delete_name(name, scope)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1668,6 +1972,7 @@ where
     ) -> Result<(), ExcelError> {
         self.graph
             .define_table(name, range, header_row, headers, totals_row)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1678,6 +1983,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.define_source_scalar(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1688,6 +1994,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.define_source_table(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(())
     }
@@ -1697,7 +2004,9 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
-        self.graph.set_source_scalar_version(name, version)
+        self.graph.set_source_scalar_version(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        Ok(())
     }
 
     pub fn set_source_table_version(
@@ -1705,11 +2014,15 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
-        self.graph.set_source_table_version(name, version)
+        self.graph.set_source_table_version(name, version)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        Ok(())
     }
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
-        self.graph.invalidate_source(name)
+        self.graph.invalidate_source(name)?;
+        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        Ok(())
     }
 
     pub fn vertex_value(&self, vertex: VertexId) -> Option<LiteralValue> {
@@ -1726,6 +2039,43 @@ where
 
     pub fn evaluation_vertices(&self) -> Vec<VertexId> {
         self.graph.get_evaluation_vertices()
+    }
+
+    /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
+    pub fn baseline_stats(&self) -> EngineBaselineStats {
+        let graph = self.graph.baseline_stats();
+        let formula_authority = self.graph.formula_authority();
+        EngineBaselineStats {
+            graph_vertex_count: graph.graph_vertex_count,
+            graph_formula_vertex_count: graph.graph_formula_vertex_count,
+            graph_edge_count: graph.graph_edge_count,
+            dirty_vertex_count: graph.dirty_vertex_count,
+            evaluation_vertex_count: graph.evaluation_vertex_count,
+            formula_ast_root_count: graph.formula_ast_root_count,
+            formula_ast_node_count: graph.formula_ast_node_count,
+            staged_formula_count: self.staged_formula_count(),
+            formula_plane_active_span_count: formula_authority.active_span_count(),
+            formula_plane_producer_result_entries: formula_authority.producer_results.len(),
+            formula_plane_consumer_read_entries: formula_authority.consumer_reads.len(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn used_axis_bounds_cache_stats(&self) -> (usize, usize, usize, usize) {
+        self.used_axis_bounds_cache
+            .read()
+            .ok()
+            .and_then(|guard| {
+                guard.as_ref().map(|cache| {
+                    (
+                        cache.row_hits.load(Ordering::Relaxed),
+                        cache.row_misses.load(Ordering::Relaxed),
+                        cache.col_hits.load(Ordering::Relaxed),
+                        cache.col_misses.load(Ordering::Relaxed),
+                    )
+                })
+            })
+            .unwrap_or((0, 0, 0, 0))
     }
 
     pub fn set_first_load_assume_new(&mut self, enabled: bool) {
@@ -1853,6 +2203,9 @@ where
         match res {
             Ok(v) => {
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                    for event in &journal.graph.events {
+                        self.record_formula_plane_change_for_event(event);
+                    }
                     self.mark_data_edited();
                 }
                 Ok((v, journal))
@@ -1864,6 +2217,11 @@ where
                             "Engine::action_atomic rollback failed after error '{e}': {rb}"
                         ),
                     });
+                }
+                if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                    for event in &journal.graph.events {
+                        self.record_formula_plane_change_for_event(event);
+                    }
                 }
                 Err(e)
             }
@@ -2033,6 +2391,9 @@ where
         for ev in &log.events()[start_len..] {
             self.mirror_forward_change_to_arrow(ev);
         }
+        for ev in &log.events()[start_len..] {
+            self.record_formula_plane_change_for_event(ev);
+        }
 
         ret
     }
@@ -2048,6 +2409,11 @@ where
             self.apply_inverse_staged_formula_event(&item.event);
         }
         self.mirror_undo_batch_to_arrow(&batch);
+        if !batch.is_empty() {
+            for item in &batch {
+                self.record_formula_plane_change_for_event(&item.event);
+            }
+        }
         Ok(())
     }
 
@@ -2062,6 +2428,11 @@ where
             self.apply_forward_staged_formula_event(&item.event);
         }
         self.mirror_redo_batch_to_arrow(&batch);
+        if !batch.is_empty() {
+            for item in &batch {
+                self.record_formula_plane_change_for_event(&item.event);
+            }
+        }
         Ok(())
     }
 
@@ -2079,6 +2450,12 @@ where
         journal.graph.undo(&mut self.graph)?;
         self.apply_inverse_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
+        if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+            for event in &journal.graph.events {
+                self.record_formula_plane_change_for_event(event);
+            }
+            self.mark_data_edited();
+        }
 
         undo.push_redo_action(journal);
         Ok(())
@@ -2098,6 +2475,12 @@ where
         journal.graph.redo(&mut self.graph)?;
         self.apply_forward_row_visibility_events(&journal.graph.events);
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
+        if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+            for event in &journal.graph.events {
+                self.record_formula_plane_change_for_event(event);
+            }
+            self.mark_data_edited();
+        }
 
         undo.push_done_action(journal);
         Ok(())
@@ -2277,6 +2660,24 @@ where
         self.has_edited = true;
     }
 
+    fn mark_all_formula_vertices_dirty(&mut self) {
+        let vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
+        for vertex in vertices {
+            self.graph.mark_vertex_dirty(vertex);
+        }
+    }
+
+    fn mark_moved_formula_vertices_dirty(
+        &mut self,
+        summary: &crate::engine::graph::editor::vertex_editor::ShiftSummary,
+    ) {
+        for vertex in &summary.vertices_moved {
+            if self.graph.get_formula_id(*vertex).is_some() {
+                self.graph.mark_vertex_dirty(*vertex);
+            }
+        }
+    }
+
     /// Access Arrow sheet store (read-only)
     pub fn sheet_store(&self) -> &SheetStore {
         &self.arrow_sheets
@@ -2289,6 +2690,10 @@ where
 
     pub fn has_staged_formulas(&self) -> bool {
         !self.staged_formulas.is_empty()
+    }
+
+    pub fn staged_formula_count(&self) -> usize {
+        self.staged_formulas.values().map(Vec::len).sum()
     }
 
     pub fn staged_formula_state_snapshot(&self) -> Vec<(String, u32, u32, String)> {
@@ -2380,6 +2785,598 @@ where
         self.formula_parse_diagnostics.clear();
     }
 
+    pub fn last_formula_ingest_report(&self) -> Option<&FormulaIngestReport> {
+        self.last_formula_ingest_report.as_ref()
+    }
+
+    pub fn formula_ingest_report_total(&self) -> &FormulaIngestReport {
+        &self.formula_ingest_report_total
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_formula_plane_span_eval_report(&self) -> Option<&SpanEvalReport> {
+        self.last_formula_plane_span_eval_report.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn formula_plane_indexes_epoch(&self) -> u64 {
+        self.graph.formula_authority().indexes_epoch()
+    }
+
+    fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
+        self.formula_ingest_report_total.mode = report.mode;
+        self.formula_ingest_report_total.accumulate(&report);
+        self.last_formula_ingest_report = Some(report);
+    }
+
+    fn analyze_formula_plane_shadow_candidates(
+        &mut self,
+        batches: &[FormulaIngestBatch],
+    ) -> FormulaIngestReport {
+        let mut report = FormulaIngestReport::with_mode(FormulaPlaneMode::Shadow);
+        report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+
+        // Touch graph-owned authority deliberately: Tranche 3 shadow analysis uses
+        // scratch state, but FormulaPlane ownership now lives on DependencyGraph.
+        let _active_epoch = self.graph.formula_authority().plane.epoch();
+
+        let batch_sheet_ids: Vec<SheetId> = batches
+            .iter()
+            .map(|batch| self.graph.sheet_id_mut(&batch.sheet_name))
+            .collect();
+        let mut groups: BTreeMap<
+            (SheetId, u64, u32),
+            Vec<(FormulaPlacementCandidate, CandidateAnalysis)>,
+        > = BTreeMap::new();
+        {
+            let mut pipeline = self.ingest_pipeline();
+            for (batch, sheet_id) in batches.iter().zip(batch_sheet_ids.iter().copied()) {
+                for record in &batch.formulas {
+                    if record.row == 0 || record.col == 0 {
+                        report.shadow_candidate_cells =
+                            report.shadow_candidate_cells.saturating_add(1);
+                        report.shadow_fallback_cells =
+                            report.shadow_fallback_cells.saturating_add(1);
+                        Self::record_shadow_fallback_reason(
+                            &mut report,
+                            PlacementFallbackReason::UnsupportedShapeOrGaps,
+                            1,
+                        );
+                        continue;
+                    }
+
+                    let placement = CellRef::new(
+                        sheet_id,
+                        Coord::from_excel(record.row, record.col, true, true),
+                    );
+                    let ingested = match pipeline.ingest_formula(
+                        FormulaAstInput::RawArena(record.ast_id),
+                        placement,
+                        record.formula_text.clone(),
+                    ) {
+                        Ok(ingested) => ingested,
+                        Err(_) => {
+                            report.shadow_candidate_cells =
+                                report.shadow_candidate_cells.saturating_add(1);
+                            report.shadow_fallback_cells =
+                                report.shadow_fallback_cells.saturating_add(1);
+                            Self::record_shadow_fallback_reason(
+                                &mut report,
+                                PlacementFallbackReason::UnsupportedCanonicalTemplate,
+                                1,
+                            );
+                            continue;
+                        }
+                    };
+                    let candidate = FormulaPlacementCandidate::new(
+                        sheet_id,
+                        record.row - 1,
+                        record.col - 1,
+                        ingested.ast_id,
+                        record.formula_text.clone(),
+                    );
+                    let analysis = match CandidateAnalysis::from_ingested(&candidate, &ingested) {
+                        Ok(analysis) => analysis,
+                        Err(reason) => {
+                            report.shadow_candidate_cells =
+                                report.shadow_candidate_cells.saturating_add(1);
+                            report.shadow_fallback_cells =
+                                report.shadow_fallback_cells.saturating_add(1);
+                            Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                            continue;
+                        }
+                    };
+                    groups
+                        .entry((
+                            sheet_id,
+                            ingested.parameterized_canonical_hash,
+                            candidate.col,
+                        ))
+                        .or_default()
+                        .push((candidate, analysis));
+                }
+            }
+        }
+
+        let mut scratch_plane = FormulaPlane::default();
+        for entries in groups.into_values() {
+            let (candidates, analyses): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+            for (component, component_analyses) in
+                Self::split_candidate_components_with_analyses(candidates, analyses)
+            {
+                let placement_report = place_candidate_family_with_analyses(
+                    &mut scratch_plane,
+                    component,
+                    component_analyses,
+                );
+                let counters = placement_report.counters;
+                report.shadow_candidate_cells = report
+                    .shadow_candidate_cells
+                    .saturating_add(counters.formula_cells_seen);
+                report.shadow_accepted_span_cells = report
+                    .shadow_accepted_span_cells
+                    .saturating_add(counters.accepted_span_cells);
+                report.shadow_fallback_cells = report
+                    .shadow_fallback_cells
+                    .saturating_add(counters.legacy_cells);
+                report.shadow_templates_interned = report
+                    .shadow_templates_interned
+                    .saturating_add(counters.templates_interned);
+                report.shadow_spans_created = report
+                    .shadow_spans_created
+                    .saturating_add(counters.spans_created);
+                report.graph_formula_vertices_avoided_shadow = report
+                    .graph_formula_vertices_avoided_shadow
+                    .saturating_add(counters.formula_vertices_avoided);
+                report.ast_roots_avoided_shadow = report
+                    .ast_roots_avoided_shadow
+                    .saturating_add(counters.ast_roots_avoided);
+                report.edge_rows_avoided_shadow = report
+                    .edge_rows_avoided_shadow
+                    .saturating_add(counters.edge_rows_avoided);
+                for (reason, count) in counters.fallback_reasons {
+                    Self::record_shadow_fallback_reason(&mut report, reason, count);
+                }
+            }
+        }
+        report
+    }
+
+    fn record_shadow_fallback_reason(
+        report: &mut FormulaIngestReport,
+        reason: PlacementFallbackReason,
+        count: u64,
+    ) {
+        *report
+            .fallback_reasons
+            .entry(format!("{reason:?}"))
+            .or_default() += count;
+    }
+
+    fn analyze_formula_plane_authoritative_ingest(
+        &mut self,
+        batches: &[FormulaIngestBatch],
+    ) -> (
+        FormulaIngestReport,
+        Vec<FormulaIngestBatch>,
+        PlannedFormulaMaterialize,
+    ) {
+        let mut report =
+            FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+        report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+
+        let mut pending_candidates: Vec<(String, FormulaPlacementCandidate)> = Vec::new();
+        let mut fallback: BTreeMap<String, Vec<FormulaIngestRecord>> = BTreeMap::new();
+        let mut planned_fallback: PlannedFormulaMaterialize = BTreeMap::new();
+
+        for batch in batches {
+            let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
+            for record in &batch.formulas {
+                if record.row == 0 || record.col == 0 {
+                    report.shadow_candidate_cells = report.shadow_candidate_cells.saturating_add(1);
+                    report.shadow_fallback_cells = report.shadow_fallback_cells.saturating_add(1);
+                    Self::record_shadow_fallback_reason(
+                        &mut report,
+                        PlacementFallbackReason::UnsupportedShapeOrGaps,
+                        1,
+                    );
+                    fallback
+                        .entry(batch.sheet_name.clone())
+                        .or_default()
+                        .push(record.clone());
+                    continue;
+                }
+
+                pending_candidates.push((
+                    batch.sheet_name.clone(),
+                    FormulaPlacementCandidate::new(
+                        sheet_id,
+                        record.row - 1,
+                        record.col - 1,
+                        record.ast_id,
+                        record.formula_text.clone(),
+                    ),
+                ));
+            }
+        }
+
+        let mut groups: BTreeMap<(SheetId, u64, u32), Vec<usize>> = BTreeMap::new();
+        let mut analyses_by_index: Vec<Option<CandidateAnalysis>> =
+            (0..pending_candidates.len()).map(|_| None).collect();
+        let mut plans_by_index: Vec<Option<DependencyPlanRow>> =
+            (0..pending_candidates.len()).map(|_| None).collect();
+        {
+            let mut pipeline = self.ingest_pipeline();
+            for (idx, (sheet_name, candidate)) in pending_candidates.iter_mut().enumerate() {
+                let placement = CellRef::new(
+                    candidate.sheet_id,
+                    Coord::from_excel(
+                        candidate.row.saturating_add(1),
+                        candidate.col.saturating_add(1),
+                        true,
+                        true,
+                    ),
+                );
+                let ingested = pipeline.ingest_formula(
+                    FormulaAstInput::RawArena(candidate.ast_id),
+                    placement,
+                    candidate.formula_text.clone(),
+                );
+                match ingested {
+                    Ok(ingested) => {
+                        candidate.ast_id = ingested.ast_id;
+                        let canonical_hash = ingested.parameterized_canonical_hash;
+                        let dep_plan = ingested.dep_plan.clone();
+                        match CandidateAnalysis::from_ingested(candidate, &ingested) {
+                            Ok(analysis) => {
+                                groups
+                                    .entry((candidate.sheet_id, canonical_hash, candidate.col))
+                                    .or_default()
+                                    .push(idx);
+                                analyses_by_index[idx] = Some(analysis);
+                                plans_by_index[idx] = Some(dep_plan);
+                            }
+                            Err(reason) => {
+                                report.shadow_candidate_cells =
+                                    report.shadow_candidate_cells.saturating_add(1);
+                                report.shadow_fallback_cells =
+                                    report.shadow_fallback_cells.saturating_add(1);
+                                Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                                planned_fallback
+                                    .entry(sheet_name.clone())
+                                    .or_default()
+                                    .push((
+                                        candidate.row.saturating_add(1),
+                                        candidate.col.saturating_add(1),
+                                        candidate.ast_id,
+                                        dep_plan,
+                                    ));
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        report.shadow_candidate_cells =
+                            report.shadow_candidate_cells.saturating_add(1);
+                        report.shadow_fallback_cells =
+                            report.shadow_fallback_cells.saturating_add(1);
+                        Self::record_shadow_fallback_reason(
+                            &mut report,
+                            PlacementFallbackReason::UnsupportedCanonicalTemplate,
+                            1,
+                        );
+                        fallback.entry(sheet_name.clone()).or_default().push(
+                            FormulaIngestRecord::new(
+                                candidate.row.saturating_add(1),
+                                candidate.col.saturating_add(1),
+                                candidate.ast_id,
+                                candidate.formula_text.clone(),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+
+        for ((_sheet_id, _canonical_hash, _col), candidate_indices) in groups {
+            let sheet_name = pending_candidates[candidate_indices[0]].0.clone();
+            let mut plans_by_coord: BTreeMap<(u32, u32), Vec<DependencyPlanRow>> = BTreeMap::new();
+            for idx in &candidate_indices {
+                if let Some(plan) = plans_by_index[*idx].clone() {
+                    let candidate = &pending_candidates[*idx].1;
+                    plans_by_coord
+                        .entry((candidate.row, candidate.col))
+                        .or_default()
+                        .push(plan);
+                }
+            }
+            let candidates: Vec<_> = candidate_indices
+                .iter()
+                .map(|idx| pending_candidates[*idx].1.clone())
+                .collect();
+            let components = Self::split_shadow_candidate_components(candidates);
+            let analyzed_components =
+                if components.len() == 1 && components[0].len() == candidate_indices.len() {
+                    let component = components.into_iter().next().expect("one component");
+                    let component_analyses = candidate_indices
+                        .iter()
+                        .map(|idx| {
+                            analyses_by_index[*idx]
+                                .take()
+                                .expect("candidate analysis must be used once")
+                        })
+                        .collect();
+                    vec![(component, component_analyses)]
+                } else {
+                    let mut indices_by_coord: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
+                    for idx in candidate_indices.iter().rev() {
+                        let candidate = &pending_candidates[*idx].1;
+                        indices_by_coord
+                            .entry((candidate.row, candidate.col))
+                            .or_default()
+                            .push(*idx);
+                    }
+
+                    components
+                        .into_iter()
+                        .map(|component| {
+                            let mut component_analyses = Vec::with_capacity(component.len());
+                            for candidate in &component {
+                                let idx = indices_by_coord
+                                    .get_mut(&(candidate.row, candidate.col))
+                                    .and_then(Vec::pop)
+                                    .expect("component candidate must have a precomputed analysis");
+                                component_analyses.push(
+                                    analyses_by_index[idx]
+                                        .take()
+                                        .expect("candidate analysis must be used once"),
+                                );
+                            }
+                            (component, component_analyses)
+                        })
+                        .collect()
+                };
+
+            for (component, component_analyses) in analyzed_components {
+                for (component, component_analyses) in
+                    split_candidate_affine_literal_runs(component, component_analyses)
+                {
+                    let placement_report = {
+                        let authority = self.graph.formula_authority_mut();
+                        place_candidate_family_with_analyses(
+                            &mut authority.plane,
+                            component.clone(),
+                            component_analyses,
+                        )
+                    };
+                    Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
+
+                    for result in &placement_report.results {
+                        let FormulaPlacementResult::Legacy { placement, .. } = result else {
+                            continue;
+                        };
+                        if let Some(candidate) = component
+                            .iter()
+                            .find(|candidate| candidate.placement() == *placement)
+                        {
+                            let plan = plans_by_coord
+                                .get_mut(&(candidate.row, candidate.col))
+                                .and_then(Vec::pop);
+                            if let Some(plan) = plan {
+                                planned_fallback
+                                    .entry(sheet_name.clone())
+                                    .or_default()
+                                    .push((
+                                        candidate.row.saturating_add(1),
+                                        candidate.col.saturating_add(1),
+                                        candidate.ast_id,
+                                        plan,
+                                    ));
+                            } else {
+                                fallback.entry(sheet_name.clone()).or_default().push(
+                                    FormulaIngestRecord::new(
+                                        candidate.row.saturating_add(1),
+                                        candidate.col.saturating_add(1),
+                                        candidate.ast_id,
+                                        candidate.formula_text.clone(),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let _index_report = self.graph.formula_authority_mut().rebuild_indexes();
+
+        let fallback_batches = fallback
+            .into_iter()
+            .map(|(sheet_name, formulas)| FormulaIngestBatch::new(sheet_name, formulas))
+            .collect();
+        (report, fallback_batches, planned_fallback)
+    }
+
+    fn accumulate_formula_plane_placement_report(
+        report: &mut FormulaIngestReport,
+        placement_report: &crate::formula_plane::placement::FormulaPlacementReport,
+    ) {
+        let counters = &placement_report.counters;
+        report.shadow_candidate_cells = report
+            .shadow_candidate_cells
+            .saturating_add(counters.formula_cells_seen);
+        report.shadow_accepted_span_cells = report
+            .shadow_accepted_span_cells
+            .saturating_add(counters.accepted_span_cells);
+        report.shadow_fallback_cells = report
+            .shadow_fallback_cells
+            .saturating_add(counters.legacy_cells);
+        report.shadow_templates_interned = report
+            .shadow_templates_interned
+            .saturating_add(counters.templates_interned);
+        report.shadow_spans_created = report
+            .shadow_spans_created
+            .saturating_add(counters.spans_created);
+        report.graph_formula_vertices_avoided_shadow = report
+            .graph_formula_vertices_avoided_shadow
+            .saturating_add(counters.formula_vertices_avoided);
+        report.ast_roots_avoided_shadow = report
+            .ast_roots_avoided_shadow
+            .saturating_add(counters.ast_roots_avoided);
+        report.edge_rows_avoided_shadow = report
+            .edge_rows_avoided_shadow
+            .saturating_add(counters.edge_rows_avoided);
+        for (reason, count) in &counters.fallback_reasons {
+            Self::record_shadow_fallback_reason(report, *reason, *count);
+        }
+    }
+
+    fn split_candidate_components_with_analyses(
+        candidates: Vec<FormulaPlacementCandidate>,
+        mut analyses: Vec<CandidateAnalysis>,
+    ) -> Vec<(Vec<FormulaPlacementCandidate>, Vec<CandidateAnalysis>)> {
+        let components = Self::split_shadow_candidate_components(candidates.clone());
+        let mut analysis_by_coord: BTreeMap<(u32, u32), Vec<CandidateAnalysis>> = BTreeMap::new();
+        for (candidate, analysis) in candidates.into_iter().zip(analyses.drain(..)) {
+            analysis_by_coord
+                .entry((candidate.row, candidate.col))
+                .or_default()
+                .push(analysis);
+        }
+        components
+            .into_iter()
+            .flat_map(|component| {
+                let mut component_analyses = Vec::with_capacity(component.len());
+                for candidate in &component {
+                    let analysis = analysis_by_coord
+                        .get_mut(&(candidate.row, candidate.col))
+                        .and_then(Vec::pop)
+                        .expect("component candidate must have a precomputed analysis");
+                    component_analyses.push(analysis);
+                }
+                split_candidate_affine_literal_runs(component, component_analyses)
+            })
+            .collect()
+    }
+
+    fn split_shadow_candidate_components(
+        candidates: Vec<FormulaPlacementCandidate>,
+    ) -> Vec<Vec<FormulaPlacementCandidate>> {
+        if candidates.len() <= 1 {
+            return vec![candidates];
+        }
+
+        let mut coord_to_indices: BTreeMap<(u32, u32), Vec<usize>> = BTreeMap::new();
+        for (idx, candidate) in candidates.iter().enumerate() {
+            coord_to_indices
+                .entry((candidate.row, candidate.col))
+                .or_default()
+                .push(idx);
+        }
+
+        let mut remaining: BTreeSet<usize> = (0..candidates.len()).collect();
+        let mut components = Vec::new();
+        while let Some(&start) = remaining.iter().next() {
+            remaining.remove(&start);
+            let mut queue = VecDeque::from([start]);
+            let mut component_indices = Vec::new();
+
+            while let Some(idx) = queue.pop_front() {
+                component_indices.push(idx);
+                let candidate = &candidates[idx];
+                let mut neighbor_coords = Vec::with_capacity(5);
+                neighbor_coords.push((candidate.row, candidate.col));
+                if let Some(row) = candidate.row.checked_sub(1) {
+                    neighbor_coords.push((row, candidate.col));
+                }
+                neighbor_coords.push((candidate.row.saturating_add(1), candidate.col));
+                if let Some(col) = candidate.col.checked_sub(1) {
+                    neighbor_coords.push((candidate.row, col));
+                }
+                neighbor_coords.push((candidate.row, candidate.col.saturating_add(1)));
+
+                for coord in neighbor_coords {
+                    if let Some(indices) = coord_to_indices.get(&coord) {
+                        for &neighbor in indices {
+                            if remaining.remove(&neighbor) {
+                                queue.push_back(neighbor);
+                            }
+                        }
+                    }
+                }
+            }
+
+            component_indices.sort_by_key(|idx| {
+                let candidate = &candidates[*idx];
+                (candidate.row, candidate.col, *idx)
+            });
+            components.push(
+                component_indices
+                    .into_iter()
+                    .map(|idx| candidates[idx].clone())
+                    .collect(),
+            );
+        }
+
+        components
+    }
+
+    pub fn ingest_formula_batches(
+        &mut self,
+        batches: Vec<FormulaIngestBatch>,
+    ) -> Result<FormulaIngestReport, ExcelError> {
+        let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
+        let (mut report, materialize_batches, planned_materialize) =
+            match self.config.formula_plane_mode {
+                FormulaPlaneMode::Off => (
+                    FormulaIngestReport::with_mode(FormulaPlaneMode::Off),
+                    batches,
+                    BTreeMap::new(),
+                ),
+                FormulaPlaneMode::Shadow => (
+                    self.analyze_formula_plane_shadow_candidates(&batches),
+                    batches,
+                    BTreeMap::new(),
+                ),
+                FormulaPlaneMode::AuthoritativeExperimental => {
+                    self.analyze_formula_plane_authoritative_ingest(&batches)
+                }
+            };
+        report.formula_cells_seen = formula_cells_seen;
+
+        if !materialize_batches.iter().all(FormulaIngestBatch::is_empty)
+            || !planned_materialize.is_empty()
+        {
+            let mut builder = self.begin_bulk_ingest();
+            for batch in materialize_batches {
+                if batch.is_empty() {
+                    continue;
+                }
+                let sheet_id = builder.add_sheet(&batch.sheet_name);
+                builder.add_formula_ids(
+                    sheet_id,
+                    batch
+                        .formulas
+                        .into_iter()
+                        .map(|record| (record.row, record.col, record.ast_id)),
+                );
+            }
+            for (sheet_name, formulas) in planned_materialize {
+                if formulas.is_empty() {
+                    continue;
+                }
+                let sheet_id = builder.add_sheet(&sheet_name);
+                builder.add_formula_plans(sheet_id, formulas);
+            }
+            let summary = builder.finish()?;
+            report.graph_formula_cells_materialized = summary.formulas as u64;
+            report.graph_vertices_created = summary.vertices as u64;
+            report.graph_edges_created = summary.edges as u64;
+        }
+
+        self.record_formula_ingest_report(report.clone());
+        Ok(report)
+    }
+
     pub fn handle_formula_parse_error(
         &mut self,
         sheet: &str,
@@ -2435,11 +3432,11 @@ where
             let _ = self.add_sheet(sheet);
         }
 
-        // Parse/recover first, then borrow graph builder.
+        // Parse/recover first, then pass prepared batches through the centralized ingest seam.
         let mut prepared: PreparedFormulaBatches = Vec::new();
         for (sheet, entries) in staged {
-            let mut formulas: Vec<ParsedFormulaEntry> = Vec::new();
-            let mut cache: rustc_hash::FxHashMap<String, ASTNode> =
+            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
+            let mut cache: rustc_hash::FxHashMap<String, Option<crate::engine::arena::AstNodeId>> =
                 rustc_hash::FxHashMap::default();
             cache.reserve(4096);
 
@@ -2449,37 +3446,37 @@ where
                 } else {
                     format!("={txt}")
                 };
-                let ast = if let Some(p) = cache.get(&key) {
-                    Some(p.clone())
+                let ast_id = if let Some(cached) = cache.get(&key) {
+                    *cached
                 } else {
-                    match formualizer_parse::parser::parse(&key) {
-                        Ok(parsed) => {
-                            cache.insert(key.clone(), parsed.clone());
-                            Some(parsed)
-                        }
+                    let parsed = match formualizer_parse::parser::parse(&key) {
+                        Ok(parsed) => Some(parsed),
                         Err(e) => {
                             self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
                         }
-                    }
+                    };
+                    let ast_id = parsed.as_ref().map(|ast| self.intern_formula_ast(ast));
+                    cache.insert(key.clone(), ast_id);
+                    ast_id
                 };
 
-                if let Some(ast) = ast {
-                    formulas.push((row, col, ast));
+                if let Some(ast_id) = ast_id {
+                    formulas.push(FormulaIngestRecord::new(
+                        row,
+                        col,
+                        ast_id,
+                        Some(Arc::<str>::from(key.clone())),
+                    ));
                 }
             }
 
             if !formulas.is_empty() {
-                prepared.push((sheet, formulas));
+                prepared.push(FormulaIngestBatch::new(sheet, formulas));
             }
         }
 
         if !prepared.is_empty() {
-            let mut builder = self.begin_bulk_ingest();
-            for (sheet, formulas) in prepared {
-                let sid = builder.add_sheet(&sheet);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            let _ = builder.finish();
+            let _ = self.ingest_formula_batches(prepared)?;
         }
         Ok(())
     }
@@ -2504,49 +3501,50 @@ where
             let _ = self.add_sheet(sheet);
         }
 
-        // Parse/recover first, then borrow graph builder.
+        // Parse/recover first, then pass prepared batches through the centralized ingest seam.
         let mut prepared: PreparedFormulaBatches = Vec::new();
-        let mut cache: rustc_hash::FxHashMap<String, ASTNode> = rustc_hash::FxHashMap::default();
+        let mut cache: rustc_hash::FxHashMap<String, Option<crate::engine::arena::AstNodeId>> =
+            rustc_hash::FxHashMap::default();
         cache.reserve(4096);
 
         for (sheet, entries) in collected {
-            let mut formulas: Vec<ParsedFormulaEntry> = Vec::new();
+            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
             for (row, col, txt) in entries {
                 let key = if txt.starts_with('=') {
                     txt
                 } else {
                     format!("={txt}")
                 };
-                let ast = if let Some(p) = cache.get(&key) {
-                    Some(p.clone())
+                let ast_id = if let Some(cached) = cache.get(&key) {
+                    *cached
                 } else {
-                    match formualizer_parse::parser::parse(&key) {
-                        Ok(parsed) => {
-                            cache.insert(key.clone(), parsed.clone());
-                            Some(parsed)
-                        }
+                    let parsed = match formualizer_parse::parser::parse(&key) {
+                        Ok(parsed) => Some(parsed),
                         Err(e) => {
                             self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
                         }
-                    }
+                    };
+                    let ast_id = parsed.as_ref().map(|ast| self.intern_formula_ast(ast));
+                    cache.insert(key.clone(), ast_id);
+                    ast_id
                 };
 
-                if let Some(ast) = ast {
-                    formulas.push((row, col, ast));
+                if let Some(ast_id) = ast_id {
+                    formulas.push(FormulaIngestRecord::new(
+                        row,
+                        col,
+                        ast_id,
+                        Some(Arc::<str>::from(key.clone())),
+                    ));
                 }
             }
             if !formulas.is_empty() {
-                prepared.push((sheet, formulas));
+                prepared.push(FormulaIngestBatch::new(sheet, formulas));
             }
         }
 
         if !prepared.is_empty() {
-            let mut builder = self.begin_bulk_ingest();
-            for (sheet, formulas) in prepared {
-                let sid = builder.add_sheet(&sheet);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            let _ = builder.finish();
+            let _ = self.ingest_formula_batches(prepared)?;
         }
         Ok(())
     }
@@ -2757,6 +3755,9 @@ where
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let row0 = Self::normalize_row_1based(row_1based)?;
         if self.set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source) {
+            self.record_formula_plane_structural_change(StructuralScope::Region(
+                Region::whole_row(sheet_id, row0),
+            ));
             self.mark_data_edited();
         }
         Ok(())
@@ -2774,6 +3775,13 @@ where
         let (start_row0, end_row0) =
             Self::normalize_row_range_1based(start_row_1based, end_row_1based)?;
         if self.set_rows_hidden_by_sheet_id(sheet_id, start_row0, end_row0, hidden, source) {
+            if start_row0 == end_row0 {
+                self.record_formula_plane_structural_change(StructuralScope::Region(
+                    Region::whole_row(sheet_id, start_row0),
+                ));
+            } else {
+                self.record_formula_plane_structural_change(StructuralScope::Sheet(sheet_id));
+            }
             self.mark_data_edited();
         }
         Ok(())
@@ -2877,6 +3885,936 @@ where
         Some(mask)
     }
 
+    fn editor_error_to_excel(error: crate::engine::EditorError) -> ExcelError {
+        match error {
+            crate::engine::EditorError::Excel(error) => error,
+            other => ExcelError::new(ExcelErrorKind::Value).with_message(other.to_string()),
+        }
+    }
+
+    fn demote_span_containing_cell_for_write(
+        &mut self,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+    ) -> Result<(), crate::engine::EditorError> {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return Ok(());
+        }
+        let placement = PlacementCoord::new(sheet_id, row0, col0);
+        let inside_active_span = self
+            .graph
+            .formula_authority()
+            .plane
+            .spans
+            .find_at(placement)
+            .is_some();
+        if inside_active_span {
+            self.demote_spans_preserving_computed_overlays(
+                sheet_id,
+                Region::point(sheet_id, row0, col0),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn demote_all_spans(&mut self) -> Result<(), crate::engine::EditorError> {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return Ok(());
+        }
+        let sheet_ids: FxHashSet<SheetId> = {
+            let authority = self.graph.formula_authority();
+            authority
+                .active_span_refs()
+                .into_iter()
+                .filter_map(|span_ref| {
+                    authority
+                        .plane
+                        .spans
+                        .get(span_ref)
+                        .map(|span| span.sheet_id)
+                })
+                .collect()
+        };
+        for sheet_id in sheet_ids {
+            self.demote_spans_preserving_computed_overlays(
+                sheet_id,
+                Region::whole_sheet(sheet_id),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn demote_spans_preserving_computed_overlays(
+        &mut self,
+        _sheet_id: SheetId,
+        affected_region: Region,
+    ) -> Result<(), crate::engine::EditorError> {
+        // Per-cell write inside a span (or whole-sheet demote via remove_sheet):
+        // not a structural axis shift. Demote every span whose result or read
+        // region intersects `affected_region`; leave disjoint spans untouched.
+        self.demote_spans_for_structural_op_impl(None, affected_region, false)
+    }
+
+    fn structural_row_region(sheet_id: SheetId, start_row0: u32) -> Region {
+        Region::rows_from(sheet_id, start_row0)
+    }
+
+    fn structural_col_region(sheet_id: SheetId, start_col0: u32) -> Region {
+        Region::cols_from(sheet_id, start_col0)
+    }
+
+    fn span_result_region_intersects_affected(
+        span: &crate::formula_plane::runtime::FormulaSpan,
+        affected_region: &Region,
+    ) -> bool {
+        Region::from_domain(span.result_region.domain()).intersects(affected_region)
+    }
+
+    fn span_any_read_region_intersects_affected(
+        plane: &FormulaPlane,
+        span: &crate::formula_plane::runtime::FormulaSpan,
+        affected_region: &Region,
+    ) -> bool {
+        span.read_summary_id
+            .and_then(|read_summary_id| plane.span_read_summaries.get(read_summary_id))
+            .is_some_and(|summary| {
+                summary
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.read_region.intersects(affected_region))
+            })
+    }
+
+    fn insert_formula_plane_dirty_coords_for_span(
+        &self,
+        span_ref: FormulaSpanRef,
+        dirty: ProducerDirtyDomain,
+        out: &mut FxHashSet<(SheetId, u32, u32)>,
+    ) -> Result<(), crate::engine::EditorError> {
+        let authority = self.graph.formula_authority();
+        let span = authority.plane.spans.get(span_ref).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("FormulaPlane dirty transfer referenced a stale span")
+        })?;
+        match dirty {
+            ProducerDirtyDomain::Whole => {
+                out.extend(
+                    span.domain
+                        .iter()
+                        .map(|coord| (coord.sheet_id, coord.row, coord.col)),
+                );
+            }
+            ProducerDirtyDomain::Cells(cells) => {
+                out.extend(cells.into_iter().filter_map(|key| {
+                    let coord = PlacementCoord::new(key.sheet_id, key.row, key.col);
+                    span.domain
+                        .contains(coord)
+                        .then_some((coord.sheet_id, coord.row, coord.col))
+                }));
+            }
+            ProducerDirtyDomain::Regions(regions) => {
+                out.extend(span.domain.iter().filter_map(|coord| {
+                    let key = crate::formula_plane::region_index::RegionKey::from(coord);
+                    regions
+                        .iter()
+                        .any(|region| region.contains_key(key))
+                        .then_some((coord.sheet_id, coord.row, coord.col))
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    fn compute_current_formula_plane_dirty_result_coords(
+        &self,
+    ) -> Result<FxHashSet<(SheetId, u32, u32)>, crate::engine::EditorError> {
+        use crate::formula_plane::producer::compute_dirty_closure;
+
+        let authority = self.graph.formula_authority();
+        let span_refs = authority.active_span_refs();
+        let span_refs_by_id = span_refs
+            .iter()
+            .copied()
+            .map(|span_ref| (span_ref.id, span_ref))
+            .collect::<BTreeMap<_, _>>();
+        let mut dirty_coords = FxHashSet::default();
+
+        if self.formula_plane_indexes_epoch_seen != authority.indexes_epoch() {
+            for span_ref in span_refs {
+                self.insert_formula_plane_dirty_coords_for_span(
+                    span_ref,
+                    ProducerDirtyDomain::Whole,
+                    &mut dirty_coords,
+                )?;
+            }
+            return Ok(dirty_coords);
+        }
+
+        let pending_changed_regions = authority.pending_changed_regions();
+        if pending_changed_regions.is_empty() {
+            return Ok(dirty_coords);
+        }
+
+        let closure = compute_dirty_closure(
+            &authority.consumer_reads,
+            pending_changed_regions.iter().copied(),
+            |producer| authority.producer_results.producer_result_region(producer),
+        );
+        for work in closure.work {
+            let FormulaProducerId::Span(span_id) = work.producer else {
+                continue;
+            };
+            let Some(span_ref) = span_refs_by_id.get(&span_id).copied() else {
+                continue;
+            };
+            self.insert_formula_plane_dirty_coords_for_span(
+                span_ref,
+                work.dirty,
+                &mut dirty_coords,
+            )?;
+        }
+        for fallback in closure.fallbacks {
+            let FormulaProducerId::Span(span_id) = fallback.consumer else {
+                continue;
+            };
+            let Some(span_ref) = span_refs_by_id.get(&span_id).copied() else {
+                continue;
+            };
+            self.insert_formula_plane_dirty_coords_for_span(
+                span_ref,
+                ProducerDirtyDomain::Whole,
+                &mut dirty_coords,
+            )?;
+        }
+
+        Ok(dirty_coords)
+    }
+
+    /// Demote active FormulaPlane spans affected by a structural edit on `sheet_id`.
+    ///
+    /// This is the conservative Option-A correctness path for structural edits: rather than
+    /// attempting to transform FormulaPlane span domains/templates/indexes, materialize each span
+    /// placement as an ordinary legacy graph formula at its current coordinate, remove the span,
+    /// and let the existing VertexEditor structural machinery shift/delete those vertices and
+    /// adjust their ASTs.  Spans whose formula domain is on `sheet_id` are affected directly; spans
+    /// on other sheets are also affected when one of their retained read regions targets
+    /// `sheet_id`, because those read-region coordinates become stale after row/column shifts.
+    fn demote_spans_for_structural_op(
+        &mut self,
+        op: StructuralOp,
+        affected_region: Region,
+    ) -> Result<(), crate::engine::EditorError> {
+        if op.count() == 0 {
+            return Ok(());
+        }
+        self.demote_spans_for_structural_op_impl(Some(op), affected_region, true)
+    }
+
+    fn demote_spans_for_structural_op_impl(
+        &mut self,
+        op: Option<StructuralOp>,
+        affected_region: Region,
+        clear_computed_overlays: bool,
+    ) -> Result<(), crate::engine::EditorError> {
+        struct SpanPlan {
+            span_ref: FormulaSpanRef,
+            sheet_id: SheetId,
+            ast: ASTNode,
+            origin_row: u32,
+            origin_col: u32,
+            binding_set_id: Option<crate::formula_plane::runtime::SpanBindingSetId>,
+            placements: Vec<(u32, u32)>,
+        }
+
+        fn substitute_literal_slots_for_template_placement(
+            ast: &ASTNode,
+            binding: &[LiteralValue],
+        ) -> ASTNode {
+            fn clone_with_slots(
+                ast: &ASTNode,
+                binding: &[LiteralValue],
+                next: &mut usize,
+                in_array: bool,
+            ) -> ASTNode {
+                let node_type = match &ast.node_type {
+                    ASTNodeType::Literal(_) if !in_array => {
+                        let value = binding.get(*next).cloned().unwrap_or(LiteralValue::Empty);
+                        *next = next.saturating_add(1);
+                        ASTNodeType::Literal(value)
+                    }
+                    ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
+                    ASTNodeType::Reference {
+                        original,
+                        reference,
+                    } => ASTNodeType::Reference {
+                        original: original.clone(),
+                        reference: reference.clone(),
+                    },
+                    ASTNodeType::UnaryOp { op, expr } => ASTNodeType::UnaryOp {
+                        op: op.clone(),
+                        expr: Box::new(clone_with_slots(expr, binding, next, in_array)),
+                    },
+                    ASTNodeType::BinaryOp { op, left, right } => ASTNodeType::BinaryOp {
+                        op: op.clone(),
+                        left: Box::new(clone_with_slots(left, binding, next, in_array)),
+                        right: Box::new(clone_with_slots(right, binding, next, in_array)),
+                    },
+                    ASTNodeType::Function { name, args } => ASTNodeType::Function {
+                        name: name.clone(),
+                        args: args
+                            .iter()
+                            .map(|arg| clone_with_slots(arg, binding, next, in_array))
+                            .collect(),
+                    },
+                    ASTNodeType::Call { callee, args } => ASTNodeType::Call {
+                        callee: Box::new(clone_with_slots(callee, binding, next, in_array)),
+                        args: args
+                            .iter()
+                            .map(|arg| clone_with_slots(arg, binding, next, in_array))
+                            .collect(),
+                    },
+                    ASTNodeType::Array(rows) => ASTNodeType::Array(
+                        rows.iter()
+                            .map(|row| {
+                                row.iter()
+                                    .map(|cell| clone_with_slots(cell, binding, next, true))
+                                    .collect()
+                            })
+                            .collect(),
+                    ),
+                };
+                ASTNode::new(node_type, ast.source_token.clone())
+            }
+            let mut next = 0usize;
+            clone_with_slots(ast, binding, &mut next, false)
+        }
+
+        let span_refs = self.graph.formula_authority().active_span_refs();
+        if span_refs.is_empty() {
+            return Ok(());
+        }
+        let dirty_span_coords = if clear_computed_overlays {
+            FxHashSet::default()
+        } else {
+            self.compute_current_formula_plane_dirty_result_coords()?
+        };
+
+        struct ShiftPlan {
+            span_ref: FormulaSpanRef,
+            template_id: crate::formula_plane::ids::FormulaTemplateId,
+            new_origin_row: u32,
+            new_origin_col: u32,
+            new_domain: crate::formula_plane::runtime::PlacementDomain,
+            new_read_summary: Option<SpanReadSummary>,
+            binding_set_id: Option<crate::formula_plane::runtime::SpanBindingSetId>,
+            force_binding_residual_axes: bool,
+        }
+
+        fn checked_shift_u32(value: u32, delta: i64) -> Option<u32> {
+            u32::try_from(i64::from(value).checked_add(delta)?).ok()
+        }
+
+        fn shifted_read_summary(
+            read_summary: &SpanReadSummary,
+            new_result_region: Region,
+            op: StructuralOp,
+            row_delta: i64,
+            col_delta: i64,
+        ) -> Option<SpanReadSummary> {
+            let mut dependencies = Vec::with_capacity(read_summary.dependencies.len());
+            for dependency in &read_summary.dependencies {
+                let read_region = match op.classify_region(dependency.read_region) {
+                    crate::formula_plane::structural_shift::AxisShiftCase::OtherSheet
+                    | crate::formula_plane::structural_shift::AxisShiftCase::EntirelyBelow => {
+                        dependency.read_region
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::EntirelyAboveShift {
+                        ..
+                    } => dependency
+                        .read_region
+                        .project_through_axis_shift(row_delta, col_delta)?,
+                    crate::formula_plane::structural_shift::AxisShiftCase::Straddles
+                    | crate::formula_plane::structural_shift::AxisShiftCase::DeleteFullyContains => {
+                        return None;
+                    }
+                };
+                dependencies.push(crate::formula_plane::producer::SpanReadDependency {
+                    read_region,
+                    projection: dependency.projection,
+                });
+            }
+            Some(SpanReadSummary {
+                result_region: new_result_region,
+                dependencies,
+            })
+        }
+
+        fn compact_axis_through_delete(
+            min: u32,
+            max: u32,
+            start: u32,
+            count: u32,
+        ) -> Option<(u32, u32)> {
+            let end = start.saturating_add(count);
+            if max < start || min >= end {
+                return Some((min.saturating_sub(count), max.saturating_sub(count)));
+            }
+            let keeps_left = min < start;
+            let keeps_right = max >= end;
+            match (keeps_left, keeps_right) {
+                (false, false) => None,
+                (true, false) => Some((min, start.checked_sub(1)?)),
+                (false, true) => Some((start, max.checked_sub(count)?)),
+                (true, true) => Some((min, max.checked_sub(count)?)),
+            }
+        }
+
+        fn compact_domain_through_delete(
+            domain: &PlacementDomain,
+            op: StructuralOp,
+        ) -> Option<PlacementDomain> {
+            match (domain, op) {
+                (
+                    PlacementDomain::RowRun {
+                        sheet_id,
+                        row_start,
+                        row_end,
+                        col,
+                    },
+                    StructuralOp::DeleteRows { start, count, .. },
+                ) => {
+                    let (row_start, row_end) =
+                        compact_axis_through_delete(*row_start, *row_end, start, count)?;
+                    Some(PlacementDomain::row_run(
+                        *sheet_id, row_start, row_end, *col,
+                    ))
+                }
+                (
+                    PlacementDomain::Rect {
+                        sheet_id,
+                        row_start,
+                        row_end,
+                        col_start,
+                        col_end,
+                    },
+                    StructuralOp::DeleteRows { start, count, .. },
+                ) => {
+                    let (row_start, row_end) =
+                        compact_axis_through_delete(*row_start, *row_end, start, count)?;
+                    Some(PlacementDomain::rect(
+                        *sheet_id, row_start, row_end, *col_start, *col_end,
+                    ))
+                }
+                (
+                    PlacementDomain::ColRun {
+                        sheet_id,
+                        row,
+                        col_start,
+                        col_end,
+                    },
+                    StructuralOp::DeleteColumns { start, count, .. },
+                ) => {
+                    let (col_start, col_end) =
+                        compact_axis_through_delete(*col_start, *col_end, start, count)?;
+                    Some(PlacementDomain::col_run(
+                        *sheet_id, *row, col_start, col_end,
+                    ))
+                }
+                (
+                    PlacementDomain::Rect {
+                        sheet_id,
+                        row_start,
+                        row_end,
+                        col_start,
+                        col_end,
+                    },
+                    StructuralOp::DeleteColumns { start, count, .. },
+                ) => {
+                    let (col_start, col_end) =
+                        compact_axis_through_delete(*col_start, *col_end, start, count)?;
+                    Some(PlacementDomain::rect(
+                        *sheet_id, *row_start, *row_end, col_start, col_end,
+                    ))
+                }
+                _ => None,
+            }
+        }
+
+        fn compact_axis_range_through_delete(
+            axis: crate::formula_plane::region_index::AxisRange,
+            start: u32,
+            count: u32,
+        ) -> Option<crate::formula_plane::region_index::AxisRange> {
+            use crate::formula_plane::region_index::AxisRange;
+            match axis {
+                AxisRange::Point(point) => compact_axis_through_delete(point, point, start, count)
+                    .map(|(point, _)| AxisRange::Point(point)),
+                AxisRange::Span(min, max) => compact_axis_through_delete(min, max, start, count)
+                    .map(|(min, max)| AxisRange::Span(min, max)),
+                AxisRange::All => Some(AxisRange::All),
+                AxisRange::From(_) | AxisRange::To(_) => None,
+            }
+        }
+
+        fn compact_region_through_delete(region: Region, op: StructuralOp) -> Option<Region> {
+            let (rows, cols) = region.axis_ranges();
+            match op {
+                StructuralOp::DeleteRows {
+                    sheet_id,
+                    start,
+                    count,
+                } if region.sheet_id() == sheet_id => Some(Region {
+                    sheet_id,
+                    rows: compact_axis_range_through_delete(rows, start, count)?,
+                    cols,
+                }),
+                StructuralOp::DeleteColumns {
+                    sheet_id,
+                    start,
+                    count,
+                } if region.sheet_id() == sheet_id => Some(Region {
+                    sheet_id,
+                    rows,
+                    cols: compact_axis_range_through_delete(cols, start, count)?,
+                }),
+                _ => Some(region),
+            }
+        }
+
+        fn compact_read_summary_through_delete(
+            read_summary: &SpanReadSummary,
+            new_result_region: Region,
+            op: StructuralOp,
+        ) -> Option<SpanReadSummary> {
+            let mut dependencies = Vec::with_capacity(read_summary.dependencies.len());
+            for dependency in &read_summary.dependencies {
+                let read_region = match op.classify_region(dependency.read_region) {
+                    crate::formula_plane::structural_shift::AxisShiftCase::OtherSheet
+                    | crate::formula_plane::structural_shift::AxisShiftCase::EntirelyBelow => {
+                        dependency.read_region
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::EntirelyAboveShift {
+                        ..
+                    } => {
+                        let (row_delta, col_delta) = op.axis_shift_delta();
+                        dependency
+                            .read_region
+                            .project_through_axis_shift(row_delta, col_delta)?
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::Straddles => {
+                        compact_region_through_delete(dependency.read_region, op)?
+                    }
+                    crate::formula_plane::structural_shift::AxisShiftCase::DeleteFullyContains => {
+                        return None;
+                    }
+                };
+                dependencies.push(crate::formula_plane::producer::SpanReadDependency {
+                    read_region,
+                    projection: dependency.projection,
+                });
+            }
+            Some(SpanReadSummary {
+                result_region: new_result_region,
+                dependencies,
+            })
+        }
+
+        fn domain_origin_1_based(domain: &PlacementDomain) -> (u32, u32) {
+            match domain {
+                PlacementDomain::RowRun { row_start, col, .. } => (row_start + 1, col + 1),
+                PlacementDomain::ColRun { row, col_start, .. } => (row + 1, col_start + 1),
+                PlacementDomain::Rect {
+                    row_start,
+                    col_start,
+                    ..
+                } => (row_start + 1, col_start + 1),
+            }
+        }
+
+        let mut shift_plans = Vec::new();
+        let mut remove_refs = Vec::new();
+        let mut demote_refs = Vec::new();
+        for span_ref in span_refs {
+            let authority = self.graph.formula_authority();
+            let Some(span) = authority.plane.spans.get(span_ref) else {
+                continue;
+            };
+            let read_summary = span
+                .read_summary_id
+                .and_then(|id| authority.plane.span_read_summaries.get(id));
+            let Some(op) = op else {
+                // Non-structural demote path (per-cell write into span, or
+                // remove_sheet's whole-sheet sweep). Only demote spans whose
+                // result or read region intersects affected_region; leave
+                // disjoint spans untouched.
+                let result_region_affected =
+                    Self::span_result_region_intersects_affected(span, &affected_region);
+                let read_region_affected = Self::span_any_read_region_intersects_affected(
+                    &authority.plane,
+                    span,
+                    &affected_region,
+                );
+                if result_region_affected || read_region_affected {
+                    demote_refs.push(span_ref);
+                }
+                continue;
+            };
+            match classify_span_for_op(span, read_summary, op) {
+                SpanShiftPlan::NoOp => {}
+                SpanShiftPlan::Remove => {
+                    remove_refs.push(span_ref);
+                }
+                SpanShiftPlan::Demote {
+                    reason:
+                        crate::formula_plane::structural_shift::SpanDemoteReason::DeletePartiallyOverlaps,
+                } => {
+                    let binding_compaction_safe = span
+                        .binding_set_id
+                        .and_then(|id| authority.plane.binding_sets.get(id))
+                        .is_none_or(|binding_set| binding_set.is_single_literal_binding());
+                    if binding_compaction_safe
+                        && let Some(new_domain) = compact_domain_through_delete(&span.domain, op)
+                    {
+                        let new_result_region = Region::from_domain(&new_domain);
+                        let new_read_summary = if let Some(summary) = read_summary {
+                            compact_read_summary_through_delete(summary, new_result_region, op)
+                        } else {
+                            None
+                        };
+                        if read_summary.is_none() || new_read_summary.is_some() {
+                            let (new_origin_row, new_origin_col) = domain_origin_1_based(&new_domain);
+                            let Some(template) = authority.plane.templates.get(span.template_id)
+                            else {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref)
+                                    .with_message(
+                                        "FormulaPlane delete compaction found a span with a missing template",
+                                    )
+                                    .into());
+                            };
+                            let force_binding_residual_axes = span
+                                .binding_set_id
+                                .and_then(|id| authority.plane.binding_sets.get(id))
+                                .is_some_and(|binding_set| {
+                                    !binding_set.value_ref_slots.is_empty()
+                                        && (new_origin_row != template.origin_row
+                                            || new_origin_col != template.origin_col)
+                                });
+                            shift_plans.push(ShiftPlan {
+                                span_ref,
+                                template_id: span.template_id,
+                                new_origin_row,
+                                new_origin_col,
+                                new_domain,
+                                new_read_summary,
+                                binding_set_id: span.binding_set_id,
+                                force_binding_residual_axes,
+                            });
+                        } else {
+                            demote_refs.push(span_ref);
+                        }
+                    } else {
+                        demote_refs.push(span_ref);
+                    }
+                }
+                SpanShiftPlan::Demote { .. } => {
+                    demote_refs.push(span_ref);
+                }
+                SpanShiftPlan::Shift {
+                    row_delta,
+                    col_delta,
+                    origin_row_delta,
+                    origin_col_delta,
+                } => {
+                    let Some(template) = authority.plane.templates.get(span.template_id) else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift found a span with a missing template")
+                            .into());
+                    };
+                    let Some(new_origin_row) =
+                        checked_shift_u32(template.origin_row, origin_row_delta)
+                    else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift overflowed template origin row")
+                            .into());
+                    };
+                    let Some(new_origin_col) =
+                        checked_shift_u32(template.origin_col, origin_col_delta)
+                    else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift overflowed template origin column")
+                            .into());
+                    };
+                    let Some(new_domain) =
+                        span.domain.project_through_axis_shift(row_delta, col_delta)
+                    else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift overflowed span domain")
+                            .into());
+                    };
+                    let new_result_region = Region::from_domain(&new_domain);
+                    let new_read_summary = if let Some(summary) = read_summary {
+                        Some(
+                            shifted_read_summary(
+                                summary,
+                                new_result_region,
+                                op,
+                                row_delta,
+                                col_delta,
+                            )
+                            .ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                    "FormulaPlane shift could not project read summary",
+                                )
+                            })?,
+                        )
+                    } else {
+                        None
+                    };
+                    let force_binding_residual_axes = span
+                        .binding_set_id
+                        .and_then(|id| authority.plane.binding_sets.get(id))
+                        .is_some_and(|binding_set| {
+                            !binding_set.value_ref_slots.is_empty()
+                                && (origin_row_delta != 0 || origin_col_delta != 0)
+                        });
+                    shift_plans.push(ShiftPlan {
+                        span_ref,
+                        template_id: span.template_id,
+                        new_origin_row,
+                        new_origin_col,
+                        new_domain,
+                        new_read_summary,
+                        binding_set_id: span.binding_set_id,
+                        force_binding_residual_axes,
+                    });
+                }
+            }
+        }
+
+        if !shift_plans.is_empty() || !remove_refs.is_empty() {
+            let authority = self.graph.formula_authority_mut();
+            for span_ref in remove_refs {
+                authority.plane.remove_overlays_for_source_span(span_ref);
+                authority.plane.remove_span(span_ref);
+            }
+            for plan in shift_plans {
+                let Some(template_id) = authority.plane.intern_shifted_template_origin(
+                    plan.template_id,
+                    plan.new_origin_row,
+                    plan.new_origin_col,
+                ) else {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane shift could not clone template origin")
+                        .into());
+                };
+                if let Some(binding_set_id) = plan.binding_set_id {
+                    let Some(template) = authority.plane.templates.get(template_id) else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane shift could not find shifted template")
+                            .into());
+                    };
+                    let (ast_id, origin_row, origin_col) =
+                        (template.ast_id, template.origin_row, template.origin_col);
+                    authority.plane.set_binding_template_anchor(
+                        binding_set_id,
+                        ast_id,
+                        origin_row,
+                        origin_col,
+                    );
+                }
+                let read_summary_id = plan
+                    .new_read_summary
+                    .map(|summary| authority.plane.insert_span_read_summary(summary));
+                let result_region = ResultRegion::scalar_cells(plan.new_domain.clone());
+                if !authority.plane.replace_span_geometry(
+                    plan.span_ref,
+                    template_id,
+                    plan.new_domain,
+                    result_region,
+                    read_summary_id,
+                ) {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane shift could not update span geometry")
+                        .into());
+                }
+                if plan.force_binding_residual_axes
+                    && let Some(binding_set_id) = plan.binding_set_id
+                {
+                    // Value-ref memoization keys are placement-relative. When a
+                    // structural op moves the formula origin while keeping some
+                    // precedents fixed (e.g. insert a column before a formula
+                    // family that reads column A), those keys no longer name
+                    // the same producer cells. Keep correctness by forcing
+                    // placement offsets into the key so memoization falls back
+                    // to per-placement work rather than broadcasting stale
+                    // representative values.
+                    authority.plane.force_binding_residual_axes(binding_set_id);
+                }
+            }
+            authority.rebuild_indexes();
+            self.formula_plane_indexes_epoch_seen = 0;
+        }
+
+        let mut span_plans = Vec::new();
+        for span_ref in demote_refs {
+            let authority = self.graph.formula_authority();
+            let Some(span) = authority.plane.spans.get(span_ref) else {
+                continue;
+            };
+            let Some(template) = authority.plane.templates.get(span.template_id) else {
+                return Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("FormulaPlane demotion found a span with a missing template")
+                    .into());
+            };
+            let ast = self
+                .graph
+                .data_store()
+                .retrieve_ast(template.ast_id, self.graph.sheet_reg())
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane demotion could not retrieve the template AST")
+                })?;
+            let placements = span
+                .domain
+                .iter()
+                .map(|placement| (placement.row + 1, placement.col + 1))
+                .collect();
+            span_plans.push(SpanPlan {
+                span_ref,
+                sheet_id: span.sheet_id,
+                ast,
+                origin_row: template.origin_row,
+                origin_col: template.origin_col,
+                binding_set_id: span.binding_set_id,
+                placements,
+            });
+        }
+
+        if span_plans.is_empty() {
+            return Ok(());
+        }
+
+        let mut relocated = Vec::new();
+        let mut placement_cells = Vec::new();
+        for plan in &span_plans {
+            for &(row, col) in &plan.placements {
+                let row_delta = i64::from(row) - i64::from(plan.origin_row);
+                let col_delta = i64::from(col) - i64::from(plan.origin_col);
+                let bound_ast = if let Some(binding_set_id) = plan.binding_set_id {
+                    let authority = self.graph.formula_authority();
+                    if let Some(binding_set) = authority.plane.binding_sets.get(binding_set_id) {
+                        if binding_set.is_single_literal_binding() {
+                            plan.ast.clone()
+                        } else {
+                            let placement = crate::formula_plane::runtime::PlacementCoord::new(
+                                plan.sheet_id,
+                                row.saturating_sub(1),
+                                col.saturating_sub(1),
+                            );
+                            let binding =
+                                authority.plane.spans.get(plan.span_ref).and_then(|span| {
+                                    binding_set
+                                        .literal_bindings_for_placement(&span.domain, placement)
+                                });
+                            if let Some(binding) = binding {
+                                substitute_literal_slots_for_template_placement(
+                                    &plan.ast,
+                                    binding.as_ref(),
+                                )
+                            } else {
+                                plan.ast.clone()
+                            }
+                        }
+                    } else {
+                        plan.ast.clone()
+                    }
+                } else {
+                    plan.ast.clone()
+                };
+                let ast = relocate_ast_for_template_placement(&bound_ast, row_delta, col_delta)?;
+                relocated.push((plan.sheet_id, row, col, ast));
+                placement_cells.push((plan.sheet_id, row, col));
+            }
+        }
+
+        let planned_by_sheet = {
+            let mut pipeline = self.ingest_pipeline();
+            let mut planned_by_sheet: BTreeMap<
+                SheetId,
+                Vec<(u32, u32, AstNodeId, DependencyPlanRow)>,
+            > = BTreeMap::new();
+            for (formula_sheet_id, row, col, ast) in relocated {
+                let placement =
+                    CellRef::new(formula_sheet_id, Coord::from_excel(row, col, true, true));
+                let ingested =
+                    pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?;
+                planned_by_sheet.entry(formula_sheet_id).or_default().push((
+                    row,
+                    col,
+                    ingested.ast_id,
+                    ingested.dep_plan,
+                ));
+            }
+            planned_by_sheet
+        };
+
+        {
+            let authority = self.graph.formula_authority_mut();
+            for plan in &span_plans {
+                authority
+                    .plane
+                    .remove_overlays_for_source_span(plan.span_ref);
+                authority.plane.remove_span(plan.span_ref);
+            }
+            authority.rebuild_indexes();
+        }
+
+        if clear_computed_overlays {
+            // Only clear placement cells whose coordinate intersects the affected
+            // structural region. The structural-op contract preserves cells
+            // BEFORE the structural boundary; the legacy `clear_computed_overlay_after_*`
+            // call honors that. Demoting a span whose footprint straddles the
+            // boundary still must not clear cells before the boundary, even
+            // though the span as a whole is demoted.
+            for (formula_sheet_id, row, col) in &placement_cells {
+                // 1-based -> 0-based for region intersection.
+                let placement_region = Region::point(
+                    *formula_sheet_id,
+                    row.saturating_sub(1),
+                    col.saturating_sub(1),
+                );
+                if !placement_region.intersects(&affected_region) {
+                    continue;
+                }
+                let sheet_name = self.graph.sheet_name(*formula_sheet_id).to_string();
+                self.clear_computed_overlay_cell(&sheet_name, *row, *col);
+            }
+        }
+
+        for (formula_sheet_id, planned) in planned_by_sheet {
+            let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
+            self.graph
+                .bulk_set_formulas_with_plans(&sheet_name, planned)?;
+        }
+        if !clear_computed_overlays {
+            for (formula_sheet_id, row, col) in &placement_cells {
+                let row0 = row.saturating_sub(1);
+                let col0 = col.saturating_sub(1);
+                if dirty_span_coords.contains(&(*formula_sheet_id, row0, col0)) {
+                    continue;
+                }
+                let cell =
+                    CellRef::new(*formula_sheet_id, Coord::from_excel(*row, *col, true, true));
+                if let Some(&vertex_id) = self.graph.get_vertex_id_for_address(&cell) {
+                    self.graph.set_dirty(vertex_id, false);
+                }
+            }
+        }
+        self.formula_plane_indexes_epoch_seen = 0;
+        Ok(())
+    }
+
     /// Insert rows (1-based) and mirror into Arrow store when enabled
     pub fn insert_rows(
         &mut self,
@@ -2888,6 +4826,13 @@ where
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let before0 = before.saturating_sub(1);
+        let affected_region = Self::structural_row_region(sheet_id, before0);
+        let op = StructuralOp::InsertRows {
+            sheet_id,
+            before: before0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_rows(sheet_id, before0, count)?
@@ -2896,7 +4841,10 @@ where
             let before0 = before0 as usize;
             asheet.insert_rows(before0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_row(sheet, before0 as usize);
         self.shift_row_visibility_insert(sheet_id, before0, count);
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -2912,6 +4860,13 @@ where
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let start0 = start.saturating_sub(1);
+        let affected_region = Self::structural_row_region(sheet_id, start0);
+        let op = StructuralOp::DeleteRows {
+            sheet_id,
+            start: start0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_rows(sheet_id, start0, count)?
@@ -2920,7 +4875,10 @@ where
             let start0 = start0 as usize;
             asheet.delete_rows(start0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_row(sheet, start0 as usize);
         self.shift_row_visibility_delete(sheet_id, start0, count);
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -2941,6 +4899,13 @@ where
             },
         )?;
         let before0 = before.saturating_sub(1);
+        let affected_region = Self::structural_col_region(sheet_id, before0);
+        let op = StructuralOp::InsertColumns {
+            sheet_id,
+            before: before0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.insert_columns(sheet_id, before0, count)?
@@ -2949,6 +4914,9 @@ where
             let before0 = before0 as usize;
             asheet.insert_columns(before0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_col(sheet, before0 as usize);
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -2969,6 +4937,13 @@ where
             },
         )?;
         let start0 = start.saturating_sub(1);
+        let affected_region = Self::structural_col_region(sheet_id, start0);
+        let op = StructuralOp::DeleteColumns {
+            sheet_id,
+            start: start0,
+            count,
+        };
+        self.demote_spans_for_structural_op(op, affected_region)?;
         let summary = {
             let mut editor = VertexEditor::new(&mut self.graph);
             editor.delete_columns(sheet_id, start0, count)?
@@ -2977,6 +4952,9 @@ where
             let start0 = start0 as usize;
             asheet.delete_columns(start0, count as usize);
         }
+        self.mark_moved_formula_vertices_dirty(&summary);
+        self.clear_computed_overlay_after_col(sheet, start0 as usize);
+        self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
     }
@@ -3499,6 +5477,118 @@ where
         if let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) {
             let _ = ch.overlay.remove(in_off);
         }
+    }
+
+    /// Remove a computed-overlay entry for a single cell (if present) without allocating
+    /// missing sheet/column/row storage. FormulaPlane structural demotion calls this for every
+    /// demoted placement so stale span results cannot mask freshly materialized legacy formulas.
+    fn clear_computed_overlay_cell(&mut self, sheet: &str, row: u32, col: u32) {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
+            return;
+        }
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) else {
+            return;
+        };
+        let delta = ch.computed_overlay.remove(in_off);
+        self.adjust_computed_overlay_bytes(delta);
+    }
+
+    fn clear_computed_overlay_after_row(&mut self, sheet: &str, start_row0: usize) {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return;
+        }
+
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        if start_row0 >= asheet.nrows as usize {
+            return;
+        }
+
+        let starts = asheet.chunk_starts.clone();
+        let nrows = asheet.nrows as usize;
+        let mut delta = 0isize;
+        for col in &mut asheet.columns {
+            for (chunk_idx, ch) in col.chunks.iter_mut().enumerate() {
+                let Some(&chunk_start) = starts.get(chunk_idx) else {
+                    continue;
+                };
+                let chunk_end = starts
+                    .get(chunk_idx + 1)
+                    .copied()
+                    .unwrap_or(nrows)
+                    .min(chunk_start.saturating_add(ch.len()));
+                if chunk_end <= start_row0 {
+                    continue;
+                }
+                if chunk_start >= start_row0 {
+                    delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+                } else {
+                    let start_in_chunk = start_row0.saturating_sub(chunk_start).min(ch.len());
+                    for offset in start_in_chunk..ch.len() {
+                        delta = delta.saturating_add(ch.computed_overlay.remove(offset));
+                    }
+                }
+            }
+
+            for (chunk_idx, ch) in &mut col.sparse_chunks {
+                let Some(&chunk_start) = starts.get(*chunk_idx) else {
+                    continue;
+                };
+                let chunk_end = starts
+                    .get(*chunk_idx + 1)
+                    .copied()
+                    .unwrap_or(nrows)
+                    .min(chunk_start.saturating_add(ch.len()));
+                if chunk_end <= start_row0 {
+                    continue;
+                }
+                if chunk_start >= start_row0 {
+                    delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+                } else {
+                    let start_in_chunk = start_row0.saturating_sub(chunk_start).min(ch.len());
+                    for offset in start_in_chunk..ch.len() {
+                        delta = delta.saturating_add(ch.computed_overlay.remove(offset));
+                    }
+                }
+            }
+        }
+        self.adjust_computed_overlay_bytes(delta);
+    }
+
+    fn clear_computed_overlay_after_col(&mut self, sheet: &str, start_col0: usize) {
+        if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
+            return;
+        }
+
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        if start_col0 >= asheet.columns.len() {
+            return;
+        }
+
+        let mut delta = 0isize;
+        for col in asheet.columns.iter_mut().skip(start_col0) {
+            for ch in &mut col.chunks {
+                delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+            }
+            for ch in col.sparse_chunks.values_mut() {
+                delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+            }
+        }
+        self.adjust_computed_overlay_bytes(delta);
     }
 
     #[inline]
@@ -4479,7 +6569,15 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
+        let sheet_id = self.graph.sheet_id_mut(sheet);
+        self.demote_span_containing_cell_for_write(
+            sheet_id,
+            row.saturating_sub(1),
+            col.saturating_sub(1),
+        )
+        .map_err(Self::editor_error_to_excel)?;
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
+        self.record_formula_plane_changed_cell(sheet, row, col);
         // Mirror into Arrow overlay when enabled
         self.mirror_value_to_overlay(sheet, row, col, &value);
         // Advance snapshot to reflect external mutation
@@ -4487,6 +6585,142 @@ where
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.has_edited = true;
         Ok(())
+    }
+
+    /// Record a single-cell change in FormulaPlane authority so the next
+    /// `evaluate_all` under `AuthoritativeExperimental` can derive bounded
+    /// span work from `FormulaConsumerReadIndex` instead of recomputing every
+    /// active span.
+    fn record_formula_plane_changed_cell(&mut self, sheet: &str, row: u32, col: u32) {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return;
+        }
+        let sheet_id = self.graph.sheet_id_mut(sheet);
+        self.record_formula_plane_structural_change(StructuralScope::Cell {
+            sheet: sheet_id,
+            row: row.saturating_sub(1),
+            col: col.saturating_sub(1),
+        });
+    }
+
+    fn record_formula_plane_change_for_event(&mut self, event: &ChangeEvent) {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return;
+        }
+
+        match event {
+            ChangeEvent::SetValue { addr, .. } | ChangeEvent::SetFormula { addr, .. } => {
+                self.record_formula_plane_structural_change(StructuralScope::Cell {
+                    sheet: addr.sheet_id,
+                    row: addr.coord.row(),
+                    col: addr.coord.col(),
+                });
+            }
+            ChangeEvent::SpillCommitted { new, .. } => {
+                if let Some(scope) = Self::formula_plane_region_from_cells(&new.target_cells) {
+                    self.record_formula_plane_structural_change(scope);
+                }
+            }
+            ChangeEvent::SpillCleared { old, .. } => {
+                if let Some(scope) = Self::formula_plane_region_from_cells(&old.target_cells) {
+                    self.record_formula_plane_structural_change(scope);
+                }
+            }
+            ChangeEvent::DefineName { .. }
+            | ChangeEvent::UpdateName { .. }
+            | ChangeEvent::DeleteName { .. }
+            | ChangeEvent::VertexMoved { .. }
+            | ChangeEvent::FormulaAdjusted { .. }
+            | ChangeEvent::NamedRangeAdjusted { .. } => {
+                self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+            }
+            ChangeEvent::SetRowVisibility { sheet_id, row0, .. } => {
+                self.record_formula_plane_structural_change(StructuralScope::Region(
+                    Region::whole_row(*sheet_id, *row0),
+                ));
+            }
+            ChangeEvent::AddVertex { .. }
+            | ChangeEvent::RemoveVertex { .. }
+            | ChangeEvent::EdgeAdded { .. }
+            | ChangeEvent::EdgeRemoved { .. }
+            | ChangeEvent::CompoundStart { .. }
+            | ChangeEvent::CompoundEnd { .. }
+            | ChangeEvent::StagedFormulaStateChanged { .. } => {}
+        }
+    }
+
+    fn record_formula_plane_structural_change(&mut self, scope: StructuralScope) {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return;
+        }
+
+        match scope {
+            StructuralScope::Cell { sheet, row, col } => {
+                self.graph
+                    .formula_authority_mut()
+                    .record_changed_region(Region::point(sheet, row, col));
+            }
+            StructuralScope::Region(region) => {
+                self.graph
+                    .formula_authority_mut()
+                    .record_changed_region(region);
+            }
+            StructuralScope::Sheet(sheet_id) => {
+                self.graph
+                    .formula_authority_mut()
+                    .record_changed_region(Region::whole_sheet(sheet_id));
+            }
+            StructuralScope::RemovedSheet(sheet_id) => {
+                let removed_refs = {
+                    let authority = self.graph.formula_authority();
+                    authority
+                        .active_span_refs()
+                        .into_iter()
+                        .filter(|span_ref| {
+                            authority
+                                .plane
+                                .spans
+                                .get(*span_ref)
+                                .map(|span| span.sheet_id == sheet_id)
+                                .unwrap_or(false)
+                        })
+                        .collect::<Vec<_>>()
+                };
+
+                let authority = self.graph.formula_authority_mut();
+                for span_ref in removed_refs {
+                    authority.plane.remove_span(span_ref);
+                }
+                authority.mark_all_active_spans_dirty();
+                let _ = authority.rebuild_indexes();
+            }
+            StructuralScope::AllSheets => {
+                let authority = self.graph.formula_authority_mut();
+                authority.mark_all_active_spans_dirty();
+                let _ = authority.rebuild_indexes();
+            }
+        }
+    }
+
+    fn formula_plane_region_from_cells(cells: &[CellRef]) -> Option<StructuralScope> {
+        let first = cells.first()?;
+        let sheet_id = first.sheet_id;
+        if cells.iter().any(|cell| cell.sheet_id != sheet_id) {
+            return Some(StructuralScope::AllSheets);
+        }
+        let mut row_start = first.coord.row();
+        let mut row_end = row_start;
+        let mut col_start = first.coord.col();
+        let mut col_end = col_start;
+        for cell in cells.iter().skip(1) {
+            row_start = row_start.min(cell.coord.row());
+            row_end = row_end.max(cell.coord.row());
+            col_start = col_start.min(cell.coord.col());
+            col_end = col_end.max(cell.coord.col());
+        }
+        Some(StructuralScope::Region(Region::rect(
+            sheet_id, row_start, row_end, col_start, col_end,
+        )))
     }
 
     pub fn set_cell_value_ref(
@@ -4581,9 +6815,28 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
-        let volatile = self.is_ast_volatile_with_provider(&ast);
-        self.graph
-            .set_cell_formula_with_volatility(sheet, row, col, ast, volatile)?;
+        let sheet_id = self.graph.sheet_id_mut(sheet);
+        self.demote_span_containing_cell_for_write(
+            sheet_id,
+            row.saturating_sub(1),
+            col.saturating_sub(1),
+        )
+        .map_err(Self::editor_error_to_excel)?;
+        let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline();
+            pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?
+        };
+        self.graph.set_cell_formula_with_plan(
+            sheet,
+            row,
+            col,
+            ingested.ast_id,
+            &ingested.dep_plan,
+            ingested.dep_plan.volatile,
+            ingested.dep_plan.dynamic,
+        )?;
+        self.record_formula_plane_changed_cell(sheet, row, col);
 
         // If the cell previously held a user value in the delta overlay, it must not continue
         // to mask the formula result under Arrow-canonical reads (overlay precedence is
@@ -4602,13 +6855,45 @@ where
         I: IntoIterator<Item = (u32, u32, ASTNode)>,
     {
         let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
-        let vol_flags: Vec<bool> = collected
-            .iter()
-            .map(|(_, _, ast)| self.is_ast_volatile_with_provider(ast))
+        let edited_cells: Vec<(u32, u32)> = collected.iter().map(|(r, c, _)| (*r, *c)).collect();
+        let sheet_id = self.graph.sheet_id_mut(sheet);
+        let writes_inside_active_span = edited_cells.iter().any(|(row, col)| {
+            let placement =
+                PlacementCoord::new(sheet_id, row.saturating_sub(1), col.saturating_sub(1));
+            self.graph
+                .formula_authority()
+                .plane
+                .spans
+                .find_at(placement)
+                .is_some()
+        });
+        if writes_inside_active_span {
+            self.demote_spans_preserving_computed_overlays(sheet_id, Region::whole_sheet(sheet_id))
+                .map_err(Self::editor_error_to_excel)?;
+        }
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline();
+            let inputs = collected.into_iter().map(|(row, col, ast)| {
+                let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+                (FormulaAstInput::Tree(ast), placement, None)
+            });
+            pipeline.ingest_batch(inputs)?
+        };
+        let planned = ingested
+            .into_iter()
+            .map(|formula| {
+                (
+                    formula.placement.coord.row() + 1,
+                    formula.placement.coord.col() + 1,
+                    formula.ast_id,
+                    formula.dep_plan,
+                )
+            })
             .collect();
-        let n = self
-            .graph
-            .bulk_set_formulas_with_volatility(sheet, collected, vol_flags)?;
+        let n = self.graph.bulk_set_formulas_with_plans(sheet, planned)?;
+        for (row, col) in edited_cells {
+            self.record_formula_plane_changed_cell(sheet, row, col);
+        }
         // Single topology bump after batch
         if n > 0 {
             self.mark_topology_edited();
@@ -4677,13 +6962,59 @@ where
         let sheet_id = self.graph.sheet_id(sheet)?;
         let coord = Coord::from_excel(row, col, true, true);
         let cell = CellRef::new(sheet_id, coord);
-        let vid = self.graph.get_vertex_for_cell(&cell)?;
-        let ast = self.graph.get_formula_id(vid).and_then(|ast_id| {
+        if let Some(vid) = self.graph.get_vertex_for_cell(&cell) {
+            let ast = self.graph.get_formula_id(vid).and_then(|ast_id| {
+                self.graph
+                    .data_store()
+                    .retrieve_ast(ast_id, self.graph.sheet_reg())
+            });
+            return Some((ast, v));
+        }
+
+        let placement =
+            crate::formula_plane::runtime::PlacementCoord::new(sheet_id, coord.row(), coord.col());
+        let handle = self
+            .graph
+            .formula_authority()
+            .plane
+            .resolve_formula_at(placement, None);
+        let template_id = match handle.resolution {
+            crate::formula_plane::runtime::FormulaResolution::SpanPlacement {
+                template_id, ..
+            } => Some(template_id),
+            crate::formula_plane::runtime::FormulaResolution::Overlay(overlay_ref) => self
+                .graph
+                .formula_authority()
+                .plane
+                .formula_overlay
+                .get(overlay_ref)
+                .and_then(|overlay| match overlay.kind {
+                    crate::formula_plane::runtime::FormulaOverlayEntryKind::FormulaOverride(
+                        template_id,
+                    ) => Some(template_id),
+                    _ => None,
+                }),
+            _ => None,
+        };
+        let ast = template_id.and_then(|template_id| {
+            let ast_id = self
+                .graph
+                .formula_authority()
+                .plane
+                .templates
+                .get(template_id)?
+                .ast_id;
             self.graph
                 .data_store()
                 .retrieve_ast(ast_id, self.graph.sheet_reg())
         });
-        Some((ast, v))
+        if let Some(ast) = ast {
+            Some((Some(ast), v))
+        } else if v.is_some() {
+            Some((None, v))
+        } else {
+            None
+        }
     }
 
     /// Begin batch operations - defer CSR rebuilds for better performance
@@ -4711,6 +7042,9 @@ where
     }
 
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+        }
         self.evaluate_vertex_impl(vertex_id, None)
     }
 
@@ -5058,6 +7392,9 @@ where
                             }
                         }
                         self.graph.clear_spill_region(vertex_id);
+                        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+                            self.record_formula_plane_structural_change(scope);
+                        }
                         if self.config.arrow_storage_enabled
                             && self.config.delta_overlay_enabled
                             && self.config.write_formula_overlay_enabled
@@ -5141,6 +7478,9 @@ where
                     }
                 }
                 self.graph.clear_spill_region(vertex_id);
+                if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+                    self.record_formula_plane_structural_change(scope);
+                }
                 if self.config.arrow_storage_enabled
                     && self.config.delta_overlay_enabled
                     && self.config.write_formula_overlay_enabled
@@ -5353,6 +7693,9 @@ where
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
         let _source_cache = self.source_cache_session();
+        if self.graph.formula_authority().active_span_count() > 0 {
+            return self.evaluate_authoritative_formula_plane_all();
+        }
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -5563,6 +7906,9 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        if self.graph.formula_authority().active_span_count() > 0 {
+            return self.evaluate_authoritative_formula_plane_all();
+        }
 
         let start = crate::instant::FzInstant::now();
         let dirty_vertices = self.graph.get_evaluation_vertices();
@@ -5633,14 +7979,433 @@ where
             elapsed: start.elapsed(),
         })
     }
+    fn evaluate_authoritative_formula_plane_all(&mut self) -> Result<EvalResult, ExcelError> {
+        // The FormulaPlane coordinator is now selected by mode for evaluate_all.
+        // SingletonUnique formulas intentionally remain legacy graph vertices;
+        // when no spans are active, execute through the private legacy primitive
+        // rather than the public legacy entry path.
+        if self.graph.formula_authority().active_span_count() == 0 {
+            #[cfg(test)]
+            {
+                self.last_formula_plane_span_eval_report = None;
+            }
+            return self.evaluate_all_legacy_impl();
+        }
+
+        // Decide span work seeding strategy: any active span we have not yet
+        // evaluated under the current authority indexes generation must run
+        // whole; subsequent passes use bounded dirty closures derived from
+        // captured changed regions.
+        let current_indexes_epoch = self.graph.formula_authority().indexes_epoch();
+        let span_seed_mode = if self.formula_plane_indexes_epoch_seen != current_indexes_epoch {
+            SpanSeedMode::WholeAll
+        } else {
+            SpanSeedMode::DirtyClosure
+        };
+        // Take pending regions out of the authority so subsequent reschedules
+        // start from a clean slate after a successful eval pass.
+        let pending_changed_regions = self
+            .graph
+            .formula_authority_mut()
+            .take_pending_changed_regions();
+
+        let start = crate::instant::FzInstant::now();
+        let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) =
+            self.build_formula_plane_mixed_schedule(span_seed_mode, &pending_changed_regions)?;
+
+        if !schedule.is_authoritative_safe() {
+            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                "FormulaPlane mixed schedule is not authoritative-safe: {:?}",
+                schedule.fallbacks
+            )));
+        }
+
+        let mut computed_vertices = 0usize;
+        #[cfg(test)]
+        {
+            self.last_formula_plane_span_eval_report = None;
+        }
+        for layer in schedule.layers {
+            let mut buffer = ComputedWriteBuffer::default();
+            let mut sink = SpanComputedWriteSink::new(&mut buffer);
+            let work_items = layer.work;
+            let mut work_index = 0usize;
+            while work_index < work_items.len() {
+                match work_items[work_index].producer {
+                    FormulaProducerId::Span(span_id) => {
+                        let span_ref = *span_refs_by_id.get(&span_id).ok_or_else(|| {
+                            ExcelError::new(ExcelErrorKind::NImpl)
+                                .with_message("FormulaPlane schedule referenced a stale span")
+                        })?;
+                        let sheet_id = {
+                            let authority = self.graph.formula_authority();
+                            let span = authority.plane.spans.get(span_ref).ok_or_else(|| {
+                                ExcelError::new(ExcelErrorKind::NImpl)
+                                    .with_message("FormulaPlane schedule referenced a stale span")
+                            })?;
+                            span.sheet_id
+                        };
+                        let current_sheet = self.graph.sheet_name(sheet_id);
+                        let authority = self.graph.formula_authority();
+                        let evaluator = SpanEvaluator::new(
+                            &authority.plane,
+                            self,
+                            current_sheet,
+                            self.graph.data_store(),
+                            self.graph.sheet_reg(),
+                        );
+                        #[cfg(test)]
+                        let mut last_group_report = None;
+                        while work_index < work_items.len() {
+                            let FormulaProducerId::Span(group_span_id) =
+                                work_items[work_index].producer
+                            else {
+                                break;
+                            };
+                            let group_span_ref =
+                                *span_refs_by_id.get(&group_span_id).ok_or_else(|| {
+                                    ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                        "FormulaPlane schedule referenced a stale span",
+                                    )
+                                })?;
+                            let group_sheet_id = {
+                                let authority = self.graph.formula_authority();
+                                let span =
+                                    authority.plane.spans.get(group_span_ref).ok_or_else(|| {
+                                        ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                            "FormulaPlane schedule referenced a stale span",
+                                        )
+                                    })?;
+                                span.sheet_id
+                            };
+                            if group_sheet_id != sheet_id {
+                                break;
+                            }
+
+                            let dirty = producer_dirty_to_span_dirty(
+                                work_items[work_index].dirty.clone(),
+                                group_span_ref,
+                            );
+                            let task = SpanEvalTask {
+                                span: group_span_ref,
+                                dirty,
+                                plane_epoch,
+                            };
+                            let report =
+                                evaluator.evaluate_task(&task, &mut sink).map_err(|err| {
+                                    ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                                        "FormulaPlane span evaluation failed: {err:?}"
+                                    ))
+                                })?;
+                            #[cfg(test)]
+                            {
+                                last_group_report = Some(report.clone());
+                            }
+                            computed_vertices = computed_vertices
+                                .saturating_add(report.span_eval_placement_count as usize);
+                            work_index = work_index.saturating_add(1);
+                        }
+                        #[cfg(test)]
+                        {
+                            if let Some(report) = last_group_report {
+                                self.last_formula_plane_span_eval_report = Some(report);
+                            }
+                        }
+                    }
+                    FormulaProducerId::Legacy(vertex_id) => {
+                        let _ = self.evaluate_vertex_impl(vertex_id, None)?;
+                        computed_vertices = computed_vertices.saturating_add(1);
+                        work_index = work_index.saturating_add(1);
+                    }
+                }
+            }
+            self.flush_computed_write_buffer(&mut buffer)?;
+        }
+
+        self.graph.clear_dirty_flags(&legacy_vertices);
+        // Drop dirty flags on any newly-scheduled FP runtime cells whose graph
+        // vertices weren't in the dirty subset (e.g. recently-introduced span
+        // result cells); legacy clear_dirty_flags is safe over the full set.
+        self.graph.redirty_volatiles();
+        // Mark this indexes-epoch as fully evaluated so subsequent passes can
+        // use bounded span dirty closures rather than whole-span work.
+        self.formula_plane_indexes_epoch_seen = self.graph.formula_authority().indexes_epoch();
+        self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+        Ok(EvalResult {
+            computed_vertices,
+            cycle_errors: 0,
+            elapsed: start.elapsed(),
+        })
+    }
+
+    fn build_formula_plane_mixed_schedule(
+        &self,
+        span_seed_mode: SpanSeedMode,
+        pending_changed_regions: &[Region],
+    ) -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
+        let authority = self.graph.formula_authority();
+        let mut producer_results = FormulaProducerResultIndex::default();
+        let mut consumer_reads = FormulaConsumerReadIndex::default();
+        let mut work = Vec::new();
+
+        // Legacy formula producers participate in the mixed runtime only when
+        // they are dirty under graph semantics. Result/read indexes still cover
+        // every legacy formula so that span->legacy and legacy->span ordering is
+        // visible to the scheduler regardless of dirty status, but only dirty
+        // vertices receive scheduled work.
+        let dirty_legacy: rustc_hash::FxHashSet<VertexId> =
+            self.graph.get_evaluation_vertices().into_iter().collect();
+
+        let span_refs = authority.active_span_refs();
+        let span_refs_by_id = span_refs
+            .iter()
+            .copied()
+            .map(|span_ref| (span_ref.id, span_ref))
+            .collect::<BTreeMap<_, _>>();
+        for span_ref in &span_refs {
+            let span = authority.plane.spans.get(*span_ref).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span ref is stale")
+            })?;
+            let result_region = Region::from_domain(span.result_region.domain());
+            producer_results.insert_producer(FormulaProducerId::Span(span.id), result_region);
+            let Some(read_summary_id) = span.read_summary_id else {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span is missing read summary"));
+            };
+            let Some(read_summary) = authority.plane.span_read_summaries.get(read_summary_id)
+            else {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span has stale read summary"));
+            };
+            if read_summary.result_region != result_region {
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane active span read summary is stale"));
+            }
+            for dependency in &read_summary.dependencies {
+                consumer_reads.insert_read(
+                    FormulaProducerId::Span(span.id),
+                    dependency.read_region,
+                    read_summary.result_region,
+                    dependency.projection,
+                );
+            }
+            if matches!(span_seed_mode, SpanSeedMode::WholeAll) {
+                work.push(FormulaProducerWork {
+                    producer: FormulaProducerId::Span(span.id),
+                    dirty: ProducerDirtyDomain::Whole,
+                });
+            }
+        }
+
+        let legacy_vertices = self.graph.formula_vertices();
+        let mut scheduled_legacy_vertices = Vec::new();
+        for vertex in &legacy_vertices {
+            let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
+                continue;
+            };
+            let result_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            producer_results.insert_producer(FormulaProducerId::Legacy(*vertex), result_region);
+            if dirty_legacy.contains(vertex) {
+                scheduled_legacy_vertices.push(*vertex);
+                work.push(FormulaProducerWork {
+                    producer: FormulaProducerId::Legacy(*vertex),
+                    dirty: ProducerDirtyDomain::Whole,
+                });
+            }
+        }
+
+        for vertex in &legacy_vertices {
+            let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
+                continue;
+            };
+            let result_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            let mut seen = rustc_hash::FxHashSet::default();
+            for dep in self.graph.get_dependencies(*vertex) {
+                let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
+                    continue;
+                };
+                let read_region = Region::point(
+                    dep_cell.sheet_id,
+                    dep_cell.coord.row(),
+                    dep_cell.coord.col(),
+                );
+                if seen.insert(read_region) {
+                    consumer_reads.insert_read(
+                        FormulaProducerId::Legacy(*vertex),
+                        read_region,
+                        result_region,
+                        DirtyProjectionRule::WholeResult,
+                    );
+                }
+            }
+            if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+                for range in ranges {
+                    let Some(read_region) = self.shared_range_to_region_pattern(range)? else {
+                        continue;
+                    };
+                    if seen.insert(read_region) {
+                        consumer_reads.insert_read(
+                            FormulaProducerId::Legacy(*vertex),
+                            read_region,
+                            result_region,
+                            DirtyProjectionRule::WholeResult,
+                        );
+                    }
+                }
+            }
+        }
+
+        // When span seed mode is DirtyClosure, derive bounded span work from
+        // captured changed regions via the consumer-read index. This avoids
+        // recomputing every active span on edits that only touch a small
+        // number of cells.
+        if matches!(span_seed_mode, SpanSeedMode::DirtyClosure)
+            && !pending_changed_regions.is_empty()
+        {
+            use crate::formula_plane::producer::compute_dirty_closure;
+            let producer_results_ref = &producer_results;
+            let closure = compute_dirty_closure(
+                &consumer_reads,
+                pending_changed_regions.iter().copied(),
+                |producer| producer_results_ref.producer_result_region(producer),
+            );
+            for fallback_work in closure.work {
+                work.push(fallback_work);
+            }
+            // Any unsupported/conservative fallbacks for spans imply we may have
+            // missed work; in that case demote to whole-span for affected spans.
+            if !closure.fallbacks.is_empty() {
+                let mut already_whole: rustc_hash::FxHashSet<_> = work
+                    .iter()
+                    .filter_map(|w| match (w.producer, &w.dirty) {
+                        (FormulaProducerId::Span(id), ProducerDirtyDomain::Whole) => Some(id),
+                        _ => None,
+                    })
+                    .collect();
+                for fb in &closure.fallbacks {
+                    if let FormulaProducerId::Span(id) = fb.consumer
+                        && already_whole.insert(id)
+                    {
+                        work.push(FormulaProducerWork {
+                            producer: FormulaProducerId::Span(id),
+                            dirty: ProducerDirtyDomain::Whole,
+                        });
+                    }
+                }
+            }
+        }
+
+        let schedule = build_mixed_schedule(work, &producer_results, &consumer_reads);
+        Ok((
+            schedule,
+            span_refs_by_id,
+            authority.plane.epoch().0,
+            scheduled_legacy_vertices,
+        ))
+    }
+}
+
+/// Strategy for seeding span producer work in the FP mixed runtime.
+/// `WholeAll` schedules every active span as `Whole`; `DirtyClosure`
+/// computes bounded work from captured changed regions only.
+#[derive(Clone, Copy, Debug)]
+enum SpanSeedMode {
+    WholeAll,
+    DirtyClosure,
+}
+
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    fn shared_range_to_region_pattern(
+        &self,
+        range: &crate::reference::SharedRangeRef<'static>,
+    ) -> Result<Option<Region>, ExcelError> {
+        use crate::reference::SharedSheetLocator;
+        let sheet_id = match range.sheet {
+            SharedSheetLocator::Id(id) => id,
+            SharedSheetLocator::Current => self.graph.default_sheet_id(),
+            SharedSheetLocator::Name(_) => return Ok(None),
+        };
+        match (
+            range.start_row,
+            range.end_row,
+            range.start_col,
+            range.end_col,
+        ) {
+            (Some(sr), Some(er), Some(sc), Some(ec)) => Ok(Some(Region::rect(
+                sheet_id, sr.index, er.index, sc.index, ec.index,
+            ))),
+            (None, None, Some(sc), Some(ec)) if sc.index == ec.index => {
+                Ok(Some(Region::whole_col(sheet_id, sc.index)))
+            }
+            (Some(sr), Some(er), None, None) if sr.index == er.index => {
+                Ok(Some(Region::whole_row(sheet_id, sr.index)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        self.lookup_index_cache.reset_counters();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
             // Build graph for all staged formulas before evaluating
             self.build_graph_all()?;
         }
+        self.evaluate_all_coordinator()
+    }
+
+    /// Central FormulaPlane-aware coordinator for `evaluate_all`. In
+    /// `AuthoritativeExperimental` mode every call enters the FormulaPlane
+    /// coordinator; the coordinator itself composes with private legacy
+    /// primitives for legacy-only work.
+    fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
+        if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+            return self.evaluate_authoritative_formula_plane_all();
+        }
+        self.evaluate_all_legacy_impl()
+    }
+
+    fn legacy_pass_apply_cycles(&mut self, schedule: &crate::engine::scheduler::Schedule) -> usize {
+        let circ_error = LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Circular dependency detected".to_string()),
+        );
+        for cycle in &schedule.cycles {
+            for &vertex_id in cycle {
+                self.graph
+                    .update_vertex_value(vertex_id, circ_error.clone());
+                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+            }
+        }
+        schedule.cycles.len()
+    }
+
+    fn legacy_pass_run_layers(
+        &mut self,
+        schedule: &crate::engine::scheduler::Schedule,
+    ) -> Result<usize, ExcelError> {
+        let mut computed_vertices = 0;
+        for layer in &schedule.layers {
+            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                computed_vertices += self.evaluate_layer_parallel(layer)?;
+            } else {
+                computed_vertices += self.evaluate_layer_sequential(layer)?;
+            }
+        }
+        Ok(computed_vertices)
+    }
+
+    /// Legacy `evaluate_all` body, reachable from the FormulaPlane coordinator
+    /// when no active spans exist or FormulaPlane authority is not in
+    /// `AuthoritativeExperimental` mode. This is now an internal primitive; it
+    /// must not be invoked directly from public APIs.
+    fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
@@ -5670,28 +8435,8 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            // Handle cycles first by marking them with #CIRC!
-            for cycle in &schedule.cycles {
-                cycle_errors += 1;
-                let circ_error = LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Circ)
-                        .with_message("Circular dependency detected".to_string()),
-                );
-                for &vertex_id in cycle {
-                    self.graph
-                        .update_vertex_value(vertex_id, circ_error.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
-                }
-            }
-
-            // Evaluate acyclic layers (parallel or sequential based on config)
-            for layer in &schedule.layers {
-                if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                    computed_vertices += self.evaluate_layer_parallel(layer)?;
-                } else {
-                    computed_vertices += self.evaluate_layer_sequential(layer)?;
-                }
-            }
+            cycle_errors += self.legacy_pass_apply_cycles(&schedule);
+            computed_vertices += self.legacy_pass_run_layers(&schedule)?;
 
             // Check if dynamic dependencies changed
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -5751,6 +8496,10 @@ where
         let _source_cache = self.source_cache_session();
         if self.config.defer_graph_building {
             self.build_graph_all()?;
+        }
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = delta;
+            return self.evaluate_authoritative_formula_plane_all();
         }
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
@@ -5910,7 +8659,11 @@ where
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
         }
-        self.evaluate_until(targets)?;
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+        } else {
+            self.evaluate_until(targets)?;
+        }
         Ok(targets
             .iter()
             .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
@@ -5943,6 +8696,18 @@ where
                 sheets.insert(*s);
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
+        }
+        if self.graph.formula_authority().active_span_count() > 0 {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Evaluation cancelled before FormulaPlane scheduling".to_string(),
+                ));
+            }
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+            return Ok(targets
+                .iter()
+                .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
+                .collect());
         }
 
         // evaluate_until_cancellable takes &[&str] in A1 notation, but we have (&str, u32, u32)
@@ -5977,6 +8742,14 @@ where
                 sheets.insert(*s);
             }
             self.build_graph_for_sheets(sheets.iter().cloned())?;
+        }
+        if self.graph.formula_authority().active_span_count() > 0 {
+            let _ = self.evaluate_authoritative_formula_plane_all()?;
+            let values = targets
+                .iter()
+                .map(|(s, r, c)| self.get_cell_value(s, *r, *c))
+                .collect();
+            return Ok((values, EvalDelta::default()));
         }
         let mut collector = DeltaCollector::new(DeltaMode::Cells);
         self.evaluate_until_with_delta_collector(targets, &mut collector)?;
@@ -6390,6 +9163,14 @@ where
         if self.config.defer_graph_building {
             self.build_graph_all()?;
         }
+        if self.graph.formula_authority().active_span_count() > 0 {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Evaluation cancelled before FormulaPlane scheduling".to_string(),
+                ));
+            }
+            return self.evaluate_authoritative_formula_plane_all();
+        }
         self.reset_virtual_dep_telemetry_if_disabled();
         let start = crate::instant::FzInstant::now();
         let mut computed_vertices = 0;
@@ -6534,6 +9315,14 @@ where
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
         let start = crate::instant::FzInstant::now();
+        if self.graph.formula_authority().active_span_count() > 0 {
+            if cancel_flag.load(Ordering::Relaxed) {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                    "Evaluation cancelled before FormulaPlane scheduling".to_string(),
+                ));
+            }
+            return self.evaluate_authoritative_formula_plane_all();
+        }
 
         // Parse target cell addresses
         let mut target_addrs = Vec::new();
@@ -6914,6 +9703,9 @@ where
         }
 
         self.graph.clear_spill_region(vertex_id);
+        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         if self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -7315,6 +10107,118 @@ impl RowBoundsCache {
             self.map.clear();
         }
         self.map.insert((sheet_id as u32, col_idx), bounds);
+    }
+}
+
+struct UsedAxisBoundsCache {
+    snapshot: u64,
+    row_bounds_by_col_span: rustc_hash::FxHashMap<(SheetId, u32, u32), Option<(u32, u32)>>,
+    col_bounds_by_row_span: rustc_hash::FxHashMap<(SheetId, u32, u32), Option<(u32, u32)>>,
+    #[cfg(test)]
+    row_hits: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    row_misses: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    col_hits: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    col_misses: std::sync::atomic::AtomicUsize,
+}
+
+impl UsedAxisBoundsCache {
+    fn new(snapshot: u64) -> Self {
+        Self {
+            snapshot,
+            row_bounds_by_col_span: Default::default(),
+            col_bounds_by_row_span: Default::default(),
+            #[cfg(test)]
+            row_hits: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            row_misses: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            col_hits: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            col_misses: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn reset_for_snapshot(&mut self, snapshot: u64) {
+        if self.snapshot != snapshot {
+            self.snapshot = snapshot;
+            self.row_bounds_by_col_span.clear();
+            self.col_bounds_by_row_span.clear();
+        }
+    }
+
+    fn get_row_bounds(
+        &self,
+        sheet_id: SheetId,
+        start_col: u32,
+        end_col: u32,
+        snapshot: u64,
+    ) -> Option<Option<(u32, u32)>> {
+        if self.snapshot != snapshot {
+            return None;
+        }
+        let cached = self
+            .row_bounds_by_col_span
+            .get(&(sheet_id, start_col, end_col))
+            .copied();
+        #[cfg(test)]
+        if cached.is_some() {
+            self.row_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        cached
+    }
+
+    fn put_row_bounds(
+        &mut self,
+        sheet_id: SheetId,
+        start_col: u32,
+        end_col: u32,
+        snapshot: u64,
+        bounds: Option<(u32, u32)>,
+    ) {
+        self.reset_for_snapshot(snapshot);
+        self.row_bounds_by_col_span
+            .insert((sheet_id, start_col, end_col), bounds);
+        #[cfg(test)]
+        self.row_misses.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn get_col_bounds(
+        &self,
+        sheet_id: SheetId,
+        start_row: u32,
+        end_row: u32,
+        snapshot: u64,
+    ) -> Option<Option<(u32, u32)>> {
+        if self.snapshot != snapshot {
+            return None;
+        }
+        let cached = self
+            .col_bounds_by_row_span
+            .get(&(sheet_id, start_row, end_row))
+            .copied();
+        #[cfg(test)]
+        if cached.is_some() {
+            self.col_hits.fetch_add(1, Ordering::Relaxed);
+        }
+        cached
+    }
+
+    fn put_col_bounds(
+        &mut self,
+        sheet_id: SheetId,
+        start_row: u32,
+        end_row: u32,
+        snapshot: u64,
+        bounds: Option<(u32, u32)>,
+    ) {
+        self.reset_for_snapshot(snapshot);
+        self.col_bounds_by_row_span
+            .insert((sheet_id, start_row, end_row), bounds);
+        #[cfg(test)]
+        self.col_misses.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -7812,37 +10716,73 @@ where
     ) -> Option<(u32, u32)> {
         // Union Arrow-backed used-region with formula rows that have not been materialized yet.
         let sheet_id = self.graph.sheet_id(sheet)?;
+        let snap = self.data_snapshot_id();
+        if let Some(cached) = self.used_axis_bounds_cache.read().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|cache| cache.get_row_bounds(sheet_id, start_col, end_col, snap))
+        }) {
+            return cached;
+        }
+
         let arrow_bounds = self
             .sheet_store()
             .sheet(sheet)
             .and_then(|_| self.arrow_used_row_bounds(sheet, start_col, end_col));
         let formula_bounds = self.formula_row_bounds_for_columns(sheet, start_col, end_col);
-        if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
-            return Some(bounds);
+        let computed = if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
+            Some(bounds)
+        } else {
+            let sc0 = start_col.saturating_sub(1);
+            let ec0 = end_col.saturating_sub(1);
+            self.graph
+                .used_row_bounds_for_columns(sheet_id, sc0, ec0)
+                .map(|(a0, b0)| (a0 + 1, b0 + 1))
+        };
+
+        if let Ok(mut guard) = self.used_axis_bounds_cache.write() {
+            guard
+                .get_or_insert_with(|| UsedAxisBoundsCache::new(snap))
+                .put_row_bounds(sheet_id, start_col, end_col, snap, computed);
         }
-        let sc0 = start_col.saturating_sub(1);
-        let ec0 = end_col.saturating_sub(1);
-        self.graph
-            .used_row_bounds_for_columns(sheet_id, sc0, ec0)
-            .map(|(a0, b0)| (a0 + 1, b0 + 1))
+
+        computed
     }
 
     fn used_cols_for_rows(&self, sheet: &str, start_row: u32, end_row: u32) -> Option<(u32, u32)> {
         // Union Arrow-backed used-region with formula columns that have not been materialized yet.
         let sheet_id = self.graph.sheet_id(sheet)?;
+        let snap = self.data_snapshot_id();
+        if let Some(cached) = self.used_axis_bounds_cache.read().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|cache| cache.get_col_bounds(sheet_id, start_row, end_row, snap))
+        }) {
+            return cached;
+        }
+
         let arrow_bounds = self
             .sheet_store()
             .sheet(sheet)
             .and_then(|_| self.arrow_used_col_bounds(sheet, start_row, end_row));
         let formula_bounds = self.formula_col_bounds_for_rows(sheet, start_row, end_row);
-        if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
-            return Some(bounds);
+        let computed = if let Some(bounds) = Self::union_used_bounds(arrow_bounds, formula_bounds) {
+            Some(bounds)
+        } else {
+            let sr0 = start_row.saturating_sub(1);
+            let er0 = end_row.saturating_sub(1);
+            self.graph
+                .used_col_bounds_for_rows(sheet_id, sr0, er0)
+                .map(|(a0, b0)| (a0 + 1, b0 + 1))
+        };
+
+        if let Ok(mut guard) = self.used_axis_bounds_cache.write() {
+            guard
+                .get_or_insert_with(|| UsedAxisBoundsCache::new(snap))
+                .put_col_bounds(sheet_id, start_row, end_row, snap, computed);
         }
-        let sr0 = start_row.saturating_sub(1);
-        let er0 = end_row.saturating_sub(1);
-        self.graph
-            .used_col_bounds_for_rows(sheet_id, sr0, er0)
-            .map(|(a0, b0)| (a0 + 1, b0 + 1))
+
+        computed
     }
 
     fn sheet_bounds(&self, sheet: &str) -> Option<(u32, u32)> {
@@ -7864,6 +10804,14 @@ where
             tables: false,
             async_stream: false,
         }
+    }
+
+    fn build_lookup_index(
+        &self,
+        view: &RangeView<'_>,
+        axis: LookupAxis,
+    ) -> Option<Arc<LookupIndex>> {
+        self.build_lookup_index_impl(view, axis)
     }
 
     // Flats removed
@@ -8399,6 +11347,9 @@ where
         }
 
         self.graph.clear_spill_region(anchor_vertex);
+        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         if self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -8508,6 +11459,13 @@ where
                 }
             },
         )?;
+
+        if let Some(scope) = Self::formula_plane_region_from_cells(&prev_spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
+        if let Some(scope) = Self::formula_plane_region_from_cells(targets) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         if self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
@@ -8911,6 +11869,9 @@ where
         }
 
         self.graph.clear_spill_region(anchor_vertex);
+        if let Some(scope) = Self::formula_plane_region_from_cells(&spill_cells) {
+            self.record_formula_plane_structural_change(scope);
+        }
 
         // Mirror Empty to Arrow overlay for cleared cells.
         if self.config.arrow_storage_enabled
@@ -9618,6 +12579,9 @@ where
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
             self.build_graph_all()?;
+        }
+        if self.graph.formula_authority().active_span_count() > 0 {
+            return self.evaluate_authoritative_formula_plane_all();
         }
         self.reset_virtual_dep_telemetry_if_disabled();
         let start = crate::instant::FzInstant::now();

@@ -11,6 +11,7 @@
 
 use super::lookup_utils::{cmp_for_lookup, find_exact_index, is_sorted_ascending};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
+use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::ArgKind;
@@ -211,6 +212,27 @@ impl Function for MatchFn {
                 Ok(rv) => {
                     if mt == 0 {
                         let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
+                        if !wildcard_mode {
+                            let axis = if rv.dims().1 == 1 {
+                                Some(LookupAxis::ColumnInView(0))
+                            } else if rv.dims().0 == 1 {
+                                Some(LookupAxis::RowInView(0))
+                            } else {
+                                None
+                            };
+                            if let Some(axis) = axis
+                                && let Some(index) = ctx.get_lookup_index(&rv, axis)
+                            {
+                                if let Some(idx) = index.find_first_exact(&lookup_value) {
+                                    return Ok(crate::traits::CalcValue::Scalar(
+                                        LiteralValue::Int((idx + 1) as i64),
+                                    ));
+                                }
+                                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                    ExcelError::new(ExcelErrorKind::Na),
+                                )));
+                            }
+                        }
                         if let Some(idx) = super::lookup_utils::find_exact_index_in_view(
                             &rv,
                             &lookup_value,
@@ -495,11 +517,17 @@ impl Function for VLookupFn {
             let first_col_view = rv.sub_view(0, 0, rows, 1);
             let row_idx_opt = if !approximate {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
-                super::lookup_utils::find_exact_index_in_view(
-                    &first_col_view,
-                    &lookup_value,
-                    wildcard_mode,
-                )?
+                if !wildcard_mode
+                    && let Some(index) = ctx.get_lookup_index(&rv, LookupAxis::ColumnInView(0))
+                {
+                    index.find_first_exact(&lookup_value)
+                } else {
+                    super::lookup_utils::find_exact_index_in_view(
+                        &first_col_view,
+                        &lookup_value,
+                        wildcard_mode,
+                    )?
+                }
             } else {
                 // Fallback for approximate mode (requires materializing first column for now)
                 let mut first_col: Vec<LiteralValue> = Vec::new();
@@ -760,11 +788,17 @@ impl Function for HLookupFn {
                 binary_search_match(&first_row, &lookup_value, 1)
             } else {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
-                super::lookup_utils::find_exact_index_in_view(
-                    &first_row_view,
-                    &lookup_value,
-                    wildcard_mode,
-                )?
+                if !wildcard_mode
+                    && let Some(index) = ctx.get_lookup_index(&rv, LookupAxis::RowInView(0))
+                {
+                    index.find_first_exact(&lookup_value)
+                } else {
+                    super::lookup_utils::find_exact_index_in_view(
+                        &first_row_view,
+                        &lookup_value,
+                        wildcard_mode,
+                    )?
+                }
             };
 
             match col_idx_opt {

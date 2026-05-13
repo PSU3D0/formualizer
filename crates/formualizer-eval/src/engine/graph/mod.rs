@@ -2,6 +2,7 @@ use crate::SheetId;
 use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
+use crate::formula_plane::authority::FormulaAuthority;
 use formualizer_common::{
     CoordBuildHasher, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell,
 };
@@ -33,6 +34,7 @@ mod tables;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
+use super::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
 use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
@@ -43,6 +45,18 @@ use crate::engine::topo::{
 use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLocator};
 use formualizer_common::Coord as AbsCoord;
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
+
+struct RegistryFunctionProvider;
+
+impl crate::traits::FunctionProvider for RegistryFunctionProvider {
+    fn get_function(
+        &self,
+        ns: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
+        crate::function_registry::get(ns, name)
+    }
+}
 
 #[inline]
 fn normalize_stored_literal(value: LiteralValue) -> LiteralValue {
@@ -107,6 +121,21 @@ pub struct OperationSummary {
     pub affected_vertices: Vec<VertexId>,
     /// Placeholder cells that were newly created to satisfy dependencies.
     pub created_placeholders: Vec<CellRef>,
+}
+
+/// Read-only dependency graph counters used by benchmark/instrumentation tooling.
+///
+/// These counters are deliberately observational: collecting them must not mutate graph state or
+/// alter formula evaluation semantics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphBaselineStats {
+    pub graph_vertex_count: usize,
+    pub graph_formula_vertex_count: usize,
+    pub graph_edge_count: usize,
+    pub dirty_vertex_count: usize,
+    pub evaluation_vertex_count: usize,
+    pub formula_ast_root_count: usize,
+    pub formula_ast_node_count: usize,
 }
 
 /// SoA-based dependency graph implementation
@@ -227,6 +256,9 @@ pub struct DependencyGraph {
     // Evaluation configuration
     config: super::EvalConfig,
 
+    // Graph-owned FormulaPlane authority shell. Inert until a later runtime cut-over.
+    formula_authority: FormulaAuthority,
+
     // Dynamic topology orderer (Pearce–Kelly) maintained alongside edges when enabled
     pk_order: Option<DynamicTopo<VertexId>>,
 
@@ -263,6 +295,28 @@ impl DependencyGraph {
         &self.config
     }
 
+    pub(crate) fn formula_authority(&self) -> &FormulaAuthority {
+        &self.formula_authority
+    }
+
+    pub(crate) fn formula_authority_mut(&mut self) -> &mut FormulaAuthority {
+        &mut self.formula_authority
+    }
+
+    /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
+    pub fn baseline_stats(&self) -> GraphBaselineStats {
+        let data_stats = self.data_store.memory_usage();
+        GraphBaselineStats {
+            graph_vertex_count: self.store.len(),
+            graph_formula_vertex_count: self.vertex_formulas.len(),
+            graph_edge_count: self.edges.num_edges_exact(),
+            dirty_vertex_count: self.dirty_vertices.len(),
+            evaluation_vertex_count: self.get_evaluation_vertices().len(),
+            formula_ast_root_count: self.vertex_formulas.len(),
+            formula_ast_node_count: data_stats.total_ast_nodes,
+        }
+    }
+
     #[inline]
     pub(crate) fn value_cache_enabled(&self) -> bool {
         self.value_cache_enabled
@@ -295,6 +349,31 @@ impl DependencyGraph {
     {
         crate::engine::plan::build_dependency_plan(
             &mut self.sheet_reg,
+            items.into_iter(),
+            policy,
+            volatile,
+        )
+    }
+
+    pub fn plan_dependencies_mixed<'a, I>(
+        &mut self,
+        items: I,
+        policy: &formualizer_parse::parser::CollectPolicy,
+        volatile: Option<&[bool]>,
+    ) -> Result<crate::engine::plan::DependencyPlan, formualizer_common::ExcelError>
+    where
+        I: IntoIterator<
+            Item = (
+                &'a str,
+                u32,
+                u32,
+                crate::engine::plan::DependencyPlanAst<'a>,
+            ),
+        >,
+    {
+        crate::engine::plan::build_dependency_plan_mixed(
+            &mut self.sheet_reg,
+            &self.data_store,
             items.into_iter(),
             policy,
             volatile,
@@ -689,6 +768,11 @@ impl DependencyGraph {
         self.ensure_touched_sheets.clear();
     }
 
+    /// Store an AST and return its arena id.
+    pub fn store_ast(&mut self, ast: &formualizer_parse::parser::ASTNode) -> AstNodeId {
+        self.data_store.store_ast(ast, &self.sheet_reg)
+    }
+
     /// Store ASTs in batch and return their arena ids
     pub fn store_asts_batch<'a, I>(&mut self, asts: I) -> Vec<AstNodeId>
     where
@@ -993,6 +1077,7 @@ impl DependencyGraph {
             cell_to_name_dependents: FxHashMap::default(),
             name_to_cell_dependencies: FxHashMap::default(),
             config: config.clone(),
+            formula_authority: FormulaAuthority::default(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
             spill_cell_to_anchor: std::collections::HashMap::with_hasher(CoordBuildHasher),
@@ -1109,6 +1194,129 @@ impl DependencyGraph {
 
     pub(crate) fn data_store(&self) -> &DataStore {
         &self.data_store
+    }
+
+    pub(crate) fn make_ingest_pipeline<'a>(
+        &'a mut self,
+        function_provider: &'a dyn crate::traits::FunctionProvider,
+        policy: formualizer_parse::parser::CollectPolicy,
+    ) -> crate::engine::ingest_pipeline::IngestPipeline<'a> {
+        use crate::engine::ingest_pipeline::{
+            NameRegistryView, NamedEntryRef, SourceEntryRef, SourceRegistryView,
+            TableEntrySnapshot, TableRegistryView,
+        };
+
+        let DependencyGraph {
+            data_store,
+            sheet_reg,
+            named_ranges,
+            named_ranges_lookup,
+            sheet_named_ranges,
+            sheet_named_ranges_lookup,
+            tables,
+            tables_lookup,
+            source_scalars,
+            source_tables,
+            config,
+            ..
+        } = self;
+
+        let case_sensitive_names = config.case_sensitive_names;
+        let names = NameRegistryView::new(move |name, current_sheet| {
+            let found = if case_sensitive_names {
+                sheet_named_ranges
+                    .get(&(current_sheet, name.to_string()))
+                    .or_else(|| named_ranges.get(name))
+            } else {
+                let key = name.to_lowercase();
+                sheet_named_ranges_lookup
+                    .get(&(current_sheet, key.clone()))
+                    .and_then(|canon| sheet_named_ranges.get(&(current_sheet, canon.clone())))
+                    .or_else(|| {
+                        named_ranges_lookup
+                            .get(&key)
+                            .and_then(|canon| named_ranges.get(canon))
+                    })
+            };
+            found.map(|entry| NamedEntryRef {
+                vertex: entry.vertex,
+            })
+        });
+
+        let case_sensitive_tables = config.case_sensitive_tables;
+        let tables_ref = &*tables;
+        let tables_lookup_ref = &*tables_lookup;
+        let snapshot_table = |entry: &tables::TableEntry| TableEntrySnapshot {
+            name: entry.name.clone(),
+            range: entry.range,
+            header_row: entry.header_row,
+            headers: entry.headers.clone(),
+            vertex: entry.vertex,
+        };
+        let tables_view = TableRegistryView::new(
+            move |name| {
+                if case_sensitive_tables {
+                    tables_ref.get(name).map(snapshot_table)
+                } else {
+                    let key = name.to_lowercase();
+                    tables_lookup_ref
+                        .get(&key)
+                        .and_then(|canon| tables_ref.get(canon))
+                        .map(snapshot_table)
+                }
+            },
+            move |cell| {
+                let row0 = cell.coord.row();
+                let col0 = cell.coord.col();
+                let mut best: Option<&tables::TableEntry> = None;
+                let mut best_area = u64::MAX;
+                let mut best_name = "";
+                for table in tables_ref.values() {
+                    if table.sheet_id() != cell.sheet_id {
+                        continue;
+                    }
+                    let sr0 = table.range.start.coord.row();
+                    let sc0 = table.range.start.coord.col();
+                    let er0 = table.range.end.coord.row();
+                    let ec0 = table.range.end.coord.col();
+                    if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
+                        continue;
+                    }
+                    let area = ((er0 - sr0 + 1) as u64).saturating_mul((ec0 - sc0 + 1) as u64);
+                    let name = table.name.as_str();
+                    if best.is_none() || area < best_area || (area == best_area && name < best_name)
+                    {
+                        best = Some(table);
+                        best_area = area;
+                        best_name = name;
+                    }
+                }
+                best.map(snapshot_table)
+            },
+        );
+
+        let sources = SourceRegistryView::new(
+            move |name| {
+                source_scalars.get(name).map(|entry| SourceEntryRef {
+                    vertex: entry.vertex,
+                })
+            },
+            move |name| {
+                source_tables.get(name).map(|entry| SourceEntryRef {
+                    vertex: entry.vertex,
+                })
+            },
+        );
+
+        crate::engine::ingest_pipeline::IngestPipeline::new(
+            data_store,
+            sheet_reg,
+            names,
+            tables_view,
+            sources,
+            function_provider,
+            policy,
+        )
     }
 
     /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "SheetName!A1").
@@ -1358,18 +1566,46 @@ impl DependencyGraph {
         col: u32,
         ast: ASTNode,
     ) -> Result<OperationSummary, ExcelError> {
-        let volatile = self.is_ast_volatile(&ast);
-        self.set_cell_formula_with_volatility(sheet, row, col, ast, volatile)
+        self.set_cell_formula_with_volatility(sheet, row, col, ast, false)
     }
 
-    /// Set a formula in a cell with a known volatility flag (context-scoped detection upstream)
+    /// Set a formula in a cell. The volatility argument is retained for API compatibility;
+    /// dependency flags now come from `IngestPipeline`.
     pub fn set_cell_formula_with_volatility(
         &mut self,
         sheet: &str,
         row: u32,
         col: u32,
         ast: ASTNode,
+        _volatile: bool,
+    ) -> Result<OperationSummary, ExcelError> {
+        let sheet_id = self.sheet_id_mut(sheet);
+        let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let provider = RegistryFunctionProvider;
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline(&provider);
+            pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?
+        };
+        self.set_cell_formula_with_plan(
+            sheet,
+            row,
+            col,
+            ingested.ast_id,
+            &ingested.dep_plan,
+            ingested.dep_plan.volatile,
+            ingested.dep_plan.dynamic,
+        )
+    }
+
+    pub(crate) fn set_cell_formula_with_plan(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        ast_id: AstNodeId,
+        plan: &DependencyPlanRow,
         volatile: bool,
+        dynamic: bool,
     ) -> Result<OperationSummary, ExcelError> {
         let dbg = std::env::var("FZ_DEBUG_LOAD")
             .ok()
@@ -1391,50 +1627,74 @@ impl DependencyGraph {
         let coord = Coord::from_excel(row, col, true, true);
         let addr = CellRef::new(sheet_id, coord);
 
-        // Rewrite context-dependent structured references (e.g., this-row selectors) into
-        // concrete cell/range references for this formula cell.
-        let mut ast = ast;
-        self.rewrite_structured_references_for_cell(&mut ast, addr)?;
-
-        // Extract dependencies from AST, creating placeholders if needed
         let t_dep0 = if dbg {
             Some(crate::instant::FzInstant::now())
         } else {
             None
         };
-        let (
-            new_dependencies,
-            new_range_dependencies,
-            mut created_placeholders,
-            named_dependencies,
-            unresolved_names,
-        ) = self.extract_dependencies_with_pending_names(&ast, sheet_id)?;
+        let mut created_placeholders = Vec::new();
+        let mut new_dependencies = Vec::with_capacity(plan.direct_cell_deps.len());
+        for dep in &plan.direct_cell_deps {
+            let dep_vid = self.get_or_create_vertex(dep, &mut created_placeholders);
+            if !new_dependencies.contains(&dep_vid) {
+                new_dependencies.push(dep_vid);
+            }
+        }
+        let mut named_dependencies = Vec::new();
+        let mut unresolved_names = Vec::new();
+        for name in plan
+            .resolved_named_refs
+            .iter()
+            .chain(plan.named_refs.iter())
+        {
+            if let Some(named) = self.resolve_name_entry(name, sheet_id) {
+                if !new_dependencies.contains(&named.vertex) {
+                    new_dependencies.push(named.vertex);
+                }
+                if !named_dependencies.contains(&named.vertex) {
+                    named_dependencies.push(named.vertex);
+                }
+            } else if let Some(source) = self.resolve_source_scalar_entry(name) {
+                if !new_dependencies.contains(&source.vertex) {
+                    new_dependencies.push(source.vertex);
+                }
+            } else {
+                unresolved_names.push(name.clone());
+            }
+        }
+        for source_name in &plan.source_refs {
+            if let Some(source) = self.resolve_source_scalar_entry(source_name) {
+                if !new_dependencies.contains(&source.vertex) {
+                    new_dependencies.push(source.vertex);
+                }
+            } else if let Some(source) = self.resolve_source_table_entry(source_name)
+                && !new_dependencies.contains(&source.vertex)
+            {
+                new_dependencies.push(source.vertex);
+            }
+        }
+        for table_name in &plan.table_refs {
+            if let Some(table) = self.resolve_table_entry(table_name) {
+                if !new_dependencies.contains(&table.vertex) {
+                    new_dependencies.push(table.vertex);
+                }
+            } else if let Some(source) = self.resolve_source_table_entry(table_name)
+                && !new_dependencies.contains(&source.vertex)
+            {
+                new_dependencies.push(source.vertex);
+            }
+        }
         if let (true, Some(t)) = (dbg, t_dep0) {
             let elapsed = t.elapsed().as_millis();
-            // Only log if over threshold or sampled
             let do_log = (dep_ms_thresh > 0 && elapsed >= dep_ms_thresh)
                 || (sample_n > 0 && (row as usize).is_multiple_of(sample_n));
-            if dep_ms_thresh == 0 && sample_n == 0 {
-                // default: very light sampling every 1000 rows
-                if row.is_multiple_of(1000) {
-                    eprintln!(
-                        "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
-                        self.sheet_name(sheet_id),
-                        crate::reference::Coord::from_excel(row, col, true, true),
-                        new_dependencies.len(),
-                        new_range_dependencies.len(),
-                        created_placeholders.len(),
-                        named_dependencies.len(),
-                        elapsed
-                    );
-                }
-            } else if do_log {
+            if (dep_ms_thresh == 0 && sample_n == 0 && row.is_multiple_of(1000)) || do_log {
                 eprintln!(
-                    "[fz][dep] {}!{} extracted: deps={}, ranges={}, placeholders={}, names={} in {} ms",
+                    "[fz][dep] {}!{} planned: deps={}, ranges={}, placeholders={}, names={} in {} ms",
                     self.sheet_name(sheet_id),
                     crate::reference::Coord::from_excel(row, col, true, true),
                     new_dependencies.len(),
-                    new_range_dependencies.len(),
+                    plan.range_deps.len(),
                     created_placeholders.len(),
                     named_dependencies.len(),
                     elapsed
@@ -1469,7 +1729,6 @@ impl DependencyGraph {
         // Update vertex properties
         self.store
             .set_kind(addr_vertex_id, VertexKind::FormulaScalar);
-        let ast_id = self.data_store.store_ast(&ast, &self.sheet_reg);
         self.vertex_formulas.insert(addr_vertex_id, ast_id);
         self.store.set_dirty(addr_vertex_id, true);
 
@@ -1477,7 +1736,6 @@ impl DependencyGraph {
         self.vertex_values.remove(&addr_vertex_id);
 
         self.mark_volatile(addr_vertex_id, volatile);
-        let dynamic = self.is_ast_dynamic(&ast);
         self.store.set_dynamic(addr_vertex_id, dynamic);
 
         if !named_dependencies.is_empty() {
@@ -1502,7 +1760,7 @@ impl DependencyGraph {
 
         // Add new dependency edges
         self.add_dependent_edges(addr_vertex_id, &new_dependencies);
-        self.add_range_dependent_edges(addr_vertex_id, &new_range_dependencies, sheet_id);
+        self.add_range_dependent_edges(addr_vertex_id, &plan.range_deps, sheet_id);
 
         Ok(OperationSummary {
             affected_vertices: self.mark_dirty(addr_vertex_id),
@@ -1514,7 +1772,7 @@ impl DependencyGraph {
         &self,
         ast: &mut ASTNode,
         cell: CellRef,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<bool, ExcelError> {
         self.rewrite_structured_references_node(ast, cell)
     }
 
@@ -1522,7 +1780,7 @@ impl DependencyGraph {
         &self,
         node: &mut ASTNode,
         cell: CellRef,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<bool, ExcelError> {
         match &mut node.node_type {
             ASTNodeType::Reference { reference, .. } => {
                 self.rewrite_structured_reference(reference, cell)
@@ -1531,31 +1789,34 @@ impl DependencyGraph {
                 self.rewrite_structured_references_node(expr, cell)
             }
             ASTNodeType::BinaryOp { left, right, .. } => {
-                self.rewrite_structured_references_node(left, cell)?;
-                self.rewrite_structured_references_node(right, cell)
+                let left_rewritten = self.rewrite_structured_references_node(left, cell)?;
+                let right_rewritten = self.rewrite_structured_references_node(right, cell)?;
+                Ok(left_rewritten || right_rewritten)
             }
             ASTNodeType::Function { args, .. } => {
+                let mut rewritten = false;
                 for a in args.iter_mut() {
-                    self.rewrite_structured_references_node(a, cell)?;
+                    rewritten |= self.rewrite_structured_references_node(a, cell)?;
                 }
-                Ok(())
+                Ok(rewritten)
             }
             ASTNodeType::Call { callee, args } => {
-                self.rewrite_structured_references_node(callee, cell)?;
+                let mut rewritten = self.rewrite_structured_references_node(callee, cell)?;
                 for a in args.iter_mut() {
-                    self.rewrite_structured_references_node(a, cell)?;
+                    rewritten |= self.rewrite_structured_references_node(a, cell)?;
                 }
-                Ok(())
+                Ok(rewritten)
             }
             ASTNodeType::Array(rows) => {
+                let mut rewritten = false;
                 for r in rows.iter_mut() {
                     for item in r.iter_mut() {
-                        self.rewrite_structured_references_node(item, cell)?;
+                        rewritten |= self.rewrite_structured_references_node(item, cell)?;
                     }
                 }
-                Ok(())
+                Ok(rewritten)
             }
-            ASTNodeType::Literal(_) => Ok(()),
+            ASTNodeType::Literal(_) => Ok(false),
         }
     }
 
@@ -1563,16 +1824,16 @@ impl DependencyGraph {
         &self,
         reference: &mut ReferenceType,
         cell: CellRef,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<bool, ExcelError> {
         use formualizer_parse::parser::{SpecialItem, TableSpecifier};
 
         let ReferenceType::Table(tref) = reference else {
-            return Ok(());
+            return Ok(false);
         };
 
         // This-row shorthand: parsed as an unnamed table reference with a Combination specifier.
         if !tref.name.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         let col_name = match &tref.specifier {
@@ -1667,7 +1928,7 @@ impl DependencyGraph {
             col_abs: true,
         };
 
-        Ok(())
+        Ok(true)
     }
 
     fn find_table_containing_cell(&self, cell: CellRef) -> Option<&tables::TableEntry> {
@@ -1706,6 +1967,28 @@ impl DependencyGraph {
         }
 
         best
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn fp8_parity_extract_dependencies_with_pending_names(
+        &mut self,
+        ast: &ASTNode,
+        current_sheet_id: SheetId,
+    ) -> Result<
+        (
+            Vec<VertexId>,
+            Vec<SharedRangeRef<'static>>,
+            Vec<CellRef>,
+            Vec<VertexId>,
+            Vec<String>,
+        ),
+        ExcelError,
+    > {
+        self.extract_dependencies_with_pending_names(ast, current_sheet_id)
+    }
+
+    pub(crate) fn fp8_parity_is_ast_volatile(&self, ast: &ASTNode) -> bool {
+        self.is_ast_volatile(ast)
     }
 
     pub fn set_cell_value_ref(
@@ -1862,14 +2145,16 @@ impl DependencyGraph {
         let mut result: Vec<VertexId> = combined
             .into_iter()
             .filter(|&id| {
-                // Only include formula vertices
-                matches!(
-                    self.store.kind(id),
-                    VertexKind::FormulaScalar
-                        | VertexKind::FormulaArray
-                        | VertexKind::NamedScalar
-                        | VertexKind::NamedArray
-                )
+                // Only include active formula/name vertices; tombstoned vertices can retain stable
+                // IDs in the store, but must never be scheduled for evaluation.
+                self.store.vertex_exists_active(id)
+                    && matches!(
+                        self.store.kind(id),
+                        VertexKind::FormulaScalar
+                            | VertexKind::FormulaArray
+                            | VertexKind::NamedScalar
+                            | VertexKind::NamedArray
+                    )
             })
             .collect();
         result.sort_unstable();
@@ -2030,138 +2315,131 @@ impl DependencyGraph {
         &mut self,
         sheet: &str,
         collected: Vec<(u32, u32, ASTNode)>,
-        vol_flags: Vec<bool>,
+        _vol_flags: Vec<bool>,
     ) -> Result<usize, ExcelError> {
-        use formualizer_parse::parser::CollectPolicy;
         let sheet_id = self.sheet_id_mut(sheet);
-
         if collected.is_empty() {
             return Ok(0);
         }
-
-        // 1) Build plan across all formulas (read-only, no graph mutation)
-        let tiny_refs = collected.iter().map(|(r, c, ast)| (sheet, *r, *c, ast));
-        let policy = CollectPolicy {
-            expand_small_ranges: true,
-            range_expansion_limit: self.config.range_expansion_limit,
-            include_names: true,
+        let provider = RegistryFunctionProvider;
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline(&provider);
+            let inputs = collected.into_iter().map(|(row, col, ast)| {
+                let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+                (FormulaAstInput::Tree(ast), placement, None)
+            });
+            pipeline.ingest_batch(inputs)?
         };
-        let plan = crate::engine::plan::build_dependency_plan(
-            &mut self.sheet_reg,
-            tiny_refs,
-            &policy,
-            Some(&vol_flags),
-        )?;
+        let planned = ingested
+            .into_iter()
+            .map(|formula| {
+                (
+                    formula.placement.coord.row() + 1,
+                    formula.placement.coord.col() + 1,
+                    formula.ast_id,
+                    formula.dep_plan,
+                )
+            })
+            .collect();
+        self.bulk_set_formulas_with_plans(sheet, planned)
+    }
 
-        // 2) Ensure/create target vertices and referenced cells (placeholders) once
+    pub(crate) fn bulk_set_formulas_with_plans(
+        &mut self,
+        sheet: &str,
+        planned: Vec<(u32, u32, AstNodeId, DependencyPlanRow)>,
+    ) -> Result<usize, ExcelError> {
+        let sheet_id = self.sheet_id_mut(sheet);
+        if planned.is_empty() {
+            return Ok(0);
+        }
         let mut created_placeholders: Vec<CellRef> = Vec::new();
-
-        // Targets
-        let mut target_vids: Vec<VertexId> = Vec::with_capacity(plan.formula_targets.len());
-        for (sid, pc) in &plan.formula_targets {
-            let addr = CellRef::new(*sid, Coord::new(pc.row(), pc.col(), true, true));
-            let vid = if let Some(&existing) = self.cell_to_vertex.get(&addr) {
-                existing
-            } else {
-                self.get_or_create_vertex(&addr, &mut created_placeholders)
-            };
-            target_vids.push(vid);
+        let mut target_vids: Vec<VertexId> = Vec::with_capacity(planned.len());
+        for (row, col, _, _) in &planned {
+            let addr = CellRef::new(sheet_id, Coord::from_excel(*row, *col, true, true));
+            target_vids.push(self.get_or_create_vertex(&addr, &mut created_placeholders));
         }
 
-        // Global referenced cells
-        let mut dep_vids: Vec<VertexId> = Vec::with_capacity(plan.global_cells.len());
-        for (sid, pc) in &plan.global_cells {
-            let addr = CellRef::new(*sid, Coord::new(pc.row(), pc.col(), true, true));
-            let vid = if let Some(&existing) = self.cell_to_vertex.get(&addr) {
-                existing
-            } else {
-                self.get_or_create_vertex(&addr, &mut created_placeholders)
-            };
-            dep_vids.push(vid);
-        }
-
-        // 3) Store ASTs in batch and update kinds/flags/value map
-        let ast_ids = self
-            .data_store
-            .store_asts_batch(collected.iter().map(|(_, _, ast)| ast), &self.sheet_reg);
         for (i, &tvid) in target_vids.iter().enumerate() {
-            // If this cell already had a formula, remove its edges once here
             if self.vertex_formulas.contains_key(&tvid) {
                 self.remove_dependent_edges(tvid);
             }
+            self.detach_vertex_from_names(tvid);
+            self.clear_pending_name_references(tvid);
             self.store.set_kind(tvid, VertexKind::FormulaScalar);
             self.store.set_dirty(tvid, true);
             self.vertex_values.remove(&tvid);
-            self.vertex_formulas.insert(tvid, ast_ids[i]);
-            self.mark_volatile(tvid, vol_flags.get(i).copied().unwrap_or(false));
-
-            let dynamic = self.is_ast_dynamic(&collected[i].2);
-            self.store.set_dynamic(tvid, dynamic);
+            self.vertex_formulas.insert(tvid, planned[i].2);
+            self.mark_volatile(tvid, planned[i].3.volatile);
+            self.store.set_dynamic(tvid, planned[i].3.dynamic);
         }
+        self.dirty_vertices.extend(target_vids.iter().copied());
 
-        // 4) Add edges in one batch
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
+            let plan = &planned[i].3;
             let mut deps: Vec<VertexId> = Vec::new();
-
-            // Map per-formula indices into dep_vids
-            if let Some(indices) = plan.per_formula_cells.get(i) {
-                deps.reserve(indices.len());
-                for &idx in indices {
-                    if let Some(vid) = dep_vids.get(idx as usize) {
-                        deps.push(*vid);
-                    }
+            for cell in &plan.direct_cell_deps {
+                let dep_vid = self.get_or_create_vertex(cell, &mut created_placeholders);
+                if !deps.contains(&dep_vid) {
+                    deps.push(dep_vid);
                 }
             }
 
-            if let Some(names) = plan.per_formula_names.get(i)
-                && !names.is_empty()
+            let mut name_vertices = Vec::new();
+            for name in plan
+                .resolved_named_refs
+                .iter()
+                .chain(plan.named_refs.iter())
             {
-                let mut name_vertices = Vec::new();
-                let formula_sheet = plan
-                    .formula_targets
-                    .get(i)
-                    .map(|(sid, _)| *sid)
-                    .unwrap_or(sheet_id);
-                for name in names {
-                    if let Some(named) = self.resolve_name_entry(name, formula_sheet) {
+                if let Some(named) = self.resolve_name_entry(name, sheet_id) {
+                    if !deps.contains(&named.vertex) {
                         deps.push(named.vertex);
+                    }
+                    if !name_vertices.contains(&named.vertex) {
                         name_vertices.push(named.vertex);
-                    } else if let Some(source) = self.resolve_source_scalar_entry(name) {
-                        deps.push(source.vertex);
-                    } else {
-                        self.record_pending_name_reference(formula_sheet, name, tvid);
                     }
-                }
-                if !name_vertices.is_empty() {
-                    self.attach_vertex_to_names(tvid, &name_vertices);
+                } else if let Some(source) = self.resolve_source_scalar_entry(name) {
+                    if !deps.contains(&source.vertex) {
+                        deps.push(source.vertex);
+                    }
+                } else {
+                    self.record_pending_name_reference(sheet_id, name, tvid);
                 }
             }
-
-            if let Some(tables) = plan.per_formula_tables.get(i)
-                && !tables.is_empty()
-            {
-                for table_name in tables {
-                    if let Some(table) = self.resolve_table_entry(table_name) {
+            for source_name in &plan.source_refs {
+                if let Some(source) = self.resolve_source_scalar_entry(source_name) {
+                    if !deps.contains(&source.vertex) {
+                        deps.push(source.vertex);
+                    }
+                } else if let Some(source) = self.resolve_source_table_entry(source_name)
+                    && !deps.contains(&source.vertex)
+                {
+                    deps.push(source.vertex);
+                }
+            }
+            for table_name in &plan.table_refs {
+                if let Some(table) = self.resolve_table_entry(table_name) {
+                    if !deps.contains(&table.vertex) {
                         deps.push(table.vertex);
-                    } else if let Some(source) = self.resolve_source_table_entry(table_name) {
-                        deps.push(source.vertex);
                     }
+                } else if let Some(source) = self.resolve_source_table_entry(table_name)
+                    && !deps.contains(&source.vertex)
+                {
+                    deps.push(source.vertex);
                 }
             }
-
+            if !name_vertices.is_empty() {
+                self.attach_vertex_to_names(tvid, &name_vertices);
+            }
             if !deps.is_empty() {
                 self.add_dependent_edges_nobatch(tvid, &deps);
             }
-
-            // Range deps from plan are already compact RangeKeys; register directly.
-            if let Some(rks) = plan.per_formula_ranges.get(i) {
-                self.add_range_deps_from_keys(tvid, rks, sheet_id);
-            }
+            self.add_range_dependent_edges(tvid, &plan.range_deps, sheet_id);
         }
         self.edges.end_batch();
 
-        Ok(collected.len())
+        Ok(planned.len())
     }
 
     /// Public (crate) helper to add a single dependency edge (dependent -> dependency) used for restoration/undo.
@@ -2857,6 +3135,12 @@ impl DependencyGraph {
 
     pub fn get_formula_id(&self, vertex_id: VertexId) -> Option<AstNodeId> {
         self.vertex_formulas.get(&vertex_id).copied()
+    }
+
+    pub(crate) fn formula_vertices(&self) -> Vec<VertexId> {
+        let mut vertices = self.vertex_formulas.keys().copied().collect::<Vec<_>>();
+        vertices.sort_unstable();
+        vertices
     }
 
     pub fn get_formula_id_and_volatile(&self, vertex_id: VertexId) -> Option<(AstNodeId, bool)> {

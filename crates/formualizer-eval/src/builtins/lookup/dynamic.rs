@@ -22,6 +22,7 @@
 use super::super::utils::collapse_if_scalar;
 use super::lookup_utils::{PreparedLookupMatcher, cmp_for_lookup, value_to_f64_lenient};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
+use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function; // FnCaps imported via macro
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
@@ -278,7 +279,22 @@ impl Function for XLookupFn {
         let needle = lookup_value;
         let prepared_matcher = PreparedLookupMatcher::new(&needle, wildcard);
         if match_mode == 0 || wildcard {
-            if search_mode == 1 && lookup_rows > 0 && lookup_cols > 0 {
+            if match_mode == 0 && search_mode == 1 && lookup_rows > 0 && lookup_cols > 0 {
+                let axis = if vertical {
+                    LookupAxis::ColumnInView(0)
+                } else {
+                    LookupAxis::RowInView(0)
+                };
+                if let Some(index) = _ctx.get_lookup_index(&lookup_view, axis) {
+                    found = index.find_first_exact(&needle);
+                } else {
+                    found = super::lookup_utils::find_exact_index_in_view(
+                        &lookup_view,
+                        &needle,
+                        false,
+                    )?;
+                }
+            } else if search_mode == 1 && lookup_rows > 0 && lookup_cols > 0 {
                 found =
                     super::lookup_utils::find_exact_index_in_view(&lookup_view, &needle, wildcard)?;
             } else if search_mode == -1 {

@@ -1,3 +1,4 @@
+use crate::engine::lookup_index_cache::{LookupAxis, LookupIndex};
 use crate::engine::range_view::RangeView;
 use crate::engine::row_visibility::VisibilityMaskMode;
 pub use crate::function::Function;
@@ -334,7 +335,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     fn reference_for_eval(&self) -> Result<ReferenceType, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+                ASTNodeType::Reference { reference, .. } => {
+                    self.interp.reference_for_current_offset(reference)
+                }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }
@@ -350,9 +353,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
                 })?;
                 match node {
-                    crate::engine::arena::AstNodeData::Reference { ref_type, .. } => Ok(
-                        data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry)
-                    ),
+                    crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
+                        let reference = data_store
+                            .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                        self.interp.reference_for_current_offset(&reference)
+                    }
                     crate::engine::arena::AstNodeData::Function { .. }
                     | crate::engine::arena::AstNodeData::BinaryOp { .. } => self
                         .interp
@@ -369,10 +374,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
                     // Prefer RangeView since it has explicit current-sheet context.
+                    let reference = self.interp.reference_for_current_offset(reference)?;
                     let view = self
                         .interp
                         .context
-                        .resolve_range_view(reference, self.interp.current_sheet())?;
+                        .resolve_range_view(&reference, self.interp.current_sheet())?;
                     let (rows, cols) = view.dims();
                     let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
                     view.for_each_row(&mut |row| {
@@ -489,11 +495,13 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn range_view(&self) -> Result<RangeView<'b>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => self
-                    .interp
-                    .context
-                    .resolve_range_view(reference, self.interp.current_sheet())
-                    .map(|v| v.with_cancel_token(self.interp.context.cancellation_token())),
+                ASTNodeType::Reference { reference, .. } => {
+                    let reference = self.interp.reference_for_current_offset(reference)?;
+                    self.interp
+                        .context
+                        .resolve_range_view(&reference, self.interp.current_sheet())
+                        .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
+                }
                 // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
                 ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(
                     RangeView::from_owned_rows(arr.clone(), self.interp.context.date_system())
@@ -778,7 +786,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     pub fn as_reference_or_eval(&self) -> Result<ReferenceType, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => Ok(reference.clone()),
+                ASTNodeType::Reference { reference, .. } => {
+                    self.interp.reference_for_current_offset(reference)
+                }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
                     self.interp.evaluate_ast_as_reference(node)
                 }
@@ -1292,6 +1302,16 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         crate::engine::DateSystem::Excel1900
     }
 
+    /// Optional: Build or fetch an exact-match lookup index over an Arrow-backed view.
+    /// Implementations should return None if not supported or unsafe.
+    fn build_lookup_index(
+        &self,
+        _view: &RangeView<'_>,
+        _axis: LookupAxis,
+    ) -> Option<std::sync::Arc<LookupIndex>> {
+        None
+    }
+
     /// Optional: Build or fetch a cached boolean mask for a criterion over an Arrow-backed view.
     /// Implementations should return None if not supported.
     fn build_criteria_mask(
@@ -1386,6 +1406,16 @@ pub trait FunctionContext<'ctx> {
     /// Workbook date system selection (1900 vs 1904).
     fn date_system(&self) -> crate::engine::DateSystem {
         crate::engine::DateSystem::Excel1900
+    }
+
+    /// Optional: Build or fetch an exact-match lookup index over an Arrow-backed view.
+    /// Returns None if not supported by the underlying context.
+    fn get_lookup_index(
+        &self,
+        _view: &RangeView<'_>,
+        _axis: LookupAxis,
+    ) -> Option<std::sync::Arc<LookupIndex>> {
+        None
     }
 
     /// Optional: Build or fetch a cached boolean mask for a criterion over an Arrow-backed view.
@@ -1488,6 +1518,14 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
 
     fn date_system(&self) -> crate::engine::DateSystem {
         self.base.date_system()
+    }
+
+    fn get_lookup_index(
+        &self,
+        view: &RangeView<'_>,
+        axis: LookupAxis,
+    ) -> Option<std::sync::Arc<LookupIndex>> {
+        self.base.build_lookup_index(view, axis)
     }
 
     fn get_criteria_mask(

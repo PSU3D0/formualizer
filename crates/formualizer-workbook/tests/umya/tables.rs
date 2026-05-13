@@ -17,7 +17,7 @@ fn rewrite_header_row_count(path: &std::path::Path, table_name: &str, header_row
     let out_path = path.with_file_name("fixture-headerless.xlsx");
     let out_file = File::create(&out_path).expect("create output xlsx");
     let mut zout = zip::ZipWriter::new(out_file);
-    let options = zip::write::FileOptions::default();
+    let options = zip::write::SimpleFileOptions::default();
 
     for i in 0..zin.len() {
         let mut f = zin.by_index(i).expect("zip entry");

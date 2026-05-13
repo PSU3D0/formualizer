@@ -4,6 +4,7 @@
     "index",
     "parse-ast-evaluate-workbook",
     "dependency-graph-and-recalc",
+    "formula-plane-span-evaluation",
     "values-coercion-and-errors",
     "spill-behavior",
     "named-ranges-and-tables"

@@ -77,6 +77,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { workspace = true }
 glob = "0.3"
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
 
 [[bench]]
 name = "interval_tree_bench"
@@ -100,6 +101,7 @@ js-runtime = ["dep:web-time", "dep:getrandom", "dep:getrandom02"]
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
 tracing_chrome = ["tracing", "dep:tracing-chrome"]
 perf_instrumentation = []
+formula_plane_diagnostics = []
 
 [[example]]
 name = "recalc_quadratic"

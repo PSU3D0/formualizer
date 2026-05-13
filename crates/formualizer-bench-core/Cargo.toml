@@ -11,8 +11,9 @@ publish = false
 
 [features]
 default = []
-xlsx = ["dep:formualizer-testkit"]
+xlsx = ["dep:formualizer-testkit", "dep:umya-spreadsheet"]
 formualizer_runner = ["xlsx", "dep:formualizer-workbook"]
+dhat-heap = ["dep:dhat"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]
 
@@ -24,7 +25,12 @@ regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-zip = "0.6"
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
 formualizer-testkit = { path = "../formualizer-testkit", optional = true }
 formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya", "calamine"] }
+umya-spreadsheet = { version = "=2.3.2", optional = true }
+formualizer-parse = { workspace = true }
+formualizer-common = { workspace = true }
+formualizer-eval = { workspace = true, features = ["formula_plane_diagnostics"] }
+dhat = { version = "0.3", optional = true }
 ironcalc = { version = "0.7.1", optional = true }
