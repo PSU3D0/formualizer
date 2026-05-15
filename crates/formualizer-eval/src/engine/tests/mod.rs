@@ -4,6 +4,7 @@ mod cancellation;
 mod change_log;
 mod changelog_replay;
 mod common;
+mod cross_sheet_named_range_first_cell;
 mod cycle_detection;
 mod demand_driven;
 mod dependency;
