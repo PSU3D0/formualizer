@@ -696,7 +696,11 @@ impl<'a> Interpreter<'a> {
 
     fn eval_unary_scalar(&self, op: &str, v: LiteralValue) -> Result<LiteralValue, ExcelError> {
         match op {
-            "+" => self.apply_number_unary(v, |n| n),
+            // Excel/LibreOffice treat unary `+` as a pass-through (identity) operator,
+            // not as a numeric coercion. `=+"2014F"` returns the text "2014F"; only the
+            // unary `-` form coerces operands to numbers. The `=+A1` idiom is common in
+            // finance models (Lotus 1-2-3 carry-over) and must preserve text labels.
+            "+" => Ok(v),
             "-" => self.apply_number_unary(v, |n| -n),
             "%" => self.apply_number_unary(v, |n| n / 100.0),
             _ => {
