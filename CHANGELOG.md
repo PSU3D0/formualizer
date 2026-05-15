@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Treated unary `+` as a pass-through (identity) operator to match Excel/LibreOffice semantics. Previously, `=+A1` returned `#VALUE!` when `A1` held a non-numeric string such as `"2014F"`; the leading-`=+` idiom is common in finance models carried over from Lotus 1-2-3 and now preserves text, booleans, and other non-numeric operand types. Unary `-` and `%` retain their numeric-coercion semantics.
+
 ## [0.5.8] - 2026-04-27
 
 ### Breaking changes
