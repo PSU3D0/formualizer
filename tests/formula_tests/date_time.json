@@ -437,6 +437,84 @@
       "result_type": "int",
       "description": "EOMONTH 3 months backward from serial 444",
       "skip": "EOMONTH negative months edge case not yet handled"
+    },
+    {
+      "formula": "=EDATE(A1, 15)",
+      "result": 46146,
+      "result_type": "int",
+      "description": "EDATE adds months to a native Date cell, preserving day",
+      "context": {
+        "A1": {"type": "date", "value": "2025-02-04"}
+      }
+    },
+    {
+      "formula": "=EDATE(A1, 1)",
+      "result": 45716,
+      "result_type": "int",
+      "description": "EDATE clamps day-of-month overflow when target month is shorter",
+      "context": {
+        "A1": {"type": "date", "value": "2025-01-31"}
+      }
+    },
+    {
+      "formula": "=EDATE(A1, -3)",
+      "result": 45641,
+      "result_type": "int",
+      "description": "EDATE accepts negative months from a native Date cell",
+      "context": {
+        "A1": {"type": "date", "value": "2025-03-15"}
+      }
+    },
+    {
+      "formula": "=EOMONTH(A1, 0)",
+      "result": 45716,
+      "result_type": "int",
+      "description": "EOMONTH on a native Date cell returns the month-end serial",
+      "context": {
+        "A1": {"type": "date", "value": "2025-02-04"}
+      }
+    },
+    {
+      "formula": "=WEEKNUM(0, 1)",
+      "result": 0,
+      "result_type": "int",
+      "description": "WEEKNUM serial 0, return_type 1"
+    },
+    {
+      "formula": "=WEEKNUM(1, 21)",
+      "result": 52,
+      "result_type": "int",
+      "description": "WEEKNUM serial 1, ISO return_type"
+    },
+    {
+      "formula": "=WEEKNUM(2, 21)",
+      "result": 1,
+      "result_type": "int",
+      "description": "WEEKNUM serial 2, ISO return_type"
+    },
+    {
+      "formula": "=WEEKNUM(60, 21)",
+      "result": 9,
+      "result_type": "int",
+      "description": "WEEKNUM phantom leap day ISO"
+    },
+    {
+      "formula": "=WEEKNUM(60, 1)",
+      "result": 9,
+      "result_type": "int",
+      "description": "WEEKNUM phantom leap day return_type 1"
+    },
+    {
+      "formula": "=WEEKNUM(11326)",
+      "result": 1,
+      "result_type": "int",
+      "description": "WEEKNUM large serial default return_type"
+    },
+    {
+      "formula": "=WEEKNUM(36534)",
+      "result": 3,
+      "result_type": "int",
+      "description": "WEEKNUM year 2000 area"
     }
   ]
 }

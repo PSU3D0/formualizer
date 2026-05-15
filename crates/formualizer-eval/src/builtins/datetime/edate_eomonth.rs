@@ -10,34 +10,26 @@ use formualizer_macros::func_caps;
 
 fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
-    match v {
-        LiteralValue::Number(f) => Ok(f),
-        LiteralValue::Int(i) => Ok(i as f64),
-        LiteralValue::Text(s) => s.parse::<f64>().map_err(|_| {
-            ExcelError::new_value().with_message("EDATE/EOMONTH start_date is not a valid number")
-        }),
-        LiteralValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
-        LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e),
-        _ => Err(ExcelError::new_value()
-            .with_message("EDATE/EOMONTH expects numeric or text-numeric arguments")),
+    if let LiteralValue::Error(e) = v {
+        return Err(e);
     }
+    crate::coercion::to_number_lenient(&v).map_err(|_| {
+        ExcelError::new_value()
+            .with_message("EDATE/EOMONTH expects numeric, date, or text-numeric arguments")
+    })
 }
 
 fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
     let v = arg.value()?.into_literal();
-    match v {
-        LiteralValue::Int(i) => Ok(i as i32),
-        LiteralValue::Number(f) => Ok(f.trunc() as i32),
-        LiteralValue::Text(s) => s.parse::<f64>().map(|f| f.trunc() as i32).map_err(|_| {
-            ExcelError::new_value().with_message("EDATE/EOMONTH months is not a valid number")
-        }),
-        LiteralValue::Boolean(b) => Ok(if b { 1 } else { 0 }),
-        LiteralValue::Empty => Ok(0),
-        LiteralValue::Error(e) => Err(e),
-        _ => Err(ExcelError::new_value()
-            .with_message("EDATE/EOMONTH expects numeric or text-numeric arguments")),
+    if let LiteralValue::Error(e) = v {
+        return Err(e);
     }
+    crate::coercion::to_number_lenient(&v)
+        .map(|f| f.trunc() as i32)
+        .map_err(|_| {
+            ExcelError::new_value()
+                .with_message("EDATE/EOMONTH months argument is not a valid number")
+        })
 }
 
 /// Returns the serial date offset by a whole number of months from a start date.
