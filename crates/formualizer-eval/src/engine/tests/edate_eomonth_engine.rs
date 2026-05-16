@@ -32,7 +32,7 @@ fn run_edate(start: NaiveDate, months: i64) -> Option<LiteralValue> {
             "Sheet1",
             1,
             2,
-            parse(&format!("=EDATE($A$1, {months})")).unwrap(),
+            parse(format!("=EDATE($A$1, {months})")).unwrap(),
         )
         .unwrap();
     engine.evaluate_all().unwrap();
