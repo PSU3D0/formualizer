@@ -9155,31 +9155,26 @@ where
                 _ => {}
             }
 
-            // Explicit dependencies (graph edges)
+            // Explicit dependencies (graph edges). We push *every* dep onto
+            // the stack — not just formulas — because intermediate vertices
+            // (NamedScalar, NamedArray, Range) are pass-through nodes whose
+            // own dependencies point at the actual formula cells. Filtering
+            // by kind here previously caused DN-range refs to be dropped
+            // from the demand subgraph, so a target like
+            // ``=SUM(named_range_pointing_at_dirty_cells)`` would evaluate
+            // using stale values for those cells. The kind check at the top
+            // of the loop still gates which vertices end up in
+            // ``to_evaluate``; only Formula vertices are scheduled.
             if let Some(dependencies) = self.graph.dependencies_slice(v) {
                 for &dep in dependencies {
-                    if self.graph.vertex_exists(dep) {
-                        match self.graph.get_vertex_kind(dep) {
-                            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                                if !visited.contains(&dep) {
-                                    stack.push(dep);
-                                }
-                            }
-                            _ => {}
-                        }
+                    if self.graph.vertex_exists(dep) && !visited.contains(&dep) {
+                        stack.push(dep);
                     }
                 }
             } else {
                 for dep in self.graph.get_dependencies(v) {
-                    if self.graph.vertex_exists(dep) {
-                        match self.graph.get_vertex_kind(dep) {
-                            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                                if !visited.contains(&dep) {
-                                    stack.push(dep);
-                                }
-                            }
-                            _ => {}
-                        }
+                    if self.graph.vertex_exists(dep) && !visited.contains(&dep) {
+                        stack.push(dep);
                     }
                 }
             } // Virtual dependencies (compressed ranges + dynamic like INDIRECT)

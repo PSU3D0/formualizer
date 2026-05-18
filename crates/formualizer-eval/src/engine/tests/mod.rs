@@ -130,3 +130,5 @@ mod row_visibility_state;
 mod row_visibility_transactions;
 mod subtotal_visibility;
 mod visibility_mask_cache;
+
+mod demand_subgraph_named_range;
