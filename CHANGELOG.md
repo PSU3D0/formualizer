@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.9] - 2026-05-18
+
 ### Fixed
 
 - Treated unary `+` as a pass-through (identity) operator to match Excel/LibreOffice semantics. Previously, `=+A1` returned `#VALUE!` when `A1` held a non-numeric string such as `"2014F"`; the leading-`=+` idiom is common in finance models carried over from Lotus 1-2-3 and now preserves text, booleans, and other non-numeric operand types. Unary `-` and `%` retain their numeric-coercion semantics. (#100)
@@ -156,7 +158,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.9...HEAD
+[0.5.9]: https://github.com/PSU3D0/formualizer/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/PSU3D0/formualizer/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/PSU3D0/formualizer/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/PSU3D0/formualizer/compare/v0.5.5...v0.5.6
