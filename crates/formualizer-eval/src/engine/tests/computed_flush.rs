@@ -488,6 +488,56 @@ fn computed_write_coalescing_plan_preserves_sparse_gaps_and_empty_values() {
 }
 
 #[test]
+fn narrow_layer_below_threshold_uses_direct_point_writes() {
+    let mut cfg = arrow_eval_config();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    let sheet = "Sheet1";
+    phase5_seed_base_rows(&mut engine, sheet, 7, 32);
+    let ast = parse("=ROW()").unwrap();
+    for row in 1..=7 {
+        engine.set_cell_formula(sheet, row, 1, ast.clone()).unwrap();
+    }
+
+    engine.evaluate_all().unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let stats = phase5_probe_overlay_stats(asheet, 0);
+    assert_eq!(stats.points, 7);
+    assert_eq!(stats.sparse_fragments, 0);
+    assert_eq!(stats.dense_fragments, 0);
+    assert_eq!(stats.run_fragments, 0);
+    assert_eq!(stats.covered_len, 7);
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(1.0));
+    assert_eq!(asheet.get_cell_value(6, 0), LiteralValue::Number(7.0));
+}
+
+#[test]
+fn layer_at_threshold_uses_coalesced_dense_fragment() {
+    let mut cfg = arrow_eval_config();
+    cfg.enable_parallel = false;
+    let mut engine = Engine::new(TestWorkbook::new(), cfg);
+    let sheet = "Sheet1";
+    phase5_seed_base_rows(&mut engine, sheet, 8, 32);
+    let ast = parse("=ROW()").unwrap();
+    for row in 1..=8 {
+        engine.set_cell_formula(sheet, row, 1, ast.clone()).unwrap();
+    }
+
+    engine.evaluate_all().unwrap();
+
+    let asheet = engine.sheet_store().sheet(sheet).expect("arrow sheet");
+    let stats = phase5_probe_overlay_stats(asheet, 0);
+    assert_eq!(stats.points, 0);
+    assert_eq!(stats.sparse_fragments, 0);
+    assert_eq!(stats.dense_fragments, 1);
+    assert_eq!(stats.run_fragments, 0);
+    assert_eq!(stats.covered_len, 8);
+    assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(1.0));
+    assert_eq!(asheet.get_cell_value(7, 0), LiteralValue::Number(8.0));
+}
+
+#[test]
 fn coalesced_flush_lww_matches_legacy_point_flush() {
     let mut engine = Engine::new(TestWorkbook::new(), arrow_eval_config());
     let sheet = "Sheet1";
