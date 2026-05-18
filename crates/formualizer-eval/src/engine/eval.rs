@@ -30,6 +30,11 @@ type StagedFormulaMap = std::collections::HashMap<String, Vec<StagedFormulaEntry
 type PreparedFormulaBatches = Vec<(String, Vec<ParsedFormulaEntry>)>;
 type StagedFormulaBatches = Vec<(String, Vec<StagedFormulaEntry>)>;
 
+// Computed-write coalescing pays a fixed grouping/planning cost. For very narrow
+// layers there is not enough work to amortize it, and the direct point-write path
+// is faster while preserving the same visibility semantics.
+const COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH: usize = 8;
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ComputedWrite {
     Cell {
@@ -9066,11 +9071,56 @@ where
 
     // ── Layer evaluation via effects pipeline ──────────────────────────────
 
+    fn evaluate_small_layer_direct_effects(
+        &mut self,
+        layer: &super::scheduler::Layer,
+        mut delta: Option<&mut DeltaCollector>,
+        mut log: Option<&mut ChangeLog>,
+        cancel_flag: Option<&AtomicBool>,
+        cancel_check_every: usize,
+        cancel_message: &'static str,
+    ) -> Result<usize, ExcelError> {
+        for (i, &vertex_id) in layer.vertices.iter().enumerate() {
+            if cancel_check_every > 0
+                && i % cancel_check_every == 0
+                && cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed))
+            {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message(cancel_message.to_string()));
+            }
+            let value = match self.evaluate_vertex_immutable(vertex_id) {
+                Ok(v) => v,
+                Err(e) => LiteralValue::Error(e),
+            };
+            let effects = self.plan_vertex_effects(vertex_id, value, None)?;
+            for effect in &effects {
+                self.apply_effect_with_computed_writes(
+                    effect,
+                    delta.as_deref_mut(),
+                    log.as_deref_mut(),
+                    None,
+                )?;
+            }
+        }
+        Ok(layer.vertices.len())
+    }
+
     /// Evaluate a layer sequentially using the effects pipeline.
     fn evaluate_layer_sequential_effects(
         &mut self,
         layer: &super::scheduler::Layer,
     ) -> Result<usize, ExcelError> {
+        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
+            return self.evaluate_small_layer_direct_effects(
+                layer,
+                None,
+                None,
+                None,
+                0,
+                "Evaluation cancelled within layer",
+            );
+        }
+
         let mut computed_writes = ComputedWriteBuffer::default();
         for &vertex_id in &layer.vertices {
             self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
@@ -9112,6 +9162,17 @@ where
         layer: &super::scheduler::Layer,
         delta: &mut DeltaCollector,
     ) -> Result<usize, ExcelError> {
+        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
+            return self.evaluate_small_layer_direct_effects(
+                layer,
+                Some(delta),
+                None,
+                None,
+                0,
+                "Evaluation cancelled within layer",
+            );
+        }
+
         let mut computed_writes = ComputedWriteBuffer::default();
         for &vertex_id in &layer.vertices {
             self.flush_before_range_dependent_vertex(vertex_id, &mut computed_writes)?;
@@ -9153,6 +9214,17 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
+        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
+            return self.evaluate_small_layer_direct_effects(
+                layer,
+                None,
+                None,
+                Some(cancel_flag),
+                256,
+                "Evaluation cancelled within layer",
+            );
+        }
+
         let mut computed_writes = ComputedWriteBuffer::default();
         for (i, &vertex_id) in layer.vertices.iter().enumerate() {
             if i % 256 == 0 && cancel_flag.load(Ordering::Relaxed) {
@@ -9199,6 +9271,17 @@ where
         layer: &super::scheduler::Layer,
         cancel_flag: &AtomicBool,
     ) -> Result<usize, ExcelError> {
+        if layer.vertices.len() < COMPUTED_WRITE_COALESCING_MIN_LAYER_WIDTH {
+            return self.evaluate_small_layer_direct_effects(
+                layer,
+                None,
+                None,
+                Some(cancel_flag),
+                128,
+                "Demand-driven evaluation cancelled within layer",
+            );
+        }
+
         let mut computed_writes = ComputedWriteBuffer::default();
         for (i, &vertex_id) in layer.vertices.iter().enumerate() {
             if i % 128 == 0 && cancel_flag.load(Ordering::Relaxed) {
