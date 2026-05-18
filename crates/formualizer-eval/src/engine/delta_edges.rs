@@ -417,6 +417,21 @@ impl DeltaEdgeSlab {
         self.coord_changed = false;
     }
 
+    /// Iterate over all (from, &additions) pairs in the delta. Used by
+    /// build_from_adjacency to carry forward delta-only edges that the
+    /// adjacency input does not cover.
+    pub fn additions_iter(&self) -> impl Iterator<Item = (&VertexId, &FxHashSet<VertexId>)> {
+        self.additions.iter()
+    }
+
+    /// Return removals scheduled for `from` (empty slice if none).
+    pub fn removals_for(&self, from: VertexId) -> impl Iterator<Item = VertexId> + '_ {
+        self.removals
+            .get(&from)
+            .into_iter()
+            .flat_map(|set| set.iter().copied())
+    }
+
     /// Apply delta to CSR, creating a new CSR structure
     pub fn apply_to_csr(
         &self,
@@ -660,10 +675,66 @@ impl CsrMutableEdges {
     /// This replaces the current base and clears the delta slab.
     pub fn build_from_adjacency(
         &mut self,
-        adjacency: Vec<(u32, Vec<u32>)>,
+        mut adjacency: Vec<(u32, Vec<u32>)>,
         coords: Vec<AbsCoord>,
         vertex_ids: Vec<u32>,
     ) {
+        // Carry forward any edges that exist in the current base or delta
+        // for vertices NOT covered by the input adjacency. Named-range
+        // pass-through vertices (NamedScalar/NamedArray) emit edges to
+        // their underlying cells via add_edge during load. Those edges
+        // live in base after the auto-rebuild that follows each add_vertex
+        // call. Bulk-ingest's finalize only hands us formula-target edges
+        // in the adjacency input, so without this carry-forward the
+        // named-range vertex's out-edges would be silently dropped and
+        // build_demand_subgraph would never reach the underlying cells.
+        let covered: rustc_hash::FxHashSet<u32> = adjacency.iter().map(|(vid, _)| *vid).collect();
+        // Carry forward base-only out-edges for ANY existing vertex not in
+        // the new adjacency input. Iterate over the current vertex_ids
+        // (which already track every vertex allocated so far, including
+        // named-range pass-through vertices) before we overwrite the field.
+        for &vid in &self.vertex_ids {
+            if covered.contains(&vid) {
+                continue;
+            }
+            let v = VertexId(vid);
+            // Merge with any pending delta edges for this vertex.
+            let merged = if self.delta.op_count() == 0 {
+                self.base.out_edges(v).to_vec()
+            } else {
+                self.delta.merged_view(&self.base, v)
+            };
+            if !merged.is_empty() {
+                adjacency.push((vid, merged.into_iter().map(|v| v.0).collect()));
+            }
+        }
+        // Also carry forward delta-only additions (additions to vertices
+        // that weren't in vertex_ids yet — e.g., freshly allocated names
+        // whose add_vertex didn't trigger a rebuild). Pure deltas should
+        // be rare here, but include them for completeness.
+        for (&from, adds) in self.delta.additions_iter() {
+            if covered.contains(&from.0) {
+                continue;
+            }
+            if adjacency.iter().any(|(v, _)| *v == from.0) {
+                continue;
+            }
+            let removals: rustc_hash::FxHashSet<u32> =
+                self.delta.removals_for(from).map(|v| v.0).collect();
+            let mut base_set: rustc_hash::FxHashSet<u32> =
+                self.base.out_edges(from).iter().map(|v| v.0).collect();
+            for r in &removals {
+                base_set.remove(r);
+            }
+            for &add in adds {
+                base_set.insert(add.0);
+            }
+            if !base_set.is_empty() {
+                let mut targets: Vec<u32> = base_set.into_iter().collect();
+                targets.sort_unstable();
+                adjacency.push((from.0, targets));
+            }
+        }
         self.base = CsrEdges::from_adjacency(adjacency, &coords);
         self.coords = coords;
         self.vertex_ids = vertex_ids;

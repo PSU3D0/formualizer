@@ -2191,6 +2191,21 @@ impl DependencyGraph {
             return vertex_id;
         }
 
+        // During first-load bulk ingest the fast path populates
+        // ``load_packed_to_vertex`` but skips ``cell_to_vertex``. Promote
+        // the entry into ``cell_to_vertex`` so subsequent lookups are O(1)
+        // and consistent across the two maps.
+        if self.first_load_assume_new {
+            let packed = Self::packed_cell_key(
+                addr.sheet_id,
+                AbsCoord::new(addr.coord.row(), addr.coord.col()),
+            );
+            if let Some(&existing) = self.load_packed_to_vertex.get(&packed) {
+                self.cell_to_vertex.insert(*addr, existing);
+                return existing;
+            }
+        }
+
         created_placeholders.push(*addr);
         let packed_coord = AbsCoord::new(addr.coord.row(), addr.coord.col());
         let vertex_id = self.store.allocate(packed_coord, addr.sheet_id, 0x00);
