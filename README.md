@@ -20,7 +20,7 @@
 
 **The spreadsheet engine that actually evaluates formulas.** Parse, evaluate, and mutate Excel workbooks from Rust, Python, or the browser.
 
-A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-compatible functions, Apache Arrow storage, incremental dependency tracking, undo/redo, and dynamic array support. One Rust core, three language targets, MIT/Apache-2.0.
+A permissively-licensed, production-grade spreadsheet engine with 400+ Excel-compatible functions, Apache Arrow storage, incremental dependency tracking, undo/redo, and dynamic array support. One Rust core, three language targets, MIT/Apache-2.0.
 
 ---
 
@@ -28,7 +28,7 @@ A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-com
 
 | | |
 |---|---|
-| **320+ Excel functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, statistics, financial, database, engineering |
+| **400+ Excel functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, statistics, financial, database, engineering |
 | **Three language targets** | Rust, Python (PyO3), and WASM (browser + Node) with consistent APIs |
 | **Arrow-powered storage** | Apache Arrow columnar backing with spill overlays for efficient large-workbook evaluation |
 | **Dependency graph** | Incremental recalculation, cycle detection, topological scheduling, optional parallel evaluation |
@@ -43,7 +43,7 @@ A permissively-licensed, production-grade spreadsheet engine with 320+ Excel-com
 📖 **[formualizer.dev](https://www.formualizer.dev/docs)** — full documentation, interactive tools, and API reference.
 
 - [Quickstarts](https://www.formualizer.dev/docs/quickstarts) — get running in Rust, Python, or JS/WASM in minutes
-- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 320+ built-in functions with examples
+- [Function Reference](https://www.formualizer.dev/docs/reference/functions) — 400+ built-in functions with examples
 - [Formula Parser](https://www.formualizer.dev/formula-parser) — interactive browser-based formula parser and AST inspector
 - [SheetPort Guide](https://www.formualizer.dev/docs/sheetport) — treat spreadsheets as typed, deterministic APIs
 - [Core Concepts](https://www.formualizer.dev/docs/core-concepts) — dependency graph, evaluation pipeline, coercion rules
@@ -173,7 +173,7 @@ WASM plugin path (Rust workbook API):
 
 | Library | Language | Parse | Evaluate | Write | Functions | Dep. graph | License |
 |---------|----------|-------|----------|-------|-----------|------------|---------|
-| **Formualizer** | Rust / Python / WASM | Yes | Yes | Yes | 320+ | Yes (incremental) | MIT / Apache-2.0 |
+| **Formualizer** | Rust / Python / WASM | Yes | Yes | Yes | 400+ | Yes (incremental) | MIT / Apache-2.0 |
 | HyperFormula | JavaScript | Yes | Yes | No | ~400 | Yes | **AGPL-3.0** (or commercial) |
 | calamine | Rust | No | No | No | N/A | N/A | MIT / Apache-2.0 |
 | openpyxl | Python | No | No | Yes | N/A | N/A | MIT |
@@ -184,7 +184,7 @@ WASM plugin path (Rust workbook API):
 - **calamine** is read-only — it extracts cached values from XLSX files but cannot evaluate formulas.
 - **openpyxl** reads and writes XLSX but has no formula evaluation engine.
 - **xlcalc** evaluates formulas but supports a fraction of Excel's function library and has limited dependency tracking.
-- **Formualizer** is a complete, permissively-licensed engine: parse formulas, track dependencies, evaluate with 320+ functions, mutate workbooks, undo/redo — from Rust, Python, or the browser.
+- **Formualizer** is a complete, permissively-licensed engine: parse formulas, track dependencies, evaluate with 400+ functions, mutate workbooks, undo/redo — from Rust, Python, or the browser.
 
 ## Architecture
 

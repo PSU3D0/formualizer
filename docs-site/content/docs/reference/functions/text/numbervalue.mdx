@@ -1,0 +1,59 @@
+---
+title: "NUMBERVALUE"
+description: "NUMBERVALUE: Converts locale-delimited text to a number."
+---
+
+<FunctionPageSchema id="text/numbervalue" />
+
+## Summary
+
+Parses text using explicit decimal and group separators, independent of the
+ workbook's invariant locale.
+
+## Remarks
+ - The decimal separator defaults to `.`.
+ - The group separator defaults to `,`.
+ - Percent suffixes are supported and scale the result by 100 per suffix.
+
+## Examples
+
+<Tabs items={["Parse with explicit separators", "Parse percent suffix"]}>
+<Tab value="Parse with explicit separators">
+<FunctionSandbox
+  title="Parse with explicit separators"
+  formula={`=NUMBERVALUE("1.234,56",",",".")`}
+  grid={{}}
+  expected={"1234.56"}
+/>
+</Tab>
+
+<Tab value="Parse percent suffix">
+<FunctionSandbox
+  title="Parse percent suffix"
+  formula={`=NUMBERVALUE("12.5%")`}
+  grid={{}}
+  expected={"0.125"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [VALUE](/docs/reference/functions/text/value)
+- [TEXT](/docs/reference/functions/text/text)
+- [DOLLAR](/docs/reference/functions/text/dollar)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [LEFT](/docs/reference/functions/text/left)
+
+## FAQ
+
+### Does NUMBERVALUE use the global locale?
+No. Decimal and group separators are passed explicitly as arguments.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/numbervalue" />
+{/* [formualizer-docgen:function-meta:end] */}

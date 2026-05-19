@@ -1,0 +1,39 @@
+---
+title: "LENB"
+description: "LENB: Returns text length using non-DBCS byte-compatible semantics."
+---
+
+<FunctionPageSchema id="text/lenb" />
+
+## Summary
+
+In Formualizer's invariant locale, LENB delegates to LEN.
+
+## Examples
+
+<FunctionSandbox
+  title="Length of text"
+  formula={`=LENB("abc")`}
+  grid={{}}
+  expected={"3"}
+/>
+
+## Related functions
+
+- [LEN](/docs/reference/functions/text/len)
+- [LEFTB](/docs/reference/functions/text/leftb)
+- [RIGHTB](/docs/reference/functions/text/rightb)
+- [ASC](/docs/reference/functions/text/asc)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+
+## FAQ
+
+### Does LENB count UTF-8 bytes?
+No. In the invariant locale it matches LEN.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/lenb" />
+{/* [formualizer-docgen:function-meta:end] */}

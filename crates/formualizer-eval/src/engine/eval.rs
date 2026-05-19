@@ -13,7 +13,7 @@ use crate::engine::{
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
-use crate::traits::{EvaluationContext, Resolver};
+use crate::traits::{EvaluationContext, ReferenceInfo, Resolver};
 use chrono::Timelike;
 use formualizer_common::{CoordBuildHasher, col_letters_from_1based, parse_a1_1based};
 use formualizer_parse::parser::ReferenceType;
@@ -7807,6 +7807,207 @@ where
 
     fn recalc_epoch(&self) -> u64 {
         self.recalc_epoch
+    }
+
+    fn workbook_sheet_count(&self) -> Option<usize> {
+        Some(self.graph.sheet_reg().active_len())
+    }
+
+    fn sheet_index_by_name(&self, sheet: &str) -> Option<usize> {
+        self.graph.sheet_reg().active_position(sheet)
+    }
+
+    fn current_sheet_index(&self, current_sheet: &str) -> Option<usize> {
+        self.sheet_index_by_name(current_sheet)
+    }
+
+    fn inspect_reference(
+        &self,
+        reference: &ReferenceType,
+        current_sheet: &str,
+    ) -> Result<Option<ReferenceInfo>, ExcelError> {
+        let sheet_info = |sheet_name: &str| -> Result<(SheetId, usize), ExcelError> {
+            let sheet_id = self
+                .graph
+                .sheet_id(sheet_name)
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+            let sheet_index = self
+                .graph
+                .sheet_reg()
+                .active_position_by_id(sheet_id)
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+            Ok((sheet_id, sheet_index))
+        };
+
+        let cell_info =
+            |sheet_name: &str, row: u32, col: u32| -> Result<ReferenceInfo, ExcelError> {
+                let (sheet_id, sheet_index) = sheet_info(sheet_name)?;
+                let row0 = row
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let col0 = col
+                    .checked_sub(1)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                Ok(ReferenceInfo {
+                    first_sheet_index: Some(sheet_index),
+                    sheet_count: Some(1),
+                    first_cell: Some(CellRef::new(sheet_id, Coord::new(row0, col0, true, true))),
+                })
+            };
+
+        let range_info = |sheet_name: &str,
+                          start_row: Option<u32>,
+                          start_col: Option<u32>|
+         -> Result<ReferenceInfo, ExcelError> {
+            let (sheet_id, sheet_index) = sheet_info(sheet_name)?;
+            let row = start_row.unwrap_or(1);
+            let col = start_col.unwrap_or(1);
+            let row0 = row
+                .checked_sub(1)
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+            let col0 = col
+                .checked_sub(1)
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+            Ok(ReferenceInfo {
+                first_sheet_index: Some(sheet_index),
+                sheet_count: Some(1),
+                first_cell: Some(CellRef::new(sheet_id, Coord::new(row0, col0, true, true))),
+            })
+        };
+
+        let info = match reference {
+            ReferenceType::Cell {
+                sheet, row, col, ..
+            } => {
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                cell_info(sheet_name, *row, *col)?
+            }
+            ReferenceType::Range {
+                sheet,
+                start_row,
+                start_col,
+                ..
+            } => {
+                let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+                range_info(sheet_name, *start_row, *start_col)?
+            }
+            ReferenceType::Cell3D {
+                sheet_first,
+                sheet_last,
+                row,
+                col,
+                ..
+            } => {
+                let first = cell_info(sheet_first, *row, *col)?;
+                ReferenceInfo {
+                    first_sheet_index: first.first_sheet_index,
+                    sheet_count: self
+                        .graph
+                        .sheet_reg()
+                        .active_span_len(sheet_first, sheet_last),
+                    first_cell: first.first_cell,
+                }
+            }
+            ReferenceType::Range3D {
+                sheet_first,
+                sheet_last,
+                start_row,
+                start_col,
+                ..
+            } => {
+                let first = range_info(sheet_first, *start_row, *start_col)?;
+                ReferenceInfo {
+                    first_sheet_index: first.first_sheet_index,
+                    sheet_count: self
+                        .graph
+                        .sheet_reg()
+                        .active_span_len(sheet_first, sheet_last),
+                    first_cell: first.first_cell,
+                }
+            }
+            ReferenceType::NamedRange(name) => {
+                let current_id = self
+                    .graph
+                    .sheet_id(current_sheet)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                let named = self
+                    .graph
+                    .resolve_name_entry(name, current_id)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                match &named.definition {
+                    NamedDefinition::Cell(cell) => ReferenceInfo {
+                        first_sheet_index: self
+                            .graph
+                            .sheet_reg()
+                            .active_position_by_id(cell.sheet_id),
+                        sheet_count: Some(1),
+                        first_cell: Some(*cell),
+                    },
+                    NamedDefinition::Range(range) => ReferenceInfo {
+                        first_sheet_index: self
+                            .graph
+                            .sheet_reg()
+                            .active_position_by_id(range.start.sheet_id),
+                        sheet_count: Some(1),
+                        first_cell: Some(range.start),
+                    },
+                    NamedDefinition::Literal(_) | NamedDefinition::Formula { .. } => {
+                        ReferenceInfo {
+                            first_sheet_index: None,
+                            sheet_count: None,
+                            first_cell: None,
+                        }
+                    }
+                }
+            }
+            ReferenceType::Table(tref) => {
+                let table = self
+                    .graph
+                    .resolve_table_entry(&tref.name)
+                    .ok_or_else(|| ExcelError::new(ExcelErrorKind::Ref))?;
+                ReferenceInfo {
+                    first_sheet_index: self
+                        .graph
+                        .sheet_reg()
+                        .active_position_by_id(table.range.start.sheet_id),
+                    sheet_count: Some(1),
+                    first_cell: Some(table.range.start),
+                }
+            }
+            ReferenceType::External(_) => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+        };
+
+        Ok(Some(info))
+    }
+
+    fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
+        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+        if sheet_name.is_empty() {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        }
+        let row = cell.coord.row() + 1;
+        let col = cell.coord.col() + 1;
+
+        if let Some(entries) = self.staged_formulas.get(sheet_name)
+            && let Some((_, _, text)) = entries
+                .iter()
+                .rev()
+                .find(|(r, c, _)| *r == row && *c == col)
+        {
+            return Ok(Some(if text.starts_with('=') {
+                text.clone()
+            } else {
+                format!("={text}")
+            }));
+        }
+
+        let Some(vertex) = self.graph.get_vertex_for_cell(&cell) else {
+            return Ok(None);
+        };
+        let Some(ast) = self.graph.get_formula(vertex) else {
+            return Ok(None);
+        };
+        Ok(Some(formualizer_parse::pretty::canonical_formula(&ast)))
     }
 
     fn used_rows_for_columns(

@@ -1,0 +1,39 @@
+---
+title: "MIDB"
+description: "MIDB: Extracts text from the middle using non-DBCS byte-compatible semantics."
+---
+
+<FunctionPageSchema id="text/midb" />
+
+## Summary
+
+In Formualizer's invariant locale, MIDB delegates to MID.
+
+## Examples
+
+<FunctionSandbox
+  title="Middle byte-compatible characters"
+  formula={`=MIDB("abcdef",2,3)`}
+  grid={{}}
+  expected={"bcd"}
+/>
+
+## Related functions
+
+- [MID](/docs/reference/functions/text/mid)
+- [LEFTB](/docs/reference/functions/text/leftb)
+- [RIGHTB](/docs/reference/functions/text/rightb)
+- [ASC](/docs/reference/functions/text/asc)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+
+## FAQ
+
+### How are byte positions interpreted?
+In the invariant locale, positions are character positions matching MID.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/midb" />
+{/* [formualizer-docgen:function-meta:end] */}

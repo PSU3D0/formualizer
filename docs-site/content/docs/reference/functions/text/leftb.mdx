@@ -1,0 +1,39 @@
+---
+title: "LEFTB"
+description: "LEFTB: Returns the leftmost characters using non-DBCS byte-compatible semantics."
+---
+
+<FunctionPageSchema id="text/leftb" />
+
+## Summary
+
+In Formualizer's invariant locale, LEFTB delegates to LEFT.
+
+## Examples
+
+<FunctionSandbox
+  title="Left byte-compatible characters"
+  formula={`=LEFTB("hello",2)`}
+  grid={{}}
+  expected={"he"}
+/>
+
+## Related functions
+
+- [LEFT](/docs/reference/functions/text/left)
+- [RIGHTB](/docs/reference/functions/text/rightb)
+- [MIDB](/docs/reference/functions/text/midb)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [NUMBERVALUE](/docs/reference/functions/text/numbervalue)
+
+## FAQ
+
+### Does LEFTB split UTF-8 bytes?
+No. It follows the non-DBCS behavior and delegates to LEFT.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/leftb" />
+{/* [formualizer-docgen:function-meta:end] */}

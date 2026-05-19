@@ -1,0 +1,50 @@
+---
+title: "FORMULATEXT"
+description: "FORMULATEXT: Returns the formula text stored in the referenced cell."
+---
+
+<FunctionPageSchema id="info/formulatext" />
+
+## Summary
+
+Retrieves formula source text for a single referenced cell without evaluating
+ that cell's value.
+
+## Remarks
+ - Returns `#N/A` if the reference does not point at a formula cell.
+ - Staged formula text is preferred when present; otherwise canonical formula text is returned.
+
+
+
+
+
+Returns the formula text stored in the referenced cell.
+
+## Examples
+
+<FunctionSandbox
+  title="Formula text"
+  formula={`=FORMULATEXT(A1)`}
+  grid={{"A1":"=1+2"}}
+  expected={"=1 + 2"}
+/>
+
+## Related functions
+
+- [ISFORMULA](/docs/reference/functions/info/isformula)
+- [ISREF](/docs/reference/functions/info/isref)
+- [SHEET](/docs/reference/functions/info/sheet)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Does FORMULATEXT evaluate the referenced formula?
+No. It retrieves formula provenance/source text only.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/formulatext" />
+{/* [formualizer-docgen:function-meta:end] */}

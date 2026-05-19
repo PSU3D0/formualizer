@@ -1,0 +1,39 @@
+---
+title: "RIGHTB"
+description: "RIGHTB: Returns the rightmost characters using non-DBCS byte-compatible semantics."
+---
+
+<FunctionPageSchema id="text/rightb" />
+
+## Summary
+
+In Formualizer's invariant locale, RIGHTB delegates to RIGHT.
+
+## Examples
+
+<FunctionSandbox
+  title="Right byte-compatible characters"
+  formula={`=RIGHTB("hello",2)`}
+  grid={{}}
+  expected={"lo"}
+/>
+
+## Related functions
+
+- [RIGHT](/docs/reference/functions/text/right)
+- [LEFTB](/docs/reference/functions/text/leftb)
+- [MIDB](/docs/reference/functions/text/midb)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+- [LEFT](/docs/reference/functions/text/left)
+
+## FAQ
+
+### Does RIGHTB count DBCS bytes?
+Not currently. In the invariant locale it matches RIGHT.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/rightb" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,12 +1,28 @@
 use crate::args::ArgSchema;
 use crate::function::Function;
-use crate::traits::{ArgumentHandle, FunctionContext};
+use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
 use super::utils::ARG_ANY_ONE;
 
 /* Info and type-introspection builtins for spreadsheet formulas. */
+
+fn scalar<'ctx>(value: LiteralValue) -> CalcValue<'ctx> {
+    CalcValue::Scalar(value)
+}
+
+fn error_value<'ctx>(kind: ExcelErrorKind) -> CalcValue<'ctx> {
+    scalar(LiteralValue::Error(ExcelError::new(kind)))
+}
+
+fn arity_error<'ctx>() -> Result<CalcValue<'ctx>, ExcelError> {
+    Ok(error_value(ExcelErrorKind::Value))
+}
+
+fn na_result<'ctx>() -> Result<CalcValue<'ctx>, ExcelError> {
+    Ok(error_value(ExcelErrorKind::Na))
+}
 
 #[derive(Debug)]
 pub struct IsNumberFn;
@@ -583,6 +599,356 @@ impl Function for IsFormulaFn {
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             false,
         )))
+    }
+}
+
+/// Returns TRUE when the argument resolves to a reference.
+///
+/// Checks reference metadata without materializing the referenced value or range.
+///
+/// ```yaml,sandbox
+/// title: "Cell reference"
+/// formula: "=ISREF(A1)"
+/// expected: true
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Expression is not a reference"
+/// formula: "=ISREF(1+1)"
+/// expected: false
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - FORMULATEXT
+///   - SHEET
+///   - ISFORMULA
+/// faq:
+///   - q: "Does ISREF read cell values?"
+///     a: "No. It inspects whether the argument can resolve as a reference."
+/// ```
+#[derive(Debug)]
+pub struct IsRefFn;
+/// Returns TRUE when the argument resolves to a reference.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: ISREF
+/// Type: IsRefFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ISREF(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for IsRefFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ISREF"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return arity_error();
+        }
+        let Ok(reference) = args[0].as_reference_or_eval() else {
+            return Ok(scalar(LiteralValue::Boolean(false)));
+        };
+        let is_ref = match ctx.inspect_reference(&reference) {
+            Ok(Some(info)) => info.first_cell.is_some() || info.sheet_count.is_some(),
+            Ok(None) => true,
+            Err(_) => false,
+        };
+        Ok(scalar(LiteralValue::Boolean(is_ref)))
+    }
+}
+
+/// Returns the formula text stored in the referenced cell.
+///
+/// Retrieves formula source text for a single referenced cell without evaluating
+/// that cell's value.
+///
+/// # Remarks
+/// - Returns `#N/A` if the reference does not point at a formula cell.
+/// - Staged formula text is preferred when present; otherwise canonical formula text is returned.
+///
+/// ```yaml,sandbox
+/// title: "Formula text"
+/// grid:
+///   A1: "=1+2"
+/// formula: "=FORMULATEXT(A1)"
+/// expected: "=1 + 2"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ISFORMULA
+///   - ISREF
+///   - SHEET
+/// faq:
+///   - q: "Does FORMULATEXT evaluate the referenced formula?"
+///     a: "No. It retrieves formula provenance/source text only."
+/// ```
+#[derive(Debug)]
+pub struct FormulaTextFn;
+/// Returns the formula text stored in the referenced cell.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: FORMULATEXT
+/// Type: FormulaTextFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: FORMULATEXT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for FormulaTextFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "FORMULATEXT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return arity_error();
+        }
+        let reference = match args[0].as_reference_or_eval() {
+            Ok(reference) => reference,
+            Err(_) => return na_result(),
+        };
+        let Some(info) = ctx.inspect_reference(&reference)? else {
+            return na_result();
+        };
+        let Some(cell) = info.first_cell else {
+            return na_result();
+        };
+        match ctx.formula_text_at_cell(cell)? {
+            Some(text) => Ok(scalar(LiteralValue::Text(text))),
+            None => na_result(),
+        }
+    }
+}
+
+/// Returns the 1-based sheet index for the current sheet or a reference.
+///
+/// With no argument, returns the index of the sheet containing the formula. With
+/// a reference or sheet-name text argument, returns that sheet's index.
+///
+/// ```yaml,sandbox
+/// title: "Current sheet index"
+/// formula: "=SHEET()"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Referenced sheet index"
+/// formula: "=SHEET(A1)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SHEETS
+///   - ISREF
+///   - FORMULATEXT
+/// faq:
+///   - q: "Are sheet indexes 0-based?"
+///     a: "No. SHEET returns Excel-style 1-based sheet indexes."
+/// ```
+#[derive(Debug)]
+pub struct SheetFn;
+/// Returns the 1-based sheet index for the current sheet or a reference.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SHEET
+/// Type: SheetFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SHEET(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SheetFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SHEET"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() > 1 {
+            return arity_error();
+        }
+        if args.is_empty() {
+            return ctx
+                .current_sheet_index()
+                .map(|idx| scalar(LiteralValue::Int(idx as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result);
+        }
+
+        if let Ok(reference) = args[0].as_reference_or_eval() {
+            let Some(info) = ctx.inspect_reference(&reference)? else {
+                return na_result();
+            };
+            return info
+                .first_sheet_index
+                .map(|idx| scalar(LiteralValue::Int(idx as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result);
+        }
+
+        match args[0].value()?.into_literal() {
+            LiteralValue::Text(name) => ctx
+                .sheet_index_by_name(name.as_ref())
+                .map(|idx| scalar(LiteralValue::Int(idx as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result),
+            LiteralValue::Error(e) => Ok(scalar(LiteralValue::Error(e))),
+            _ => arity_error(),
+        }
+    }
+}
+
+/// Returns the number of sheets in the workbook or reference span.
+///
+/// With no argument, returns the active workbook sheet count. With a reference,
+/// returns the number of sheets covered by that reference.
+///
+/// ```yaml,sandbox
+/// title: "Workbook sheet count"
+/// formula: "=SHEETS()"
+/// expected: 1
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Single-sheet reference count"
+/// formula: "=SHEETS(A1)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - SHEET
+///   - ISREF
+///   - FORMULATEXT
+/// faq:
+///   - q: "What does SHEETS return for ordinary references?"
+///     a: "Ordinary references cover one sheet, so the result is 1."
+/// ```
+#[derive(Debug)]
+pub struct SheetsFn;
+/// Returns the number of sheets in the workbook or covered by a 3D reference.
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SHEETS
+/// Type: SheetsFn
+/// Min args: 0
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SHEETS(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SheetsFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "SHEETS"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() > 1 {
+            return arity_error();
+        }
+        if args.is_empty() {
+            return ctx
+                .workbook_sheet_count()
+                .map(|count| scalar(LiteralValue::Int(count as i64)))
+                .map(Ok)
+                .unwrap_or_else(na_result);
+        }
+        let reference = match args[0].as_reference_or_eval() {
+            Ok(reference) => reference,
+            Err(_) => return arity_error(),
+        };
+        let Some(info) = ctx.inspect_reference(&reference)? else {
+            return na_result();
+        };
+        info.sheet_count
+            .map(|count| scalar(LiteralValue::Int(count as i64)))
+            .map(Ok)
+            .unwrap_or_else(na_result)
     }
 }
 
@@ -1291,6 +1657,10 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(IsErrFn));
     crate::function_registry::register_function(Arc::new(IsNaFn));
     crate::function_registry::register_function(Arc::new(IsFormulaFn));
+    crate::function_registry::register_function(Arc::new(IsRefFn));
+    crate::function_registry::register_function(Arc::new(FormulaTextFn));
+    crate::function_registry::register_function(Arc::new(SheetFn));
+    crate::function_registry::register_function(Arc::new(SheetsFn));
     crate::function_registry::register_function(Arc::new(IsEvenFn));
     crate::function_registry::register_function(Arc::new(IsOddFn));
     crate::function_registry::register_function(Arc::new(ErrorTypeFn));

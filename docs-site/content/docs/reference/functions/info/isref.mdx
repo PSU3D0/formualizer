@@ -1,0 +1,61 @@
+---
+title: "ISREF"
+description: "ISREF: Returns TRUE when the argument resolves to a reference."
+---
+
+<FunctionPageSchema id="info/isref" />
+
+## Summary
+
+Checks reference metadata without materializing the referenced value or range.
+
+
+
+
+
+
+
+Returns TRUE when the argument resolves to a reference.
+
+## Examples
+
+<Tabs items={["Cell reference", "Expression is not a reference"]}>
+<Tab value="Cell reference">
+<FunctionSandbox
+  title="Cell reference"
+  formula={`=ISREF(A1)`}
+  grid={{}}
+  expected={"true"}
+/>
+</Tab>
+
+<Tab value="Expression is not a reference">
+<FunctionSandbox
+  title="Expression is not a reference"
+  formula={`=ISREF(1+1)`}
+  grid={{}}
+  expected={"false"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [FORMULATEXT](/docs/reference/functions/info/formulatext)
+- [SHEET](/docs/reference/functions/info/sheet)
+- [ISFORMULA](/docs/reference/functions/info/isformula)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Does ISREF read cell values?
+No. It inspects whether the argument can resolve as a reference.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/isref" />
+{/* [formualizer-docgen:function-meta:end] */}

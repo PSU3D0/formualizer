@@ -1,0 +1,58 @@
+---
+title: "TOCOL"
+description: "TOCOL: Converts an array or range into a single column."
+---
+
+<FunctionPageSchema id="lookup/tocol" />
+
+## Summary
+
+Flattens input values into one column, with options to ignore blanks/errors
+ and to scan by row or by column.
+
+## Remarks
+ - `ignore` values are `0` keep all, `1` ignore blanks, `2` ignore errors, `3` ignore both.
+ - `scan_by_column` defaults to FALSE, so values are read row by row.
+
+## Examples
+
+<Tabs items={["Flatten row by row", "Scan by column"]}>
+<Tab value="Flatten row by row">
+<FunctionSandbox
+  title="Flatten row by row"
+  formula={`=TOCOL({1,2;3,4})`}
+  grid={{}}
+  expected={"[[1],[2],[3],[4]]"}
+/>
+</Tab>
+
+<Tab value="Scan by column">
+<FunctionSandbox
+  title="Scan by column"
+  formula={`=TOCOL({1,2;3,4},0,TRUE)`}
+  grid={{}}
+  expected={"[[1],[3],[2],[4]]"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [TOROW](/docs/reference/functions/lookup/torow)
+- [HSTACK](/docs/reference/functions/lookup/hstack)
+- [VSTACK](/docs/reference/functions/lookup/vstack)
+- [SORT](/docs/reference/functions/lookup/sort)
+- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
+- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
+
+## FAQ
+
+### Can TOCOL filter blanks and errors?
+Yes. Use the ignore argument to drop blanks, errors, or both.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="lookup/tocol" />
+{/* [formualizer-docgen:function-meta:end] */}

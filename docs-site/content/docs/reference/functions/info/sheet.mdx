@@ -1,0 +1,62 @@
+---
+title: "SHEET"
+description: "Returns the 1-based sheet index for the current sheet or a reference."
+---
+
+<FunctionPageSchema id="info/sheet" />
+
+## Summary
+
+With no argument, returns the index of the sheet containing the formula. With
+ a reference or sheet-name text argument, returns that sheet's index.
+
+
+
+
+
+
+
+Returns the 1-based sheet index for the current sheet or a reference.
+
+## Examples
+
+<Tabs items={["Current sheet index", "Referenced sheet index"]}>
+<Tab value="Current sheet index">
+<FunctionSandbox
+  title="Current sheet index"
+  formula={`=SHEET()`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Referenced sheet index">
+<FunctionSandbox
+  title="Referenced sheet index"
+  formula={`=SHEET(A1)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SHEETS](/docs/reference/functions/info/sheets)
+- [ISREF](/docs/reference/functions/info/isref)
+- [FORMULATEXT](/docs/reference/functions/info/formulatext)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### Are sheet indexes 0-based?
+No. SHEET returns Excel-style 1-based sheet indexes.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/sheet" />
+{/* [formualizer-docgen:function-meta:end] */}
