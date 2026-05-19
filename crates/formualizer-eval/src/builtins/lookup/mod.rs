@@ -6,6 +6,7 @@
 //! - Reference creation: ADDRESS
 
 mod address;
+mod array_shape;
 mod choose;
 mod core;
 mod dynamic;
@@ -15,6 +16,7 @@ mod reference_info; // modern lookup & dynamic array subset (XLOOKUP, FILTER, UN
 mod stack; // stacking & concatenation functions (HSTACK, VSTACK)
 
 pub use address::AddressFn;
+pub use array_shape::{ToColFn, ToRowFn};
 pub use choose::ChooseFn;
 pub use core::{HLookupFn, MatchFn, VLookupFn};
 pub use dynamic::{
@@ -54,8 +56,9 @@ pub fn register_builtins() {
     // Dynamic / modern lookup subset (Sprint 5 initial)
     dynamic::register_builtins();
 
-    // Stack functions
+    // Stack and array-shaping functions
     stack::register_builtins();
+    array_shape::register_builtins();
 
     // CHOOSECOLS / CHOOSEROWS
     register_function(Arc::new(choose::ChooseColsFn));

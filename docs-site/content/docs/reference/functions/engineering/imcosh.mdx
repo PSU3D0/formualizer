@@ -1,0 +1,44 @@
+---
+title: "IMCOSH"
+description: "IMCOSH: Returns the hyperbolic cosine of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imcosh" />
+
+## Summary
+
+Accepts an Excel-style complex number string and returns the complex
+ hyperbolic cosine as text.
+
+## Remarks
+ - The input may use either `i` or `j` as the imaginary suffix.
+ - Invalid complex text returns `#NUM!`.
+
+## Examples
+
+<FunctionSandbox
+  title="Hyperbolic cosine of zero"
+  formula={`=IMCOSH("0")`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [IMSINH](/docs/reference/functions/engineering/imsinh)
+- [IMSECH](/docs/reference/functions/engineering/imsech)
+- [IMCOS](/docs/reference/functions/engineering/imcos)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### Does IMCOSH preserve the imaginary suffix?
+Results preserve the input's i/j suffix when an imaginary part is present.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imcosh" />
+{/* [formualizer-docgen:function-meta:end] */}

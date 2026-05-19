@@ -14,6 +14,16 @@ use std::sync::Arc;
 
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, TableSpecifier};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceInfo {
+    /// Excel-style 1-based index of the first sheet covered by the reference.
+    pub first_sheet_index: Option<usize>,
+    /// Number of sheets covered by the reference (`1` for ordinary references, `N` for 3D refs).
+    pub sheet_count: Option<usize>,
+    /// Top-left / first cell addressed by the reference, when it resolves to a concrete cell.
+    pub first_cell: Option<CellRef>,
+}
+
 /* ───────────────────────────── Range ───────────────────────────── */
 
 pub trait Range: Debug + Send + Sync {
@@ -1193,6 +1203,35 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         crate::locale::Locale::invariant()
     }
 
+    /// Number of active sheets in the workbook, if known.
+    fn workbook_sheet_count(&self) -> Option<usize> {
+        None
+    }
+
+    /// Excel-style 1-based active-sheet index for a sheet name, if known.
+    fn sheet_index_by_name(&self, _sheet: &str) -> Option<usize> {
+        None
+    }
+
+    /// Excel-style 1-based active-sheet index for the current formula sheet, if known.
+    fn current_sheet_index(&self, current_sheet: &str) -> Option<usize> {
+        self.sheet_index_by_name(current_sheet)
+    }
+
+    /// Inspect reference metadata without materializing referenced values.
+    fn inspect_reference(
+        &self,
+        _reference: &ReferenceType,
+        _current_sheet: &str,
+    ) -> Result<Option<ReferenceInfo>, ExcelError> {
+        Ok(None)
+    }
+
+    /// Retrieve formula text for a concrete cell, if that cell stores a formula.
+    fn formula_text_at_cell(&self, _cell: CellRef) -> Result<Option<String>, ExcelError> {
+        Ok(None)
+    }
+
     /// Clock provider for volatile date/time builtins.
     ///
     /// Default when `system-clock` feature is enabled: `SystemClock(Local)` for
@@ -1353,6 +1392,29 @@ pub trait FunctionContext<'ctx> {
     /// Current formula sheet name.
     fn current_sheet(&self) -> &str;
 
+    fn workbook_sheet_count(&self) -> Option<usize> {
+        None
+    }
+
+    fn sheet_index_by_name(&self, _sheet: &str) -> Option<usize> {
+        None
+    }
+
+    fn current_sheet_index(&self) -> Option<usize> {
+        self.sheet_index_by_name(self.current_sheet())
+    }
+
+    fn inspect_reference(
+        &self,
+        _reference: &ReferenceType,
+    ) -> Result<Option<ReferenceInfo>, ExcelError> {
+        Ok(None)
+    }
+
+    fn formula_text_at_cell(&self, _cell: CellRef) -> Result<Option<String>, ExcelError> {
+        Ok(None)
+    }
+
     fn volatile_level(&self) -> VolatileLevel;
     fn workbook_seed(&self) -> u64;
     fn recalc_epoch(&self) -> u64;
@@ -1446,6 +1508,30 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
     fn current_sheet(&self) -> &str {
         self.current_sheet
     }
+
+    fn workbook_sheet_count(&self) -> Option<usize> {
+        self.base.workbook_sheet_count()
+    }
+
+    fn sheet_index_by_name(&self, sheet: &str) -> Option<usize> {
+        self.base.sheet_index_by_name(sheet)
+    }
+
+    fn current_sheet_index(&self) -> Option<usize> {
+        self.base.current_sheet_index(self.current_sheet)
+    }
+
+    fn inspect_reference(
+        &self,
+        reference: &ReferenceType,
+    ) -> Result<Option<ReferenceInfo>, ExcelError> {
+        self.base.inspect_reference(reference, self.current_sheet)
+    }
+
+    fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
+        self.base.formula_text_at_cell(cell)
+    }
+
     fn timezone(&self) -> &crate::timezone::TimeZoneSpec {
         self.base.timezone()
     }

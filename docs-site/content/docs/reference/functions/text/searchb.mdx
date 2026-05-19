@@ -1,0 +1,40 @@
+---
+title: "SEARCHB"
+description: "SEARCHB: Searches text using non-DBCS byte-compatible semantics."
+---
+
+<FunctionPageSchema id="text/searchb" />
+
+## Summary
+
+In Formualizer's invariant locale, SEARCHB delegates to SEARCH and supports
+ the same wildcard behavior.
+
+## Examples
+
+<FunctionSandbox
+  title="Wildcard byte-compatible search"
+  formula={`=SEARCHB("d?f","abcDEF")`}
+  grid={{}}
+  expected={"4"}
+/>
+
+## Related functions
+
+- [SEARCH](/docs/reference/functions/text/search)
+- [FINDB](/docs/reference/functions/text/findb)
+- [LENB](/docs/reference/functions/text/lenb)
+- [FIND](/docs/reference/functions/text/find)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+
+## FAQ
+
+### Is SEARCHB case-sensitive?
+No. It follows SEARCH behavior in the invariant locale.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/searchb" />
+{/* [formualizer-docgen:function-meta:end] */}

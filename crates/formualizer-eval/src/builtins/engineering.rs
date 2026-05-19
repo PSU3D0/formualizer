@@ -8,6 +8,8 @@ use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+mod transcendental;
+
 /// Helper to convert to integer for bitwise operations
 /// Excel's bitwise functions only work with non-negative integers up to 2^48
 fn to_bitwise_int(v: &LiteralValue) -> Result<i64, ExcelError> {
@@ -2297,6 +2299,385 @@ impl Function for ErfcFn {
     }
 }
 
+/// Returns the complementary error function of a number.
+///
+/// Computes `1 - ERF(x)` using the same one-argument precise behavior as Excel
+/// `ERFC.PRECISE`.
+///
+/// # Remarks
+/// - Accepts one numeric argument.
+/// - Numeric text is coerced using standard function coercion.
+/// - Results are approximate floating-point values.
+///
+/// ```yaml,sandbox
+/// title: "Complement at one"
+/// formula: "=ERFC.PRECISE(1)"
+/// expected: 0.1572992070502851
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Complement at zero"
+/// formula: "=ERFC.PRECISE(0)"
+/// expected: 1
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ERFC
+///   - ERF.PRECISE
+///   - ERF
+/// faq:
+///   - q: "How is ERFC.PRECISE different from ERFC?"
+///     a: "It exposes the precise one-argument complement form; numerically it matches ERFC(x) in this implementation."
+/// ```
+#[derive(Debug)]
+pub struct ErfcPreciseFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ERFC.PRECISE
+/// Type: ErfcPreciseFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERFC.PRECISE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ErfcPreciseFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ERFC.PRECISE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let x = match args[0].value()?.into_literal() {
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            other => coerce_num(&other)?,
+        };
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+            erfc_direct(x),
+        )))
+    }
+}
+
+fn eval_bessel<'b, F>(
+    args: &[ArgumentHandle<'_, 'b>],
+    f: F,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError>
+where
+    F: FnOnce(i32, f64) -> f64,
+{
+    if args.len() != 2 {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_value(),
+        )));
+    }
+    let x = match args[0].value()?.into_literal() {
+        LiteralValue::Error(e) => {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
+        other => coerce_num(&other)?,
+    };
+    let n = match args[1].value()?.into_literal() {
+        LiteralValue::Error(e) => {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
+        other => coerce_num(&other)?,
+    };
+
+    if !x.is_finite() || !n.is_finite() {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_num(),
+        )));
+    }
+
+    let n_trunc = n.trunc();
+    if n_trunc < 0.0 || n_trunc > i32::MAX as f64 {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_num(),
+        )));
+    }
+
+    let result = f(n_trunc as i32, x);
+    if !result.is_finite() {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_num(),
+        )));
+    }
+
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
+        result,
+    )))
+}
+
+/// Returns the modified Bessel function In(x).
+///
+/// Computes the modified Bessel function of the first kind for a real value `x`
+/// and a non-negative integer order `n`. The order is truncated toward zero,
+/// matching spreadsheet behavior.
+///
+/// # Remarks
+/// - Arguments are supplied as `BESSELI(x, n)`.
+/// - `n` must truncate to a non-negative integer order.
+/// - Invalid domains or non-finite results return `#NUM!`.
+///
+/// ```yaml,sandbox
+/// title: "First-order modified Bessel I"
+/// formula: "=BESSELI(0.5,1)"
+/// expected: 0.2578943053908963
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Order is truncated"
+/// formula: "=BESSELI(0.5,1.9)"
+/// expected: 0.2578943053908963
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BESSELJ
+///   - BESSELK
+///   - BESSELY
+/// faq:
+///   - q: "What happens to fractional order values?"
+///     a: "The order argument is truncated toward zero before evaluation."
+/// ```
+#[derive(Debug)]
+pub struct BesselIFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BESSELI
+/// Type: BesselIFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BESSELI(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BesselIFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BESSELI"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_bessel(args, transcendental::bessel_i)
+    }
+}
+
+/// Returns the Bessel function Jn(x).
+///
+/// Computes the Bessel function of the first kind for a real value `x` and a
+/// non-negative integer order `n`. The order is truncated toward zero.
+///
+/// # Remarks
+/// - Arguments are supplied as `BESSELJ(x, n)`.
+/// - Negative orders return `#NUM!` in the public spreadsheet function.
+/// - Results are approximate floating-point values.
+///
+/// ```yaml,sandbox
+/// title: "Third-order Bessel J"
+/// formula: "=BESSELJ(0.5,3)"
+/// expected: 0.002563729994587244
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Zero input for positive order"
+/// formula: "=BESSELJ(0,7)"
+/// expected: 0
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BESSELI
+///   - BESSELK
+///   - BESSELY
+/// faq:
+///   - q: "Are negative public orders supported?"
+///     a: "No. Negative order arguments return #NUM! for Excel compatibility."
+/// ```
+#[derive(Debug)]
+pub struct BesselJFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BESSELJ
+/// Type: BesselJFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BESSELJ(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BesselJFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BESSELJ"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_bessel(args, transcendental::bessel_j)
+    }
+}
+
+/// Returns the modified Bessel function Kn(x).
+///
+/// Computes the modified Bessel function of the second kind for a positive real
+/// value `x` and a non-negative integer order `n`.
+///
+/// # Remarks
+/// - Arguments are supplied as `BESSELK(x, n)`.
+/// - `x` must be positive and `n` must truncate to a non-negative integer.
+/// - Invalid domains or non-finite results return `#NUM!`.
+///
+/// ```yaml,sandbox
+/// title: "First-order modified Bessel K"
+/// formula: "=BESSELK(0.5,1)"
+/// expected: 1.656441120003301
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Zero-order modified Bessel K"
+/// formula: "=BESSELK(0.5,0)"
+/// expected: 0.9244190712276659
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BESSELI
+///   - BESSELJ
+///   - BESSELY
+/// faq:
+///   - q: "Why can BESSELK return #NUM!?"
+///     a: "BESSELK is undefined for non-positive x values and negative orders."
+/// ```
+#[derive(Debug)]
+pub struct BesselKFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BESSELK
+/// Type: BesselKFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BESSELK(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BesselKFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BESSELK"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_bessel(args, transcendental::bessel_k)
+    }
+}
+
+/// Returns the Bessel function Yn(x).
+///
+/// Computes the Bessel function of the second kind for a positive real value `x`
+/// and a non-negative integer order `n`.
+///
+/// # Remarks
+/// - Arguments are supplied as `BESSELY(x, n)`.
+/// - Negative orders and invalid domains return `#NUM!`.
+/// - Results are approximate floating-point values.
+///
+/// ```yaml,sandbox
+/// title: "Third-order Bessel Y"
+/// formula: "=BESSELY(0.5,3)"
+/// expected: -42.059494304723883
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Large-input Bessel Y"
+/// formula: "=BESSELY(35,3)"
+/// expected: -0.13191405300596323
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - BESSELI
+///   - BESSELJ
+///   - BESSELK
+/// faq:
+///   - q: "Is BESSELY defined at zero?"
+///     a: "No. Singular or otherwise invalid inputs return #NUM!."
+/// ```
+#[derive(Debug)]
+pub struct BesselYFn;
+/// [formualizer-docgen:schema:start]
+/// Name: BESSELY
+/// Type: BesselYFn
+/// Min args: 2
+/// Max args: 2
+/// Variadic: false
+/// Signature: BESSELY(arg1: any@scalar, arg2: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for BesselYFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "BESSELY"
+    }
+    fn min_args(&self) -> usize {
+        2
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_TWO[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_bessel(args, transcendental::bessel_y)
+    }
+}
+
 /// Returns the error function of a number.
 ///
 /// This is the one-argument precise variant of `ERF`.
@@ -4171,6 +4552,514 @@ impl Function for ImCosFn {
     }
 }
 
+fn eval_complex_unary<'a, 'b, 'c, F>(
+    args: &'c [ArgumentHandle<'a, 'b>],
+    f: F,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError>
+where
+    F: FnOnce(f64, f64, char) -> Result<(f64, f64, char), ExcelError>,
+{
+    if args.len() != 1 {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_value(),
+        )));
+    }
+    let inumber = match args[0].value()?.into_literal() {
+        LiteralValue::Error(e) => {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
+        other => match coerce_complex_str(&other) {
+            Ok(s) => s,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        },
+    };
+    let (a, b, suffix) = match parse_complex(&inumber) {
+        Ok(c) => c,
+        Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+    };
+    let (real, imag, suffix) = f(a, b, suffix)?;
+    if real.is_nan() || imag.is_nan() || real.is_infinite() || imag.is_infinite() {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+            ExcelError::new_num(),
+        )));
+    }
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+        format_complex(real, imag, suffix),
+    )))
+}
+
+/// Returns the hyperbolic cosine of a complex number.
+///
+/// Accepts an Excel-style complex number string and returns the complex
+/// hyperbolic cosine as text.
+///
+/// # Remarks
+/// - The input may use either `i` or `j` as the imaginary suffix.
+/// - Invalid complex text returns `#NUM!`.
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosine of zero"
+/// formula: '=IMCOSH("0")'
+/// expected: "1"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMSINH
+///   - IMSECH
+///   - IMCOS
+/// faq:
+///   - q: "Does IMCOSH preserve the imaginary suffix?"
+///     a: "Results preserve the input's i/j suffix when an imaginary part is present."
+/// ```
+#[derive(Debug)]
+pub struct ImCoshFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMCOSH
+/// Type: ImCoshFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMCOSH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImCoshFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMCOSH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            Ok((a.cosh() * b.cos(), a.sinh() * b.sin(), suffix))
+        })
+    }
+}
+
+/// Returns the hyperbolic sine of a complex number.
+///
+/// Accepts an Excel-style complex number string and returns the complex
+/// hyperbolic sine as text.
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic sine of zero"
+/// formula: '=IMSINH("0")'
+/// expected: "0"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMCOSH
+///   - IMTAN
+///   - IMSIN
+/// faq:
+///   - q: "What input format is accepted?"
+///     a: 'Use standard spreadsheet complex-number text such as "1+2i" or "1+2j".'
+/// ```
+#[derive(Debug)]
+pub struct ImSinhFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMSINH
+/// Type: ImSinhFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMSINH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImSinhFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMSINH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            Ok((a.sinh() * b.cos(), a.cosh() * b.sin(), suffix))
+        })
+    }
+}
+
+/// Returns the secant of a complex number.
+///
+/// Computes `1 / IMCOS(inumber)` for an Excel-style complex number string.
+///
+/// ```yaml,sandbox
+/// title: "Secant of zero"
+/// formula: '=IMSEC("0")'
+/// expected: "1"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMCOS
+///   - IMSECH
+///   - IMCSC
+/// faq:
+///   - q: "How are poles represented?"
+///     a: "Inputs that lead to non-finite results return #NUM!."
+/// ```
+#[derive(Debug)]
+pub struct ImSecFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMSEC
+/// Type: ImSecFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMSEC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImSecFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMSEC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            let cos_a = a.cos();
+            let sin_a = a.sin();
+            let cosh_b = b.cosh();
+            let sinh_b = b.sinh();
+            let denom = cos_a * cos_a * cosh_b * cosh_b + sin_a * sin_a * sinh_b * sinh_b;
+            Ok((cos_a * cosh_b / denom, sin_a * sinh_b / denom, suffix))
+        })
+    }
+}
+
+/// Returns the hyperbolic secant of a complex number.
+///
+/// Computes `1 / IMCOSH(inumber)` for an Excel-style complex number string.
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic secant of zero"
+/// formula: '=IMSECH("0")'
+/// expected: "1"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMCOSH
+///   - IMSEC
+///   - IMCSCH
+/// faq:
+///   - q: "What does IMSECH return?"
+///     a: "It returns a complex number encoded as spreadsheet text."
+/// ```
+#[derive(Debug)]
+pub struct ImSechFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMSECH
+/// Type: ImSechFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMSECH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImSechFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMSECH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            let cosh_a = a.cosh();
+            let sinh_a = a.sinh();
+            let cos_b = b.cos();
+            let sin_b = b.sin();
+            let denom = cosh_a * cosh_a * cos_b * cos_b + sinh_a * sinh_a * sin_b * sin_b;
+            Ok((cosh_a * cos_b / denom, -sinh_a * sin_b / denom, suffix))
+        })
+    }
+}
+
+/// Returns the cosecant of a complex number.
+///
+/// Computes `1 / IMSIN(inumber)` for an Excel-style complex number string.
+///
+/// ```yaml,sandbox
+/// title: "Cosecant of pi over two"
+/// formula: '=IMCSC("1.5707963267948966")'
+/// expected: "1"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMSIN
+///   - IMCSCH
+///   - IMSEC
+/// faq:
+///   - q: "What happens at a pole?"
+///     a: "Inputs such as zero that make the reciprocal undefined return #NUM!."
+/// ```
+#[derive(Debug)]
+pub struct ImCscFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMCSC
+/// Type: ImCscFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMCSC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImCscFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMCSC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            let cos_a = a.cos();
+            let sin_a = a.sin();
+            let cosh_b = b.cosh();
+            let sinh_b = b.sinh();
+            let denom = sin_a * sin_a * cosh_b * cosh_b + cos_a * cos_a * sinh_b * sinh_b;
+            Ok((sin_a * cosh_b / denom, -cos_a * sinh_b / denom, suffix))
+        })
+    }
+}
+
+/// Returns the hyperbolic cosecant of a complex number.
+///
+/// Computes `1 / IMSINH(inumber)` for an Excel-style complex number string.
+///
+/// ```yaml,sandbox
+/// title: "Hyperbolic cosecant of one"
+/// formula: '=IMCSCH("1")'
+/// expected: "0.8509181282393216"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMSINH
+///   - IMCSC
+///   - IMSECH
+/// faq:
+///   - q: "Can IMCSCH return #NUM!?"
+///     a: "Yes. Undefined reciprocal results return #NUM!."
+/// ```
+#[derive(Debug)]
+pub struct ImCschFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMCSCH
+/// Type: ImCschFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMCSCH(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImCschFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMCSCH"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            let cosh_a = a.cosh();
+            let sinh_a = a.sinh();
+            let cos_b = b.cos();
+            let sin_b = b.sin();
+            let denom = sinh_a * sinh_a * cos_b * cos_b + cosh_a * cosh_a * sin_b * sin_b;
+            Ok((sinh_a * cos_b / denom, -cosh_a * sin_b / denom, suffix))
+        })
+    }
+}
+
+/// Returns the tangent of a complex number.
+///
+/// Accepts an Excel-style complex number string and returns the complex tangent
+/// as text.
+///
+/// ```yaml,sandbox
+/// title: "Tangent of zero"
+/// formula: '=IMTAN("0")'
+/// expected: "0"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMSIN
+///   - IMCOS
+///   - IMCOT
+/// faq:
+///   - q: "How is IMTAN related to sine and cosine?"
+///     a: "It computes the complex tangent, equivalent to IMSIN divided by IMCOS."
+/// ```
+#[derive(Debug)]
+pub struct ImTanFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMTAN
+/// Type: ImTanFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMTAN(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImTanFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMTAN"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            let tan_a = a.tan();
+            let tanh_b = b.tanh();
+            let denom = 1.0 + tan_a * tan_a * tanh_b * tanh_b;
+            Ok((
+                (tan_a - tan_a * tanh_b * tanh_b) / denom,
+                (tanh_b + tan_a * tan_a * tanh_b) / denom,
+                suffix,
+            ))
+        })
+    }
+}
+
+/// Returns the cotangent of a complex number.
+///
+/// Computes the reciprocal of the complex tangent for an Excel-style complex
+/// number string.
+///
+/// ```yaml,sandbox
+/// title: "Cotangent of one"
+/// formula: '=IMCOT("1")'
+/// expected: "0.6420926159343306"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - IMTAN
+///   - IMCOS
+///   - IMSIN
+/// faq:
+///   - q: "What happens at undefined inputs?"
+///     a: "Inputs that produce non-finite reciprocal results return #NUM!."
+/// ```
+#[derive(Debug)]
+pub struct ImCotFn;
+/// [formualizer-docgen:schema:start]
+/// Name: IMCOT
+/// Type: ImCotFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: IMCOT(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for ImCotFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "IMCOT"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        eval_complex_unary(args, |a, b, suffix| {
+            if a == 0.0 && b != 0.0 {
+                return Ok((0.0, -1.0 / b.tanh(), suffix));
+            }
+            if b == 0.0 {
+                return Ok((1.0 / a.tan(), 0.0, suffix));
+            }
+            let cot_a = 1.0 / a.tan();
+            let coth_b = 1.0 / b.tanh();
+            let denom = cot_a * cot_a + coth_b * coth_b;
+            Ok((
+                (cot_a * coth_b * coth_b - cot_a) / denom,
+                (-cot_a * cot_a * coth_b - coth_b) / denom,
+                suffix,
+            ))
+        })
+    }
+}
+
 /* ─────────────────────────── Unit Conversion (CONVERT) ──────────────────────────── */
 
 /// Unit categories for CONVERT function
@@ -4461,6 +5350,11 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(ErfFn));
     crate::function_registry::register_function(Arc::new(ErfcFn));
     crate::function_registry::register_function(Arc::new(ErfPreciseFn));
+    crate::function_registry::register_function(Arc::new(ErfcPreciseFn));
+    crate::function_registry::register_function(Arc::new(BesselIFn));
+    crate::function_registry::register_function(Arc::new(BesselJFn));
+    crate::function_registry::register_function(Arc::new(BesselKFn));
+    crate::function_registry::register_function(Arc::new(BesselYFn));
     // Complex number functions
     crate::function_registry::register_function(Arc::new(ComplexFn));
     crate::function_registry::register_function(Arc::new(ImRealFn));
@@ -4481,6 +5375,127 @@ pub fn register_builtins() {
     crate::function_registry::register_function(Arc::new(ImSqrtFn));
     crate::function_registry::register_function(Arc::new(ImSinFn));
     crate::function_registry::register_function(Arc::new(ImCosFn));
+    crate::function_registry::register_function(Arc::new(ImCoshFn));
+    crate::function_registry::register_function(Arc::new(ImCotFn));
+    crate::function_registry::register_function(Arc::new(ImCscFn));
+    crate::function_registry::register_function(Arc::new(ImCschFn));
+    crate::function_registry::register_function(Arc::new(ImSecFn));
+    crate::function_registry::register_function(Arc::new(ImSechFn));
+    crate::function_registry::register_function(Arc::new(ImSinhFn));
+    crate::function_registry::register_function(Arc::new(ImTanFn));
     // Unit conversion
     crate::function_registry::register_function(Arc::new(ConvertFn));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::builtins::text::ValueFn;
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
+    use formualizer_parse::parser::parse;
+    use std::sync::Arc;
+
+    fn eval(formula: &str) -> LiteralValue {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(ErfcFn))
+            .with_function(Arc::new(ErfcPreciseFn))
+            .with_function(Arc::new(BesselIFn))
+            .with_function(Arc::new(BesselJFn))
+            .with_function(Arc::new(BesselKFn))
+            .with_function(Arc::new(BesselYFn))
+            .with_function(Arc::new(ImCoshFn))
+            .with_function(Arc::new(ImCotFn))
+            .with_function(Arc::new(ImCscFn))
+            .with_function(Arc::new(ImCschFn))
+            .with_function(Arc::new(ImSecFn))
+            .with_function(Arc::new(ImSechFn))
+            .with_function(Arc::new(ImSinhFn))
+            .with_function(Arc::new(ImTanFn))
+            .with_function(Arc::new(ValueFn));
+        let interp = wb.interpreter();
+        let ast = parse(formula).expect("parse");
+        interp.evaluate_ast(&ast).expect("eval").into_literal()
+    }
+
+    fn assert_number_close(value: LiteralValue, expected: f64) {
+        match value {
+            LiteralValue::Number(n) => assert!((n - expected).abs() < 1e-12, "{n} != {expected}"),
+            other => panic!("expected number, got {other:?}"),
+        }
+    }
+
+    fn assert_number_rel_close(value: LiteralValue, expected: f64, tol: f64) {
+        match value {
+            LiteralValue::Number(n) => {
+                let denom = (n * n + expected * expected).sqrt().max(1.0);
+                assert!((n - expected).abs() / denom < tol, "{n} != {expected}");
+            }
+            other => panic!("expected number, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn erfc_precise_matches_erfc() {
+        assert_number_close(eval("=ERFC.PRECISE(1)"), erfc_direct(1.0));
+        assert_eq!(eval("=ERFC.PRECISE(0)"), LiteralValue::Number(1.0));
+        // Numeric text is accepted through standard function coercion.
+        assert_number_close(eval("=ERFC.PRECISE(\"1\")"), erfc_direct(1.0));
+    }
+
+    #[test]
+    fn bessel_functions_match_known_values_and_excel_order_truncation() {
+        assert_number_rel_close(eval("=BESSELI(0.5,1)"), 0.2578943053908963, 1e-6);
+        assert_number_rel_close(eval("=BESSELI(0.5,1.9)"), 0.2578943053908963, 1e-6);
+        assert_number_rel_close(eval("=BESSELJ(0.5,3)"), 0.002563729994587244, 1e-13);
+        assert_number_rel_close(eval("=BESSELK(0.5,1)"), 1.656441120003301, 1e-6);
+        assert_number_rel_close(eval("=BESSELY(0.5,3)"), -42.059494304723883, 1e-13);
+    }
+
+    #[test]
+    fn bessel_functions_map_invalid_domains_to_num() {
+        assert!(
+            matches!(eval("=BESSELJ(1,-1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
+        assert!(
+            matches!(eval("=BESSELY(1,-1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
+        assert!(
+            matches!(eval("=BESSELK(0,1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
+        assert!(
+            matches!(eval("=BESSELY(-1,1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
+    }
+
+    #[test]
+    fn complex_hyperbolic_functions() {
+        assert_eq!(eval("=IMCOSH(\"0\")"), LiteralValue::Text("1".into()));
+        assert_eq!(eval("=IMSINH(\"0\")"), LiteralValue::Text("0".into()));
+        assert_eq!(eval("=IMSECH(\"0\")"), LiteralValue::Text("1".into()));
+        assert_eq!(eval("=IMTAN(\"0\")"), LiteralValue::Text("0".into()));
+    }
+
+    #[test]
+    fn complex_reciprocal_trig_functions() {
+        assert_eq!(eval("=IMSEC(\"0\")"), LiteralValue::Text("1".into()));
+        assert_eq!(
+            eval("=IMCOT(\"1\")"),
+            LiteralValue::Text(format_complex(1.0 / 1.0f64.tan(), 0.0, 'i'))
+        );
+        assert_eq!(
+            eval("=IMCSC(\"1.5707963267948966\")"),
+            LiteralValue::Text("1".into())
+        );
+    }
+
+    #[test]
+    fn complex_functions_preserve_j_suffix_and_error_on_poles() {
+        match eval("=IMSINH(\"j\")") {
+            LiteralValue::Text(s) => assert!(s.ends_with('j'), "expected j suffix, got {s}"),
+            other => panic!("expected text, got {other:?}"),
+        }
+        let pole = eval("=IMCSC(\"0\")");
+        assert!(matches!(pole, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num));
+    }
 }

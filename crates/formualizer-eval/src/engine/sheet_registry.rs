@@ -36,6 +36,42 @@ impl SheetRegistry {
         self.id_by_name.get(name).copied()
     }
 
+    /// Count active sheets without cloning sheet names.
+    pub fn active_len(&self) -> usize {
+        self.name_by_id
+            .iter()
+            .filter(|name| !name.is_empty())
+            .count()
+    }
+
+    /// Excel-style 1-based active sheet position for a sheet id.
+    pub fn active_position_by_id(&self, id: SheetId) -> Option<usize> {
+        let idx = id as usize;
+        if idx >= self.name_by_id.len() || self.name_by_id[idx].is_empty() {
+            return None;
+        }
+        Some(
+            self.name_by_id
+                .iter()
+                .take(idx + 1)
+                .filter(|name| !name.is_empty())
+                .count(),
+        )
+    }
+
+    /// Excel-style 1-based active sheet position for a sheet name.
+    pub fn active_position(&self, name: &str) -> Option<usize> {
+        self.get_id(name)
+            .and_then(|id| self.active_position_by_id(id))
+    }
+
+    /// Inclusive count of active sheets between two sheet names.
+    pub fn active_span_len(&self, first: &str, last: &str) -> Option<usize> {
+        let a = self.active_position(first)?;
+        let b = self.active_position(last)?;
+        Some(a.abs_diff(b) + 1)
+    }
+
     /// Get all sheet IDs and names (excluding removed sheets)
     pub fn all_sheets(&self) -> Vec<(SheetId, String)> {
         self.name_by_id

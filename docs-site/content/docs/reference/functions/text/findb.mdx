@@ -1,0 +1,40 @@
+---
+title: "FINDB"
+description: "FINDB: Finds text within text using non-DBCS byte-compatible semantics."
+---
+
+<FunctionPageSchema id="text/findb" />
+
+## Summary
+
+In Formualizer's invariant locale, FINDB delegates to FIND and counts Unicode
+ scalar characters rather than double-byte locale bytes.
+
+## Examples
+
+<FunctionSandbox
+  title="Find byte-compatible text"
+  formula={`=FINDB("CD","abcDEFCD")`}
+  grid={{}}
+  expected={"7"}
+/>
+
+## Related functions
+
+- [FIND](/docs/reference/functions/text/find)
+- [SEARCHB](/docs/reference/functions/text/searchb)
+- [LENB](/docs/reference/functions/text/lenb)
+- [SEARCH](/docs/reference/functions/text/search)
+- [CONCAT](/docs/reference/functions/text/concat)
+- [CONCATENATE](/docs/reference/functions/text/concatenate)
+
+## FAQ
+
+### Does FINDB use DBCS byte counts?
+Not currently. In the invariant locale it delegates to FIND.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/findb" />
+{/* [formualizer-docgen:function-meta:end] */}

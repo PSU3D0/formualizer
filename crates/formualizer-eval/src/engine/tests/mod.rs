@@ -94,6 +94,7 @@ mod formula_edit_propagation;
 mod formula_error_propagation;
 mod formula_overlay_writeback;
 mod indirect;
+mod info_reference_context;
 mod let_lambda;
 mod offset_dynamic;
 mod open_ended_bounds_caps;

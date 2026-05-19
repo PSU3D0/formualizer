@@ -1,0 +1,39 @@
+---
+title: "REPLACEB"
+description: "REPLACEB: Replaces text using non-DBCS byte-compatible semantics."
+---
+
+<FunctionPageSchema id="text/replaceb" />
+
+## Summary
+
+In Formualizer's invariant locale, REPLACEB delegates to REPLACE.
+
+## Examples
+
+<FunctionSandbox
+  title="Replace byte-compatible text"
+  formula={`=REPLACEB("abcdef",3,2,"ZZ")`}
+  grid={{}}
+  expected={"abZZef"}
+/>
+
+## Related functions
+
+- [REPLACE](/docs/reference/functions/text/replace)
+- [MIDB](/docs/reference/functions/text/midb)
+- [FINDB](/docs/reference/functions/text/findb)
+- [ASC](/docs/reference/functions/text/asc)
+- [CHAR](/docs/reference/functions/text/char)
+- [CLEAN](/docs/reference/functions/text/clean)
+
+## FAQ
+
+### Does REPLACEB operate on raw UTF-8 bytes?
+No. In the invariant locale it delegates to REPLACE.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/replaceb" />
+{/* [formualizer-docgen:function-meta:end] */}
