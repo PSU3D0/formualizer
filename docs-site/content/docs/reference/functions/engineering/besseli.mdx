@@ -1,0 +1,60 @@
+---
+title: "BESSELI"
+description: "BESSELI: Returns the modified Bessel function In(x)."
+---
+
+<FunctionPageSchema id="engineering/besseli" />
+
+## Summary
+
+Computes the modified Bessel function of the first kind for a real value `x`
+ and a non-negative integer order `n`. The order is truncated toward zero,
+ matching spreadsheet behavior.
+
+## Remarks
+ - Arguments are supplied as `BESSELI(x, n)`.
+ - `n` must truncate to a non-negative integer order.
+ - Invalid domains or non-finite results return `#NUM!`.
+
+## Examples
+
+<Tabs items={["First-order modified Bessel I", "Order is truncated"]}>
+<Tab value="First-order modified Bessel I">
+<FunctionSandbox
+  title="First-order modified Bessel I"
+  formula={`=BESSELI(0.5,1)`}
+  grid={{}}
+  expected={"0.2578943053908963"}
+/>
+</Tab>
+
+<Tab value="Order is truncated">
+<FunctionSandbox
+  title="Order is truncated"
+  formula={`=BESSELI(0.5,1.9)`}
+  grid={{}}
+  expected={"0.2578943053908963"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BESSELJ](/docs/reference/functions/engineering/besselj)
+- [BESSELK](/docs/reference/functions/engineering/besselk)
+- [BESSELY](/docs/reference/functions/engineering/bessely)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+
+## FAQ
+
+### What happens to fractional order values?
+The order argument is truncated toward zero before evaluation.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/besseli" />
+{/* [formualizer-docgen:function-meta:end] */}

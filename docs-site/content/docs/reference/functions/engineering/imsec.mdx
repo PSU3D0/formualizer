@@ -1,0 +1,39 @@
+---
+title: "IMSEC"
+description: "IMSEC: Returns the secant of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imsec" />
+
+## Summary
+
+Computes `1 / IMCOS(inumber)` for an Excel-style complex number string.
+
+## Examples
+
+<FunctionSandbox
+  title="Secant of zero"
+  formula={`=IMSEC("0")`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [IMCOS](/docs/reference/functions/engineering/imcos)
+- [IMSECH](/docs/reference/functions/engineering/imsech)
+- [IMCSC](/docs/reference/functions/engineering/imcsc)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### How are poles represented?
+Inputs that lead to non-finite results return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imsec" />
+{/* [formualizer-docgen:function-meta:end] */}

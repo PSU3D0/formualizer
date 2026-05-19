@@ -13,7 +13,9 @@ description: "INDEX: Returns the value or reference at a 1-based row and column 
 
 ## Remarks
  - Indexing is 1-based for both `row_num` and `column_num`.
- - If `column_num` is omitted for a 1D array, `row_num` selects the position in that vector.
+ - If `column_num` is omitted for a single-row or single-column input, `row_num` selects the
+   position along that 1D vector.
+ - For rectangular 2D inputs, omitted `column_num` defaults to the first column.
  - `row_num &lt;= 0`, `column_num &lt;= 0`, or out-of-bounds indexes return `#REF!`.
  - Non-numeric index arguments return `#VALUE!`.
 
@@ -52,7 +54,7 @@ description: "INDEX: Returns the value or reference at a 1-based row and column 
 ## FAQ
 
 ### How does INDEX behave when column_num is omitted?
-For 1D arrays, row_num selects the position along that vector; for 2D arrays, omitted column_num defaults to the first column.
+For single-row or single-column inputs, row_num selects the position along that vector; for 2D inputs, omitted column_num defaults to the first column.
 
 ### Which errors indicate bad indexes?
 Non-numeric index arguments return #VALUE!, while 0/negative or out-of-bounds indexes return #REF!.

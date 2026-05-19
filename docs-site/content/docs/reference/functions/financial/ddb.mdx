@@ -12,14 +12,14 @@ description: "DDB: Returns declining-balance depreciation for a period using a c
 
 ## Remarks
  - Parameters: `cost`, `salvage`, `life`, `period`, and optional `factor` (default `2`).
- - Input constraints: `cost &gt;= 0`, `salvage &gt;= 0`, `life &gt; 0`, `period &gt; 0`, `factor &gt; 0`, and `period &lt;= life`; violations return `#NUM!`.
+ - Input constraints: `cost &gt;= 0`, `salvage &gt;= 0`, `life &gt; 0`, `factor &gt; 0`, and `1 &lt;= trunc(period) &lt;= life`; violations return `#NUM!`.
  - Per-period rate is `factor / life`.
- - This implementation processes the integer part of `period` and then blends with the next period for a fractional remainder.
+ - `period` is truncated to an integer before calculation, matching Excel behavior.
  - Result is the period depreciation amount; with valid inputs above it is non-negative.
 
 ## Examples
 
-<Tabs items={["Default double-declining first period", "Using a custom factor"]}>
+<Tabs items={["Default double-declining first period", "Using a custom factor", "Fractional period is truncated to integer"]}>
 <Tab value="Default double-declining first period">
 <FunctionSandbox
   title="Default double-declining first period"
@@ -35,6 +35,15 @@ description: "DDB: Returns declining-balance depreciation for a period using a c
   formula={`=DDB(10000, 1000, 5, 1, 1.5)`}
   grid={{}}
   expected={"3000"}
+/>
+</Tab>
+
+<Tab value="Fractional period is truncated to integer">
+<FunctionSandbox
+  title="Fractional period is truncated to integer"
+  formula={`=DDB(10000, 1000, 5, 1.9)`}
+  grid={{}}
+  expected={"4000"}
 />
 </Tab>
 
@@ -56,6 +65,9 @@ It sets the per-period declining rate as `factor / life`; `2` gives double-decli
 
 ### When does `DDB` return `#NUM!`?
 Invalid non-positive inputs (`life`, `period`, `factor`), negative `cost`/`salvage`, or `period &gt; life`.
+
+### What happens with a fractional `period`?
+`period` is truncated to an integer before calculation (e.g. `1.9` is treated as `1`), matching Excel and DB behavior.
 
 ## Runtime metadata
 

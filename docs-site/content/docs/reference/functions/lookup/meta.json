@@ -24,6 +24,8 @@
     "sort",
     "sortby",
     "take",
+    "tocol",
+    "torow",
     "transpose",
     "unique",
     "vlookup",

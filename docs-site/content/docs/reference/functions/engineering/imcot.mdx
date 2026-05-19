@@ -1,0 +1,40 @@
+---
+title: "IMCOT"
+description: "IMCOT: Returns the cotangent of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imcot" />
+
+## Summary
+
+Computes the reciprocal of the complex tangent for an Excel-style complex
+ number string.
+
+## Examples
+
+<FunctionSandbox
+  title="Cotangent of one"
+  formula={`=IMCOT("1")`}
+  grid={{}}
+  expected={"0.6420926159343306"}
+/>
+
+## Related functions
+
+- [IMTAN](/docs/reference/functions/engineering/imtan)
+- [IMCOS](/docs/reference/functions/engineering/imcos)
+- [IMSIN](/docs/reference/functions/engineering/imsin)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### What happens at undefined inputs?
+Inputs that produce non-finite reciprocal results return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imcot" />
+{/* [formualizer-docgen:function-meta:end] */}

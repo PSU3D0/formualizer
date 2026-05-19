@@ -1,0 +1,59 @@
+---
+title: "BESSELK"
+description: "BESSELK: Returns the modified Bessel function Kn(x)."
+---
+
+<FunctionPageSchema id="engineering/besselk" />
+
+## Summary
+
+Computes the modified Bessel function of the second kind for a positive real
+ value `x` and a non-negative integer order `n`.
+
+## Remarks
+ - Arguments are supplied as `BESSELK(x, n)`.
+ - `x` must be positive and `n` must truncate to a non-negative integer.
+ - Invalid domains or non-finite results return `#NUM!`.
+
+## Examples
+
+<Tabs items={["First-order modified Bessel K", "Zero-order modified Bessel K"]}>
+<Tab value="First-order modified Bessel K">
+<FunctionSandbox
+  title="First-order modified Bessel K"
+  formula={`=BESSELK(0.5,1)`}
+  grid={{}}
+  expected={"1.656441120003301"}
+/>
+</Tab>
+
+<Tab value="Zero-order modified Bessel K">
+<FunctionSandbox
+  title="Zero-order modified Bessel K"
+  formula={`=BESSELK(0.5,0)`}
+  grid={{}}
+  expected={"0.9244190712276659"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BESSELI](/docs/reference/functions/engineering/besseli)
+- [BESSELJ](/docs/reference/functions/engineering/besselj)
+- [BESSELY](/docs/reference/functions/engineering/bessely)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+
+## FAQ
+
+### Why can BESSELK return #NUM!?
+BESSELK is undefined for non-positive x values and negative orders.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/besselk" />
+{/* [formualizer-docgen:function-meta:end] */}

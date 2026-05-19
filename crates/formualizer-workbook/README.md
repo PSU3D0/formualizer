@@ -88,7 +88,7 @@ cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example was
 ## Features
 
 - **Mutable workbook model** — add sheets, edit cells, and track staged formula changes without rebuilding the entire dependency graph.
-- **320+ Excel functions** — all built-ins from `formualizer-eval` are available through the workbook surface.
+- **400+ Excel functions** — all built-ins from `formualizer-eval` are available through the workbook surface.
 - **Changelog + undo/redo** — opt into change logging with automatic action grouping. Single edits are individually undoable; batch operations group as one step.
 - **I/O backends** — pluggable readers/writers behind feature flags:
   - `calamine` — XLSX/ODS reading

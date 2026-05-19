@@ -1,0 +1,40 @@
+---
+title: "IMTAN"
+description: "IMTAN: Returns the tangent of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imtan" />
+
+## Summary
+
+Accepts an Excel-style complex number string and returns the complex tangent
+ as text.
+
+## Examples
+
+<FunctionSandbox
+  title="Tangent of zero"
+  formula={`=IMTAN("0")`}
+  grid={{}}
+  expected={"0"}
+/>
+
+## Related functions
+
+- [IMSIN](/docs/reference/functions/engineering/imsin)
+- [IMCOS](/docs/reference/functions/engineering/imcos)
+- [IMCOT](/docs/reference/functions/engineering/imcot)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### How is IMTAN related to sine and cosine?
+It computes the complex tangent, equivalent to IMSIN divided by IMCOS.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imtan" />
+{/* [formualizer-docgen:function-meta:end] */}

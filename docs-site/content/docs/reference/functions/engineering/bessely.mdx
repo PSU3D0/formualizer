@@ -1,0 +1,59 @@
+---
+title: "BESSELY"
+description: "BESSELY: Returns the Bessel function Yn(x)."
+---
+
+<FunctionPageSchema id="engineering/bessely" />
+
+## Summary
+
+Computes the Bessel function of the second kind for a positive real value `x`
+ and a non-negative integer order `n`.
+
+## Remarks
+ - Arguments are supplied as `BESSELY(x, n)`.
+ - Negative orders and invalid domains return `#NUM!`.
+ - Results are approximate floating-point values.
+
+## Examples
+
+<Tabs items={["Third-order Bessel Y", "Large-input Bessel Y"]}>
+<Tab value="Third-order Bessel Y">
+<FunctionSandbox
+  title="Third-order Bessel Y"
+  formula={`=BESSELY(0.5,3)`}
+  grid={{}}
+  expected={"-42.059494304723884"}
+/>
+</Tab>
+
+<Tab value="Large-input Bessel Y">
+<FunctionSandbox
+  title="Large-input Bessel Y"
+  formula={`=BESSELY(35,3)`}
+  grid={{}}
+  expected={"-0.13191405300596323"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BESSELI](/docs/reference/functions/engineering/besseli)
+- [BESSELJ](/docs/reference/functions/engineering/besselj)
+- [BESSELK](/docs/reference/functions/engineering/besselk)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+
+## FAQ
+
+### Is BESSELY defined at zero?
+No. Singular or otherwise invalid inputs return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/bessely" />
+{/* [formualizer-docgen:function-meta:end] */}
