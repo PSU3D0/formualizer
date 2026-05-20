@@ -4,6 +4,7 @@ use super::serial::{date_to_serial, serial_to_date};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+use arrow_array::Array;
 use chrono::{Datelike, NaiveDate, Weekday};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
@@ -594,14 +595,27 @@ fn collect_holidays(args: &[ArgumentHandle], arg_start: usize) -> Vec<NaiveDate>
         match arg.value() {
             Ok(CalcValue::Scalar(lit)) => collect_holidays_from_literal(&lit, &mut holidays),
             Ok(CalcValue::Range(rv)) => {
-                let _ = rv.for_each_cell(&mut |val| {
-                    collect_holidays_from_literal(val, &mut holidays);
-                    Ok(())
-                });
+                if let Ok(slices) = rv.numbers_slices().collect::<Result<Vec<_>, _>>() {
+                    for (_row_start, _row_len, cols) in slices {
+                        for col in cols {
+                            let len = col.len();
+                            let values = col.values();
+                            for i in 0..len {
+                                if !col.is_null(i)
+                                    && let Ok(d) = serial_to_date(values[i])
+                                {
+                                    holidays.push(d);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }
     }
+    holidays.sort_unstable();
+    holidays.dedup();
     holidays
 }
 
@@ -719,7 +733,7 @@ impl Function for NetworkdaysFn {
         let mut count = 0i64;
         let mut current = start;
         while current <= end {
-            if !is_weekend(&current) && !holidays.contains(&current) {
+            if !is_weekend(&current) && holidays.binary_search(&current).is_err() {
                 count += 1;
             }
             current = current.succ_opt().unwrap_or(current);
@@ -817,7 +831,7 @@ impl Function for WorkdayFn {
                 current.pred_opt().ok_or_else(ExcelError::new_num)?
             };
 
-            if !is_weekend(&current) && !holidays.contains(&current) {
+            if !is_weekend(&current) && holidays.binary_search(&current).is_err() {
                 remaining -= 1;
             }
         }
@@ -940,7 +954,7 @@ impl Function for NetworkdaysIntlFn {
         let mut count = 0i64;
         let mut current = start;
         while current <= end {
-            if !is_weekend_masked(&current, &mask) && !holidays.contains(&current) {
+            if !is_weekend_masked(&current, &mask) && holidays.binary_search(&current).is_err() {
                 count += 1;
             }
             current = current.succ_opt().unwrap_or(current);
@@ -1064,7 +1078,7 @@ impl Function for WorkdayIntlFn {
                 current.pred_opt().ok_or_else(ExcelError::new_num)?
             };
 
-            if !is_weekend_masked(&current, &mask) && !holidays.contains(&current) {
+            if !is_weekend_masked(&current, &mask) && holidays.binary_search(&current).is_err() {
                 remaining -= 1;
             }
         }
@@ -1450,5 +1464,46 @@ mod tests {
             .into_literal();
         let expected = date_to_serial(&NaiveDate::from_ymd_opt(2024, 1, 8).unwrap());
         assert_eq!(result, LiteralValue::Number(expected));
+    }
+
+    #[test]
+    fn networkdays_collects_sorted_deduped_holidays() {
+        // Jan 1-7 2024 (Mon-Sun) default weekends => 5 workdays
+        // Holidays: Jan 2, Jan 2 (dup), Jan 3, and Jan 4 out of order => total 2 unique workdays left
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NetworkdaysFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        )));
+        let e = lit(LiteralValue::Number(date_to_serial(
+            &NaiveDate::from_ymd_opt(2024, 1, 7).unwrap(),
+        )));
+        let holidays = lit(LiteralValue::Array(vec![
+            vec![LiteralValue::Number(date_to_serial(
+                &NaiveDate::from_ymd_opt(2024, 1, 4).unwrap(),
+            ))], // Out of order
+            vec![LiteralValue::Number(date_to_serial(
+                &NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            ))],
+            vec![LiteralValue::Number(date_to_serial(
+                &NaiveDate::from_ymd_opt(2024, 1, 2).unwrap(),
+            ))], // Duplicate
+            vec![LiteralValue::Number(date_to_serial(
+                &NaiveDate::from_ymd_opt(2024, 1, 3).unwrap(),
+            ))],
+        ]));
+        let f = ctx.context.get_function("", "NETWORKDAYS").unwrap();
+        let result = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&s, &ctx),
+                    ArgumentHandle::new(&e, &ctx),
+                    ArgumentHandle::new(&holidays, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(result, LiteralValue::Int(2)); // Mon(1), Fri(5) are the only active workdays
     }
 }
