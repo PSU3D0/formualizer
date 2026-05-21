@@ -31,6 +31,28 @@ All notable changes to Formualizer will be documented in this file.
 - Calamine-backed structured table metadata is still incomplete for some table-reference workloads; Umya remains the fuller XLSX compatibility path for those cases.
 - Calamine formula-record streaming is deferred until the upstream API is available in a crates.io release.
 
+## [0.5.9] - 2026-05-18
+
+### Fixed
+
+- Treated unary `+` as a pass-through (identity) operator to match Excel/LibreOffice semantics. Previously, `=+A1` returned `#VALUE!` when `A1` held a non-numeric string such as `"2014F"`; the leading-`=+` idiom is common in finance models carried over from Lotus 1-2-3 and now preserves text, booleans, and other non-numeric operand types. Unary `-` and `%` retain their numeric-coercion semantics. (#100)
+- Preserved computed-overlay accounting when edits remove previously computed values, preventing stale overlay memory estimates and keeping later recalc flushes consistent. (#95)
+
+### Performance
+
+- Improved computed formula overlay flushing by buffering formula-result writes and coalescing them into sparse, dense, or run-length overlay fragments instead of emitting every result as an individual point write; narrow layers now use the direct point-write path so deep chains do not pay coalescing overhead when there is nothing to coalesce. In local `v0.5.8` → 0.5.9-candidate A/B runs with a 20 GiB process memory cap, `headline_100k_single_edit` incremental recalc improved from 22.01 ms to 6.89 ms (3.19x), `agg_countifs_multi_criteria_100k` incremental recalc improved from 9.80 ms to 8.35 ms (1.17x), and a 50k-row finance repeated-edit probe improved total recalc from 223.83 ms to 170.75 ms (1.31x) with flat peak RSS. The adversarial `chain_100k` watchlist scenario is much closer to baseline after the narrow-layer fast path (57.58 ms to 63.23 ms, 0.91x). (#95)
+- Added finance-shaped recalc probes and computed-overlay observability coverage for dense, sparse, and run-length formula-result flush patterns.
+
+### Changed
+
+- Bumped Arrow dependencies from the 56.x series to `58.2.0` and Wasmtime from `42.0.2` to `43.0.2`. (#95, #97)
+- Bumped the docs site to Next.js `16.2.6` to pick up current security fixes.
+
+### Tooling and quality
+
+- Hardened the WASM CI path with explicit portable-wasm and wasm-js profile checks, artifact import validation, and Node.js 24 for npm release builds.
+- Refreshed Python development dependencies, including `pytest` `9.0.3`.
+
 ## [0.5.8] - 2026-04-27
 
 ### Breaking changes
@@ -163,7 +185,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.9...HEAD
+[0.5.9]: https://github.com/PSU3D0/formualizer/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/PSU3D0/formualizer/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/PSU3D0/formualizer/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/PSU3D0/formualizer/compare/v0.5.5...v0.5.6

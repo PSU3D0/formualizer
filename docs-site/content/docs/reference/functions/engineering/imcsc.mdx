@@ -1,0 +1,39 @@
+---
+title: "IMCSC"
+description: "IMCSC: Returns the cosecant of a complex number."
+---
+
+<FunctionPageSchema id="engineering/imcsc" />
+
+## Summary
+
+Computes `1 / IMSIN(inumber)` for an Excel-style complex number string.
+
+## Examples
+
+<FunctionSandbox
+  title="Cosecant of pi over two"
+  formula={`=IMCSC("1.5707963267948966")`}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [IMSIN](/docs/reference/functions/engineering/imsin)
+- [IMCSCH](/docs/reference/functions/engineering/imcsch)
+- [IMSEC](/docs/reference/functions/engineering/imsec)
+- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
+- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
+- [ERFC](/docs/reference/functions/engineering/erfc)
+
+## FAQ
+
+### What happens at a pole?
+Inputs such as zero that make the reciprocal undefined return #NUM!.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/imcsc" />
+{/* [formualizer-docgen:function-meta:end] */}

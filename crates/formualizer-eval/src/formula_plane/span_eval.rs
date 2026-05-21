@@ -1,8 +1,9 @@
-//! Internal scalar FormulaPlane span evaluator for FP6.4.
+//! Internal scalar FormulaPlane span evaluator.
 //!
-//! This is direct FormulaPlane substrate only. It evaluates accepted spans with
-//! existing scalar interpreter semantics and stages results into
-//! `ComputedWriteBuffer`; it does not integrate with normal engine scheduling.
+//! Authoritative FormulaPlane mode uses this evaluator for accepted spans. It
+//! preserves existing scalar interpreter semantics and stages span results into
+//! `ComputedWriteBuffer` so the normal computed-overlay flush path remains the
+//! single writeback mechanism.
 
 use std::sync::Arc;
 

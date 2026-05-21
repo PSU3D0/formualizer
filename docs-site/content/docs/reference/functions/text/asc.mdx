@@ -1,0 +1,54 @@
+---
+title: "ASC"
+description: "Converts full-width Latin and ASCII characters to half-width text."
+---
+
+<FunctionPageSchema id="text/asc" />
+
+## Summary
+
+Maps full-width ASCII punctuation, digits, letters, and ideographic space to
+ their half-width equivalents while leaving other characters unchanged.
+
+## Examples
+
+<Tabs items={["Convert full-width letters and digits", "Convert ideographic space"]}>
+<Tab value="Convert full-width letters and digits">
+<FunctionSandbox
+  title="Convert full-width letters and digits"
+  formula={`=ASC("ＡＢＣ１２３")`}
+  grid={{}}
+  expected={"ABC123"}
+/>
+</Tab>
+
+<Tab value="Convert ideographic space">
+<FunctionSandbox
+  title="Convert ideographic space"
+  formula={`=ASC("Ａ　Ｂ")`}
+  grid={{}}
+  expected={"A B"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [CHAR](/docs/reference/functions/text/char)
+- [CODE](/docs/reference/functions/text/code)
+- [UNICHAR](/docs/reference/functions/text/unichar)
+- [CLEAN](/docs/reference/functions/text/clean)
+- [LEN](/docs/reference/functions/text/len)
+- [LENB](/docs/reference/functions/text/lenb)
+
+## FAQ
+
+### Are non-ASCII full-width characters transliterated?
+No. ASC only maps the full-width ASCII block and ideographic space.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="text/asc" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -2334,6 +2334,16 @@ impl Function for DollarfrFn {
 /// Returns (fv/pv)^(1/nper) - 1  (i.e. CAGR).
 #[derive(Debug)]
 pub struct RriFn;
+/// [formualizer-docgen:schema:start]
+/// Name: RRI
+/// Type: RriFn
+/// Min args: 3
+/// Max args: 3
+/// Variadic: false
+/// Signature: RRI(arg1: number@scalar, arg2: number@scalar, arg3: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for RriFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

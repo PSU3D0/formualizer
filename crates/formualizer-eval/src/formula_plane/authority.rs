@@ -1,10 +1,9 @@
 //! Graph-owned FormulaPlane authority shell.
 //!
-//! This is intentionally inert in FP6.5R: normal formula ingest still
-//! materializes every formula into the legacy dependency graph. The authority
-//! shell establishes ownership on `DependencyGraph` and can rebuild producer/read
-//! indexes from accepted spans, but those indexes are not wired into graph dirty
-//! propagation, scheduling, or evaluation yet.
+//! The authority owns accepted spans, tracks overlay punchouts, rebuilds
+//! producer/read indexes, and projects edited regions into span-local dirty work
+//! for opt-in authoritative FormulaPlane evaluation. Unsupported or demoted
+//! formulas remain on the legacy dependency graph.
 
 use rustc_hash::FxHashSet;
 

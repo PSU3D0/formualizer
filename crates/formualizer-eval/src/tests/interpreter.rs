@@ -142,6 +142,223 @@ mod tests {
         );
     }
 
+    /// Unary `+` is a pass-through (identity) operator in Excel/LibreOffice,
+    /// not a numeric coercion. The `=+A1` idiom is a Lotus 1-2-3 carry-over
+    /// that is common in finance models, and must not turn text labels into
+    /// `#VALUE!`. Unary `-` and `%` retain their numeric-coercion semantics.
+    ///
+    /// Ground truth was captured by writing the same formulas to an .xlsx,
+    /// having LibreOffice recalculate them, and reading back cached values.
+    #[test]
+    fn test_unary_plus_is_passthrough_excel_parity() {
+        let wb = create_workbook()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Text("2014F".to_string()))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Text("hello".to_string()))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Text("5".to_string()))
+            .with_cell("Sheet1", 4, 1, LiteralValue::Number(42.0))
+            .with_cell("Sheet1", 5, 1, LiteralValue::Number(-3.5))
+            .with_cell("Sheet1", 6, 1, LiteralValue::Boolean(true))
+            .with_cell("Sheet1", 7, 1, LiteralValue::Boolean(false))
+            .with_cell("Sheet1", 8, 1, LiteralValue::Empty)
+            .with_cell(
+                "Sheet1",
+                9,
+                1,
+                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)),
+            );
+
+        // Reference operand: text passes through unchanged. Pre-fix this returned #VALUE!.
+        assert_eq!(
+            evaluate_formula("=+A1", &wb).unwrap(),
+            LiteralValue::Text("2014F".to_string()),
+        );
+        assert_eq!(
+            evaluate_formula("=+A2", &wb).unwrap(),
+            LiteralValue::Text("hello".to_string()),
+        );
+        // Numeric-looking text stays text (Excel: `=+"5"` cached as "5", not 5).
+        assert_eq!(
+            evaluate_formula("=+A3", &wb).unwrap(),
+            LiteralValue::Text("5".to_string()),
+        );
+        // Numbers pass through.
+        assert_eq!(
+            evaluate_formula("=+A4", &wb).unwrap(),
+            LiteralValue::Number(42.0),
+        );
+        assert_eq!(
+            evaluate_formula("=+A5", &wb).unwrap(),
+            LiteralValue::Number(-3.5),
+        );
+        // Booleans stay booleans (LibreOffice cached value confirms this).
+        assert_eq!(
+            evaluate_formula("=+A6", &wb).unwrap(),
+            LiteralValue::Boolean(true),
+        );
+        assert_eq!(
+            evaluate_formula("=+A7", &wb).unwrap(),
+            LiteralValue::Boolean(false),
+        );
+        // Empty operand: identity preserves Empty (matches `=A8`).
+        assert_eq!(evaluate_formula("=+A8", &wb).unwrap(), LiteralValue::Empty);
+        // Errors propagate unchanged.
+        match evaluate_formula("=+A9", &wb).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Div),
+            other => panic!("expected #DIV/0! got {other:?}"),
+        }
+
+        // String literals.
+        assert_eq!(
+            evaluate_formula("=+\"hello\"", &wb).unwrap(),
+            LiteralValue::Text("hello".to_string()),
+        );
+        assert_eq!(
+            evaluate_formula("=+\"5\"", &wb).unwrap(),
+            LiteralValue::Text("5".to_string()),
+        );
+
+        // Numeric literals (regression guard: must remain numeric).
+        assert_eq!(
+            evaluate_formula("=+5", &wb).unwrap(),
+            LiteralValue::Number(5.0),
+        );
+        assert_eq!(
+            evaluate_formula("=+5.5", &wb).unwrap(),
+            LiteralValue::Number(5.5),
+        );
+        // Double unary plus on a number stays numeric.
+        assert_eq!(
+            evaluate_formula("=++5", &wb).unwrap(),
+            LiteralValue::Number(5.0),
+        );
+    }
+
+    /// Unary `-` must continue to coerce. `=-A1` on a non-numeric string
+    /// must still return #VALUE! to stay Excel-compatible. Guards against an
+    /// overzealous fix that pass-throughs both `+` and `-`.
+    #[test]
+    fn test_unary_minus_still_coerces_strings() {
+        let wb = create_workbook()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Text("2014F".to_string()))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Text("5".to_string()))
+            .with_cell("Sheet1", 3, 1, LiteralValue::Boolean(true))
+            .with_cell("Sheet1", 4, 1, LiteralValue::Empty);
+
+        match evaluate_formula("=-A1", &wb).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
+            other => panic!("expected #VALUE! got {other:?}"),
+        }
+        assert_eq!(
+            evaluate_formula("=-A2", &wb).unwrap(),
+            LiteralValue::Number(-5.0),
+        );
+        assert_eq!(
+            evaluate_formula("=-A3", &wb).unwrap(),
+            LiteralValue::Number(-1.0),
+        );
+        assert_eq!(
+            evaluate_formula("=-A4", &wb).unwrap(),
+            LiteralValue::Number(0.0),
+        );
+        match evaluate_formula("=-\"hello\"", &wb).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
+            other => panic!("expected #VALUE! got {other:?}"),
+        }
+    }
+
+    /// Percent operator must continue to coerce just like unary `-`.
+    #[test]
+    fn test_unary_percent_still_coerces_strings() {
+        let wb = create_workbook()
+            .with_cell("Sheet1", 1, 1, LiteralValue::Text("2014F".to_string()))
+            .with_cell("Sheet1", 2, 1, LiteralValue::Text("50".to_string()));
+
+        match evaluate_formula("=A1%", &wb).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
+            other => panic!("expected #VALUE! got {other:?}"),
+        }
+        assert_eq!(
+            evaluate_formula("=A2%", &wb).unwrap(),
+            LiteralValue::Number(0.5),
+        );
+    }
+
+    /// Unary `+` inside a larger expression: the surrounding arithmetic
+    /// still coerces its operands, so `=1++"hello"` and `=1++A_text` remain
+    /// #VALUE!. Pass-through only changes the value produced by the `+` node
+    /// itself. Matches Excel: `=1++"hello"` -> #VALUE!, `=1++"5"` -> 6.
+    #[test]
+    fn test_inner_unary_plus_on_text_still_errors_in_arithmetic() {
+        let wb =
+            create_workbook().with_cell("Sheet1", 1, 1, LiteralValue::Text("2014F".to_string()));
+
+        match evaluate_formula("=1++\"hello\"", &wb).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
+            other => panic!("expected #VALUE! got {other:?}"),
+        }
+        match evaluate_formula("=1++A1", &wb).unwrap() {
+            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
+            other => panic!("expected #VALUE! got {other:?}"),
+        }
+        assert_eq!(
+            evaluate_formula("=1++\"5\"", &wb).unwrap(),
+            LiteralValue::Number(6.0),
+        );
+    }
+
+    /// Unary `+` applied to an array operates element-wise as pass-through.
+    /// `=+{"a","b","c"}` returns an array of text, not an error.
+    #[test]
+    fn test_unary_plus_array_passthrough() {
+        let wb = create_workbook();
+
+        match evaluate_formula("=+{\"a\",\"b\",\"c\"}", &wb).unwrap() {
+            LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(
+                    rows[0],
+                    vec![
+                        LiteralValue::Text("a".to_string()),
+                        LiteralValue::Text("b".to_string()),
+                        LiteralValue::Text("c".to_string()),
+                    ]
+                );
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
+
+        match evaluate_formula("=+{1,2,3}", &wb).unwrap() {
+            LiteralValue::Array(rows) => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(
+                    rows[0],
+                    vec![
+                        LiteralValue::Number(1.0),
+                        LiteralValue::Number(2.0),
+                        LiteralValue::Number(3.0),
+                    ]
+                );
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
+    }
+
+    /// Original bug-report scenario: leading `=+SheetRef!Cell` on a text
+    /// label must pass through, not become #VALUE!.
+    #[test]
+    fn test_unary_plus_on_cross_sheet_text_reference() {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(crate::builtins::math::SumFn))
+            .with_cell("SheetA", 1, 1, LiteralValue::Text("2014F".to_string()));
+
+        let tokenizer = Tokenizer::new("=+SheetA!A1").unwrap();
+        let mut parser = Parser::new(tokenizer.items, false);
+        let ast = parser.parse().unwrap();
+        let interp = wb.interpreter();
+        let v = interp.evaluate_ast(&ast).unwrap().into_literal();
+        assert_eq!(v, LiteralValue::Text("2014F".to_string()));
+    }
+
     #[test]
     fn test_value_coercion() {
         let wb = create_workbook();

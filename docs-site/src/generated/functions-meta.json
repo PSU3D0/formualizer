@@ -1455,6 +1455,182 @@
     "typeName": "YearFracFn",
     "variadic": true
   },
+  "engineering/besseli": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "BESSELI",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the modified Bessel function In(x).",
+    "signature": "BESSELI(arg1: any@scalar, arg2: any@scalar)",
+    "typeName": "BesselIFn",
+    "variadic": false
+  },
+  "engineering/besselj": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "BESSELJ",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the Bessel function Jn(x).",
+    "signature": "BESSELJ(arg1: any@scalar, arg2: any@scalar)",
+    "typeName": "BesselJFn",
+    "variadic": false
+  },
+  "engineering/besselk": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "BESSELK",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the modified Bessel function Kn(x).",
+    "signature": "BESSELK(arg1: any@scalar, arg2: any@scalar)",
+    "typeName": "BesselKFn",
+    "variadic": false
+  },
+  "engineering/bessely": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 2,
+    "minArgs": 2,
+    "name": "BESSELY",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the Bessel function Yn(x).",
+    "signature": "BESSELY(arg1: any@scalar, arg2: any@scalar)",
+    "typeName": "BesselYFn",
+    "variadic": false
+  },
   "engineering/bin2dec": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -2190,6 +2366,37 @@
     "typeName": "ErfcFn",
     "variadic": false
   },
+  "engineering/erfc-precise": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "ERFC.PRECISE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the complementary error function of a number.",
+    "signature": "ERFC.PRECISE(arg1: any@scalar)",
+    "typeName": "ErfcPreciseFn",
+    "variadic": false
+  },
   "engineering/gestep": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
     "args": [
@@ -2508,6 +2715,130 @@
     "typeName": "ImCosFn",
     "variadic": false
   },
+  "engineering/imcosh": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMCOSH",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the hyperbolic cosine of a complex number.",
+    "signature": "IMCOSH(arg1: any@scalar)",
+    "typeName": "ImCoshFn",
+    "variadic": false
+  },
+  "engineering/imcot": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMCOT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the cotangent of a complex number.",
+    "signature": "IMCOT(arg1: any@scalar)",
+    "typeName": "ImCotFn",
+    "variadic": false
+  },
+  "engineering/imcsc": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMCSC",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the cosecant of a complex number.",
+    "signature": "IMCSC(arg1: any@scalar)",
+    "typeName": "ImCscFn",
+    "variadic": false
+  },
+  "engineering/imcsch": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMCSCH",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the hyperbolic cosecant of a complex number.",
+    "signature": "IMCSCH(arg1: any@scalar)",
+    "typeName": "ImCschFn",
+    "variadic": false
+  },
   "engineering/imdiv": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -2782,6 +3113,68 @@
     "typeName": "ImRealFn",
     "variadic": false
   },
+  "engineering/imsec": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMSEC",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the secant of a complex number.",
+    "signature": "IMSEC(arg1: any@scalar)",
+    "typeName": "ImSecFn",
+    "variadic": false
+  },
+  "engineering/imsech": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMSECH",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the hyperbolic secant of a complex number.",
+    "signature": "IMSECH(arg1: any@scalar)",
+    "typeName": "ImSechFn",
+    "variadic": false
+  },
   "engineering/imsin": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -2811,6 +3204,37 @@
     "shortSummary": "Returns the sine of a complex number.",
     "signature": "IMSIN(arg1: any@scalar)",
     "typeName": "ImSinFn",
+    "variadic": false
+  },
+  "engineering/imsinh": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMSINH",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the hyperbolic sine of a complex number.",
+    "signature": "IMSINH(arg1: any@scalar)",
+    "typeName": "ImSinhFn",
     "variadic": false
   },
   "engineering/imsqrt": {
@@ -2918,6 +3342,37 @@
     "signature": "IMSUM(arg1...: any@scalar)",
     "typeName": "ImSumFn",
     "variadic": true
+  },
+  "engineering/imtan": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "engineering",
+    "implementationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "IMTAN",
+    "registrationSource": "crates/formualizer-eval/src/builtins/engineering.rs",
+    "shortSummary": "Returns the tangent of a complex number.",
+    "signature": "IMTAN(arg1: any@scalar)",
+    "typeName": "ImTanFn",
+    "variadic": false
   },
   "engineering/oct2bin": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}",
@@ -5387,6 +5842,37 @@
     "typeName": "ErrorTypeFn",
     "variadic": false
   },
+  "info/formulatext": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "info",
+    "implementationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "FORMULATEXT",
+    "registrationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "shortSummary": "Returns the formula text stored in the referenced cell.",
+    "signature": "FORMULATEXT(arg1: any@scalar)",
+    "typeName": "FormulaTextFn",
+    "variadic": false
+  },
   "info/isblank": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -5697,6 +6183,37 @@
     "typeName": "IsOddFn",
     "variadic": false
   },
+  "info/isref": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "info",
+    "implementationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "ISREF",
+    "registrationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "shortSummary": "Returns TRUE when the argument resolves to a reference.",
+    "signature": "ISREF(arg1: any@scalar)",
+    "typeName": "IsRefFn",
+    "variadic": false
+  },
   "info/istext": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -5775,6 +6292,68 @@
     "signature": "NA()",
     "typeName": "NaFn",
     "variadic": false
+  },
+  "info/sheet": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "info",
+    "implementationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "maxArgs": null,
+    "minArgs": 0,
+    "name": "SHEET",
+    "registrationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "shortSummary": "Returns the 1-based sheet index for the current sheet or a reference.",
+    "signature": "SHEET(arg1...: any@scalar)",
+    "typeName": "SheetFn",
+    "variadic": true
+  },
+  "info/sheets": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "info",
+    "implementationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "maxArgs": null,
+    "minArgs": 0,
+    "name": "SHEETS",
+    "registrationSource": "crates/formualizer-eval/src/builtins/info.rs",
+    "shortSummary": "Returns the number of sheets in the workbook or reference span.",
+    "signature": "SHEETS(arg1...: any@scalar)",
+    "typeName": "SheetsFn",
+    "variadic": true
   },
   "info/t": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
@@ -7465,6 +8044,124 @@
     "shortSummary": "Returns a subset from the start or end of rows and optional columns.",
     "signature": "TAKE(arg1: range@range, arg2: number@scalar, arg3?...: number@scalar)",
     "typeName": "TakeFn",
+    "variadic": true
+  },
+  "lookup/tocol": {
+    "argSchema": "arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=logical|number,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=true}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "range",
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": true,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": false,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": true,
+        "kinds": [
+          "logical",
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": false,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "lookup",
+    "implementationSource": "crates/formualizer-eval/src/builtins/lookup/array_shape.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "TOCOL",
+    "registrationSource": "crates/formualizer-eval/src/builtins/lookup/array_shape.rs",
+    "shortSummary": "Converts an array or range into a single column.",
+    "signature": "TOCOL(arg1: range|any@range, arg2?: number@scalar, arg3?...: logical|number@scalar)",
+    "typeName": "ToColFn",
+    "variadic": true
+  },
+  "lookup/torow": {
+    "argSchema": "arg1{kinds=range|any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=logical|number,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=true}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "range",
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "range"
+      },
+      {
+        "by_ref": false,
+        "coercion": "NumberLenientText",
+        "has_default": true,
+        "kinds": [
+          "number"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": false,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": true,
+        "kinds": [
+          "logical",
+          "number"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": null,
+        "required": false,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "lookup",
+    "implementationSource": "crates/formualizer-eval/src/builtins/lookup/array_shape.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "TOROW",
+    "registrationSource": "crates/formualizer-eval/src/builtins/lookup/array_shape.rs",
+    "shortSummary": "Converts an array or range into a single row.",
+    "signature": "TOROW(arg1: range|any@range, arg2?: number@scalar, arg3?...: logical|number@scalar)",
+    "typeName": "ToRowFn",
     "variadic": true
   },
   "lookup/transpose": {
@@ -15196,6 +15893,37 @@
     "typeName": "ArrayToTextFn",
     "variadic": false
   },
+  "text/asc": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/char_code_rept.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "ASC",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/char_code_rept.rs",
+    "shortSummary": "Converts full-width Latin and ASCII characters to half-width text.",
+    "signature": "ASC(arg1: any@scalar)",
+    "typeName": "AscFn",
+    "variadic": false
+  },
   "text/char": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -15457,6 +16185,37 @@
     "typeName": "FindFn",
     "variadic": true
   },
+  "text/findb": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "maxArgs": null,
+    "minArgs": 2,
+    "name": "FINDB",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "shortSummary": "Finds text within text using non-DBCS byte-compatible semantics.",
+    "signature": "FINDB(arg1...: any@scalar)",
+    "typeName": "FindBFn",
+    "variadic": true
+  },
   "text/fixed": {
     "argSchema": "arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg3{kinds=logical,required=false,shape=scalar,by_ref=false,coercion=Logical,max=None,repeating=None,default=true}",
     "args": [
@@ -15545,6 +16304,37 @@
     "typeName": "LeftFn",
     "variadic": true
   },
+  "text/leftb": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "LEFTB",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "shortSummary": "Returns the leftmost characters using non-DBCS byte-compatible semantics.",
+    "signature": "LEFTB(arg1...: any@scalar)",
+    "typeName": "LeftBFn",
+    "variadic": true
+  },
   "text/len": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -15574,6 +16364,37 @@
     "shortSummary": "Returns the number of characters in a text value.",
     "signature": "LEN(arg1: any@scalar)",
     "typeName": "LenFn",
+    "variadic": false
+  },
+  "text/lenb": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "maxArgs": 1,
+    "minArgs": 1,
+    "name": "LENB",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "shortSummary": "Returns text length using non-DBCS byte-compatible semantics.",
+    "signature": "LENB(arg1: any@scalar)",
+    "typeName": "LenBFn",
     "variadic": false
   },
   "text/lower": {
@@ -15638,6 +16459,68 @@
     "typeName": "MidFn",
     "variadic": false
   },
+  "text/midb": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "maxArgs": 1,
+    "minArgs": 3,
+    "name": "MIDB",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "shortSummary": "Extracts text from the middle using non-DBCS byte-compatible semantics.",
+    "signature": "MIDB(arg1: any@scalar)",
+    "typeName": "MidBFn",
+    "variadic": false
+  },
+  "text/numbervalue": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/value_text.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "NUMBERVALUE",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/value_text.rs",
+    "shortSummary": "Converts locale-delimited text to a number.",
+    "signature": "NUMBERVALUE(arg1...: any@scalar)",
+    "typeName": "NumberValueFn",
+    "variadic": true
+  },
   "text/proper": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -15698,6 +16581,37 @@
     "shortSummary": "Replaces part of a text string by position.",
     "signature": "REPLACE(arg1: any@scalar)",
     "typeName": "ReplaceFn",
+    "variadic": false
+  },
+  "text/replaceb": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "maxArgs": 1,
+    "minArgs": 4,
+    "name": "REPLACEB",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "shortSummary": "Replaces text using non-DBCS byte-compatible semantics.",
+    "signature": "REPLACEB(arg1: any@scalar)",
+    "typeName": "ReplaceBFn",
     "variadic": false
   },
   "text/rept": {
@@ -15775,6 +16689,37 @@
     "typeName": "RightFn",
     "variadic": true
   },
+  "text/rightb": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "maxArgs": null,
+    "minArgs": 1,
+    "name": "RIGHTB",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "shortSummary": "Returns the rightmost characters using non-DBCS byte-compatible semantics.",
+    "signature": "RIGHTB(arg1...: any@scalar)",
+    "typeName": "RightBFn",
+    "variadic": true
+  },
   "text/search": {
     "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
@@ -15804,6 +16749,37 @@
     "shortSummary": "Returns the 1-based position of one text string inside another.",
     "signature": "SEARCH(arg1...: any@scalar)",
     "typeName": "SearchFn",
+    "variadic": true
+  },
+  "text/searchb": {
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "args": [
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg1",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      }
+    ],
+    "caps": [
+      "PURE"
+    ],
+    "category": "text",
+    "implementationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "maxArgs": null,
+    "minArgs": 2,
+    "name": "SEARCHB",
+    "registrationSource": "crates/formualizer-eval/src/builtins/text/byte.rs",
+    "shortSummary": "Searches text using non-DBCS byte-compatible semantics.",
+    "signature": "SEARCHB(arg1...: any@scalar)",
+    "typeName": "SearchBFn",
     "variadic": true
   },
   "text/substitute": {

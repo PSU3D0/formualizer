@@ -1,0 +1,62 @@
+---
+title: "SHEETS"
+description: "Returns the number of sheets in the workbook or reference span."
+---
+
+<FunctionPageSchema id="info/sheets" />
+
+## Summary
+
+With no argument, returns the active workbook sheet count. With a reference,
+ returns the number of sheets covered by that reference.
+
+
+
+
+
+
+
+Returns the number of sheets in the workbook or covered by a 3D reference.
+
+## Examples
+
+<Tabs items={["Workbook sheet count", "Single-sheet reference count"]}>
+<Tab value="Workbook sheet count">
+<FunctionSandbox
+  title="Workbook sheet count"
+  formula={`=SHEETS()`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+<Tab value="Single-sheet reference count">
+<FunctionSandbox
+  title="Single-sheet reference count"
+  formula={`=SHEETS(A1)`}
+  grid={{}}
+  expected={"1"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [SHEET](/docs/reference/functions/info/sheet)
+- [ISREF](/docs/reference/functions/info/isref)
+- [FORMULATEXT](/docs/reference/functions/info/formulatext)
+- [ERROR.TYPE](/docs/reference/functions/info/error-type)
+- [ISBLANK](/docs/reference/functions/info/isblank)
+- [ISERR](/docs/reference/functions/info/iserr)
+
+## FAQ
+
+### What does SHEETS return for ordinary references?
+Ordinary references cover one sheet, so the result is 1.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="info/sheets" />
+{/* [formualizer-docgen:function-meta:end] */}

@@ -1,0 +1,59 @@
+---
+title: "BESSELJ"
+description: "BESSELJ: Returns the Bessel function Jn(x)."
+---
+
+<FunctionPageSchema id="engineering/besselj" />
+
+## Summary
+
+Computes the Bessel function of the first kind for a real value `x` and a
+ non-negative integer order `n`. The order is truncated toward zero.
+
+## Remarks
+ - Arguments are supplied as `BESSELJ(x, n)`.
+ - Negative orders return `#NUM!` in the public spreadsheet function.
+ - Results are approximate floating-point values.
+
+## Examples
+
+<Tabs items={["Third-order Bessel J", "Zero input for positive order"]}>
+<Tab value="Third-order Bessel J">
+<FunctionSandbox
+  title="Third-order Bessel J"
+  formula={`=BESSELJ(0.5,3)`}
+  grid={{}}
+  expected={"0.002563729994587244"}
+/>
+</Tab>
+
+<Tab value="Zero input for positive order">
+<FunctionSandbox
+  title="Zero input for positive order"
+  formula={`=BESSELJ(0,7)`}
+  grid={{}}
+  expected={"0"}
+/>
+</Tab>
+
+</Tabs>
+
+## Related functions
+
+- [BESSELI](/docs/reference/functions/engineering/besseli)
+- [BESSELK](/docs/reference/functions/engineering/besselk)
+- [BESSELY](/docs/reference/functions/engineering/bessely)
+- [IMDIV](/docs/reference/functions/engineering/imdiv)
+- [IMPOWER](/docs/reference/functions/engineering/impower)
+- [IMSUB](/docs/reference/functions/engineering/imsub)
+
+## FAQ
+
+### Are negative public orders supported?
+No. Negative order arguments return #NUM! for Excel compatibility.
+
+## Runtime metadata
+
+{/* [formualizer-docgen:function-meta:start] */}
+<FunctionMeta id="engineering/besselj" />
+{/* [formualizer-docgen:function-meta:end] */}

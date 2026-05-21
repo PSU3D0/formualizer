@@ -1,9 +1,9 @@
-//! Inert mixed FormulaProducerId scheduler substrate for FP6.5R.
+//! Mixed FormulaProducerId scheduling helpers.
 //!
-//! This module builds a producer-bounded topological schedule over legacy and
-//! FormulaPlane span producers. It is deliberately pure: it does not mutate graph
-//! dirty state, call the engine scheduler, evaluate formulas, or create proxy
-//! graph nodes.
+//! This module builds producer-bounded topological schedules across legacy and
+//! FormulaPlane span producers. Schedule construction is deliberately pure: it
+//! does not mutate graph dirty state, evaluate formulas, or create proxy graph
+//! nodes.
 
 use std::collections::{BTreeMap, VecDeque};
 

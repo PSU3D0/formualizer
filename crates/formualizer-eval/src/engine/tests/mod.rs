@@ -110,6 +110,7 @@ mod formula_plane_structural;
 mod formula_plane_structural_affected_region;
 mod formula_plane_structural_tail_precision;
 mod indirect;
+mod info_reference_context;
 mod let_lambda;
 mod offset_dynamic;
 mod open_ended_bounds_caps;

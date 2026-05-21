@@ -256,6 +256,91 @@ impl Function for CodeFn {
     }
 }
 
+fn asc_convert(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let cp = c as u32;
+            if cp == 0x3000 {
+                ' '
+            } else if (0xFF01..=0xFF5E).contains(&cp) {
+                char::from_u32(cp - 0xFF01 + 0x21).unwrap_or(c)
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// Converts full-width Latin and ASCII characters to half-width text.
+///
+/// Maps full-width ASCII punctuation, digits, letters, and ideographic space to
+/// their half-width equivalents while leaving other characters unchanged.
+///
+/// ```yaml,sandbox
+/// title: "Convert full-width letters and digits"
+/// formula: '=ASC("ＡＢＣ１２３")'
+/// expected: "ABC123"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Convert ideographic space"
+/// formula: '=ASC("Ａ　Ｂ")'
+/// expected: "A B"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - CHAR
+///   - CODE
+///   - UNICHAR
+/// faq:
+///   - q: "Are non-ASCII full-width characters transliterated?"
+///     a: "No. ASC only maps the full-width ASCII block and ideographic space."
+/// ```
+#[derive(Debug)]
+pub struct AscFn;
+/// [formualizer-docgen:schema:start]
+/// Name: ASC
+/// Type: AscFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ASC(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for AscFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "ASC"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let v = scalar_like_value(&args[0])?;
+        let s = match v {
+            LiteralValue::Text(t) => t,
+            LiteralValue::Empty => String::new(),
+            LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            other => other.to_string(),
+        };
+        Ok(CalcValue::Scalar(LiteralValue::Text(asc_convert(&s))))
+    }
+}
+
 /// REPT(text, number_times) - Repeats text a given number of times
 #[derive(Debug)]
 pub struct ReptFn;
@@ -357,6 +442,7 @@ pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(CharFn));
     crate::function_registry::register_function(Arc::new(CodeFn));
+    crate::function_registry::register_function(Arc::new(AscFn));
     crate::function_registry::register_function(Arc::new(ReptFn));
 }
 
@@ -405,6 +491,23 @@ mod tests {
             .unwrap()
             .into_literal(),
             LiteralValue::Int(65)
+        );
+    }
+
+    #[test]
+    fn asc_converts_full_width_ascii_and_space() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(AscFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Text("ＡＢＣ１２３！　x".to_string()));
+        let f = ctx.context.get_function("", "ASC").unwrap();
+        assert_eq!(
+            f.dispatch(
+                &[ArgumentHandle::new(&s, &ctx)],
+                &ctx.function_context(None)
+            )
+            .unwrap()
+            .into_literal(),
+            LiteralValue::Text("ABC123! x".to_string())
         );
     }
 

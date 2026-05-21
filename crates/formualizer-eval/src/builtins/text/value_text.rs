@@ -104,6 +104,125 @@ impl Function for ValueFn {
     }
 }
 
+/// Converts locale-delimited text to a number.
+///
+/// Parses text using explicit decimal and group separators, independent of the
+/// workbook's invariant locale.
+///
+/// # Remarks
+/// - The decimal separator defaults to `.`.
+/// - The group separator defaults to `,`.
+/// - Percent suffixes are supported and scale the result by 100 per suffix.
+///
+/// ```yaml,sandbox
+/// title: "Parse with explicit separators"
+/// formula: '=NUMBERVALUE("1.234,56",",",".")'
+/// expected: 1234.56
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Parse percent suffix"
+/// formula: '=NUMBERVALUE("12.5%")'
+/// expected: 0.125
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - VALUE
+///   - TEXT
+///   - DOLLAR
+/// faq:
+///   - q: "Does NUMBERVALUE use the global locale?"
+///     a: "No. Decimal and group separators are passed explicitly as arguments."
+/// ```
+#[derive(Debug)]
+pub struct NumberValueFn;
+
+/// [formualizer-docgen:schema:start]
+/// Name: NUMBERVALUE
+/// Type: NumberValueFn
+/// Min args: 1
+/// Max args: variadic
+/// Variadic: true
+/// Signature: NUMBERVALUE(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for NumberValueFn {
+    func_caps!(PURE);
+    fn name(&self) -> &'static str {
+        "NUMBERVALUE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn variadic(&self) -> bool {
+        true
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        &ARG_ANY_ONE[..]
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.is_empty() || args.len() > 3 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+
+        let text = to_text(&args[0])?;
+        let decimal_sep = if args.len() >= 2 {
+            to_text(&args[1])?
+        } else {
+            ".".to_string()
+        };
+        let group_sep = if args.len() >= 3 {
+            to_text(&args[2])?
+        } else {
+            ",".to_string()
+        };
+
+        if decimal_sep.is_empty() || decimal_sep == group_sep {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+
+        let mut trimmed = text.trim();
+        let mut pct_count = 0u32;
+        while let Some(prefix) = trimmed.strip_suffix('%') {
+            trimmed = prefix.trim_end();
+            pct_count += 1;
+        }
+        if trimmed.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+
+        let cleaned = trimmed.replace(&group_sep, "").replace(&decimal_sep, ".");
+        if cleaned.matches('.').count() > 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+
+        let Ok(mut n) = cleaned.parse::<f64>() else {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        };
+        for _ in 0..pct_count {
+            n /= 100.0;
+        }
+
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n)))
+    }
+}
+
 // TEXT(value, format_text) - limited formatting (#,0,0.00, percent, yyyy, mm, dd, hh:mm) naive
 #[derive(Debug)]
 pub struct TextFn;
@@ -315,6 +434,7 @@ fn format_serial_date(n: f64, fmt: &str) -> String {
 pub fn register_builtins() {
     use std::sync::Arc;
     crate::function_registry::register_function(Arc::new(ValueFn));
+    crate::function_registry::register_function(Arc::new(NumberValueFn));
     crate::function_registry::register_function(Arc::new(TextFn));
 }
 
@@ -323,7 +443,7 @@ mod tests {
     use super::*;
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
-    use formualizer_common::LiteralValue;
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)
@@ -358,6 +478,58 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(out, LiteralValue::Number(0.9));
+    }
+
+    #[test]
+    fn numbervalue_supports_explicit_separators_and_percent() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NumberValueFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "NUMBERVALUE").unwrap();
+        let text = lit(LiteralValue::Text(" 1.234,50%% ".into()));
+        let dec = lit(LiteralValue::Text(",".into()));
+        let grp = lit(LiteralValue::Text(".".into()));
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&text, &ctx),
+                    ArgumentHandle::new(&dec, &ctx),
+                    ArgumentHandle::new(&grp, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Number(0.12345));
+    }
+
+    #[test]
+    fn numbervalue_rejects_bad_separators_and_multiple_decimals() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(NumberValueFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "NUMBERVALUE").unwrap();
+        let text = lit(LiteralValue::Text("1.2.3".into()));
+        let out = f
+            .dispatch(
+                &[ArgumentHandle::new(&text, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(matches!(out, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
+
+        let sep = lit(LiteralValue::Text(".".into()));
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&lit(LiteralValue::Text("1.2".into())), &ctx),
+                    ArgumentHandle::new(&sep, &ctx),
+                    ArgumentHandle::new(&sep, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert!(matches!(out, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value));
     }
 
     #[test]

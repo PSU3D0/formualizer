@@ -1267,6 +1267,16 @@ impl AggregateCollector {
 #[derive(Debug)]
 pub struct SubtotalFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: SUBTOTAL
+/// Type: SubtotalFn
+/// Min args: 2
+/// Max args: variadic
+/// Variadic: true
+/// Signature: SUBTOTAL(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for SubtotalFn {
     func_caps!(VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
 
@@ -1340,6 +1350,16 @@ impl Function for SubtotalFn {
 #[derive(Debug)]
 pub struct AggregateFn;
 
+/// [formualizer-docgen:schema:start]
+/// Name: AGGREGATE
+/// Type: AggregateFn
+/// Min args: 3
+/// Max args: variadic
+/// Variadic: true
+/// Signature: AGGREGATE(arg1...: number@range)
+/// Arg schema: arg1{kinds=number,required=true,shape=range,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Caps: VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK
+/// [formualizer-docgen:schema:end]
 impl Function for AggregateFn {
     func_caps!(VOLATILE, REDUCTION, NUMERIC_ONLY, STREAM_OK);
 
