@@ -94,6 +94,9 @@ jobs:
         if-no-files-found: error
 
   test-rust:
+    # Keep Python and WASM binding crates out of the core Rust pass. They are
+    # covered by test-python and the WASM workflow, and pulling them in here
+    # needlessly compiles PyO3/wasm-bindgen twice.
     runs-on: ubuntu-latest
 
     steps:
@@ -120,10 +123,20 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: Run Rust clippy
-      run: cargo clippy --workspace --exclude formualizer-bench-core --all-targets --all-features -- -D warnings
+      run: >-
+        cargo clippy --workspace
+        --exclude formualizer-bench-core
+        --exclude formualizer-python
+        --exclude formualizer-wasm
+        --all-targets --all-features -- -D warnings
 
     - name: Run Rust tests
-      run: cargo test --workspace --exclude formualizer-bench-core --all-features
+      run: >-
+        cargo test --workspace
+        --exclude formualizer-bench-core
+        --exclude formualizer-python
+        --exclude formualizer-wasm
+        --all-features
 
     - name: Run CFFI smoke test
       shell: bash

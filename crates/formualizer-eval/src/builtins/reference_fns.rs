@@ -769,7 +769,6 @@ mod tests {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
-    use formualizer_parse::Tokenizer;
     use formualizer_parse::parser::{ASTNode, ASTNodeType, Parser};
 
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
@@ -777,8 +776,7 @@ mod tests {
     }
 
     fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> Result<LiteralValue, ExcelError> {
-        let tokenizer = Tokenizer::new(formula).unwrap();
-        let mut parser = Parser::new(tokenizer.items, false);
+        let mut parser = Parser::new(formula).unwrap();
         let ast = parser
             .parse()
             .map_err(|e| ExcelError::new(ExcelErrorKind::Error).with_message(e.message.clone()))?;

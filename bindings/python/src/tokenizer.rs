@@ -27,6 +27,10 @@ impl PyTokenizer {
     pub fn new(inner: Tokenizer) -> Self {
         PyTokenizer { inner }
     }
+
+    pub(crate) fn render_formula(&self) -> String {
+        self.inner.render()
+    }
 }
 
 #[gen_stub_pymethods]

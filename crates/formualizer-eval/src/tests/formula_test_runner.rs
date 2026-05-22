@@ -7,8 +7,6 @@
 #[cfg(test)]
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, parse_a1_1based};
 #[cfg(test)]
-use formualizer_parse::Tokenizer;
-#[cfg(test)]
 use formualizer_parse::parser::Parser;
 #[cfg(test)]
 use serde::Deserialize;
@@ -141,8 +139,7 @@ fn evaluate_formula(
     formula: &str,
     wb: &crate::test_workbook::TestWorkbook,
 ) -> Result<LiteralValue, String> {
-    let tokenizer = Tokenizer::new(formula).map_err(|e| format!("Tokenizer error: {:?}", e))?;
-    let mut parser = Parser::new(tokenizer.items, false);
+    let mut parser = Parser::new(formula).map_err(|e| format!("Tokenizer error: {:?}", e))?;
     let ast = parser
         .parse()
         .map_err(|e| format!("Parse error: {}", e.message))?;
