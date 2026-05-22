@@ -1,8 +1,5 @@
 use crate::{FormulaDialect, ast::ASTNode};
-use formualizer::{
-    FormulaDialect as CoreFormulaDialect, Parser as CoreParser, Tokenizer as CoreTokenizer,
-    parse_with_dialect,
-};
+use formualizer::{FormulaDialect as CoreFormulaDialect, Parser as CoreParser, parse_with_dialect};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -29,16 +26,14 @@ impl Parser {
     #[wasm_bindgen(constructor)]
     pub fn new(formula: &str, dialect: Option<FormulaDialect>) -> Result<Parser, JsValue> {
         let dialect: CoreFormulaDialect = dialect.map(Into::into).unwrap_or_default();
-        let tokenizer = CoreTokenizer::new_with_dialect(formula, dialect).map_err(|e| {
+        let inner = CoreParser::new_with_dialect(formula, dialect).map_err(|e| {
             JsValue::from_str(&format!(
                 "Tokenizer error: {} at position {}",
                 e.message, e.pos
             ))
         })?;
 
-        Ok(Parser {
-            inner: CoreParser::new_with_dialect(tokenizer.items.clone(), false, dialect),
-        })
+        Ok(Parser { inner })
     }
 
     #[wasm_bindgen]

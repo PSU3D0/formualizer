@@ -203,8 +203,7 @@ pub unsafe extern "C" fn fz_parse_ast(
 ) -> fz_buffer {
     use crate::parse::CffiASTNode;
     use formualizer_parse::FormulaDialect;
-    use formualizer_parse::parser::Parser;
-    use formualizer_parse::tokenizer::Tokenizer;
+    use formualizer_parse::parser::parse_with_dialect;
     use std::ffi::CStr;
 
     if formula.is_null() {
@@ -220,11 +219,7 @@ pub unsafe extern "C" fn fz_parse_ast(
 
     let result: Result<Vec<u8>, String> = (|| {
         let dialect = FormulaDialect::from(options.dialect);
-        let tokens = Tokenizer::new_with_dialect(&input, dialect)
-            .map_err(|e| e.to_string())?
-            .items;
-        let mut parser = Parser::new_with_dialect(tokens, true, dialect);
-        let ast = parser.parse().map_err(|e| e.to_string())?;
+        let ast = parse_with_dialect(&input, dialect).map_err(|e| e.to_string())?;
 
         let cffi_ast = CffiASTNode::from_core(&ast, options.include_spans);
 

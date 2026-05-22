@@ -22,12 +22,13 @@ If you also need evaluation, use [`formualizer-workbook`](https://crates.io/crat
 ## Quick start
 
 ```rust
-use formualizer_parse::{FormulaDialect, Tokenizer, canonical_formula};
-use formualizer_parse::parser::Parser;
+use formualizer_parse::{FormulaDialect, Parser, canonical_formula, parse_with_dialect};
 
-// Tokenize and parse
-let tokenizer = Tokenizer::new_with_dialect("=SUM(A1:B3)", FormulaDialect::Excel)?;
-let mut parser = Parser::new(tokenizer.items, false);
+// One-shot parse
+let ast = parse_with_dialect("=SUM(A1:B3)", FormulaDialect::Excel)?;
+
+// Or use the stateful source-span parser directly
+let mut parser = Parser::new("=SUM(A1:B3)")?;
 let ast = parser.parse()?;
 
 // Canonical form

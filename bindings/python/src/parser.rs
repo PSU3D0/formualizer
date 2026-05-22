@@ -2,7 +2,7 @@ use crate::ast::PyASTNode;
 use crate::enums::PyFormulaDialect;
 use crate::errors::ParserError;
 use crate::tokenizer::PyTokenizer;
-use formualizer::parse::parser::{Parser, parse_with_dialect};
+use formualizer::parse::parser::parse_with_dialect;
 use formualizer::parse::types::FormulaDialect;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
@@ -60,27 +60,12 @@ impl PyParser {
         include_whitespace: bool,
         dialect: Option<PyFormulaDialect>,
     ) -> PyResult<PyASTNode> {
-        let tokens = tokenizer
-            .tokens()
-            .into_iter()
-            .map(|py_token| {
-                // Extract the inner token - we need to access the inner field
-                // This is a bit of a hack since we can't directly access private fields
-                // Instead, we'll recreate the token from the public interface
-                formualizer::parse::tokenizer::Token::new(
-                    py_token.value().to_string(),
-                    py_token.token_type().into(),
-                    py_token.subtype().into(),
-                )
-            })
-            .collect();
-
+        let _ = include_whitespace;
         let dialect: FormulaDialect = dialect
             .map(Into::into)
             .unwrap_or_else(|| tokenizer.dialect().into());
-        let mut parser = Parser::new_with_dialect(tokens, include_whitespace, dialect);
-        let ast = parser
-            .parse()
+        let formula = tokenizer.render_formula();
+        let ast = parse_with_dialect(&formula, dialect)
             .map_err(|e| ParserError::new_with_pos(e.message, e.position))?;
         Ok(PyASTNode::new(ast))
     }

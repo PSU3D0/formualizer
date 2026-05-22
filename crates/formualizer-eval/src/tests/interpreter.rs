@@ -3,14 +3,12 @@ mod tests {
     use crate::test_workbook::TestWorkbook;
     use formualizer_common::error::{ExcelError, ExcelErrorKind};
     use formualizer_parse::LiteralValue;
-    use formualizer_parse::Tokenizer;
     use formualizer_parse::parser::Parser;
     use std::sync::Arc;
 
     /// Helper function to parse and evaluate a formula.
     fn evaluate_formula(formula: &str, wb: &TestWorkbook) -> Result<LiteralValue, ExcelError> {
-        let tokenizer = Tokenizer::new(formula).unwrap();
-        let mut parser = Parser::new(tokenizer.items, false);
+        let mut parser = Parser::new(formula).unwrap();
         let ast = parser
             .parse()
             .map_err(|e| ExcelError::new(ExcelErrorKind::Error).with_message(e.message.clone()))?;
@@ -58,8 +56,7 @@ mod tests {
             .with_cell("Sheet1", 1, 2, LiteralValue::Int(2))
             .with_cell("Sheet1", 2, 1, LiteralValue::Int(3))
             .with_cell("Sheet1", 2, 2, LiteralValue::Int(4));
-        let tokenizer = Tokenizer::new("=SUM(A1:B2, A1:B2)").unwrap();
-        let mut parser = Parser::new(tokenizer.items, false);
+        let mut parser = Parser::new("=SUM(A1:B2, A1:B2)").unwrap();
         let ast = parser.parse().unwrap();
         let interp = wb.interpreter();
         let res = interp.evaluate_ast(&ast).unwrap().into_literal();
@@ -351,8 +348,7 @@ mod tests {
             .with_function(Arc::new(crate::builtins::math::SumFn))
             .with_cell("SheetA", 1, 1, LiteralValue::Text("2014F".to_string()));
 
-        let tokenizer = Tokenizer::new("=+SheetA!A1").unwrap();
-        let mut parser = Parser::new(tokenizer.items, false);
+        let mut parser = Parser::new("=+SheetA!A1").unwrap();
         let ast = parser.parse().unwrap();
         let interp = wb.interpreter();
         let v = interp.evaluate_ast(&ast).unwrap().into_literal();

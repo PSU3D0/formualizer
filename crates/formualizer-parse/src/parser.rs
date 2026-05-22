@@ -1,5 +1,7 @@
 use crate::structured_ref;
-use crate::tokenizer::{Associativity, Token, TokenSubType, TokenType, Tokenizer, TokenizerError};
+use crate::tokenizer::{
+    Associativity, Token, TokenSpan, TokenStream, TokenSubType, TokenType, TokenizerError,
+};
 use crate::types::{FormulaDialect, ParsingError};
 use crate::{ExcelError, LiteralValue};
 
@@ -2326,11 +2328,24 @@ impl std::hash::Hash for ASTNode {
     }
 }
 
-/// A parser for converting tokens into an AST.
+impl From<TokenizerError> for ParserError {
+    fn from(err: TokenizerError) -> Self {
+        ParserError {
+            message: err.message,
+            position: Some(err.pos),
+        }
+    }
+}
+
+/// Source-span-backed parser for converting formulas into an AST.
+///
+/// This is the canonical parser implementation. It owns the formula source and
+/// span tokens, avoiding per-token string allocation while preserving source
+/// locations for AST nodes.
 pub struct Parser {
-    tokens: Arc<[Token]>,
+    source: Arc<str>,
+    tokens: Arc<[TokenSpan]>,
     position: usize,
-    /// Optional classifier to determine whether a function name is volatile.
     volatility_classifier: Option<VolatilityClassifierBox>,
     dialect: FormulaDialect,
     /// When > 0, treat a top-level `OpInfix(",")` as a terminator (call-arg
@@ -2338,49 +2353,53 @@ pub struct Parser {
     in_call_args_depth: usize,
 }
 
-impl TryFrom<&str> for Parser {
-    type Error = TokenizerError;
-
-    fn try_from(formula: &str) -> Result<Self, Self::Error> {
-        let tokens = Tokenizer::new(formula)?.items;
-        Ok(Self::new(tokens, false))
-    }
-}
-
-impl TryFrom<String> for Parser {
-    type Error = TokenizerError;
-
-    fn try_from(formula: String) -> Result<Self, Self::Error> {
-        Self::try_from(formula.as_str())
-    }
-}
-
 impl Parser {
-    pub fn new(tokens: Vec<Token>, include_whitespace: bool) -> Self {
-        Self::new_with_dialect(tokens, include_whitespace, FormulaDialect::Excel)
+    /// Tokenize a formula using the default Excel dialect and prepare it for parsing.
+    pub fn new<T: AsRef<str>>(formula: T) -> Result<Self, TokenizerError> {
+        Self::new_with_dialect(formula, FormulaDialect::Excel)
     }
 
-    pub fn new_with_dialect(
-        mut tokens: Vec<Token>,
-        include_whitespace: bool,
+    /// Compatibility alias for `Parser::new`.
+    pub fn try_from_formula(formula: &str) -> Result<Self, TokenizerError> {
+        Self::new(formula)
+    }
+
+    /// Tokenize a formula with an explicit dialect and prepare it for parsing.
+    pub fn new_with_dialect<T: AsRef<str>>(
+        formula: T,
+        dialect: FormulaDialect,
+    ) -> Result<Self, TokenizerError> {
+        let source: Arc<str> = Arc::from(formula.as_ref());
+        let spans = crate::tokenizer::tokenize_spans_with_dialect(source.as_ref(), dialect)?;
+        Ok(Self::from_source_and_tokens(
+            source,
+            Arc::from(spans.into_boxed_slice()),
+            dialect,
+        ))
+    }
+
+    /// Build a parser from an existing source-backed token stream.
+    pub fn from_token_stream(stream: &TokenStream) -> Self {
+        Self::from_source_and_tokens(
+            Arc::from(stream.source()),
+            Arc::from(stream.spans.clone().into_boxed_slice()),
+            stream.dialect(),
+        )
+    }
+
+    fn from_source_and_tokens(
+        source: Arc<str>,
+        tokens: Arc<[TokenSpan]>,
         dialect: FormulaDialect,
     ) -> Self {
-        if !include_whitespace {
-            tokens.retain(|t| t.token_type != TokenType::Whitespace);
-        }
-
         Parser {
-            tokens: Arc::from(tokens.into_boxed_slice()),
+            source,
+            tokens,
             position: 0,
             volatility_classifier: None,
             dialect,
             in_call_args_depth: 0,
         }
-    }
-
-    pub fn try_from_formula(formula: &str) -> Result<Self, TokenizerError> {
-        let tokens = Tokenizer::new(formula)?.items;
-        Ok(Self::new(tokens, false))
     }
 
     /// Provide a function-volatility classifier for this parser.
@@ -2393,26 +2412,6 @@ impl Parser {
         self
     }
 
-    /// Convenience constructor to set a classifier alongside other options.
-    pub fn new_with_classifier<F>(tokens: Vec<Token>, include_whitespace: bool, f: F) -> Self
-    where
-        F: Fn(&str) -> bool + Send + Sync + 'static,
-    {
-        Self::new(tokens, include_whitespace).with_volatility_classifier(f)
-    }
-
-    pub fn new_with_classifier_and_dialect<F>(
-        tokens: Vec<Token>,
-        include_whitespace: bool,
-        dialect: FormulaDialect,
-        f: F,
-    ) -> Self
-    where
-        F: Fn(&str) -> bool + Send + Sync + 'static,
-    {
-        Self::new_with_dialect(tokens, include_whitespace, dialect).with_volatility_classifier(f)
-    }
-
     fn skip_whitespace(&mut self) {
         while self.position < self.tokens.len()
             && self.tokens[self.position].token_type == TokenType::Whitespace
@@ -2421,558 +2420,11 @@ impl Parser {
         }
     }
 
-    /// Parse the tokens into an AST.
-    pub fn parse(&mut self) -> Result<ASTNode, ParserError> {
-        if self.tokens.is_empty() {
-            return Err(ParserError {
-                message: "No tokens to parse".to_string(),
-                position: None,
-            });
-        }
-
-        self.skip_whitespace();
-        if self.position >= self.tokens.len() {
-            return Err(ParserError {
-                message: "No tokens to parse".to_string(),
-                position: None,
-            });
-        }
-
-        // Check for literal formula (doesn't start with '=')
-        if self.tokens[self.position].token_type == TokenType::Literal {
-            let token = self.tokens[self.position].clone();
-            self.position += 1;
-            self.skip_whitespace();
-            if self.position < self.tokens.len() {
-                return Err(ParserError {
-                    message: format!(
-                        "Unexpected token at position {}: {:?}",
-                        self.position, self.tokens[self.position]
-                    ),
-                    position: Some(self.position),
-                });
-            }
-            return Ok(ASTNode::new(
-                ASTNodeType::Literal(LiteralValue::Text(token.value.clone())),
-                Some(token),
-            ));
-        }
-
-        let ast = self.parse_expression()?;
-        self.skip_whitespace();
-        if self.position < self.tokens.len() {
-            return Err(ParserError {
-                message: format!(
-                    "Unexpected token at position {}: {:?}",
-                    self.position, self.tokens[self.position]
-                ),
-                position: Some(self.position),
-            });
-        }
-        Ok(ast)
-    }
-
-    fn parse_expression(&mut self) -> Result<ASTNode, ParserError> {
-        self.parse_bp(0)
-    }
-
-    // Pratt-style precedence parser. `min_precedence` is the minimum binding power
-    // an operator must have to be consumed at this level.
-    fn parse_bp(&mut self, min_precedence: u8) -> Result<ASTNode, ParserError> {
-        let mut left = self.parse_prefix()?;
-
-        loop {
-            self.skip_whitespace();
-            if self.position >= self.tokens.len() {
-                break;
-            }
-
-            // Postfix call: a `(` directly following a closed expression denotes
-            // immediate invocation of a callable result (e.g. LAMBDA IIFE).
-            if self.tokens[self.position].token_type == TokenType::Paren
-                && self.tokens[self.position].subtype == TokenSubType::Open
-            {
-                self.position += 1;
-                let args = self.parse_call_arguments()?;
-                let call_volatile =
-                    left.contains_volatile || args.iter().any(|a| a.contains_volatile);
-                left = ASTNode::new_with_volatile(
-                    ASTNodeType::Call {
-                        callee: Box::new(left),
-                        args,
-                    },
-                    None,
-                    call_volatile,
-                );
-                continue;
-            }
-
-            // Postfix operators (e.g. percent).
-            if self.tokens[self.position].token_type == TokenType::OpPostfix {
-                let (precedence, _) = self.tokens[self.position]
-                    .get_precedence()
-                    .unwrap_or((0, Associativity::Left));
-                if precedence < min_precedence {
-                    break;
-                }
-
-                let op_token = self.tokens[self.position].clone();
-                self.position += 1;
-                let contains_volatile = left.contains_volatile;
-                left = ASTNode::new_with_volatile(
-                    ASTNodeType::UnaryOp {
-                        op: op_token.value.clone(),
-                        expr: Box::new(left),
-                    },
-                    Some(op_token),
-                    contains_volatile,
-                );
-                continue;
-            }
-
-            let token = &self.tokens[self.position];
-            if token.token_type != TokenType::OpInfix {
-                break;
-            }
-
-            // Inside a postfix call's argument list, treat top-level `,` as
-            // an argument separator, not as the union operator.
-            if self.in_call_args_depth > 0 && token.value == "," {
-                break;
-            }
-
-            let (precedence, associativity) =
-                token.get_precedence().unwrap_or((0, Associativity::Left));
-            if precedence < min_precedence {
-                break;
-            }
-
-            let op_token = self.tokens[self.position].clone();
-            self.position += 1;
-
-            let next_min_precedence = if associativity == Associativity::Left {
-                precedence + 1
-            } else {
-                precedence
-            };
-
-            let right = self.parse_bp(next_min_precedence)?;
-            let contains_volatile = left.contains_volatile || right.contains_volatile;
-            left = ASTNode::new_with_volatile(
-                ASTNodeType::BinaryOp {
-                    op: op_token.value.clone(),
-                    left: Box::new(left),
-                    right: Box::new(right),
-                },
-                Some(op_token),
-                contains_volatile,
-            );
-        }
-
-        Ok(left)
-    }
-
-    fn parse_prefix(&mut self) -> Result<ASTNode, ParserError> {
-        self.skip_whitespace();
-        if self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::OpPrefix
-        {
-            let op_token = self.tokens[self.position].clone();
-            self.position += 1;
-
-            // Prefix unary binds tighter than exponent (Excel semantics),
-            // so parse the RHS with min_precedence equal to unary's precedence.
-            let (precedence, _) = op_token
-                .get_precedence()
-                .unwrap_or((0, Associativity::Right));
-
-            let expr = self.parse_bp(precedence)?;
-            let contains_volatile = expr.contains_volatile;
-            return Ok(ASTNode::new_with_volatile(
-                ASTNodeType::UnaryOp {
-                    op: op_token.value.clone(),
-                    expr: Box::new(expr),
-                },
-                Some(op_token),
-                contains_volatile,
-            ));
-        }
-
-        self.parse_primary()
-    }
-
-    fn parse_primary(&mut self) -> Result<ASTNode, ParserError> {
-        self.skip_whitespace();
-        if self.position >= self.tokens.len() {
-            return Err(ParserError {
-                message: "Unexpected end of tokens".to_string(),
-                position: Some(self.position),
-            });
-        }
-
-        let token = &self.tokens[self.position];
-        match token.token_type {
-            TokenType::Operand => {
-                let operand_token = self.tokens[self.position].clone();
-                self.position += 1;
-                self.parse_operand(operand_token)
-            }
-            TokenType::Func => {
-                let func_token = self.tokens[self.position].clone();
-                self.position += 1;
-                self.parse_function(func_token)
-            }
-            TokenType::Paren if token.subtype == TokenSubType::Open => {
-                self.position += 1;
-                let expr = self.parse_expression()?;
-                if self.position >= self.tokens.len()
-                    || self.tokens[self.position].token_type != TokenType::Paren
-                    || self.tokens[self.position].subtype != TokenSubType::Close
-                {
-                    return Err(ParserError {
-                        message: "Expected closing parenthesis".to_string(),
-                        position: Some(self.position),
-                    });
-                }
-                self.position += 1;
-                Ok(expr)
-            }
-            TokenType::Array if token.subtype == TokenSubType::Open => {
-                self.position += 1;
-                self.parse_array()
-            }
-            _ => Err(ParserError {
-                message: format!("Unexpected token: {token:?}"),
-                position: Some(self.position),
-            }),
-        }
-    }
-
-    fn parse_operand(&mut self, token: Token) -> Result<ASTNode, ParserError> {
-        match token.subtype {
-            TokenSubType::Number => {
-                let value = token.value.parse::<f64>().map_err(|_| ParserError {
-                    message: format!("Invalid number: {}", token.value),
-                    position: Some(self.position),
-                })?;
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Number(value)),
-                    Some(token),
-                ))
-            }
-            TokenSubType::Text => {
-                // Strip surrounding quotes from text literals
-                let mut text = token.value.clone();
-                if text.starts_with('"') && text.ends_with('"') && text.len() >= 2 {
-                    text = text[1..text.len() - 1].to_string();
-                    // Handle escaped quotes
-                    text = text.replace("\"\"", "\"");
-                }
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Text(text)),
-                    Some(token),
-                ))
-            }
-            TokenSubType::Logical => {
-                let value = token.value.eq_ignore_ascii_case("TRUE");
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Boolean(value)),
-                    Some(token),
-                ))
-            }
-            TokenSubType::Error => {
-                let error = ExcelError::from_error_string(&token.value);
-                Ok(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Error(error)),
-                    Some(token),
-                ))
-            }
-            TokenSubType::Range => {
-                let reference = ReferenceType::from_string_with_dialect(&token.value, self.dialect)
-                    .map_err(|e| ParserError {
-                        message: format!("Invalid reference '{}': {}", token.value, e),
-                        position: Some(self.position),
-                    })?;
-                Ok(ASTNode::new(
-                    ASTNodeType::Reference {
-                        original: token.value.clone(),
-                        reference,
-                    },
-                    Some(token),
-                ))
-            }
-            _ => Err(ParserError {
-                message: format!("Unexpected operand subtype: {:?}", token.subtype),
-                position: Some(self.position),
-            }),
-        }
-    }
-
-    fn parse_function(&mut self, func_token: Token) -> Result<ASTNode, ParserError> {
-        let name = func_token.value[..func_token.value.len() - 1].to_string();
-        let args = self.parse_function_arguments()?;
-        // Determine volatility for this function
-        let this_is_volatile = self
-            .volatility_classifier
-            .as_ref()
-            .map(|f| f(name.as_str()))
-            .unwrap_or(false);
-        let args_volatile = args.iter().any(|a| a.contains_volatile);
-
-        Ok(ASTNode::new_with_volatile(
-            ASTNodeType::Function { name, args },
-            Some(func_token),
-            this_is_volatile || args_volatile,
-        ))
-    }
-
-    /// Parse arguments for a postfix call (immediate invocation), where the
-    /// opening `(` is a `Paren:Open` and the matching `)` is a `Paren:Close`.
-    /// Caller has already consumed the opening paren.
-    ///
-    /// Inside this region the tokenizer emits a top-level `,` as `OpInfix`
-    /// (Excel's union operator). For call arguments we want it to behave as a
-    /// separator, so we bump `in_call_args_depth` while parsing each argument.
-    fn parse_call_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
-        let mut args: Vec<ASTNode> = Vec::new();
-
-        self.skip_whitespace();
-        // Empty argument list: `f()`
-        if self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::Paren
-            && self.tokens[self.position].subtype == TokenSubType::Close
-        {
-            self.position += 1;
-            return Ok(args);
-        }
-
-        self.in_call_args_depth += 1;
-        let result = (|| -> Result<Vec<ASTNode>, ParserError> {
-            args.push(self.parse_expression()?);
-            loop {
-                self.skip_whitespace();
-                if self.position >= self.tokens.len() {
-                    return Err(ParserError {
-                        message: "Unterminated call argument list".to_string(),
-                        position: Some(self.position),
-                    });
-                }
-                let token = &self.tokens[self.position];
-                let is_separator = (token.token_type == TokenType::Sep
-                    && token.subtype == TokenSubType::Arg)
-                    || (token.token_type == TokenType::OpInfix && token.value == ",");
-                if is_separator {
-                    self.position += 1;
-                    args.push(self.parse_expression()?);
-                } else if token.token_type == TokenType::Paren
-                    && token.subtype == TokenSubType::Close
-                {
-                    self.position += 1;
-                    return Ok(std::mem::take(&mut args));
-                } else {
-                    return Err(ParserError {
-                        message: format!("Expected ',' or ')' in call arguments, got {token:?}"),
-                        position: Some(self.position),
-                    });
-                }
-            }
-        })();
-        self.in_call_args_depth -= 1;
-        result
-    }
-
-    /// Parse function arguments.
-    fn parse_function_arguments(&mut self) -> Result<Vec<ASTNode>, ParserError> {
-        let mut args = Vec::new();
-
-        // Check for closing parenthesis (empty arguments)
-        if self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::Func
-            && self.tokens[self.position].subtype == TokenSubType::Close
-        {
-            self.position += 1;
-            return Ok(args);
-        }
-
-        // Handle optional arguments (consecutive separators)
-        // Check if we start with a separator (empty first argument)
-        if self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::Sep
-            && self.tokens[self.position].subtype == TokenSubType::Arg
-        {
-            // Empty first argument - represented as empty text literal for compatibility
-            args.push(ASTNode::new(
-                ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                None,
-            ));
-            self.position += 1;
-        } else {
-            // Parse first argument
-            args.push(self.parse_expression()?);
-        }
-
-        // Parse remaining arguments
-        while self.position < self.tokens.len() {
-            let token = &self.tokens[self.position];
-
-            if token.token_type == TokenType::Sep && token.subtype == TokenSubType::Arg {
-                self.position += 1;
-                // Check for consecutive separators (empty argument)
-                if self.position < self.tokens.len() {
-                    let next_token = &self.tokens[self.position];
-                    if next_token.token_type == TokenType::Sep
-                        && next_token.subtype == TokenSubType::Arg
-                    {
-                        // Empty argument - represented as empty text literal for compatibility
-                        args.push(ASTNode::new(
-                            ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                            None,
-                        ));
-                    } else if next_token.token_type == TokenType::Func
-                        && next_token.subtype == TokenSubType::Close
-                    {
-                        // Empty last argument
-                        args.push(ASTNode::new(
-                            ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                            None,
-                        ));
-                        self.position += 1;
-                        break;
-                    } else {
-                        args.push(self.parse_expression()?);
-                    }
-                } else {
-                    // Trailing separator at end of formula
-                    args.push(ASTNode::new(
-                        ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                        None,
-                    ));
-                }
-            } else if token.token_type == TokenType::Func && token.subtype == TokenSubType::Close {
-                self.position += 1;
-                break;
-            } else {
-                return Err(ParserError {
-                    message: format!("Expected ',' or ')' in function arguments, got {token:?}"),
-                    position: Some(self.position),
-                });
-            }
-        }
-
-        Ok(args)
-    }
-
-    fn parse_array(&mut self) -> Result<ASTNode, ParserError> {
-        let mut rows = Vec::new();
-        let mut current_row = Vec::new();
-
-        // Check for empty array
-        if self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::Array
-            && self.tokens[self.position].subtype == TokenSubType::Close
-        {
-            self.position += 1;
-            return Ok(ASTNode::new(ASTNodeType::Array(rows), None));
-        }
-
-        // Parse first element
-        current_row.push(self.parse_expression()?);
-
-        while self.position < self.tokens.len() {
-            let token = &self.tokens[self.position];
-
-            if token.token_type == TokenType::Sep {
-                if token.subtype == TokenSubType::Arg {
-                    // Column separator
-                    self.position += 1;
-                    current_row.push(self.parse_expression()?);
-                } else if token.subtype == TokenSubType::Row {
-                    // Row separator
-                    self.position += 1;
-                    rows.push(current_row);
-                    current_row = vec![self.parse_expression()?];
-                }
-            } else if token.token_type == TokenType::Array && token.subtype == TokenSubType::Close {
-                self.position += 1;
-                rows.push(current_row);
-                break;
-            } else {
-                return Err(ParserError {
-                    message: format!("Unexpected token in array: {token:?}"),
-                    position: Some(self.position),
-                });
-            }
-        }
-
-        // Array volatility is the OR of element volatility
-        let contains_volatile = rows
-            .iter()
-            .flat_map(|r| r.iter())
-            .any(|n| n.contains_volatile);
-        Ok(ASTNode::new_with_volatile(
-            ASTNodeType::Array(rows),
-            None,
-            contains_volatile,
-        ))
-    }
-}
-
-impl From<TokenizerError> for ParserError {
-    fn from(err: TokenizerError) -> Self {
-        ParserError {
-            message: err.message,
-            position: Some(err.pos),
-        }
-    }
-}
-
-struct SpanParser<'a> {
-    source: &'a str,
-    tokens: &'a [crate::tokenizer::TokenSpan],
-    position: usize,
-    volatility_classifier: Option<VolatilityClassifierBox>,
-    dialect: FormulaDialect,
-    /// See `Parser::in_call_args_depth`.
-    in_call_args_depth: usize,
-}
-
-impl<'a> SpanParser<'a> {
-    fn new(
-        source: &'a str,
-        tokens: &'a [crate::tokenizer::TokenSpan],
-        dialect: FormulaDialect,
-    ) -> Self {
-        SpanParser {
-            source,
-            tokens,
-            position: 0,
-            volatility_classifier: None,
-            dialect,
-            in_call_args_depth: 0,
-        }
-    }
-
-    fn with_volatility_classifier<F>(mut self, f: F) -> Self
-    where
-        F: Fn(&str) -> bool + Send + Sync + 'static,
-    {
-        self.volatility_classifier = Some(Box::new(f));
-        self
-    }
-
-    fn skip_whitespace(&mut self) {
-        while self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::Whitespace
-        {
-            self.position += 1;
-        }
-    }
-
-    fn span_value(&self, span: &crate::tokenizer::TokenSpan) -> &str {
+    fn span_value(&self, span: &TokenSpan) -> &str {
         &self.source[span.start..span.end]
     }
 
-    fn span_to_token(&self, span: &crate::tokenizer::TokenSpan) -> Token {
+    fn span_to_token(&self, span: &TokenSpan) -> Token {
         Token::new_with_span(
             self.span_value(span).to_string(),
             span.token_type,
@@ -2982,7 +2434,7 @@ impl<'a> SpanParser<'a> {
         )
     }
 
-    fn span_precedence(&self, span: &crate::tokenizer::TokenSpan) -> Option<(u8, Associativity)> {
+    fn span_precedence(&self, span: &TokenSpan) -> Option<(u8, Associativity)> {
         if !matches!(
             span.token_type,
             TokenType::OpPrefix | TokenType::OpInfix | TokenType::OpPostfix
@@ -3012,7 +2464,7 @@ impl<'a> SpanParser<'a> {
         }
     }
 
-    fn parse(&mut self) -> Result<ASTNode, ParserError> {
+    pub fn parse(&mut self) -> Result<ASTNode, ParserError> {
         if self.tokens.is_empty() {
             return Err(ParserError {
                 message: "No tokens to parse".to_string(),
@@ -3239,7 +2691,7 @@ impl<'a> SpanParser<'a> {
         }
     }
 
-    fn parse_operand(&mut self, span: crate::tokenizer::TokenSpan) -> Result<ASTNode, ParserError> {
+    fn parse_operand(&mut self, span: TokenSpan) -> Result<ASTNode, ParserError> {
         let value = self.span_value(&span);
         let token = self.span_to_token(&span);
 
@@ -3300,10 +2752,7 @@ impl<'a> SpanParser<'a> {
         }
     }
 
-    fn parse_function(
-        &mut self,
-        func_span: crate::tokenizer::TokenSpan,
-    ) -> Result<ASTNode, ParserError> {
+    fn parse_function(&mut self, func_span: TokenSpan) -> Result<ASTNode, ParserError> {
         let func_value = self.span_value(&func_span);
         if func_value.is_empty() {
             return Err(ParserError {
@@ -3401,7 +2850,6 @@ impl<'a> SpanParser<'a> {
                 ASTNodeType::Literal(LiteralValue::Text("".to_string())),
                 None,
             ));
-            self.position += 1;
         } else {
             args.push(self.parse_expression()?);
         }
@@ -3513,6 +2961,92 @@ impl<'a> SpanParser<'a> {
     }
 }
 
+impl TryFrom<&str> for Parser {
+    type Error = TokenizerError;
+
+    fn try_from(formula: &str) -> Result<Self, Self::Error> {
+        Self::new(formula)
+    }
+}
+
+impl TryFrom<String> for Parser {
+    type Error = TokenizerError;
+
+    fn try_from(formula: String) -> Result<Self, Self::Error> {
+        Self::new(formula)
+    }
+}
+
+impl From<&TokenStream> for Parser {
+    fn from(stream: &TokenStream) -> Self {
+        Self::from_token_stream(stream)
+    }
+}
+
+impl FromStr for ASTNode {
+    type Err = ParserError;
+
+    fn from_str(formula: &str) -> Result<Self, Self::Err> {
+        parse(formula)
+    }
+}
+
+impl TryFrom<&str> for ASTNode {
+    type Error = ParserError;
+
+    fn try_from(formula: &str) -> Result<Self, Self::Error> {
+        parse(formula)
+    }
+}
+
+impl TryFrom<String> for ASTNode {
+    type Error = ParserError;
+
+    fn try_from(formula: String) -> Result<Self, Self::Error> {
+        parse(formula)
+    }
+}
+
+impl Parser {
+    pub fn builder() -> ParserBuilder {
+        ParserBuilder::default()
+    }
+}
+
+#[derive(Default)]
+pub struct ParserBuilder {
+    dialect: FormulaDialect,
+    volatility_classifier: Option<VolatilityClassifierArc>,
+}
+
+impl ParserBuilder {
+    pub fn dialect(mut self, dialect: FormulaDialect) -> Self {
+        self.dialect = dialect;
+        self
+    }
+
+    pub fn with_volatility_classifier<F>(mut self, f: F) -> Self
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static,
+    {
+        self.volatility_classifier = Some(Arc::new(f));
+        self
+    }
+
+    pub fn build<T: AsRef<str>>(self, formula: T) -> Result<Parser, TokenizerError> {
+        let mut parser = Parser::new_with_dialect(formula, self.dialect)?;
+        if let Some(classifier) = self.volatility_classifier {
+            parser = parser.with_volatility_classifier(move |name| classifier(name));
+        }
+        Ok(parser)
+    }
+
+    pub fn parse<T: AsRef<str>>(self, formula: T) -> Result<ASTNode, ParserError> {
+        let mut parser = self.build(formula)?;
+        parser.parse()
+    }
+}
+
 /// Normalise a reference string to its canonical form
 pub fn normalise_reference(reference: &str) -> Result<String, ParsingError> {
     let ref_type = ReferenceType::from_string(reference)?;
@@ -3527,13 +3061,12 @@ pub fn parse_with_dialect<T: AsRef<str>>(
     formula: T,
     dialect: FormulaDialect,
 ) -> Result<ASTNode, ParserError> {
-    let spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
-    let mut parser = SpanParser::new(formula.as_ref(), &spans, dialect);
+    let mut parser = Parser::new_with_dialect(formula, dialect)?;
     parser.parse()
 }
 
 /// Parse a single formula and annotate volatility using the provided classifier.
-/// This is a convenience wrapper around `Parser::new_with_classifier`.
+/// This is a convenience wrapper around `Parser::with_volatility_classifier`.
 pub fn parse_with_volatility_classifier<T, F>(
     formula: T,
     classifier: F,
@@ -3554,9 +3087,8 @@ where
     T: AsRef<str>,
     F: Fn(&str) -> bool + Send + Sync + 'static,
 {
-    let spans = crate::tokenizer::tokenize_spans_with_dialect(formula.as_ref(), dialect)?;
     let mut parser =
-        SpanParser::new(formula.as_ref(), &spans, dialect).with_volatility_classifier(classifier);
+        Parser::new_with_dialect(formula, dialect)?.with_volatility_classifier(classifier);
     parser.parse()
 }
 
@@ -3567,7 +3099,7 @@ where
 pub struct BatchParser {
     include_whitespace: bool,
     volatility_classifier: Option<VolatilityClassifierArc>,
-    token_cache: std::collections::HashMap<String, Arc<[crate::tokenizer::TokenSpan]>>, // cached tokens
+    token_cache: std::collections::HashMap<String, (Arc<str>, Arc<[TokenSpan]>)>,
     dialect: FormulaDialect,
 }
 
@@ -3578,21 +3110,25 @@ impl BatchParser {
 
     /// Parse a formula using the internal cache and configured classifier.
     pub fn parse(&mut self, formula: &str) -> Result<ASTNode, ParserError> {
-        let spans = if let Some(tokens) = self.token_cache.get(formula) {
-            Arc::clone(tokens)
+        let (source, spans) = if let Some((source, tokens)) = self.token_cache.get(formula) {
+            (Arc::clone(source), Arc::clone(tokens))
         } else {
-            let mut spans = crate::tokenizer::tokenize_spans_with_dialect(formula, self.dialect)?;
+            let source: Arc<str> = Arc::from(formula);
+            let mut spans =
+                crate::tokenizer::tokenize_spans_with_dialect(source.as_ref(), self.dialect)?;
             if !self.include_whitespace {
                 spans.retain(|t| t.token_type != TokenType::Whitespace);
             }
 
-            let spans: Arc<[crate::tokenizer::TokenSpan]> = Arc::from(spans.into_boxed_slice());
-            self.token_cache
-                .insert(formula.to_string(), Arc::clone(&spans));
-            spans
+            let spans: Arc<[TokenSpan]> = Arc::from(spans.into_boxed_slice());
+            self.token_cache.insert(
+                formula.to_string(),
+                (Arc::clone(&source), Arc::clone(&spans)),
+            );
+            (source, spans)
         };
 
-        let mut parser = SpanParser::new(formula, spans.as_ref(), self.dialect);
+        let mut parser = Parser::from_source_and_tokens(source, spans, self.dialect);
         if let Some(classifier) = self.volatility_classifier.clone() {
             parser = parser.with_volatility_classifier(move |name| classifier(name));
         }
