@@ -114,7 +114,7 @@ fn delete_columns_clears_computed_values() {
 }
 
 #[test]
-fn add_sheet_clears_all_sheets_computed_values() {
+fn add_sheet_preserves_unaffected_computed_values() {
     let mut engine = off_engine();
     engine.add_sheet("Sheet2").unwrap();
     engine.set_cell_value(SHEET, 1, 1, number(2.0)).unwrap();
@@ -132,8 +132,8 @@ fn add_sheet_clears_all_sheets_computed_values() {
 
     engine.add_sheet("NewSheet").unwrap();
 
-    assert_empty(&engine, SHEET, 1, 2);
-    assert_empty(&engine, "Sheet2", 1, 2);
+    assert_number(&engine, SHEET, 1, 2, 6.0);
+    assert_number(&engine, "Sheet2", 1, 2, 20.0);
 }
 
 #[test]

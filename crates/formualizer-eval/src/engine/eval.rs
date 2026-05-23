@@ -1758,23 +1758,24 @@ where
     }
 
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
-        self.demote_all_spans()
-            .map_err(Self::editor_error_to_excel)?;
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
-        self.clear_all_computed_overlays();
-        self.mark_all_formula_vertices_dirty();
-        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
+        // Adding a sheet does not invalidate existing SheetId-based FormulaPlane
+        // spans. `graph.add_sheet` handles legacy orphan-healing for formulas
+        // that were explicitly tombstoned for this sheet name; avoid a global
+        // FormulaPlane demotion/dirty mark for unrelated spans.
         self.mark_topology_edited();
         Ok(id)
     }
 
     pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<SheetId, ExcelError> {
-        self.demote_all_spans()
-            .map_err(Self::editor_error_to_excel)?;
         let source_id = self.graph.sheet_id(source).ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::Value).with_message("Source sheet does not exist")
         })?;
+        // Materialize only spans on the source sheet so graph duplication sees
+        // the formulas being copied. Spans on unrelated sheets remain active.
+        self.demote_spans_preserving_computed_overlays(source_id, Region::whole_sheet(source_id))
+            .map_err(Self::editor_error_to_excel)?;
         let new_id = self.graph.duplicate_sheet(source_id, new_name)?;
 
         if let Some(source_sheet) = self.arrow_sheets.sheet(source).cloned() {
@@ -1787,7 +1788,6 @@ where
 
         self.clear_all_computed_overlays();
         self.mark_all_formula_vertices_dirty();
-        self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(new_id)
     }
@@ -1809,7 +1809,10 @@ where
 
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
         let name = self.graph.sheet_name(sheet_id).to_string();
-        self.demote_all_spans()
+        // Removing a sheet only affects spans on that sheet and spans reading
+        // from that sheet. Preserve spans on unrelated sheets so sheet
+        // lifecycle operations do not collapse the whole FormulaPlane.
+        self.demote_spans_preserving_computed_overlays(sheet_id, Region::whole_sheet(sheet_id))
             .map_err(Self::editor_error_to_excel)?;
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
@@ -3918,33 +3921,6 @@ where
             self.demote_spans_preserving_computed_overlays(
                 sheet_id,
                 Region::point(sheet_id, row0, col0),
-            )?;
-        }
-        Ok(())
-    }
-
-    fn demote_all_spans(&mut self) -> Result<(), crate::engine::EditorError> {
-        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
-            return Ok(());
-        }
-        let sheet_ids: FxHashSet<SheetId> = {
-            let authority = self.graph.formula_authority();
-            authority
-                .active_span_refs()
-                .into_iter()
-                .filter_map(|span_ref| {
-                    authority
-                        .plane
-                        .spans
-                        .get(span_ref)
-                        .map(|span| span.sheet_id)
-                })
-                .collect()
-        };
-        for sheet_id in sheet_ids {
-            self.demote_spans_preserving_computed_overlays(
-                sheet_id,
-                Region::whole_sheet(sheet_id),
             )?;
         }
         Ok(())

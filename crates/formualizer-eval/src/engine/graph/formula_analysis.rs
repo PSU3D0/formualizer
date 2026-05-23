@@ -195,7 +195,7 @@ impl DependencyGraph {
                                     SharedSheetLocator::Id(id) => id,
                                     SharedSheetLocator::Current => current_sheet_id,
                                     SharedSheetLocator::Name(name) => {
-                                        self.sheet_id_mut(name.as_ref())
+                                        self.resolve_existing_sheet_id(name.as_ref())?
                                     }
                                 };
                                 range_dependencies.push(SharedRangeRef {
@@ -207,10 +207,11 @@ impl DependencyGraph {
                                 });
                             }
                         } else {
-                            let sr = start_row.unwrap();
-                            let sc = start_col.unwrap();
-                            let er = end_row.unwrap();
-                            let ec = end_col.unwrap();
+                            let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                                (*start_row, *start_col, *end_row, *end_col)
+                            else {
+                                return Err(ExcelError::new(ExcelErrorKind::Ref));
+                            };
 
                             if sr > er || sc > ec {
                                 return Err(ExcelError::new(ExcelErrorKind::Ref));
@@ -245,7 +246,7 @@ impl DependencyGraph {
                                         SharedSheetLocator::Id(id) => id,
                                         SharedSheetLocator::Current => current_sheet_id,
                                         SharedSheetLocator::Name(name) => {
-                                            self.sheet_id_mut(name.as_ref())
+                                            self.resolve_existing_sheet_id(name.as_ref())?
                                         }
                                     };
                                     range_dependencies.push(SharedRangeRef {
@@ -576,7 +577,9 @@ impl DependencyGraph {
                             let sheet_id = match owned.sheet {
                                 SharedSheetLocator::Id(id) => id,
                                 SharedSheetLocator::Current => current_sheet_id,
-                                SharedSheetLocator::Name(name) => self.sheet_id_mut(name.as_ref()),
+                                SharedSheetLocator::Name(name) => {
+                                    self.resolve_existing_sheet_id(name.as_ref())?
+                                }
                             };
                             range_dependencies.push(SharedRangeRef {
                                 sheet: SharedSheetLocator::Id(sheet_id),
@@ -587,10 +590,11 @@ impl DependencyGraph {
                             });
                         }
                     } else {
-                        let sr = start_row.unwrap();
-                        let sc = start_col.unwrap();
-                        let er = end_row.unwrap();
-                        let ec = end_col.unwrap();
+                        let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                            (*start_row, *start_col, *end_row, *end_col)
+                        else {
+                            return Err(ExcelError::new(ExcelErrorKind::Ref));
+                        };
 
                         if sr > er || sc > ec {
                             return Err(ExcelError::new(ExcelErrorKind::Ref));
@@ -623,7 +627,7 @@ impl DependencyGraph {
                                     SharedSheetLocator::Id(id) => id,
                                     SharedSheetLocator::Current => current_sheet_id,
                                     SharedSheetLocator::Name(name) => {
-                                        self.sheet_id_mut(name.as_ref())
+                                        self.resolve_existing_sheet_id(name.as_ref())?
                                     }
                                 };
                                 range_dependencies.push(SharedRangeRef {

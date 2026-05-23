@@ -623,11 +623,13 @@ impl<T: Clone> SheetRegionIndex<T> {
                 };
                 self.whole_sheets.entry(sheet_id).or_default().push(id);
             }
-            _ => panic!(
-                "unsupported SheetRegionIndex insertion kind pair in Phase 2: ({:?}, {:?})",
-                rows.kind(),
-                cols.kind()
-            ),
+            _ => {
+                // Keep unsupported-but-valid region shapes conservative: index
+                // them as a whole-sheet candidate so supported point/range
+                // queries still exact-filter them instead of panicking or
+                // silently under-returning.
+                self.whole_sheets.entry(sheet_id).or_default().push(id);
+            }
         }
     }
 
@@ -866,11 +868,17 @@ impl<T: Clone> SheetRegionIndex<T> {
                 self.collect_whole_cols_matching(sheet_id, |_| true, out);
                 self.collect_whole_sheet(sheet_id, out);
             }
-            _ => panic!(
-                "unsupported SheetRegionIndex query kind pair in Phase 2: ({:?}, {:?})",
-                rows.kind(),
-                cols.kind()
-            ),
+            _ => {
+                // Unsupported query shapes are rare internal fallback cases.
+                // Scan same-sheet entries and let the exact intersection
+                // filter in `query` decide, preserving correctness without a
+                // production panic.
+                out.extend(
+                    self.entries.iter().enumerate().filter_map(|(id, entry)| {
+                        (entry.region.sheet_id() == sheet_id).then_some(id)
+                    }),
+                );
+            }
         }
     }
 
@@ -1867,6 +1875,41 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn sheet_region_index_unsupported_axis_pairs_do_not_panic_or_under_return() {
+        let mut index = SheetRegionIndex::with_rect_bucket_size(4, 4);
+        let unsupported_insert = Region {
+            sheet_id: 1,
+            rows: AxisRange::To(10),
+            cols: AxisRange::Point(3),
+        };
+        let point_query = Region::point(1, 5, 3);
+
+        index.insert(unsupported_insert, "unsupported_insert");
+        let point_values: FxHashSet<_> = index
+            .query(point_query)
+            .matches
+            .iter()
+            .map(|matched| matched.value)
+            .collect();
+        assert!(point_values.contains("unsupported_insert"));
+
+        index.insert(Region::whole_sheet(1), "whole_sheet");
+        let unsupported_query = Region {
+            sheet_id: 1,
+            rows: AxisRange::To(10),
+            cols: AxisRange::Point(3),
+        };
+        let query_values: FxHashSet<_> = index
+            .query(unsupported_query)
+            .matches
+            .iter()
+            .map(|matched| matched.value)
+            .collect();
+        assert!(query_values.contains("unsupported_insert"));
+        assert!(query_values.contains("whole_sheet"));
     }
 
     #[test]
