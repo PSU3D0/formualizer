@@ -4572,7 +4572,6 @@ where
                 }
             }
         }
-
         if !shift_plans.is_empty() || !remove_refs.is_empty() {
             let authority = self.graph.formula_authority_mut();
             for span_ref in remove_refs {
@@ -4671,7 +4670,6 @@ where
                 placements,
             });
         }
-
         if span_plans.is_empty() {
             return Ok(());
         }
@@ -4718,7 +4716,6 @@ where
                 placement_cells.push((plan.sheet_id, row, col));
             }
         }
-
         let planned_by_sheet = {
             let mut pipeline = self.ingest_pipeline();
             let mut planned_by_sheet: BTreeMap<
@@ -4739,7 +4736,6 @@ where
             }
             planned_by_sheet
         };
-
         {
             let authority = self.graph.formula_authority_mut();
             for plan in &span_plans {
@@ -4750,7 +4746,6 @@ where
             }
             authority.rebuild_indexes();
         }
-
         if clear_computed_overlays {
             // Only clear placement cells whose coordinate intersects the affected
             // structural region. The structural-op contract preserves cells
@@ -4758,21 +4753,8 @@ where
             // call honors that. Demoting a span whose footprint straddles the
             // boundary still must not clear cells before the boundary, even
             // though the span as a whole is demoted.
-            for (formula_sheet_id, row, col) in &placement_cells {
-                // 1-based -> 0-based for region intersection.
-                let placement_region = Region::point(
-                    *formula_sheet_id,
-                    row.saturating_sub(1),
-                    col.saturating_sub(1),
-                );
-                if !placement_region.intersects(&affected_region) {
-                    continue;
-                }
-                let sheet_name = self.graph.sheet_name(*formula_sheet_id).to_string();
-                self.clear_computed_overlay_cell(&sheet_name, *row, *col);
-            }
+            self.clear_computed_overlay_cells_in_region(&placement_cells, &affected_region);
         }
-
         for (formula_sheet_id, planned) in planned_by_sheet {
             let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
             self.graph
@@ -5460,29 +5442,135 @@ where
         }
     }
 
-    /// Remove a computed-overlay entry for a single cell (if present) without allocating
-    /// missing sheet/column/row storage. FormulaPlane structural demotion calls this for every
-    /// demoted placement so stale span results cannot mask freshly materialized legacy formulas.
-    fn clear_computed_overlay_cell(&mut self, sheet: &str, row: u32, col: u32) {
+    fn clear_computed_overlay_col_row_range(
+        &mut self,
+        sheet: &str,
+        col0: usize,
+        start_row0: usize,
+        end_row0_exclusive: usize,
+    ) {
         if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
             return;
         }
+        if start_row0 >= end_row0_exclusive {
+            return;
+        }
+
         let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
             return;
         };
-        let row0 = row.saturating_sub(1) as usize;
-        let col0 = col.saturating_sub(1) as usize;
-        if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
+        if col0 >= asheet.columns.len() || start_row0 >= asheet.nrows as usize {
             return;
         }
-        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+        let end_row0_exclusive = end_row0_exclusive.min(asheet.nrows as usize);
+        if start_row0 >= end_row0_exclusive {
+            return;
+        }
+
+        let starts = asheet.chunk_starts.clone();
+        let nrows = asheet.nrows as usize;
+        let mut delta = 0isize;
+        let Some(col) = asheet.columns.get_mut(col0) else {
             return;
         };
-        let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) else {
-            return;
-        };
-        let delta = ch.computed_overlay.remove(in_off);
+        for (chunk_idx, ch) in col.chunks.iter_mut().enumerate() {
+            let Some(&chunk_start) = starts.get(chunk_idx) else {
+                continue;
+            };
+            let chunk_end = starts
+                .get(chunk_idx + 1)
+                .copied()
+                .unwrap_or(nrows)
+                .min(chunk_start.saturating_add(ch.len()));
+            let clear_start = start_row0.max(chunk_start);
+            let clear_end = end_row0_exclusive.min(chunk_end);
+            if clear_start >= clear_end {
+                continue;
+            }
+            if clear_start == chunk_start && clear_end == chunk_end {
+                delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+            } else {
+                let start_in_chunk = clear_start.saturating_sub(chunk_start).min(ch.len());
+                let end_in_chunk = clear_end.saturating_sub(chunk_start).min(ch.len());
+                delta = delta.saturating_add(
+                    ch.computed_overlay
+                        .remove_range(start_in_chunk..end_in_chunk),
+                );
+            }
+        }
+        for (chunk_idx, ch) in &mut col.sparse_chunks {
+            let Some(&chunk_start) = starts.get(*chunk_idx) else {
+                continue;
+            };
+            let chunk_end = starts
+                .get(*chunk_idx + 1)
+                .copied()
+                .unwrap_or(nrows)
+                .min(chunk_start.saturating_add(ch.len()));
+            let clear_start = start_row0.max(chunk_start);
+            let clear_end = end_row0_exclusive.min(chunk_end);
+            if clear_start >= clear_end {
+                continue;
+            }
+            if clear_start == chunk_start && clear_end == chunk_end {
+                delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
+            } else {
+                let start_in_chunk = clear_start.saturating_sub(chunk_start).min(ch.len());
+                let end_in_chunk = clear_end.saturating_sub(chunk_start).min(ch.len());
+                delta = delta.saturating_add(
+                    ch.computed_overlay
+                        .remove_range(start_in_chunk..end_in_chunk),
+                );
+            }
+        }
         self.adjust_computed_overlay_bytes(delta);
+    }
+
+    fn clear_computed_overlay_cells_in_region(
+        &mut self,
+        cells: &[(SheetId, u32, u32)],
+        affected_region: &Region,
+    ) {
+        let mut by_col: BTreeMap<(SheetId, u32), Vec<u32>> = BTreeMap::new();
+        for (formula_sheet_id, row, col) in cells {
+            let row0 = row.saturating_sub(1);
+            let col0 = col.saturating_sub(1);
+            let placement_region = Region::point(*formula_sheet_id, row0, col0);
+            if placement_region.intersects(affected_region) {
+                by_col
+                    .entry((*formula_sheet_id, col0))
+                    .or_default()
+                    .push(row0);
+            }
+        }
+
+        for ((formula_sheet_id, col0), mut rows) in by_col {
+            rows.sort_unstable();
+            rows.dedup();
+            let sheet_name = self.graph.sheet_name(formula_sheet_id).to_string();
+            let mut start = rows[0];
+            let mut prev = rows[0];
+            for row in rows.into_iter().skip(1) {
+                if row == prev.saturating_add(1) {
+                    prev = row;
+                    continue;
+                }
+                self.clear_computed_overlay_col_row_range(
+                    &sheet_name,
+                    col0 as usize,
+                    start as usize,
+                    prev.saturating_add(1) as usize,
+                );
+                start = row;
+                prev = row;
+            }
+            self.clear_computed_overlay_col_row_range(
+                &sheet_name,
+                col0 as usize,
+                start as usize,
+                prev.saturating_add(1) as usize,
+            );
+        }
     }
 
     fn clear_computed_overlay_after_row(&mut self, sheet: &str, start_row0: usize) {
@@ -5517,9 +5605,8 @@ where
                     delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
                 } else {
                     let start_in_chunk = start_row0.saturating_sub(chunk_start).min(ch.len());
-                    for offset in start_in_chunk..ch.len() {
-                        delta = delta.saturating_add(ch.computed_overlay.remove(offset));
-                    }
+                    delta = delta
+                        .saturating_add(ch.computed_overlay.remove_range(start_in_chunk..ch.len()));
                 }
             }
 
@@ -5539,9 +5626,8 @@ where
                     delta = delta.saturating_sub(ch.computed_overlay.clear() as isize);
                 } else {
                     let start_in_chunk = start_row0.saturating_sub(chunk_start).min(ch.len());
-                    for offset in start_in_chunk..ch.len() {
-                        delta = delta.saturating_add(ch.computed_overlay.remove(offset));
-                    }
+                    delta = delta
+                        .saturating_add(ch.computed_overlay.remove_range(start_in_chunk..ch.len()));
                 }
             }
         }

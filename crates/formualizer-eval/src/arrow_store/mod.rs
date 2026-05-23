@@ -2005,6 +2005,47 @@ impl Overlay {
         self.remove_scalar(off)
     }
 
+    pub(crate) fn remove_range(&mut self, range: core::ops::Range<usize>) -> isize {
+        if range.is_empty() {
+            return 0;
+        }
+
+        let mut delta = 0isize;
+        let removed_points: Vec<_> = self
+            .points
+            .keys()
+            .copied()
+            .filter(|off| range.contains(off))
+            .collect();
+        for off in removed_points {
+            if let Some(old) = self.points.remove(&off) {
+                let old_est = Self::point_estimate(&old);
+                self.estimated_bytes = self.estimated_bytes.saturating_sub(old_est);
+                delta = delta.saturating_sub(old_est as isize);
+            }
+        }
+
+        if !self.fragments.is_empty() {
+            let mut fragment_delta = 0isize;
+            let mut fragments = Vec::with_capacity(self.fragments.len());
+            for fragment in self.fragments.drain(..) {
+                let old_est = fragment.estimated_bytes();
+                let replacements = fragment.subtract_interval(range.clone());
+                let new_est = replacements
+                    .iter()
+                    .map(OverlayFragment::estimated_bytes)
+                    .fold(0usize, usize::saturating_add);
+                fragments.extend(replacements);
+                fragment_delta = fragment_delta.saturating_add(new_est as isize - old_est as isize);
+            }
+            self.fragments = fragments;
+            self.adjust_estimated_bytes(fragment_delta);
+            delta = delta.saturating_add(fragment_delta);
+        }
+
+        delta
+    }
+
     #[inline]
     pub(crate) fn clear_all(&mut self) -> usize {
         let freed = self.estimated_bytes;
@@ -5160,6 +5201,51 @@ mod tests {
         assert!(remove_delta < 0);
         assert!(overlay.is_empty());
         assert!(overlay.get_scalar(1).is_none());
+    }
+
+    #[test]
+    fn overlay_remove_range_splits_fragments_and_points() {
+        let mut overlay = Overlay::new();
+        overlay.set_scalar(2, OverlayValue::Number(20.0));
+        overlay.apply_fragment(
+            OverlayFragment::dense_range(
+                0,
+                (0..6)
+                    .map(|i| OverlayValue::Number(i as f64))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap(),
+        );
+        overlay.set_scalar(3, OverlayValue::Number(30.0));
+        overlay.set_scalar(8, OverlayValue::Number(80.0));
+
+        let delta = overlay.remove_range(2..5);
+
+        assert!(delta < 0);
+        assert_eq!(
+            overlay.get_scalar(0).unwrap().to_literal(),
+            LiteralValue::Number(0.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(1).unwrap().to_literal(),
+            LiteralValue::Number(1.0)
+        );
+        assert!(overlay.get_scalar(2).is_none());
+        assert!(overlay.get_scalar(3).is_none());
+        assert!(overlay.get_scalar(4).is_none());
+        assert_eq!(
+            overlay.get_scalar(5).unwrap().to_literal(),
+            LiteralValue::Number(5.0)
+        );
+        assert_eq!(
+            overlay.get_scalar(8).unwrap().to_literal(),
+            LiteralValue::Number(80.0)
+        );
+        assert!(overlay.debug_is_normalized());
+        assert_eq!(
+            overlay.estimated_bytes(),
+            overlay.debug_recomputed_estimated_bytes()
+        );
     }
 
     #[test]

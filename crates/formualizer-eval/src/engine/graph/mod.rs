@@ -2359,6 +2359,15 @@ impl DependencyGraph {
             let addr = CellRef::new(sheet_id, Coord::from_excel(*row, *col, true, true));
             target_vids.push(self.get_or_create_vertex(&addr, &mut created_placeholders));
         }
+        // Create direct-dependency placeholders before edge batching starts. If a formula-plane
+        // demotion materializes formulas into an otherwise Arrow-only graph, interleaving
+        // dependency vertex creation with edge insertion forces the CSR delta slab to rebuild on
+        // every new dependency vertex. Pre-creating these vertices keeps bulk edge insertion O(n).
+        for (_, _, _, plan) in &planned {
+            for cell in &plan.direct_cell_deps {
+                self.get_or_create_vertex(cell, &mut created_placeholders);
+            }
+        }
 
         for (i, &tvid) in target_vids.iter().enumerate() {
             if self.vertex_formulas.contains_key(&tvid) {
