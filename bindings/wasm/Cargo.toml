@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-wasm"
-version = "0.5.9"
+version = "0.6.0"
 edition = "2024"
 authors = ["Formualizer Contributors"]
 homepage = "https://github.com/PSU3D0/formualizer"
@@ -34,7 +34,7 @@ features = [
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
-zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+zip = { version = "7.2", default-features = false, features = ["deflate"] }
 
 [features]
 default = ["console_panic", "json", "calamine"]

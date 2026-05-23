@@ -1,0 +1,86 @@
+---
+title: Large Workbook Performance
+description: Practical options for loading and recalculating larger XLSX, JSON, and generated workbooks.
+---
+
+Formualizer's default path uses the stable dependency graph and is appropriate for most applications. Large workbooks benefit most from choosing the right load backend, batching writes, and evaluating only the cells your workflow needs.
+
+## Choose the right XLSX backend
+
+Formualizer supports multiple XLSX paths behind feature flags:
+
+- **Calamine**: read-focused backend optimized for loading workbooks.
+- **Umya**: read/write backend used when preserving or writing XLSX files is required.
+
+For read-heavy workloads, prefer the Calamine backend when available. In 0.6, the publishable Calamine path remains compatible with crates.io Calamine while using sparse-friendly engine ingest to avoid expanding formatting-only worksheet regions.
+
+Python example:
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook.from_path("model.xlsx", backend="calamine")
+```
+
+Rust users enable the `calamine` feature on `formualizer-workbook` or the top-level `formualizer` crate.
+
+## Use sparse-friendly imports
+
+Large spreadsheets often have far-apart populated cells, full-column formulas, or formatting over a much larger grid than the logical model. Formualizer applies load limits and sparse ingest paths to avoid treating formatting-only grid extent as real model size.
+
+If a workbook fails a load budget, inspect whether it contains:
+
+- a small populated model with very large worksheet dimensions
+- whole-column formulas over sparse inputs
+- formatting or metadata that expands worksheet bounds
+- accidental far-row/far-column cells
+
+## Batch writes before recalculation
+
+For generated or programmatically edited workbooks, write values and formulas in batches before evaluating. This reduces graph/editor churn and keeps undo/redo history cleaner.
+
+See [Workbook Edits and Batching](/docs/guides/workbook-edits-and-batching).
+
+## Evaluate targeted outputs first
+
+If your application only needs a few output cells, prefer targeted evaluation before full-workbook recomputation:
+
+```rust
+let outputs = wb.evaluate_cells(&[("Summary", 10, 2), ("Summary", 11, 2)])?;
+```
+
+Targeted evaluation is often enough for API-style spreadsheet workflows.
+
+## Experimental span evaluation
+
+FormulaPlane span evaluation is an opt-in acceleration path in 0.6:
+
+```rust
+use formualizer_workbook::{Workbook, WorkbookConfig};
+
+let cfg = WorkbookConfig::interactive().with_span_evaluation(true);
+let mut wb = Workbook::new_with_config(cfg);
+```
+
+It can speed up large copied-formula families by storing eligible families as compact spans instead of one graph formula vertex per cell.
+
+Keep these constraints in mind:
+
+- The mode is experimental and off by default.
+- Unsupported formulas fall back to the legacy graph path.
+- Internal chains/running balances and array literal families are not span-promoted in 0.6.
+- Validate application-critical workbooks before enabling it in production.
+
+See [FormulaPlane Span Evaluation](/docs/core-concepts/formula-plane-span-evaluation).
+
+## Benchmark responsibly
+
+When comparing results, separate:
+
+- load time from calculation time
+- first full evaluation from warmed incremental recalculation
+- backend choice (`calamine` vs `umya`)
+- Calamine's current two-range formula API vs future formula-record streaming once available upstream
+- default graph mode from opt-in span mode
+
+This avoids attributing XLSX load improvements to formula execution, or span-runtime improvements to the default path.

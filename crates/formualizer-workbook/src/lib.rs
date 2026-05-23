@@ -38,8 +38,8 @@ pub use recalculate::{
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};
 pub use traits::{
-    AccessGranularity, BackendCaps, CellData, LoadStrategy, MergedRange, NamedRange,
-    NamedRangeScope, SheetData, SpreadsheetIO, SpreadsheetReader, SpreadsheetWriter,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CellData, LoadStrategy, MergedRange,
+    NamedRange, NamedRangeScope, SheetData, SpreadsheetIO, SpreadsheetReader, SpreadsheetWriter,
     TableDefinition,
 };
 pub use transaction::{WriteOp, WriteTransaction};

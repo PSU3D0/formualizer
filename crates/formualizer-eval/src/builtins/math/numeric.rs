@@ -3,6 +3,7 @@ use super::super::utils::{
 };
 use crate::args::ArgSchema;
 use crate::function::Function;
+use crate::function_contract::FunctionDependencyContract;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
@@ -57,6 +58,9 @@ impl Function for AbsFn {
     }
     fn min_args(&self) -> usize {
         1
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_scalar_all_args(arity)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_NUM_LENIENT_ONE[..]

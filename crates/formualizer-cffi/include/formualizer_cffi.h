@@ -86,6 +86,10 @@ fz_buffer fz_parse_canonical_formula(
 
 fz_workbook_h fz_workbook_create(fz_status *status);
 fz_workbook_h fz_workbook_open_xlsx(const char *path, fz_status *status);
+fz_workbook_h fz_workbook_open_xlsx_with_span_evaluation(
+    const char *path,
+    bool span_evaluation,
+    fz_status *status);
 void fz_workbook_free(fz_workbook_h wb);
 void fz_workbook_add_sheet(fz_workbook_h wb, const char *name, fz_status *status);
 void fz_workbook_delete_sheet(fz_workbook_h wb, const char *name, fz_status *status);

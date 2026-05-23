@@ -2,6 +2,7 @@ use super::super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
 use crate::args::ArgSchema;
 use crate::compute_prelude::{boolean, cmp, filter_array};
 use crate::function::Function;
+use crate::function_contract::{CriteriaValueRange, FunctionArityRule, FunctionDependencyContract};
 use crate::traits::{ArgumentHandle, FunctionContext};
 use arrow::compute::kernels::aggregate::sum_array;
 use arrow_array::types::Float64Type;
@@ -760,6 +761,17 @@ impl Function for AverageIfFn {
     fn variadic(&self) -> bool {
         true
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::criteria_aggregation(
+            arity,
+            FunctionArityRule::OneOf(&[2, 3]),
+            CriteriaValueRange::Optional {
+                provided_index: 2,
+                fallback_criteria_range_index: 0,
+            },
+            0,
+        )
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -856,6 +868,17 @@ impl Function for SumIfFn {
     fn variadic(&self) -> bool {
         true
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::criteria_aggregation(
+            arity,
+            FunctionArityRule::OneOf(&[2, 3]),
+            CriteriaValueRange::Optional {
+                provided_index: 2,
+                fallback_criteria_range_index: 0,
+            },
+            0,
+        )
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -944,6 +967,14 @@ impl Function for CountIfFn {
     }
     fn variadic(&self) -> bool {
         false
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::criteria_aggregation(
+            arity,
+            FunctionArityRule::Exactly(2),
+            CriteriaValueRange::None,
+            0,
+        )
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
@@ -1040,6 +1071,14 @@ impl Function for SumIfsFn {
     fn variadic(&self) -> bool {
         true
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::criteria_aggregation(
+            arity,
+            FunctionArityRule::OddAtLeast(3),
+            CriteriaValueRange::Fixed(0),
+            1,
+        )
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -1131,6 +1170,14 @@ impl Function for CountIfsFn {
     }
     fn variadic(&self) -> bool {
         true
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::criteria_aggregation(
+            arity,
+            FunctionArityRule::EvenAtLeast(2),
+            CriteriaValueRange::None,
+            0,
+        )
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
@@ -1227,6 +1274,14 @@ impl Function for AverageIfsFn {
     fn variadic(&self) -> bool {
         true
     }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::criteria_aggregation(
+            arity,
+            FunctionArityRule::OddAtLeast(3),
+            CriteriaValueRange::Fixed(0),
+            1,
+        )
+    }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]
     }
@@ -1306,6 +1361,9 @@ impl Function for CountAFn {
     }
     fn variadic(&self) -> bool {
         true
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_reduction(arity, self.min_args())
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_ANY_ONE[..]

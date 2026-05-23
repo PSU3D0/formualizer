@@ -1,5 +1,5 @@
 use crate::error::IoError;
-use crate::traits::{LoadStrategy, SpreadsheetReader, SpreadsheetWriter};
+use crate::traits::{AdapterLoadStats, LoadStrategy, SpreadsheetReader, SpreadsheetWriter};
 use chrono::Timelike;
 use formualizer_common::{
     LiteralValue, RangeAddress,
@@ -1040,6 +1040,32 @@ impl WorkbookConfig {
         self.ingest_limits = ingest_limits;
         self
     }
+
+    /// Opt in/out of experimental FormulaPlane span evaluation.
+    ///
+    /// The default is disabled to preserve stable workbook semantics and load
+    /// costs. Enabling this selects `FormulaPlaneMode::AuthoritativeExperimental`.
+    pub fn with_span_evaluation(mut self, enabled: bool) -> Self {
+        self.eval.formula_plane_mode = if enabled {
+            formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
+        } else {
+            formualizer_eval::engine::FormulaPlaneMode::Off
+        };
+        self
+    }
+
+    pub fn with_formula_plane_mode(
+        mut self,
+        mode: formualizer_eval::engine::FormulaPlaneMode,
+    ) -> Self {
+        self.eval.formula_plane_mode = mode;
+        self
+    }
+
+    pub fn span_evaluation_enabled(&self) -> bool {
+        self.eval.formula_plane_mode
+            == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
+    }
 }
 
 impl Default for Workbook {
@@ -1479,6 +1505,16 @@ impl Workbook {
     }
     pub fn eval_config(&self) -> &formualizer_eval::engine::EvalConfig {
         &self.engine.config
+    }
+
+    pub fn last_formula_ingest_report(
+        &self,
+    ) -> Option<formualizer_eval::engine::FormulaIngestReport> {
+        self.engine.last_formula_ingest_report().cloned()
+    }
+
+    pub fn formula_ingest_report_total(&self) -> formualizer_eval::engine::FormulaIngestReport {
+        self.engine.formula_ingest_report_total().clone()
     }
 
     pub fn has_staged_formulas(&self) -> bool {
@@ -1989,6 +2025,10 @@ impl Workbook {
     pub fn add_sheet(&mut self, name: &str) -> Result<(), ExcelError> {
         self.engine.add_sheet(name)?;
         self.ensure_arrow_sheet_capacity(name, 0, 0);
+        Ok(())
+    }
+    pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<(), ExcelError> {
+        self.engine.duplicate_sheet(source, new_name)?;
         Ok(())
     }
     pub fn delete_sheet(&mut self, name: &str) -> Result<(), ExcelError> {
@@ -2834,10 +2874,23 @@ impl Workbook {
 
     // Loading via streaming ingest (Arrow base + graph formulas)
     pub fn from_reader<B>(
+        backend: B,
+        strategy: LoadStrategy,
+        config: WorkbookConfig,
+    ) -> Result<Self, IoError>
+    where
+        B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
+        IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
+    {
+        let (wb, _) = Self::from_reader_with_adapter_stats(backend, strategy, config)?;
+        Ok(wb)
+    }
+
+    pub fn from_reader_with_adapter_stats<B>(
         mut backend: B,
         _strategy: LoadStrategy,
         config: WorkbookConfig,
-    ) -> Result<Self, IoError>
+    ) -> Result<(Self, Option<AdapterLoadStats>), IoError>
     where
         B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
         IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
@@ -2846,7 +2899,8 @@ impl Workbook {
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;
-        Ok(wb)
+        let stats = backend.load_stats();
+        Ok((wb, stats))
     }
 
     pub fn from_reader_with_config<B>(

@@ -341,40 +341,6 @@ impl DependencyGraph {
             self.cell_to_vertex.insert(cell_ref, new_id);
         }
 
-        for (old_id, _) in &source_vertices {
-            if let Some(&new_id) = vertex_mapping.get(old_id)
-                && let Some(&ast_id) = self.vertex_formulas.get(old_id)
-                && let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
-            {
-                let updated_ast = update_internal_sheet_references(
-                    &ast,
-                    &source_name,
-                    new_name,
-                    source_sheet_id,
-                    new_sheet_id,
-                );
-
-                let new_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
-                self.vertex_formulas.insert(new_id, new_ast_id);
-
-                if let Ok((deps, range_deps, _, name_vertices)) =
-                    self.extract_dependencies(&updated_ast, new_sheet_id)
-                {
-                    let mapped_deps: Vec<VertexId> = deps
-                        .iter()
-                        .map(|&dep_id| vertex_mapping.get(&dep_id).copied().unwrap_or(dep_id))
-                        .collect();
-
-                    self.add_dependent_edges(new_id, &mapped_deps);
-                    self.add_range_dependent_edges(new_id, &range_deps, new_sheet_id);
-
-                    if !name_vertices.is_empty() {
-                        self.attach_vertex_to_names(new_id, &name_vertices);
-                    }
-                }
-            }
-        }
-
         let sheet_names: Vec<(String, NamedRange)> = self
             .sheet_named_ranges
             .iter()
@@ -418,8 +384,44 @@ impl DependencyGraph {
 
             self.sheet_named_ranges
                 .insert((new_sheet_id, name.clone()), named_range);
+            self.sheet_named_ranges_lookup
+                .insert((new_sheet_id, self.name_lookup_key(&name)), name.clone());
             self.name_vertex_lookup
                 .insert(name_vertex, (NameScope::Sheet(new_sheet_id), name));
+        }
+
+        for (old_id, _) in &source_vertices {
+            if let Some(&new_id) = vertex_mapping.get(old_id)
+                && let Some(&ast_id) = self.vertex_formulas.get(old_id)
+                && let Some(ast) = self.data_store.retrieve_ast(ast_id, &self.sheet_reg)
+            {
+                let updated_ast = update_internal_sheet_references(
+                    &ast,
+                    &source_name,
+                    new_name,
+                    source_sheet_id,
+                    new_sheet_id,
+                );
+
+                let new_ast_id = self.data_store.store_ast(&updated_ast, &self.sheet_reg);
+                self.vertex_formulas.insert(new_id, new_ast_id);
+
+                if let Ok((deps, range_deps, _, name_vertices)) =
+                    self.extract_dependencies(&updated_ast, new_sheet_id)
+                {
+                    let mapped_deps: Vec<VertexId> = deps
+                        .iter()
+                        .map(|&dep_id| vertex_mapping.get(&dep_id).copied().unwrap_or(dep_id))
+                        .collect();
+
+                    self.add_dependent_edges(new_id, &mapped_deps);
+                    self.add_range_dependent_edges(new_id, &range_deps, new_sheet_id);
+
+                    if !name_vertices.is_empty() {
+                        self.attach_vertex_to_names(new_id, &name_vertices);
+                    }
+                }
+            }
         }
 
         self.end_batch();

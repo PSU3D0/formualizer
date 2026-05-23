@@ -1,10 +1,11 @@
-use crate::load_limits::enforce_sheet_load_limits;
+use crate::load_limits::{enforce_sheet_load_limits, use_sparse_initial_ingest};
 use crate::traits::{
-    AccessGranularity, BackendCaps, CellData, NamedRange, NamedRangeScope, SheetData,
-    SpreadsheetReader, SpreadsheetWriter,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CellData, NamedRange, NamedRangeScope,
+    SheetData, SpreadsheetReader, SpreadsheetWriter,
 };
 use chrono::Timelike;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
+use formualizer_eval::engine::{FormulaIngestBatch, FormulaIngestRecord};
 use formualizer_parse::parser::ReferenceType;
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
@@ -12,6 +13,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 use umya_spreadsheet::{
     CellRawValue, CellValue, Spreadsheet,
@@ -21,7 +23,7 @@ use umya_spreadsheet::{
 
 use crate::traits::{DefinedName as WorkbookDefinedName, DefinedNameDefinition, DefinedNameScope};
 
-type FormulaBatch = (String, Vec<(u32, u32, formualizer_parse::ASTNode)>);
+type FormulaBatch = FormulaIngestBatch;
 
 /// Owned cache-write update used by batch formula-cache APIs.
 #[derive(Clone, Debug, PartialEq)]
@@ -45,6 +47,7 @@ pub struct UmyaAdapter {
     workbook: RwLock<Spreadsheet>,
     lazy: bool,
     original_path: Option<std::path::PathBuf>,
+    load_stats: AdapterLoadStats,
 
     // Best-effort: parse `headerRowCount` from xl/tables/*.xml.
     // Key: table name (as stored in XLSX); Value: header_row bool.
@@ -61,6 +64,7 @@ impl UmyaAdapter {
             workbook: RwLock::new(umya_spreadsheet::new_file()),
             lazy: false,
             original_path: None,
+            load_stats: AdapterLoadStats::default(),
             table_header_rows: HashMap::new(),
             table_header_rows_available: false,
         }
@@ -486,6 +490,10 @@ impl SpreadsheetReader for UmyaAdapter {
         Ok(names)
     }
 
+    fn load_stats(&self) -> Option<AdapterLoadStats> {
+        Some(self.load_stats.clone())
+    }
+
     fn defined_names(&mut self) -> Result<Vec<WorkbookDefinedName>, Self::Error> {
         let mut wb = self.workbook.write();
         let count = wb.get_sheet_count();
@@ -581,6 +589,7 @@ impl SpreadsheetReader for UmyaAdapter {
             workbook: RwLock::new(sheet),
             lazy: false,
             original_path: Some(path_ref.to_path_buf()),
+            load_stats: AdapterLoadStats::default(),
             table_header_rows,
             table_header_rows_available,
         })
@@ -630,6 +639,7 @@ impl SpreadsheetReader for UmyaAdapter {
             workbook: RwLock::new(sheet),
             lazy: false,
             original_path: None,
+            load_stats: AdapterLoadStats::default(),
             table_header_rows,
             table_header_rows_available,
         })
@@ -1134,7 +1144,7 @@ where
         engine: &mut formualizer_eval::engine::Engine<R>,
     ) -> Result<(), Self::Error> {
         use crate::error::IoError;
-        use formualizer_eval::arrow_store::IngestBuilder;
+        use formualizer_eval::arrow_store::{ArrowSheet, IngestBuilder, OverlayValue};
         use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
         use formualizer_eval::reference::{CellRef, Coord};
 
@@ -1165,6 +1175,8 @@ where
 
         let chunk_rows: usize = 32 * 1024;
         let mut total_formula_cells = 0usize;
+        let mut total_formula_handed_to_engine = 0usize;
+        let mut total_value_cells_observed = 0usize;
         let mut total_value_slots = 0usize;
         let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
 
@@ -1217,20 +1229,56 @@ where
                 );
             }
 
+            total_value_cells_observed += sheet_data
+                .cells
+                .values()
+                .filter(|cd| cd.value.is_some())
+                .count();
+
             let t_arrow = Instant::now();
-            let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
-            for r in 1..=rows {
-                let mut row_vals = vec![LiteralValue::Empty; cols];
-                for c in 1..=cols {
-                    if let Some(cd) = sheet_data.cells.get(&(r as u32, c as u32))
-                        && let Some(v) = &cd.value
-                    {
-                        row_vals[c - 1] = v.clone();
+            let sparse_initial = use_sparse_initial_ingest(
+                dims.0,
+                dims.1,
+                sheet_data.cells.len(),
+                engine.workbook_load_limits(),
+            );
+            let asheet = if sparse_initial {
+                let mut asheet = ArrowSheet::new_sparse(n, cols, rows, chunk_rows);
+                for ((row, col), cd) in &sheet_data.cells {
+                    if cd.formula.is_some() {
+                        continue;
                     }
+                    let Some(value) = &cd.value else {
+                        continue;
+                    };
+                    asheet.set_sparse_overlay_value(
+                        row.saturating_sub(1) as usize,
+                        col.saturating_sub(1) as usize,
+                        OverlayValue::from_literal_value(value, engine.config.date_system),
+                    );
                 }
-                aib.append_row(&row_vals).map_err(IoError::Engine)?;
-            }
-            let asheet = aib.finish();
+                total_value_slots += sheet_data
+                    .cells
+                    .values()
+                    .filter(|cd| cd.value.is_some())
+                    .count();
+                asheet
+            } else {
+                let mut aib = IngestBuilder::new(n, cols, chunk_rows, engine.config.date_system);
+                for r in 1..=rows {
+                    let mut row_vals = vec![LiteralValue::Empty; cols];
+                    for c in 1..=cols {
+                        if let Some(cd) = sheet_data.cells.get(&(r as u32, c as u32))
+                            && let Some(v) = &cd.value
+                        {
+                            row_vals[c - 1] = v.clone();
+                        }
+                    }
+                    aib.append_row(&row_vals).map_err(IoError::Engine)?;
+                }
+                total_value_slots += rows.saturating_mul(cols);
+                aib.finish()
+            };
             let store = engine.sheet_store_mut();
             if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
                 store.sheets[pos] = asheet;
@@ -1238,13 +1286,17 @@ where
                 store.sheets.push(asheet);
             }
             let arrow_ms = t_arrow.elapsed().as_secs_f64() * 1000.0;
-            total_value_slots += rows.saturating_mul(cols);
             if debug {
                 eprintln!(
-                    "[fz][load]    arrow: rows={} cols={} value_slots={} in {:.1} ms",
+                    "[fz][load]    arrow: rows={} cols={} sparse_initial={} value_slots={} in {:.1} ms",
                     rows,
                     cols,
-                    rows.saturating_mul(cols),
+                    sparse_initial,
+                    if sparse_initial {
+                        sheet_data.cells.len()
+                    } else {
+                        rows.saturating_mul(cols)
+                    },
                     arrow_ms,
                 );
             }
@@ -1280,6 +1332,7 @@ where
 
             let t_formulas = Instant::now();
             let mut formula_cells = 0usize;
+            let mut formula_handed_to_engine = 0usize;
             if engine.config.defer_graph_building {
                 for ((row, col), cd) in &sheet_data.cells {
                     if let Some(f) = &cd.formula {
@@ -1288,10 +1341,11 @@ where
                         }
                         engine.stage_formula_text(n, *row, *col, f.clone());
                         formula_cells += 1;
+                        formula_handed_to_engine += 1;
                     }
                 }
             } else {
-                let mut formulas: Vec<(u32, u32, formualizer_parse::ASTNode)> = Vec::new();
+                let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
                 for ((row, col), cd) in &sheet_data.cells {
                     if let Some(f) = &cd.formula {
                         if f.is_empty() {
@@ -1303,7 +1357,15 @@ where
                             format!("={f}")
                         };
                         match formualizer_parse::parser::parse(&with_eq) {
-                            Ok(parsed) => formulas.push((*row, *col, parsed)),
+                            Ok(parsed) => {
+                                let ast_id = engine.intern_formula_ast(&parsed);
+                                formulas.push(FormulaIngestRecord::new(
+                                    *row,
+                                    *col,
+                                    ast_id,
+                                    Some(Arc::<str>::from(with_eq.clone())),
+                                ));
+                            }
                             Err(e) => {
                                 if let Some(recovered) = engine
                                     .handle_formula_parse_error(
@@ -1315,19 +1377,27 @@ where
                                     )
                                     .map_err(IoError::Engine)?
                                 {
-                                    formulas.push((*row, *col, recovered));
+                                    let ast_id = engine.intern_formula_ast(&recovered);
+                                    formulas.push(FormulaIngestRecord::new(
+                                        *row,
+                                        *col,
+                                        ast_id,
+                                        Some(Arc::<str>::from(with_eq.clone())),
+                                    ));
                                 }
                             }
                         }
                         formula_cells += 1;
                     }
                 }
+                formula_handed_to_engine += formulas.len();
                 if !formulas.is_empty() {
-                    eager_formula_batches.push((n.clone(), formulas));
+                    eager_formula_batches.push(FormulaIngestBatch::new(n.clone(), formulas));
                 }
             }
             let formula_ms = t_formulas.elapsed().as_secs_f64() * 1000.0;
             total_formula_cells += formula_cells;
+            total_formula_handed_to_engine += formula_handed_to_engine;
             if debug {
                 eprintln!(
                     "[fz][load]    formulas: {} in {:.1} ms",
@@ -1374,12 +1444,9 @@ where
 
         if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
             let t_bulk = Instant::now();
-            let mut builder = engine.begin_bulk_ingest();
-            for (sheet_name, formulas) in eager_formula_batches {
-                let sid = builder.add_sheet(&sheet_name);
-                builder.add_formulas(sid, formulas.into_iter());
-            }
-            builder.finish().map_err(IoError::Engine)?;
+            engine
+                .ingest_formula_batches(eager_formula_batches)
+                .map_err(IoError::Engine)?;
             if debug {
                 eprintln!(
                     "[fz][load] umya: bulk formula ingest finished in {:.1} ms",
@@ -1477,11 +1544,20 @@ where
         engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
+        self.load_stats = AdapterLoadStats {
+            formula_cells_observed: Some(total_formula_cells as u64),
+            value_cells_observed: Some(total_value_cells_observed as u64),
+            value_slots_handed_to_engine: Some(total_value_slots as u64),
+            formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
+            shared_formula_tags_observed: None,
+        };
         if debug {
             eprintln!(
-                "[fz][load] umya: done value_slots={} formula_cells={} total={:.1} ms",
+                "[fz][load] umya: done value_slots={} value_cells={} formula_cells={} formula_handed={} total={:.1} ms",
                 total_value_slots,
+                total_value_cells_observed,
                 total_formula_cells,
+                total_formula_handed_to_engine,
                 t0.elapsed().as_secs_f64() * 1000.0,
             );
         }

@@ -106,22 +106,25 @@ pub struct PyWorkbookConfig {
     mode: PyWorkbookMode,
     eval: Option<formualizer::eval::engine::EvalConfig>,
     enable_changelog: Option<bool>,
+    span_evaluation: Option<bool>,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyWorkbookConfig {
     #[new]
-    #[pyo3(signature = (*, mode = PyWorkbookMode::Interactive, eval_config = None, enable_changelog = None))]
+    #[pyo3(signature = (*, mode = PyWorkbookMode::Interactive, eval_config = None, enable_changelog = None, span_evaluation = None))]
     pub fn new(
         mode: PyWorkbookMode,
         eval_config: Option<PyEvaluationConfig>,
         enable_changelog: Option<bool>,
+        span_evaluation: Option<bool>,
     ) -> Self {
         Self {
             mode,
             eval: eval_config.map(|c| c.inner),
             enable_changelog,
+            span_evaluation,
         }
     }
 
@@ -131,8 +134,8 @@ impl PyWorkbookConfig {
             PyWorkbookMode::Interactive => "interactive",
         };
         format!(
-            "WorkbookConfig(mode={}, enable_changelog={:?})",
-            mode, self.enable_changelog
+            "WorkbookConfig(mode={}, enable_changelog={:?}, span_evaluation={:?})",
+            mode, self.enable_changelog, self.span_evaluation
         )
     }
 }
@@ -172,9 +175,13 @@ pub struct PyWorkbook {
 #[pymethods]
 impl PyWorkbook {
     #[new]
-    #[pyo3(signature = (*, mode=None, config=None))]
-    pub fn new(mode: Option<PyWorkbookMode>, config: Option<PyWorkbookConfig>) -> PyResult<Self> {
-        let cfg = resolve_workbook_config(mode, config)?;
+    #[pyo3(signature = (*, mode=None, config=None, span_evaluation=None))]
+    pub fn new(
+        mode: Option<PyWorkbookMode>,
+        config: Option<PyWorkbookConfig>,
+        span_evaluation: Option<bool>,
+    ) -> PyResult<Self> {
+        let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
         Ok(Self::from_inner_workbook(
             formualizer::workbook::Workbook::new_with_config(cfg),
         ))
@@ -197,7 +204,7 @@ impl PyWorkbook {
     ///     print(wb.sheet_names)
     /// ```
     #[classmethod]
-    #[pyo3(signature = (path, strategy=None, backend=None, *, mode=None, config=None))]
+    #[pyo3(signature = (path, strategy=None, backend=None, *, mode=None, config=None, span_evaluation=None))]
     pub fn load_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
@@ -205,9 +212,10 @@ impl PyWorkbook {
         backend: Option<&str>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
+        span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
         let _ = strategy; // currently unused, default eager
-        Self::from_path(_cls, path, backend, mode, config)
+        Self::from_path(_cls, path, backend, mode, config, span_evaluation)
     }
 
     /// Get or create a sheet by name.
@@ -246,16 +254,17 @@ impl PyWorkbook {
     }
 
     #[classmethod]
-    #[pyo3(signature = (path, backend=None, *, mode=None, config=None))]
+    #[pyo3(signature = (path, backend=None, *, mode=None, config=None, span_evaluation=None))]
     pub fn from_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
         backend: Option<&str>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
+        span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
         let backend = backend.unwrap_or("calamine");
-        let cfg = resolve_workbook_config(mode, config)?;
+        let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
         match backend {
             "calamine" => {
                 use formualizer::workbook::backends::CalamineAdapter;
@@ -311,15 +320,16 @@ impl PyWorkbook {
     ///         is not currently supported in this repository.
     ///     mode/config: Optional workbook configuration.
     #[classmethod]
-    #[pyo3(signature = (data, backend=None, *, mode=None, config=None))]
+    #[pyo3(signature = (data, backend=None, *, mode=None, config=None, span_evaluation=None))]
     pub fn from_bytes<'py>(
         _cls: &Bound<'py, pyo3::types::PyType>,
         data: &Bound<'py, PyBytes>,
         backend: Option<&str>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
+        span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
-        let cfg = resolve_workbook_config(mode, config)?;
+        let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
         Self::from_bytes_impl(data.as_bytes().to_vec(), backend.unwrap_or("umya"), cfg)
     }
 
@@ -1178,6 +1188,7 @@ impl PyWorkbook {
 fn resolve_workbook_config(
     mode: Option<PyWorkbookMode>,
     config: Option<PyWorkbookConfig>,
+    span_evaluation: Option<bool>,
 ) -> PyResult<formualizer::workbook::WorkbookConfig> {
     let resolved = if let Some(cfg) = config {
         if let Some(requested) = mode {
@@ -1199,6 +1210,17 @@ fn resolve_workbook_config(
         if let Some(enabled) = cfg.enable_changelog {
             base.enable_changelog = enabled;
         }
+        match (cfg.span_evaluation, span_evaluation) {
+            (Some(config_value), Some(argument_value)) if config_value != argument_value => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "span_evaluation conflicts with WorkbookConfig.span_evaluation",
+                ));
+            }
+            (Some(enabled), None) | (None, Some(enabled)) => {
+                base = base.with_span_evaluation(enabled);
+            }
+            (Some(_), Some(_)) | (None, None) => {}
+        }
         base
     } else {
         let mut base = match mode.unwrap_or(PyWorkbookMode::Interactive) {
@@ -1206,6 +1228,9 @@ fn resolve_workbook_config(
             PyWorkbookMode::Interactive => formualizer::workbook::WorkbookConfig::interactive(),
         };
         apply_binding_eval_defaults(&mut base.eval);
+        if let Some(enabled) = span_evaluation {
+            base = base.with_span_evaluation(enabled);
+        }
         base
     };
 
@@ -1216,17 +1241,18 @@ fn resolve_workbook_config(
 mod tests {
     use super::{PyWorkbookConfig, resolve_workbook_config};
     use crate::enums::PyWorkbookMode;
-    use formualizer::eval::engine::EvalConfig;
+    use formualizer::eval::engine::{EvalConfig, FormulaPlaneMode};
 
     #[test]
     fn resolve_workbook_config_applies_host_default_without_explicit_eval_config() {
-        let resolved = resolve_workbook_config(None, None).expect("resolve workbook config");
+        let resolved = resolve_workbook_config(None, None, None).expect("resolve workbook config");
         assert_eq!(
             resolved.eval.enable_parallel,
             !cfg!(target_os = "emscripten")
         );
         assert!(resolved.enable_changelog);
         assert!(resolved.eval.defer_graph_building);
+        assert_eq!(resolved.eval.formula_plane_mode, FormulaPlaneMode::Off);
     }
 
     #[test]
@@ -1235,15 +1261,38 @@ mod tests {
             enable_parallel: true,
             ..EvalConfig::default()
         };
-        let cfg = PyWorkbookConfig::new(PyWorkbookMode::Interactive, None, Some(false));
+        let cfg = PyWorkbookConfig::new(PyWorkbookMode::Interactive, None, Some(false), None);
         let cfg = PyWorkbookConfig {
             eval: Some(explicit.clone()),
             ..cfg
         };
 
-        let resolved = resolve_workbook_config(None, Some(cfg)).expect("resolve workbook config");
+        let resolved =
+            resolve_workbook_config(None, Some(cfg), None).expect("resolve workbook config");
         assert_eq!(resolved.eval.enable_parallel, explicit.enable_parallel);
         assert!(!resolved.enable_changelog);
         assert!(resolved.eval.defer_graph_building);
+        assert_eq!(resolved.eval.formula_plane_mode, FormulaPlaneMode::Off);
+    }
+
+    #[test]
+    fn resolve_workbook_config_accepts_span_evaluation_opt_in_argument() {
+        let resolved =
+            resolve_workbook_config(None, None, Some(true)).expect("resolve workbook config");
+        assert_eq!(
+            resolved.eval.formula_plane_mode,
+            FormulaPlaneMode::AuthoritativeExperimental
+        );
+    }
+
+    #[test]
+    fn resolve_workbook_config_accepts_span_evaluation_opt_in_config() {
+        let cfg = PyWorkbookConfig::new(PyWorkbookMode::Interactive, None, None, Some(true));
+        let resolved =
+            resolve_workbook_config(None, Some(cfg), None).expect("resolve workbook config");
+        assert_eq!(
+            resolved.eval.formula_plane_mode,
+            FormulaPlaneMode::AuthoritativeExperimental
+        );
     }
 }

@@ -89,7 +89,7 @@ fn adjust_named_definition(
 
 impl DependencyGraph {
     #[inline]
-    fn name_lookup_key(&self, name: &str) -> String {
+    pub(crate) fn name_lookup_key(&self, name: &str) -> String {
         if self.config.case_sensitive_names {
             name.to_string()
         } else {
@@ -315,7 +315,6 @@ impl DependencyGraph {
             let mut update_data: Option<(VertexId, NameScope, NamedDefinition, bool)> = None;
             if let Some(named_range) = named_range {
                 named_range.definition = new_definition;
-                named_range.dependents.clear();
                 let is_range = matches!(named_range.definition, NamedDefinition::Range(_));
                 update_data = Some((
                     named_range.vertex,

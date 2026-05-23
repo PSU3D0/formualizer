@@ -18,6 +18,7 @@
 use super::super::builtins::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
 use crate::args::ArgSchema;
 use crate::function::Function;
+use crate::function_contract::FunctionDependencyContract;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 // use std::collections::BTreeMap; // removed unused import
@@ -1728,6 +1729,9 @@ impl Function for ProductFn {
     }
     fn variadic(&self) -> bool {
         true
+    }
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract::static_reduction(arity, self.min_args())
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         &ARG_RANGE_NUM_LENIENT_ONE[..]

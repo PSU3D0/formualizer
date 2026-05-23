@@ -3,7 +3,9 @@
 
 use core::panic;
 
-use crate::{args::ArgSchema, traits::ArgumentHandle};
+use crate::{
+    args::ArgSchema, function_contract::FunctionDependencyContract, traits::ArgumentHandle,
+};
 use formualizer_common::{ExcelError, LiteralValue};
 
 bitflags::bitflags! {
@@ -106,6 +108,16 @@ pub trait Function: Send + Sync + 'static {
     /// Returned slice must have 'static lifetime (typically a static array reference).
     fn aliases(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    /// Optional dependency contract for passive planning/FormulaPlane analysis.
+    ///
+    /// The default is deliberately conservative: functions that do not opt in
+    /// must not receive dependency-summary optimization. Implementations should
+    /// return `Some` only for arities and argument roles they can describe
+    /// without under-approximating dependencies.
+    fn dependency_contract(&self, _arity: usize) -> Option<FunctionDependencyContract> {
+        None
     }
 
     #[inline]

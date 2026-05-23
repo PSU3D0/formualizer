@@ -11,7 +11,7 @@ use serde_json::json;
 #[cfg(feature = "formualizer_runner")]
 use anyhow::{Context, Result, bail};
 #[cfg(feature = "formualizer_runner")]
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 #[cfg(feature = "formualizer_runner")]
 use formualizer_bench_core::{BenchmarkResult, BenchmarkSuite, CorrectnessResult, MetricsResult};
 
@@ -41,12 +41,34 @@ struct Cli {
     mode: String,
     #[arg(long)]
     reuse_recalc_plan: bool,
+    #[arg(long, value_enum, default_value_t = BackendMode::Umya)]
+    backend: BackendMode,
+    /// Opt into experimental FormulaPlane span evaluation for this run.
+    #[arg(long)]
+    span_evaluation: bool,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum BackendMode {
+    Umya,
+    Calamine,
+}
+
+#[cfg(feature = "formualizer_runner")]
+impl BackendMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Umya => "umya",
+            Self::Calamine => "calamine",
+        }
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]
 fn run() -> Result<()> {
     use formualizer_workbook::{
-        LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+        CalamineAdapter, LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
     };
 
     let cli = Cli::parse();
@@ -65,16 +87,55 @@ fn run() -> Result<()> {
         );
     }
 
+    let workbook_config = || {
+        WorkbookConfig::ephemeral().with_span_evaluation(
+            cli.span_evaluation || cli.mode.contains("span") || cli.mode.contains("formula_plane"),
+        )
+    };
+
     let load_start = Instant::now();
-    let backend = UmyaAdapter::open_path(&workbook_path)
-        .map_err(|e| anyhow::anyhow!("open workbook via umya: {e}"))?;
-    let mut wb =
-        Workbook::from_reader(backend, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
-            .map_err(|e| anyhow::anyhow!("load workbook into engine: {e}"))?;
+    let (mut wb, open_read_ms, workbook_ingest_ms, adapter_load_stats) = match cli.backend {
+        BackendMode::Umya => {
+            let open_start = Instant::now();
+            let backend = UmyaAdapter::open_path(&workbook_path)
+                .map_err(|e| anyhow::anyhow!("open workbook via umya: {e}"))?;
+            let open_read_ms = open_start.elapsed().as_secs_f64() * 1000.0;
+            let ingest_start = Instant::now();
+            let (wb, stats) = Workbook::from_reader_with_adapter_stats(
+                backend,
+                LoadStrategy::EagerAll,
+                workbook_config(),
+            )
+            .map_err(|e| anyhow::anyhow!("load workbook into engine via umya: {e}"))?;
+            let workbook_ingest_ms = ingest_start.elapsed().as_secs_f64() * 1000.0;
+            (wb, open_read_ms, workbook_ingest_ms, stats)
+        }
+        BackendMode::Calamine => {
+            let open_start = Instant::now();
+            let backend = CalamineAdapter::open_path(&workbook_path)
+                .map_err(|e| anyhow::anyhow!("open workbook via calamine: {e}"))?;
+            let open_read_ms = open_start.elapsed().as_secs_f64() * 1000.0;
+            let ingest_start = Instant::now();
+            let (wb, stats) = Workbook::from_reader_with_adapter_stats(
+                backend,
+                LoadStrategy::EagerAll,
+                workbook_config(),
+            )
+            .map_err(|e| anyhow::anyhow!("load workbook into engine via calamine: {e}"))?;
+            let workbook_ingest_ms = ingest_start.elapsed().as_secs_f64() * 1000.0;
+            (wb, open_read_ms, workbook_ingest_ms, stats)
+        }
+    };
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
+    let load_engine_stats = wb.engine().baseline_stats();
 
     let mut full_eval_ms: Option<f64> = None;
     let mut incremental_us: Option<f64> = None;
+    let mut full_eval_computed_vertices: Option<u64> = None;
+    let mut full_eval_engine_elapsed_ms: Option<f64> = None;
+    let mut incremental_pending_engine_stats = None;
+    let mut incremental_computed_vertices: Option<u64> = None;
+    let mut incremental_engine_elapsed_ms: Option<f64> = None;
     // Full-workbook recalc-plan reuse is primarily intended for stable-topology workloads
     // whose dirty frontier stays large enough to amortize schedule rebuild cost (for example,
     // deep chains and broad fanout). It remains correctness-safe on tiny-frontier cases like
@@ -94,9 +155,12 @@ fn run() -> Result<()> {
             "load" => {}
             "evaluate_all" => {
                 let t0 = Instant::now();
-                wb.evaluate_all()
+                let eval_result = wb
+                    .evaluate_all()
                     .map_err(|e| anyhow::anyhow!("evaluate_all: {e}"))?;
                 full_eval_ms = Some(t0.elapsed().as_secs_f64() * 1000.0);
+                full_eval_computed_vertices = Some(eval_result.computed_vertices as u64);
+                full_eval_engine_elapsed_ms = Some(eval_result.elapsed.as_secs_f64() * 1000.0);
                 if use_recalc_plan {
                     let plan = wb.build_recalc_plan().map_err(|e| {
                         anyhow::anyhow!("build_recalc_plan after evaluate_all: {e}")
@@ -108,7 +172,9 @@ fn run() -> Result<()> {
                 }
             }
             "evaluate_incremental" => {
+                incremental_pending_engine_stats = Some(wb.engine().baseline_stats());
                 let t0 = Instant::now();
+                let incremental_eval_result;
                 let reused_plan = if use_recalc_plan {
                     if let Some(plan) = cached_plan.as_ref() {
                         if plan.has_dynamic_refs() {
@@ -116,36 +182,46 @@ fn run() -> Result<()> {
                                 "recalc_plan_fallback:evaluate_all(dynamic_refs_present)"
                                     .to_string(),
                             );
-                            wb.evaluate_all().map_err(|e| {
+                            let eval_result = wb.evaluate_all().map_err(|e| {
                                 anyhow::anyhow!(
                                     "evaluate_incremental/evaluate_all(dynamic fallback): {e}"
                                 )
                             })?;
+                            incremental_eval_result = Some(eval_result);
                             plan_fallbacks += 1;
                             false
                         } else {
-                            wb.evaluate_with_plan(plan).map_err(|e| {
+                            let eval_result = wb.evaluate_with_plan(plan).map_err(|e| {
                                 anyhow::anyhow!("evaluate_incremental/evaluate_with_plan: {e}")
                             })?;
+                            incremental_eval_result = Some(eval_result);
                             plan_reuses += 1;
                             true
                         }
                     } else {
                         notes.push("recalc_plan_fallback:evaluate_all(no_cached_plan)".to_string());
-                        wb.evaluate_all().map_err(|e| {
+                        let eval_result = wb.evaluate_all().map_err(|e| {
                             anyhow::anyhow!(
                                 "evaluate_incremental/evaluate_all(no cached plan): {e}"
                             )
                         })?;
+                        incremental_eval_result = Some(eval_result);
                         plan_fallbacks += 1;
                         false
                     }
                 } else {
-                    wb.evaluate_all()
+                    let eval_result = wb
+                        .evaluate_all()
                         .map_err(|e| anyhow::anyhow!("evaluate_incremental/evaluate_all: {e}"))?;
+                    incremental_eval_result = Some(eval_result);
                     false
                 };
                 incremental_us = Some(t0.elapsed().as_secs_f64() * 1_000_000.0);
+                if let Some(eval_result) = incremental_eval_result {
+                    incremental_computed_vertices = Some(eval_result.computed_vertices as u64);
+                    incremental_engine_elapsed_ms =
+                        Some(eval_result.elapsed.as_secs_f64() * 1000.0);
+                }
 
                 if use_recalc_plan && !reused_plan {
                     let plan = wb.build_recalc_plan().map_err(|e| {
@@ -247,10 +323,71 @@ fn run() -> Result<()> {
         }
     }
 
+    let final_engine_stats = wb.engine().baseline_stats();
+
     let correctness = verify_correctness(&mut wb, scenario, &root)?;
     let status = if correctness.passed { "ok" } else { "invalid" }.to_string();
 
     let mut metrics_extra = BTreeMap::new();
+    macro_rules! insert_engine_stats {
+        ($prefix:expr, $stats:expr) => {{
+            let prefix = $prefix;
+            let stats = $stats;
+            metrics_extra.insert(
+                format!("{prefix}_graph_vertex_count"),
+                json!(stats.graph_vertex_count as u64),
+            );
+            metrics_extra.insert(
+                format!("{prefix}_graph_formula_vertex_count"),
+                json!(stats.graph_formula_vertex_count as u64),
+            );
+            metrics_extra.insert(
+                format!("{prefix}_graph_edge_count"),
+                json!(stats.graph_edge_count as u64),
+            );
+            metrics_extra.insert(
+                format!("{prefix}_dirty_vertex_count"),
+                json!(stats.dirty_vertex_count as u64),
+            );
+            metrics_extra.insert(
+                format!("{prefix}_evaluation_vertex_count"),
+                json!(stats.evaluation_vertex_count as u64),
+            );
+            metrics_extra.insert(
+                format!("{prefix}_formula_ast_root_count"),
+                json!(stats.formula_ast_root_count as u64),
+            );
+            metrics_extra.insert(
+                format!("{prefix}_formula_ast_node_count"),
+                json!(stats.formula_ast_node_count as u64),
+            );
+            metrics_extra.insert(
+                format!("{prefix}_staged_formula_count"),
+                json!(stats.staged_formula_count as u64),
+            );
+        }};
+    }
+    metrics_extra.insert("backend".to_string(), json!(cli.backend.as_str()));
+    metrics_extra.insert("open_read_ms".to_string(), json!(open_read_ms));
+    metrics_extra.insert("workbook_ingest_ms".to_string(), json!(workbook_ingest_ms));
+    insert_adapter_load_stats(&mut metrics_extra, adapter_load_stats.as_ref());
+    insert_engine_stats!("load", load_engine_stats);
+    insert_engine_stats!("final", final_engine_stats);
+    if let Some(stats) = incremental_pending_engine_stats {
+        insert_engine_stats!("incremental_pending", stats);
+    }
+    if let Some(value) = full_eval_computed_vertices {
+        metrics_extra.insert("full_eval_computed_vertices".to_string(), json!(value));
+    }
+    if let Some(value) = full_eval_engine_elapsed_ms {
+        metrics_extra.insert("full_eval_engine_elapsed_ms".to_string(), json!(value));
+    }
+    if let Some(value) = incremental_computed_vertices {
+        metrics_extra.insert("incremental_computed_vertices".to_string(), json!(value));
+    }
+    if let Some(value) = incremental_engine_elapsed_ms {
+        metrics_extra.insert("incremental_engine_elapsed_ms".to_string(), json!(value));
+    }
     metrics_extra.insert("recalc_plan_requested".to_string(), json!(use_recalc_plan));
     metrics_extra.insert("recalc_plan_builds".to_string(), json!(plan_builds));
     metrics_extra.insert("recalc_plan_reuses".to_string(), json!(plan_reuses));
@@ -285,7 +422,7 @@ fn run() -> Result<()> {
         correctness,
         notes,
         timestamp: chrono::Utc::now().to_rfc3339(),
-        meta: BTreeMap::new(),
+        meta: BTreeMap::from([("backend".to_string(), json!(cli.backend.as_str()))]),
     };
 
     println!("{}", serde_json::to_string(&result)?);
@@ -296,6 +433,40 @@ fn run() -> Result<()> {
 fn resolve_output_path(root: &Path, workbook_path: &str) -> PathBuf {
     let p = PathBuf::from(workbook_path);
     if p.is_absolute() { p } else { root.join(p) }
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn insert_adapter_load_stats(
+    metrics_extra: &mut BTreeMap<String, serde_json::Value>,
+    stats: Option<&formualizer_workbook::AdapterLoadStats>,
+) {
+    let Some(stats) = stats else {
+        return;
+    };
+    if let Some(value) = stats.formula_cells_observed {
+        metrics_extra.insert("adapter_formula_cells_observed".to_string(), json!(value));
+    }
+    if let Some(value) = stats.value_cells_observed {
+        metrics_extra.insert("adapter_value_cells_observed".to_string(), json!(value));
+    }
+    if let Some(value) = stats.value_slots_handed_to_engine {
+        metrics_extra.insert(
+            "adapter_value_slots_handed_to_engine".to_string(),
+            json!(value),
+        );
+    }
+    if let Some(value) = stats.formula_cells_handed_to_engine {
+        metrics_extra.insert(
+            "adapter_formula_cells_handed_to_engine".to_string(),
+            json!(value),
+        );
+    }
+    if let Some(value) = stats.shared_formula_tags_observed {
+        metrics_extra.insert(
+            "adapter_shared_formula_tags_observed".to_string(),
+            json!(value),
+        );
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]

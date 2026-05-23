@@ -1333,6 +1333,55 @@ fn test_update_named_range() {
 }
 
 #[test]
+fn test_update_named_range_multiple_times_redirties_dependents() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+
+    for (row, value) in [(1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)] {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(value))
+            .unwrap();
+    }
+
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    let range_def = |start_row, end_row| {
+        let start = CellRef::new(sid, Coord::from_excel(start_row, 1, true, true));
+        let end = CellRef::new(sid, Coord::from_excel(end_row, 1, true, true));
+        NamedDefinition::Range(RangeRef::new(start, end))
+    };
+
+    engine
+        .define_name("DataRange", range_def(1, 2), NameScope::Workbook)
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 2, parse("=SUM(DataRange)").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(30.0))
+    );
+
+    engine
+        .update_name("DataRange", range_def(2, 3), NameScope::Workbook)
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(50.0))
+    );
+
+    engine
+        .update_name("DataRange", range_def(3, 4), NameScope::Workbook)
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(70.0))
+    );
+}
+
+#[test]
 fn test_delete_named_range() {
     let mut graph = DependencyGraph::new();
 

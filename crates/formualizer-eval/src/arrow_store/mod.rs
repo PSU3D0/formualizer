@@ -831,6 +831,36 @@ pub enum OverlayValue {
 }
 
 impl OverlayValue {
+    pub fn from_literal_value(
+        value: &LiteralValue,
+        date_system: crate::engine::DateSystem,
+    ) -> Self {
+        match value {
+            LiteralValue::Empty => OverlayValue::Empty,
+            LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
+            LiteralValue::Number(n) => OverlayValue::Number(*n),
+            LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
+            LiteralValue::Text(s) => OverlayValue::Text(Arc::from(s.clone())),
+            LiteralValue::Error(e) => OverlayValue::Error(map_error_code(e.kind)),
+            LiteralValue::Date(d) => {
+                let dt = d.and_hms_opt(0, 0, 0).unwrap();
+                OverlayValue::DateTime(crate::builtins::datetime::datetime_to_serial_for(
+                    date_system,
+                    &dt,
+                ))
+            }
+            LiteralValue::DateTime(dt) => OverlayValue::DateTime(
+                crate::builtins::datetime::datetime_to_serial_for(date_system, dt),
+            ),
+            LiteralValue::Time(t) => {
+                OverlayValue::DateTime(t.num_seconds_from_midnight() as f64 / 86_400.0)
+            }
+            LiteralValue::Duration(d) => OverlayValue::Duration(d.num_seconds() as f64 / 86_400.0),
+            LiteralValue::Pending => OverlayValue::Pending,
+            LiteralValue::Array(_) => OverlayValue::Error(map_error_code(ExcelErrorKind::Value)),
+        }
+    }
+
     #[inline]
     pub(crate) fn estimated_payload_bytes(&self) -> usize {
         match self {
@@ -3271,6 +3301,61 @@ fn append_overlay_value_to_lane_builders(
 }
 
 impl ArrowSheet {
+    /// Create a logical sheet whose cells are initially implicit empty values.
+    ///
+    /// Columns start with no materialized chunks; callers can populate only touched
+    /// column/chunk pairs via `set_sparse_overlay_value`. Missing chunks remain
+    /// observable as empty cells through scalar and range reads.
+    pub fn new_sparse(sheet_name: &str, ncols: usize, nrows: usize, chunk_rows: usize) -> Self {
+        let chunk_rows = chunk_rows.max(1);
+        let columns = (0..ncols)
+            .map(|idx| ArrowColumn {
+                chunks: Vec::new(),
+                sparse_chunks: FxHashMap::default(),
+                index: idx as u32,
+            })
+            .collect();
+        let mut sheet = Self {
+            name: Arc::from(sheet_name.to_string()),
+            columns,
+            nrows: 0,
+            chunk_starts: Vec::new(),
+            chunk_rows,
+        };
+        sheet.ensure_row_capacity(nrows);
+        sheet
+    }
+
+    /// Populate a single sparse cell using the overlay cascade while preserving
+    /// implicit-empty chunks elsewhere. This is intended for sparse initial ingest,
+    /// not for user edits; no graph/changelog side effects are triggered here.
+    pub fn set_sparse_overlay_value(
+        &mut self,
+        abs_row: usize,
+        abs_col: usize,
+        value: OverlayValue,
+    ) -> isize {
+        if abs_col >= self.columns.len() {
+            let start = self.columns.len();
+            self.columns
+                .extend((start..=abs_col).map(|idx| ArrowColumn {
+                    chunks: Vec::new(),
+                    sparse_chunks: FxHashMap::default(),
+                    index: idx as u32,
+                }));
+        }
+        if abs_row >= self.nrows as usize {
+            self.ensure_row_capacity(abs_row + 1);
+        }
+        let Some((ch_idx, in_off)) = self.chunk_of_row(abs_row) else {
+            return 0;
+        };
+        let Some(ch) = self.ensure_column_chunk_mut(abs_col, ch_idx) else {
+            return 0;
+        };
+        ch.overlay.set(in_off, value)
+    }
+
     /// Return a summary of each column's chunk counts, total rows, and lane presence.
     pub fn shape(&self) -> Vec<ColumnShape> {
         self.columns

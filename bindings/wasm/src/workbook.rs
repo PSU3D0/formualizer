@@ -41,6 +41,29 @@ thread_local! {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct JsWorkbookLoadOptions {
+    span_evaluation: Option<bool>,
+}
+
+fn workbook_config_from_options(
+    options: Option<JsValue>,
+) -> Result<formualizer::workbook::WorkbookConfig, JsValue> {
+    let parsed = match options {
+        Some(value) if !value.is_null() && !value.is_undefined() => {
+            serde_wasm_bindgen::from_value::<JsWorkbookLoadOptions>(value)
+                .map_err(|e| js_error(format!("invalid workbook load options: {e}")))?
+        }
+        _ => JsWorkbookLoadOptions::default(),
+    };
+    let mut cfg = formualizer::workbook::WorkbookConfig::interactive();
+    if let Some(enabled) = parsed.span_evaluation {
+        cfg = cfg.with_span_evaluation(enabled);
+    }
+    Ok(cfg)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct JsRegisterFunctionOptions {
     min_args: Option<usize>,
     max_args: Option<usize>,
@@ -420,13 +443,23 @@ impl Workbook {
     /// Construct from a JSON workbook string (feature: json)
     #[wasm_bindgen(js_name = "fromJson")]
     pub fn from_json(json: String) -> Result<Workbook, JsValue> {
+        Self::from_json_with_options(json, None)
+    }
+
+    /// Construct from a JSON workbook string with options, e.g.
+    /// `{ spanEvaluation: true }` to opt into experimental FormulaPlane spans.
+    #[wasm_bindgen(js_name = "fromJsonWithOptions")]
+    pub fn from_json_with_options(
+        json: String,
+        options: Option<JsValue>,
+    ) -> Result<Workbook, JsValue> {
         #[cfg(feature = "json")]
         {
             use formualizer::workbook::backends::JsonAdapter;
             use formualizer::workbook::traits::SpreadsheetReader;
             let adapter = <JsonAdapter as SpreadsheetReader>::open_bytes(json.into_bytes())
                 .map_err(|e| js_error(format!("open failed: {e}")))?;
-            let cfg = formualizer::workbook::WorkbookConfig::interactive();
+            let cfg = workbook_config_from_options(options)?;
             let wb = formualizer::workbook::Workbook::from_reader(
                 adapter,
                 formualizer::workbook::LoadStrategy::EagerAll,
@@ -449,13 +482,23 @@ impl Workbook {
     /// Construct from XLSX bytes via the Calamine reader path (feature: calamine)
     #[wasm_bindgen(js_name = "fromXlsxBytes")]
     pub fn from_xlsx_bytes(bytes: Vec<u8>) -> Result<Workbook, JsValue> {
+        Self::from_xlsx_bytes_with_options(bytes, None)
+    }
+
+    /// Construct from XLSX bytes with options, e.g. `{ spanEvaluation: true }`
+    /// to opt into experimental FormulaPlane spans.
+    #[wasm_bindgen(js_name = "fromXlsxBytesWithOptions")]
+    pub fn from_xlsx_bytes_with_options(
+        bytes: Vec<u8>,
+        options: Option<JsValue>,
+    ) -> Result<Workbook, JsValue> {
         #[cfg(feature = "calamine")]
         {
             use formualizer::workbook::backends::CalamineAdapter;
             use formualizer::workbook::traits::SpreadsheetReader;
             let adapter = <CalamineAdapter as SpreadsheetReader>::open_bytes(bytes)
                 .map_err(|e| js_error(format!("open failed: {e}")))?;
-            let cfg = formualizer::workbook::WorkbookConfig::interactive();
+            let cfg = workbook_config_from_options(options)?;
             let wb = formualizer::workbook::Workbook::from_reader(
                 adapter,
                 formualizer::workbook::LoadStrategy::EagerAll,

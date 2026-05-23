@@ -117,8 +117,13 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 /// ```
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
-#[pyo3(signature = (path, strategy=None))]
-fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<workbook::PyWorkbook> {
+#[pyo3(signature = (path, strategy=None, *, span_evaluation=None))]
+fn load_workbook(
+    py: Python,
+    path: &str,
+    strategy: Option<&str>,
+    span_evaluation: Option<bool>,
+) -> PyResult<workbook::PyWorkbook> {
     // Backward-compat convenience
     let _ = strategy; // placeholder, backend currently fixed to calamine
     workbook::PyWorkbook::from_path(
@@ -127,6 +132,7 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
         Some("calamine"),
         None,
         None,
+        span_evaluation,
     )
 }
 
@@ -136,12 +142,13 @@ fn load_workbook(py: Python, path: &str, strategy: Option<&str>) -> PyResult<wor
 /// the `umya` backend because `calamine` byte-open is not yet supported here.
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
-#[pyo3(signature = (data, strategy=None, backend=None))]
+#[pyo3(signature = (data, strategy=None, backend=None, *, span_evaluation=None))]
 fn load_workbook_bytes<'py>(
     py: Python<'py>,
     data: &Bound<'py, PyBytes>,
     strategy: Option<&str>,
     backend: Option<&str>,
+    span_evaluation: Option<bool>,
 ) -> PyResult<workbook::PyWorkbook> {
     let _ = strategy; // placeholder, backend currently fixed to eager load
     workbook::PyWorkbook::from_bytes(
@@ -150,6 +157,7 @@ fn load_workbook_bytes<'py>(
         Some(backend.unwrap_or("umya")),
         None,
         None,
+        span_evaluation,
     )
 }
 

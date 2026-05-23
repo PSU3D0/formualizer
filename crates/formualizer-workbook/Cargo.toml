@@ -1,6 +1,6 @@
 [package]
 name = "formualizer-workbook"
-version = "0.5.9"
+version = "0.6.0"
 edition = "2024"
 description = "Ergonomic workbook API over the Formualizer engine (sheets, loaders, staging, undo/redo)"
 homepage.workspace = true
@@ -14,7 +14,7 @@ categories = ["data-structures", "mathematics"]
 [dependencies]
 formualizer-parse = { workspace = true }
 formualizer-common = { workspace = true }
-formualizer-eval = { path = "../formualizer-eval", version = "0.5.9", default-features = false }
+formualizer-eval = { path = "../formualizer-eval", version = "0.6.0", default-features = false }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
@@ -23,7 +23,7 @@ parking_lot = "0.12"
 chrono = { workspace = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
-zip = { version = "0.6.6", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
 quick-xml = { version = "0.39", features = ["encoding"], optional = true }
 
 [features]
@@ -51,7 +51,7 @@ wasm_plugins = ["dep:wasmparser", "dep:serde_json", "formualizer-common/serde"]
 wasm_runtime_wasmtime = ["wasm_plugins", "dep:wasmtime"]
 
 [dependencies.calamine]
-version = "0.34"
+version = "0.35"
 optional = true
 
 [dependencies.memmap2]

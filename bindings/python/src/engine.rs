@@ -1,4 +1,4 @@
-use formualizer::eval::engine::{DateSystem, EvalConfig};
+use formualizer::eval::engine::{DateSystem, EvalConfig, FormulaPlaneMode};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
@@ -49,6 +49,7 @@ pub(crate) fn merge_python_eval_config(base: &mut EvalConfig, python_config: &Ev
     base.case_sensitive_tables = python_config.case_sensitive_tables;
     base.warmup = python_config.warmup.clone();
     base.date_system = python_config.date_system;
+    base.formula_plane_mode = python_config.formula_plane_mode;
 }
 
 #[gen_stub_pymethods]
@@ -128,13 +129,33 @@ impl PyEvaluationConfig {
         self.inner.case_sensitive_tables
     }
 
+    /// Opt in to experimental FormulaPlane span evaluation. Disabled by default.
+    /// When enabled, copied formula spans may be evaluated
+    /// by the experimental FormulaPlane runtime instead of materialized as
+    /// per-cell graph formulas.
+    #[setter]
+    pub fn set_span_evaluation(&mut self, value: bool) {
+        self.inner.formula_plane_mode = if value {
+            FormulaPlaneMode::AuthoritativeExperimental
+        } else {
+            FormulaPlaneMode::Off
+        };
+    }
+
+    #[getter]
+    pub fn get_span_evaluation(&self) -> bool {
+        self.inner.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "EvaluationConfig(parallel={parallel}, max_threads={max_threads:?}, range_limit={range_limit}, seed={seed})",
+            "EvaluationConfig(parallel={parallel}, max_threads={max_threads:?}, range_limit={range_limit}, seed={seed}, span_evaluation={span_evaluation})",
             parallel = self.inner.enable_parallel,
             max_threads = self.inner.max_threads,
             range_limit = self.inner.range_expansion_limit,
-            seed = self.inner.workbook_seed
+            seed = self.inner.workbook_seed,
+            span_evaluation =
+                self.inner.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
         )
     }
 

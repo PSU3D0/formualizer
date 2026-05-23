@@ -235,12 +235,25 @@ pub enum LoadStrategy {
     WriteOnly,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AdapterLoadStats {
+    pub formula_cells_observed: Option<u64>,
+    pub value_cells_observed: Option<u64>,
+    pub value_slots_handed_to_engine: Option<u64>,
+    pub formula_cells_handed_to_engine: Option<u64>,
+    pub shared_formula_tags_observed: Option<u64>,
+}
+
 pub trait SpreadsheetReader: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     fn access_granularity(&self) -> AccessGranularity;
     fn capabilities(&self) -> BackendCaps;
     fn sheet_names(&self) -> Result<Vec<String>, Self::Error>;
+
+    fn load_stats(&self) -> Option<AdapterLoadStats> {
+        None
+    }
 
     /// Workbook-level defined names (workbook scoped or sheet scoped).
     ///
