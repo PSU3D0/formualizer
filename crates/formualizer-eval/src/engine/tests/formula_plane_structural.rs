@@ -47,20 +47,27 @@ fn build_three_formula_column_family(rows: u32) -> Engine<TestWorkbook> {
 
 fn build_single_formula_column_family(rows: u32) -> Engine<TestWorkbook> {
     let mut engine = authoritative_engine();
-    let mut formulas = Vec::new();
-    for row in 1..=rows {
-        engine
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
-        formulas.push(record(&mut engine, row, 2, &format!("=A{row}*2")));
-    }
-    engine
-        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
-        .unwrap();
+    add_single_formula_column_family(&mut engine, "Sheet1", rows);
     assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     engine.evaluate_all().unwrap();
     engine
+}
+
+fn add_single_formula_column_family(engine: &mut Engine<TestWorkbook>, sheet: &str, rows: u32) {
+    if engine.sheet_id(sheet).is_none() {
+        engine.add_sheet(sheet).unwrap();
+    }
+    let mut formulas = Vec::new();
+    for row in 1..=rows {
+        engine
+            .set_cell_value(sheet, row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(engine, row, 2, &format!("=A{row}*2")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(sheet, formulas)])
+        .unwrap();
 }
 
 fn only_active_span_is_constant(engine: &Engine<TestWorkbook>) -> bool {
@@ -728,6 +735,87 @@ fn formula_plane_delete_fully_contains_span_removes_it_and_clears_overlays() {
         Some(LiteralValue::Number(5.0))
     );
     assert_eq!(engine.get_cell_value("Sheet1", 5, 2), None);
+}
+
+#[test]
+fn formula_plane_ingest_rejects_unbounded_reference_to_unknown_sheet_without_creating_sheet() {
+    let mut engine = authoritative_engine();
+    let formula = record(&mut engine, 1, 1, "=SUM(MissingSheet!A:A)");
+
+    let result =
+        engine.ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", vec![formula])]);
+
+    assert!(result.is_err());
+    assert!(engine.sheet_id("MissingSheet").is_none());
+}
+
+#[test]
+fn formula_plane_add_sheet_preserves_existing_active_spans() {
+    let mut engine = build_single_formula_column_family(100);
+
+    engine.add_sheet("Added").unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(100.0))
+    );
+}
+
+#[test]
+fn formula_plane_remove_unrelated_sheet_preserves_existing_active_spans() {
+    let mut engine = authoritative_engine();
+    let unrelated = engine.add_sheet("Unrelated").unwrap();
+    add_single_formula_column_family(&mut engine, "Sheet1", 100);
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    engine.remove_sheet(unrelated).unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(100.0))
+    );
+}
+
+#[test]
+fn formula_plane_rename_sheet_preserves_existing_active_spans() {
+    let mut engine = build_single_formula_column_family(100);
+    let sheet = engine.sheet_id("Sheet1").unwrap();
+
+    engine.rename_sheet(sheet, "Renamed").unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Renamed", 50, 2),
+        Some(LiteralValue::Number(100.0))
+    );
+}
+
+#[test]
+fn formula_plane_duplicate_sheet_only_demotes_source_sheet_spans() {
+    let mut engine = authoritative_engine();
+    add_single_formula_column_family(&mut engine, "Sheet1", 100);
+    add_single_formula_column_family(&mut engine, "Other", 100);
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+
+    engine.duplicate_sheet("Sheet1", "Copy").unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Other", 50, 2),
+        Some(LiteralValue::Number(100.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Copy", 50, 2),
+        Some(LiteralValue::Number(100.0))
+    );
 }
 
 #[test]

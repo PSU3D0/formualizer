@@ -397,14 +397,19 @@ impl Iterator for PlacementDomainIter {
         if self.done {
             return (0, Some(0));
         }
-        let remaining = match self.mode {
-            PlacementDomainIterMode::RowRun => self.row_end.saturating_sub(self.row) + 1,
-            PlacementDomainIterMode::ColRun => self.col_end.saturating_sub(self.col) + 1,
+        let remaining_u64 = match self.mode {
+            PlacementDomainIterMode::RowRun => u64::from(self.row_end.saturating_sub(self.row)) + 1,
+            PlacementDomainIterMode::ColRun => u64::from(self.col_end.saturating_sub(self.col)) + 1,
             PlacementDomainIterMode::Rect => {
-                let width = self.col_end - self.col_start + 1;
-                (self.row_end - self.row) * width + (self.col_end - self.col + 1)
+                let width = u64::from(self.col_end.saturating_sub(self.col_start)) + 1;
+                let remaining_full_rows = u64::from(self.row_end.saturating_sub(self.row));
+                let remaining_in_row = u64::from(self.col_end.saturating_sub(self.col)) + 1;
+                remaining_full_rows
+                    .saturating_mul(width)
+                    .saturating_add(remaining_in_row)
             }
-        } as usize;
+        };
+        let remaining = usize::try_from(remaining_u64).unwrap_or(usize::MAX);
         (remaining, Some(remaining))
     }
 }
@@ -1427,6 +1432,14 @@ mod tests {
             .expect("overlay record")
             .kind
             .clone()
+    }
+
+    #[test]
+    fn placement_domain_rect_size_hint_uses_wide_arithmetic() {
+        let domain = PlacementDomain::rect(0, 0, 1_048_575, 0, 16_383);
+        let expected = 1_048_576usize * 16_384usize;
+
+        assert_eq!(domain.iter().size_hint(), (expected, Some(expected)));
     }
 
     #[test]

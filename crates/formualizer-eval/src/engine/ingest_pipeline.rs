@@ -473,10 +473,11 @@ impl<'a> IngestPipeline<'a> {
                     return Ok(());
                 }
 
-                let sr = start_row.unwrap();
-                let sc = start_col.unwrap();
-                let er = end_row.unwrap();
-                let ec = end_col.unwrap();
+                let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                    (*start_row, *start_col, *end_row, *end_col)
+                else {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
+                };
                 if sr > er || sc > ec {
                     return Err(ExcelError::new(ExcelErrorKind::Ref));
                 }
@@ -560,7 +561,12 @@ impl<'a> IngestPipeline<'a> {
         match sheet {
             SharedSheetLocator::Id(id) => Ok(id),
             SharedSheetLocator::Current => Ok(current_sheet_id),
-            SharedSheetLocator::Name(name) => Ok(self.sheet_registry.id_for(name.as_ref())),
+            SharedSheetLocator::Name(name) => {
+                self.sheet_registry.get_id(name.as_ref()).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("Sheet not found: {name}"))
+                })
+            }
         }
     }
 

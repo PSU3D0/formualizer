@@ -16,6 +16,17 @@ fn range_limit_config(limit: usize) -> EvalConfig {
 }
 
 #[test]
+fn unbounded_reference_to_unknown_sheet_errors_without_creating_sheet() {
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, range_limit_config(16));
+
+    let result = engine.set_cell_formula("Sheet1", 1, 1, parse("=SUM(MissingSheet!A:A)").unwrap());
+
+    assert!(result.is_err());
+    assert!(engine.sheet_id("MissingSheet").is_none());
+}
+
+#[test]
 fn infinite_column_empty_sheet_sum_count_are_zero() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, range_limit_config(16));
