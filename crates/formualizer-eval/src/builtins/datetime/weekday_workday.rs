@@ -20,31 +20,20 @@ fn non_leap_day_of_year(month: u32, day: u32) -> i64 {
 
 fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
-    match v {
-        LiteralValue::Number(f) => Ok(f),
-        LiteralValue::Int(i) => Ok(i as f64),
-        LiteralValue::Date(d) => Ok(date_to_serial(&d)),
-        LiteralValue::DateTime(dt) => Ok(date_to_serial(&dt.date())),
-        LiteralValue::Text(s) => s
-            .parse::<f64>()
-            .map_err(|_| ExcelError::new_value().with_message("Not a valid number")),
-        LiteralValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
-        LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e),
-        _ => Err(ExcelError::new_value()),
+    if let LiteralValue::Error(e) = v {
+        return Err(e);
     }
+    crate::coercion::to_number_lenient(&v).map_err(|_| ExcelError::new_value())
 }
 
 fn coerce_to_int(arg: &ArgumentHandle) -> Result<i64, ExcelError> {
     let v = arg.value()?.into_literal();
-    match v {
-        LiteralValue::Number(f) => Ok(f.trunc() as i64),
-        LiteralValue::Int(i) => Ok(i),
-        LiteralValue::Boolean(b) => Ok(if b { 1 } else { 0 }),
-        LiteralValue::Empty => Ok(0),
-        LiteralValue::Error(e) => Err(e),
-        _ => Err(ExcelError::new_value()),
+    if let LiteralValue::Error(e) = v {
+        return Err(e);
     }
+    crate::coercion::to_number_lenient(&v)
+        .map(|f| f.trunc() as i64)
+        .map_err(|_| ExcelError::new_value())
 }
 
 /// Returns the day-of-week index for a date serial with configurable numbering.

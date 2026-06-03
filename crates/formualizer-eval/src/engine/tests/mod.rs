@@ -61,7 +61,9 @@ mod spill_parallel_501;
 mod spill_semantics_101;
 
 mod date_arithmetic_ops;
+mod date_function_duration_cells;
 mod date_math_parity;
+mod edate_eomonth_engine;
 
 mod hardening_503;
 

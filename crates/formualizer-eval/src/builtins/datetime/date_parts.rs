@@ -1,6 +1,6 @@
 //! Date and time component extraction functions
 
-use super::serial::{date_to_serial, datetime_to_serial, serial_to_date, serial_to_datetime};
+use super::serial::{serial_to_date, serial_to_datetime};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -10,20 +10,12 @@ use formualizer_macros::func_caps;
 
 fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
-    match v {
-        LiteralValue::Number(f) => Ok(f),
-        LiteralValue::Int(i) => Ok(i as f64),
-        LiteralValue::Text(s) => s.parse::<f64>().map_err(|_| {
-            ExcelError::new_value().with_message("Date/time serial is not a valid number")
-        }),
-        LiteralValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
-        LiteralValue::Date(d) => Ok(date_to_serial(&d)),
-        LiteralValue::DateTime(dt) => Ok(datetime_to_serial(&dt)),
-        LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e),
-        _ => Err(ExcelError::new_value()
-            .with_message("Date/time functions expect numeric or text-numeric serials")),
+    if let LiteralValue::Error(e) = v {
+        return Err(e);
     }
+    crate::coercion::to_number_lenient(&v).map_err(|_| {
+        ExcelError::new_value().with_message("Date/time functions expect a numeric serial value")
+    })
 }
 
 fn coerce_to_date(arg: &ArgumentHandle) -> Result<NaiveDate, ExcelError> {
