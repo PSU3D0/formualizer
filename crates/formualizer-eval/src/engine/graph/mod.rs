@@ -873,6 +873,10 @@ impl DependencyGraph {
         coords: Vec<AbsCoord>,
         vertex_ids: Vec<u32>,
     ) {
+        // Merge in base/delta out-edges for vertices the formula-target
+        // adjacency doesn't cover (e.g. named-range pass-through vertices)
+        // before handing the final adjacency to the pure builder.
+        let adjacency = self.edges.adjacency_with_carried_forward_edges(adjacency);
         self.edges
             .build_from_adjacency(adjacency, coords, vertex_ids);
     }
@@ -2189,6 +2193,21 @@ impl DependencyGraph {
     ) -> VertexId {
         if let Some(&vertex_id) = self.cell_to_vertex.get(addr) {
             return vertex_id;
+        }
+
+        // During first-load bulk ingest the fast path populates
+        // ``load_packed_to_vertex`` but skips ``cell_to_vertex``. Promote
+        // the entry into ``cell_to_vertex`` so subsequent lookups are O(1)
+        // and consistent across the two maps.
+        if self.first_load_assume_new {
+            let packed = Self::packed_cell_key(
+                addr.sheet_id,
+                AbsCoord::new(addr.coord.row(), addr.coord.col()),
+            );
+            if let Some(&existing) = self.load_packed_to_vertex.get(&packed) {
+                self.cell_to_vertex.insert(*addr, existing);
+                return existing;
+            }
         }
 
         created_placeholders.push(*addr);

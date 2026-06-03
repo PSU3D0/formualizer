@@ -417,6 +417,21 @@ impl DeltaEdgeSlab {
         self.coord_changed = false;
     }
 
+    /// Iterate over all (from, &additions) pairs in the delta. Used by
+    /// build_from_adjacency to carry forward delta-only edges that the
+    /// adjacency input does not cover.
+    pub fn additions_iter(&self) -> impl Iterator<Item = (&VertexId, &FxHashSet<VertexId>)> {
+        self.additions.iter()
+    }
+
+    /// Return removals scheduled for `from` (empty slice if none).
+    pub fn removals_for(&self, from: VertexId) -> impl Iterator<Item = VertexId> + '_ {
+        self.removals
+            .get(&from)
+            .into_iter()
+            .flat_map(|set| set.iter().copied())
+    }
+
     /// Apply delta to CSR, creating a new CSR structure
     pub fn apply_to_csr(
         &self,
@@ -656,8 +671,79 @@ impl CsrMutableEdges {
         }
     }
 
+    /// Return a copy of `adjacency` extended with the current base+delta
+    /// out-edges of every existing vertex that the input does not cover.
+    ///
+    /// Named-range pass-through vertices (NamedScalar/NamedArray) emit edges
+    /// to their underlying cells via `add_edge` during load; those edges live
+    /// in `base`/`delta` but are not part of the formula-target adjacency that
+    /// bulk-ingest's finalize hands to [`build_from_adjacency`]. Feeding the
+    /// raw adjacency straight to that (pure) builder would therefore silently
+    /// drop the pass-through vertices' out-edges, and `build_demand_subgraph`
+    /// could never reach the underlying cells. Callers run this first to merge
+    /// those edges back in, then pass the result to `build_from_adjacency`.
+    ///
+    /// Must be called BEFORE `build_from_adjacency`, which overwrites
+    /// `base`/`delta`/`vertex_ids`.
+    pub fn adjacency_with_carried_forward_edges(
+        &self,
+        mut adjacency: Vec<(u32, Vec<u32>)>,
+    ) -> Vec<(u32, Vec<u32>)> {
+        let covered: FxHashSet<u32> = adjacency.iter().map(|(vid, _)| *vid).collect();
+        // Carry forward base+delta out-edges for ANY existing vertex not in
+        // the new adjacency input. `vertex_ids` already tracks every vertex
+        // allocated so far, including named-range pass-through vertices.
+        for &vid in &self.vertex_ids {
+            if covered.contains(&vid) {
+                continue;
+            }
+            let v = VertexId(vid);
+            // Merge with any pending delta edges for this vertex.
+            let merged = if self.delta.op_count() == 0 {
+                self.base.out_edges(v).to_vec()
+            } else {
+                self.delta.merged_view(&self.base, v)
+            };
+            if !merged.is_empty() {
+                adjacency.push((vid, merged.into_iter().map(|v| v.0).collect()));
+            }
+        }
+        // Also carry forward delta-only additions (additions to vertices that
+        // weren't in vertex_ids yet — e.g., freshly allocated names whose
+        // add_vertex didn't trigger a rebuild). Pure deltas should be rare
+        // here, but include them for completeness.
+        for (&from, adds) in self.delta.additions_iter() {
+            if covered.contains(&from.0) {
+                continue;
+            }
+            if adjacency.iter().any(|(v, _)| *v == from.0) {
+                continue;
+            }
+            let removals: FxHashSet<u32> = self.delta.removals_for(from).map(|v| v.0).collect();
+            let mut base_set: FxHashSet<u32> =
+                self.base.out_edges(from).iter().map(|v| v.0).collect();
+            for r in &removals {
+                base_set.remove(r);
+            }
+            for &add in adds {
+                base_set.insert(add.0);
+            }
+            if !base_set.is_empty() {
+                let mut targets: Vec<u32> = base_set.into_iter().collect();
+                targets.sort_unstable();
+                adjacency.push((from.0, targets));
+            }
+        }
+        adjacency
+    }
+
     /// Build underlying CSR directly from adjacency and provided coords/ids.
     /// This replaces the current base and clears the delta slab.
+    ///
+    /// Pure builder: it uses exactly the edges in `adjacency` and does not
+    /// consult the existing `base`/`delta`. To preserve edges for vertices
+    /// absent from `adjacency` (e.g. named-range pass-through vertices), run
+    /// [`adjacency_with_carried_forward_edges`] first and pass its result in.
     pub fn build_from_adjacency(
         &mut self,
         adjacency: Vec<(u32, Vec<u32>)>,
