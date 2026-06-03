@@ -8689,8 +8689,15 @@ where
                 .with_message("Row and column must be >= 1".to_string()));
         }
 
+        // ``defer_graph_building`` mode stages formulas during bulk load
+        // and lazily promotes them into the dependency graph at evaluate
+        // time. Per-cell evaluation must drain *all* staged sheets, not
+        // just the requested target — a cell's formula can reference
+        // any sheet in the workbook, and a cross-sheet ref to a still-
+        // staged source would silently evaluate to ``None`` if that
+        // source sheet hadn't been promoted yet.
         if self.config.defer_graph_building {
-            self.build_graph_for_sheets(std::iter::once(sheet))?;
+            self.build_graph_all()?;
         }
 
         let result = self.evaluate_cells(&[(sheet, row, col)])?;
@@ -8719,12 +8726,11 @@ where
         if targets.is_empty() {
             return Ok(Vec::new());
         }
+        // See ``evaluate_cell`` for why we drain *all* staged sheets in
+        // ``defer_graph_building`` mode: cross-sheet refs to still-staged
+        // sources would otherwise evaluate to ``None``.
         if self.config.defer_graph_building {
-            let mut sheets: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
-            for (s, _, _) in targets.iter() {
-                sheets.insert(*s);
-            }
-            self.build_graph_for_sheets(sheets.iter().cloned())?;
+            self.build_graph_all()?;
         }
         if self.graph.formula_authority().active_span_count() > 0 {
             let _ = self.evaluate_authoritative_formula_plane_all()?;
@@ -8757,12 +8763,11 @@ where
         if targets.is_empty() {
             return Ok(Vec::new());
         }
+        // See ``evaluate_cell`` for why we drain *all* staged sheets in
+        // ``defer_graph_building`` mode: cross-sheet refs to still-staged
+        // sources would otherwise evaluate to ``None``.
         if self.config.defer_graph_building {
-            let mut sheets: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
-            for (s, _, _) in targets.iter() {
-                sheets.insert(*s);
-            }
-            self.build_graph_for_sheets(sheets.iter().cloned())?;
+            self.build_graph_all()?;
         }
         if self.graph.formula_authority().active_span_count() > 0 {
             if cancel_flag.load(Ordering::Relaxed) {
