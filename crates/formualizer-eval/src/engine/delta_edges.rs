@@ -671,28 +671,28 @@ impl CsrMutableEdges {
         }
     }
 
-    /// Build underlying CSR directly from adjacency and provided coords/ids.
-    /// This replaces the current base and clears the delta slab.
-    pub fn build_from_adjacency(
-        &mut self,
+    /// Return a copy of `adjacency` extended with the current base+delta
+    /// out-edges of every existing vertex that the input does not cover.
+    ///
+    /// Named-range pass-through vertices (NamedScalar/NamedArray) emit edges
+    /// to their underlying cells via `add_edge` during load; those edges live
+    /// in `base`/`delta` but are not part of the formula-target adjacency that
+    /// bulk-ingest's finalize hands to [`build_from_adjacency`]. Feeding the
+    /// raw adjacency straight to that (pure) builder would therefore silently
+    /// drop the pass-through vertices' out-edges, and `build_demand_subgraph`
+    /// could never reach the underlying cells. Callers run this first to merge
+    /// those edges back in, then pass the result to `build_from_adjacency`.
+    ///
+    /// Must be called BEFORE `build_from_adjacency`, which overwrites
+    /// `base`/`delta`/`vertex_ids`.
+    pub fn adjacency_with_carried_forward_edges(
+        &self,
         mut adjacency: Vec<(u32, Vec<u32>)>,
-        coords: Vec<AbsCoord>,
-        vertex_ids: Vec<u32>,
-    ) {
-        // Carry forward any edges that exist in the current base or delta
-        // for vertices NOT covered by the input adjacency. Named-range
-        // pass-through vertices (NamedScalar/NamedArray) emit edges to
-        // their underlying cells via add_edge during load. Those edges
-        // live in base after the auto-rebuild that follows each add_vertex
-        // call. Bulk-ingest's finalize only hands us formula-target edges
-        // in the adjacency input, so without this carry-forward the
-        // named-range vertex's out-edges would be silently dropped and
-        // build_demand_subgraph would never reach the underlying cells.
-        let covered: rustc_hash::FxHashSet<u32> = adjacency.iter().map(|(vid, _)| *vid).collect();
-        // Carry forward base-only out-edges for ANY existing vertex not in
-        // the new adjacency input. Iterate over the current vertex_ids
-        // (which already track every vertex allocated so far, including
-        // named-range pass-through vertices) before we overwrite the field.
+    ) -> Vec<(u32, Vec<u32>)> {
+        let covered: FxHashSet<u32> = adjacency.iter().map(|(vid, _)| *vid).collect();
+        // Carry forward base+delta out-edges for ANY existing vertex not in
+        // the new adjacency input. `vertex_ids` already tracks every vertex
+        // allocated so far, including named-range pass-through vertices.
         for &vid in &self.vertex_ids {
             if covered.contains(&vid) {
                 continue;
@@ -708,10 +708,10 @@ impl CsrMutableEdges {
                 adjacency.push((vid, merged.into_iter().map(|v| v.0).collect()));
             }
         }
-        // Also carry forward delta-only additions (additions to vertices
-        // that weren't in vertex_ids yet — e.g., freshly allocated names
-        // whose add_vertex didn't trigger a rebuild). Pure deltas should
-        // be rare here, but include them for completeness.
+        // Also carry forward delta-only additions (additions to vertices that
+        // weren't in vertex_ids yet — e.g., freshly allocated names whose
+        // add_vertex didn't trigger a rebuild). Pure deltas should be rare
+        // here, but include them for completeness.
         for (&from, adds) in self.delta.additions_iter() {
             if covered.contains(&from.0) {
                 continue;
@@ -719,9 +719,8 @@ impl CsrMutableEdges {
             if adjacency.iter().any(|(v, _)| *v == from.0) {
                 continue;
             }
-            let removals: rustc_hash::FxHashSet<u32> =
-                self.delta.removals_for(from).map(|v| v.0).collect();
-            let mut base_set: rustc_hash::FxHashSet<u32> =
+            let removals: FxHashSet<u32> = self.delta.removals_for(from).map(|v| v.0).collect();
+            let mut base_set: FxHashSet<u32> =
                 self.base.out_edges(from).iter().map(|v| v.0).collect();
             for r in &removals {
                 base_set.remove(r);
@@ -735,6 +734,22 @@ impl CsrMutableEdges {
                 adjacency.push((from.0, targets));
             }
         }
+        adjacency
+    }
+
+    /// Build underlying CSR directly from adjacency and provided coords/ids.
+    /// This replaces the current base and clears the delta slab.
+    ///
+    /// Pure builder: it uses exactly the edges in `adjacency` and does not
+    /// consult the existing `base`/`delta`. To preserve edges for vertices
+    /// absent from `adjacency` (e.g. named-range pass-through vertices), run
+    /// [`adjacency_with_carried_forward_edges`] first and pass its result in.
+    pub fn build_from_adjacency(
+        &mut self,
+        adjacency: Vec<(u32, Vec<u32>)>,
+        coords: Vec<AbsCoord>,
+        vertex_ids: Vec<u32>,
+    ) {
         self.base = CsrEdges::from_adjacency(adjacency, &coords);
         self.coords = coords;
         self.vertex_ids = vertex_ids;

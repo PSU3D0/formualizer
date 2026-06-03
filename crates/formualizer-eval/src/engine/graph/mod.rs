@@ -873,6 +873,10 @@ impl DependencyGraph {
         coords: Vec<AbsCoord>,
         vertex_ids: Vec<u32>,
     ) {
+        // Merge in base/delta out-edges for vertices the formula-target
+        // adjacency doesn't cover (e.g. named-range pass-through vertices)
+        // before handing the final adjacency to the pure builder.
+        let adjacency = self.edges.adjacency_with_carried_forward_edges(adjacency);
         self.edges
             .build_from_adjacency(adjacency, coords, vertex_ids);
     }
