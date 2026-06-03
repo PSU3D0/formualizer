@@ -4,24 +4,41 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Consolidated parser implementations by removing the legacy token-vector parser and making the source-span parser the public `Parser`; consumers relying on legacy parser internals should update to the canonical parser APIs. (#104)
+
 ### Added
 
 - Added experimental opt-in FormulaPlane span evaluation for large copied-formula families. The default workbook path remains the stable dependency graph; span evaluation must be enabled explicitly through Rust, Python, WASM/JS, or C FFI configuration.
 - Added sparse initial ingest paths for JSON, Umya, and Calamine loaders to avoid materializing formatting-only worksheet extent as populated cells.
 - Added publishable Calamine-backed XLSX loading improvements that preserve sparse-friendly engine ingest while remaining compatible with the crates.io Calamine API.
 - Added benchmark corpus tooling and structural invariants for Off/Auth parity, backend comparison, and FormulaPlane promotion metrics.
+- Added idiomatic parser APIs including `Parser::new`, builder-based construction, `TokenStream` parsing, `FromStr`, and `TryFrom` conversions for `Parser` and `ASTNode`. (#104)
+- Added 28 worksheet functions across engineering, info/reference, lookup/array-shape, and text categories, including Bessel functions, `FORMULATEXT`, `SHEET`, `SHEETS`, `ISREF`, `TOCOL`, `TOROW`, and byte-oriented text functions. (#101)
 
 ### Improved
 
 - Improved FormulaPlane promotion and evaluation for arithmetic, lookup, criteria aggregate, whole-axis, cross-sheet, and affine literal formula families.
 - Improved structural edit handling for promoted spans, including row/column insert/delete shifting, bounded dirty projection, and conservative demotion when required.
 - Reduced FormulaPlane memory usage for integer-like affine literal families by encoding literal bindings compactly instead of retaining one dictionary entry per placement.
+- Kept FormulaPlane structural demotion linear by pre-creating direct-dependency placeholder vertices before batched edge insertion and by clearing computed overlays by range instead of one cell at a time.
+- Optimized holiday handling in `NETWORKDAYS`, `WORKDAY`, and their `.INTL` variants by deduplicating holidays once and using binary search during date loops. (#102)
 - Aligned direct XLSX helper dependencies with the newer Calamine/`zip` stack where possible.
 
 ### Fixed
 
 - Preserved default stable semantics by keeping FormulaPlane/span evaluation disabled unless explicitly requested.
 - Preserved Off/Auth parity across the validated benchmark corpus while falling back to the legacy graph for unsupported span shapes.
+- Fixed parser handling for leading empty function arguments such as `=FOO(,A1:C3)`, preserving the intended empty-argument arity. (#103, #104)
+- Hardened FormulaPlane sheet lifecycle operations so add/remove/duplicate/rename operations preserve unrelated spans, demote only affected spans, reject unbounded references to unknown sheets without creating phantom sheets, and avoid region-index panics or iterator overflow. (#105)
+- Fixed deferred graph-building evaluation so `evaluate_cell` and `evaluate_cells` drain all staged sheets before demand evaluation, preventing cross-sheet references to staged formula cells from resolving as `None`. (#106)
+- Fixed date functions to coerce `Date` and `DateTime` cells through the common lenient numeric path, and corrected `EDATE`/`EOMONTH` negative-month year-boundary handling. (#107)
+- Fixed named-range incremental evaluation by walking through `Named`/`Range` pass-through vertices in demand subgraphs and preserving named-range edges through CSR rebuilds. (#108)
+
+### Security and hardening
+
+- Updated lockfiles to pick up patched `openssl`, `thin-vec`, and `tmp` versions, clearing high-severity Dependabot alerts in Rust and benchmark harness dependencies.
 
 ### Known limitations
 
