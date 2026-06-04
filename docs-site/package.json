@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@vercel/analytics": "^1.6.1",
-    "formualizer": "^0.4.3",
+    "formualizer": "^0.6.0",
     "fumadocs-core": "16.7.7",
     "fumadocs-mdx": "14.2.11",
     "fumadocs-ui": "16.7.7",
