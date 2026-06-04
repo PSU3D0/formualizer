@@ -2,7 +2,7 @@
 
 All notable changes to Formualizer will be documented in this file.
 
-## [Unreleased]
+## [0.6.0] - 2026-06-03
 
 ### Breaking changes
 
