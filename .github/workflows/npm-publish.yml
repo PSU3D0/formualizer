@@ -1,0 +1,63 @@
+name: Publish npm
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to publish (tag or commit SHA)
+        required: true
+        default: v0.6.0
+      package_dir:
+        description: Directory containing the npm package
+        required: true
+        default: bindings/wasm
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM package (bundler)
+        working-directory: ${{ inputs.package_dir }}
+        run: |
+          wasm-pack build --target bundler --out-dir pkg --release
+          rm -f pkg/.gitignore
+
+      - name: Install JS dependencies
+        working-directory: ${{ inputs.package_dir }}
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Build TS wrapper
+        working-directory: ${{ inputs.package_dir }}
+        run: pnpm run build:ts
+
+      - name: Publish to npm
+        working-directory: ${{ inputs.package_dir }}
+        run: npm publish --ignore-scripts --access public --provenance
