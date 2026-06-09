@@ -7819,13 +7819,14 @@ where
         // evaluate_all).
         let mut cycle_errors = 0;
         let mut computed_vertices = 0;
-        for unit in &schedule.units {
+        for &unit in &schedule.units {
             match unit {
-                ScheduleUnit::Cycle(cycle) => {
-                    self.apply_cycle_outcome(cycle, None, None);
+                ScheduleUnit::Cycle(i) => {
+                    self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
                     cycle_errors += 1;
                 }
-                ScheduleUnit::Layer(layer) => {
+                ScheduleUnit::Layer(i) => {
+                    let layer = schedule.unit_layer(i);
                     if self.thread_pool.is_some() && layer.vertices.len() > 1 {
                         computed_vertices += self.evaluate_layer_parallel(layer)?;
                     } else {
@@ -7898,13 +7899,14 @@ where
 
         let mut cycle_errors = 0;
         let mut computed_vertices = 0;
-        for unit in &schedule.units {
+        for &unit in &schedule.units {
             match unit {
-                ScheduleUnit::Cycle(cycle) => {
-                    self.apply_cycle_outcome(cycle, Some(delta), None);
+                ScheduleUnit::Cycle(i) => {
+                    self.apply_cycle_outcome(schedule.unit_cycle(i), Some(delta), None);
                     cycle_errors += 1;
                 }
-                ScheduleUnit::Layer(layer) => {
+                ScheduleUnit::Layer(i) => {
+                    let layer = schedule.unit_layer(i);
                     if self.thread_pool.is_some() && layer.vertices.len() > 1 {
                         computed_vertices +=
                             self.evaluate_layer_parallel_with_delta(layer, delta)?;
@@ -7982,18 +7984,24 @@ where
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
-        for unit in &plan.schedule.units {
+        for &unit in &plan.schedule.units {
             match unit {
-                ScheduleUnit::Cycle(cycle) => {
+                ScheduleUnit::Cycle(i) => {
                     // Recalc-plan quirk: stamp only the DIRTY members of the
                     // cycle, and count the cycle only when it had any.
-                    let stamped = self.apply_cycle_outcome(cycle, None, Some(&dirty_set));
+                    let stamped = self.apply_cycle_outcome(
+                        plan.schedule.unit_cycle(i),
+                        None,
+                        Some(&dirty_set),
+                    );
                     if stamped > 0 {
                         cycle_errors += 1;
                     }
                 }
-                ScheduleUnit::Layer(layer) => {
-                    let work: Vec<VertexId> = layer
+                ScheduleUnit::Layer(i) => {
+                    let work: Vec<VertexId> = plan
+                        .schedule
+                        .unit_layer(i)
                         .vertices
                         .iter()
                         .copied()
@@ -8424,13 +8432,14 @@ where
     ) -> Result<(usize, usize), ExcelError> {
         let mut computed_vertices = 0;
         let mut cycle_count = 0;
-        for unit in &schedule.units {
+        for &unit in &schedule.units {
             match unit {
-                ScheduleUnit::Cycle(cycle) => {
-                    self.apply_cycle_outcome(cycle, None, None);
+                ScheduleUnit::Cycle(i) => {
+                    self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
                     cycle_count += 1;
                 }
-                ScheduleUnit::Layer(layer) => {
+                ScheduleUnit::Layer(i) => {
+                    let layer = schedule.unit_layer(i);
                     if self.thread_pool.is_some() && layer.vertices.len() > 1 {
                         computed_vertices += self.evaluate_layer_parallel(layer)?;
                     } else {
@@ -8573,13 +8582,14 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            for unit in &schedule.units {
+            for &unit in &schedule.units {
                 match unit {
-                    ScheduleUnit::Cycle(cycle) => {
-                        self.apply_cycle_outcome(cycle, Some(delta), None);
+                    ScheduleUnit::Cycle(i) => {
+                        self.apply_cycle_outcome(schedule.unit_cycle(i), Some(delta), None);
                         cycle_errors += 1;
                     }
-                    ScheduleUnit::Layer(layer) => {
+                    ScheduleUnit::Layer(i) => {
+                        let layer = schedule.unit_layer(i);
                         if self.thread_pool.is_some() && layer.vertices.len() > 1 {
                             computed_vertices +=
                                 self.evaluate_layer_parallel_with_delta(layer, delta)?;
@@ -9251,9 +9261,9 @@ where
 
             // Walk units in condensation order, checking cancellation between
             // units (formerly between cycles and between layers).
-            for unit in &schedule.units {
+            for &unit in &schedule.units {
                 match unit {
-                    ScheduleUnit::Cycle(cycle) => {
+                    ScheduleUnit::Cycle(i) => {
                         // Check cancellation between cycles
                         if cancel_flag.load(Ordering::Relaxed) {
                             if let Some(mut t) = telemetry {
@@ -9266,10 +9276,11 @@ where
                             ));
                         }
 
-                        self.apply_cycle_outcome(cycle, None, None);
+                        self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
                         cycle_errors += 1;
                     }
-                    ScheduleUnit::Layer(layer) => {
+                    ScheduleUnit::Layer(i) => {
+                        let layer = schedule.unit_layer(i);
                         // Check cancellation between layers
                         if cancel_flag.load(Ordering::Relaxed) {
                             if let Some(mut t) = telemetry {
@@ -9404,9 +9415,9 @@ where
         // units (formerly between cycles and between layers).
         let mut cycle_errors = 0;
         let mut computed_vertices = 0;
-        for unit in &schedule.units {
+        for &unit in &schedule.units {
             match unit {
-                ScheduleUnit::Cycle(cycle) => {
+                ScheduleUnit::Cycle(i) => {
                     // Check cancellation between cycles
                     if cancel_flag.load(Ordering::Relaxed) {
                         return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
@@ -9414,10 +9425,11 @@ where
                         ));
                     }
 
-                    self.apply_cycle_outcome(cycle, None, None);
+                    self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
                     cycle_errors += 1;
                 }
-                ScheduleUnit::Layer(layer) => {
+                ScheduleUnit::Layer(i) => {
+                    let layer = schedule.unit_layer(i);
                     // Check cancellation between layers
                     if cancel_flag.load(Ordering::Relaxed) {
                         return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
@@ -13036,14 +13048,15 @@ where
 
             // Walk units in condensation order: stamp cycles at their
             // position, evaluate layers with ChangeLog recording.
-            for unit in &schedule.units {
+            for &unit in &schedule.units {
                 match unit {
-                    ScheduleUnit::Cycle(cycle) => {
-                        self.apply_cycle_outcome(cycle, None, None);
+                    ScheduleUnit::Cycle(i) => {
+                        self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
                         cycle_errors += 1;
                     }
-                    ScheduleUnit::Layer(layer) => {
-                        computed_vertices += self.evaluate_layer_logged(layer, log)?;
+                    ScheduleUnit::Layer(i) => {
+                        computed_vertices +=
+                            self.evaluate_layer_logged(schedule.unit_layer(i), log)?;
                     }
                 }
             }

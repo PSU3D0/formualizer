@@ -8,7 +8,7 @@
 //! exactly as before.
 
 use super::common::get_vertex_ids_in_order;
-use crate::engine::scheduler::ScheduleUnit;
+use crate::engine::scheduler::{Schedule, ScheduleUnit};
 use crate::engine::{DependencyGraph, Scheduler, VertexId};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
@@ -54,12 +54,12 @@ fn vertex_id_at(graph: &DependencyGraph, row: u32, col: u32) -> VertexId {
 }
 
 /// Map each scheduled vertex to the index of the unit that contains it.
-fn unit_positions(units: &[ScheduleUnit]) -> rustc_hash::FxHashMap<VertexId, usize> {
+fn unit_positions(schedule: &Schedule) -> rustc_hash::FxHashMap<VertexId, usize> {
     let mut pos = rustc_hash::FxHashMap::default();
-    for (i, unit) in units.iter().enumerate() {
+    for (i, &unit) in schedule.units.iter().enumerate() {
         let members: &[VertexId] = match unit {
-            ScheduleUnit::Layer(layer) => &layer.vertices,
-            ScheduleUnit::Cycle(cycle) => cycle,
+            ScheduleUnit::Layer(l) => &schedule.unit_layer(l).vertices,
+            ScheduleUnit::Cycle(c) => schedule.unit_cycle(c),
         };
         for &v in members {
             let prev = pos.insert(v, i);
@@ -101,20 +101,20 @@ fn units_position_cycle_between_upstream_and_dependent() {
     let schedule = scheduler.create_schedule(&all).unwrap();
 
     assert_eq!(schedule.units.len(), 3, "units: {:?}", schedule.units);
-    match &schedule.units[0] {
-        ScheduleUnit::Layer(l) => assert_eq!(l.vertices, vec![u_id]),
+    match schedule.units[0] {
+        ScheduleUnit::Layer(l) => assert_eq!(schedule.unit_layer(l).vertices, vec![u_id]),
         other => panic!("unit 0 should be Layer{{U}}, got {other:?}"),
     }
-    match &schedule.units[1] {
+    match schedule.units[1] {
         ScheduleUnit::Cycle(c) => {
-            let set: FxHashSet<VertexId> = c.iter().copied().collect();
+            let set: FxHashSet<VertexId> = schedule.unit_cycle(c).iter().copied().collect();
             assert_eq!(set.len(), 2);
             assert!(set.contains(&b_id) && set.contains(&c_id));
         }
         other => panic!("unit 1 should be Cycle{{B,C}}, got {other:?}"),
     }
-    match &schedule.units[2] {
-        ScheduleUnit::Layer(l) => assert_eq!(l.vertices, vec![d_id]),
+    match schedule.units[2] {
+        ScheduleUnit::Layer(l) => assert_eq!(schedule.unit_layer(l).vertices, vec![d_id]),
         other => panic!("unit 2 should be Layer{{D}}, got {other:?}"),
     }
 
@@ -160,20 +160,20 @@ fn units_order_multi_scc_chain() {
     let schedule = scheduler.create_schedule(&all).unwrap();
 
     assert_eq!(schedule.units.len(), 3, "units: {:?}", schedule.units);
-    match &schedule.units[0] {
+    match schedule.units[0] {
         ScheduleUnit::Cycle(c) => {
-            let set: FxHashSet<VertexId> = c.iter().copied().collect();
+            let set: FxHashSet<VertexId> = schedule.unit_cycle(c).iter().copied().collect();
             assert!(set.contains(&a_id) && set.contains(&b_id));
         }
         other => panic!("unit 0 should be Cycle{{A,B}}, got {other:?}"),
     }
-    match &schedule.units[1] {
-        ScheduleUnit::Layer(l) => assert_eq!(l.vertices, vec![c_id]),
+    match schedule.units[1] {
+        ScheduleUnit::Layer(l) => assert_eq!(schedule.unit_layer(l).vertices, vec![c_id]),
         other => panic!("unit 1 should be Layer{{C}}, got {other:?}"),
     }
-    match &schedule.units[2] {
+    match schedule.units[2] {
         ScheduleUnit::Cycle(c) => {
-            let set: FxHashSet<VertexId> = c.iter().copied().collect();
+            let set: FxHashSet<VertexId> = schedule.unit_cycle(c).iter().copied().collect();
             assert!(set.contains(&d_id) && set.contains(&e_id));
         }
         other => panic!("unit 2 should be Cycle{{D,E}}, got {other:?}"),
@@ -212,10 +212,13 @@ fn independent_cycles_same_wave_sorted_by_smallest_member() {
     let schedule = scheduler.create_schedule(&all).unwrap();
 
     assert_eq!(schedule.units.len(), 2, "units: {:?}", schedule.units);
-    match (&schedule.units[0], &schedule.units[1]) {
+    match (schedule.units[0], schedule.units[1]) {
         (ScheduleUnit::Cycle(first), ScheduleUnit::Cycle(second)) => {
-            assert!(first.contains(&a_id), "smaller-id SCC must come first");
-            assert!(second.contains(&c_id));
+            assert!(
+                schedule.unit_cycle(first).contains(&a_id),
+                "smaller-id SCC must come first"
+            );
+            assert!(schedule.unit_cycle(second).contains(&c_id));
         }
         other => panic!("expected two Cycle units, got {other:?}"),
     }
@@ -260,11 +263,11 @@ fn fast_path_units_match_legacy_layers() {
         assert_eq!(got.vertices, want.vertices);
     }
 
-    // Units are exactly those layers, wrapped, in order.
+    // Units are exactly those layers, referenced in order.
     assert_eq!(schedule.units.len(), legacy_layers.len());
-    for (unit, want) in schedule.units.iter().zip(legacy_layers.iter()) {
+    for (&unit, want) in schedule.units.iter().zip(legacy_layers.iter()) {
         match unit {
-            ScheduleUnit::Layer(l) => assert_eq!(l.vertices, want.vertices),
+            ScheduleUnit::Layer(l) => assert_eq!(schedule.unit_layer(l).vertices, want.vertices),
             other => panic!("fast path must emit only Layer units, got {other:?}"),
         }
     }
@@ -323,17 +326,18 @@ fn cycle_units_respect_condensation_invariant_random() {
         let scheduled: FxHashSet<VertexId> = all.iter().copied().collect();
         let schedule = scheduler.create_schedule(&all).unwrap();
 
-        let pos = unit_positions(&schedule.units);
+        let pos = unit_positions(&schedule);
         assert_eq!(
             pos.len(),
             all.len(),
             "seed {seed}: every scheduled vertex must appear in exactly one unit"
         );
 
-        for (idx, unit) in schedule.units.iter().enumerate() {
-            let ScheduleUnit::Cycle(members) = unit else {
+        for (idx, &unit) in schedule.units.iter().enumerate() {
+            let ScheduleUnit::Cycle(c) = unit else {
                 continue;
             };
+            let members = schedule.unit_cycle(c);
             let member_set: FxHashSet<VertexId> = members.iter().copied().collect();
             for &v in members {
                 for dep in graph.get_dependencies(v) {
