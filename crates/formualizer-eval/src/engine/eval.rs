@@ -10656,7 +10656,21 @@ where
         row: u32,
         col: u32,
     ) -> Result<LiteralValue, ExcelError> {
-        let sheet_name = sheet.unwrap_or_else(|| self.default_sheet_name()); // FIXME: should use formula current-sheet context
+        // This context-free trait method has no knowledge of the formula's
+        // current sheet, so an unqualified (`None`) reference cannot be resolved
+        // here. Previously this fell back to `default_sheet_name()`, which leaked
+        // the reference onto an unrelated sheet (issue #110). Interpreter paths
+        // already qualify references with the current sheet before reaching this
+        // method (see `Interpreter::implicit_intersection_from_reference`), and
+        // the sheet-aware scalar path goes through `resolve_cell_reference_value`
+        // with an explicit `current_sheet`. Returning #REF! for an unqualified
+        // reference here surfaces the missing context instead of silently
+        // returning data from the wrong sheet.
+        let Some(sheet_name) = sheet else {
+            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                "Unqualified cell reference resolved without sheet context".to_string(),
+            ));
+        };
         // Prefer engine's unified accessor which consults Arrow store for base values
         // and falls back to graph for formulas and stored values.
         if let Some(v) = self.get_cell_value(sheet_name, row, col) {
