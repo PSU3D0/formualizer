@@ -14,8 +14,8 @@ use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
     DependencyGraph, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport,
-    FormulaParseDiagnostic, FormulaParsePolicy, FormulaPlaneMode, RowVisibilitySource, Scheduler,
-    VertexId, VertexKind, VisibilityMaskMode,
+    FormulaParseDiagnostic, FormulaParsePolicy, FormulaPlaneMode, RowVisibilitySource,
+    ScheduleUnit, Scheduler, VertexId, VertexKind, VisibilityMaskMode,
 };
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
@@ -7814,26 +7814,24 @@ where
         #[cfg(feature = "tracing")]
         drop(_span_sched);
 
-        // Handle cycles first
+        // Walk schedule units in condensation order: stamp each cyclic SCC at
+        // its position, evaluate layers (parallel when enabled, mirroring
+        // evaluate_all).
         let mut cycle_errors = 0;
-        for cycle in &schedule.cycles {
-            cycle_errors += 1;
-            let circ_error = LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Circular dependency detected".to_string()),
-            );
-            for &vertex_id in cycle {
-                self.stamp_cycle_error(vertex_id, &circ_error, None);
-            }
-        }
-
-        // Evaluate layers (parallel when enabled, mirroring evaluate_all)
         let mut computed_vertices = 0;
-        for layer in &schedule.layers {
-            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                computed_vertices += self.evaluate_layer_parallel(layer)?;
-            } else {
-                computed_vertices += self.evaluate_layer_sequential(layer)?;
+        for unit in &schedule.units {
+            match unit {
+                ScheduleUnit::Cycle(cycle) => {
+                    self.apply_cycle_outcome(cycle, None, None);
+                    cycle_errors += 1;
+                }
+                ScheduleUnit::Layer(layer) => {
+                    if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                        computed_vertices += self.evaluate_layer_parallel(layer)?;
+                    } else {
+                        computed_vertices += self.evaluate_layer_sequential(layer)?;
+                    }
+                }
             }
         }
 
@@ -7899,23 +7897,22 @@ where
         let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
 
         let mut cycle_errors = 0;
-        let circ_error = LiteralValue::Error(
-            ExcelError::new(ExcelErrorKind::Circ)
-                .with_message("Circular dependency detected".to_string()),
-        );
-        for cycle in &schedule.cycles {
-            cycle_errors += 1;
-            for &vertex_id in cycle {
-                self.stamp_cycle_error(vertex_id, &circ_error, Some(delta));
-            }
-        }
-
         let mut computed_vertices = 0;
-        for layer in &schedule.layers {
-            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                computed_vertices += self.evaluate_layer_parallel_with_delta(layer, delta)?;
-            } else {
-                computed_vertices += self.evaluate_layer_sequential_with_delta(layer, delta)?;
+        for unit in &schedule.units {
+            match unit {
+                ScheduleUnit::Cycle(cycle) => {
+                    self.apply_cycle_outcome(cycle, Some(delta), None);
+                    cycle_errors += 1;
+                }
+                ScheduleUnit::Layer(layer) => {
+                    if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                        computed_vertices +=
+                            self.evaluate_layer_parallel_with_delta(layer, delta)?;
+                    } else {
+                        computed_vertices +=
+                            self.evaluate_layer_sequential_with_delta(layer, delta)?;
+                    }
+                }
             }
         }
 
@@ -7985,39 +7982,33 @@ where
         let mut computed_vertices = 0;
         let mut cycle_errors = 0;
 
-        if !plan.schedule.cycles.is_empty() {
-            let circ_error = LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Circular dependency detected".to_string()),
-            );
-            for cycle in &plan.schedule.cycles {
-                if !cycle.iter().any(|v| dirty_set.contains(v)) {
-                    continue;
-                }
-                cycle_errors += 1;
-                for &vertex_id in cycle {
-                    if dirty_set.contains(&vertex_id) {
-                        self.stamp_cycle_error(vertex_id, &circ_error, None);
+        for unit in &plan.schedule.units {
+            match unit {
+                ScheduleUnit::Cycle(cycle) => {
+                    // Recalc-plan quirk: stamp only the DIRTY members of the
+                    // cycle, and count the cycle only when it had any.
+                    let stamped = self.apply_cycle_outcome(cycle, None, Some(&dirty_set));
+                    if stamped > 0 {
+                        cycle_errors += 1;
                     }
                 }
-            }
-        }
-
-        for layer in &plan.schedule.layers {
-            let work: Vec<VertexId> = layer
-                .vertices
-                .iter()
-                .copied()
-                .filter(|v| dirty_set.contains(v))
-                .collect();
-            if work.is_empty() {
-                continue;
-            }
-            let temp_layer = crate::engine::scheduler::Layer { vertices: work };
-            if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
-                computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
-            } else {
-                computed_vertices += self.evaluate_layer_sequential(&temp_layer)?;
+                ScheduleUnit::Layer(layer) => {
+                    let work: Vec<VertexId> = layer
+                        .vertices
+                        .iter()
+                        .copied()
+                        .filter(|v| dirty_set.contains(v))
+                        .collect();
+                    if work.is_empty() {
+                        continue;
+                    }
+                    let temp_layer = crate::engine::scheduler::Layer { vertices: work };
+                    if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
+                        computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
+                    } else {
+                        computed_vertices += self.evaluate_layer_sequential(&temp_layer)?;
+                    }
+                }
             }
         }
 
@@ -8422,32 +8413,33 @@ where
         self.evaluate_all_legacy_impl()
     }
 
-    fn legacy_pass_apply_cycles(&mut self, schedule: &crate::engine::scheduler::Schedule) -> usize {
-        let circ_error = LiteralValue::Error(
-            ExcelError::new(ExcelErrorKind::Circ)
-                .with_message("Circular dependency detected".to_string()),
-        );
-        for cycle in &schedule.cycles {
-            for &vertex_id in cycle {
-                self.stamp_cycle_error(vertex_id, &circ_error, None);
-            }
-        }
-        schedule.cycles.len()
-    }
-
-    fn legacy_pass_run_layers(
+    /// Walk a schedule's units in condensation order: stamp each cyclic SCC
+    /// at its position and evaluate each layer (parallel when enabled).
+    ///
+    /// Returns `(computed_vertices, cycle_count)` where `cycle_count` is the
+    /// number of Cycle units walked (the former `schedule.cycles.len()`).
+    fn legacy_pass_run_units(
         &mut self,
         schedule: &crate::engine::scheduler::Schedule,
-    ) -> Result<usize, ExcelError> {
+    ) -> Result<(usize, usize), ExcelError> {
         let mut computed_vertices = 0;
-        for layer in &schedule.layers {
-            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                computed_vertices += self.evaluate_layer_parallel(layer)?;
-            } else {
-                computed_vertices += self.evaluate_layer_sequential(layer)?;
+        let mut cycle_count = 0;
+        for unit in &schedule.units {
+            match unit {
+                ScheduleUnit::Cycle(cycle) => {
+                    self.apply_cycle_outcome(cycle, None, None);
+                    cycle_count += 1;
+                }
+                ScheduleUnit::Layer(layer) => {
+                    if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                        computed_vertices += self.evaluate_layer_parallel(layer)?;
+                    } else {
+                        computed_vertices += self.evaluate_layer_sequential(layer)?;
+                    }
+                }
             }
         }
-        Ok(computed_vertices)
+        Ok((computed_vertices, cycle_count))
     }
 
     /// Legacy `evaluate_all` body, reachable from the FormulaPlane coordinator
@@ -8484,8 +8476,9 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            cycle_errors += self.legacy_pass_apply_cycles(&schedule);
-            computed_vertices += self.legacy_pass_run_layers(&schedule)?;
+            let (pass_computed, pass_cycles) = self.legacy_pass_run_units(&schedule)?;
+            computed_vertices += pass_computed;
+            cycle_errors += pass_cycles;
 
             // Check if dynamic dependencies changed
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
@@ -8580,22 +8573,21 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            let circ_error = LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Circular dependency detected".to_string()),
-            );
-            for cycle in &schedule.cycles {
-                cycle_errors += 1;
-                for &vertex_id in cycle {
-                    self.stamp_cycle_error(vertex_id, &circ_error, Some(delta));
-                }
-            }
-
-            for layer in &schedule.layers {
-                if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                    computed_vertices += self.evaluate_layer_parallel_with_delta(layer, delta)?;
-                } else {
-                    computed_vertices += self.evaluate_layer_sequential_with_delta(layer, delta)?;
+            for unit in &schedule.units {
+                match unit {
+                    ScheduleUnit::Cycle(cycle) => {
+                        self.apply_cycle_outcome(cycle, Some(delta), None);
+                        cycle_errors += 1;
+                    }
+                    ScheduleUnit::Layer(layer) => {
+                        if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                            computed_vertices +=
+                                self.evaluate_layer_parallel_with_delta(layer, delta)?;
+                        } else {
+                            computed_vertices +=
+                                self.evaluate_layer_sequential_with_delta(layer, delta)?;
+                        }
+                    }
                 }
             }
 
@@ -9257,49 +9249,47 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            // Handle cycles first by marking them with #CIRC!
-            for cycle in &schedule.cycles {
-                // Check cancellation between cycles
-                if cancel_flag.load(Ordering::Relaxed) {
-                    if let Some(mut t) = telemetry {
-                        t.bailout_reason = Some("cancelled");
-                        t.replan_iterations = replan_iterations;
-                        self.last_virtual_dep_telemetry = t;
+            // Walk units in condensation order, checking cancellation between
+            // units (formerly between cycles and between layers).
+            for unit in &schedule.units {
+                match unit {
+                    ScheduleUnit::Cycle(cycle) => {
+                        // Check cancellation between cycles
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            if let Some(mut t) = telemetry {
+                                t.bailout_reason = Some("cancelled");
+                                t.replan_iterations = replan_iterations;
+                                self.last_virtual_dep_telemetry = t;
+                            }
+                            return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                                "Evaluation cancelled during cycle handling".to_string(),
+                            ));
+                        }
+
+                        self.apply_cycle_outcome(cycle, None, None);
+                        cycle_errors += 1;
                     }
-                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                        .with_message("Evaluation cancelled during cycle handling".to_string()));
-                }
+                    ScheduleUnit::Layer(layer) => {
+                        // Check cancellation between layers
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            if let Some(mut t) = telemetry {
+                                t.bailout_reason = Some("cancelled");
+                                t.replan_iterations = replan_iterations;
+                                self.last_virtual_dep_telemetry = t;
+                            }
+                            return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                                .with_message("Evaluation cancelled between layers".to_string()));
+                        }
 
-                cycle_errors += 1;
-                let circ_error = LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Circ)
-                        .with_message("Circular dependency detected".to_string()),
-                );
-                for &vertex_id in cycle {
-                    self.stamp_cycle_error(vertex_id, &circ_error, None);
-                }
-            }
-
-            // Evaluate acyclic layers sequentially with cancellation checks
-            for layer in &schedule.layers {
-                // Check cancellation between layers
-                if cancel_flag.load(Ordering::Relaxed) {
-                    if let Some(mut t) = telemetry {
-                        t.bailout_reason = Some("cancelled");
-                        t.replan_iterations = replan_iterations;
-                        self.last_virtual_dep_telemetry = t;
+                        // Evaluate vertices in this layer (parallel or sequential)
+                        if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                            computed_vertices +=
+                                self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
+                        } else {
+                            computed_vertices +=
+                                self.evaluate_layer_sequential_cancellable(layer, cancel_flag)?;
+                        }
                     }
-                    return Err(ExcelError::new(ExcelErrorKind::Cancelled)
-                        .with_message("Evaluation cancelled between layers".to_string()));
-                }
-
-                // Evaluate vertices in this layer (parallel or sequential)
-                if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                    computed_vertices +=
-                        self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
-                } else {
-                    computed_vertices +=
-                        self.evaluate_layer_sequential_cancellable(layer, cancel_flag)?;
                 }
             }
 
@@ -9410,43 +9400,43 @@ where
         let scheduler = Scheduler::new(&self.graph);
         let schedule = scheduler.create_schedule_with_virtual(&precedents_to_eval, &vdeps)?;
 
-        // Handle cycles first
+        // Walk units in condensation order with cancellation checks between
+        // units (formerly between cycles and between layers).
         let mut cycle_errors = 0;
-        for cycle in &schedule.cycles {
-            // Check cancellation between cycles
-            if cancel_flag.load(Ordering::Relaxed) {
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
-                    "Demand-driven evaluation cancelled during cycle handling".to_string(),
-                ));
-            }
-
-            cycle_errors += 1;
-            let circ_error = LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Circular dependency detected".to_string()),
-            );
-            for &vertex_id in cycle {
-                self.stamp_cycle_error(vertex_id, &circ_error, None);
-            }
-        }
-
-        // Evaluate layers with cancellation checks
         let mut computed_vertices = 0;
-        for layer in &schedule.layers {
-            // Check cancellation between layers
-            if cancel_flag.load(Ordering::Relaxed) {
-                return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
-                    "Demand-driven evaluation cancelled between layers".to_string(),
-                ));
-            }
+        for unit in &schedule.units {
+            match unit {
+                ScheduleUnit::Cycle(cycle) => {
+                    // Check cancellation between cycles
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                            "Demand-driven evaluation cancelled during cycle handling".to_string(),
+                        ));
+                    }
 
-            // Evaluate vertices in this layer (parallel or sequential)
-            if self.thread_pool.is_some() && layer.vertices.len() > 1 {
-                computed_vertices +=
-                    self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
-            } else {
-                computed_vertices +=
-                    self.evaluate_layer_sequential_cancellable_demand_driven(layer, cancel_flag)?;
+                    self.apply_cycle_outcome(cycle, None, None);
+                    cycle_errors += 1;
+                }
+                ScheduleUnit::Layer(layer) => {
+                    // Check cancellation between layers
+                    if cancel_flag.load(Ordering::Relaxed) {
+                        return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
+                            "Demand-driven evaluation cancelled between layers".to_string(),
+                        ));
+                    }
+
+                    // Evaluate vertices in this layer (parallel or sequential)
+                    if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                        computed_vertices +=
+                            self.evaluate_layer_parallel_cancellable(layer, cancel_flag)?;
+                    } else {
+                        computed_vertices += self
+                            .evaluate_layer_sequential_cancellable_demand_driven(
+                                layer,
+                                cancel_flag,
+                            )?;
+                    }
+                }
             }
         }
 
@@ -11638,6 +11628,42 @@ where
         }
     }
 
+    /// Apply the evaluation outcome for one cyclic SCC: stamp `#CIRC!` on its
+    /// (optionally filtered) members via `stamp_cycle_error`.
+    ///
+    /// This is the single per-SCC application point used by every schedule
+    /// consumer walking `Schedule::units` (pre-work for #112, where cyclic
+    /// SCCs will gain runtime verdicts instead of an unconditional stamp).
+    ///
+    /// `dirty_filter` preserves the recalc-plan quirk: when `Some(dirty)`,
+    /// only members present in the set are stamped.
+    ///
+    /// Returns the number of vertices stamped (0 when a filter excludes every
+    /// member), so callers can keep their site-specific `cycle_errors`
+    /// accounting.
+    fn apply_cycle_outcome(
+        &mut self,
+        cycle: &[VertexId],
+        mut delta: Option<&mut DeltaCollector>,
+        dirty_filter: Option<&FxHashSet<VertexId>>,
+    ) -> usize {
+        let circ_error = LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Circular dependency detected".to_string()),
+        );
+        let mut stamped = 0usize;
+        for &vertex_id in cycle {
+            if let Some(filter) = dirty_filter
+                && !filter.contains(&vertex_id)
+            {
+                continue;
+            }
+            self.stamp_cycle_error(vertex_id, &circ_error, delta.as_deref_mut());
+            stamped += 1;
+        }
+        stamped
+    }
+
     /// Stamp a vertex with `#CIRC!` as part of cycle handling.
     ///
     /// Unlike a bare `update_vertex_value`, this first tears down any spill the
@@ -13008,21 +13034,18 @@ where
                 Self::accumulate_schedule_meta(t, &meta);
             }
 
-            // Handle cycles.
-            let circ_error = LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Circ)
-                    .with_message("Circular dependency detected".to_string()),
-            );
-            for cycle in &schedule.cycles {
-                cycle_errors += 1;
-                for &vertex_id in cycle {
-                    self.stamp_cycle_error(vertex_id, &circ_error, None);
+            // Walk units in condensation order: stamp cycles at their
+            // position, evaluate layers with ChangeLog recording.
+            for unit in &schedule.units {
+                match unit {
+                    ScheduleUnit::Cycle(cycle) => {
+                        self.apply_cycle_outcome(cycle, None, None);
+                        cycle_errors += 1;
+                    }
+                    ScheduleUnit::Layer(layer) => {
+                        computed_vertices += self.evaluate_layer_logged(layer, log)?;
+                    }
                 }
-            }
-
-            // Evaluate layers.
-            for layer in &schedule.layers {
-                computed_vertices += self.evaluate_layer_logged(layer, log)?;
             }
 
             let changed_vertices = self.changed_virtual_dep_vertices(&to_evaluate, &old_vdeps);
