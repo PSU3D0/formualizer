@@ -7823,9 +7823,7 @@ where
                     .with_message("Circular dependency detected".to_string()),
             );
             for &vertex_id in cycle {
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                self.stamp_cycle_error(vertex_id, &circ_error, None);
             }
         }
 
@@ -7908,20 +7906,7 @@ where
         for cycle in &schedule.cycles {
             cycle_errors += 1;
             for &vertex_id in cycle {
-                if delta.mode != DeltaMode::Off
-                    && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
-                {
-                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                    let old = self
-                        .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                        .unwrap_or(LiteralValue::Empty);
-                    if old != circ_error {
-                        delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
-                    }
-                }
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                self.stamp_cycle_error(vertex_id, &circ_error, Some(delta));
             }
         }
 
@@ -8011,9 +7996,7 @@ where
                 cycle_errors += 1;
                 for &vertex_id in cycle {
                     if dirty_set.contains(&vertex_id) {
-                        self.graph
-                            .update_vertex_value(vertex_id, circ_error.clone());
-                        self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                        self.stamp_cycle_error(vertex_id, &circ_error, None);
                     }
                 }
             }
@@ -8445,9 +8428,7 @@ where
         );
         for cycle in &schedule.cycles {
             for &vertex_id in cycle {
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                self.stamp_cycle_error(vertex_id, &circ_error, None);
             }
         }
         schedule.cycles.len()
@@ -8605,20 +8586,7 @@ where
             for cycle in &schedule.cycles {
                 cycle_errors += 1;
                 for &vertex_id in cycle {
-                    if delta.mode != DeltaMode::Off
-                        && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
-                    {
-                        let sheet_name = self.graph.sheet_name(cell.sheet_id);
-                        let old = self
-                            .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
-                            .unwrap_or(LiteralValue::Empty);
-                        if old != circ_error {
-                            delta.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
-                        }
-                    }
-                    self.graph
-                        .update_vertex_value(vertex_id, circ_error.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                    self.stamp_cycle_error(vertex_id, &circ_error, Some(delta));
                 }
             }
 
@@ -9307,9 +9275,7 @@ where
                         .with_message("Circular dependency detected".to_string()),
                 );
                 for &vertex_id in cycle {
-                    self.graph
-                        .update_vertex_value(vertex_id, circ_error.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                    self.stamp_cycle_error(vertex_id, &circ_error, None);
                 }
             }
 
@@ -9459,9 +9425,7 @@ where
                     .with_message("Circular dependency detected".to_string()),
             );
             for &vertex_id in cycle {
-                self.graph
-                    .update_vertex_value(vertex_id, circ_error.clone());
-                self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                self.stamp_cycle_error(vertex_id, &circ_error, None);
             }
         }
 
@@ -10340,6 +10304,17 @@ impl ShimSpillManager {
                 Ok(())
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// Release any in-flight region reservation still held for `owner`.
+    ///
+    /// Reservations are normally released on commit/rollback, but if an anchor is
+    /// abandoned without committing (e.g. cycle detection stamps it with #CIRC), a
+    /// stale reservation could remain. This is a no-op when nothing is held.
+    pub(crate) fn release_owner(&mut self, owner: VertexId) {
+        if let Some(id) = self.active_locks.remove(&owner) {
+            self.region_locks.release(id);
         }
     }
 
@@ -11646,6 +11621,53 @@ where
                 );
             }
         }
+    }
+
+    /// Stamp a vertex with `#CIRC!` as part of cycle handling.
+    ///
+    /// Unlike a bare `update_vertex_value`, this first tears down any spill the
+    /// vertex previously anchored: it clears the spilled cells, releases the graph
+    /// spill registry, drops any lingering region reservation, and mirrors the
+    /// cleared cells into the computed overlay — the same teardown a normal scalar/
+    /// error result performs (see `apply_non_array_result_from_parallel` /
+    /// `clear_spill_projection_and_mirror`). Without this, a #CIRC stamp on a former
+    /// spill anchor would leave stale spilled values and a reserved region behind
+    /// (issue #111).
+    ///
+    /// When `delta` is provided, the cleared spill cells are recorded (by
+    /// `clear_spill_projection_and_mirror`) and the anchor's own #CIRC change is
+    /// recorded here, matching how other result paths emit deltas.
+    fn stamp_cycle_error(
+        &mut self,
+        vertex_id: VertexId,
+        circ_error: &LiteralValue,
+        mut delta: Option<&mut DeltaCollector>,
+    ) {
+        // Tear down any previous spill projection/region before overwriting the anchor.
+        if self.graph.spill_registry_has_anchor(vertex_id) {
+            self.clear_spill_projection_and_mirror(vertex_id, delta.as_deref_mut());
+        }
+        // Drop any reservation that was never committed (defensive; normally released
+        // on the prior successful commit).
+        self.spill_mgr.release_owner(vertex_id);
+
+        // Record the anchor's own #CIRC delta, like other result paths.
+        if let Some(d) = delta
+            && d.mode != DeltaMode::Off
+            && let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex_id)
+        {
+            let sheet_name = self.graph.sheet_name(cell.sheet_id);
+            let old = self
+                .read_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                .unwrap_or(LiteralValue::Empty);
+            if old != *circ_error {
+                d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+            }
+        }
+
+        self.graph
+            .update_vertex_value(vertex_id, circ_error.clone());
+        self.mirror_vertex_value_to_overlay(vertex_id, circ_error);
     }
 
     /// Helper: commit spill via shim and mirror resulting cells into Arrow overlay when enabled.
@@ -12979,9 +13001,7 @@ where
             for cycle in &schedule.cycles {
                 cycle_errors += 1;
                 for &vertex_id in cycle {
-                    self.graph
-                        .update_vertex_value(vertex_id, circ_error.clone());
-                    self.mirror_vertex_value_to_overlay(vertex_id, &circ_error);
+                    self.stamp_cycle_error(vertex_id, &circ_error, None);
                 }
             }
 
