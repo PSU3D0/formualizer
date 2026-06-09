@@ -13,11 +13,14 @@ pub struct Layer {
 }
 
 /// One step of the canonical schedule walk: either an acyclic Kahn wave
-/// (`Layer`) or a cyclic SCC treated as a single super-node (`Cycle`).
-#[derive(Debug, Clone)]
+/// (`Layer`, an index into `Schedule::layers`) or a cyclic SCC treated as a
+/// single super-node (`Cycle`, an index into `Schedule::cycles`). Storing
+/// indices keeps `Schedule::layers`/`Schedule::cycles` the single owners of
+/// the vertex Vecs, so building or cloning a schedule never duplicates them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScheduleUnit {
-    Layer(Layer),
-    Cycle(Vec<VertexId>),
+    Layer(u32),
+    Cycle(u32),
 }
 
 #[derive(Debug, Clone)]
@@ -39,15 +42,22 @@ impl Schedule {
             cycles.is_empty(),
             "Schedule::from_parts is the cycle-free fast path"
         );
-        let units = layers
-            .iter()
-            .map(|l| ScheduleUnit::Layer(l.clone()))
-            .collect();
+        let units = (0..layers.len() as u32).map(ScheduleUnit::Layer).collect();
         Schedule {
             units,
             cycles,
             layers,
         }
+    }
+
+    /// Resolve a `ScheduleUnit::Layer` index.
+    pub fn unit_layer(&self, i: u32) -> &Layer {
+        &self.layers[i as usize]
+    }
+
+    /// Resolve a `ScheduleUnit::Cycle` index.
+    pub fn unit_cycle(&self, i: u32) -> &[VertexId] {
+        &self.cycles[i as usize]
     }
 }
 
@@ -88,9 +98,9 @@ impl<'a> Scheduler<'a> {
             let mut cycle_order: Vec<usize> = (0..cycles.len()).collect();
             cycle_order.sort_by_key(|&i| cycles[i].iter().copied().min());
             for i in cycle_order {
-                units.push(ScheduleUnit::Cycle(cycles[i].clone()));
+                units.push(ScheduleUnit::Cycle(i as u32));
             }
-            units.extend(layers.iter().map(|l| ScheduleUnit::Layer(l.clone())));
+            units.extend((0..layers.len() as u32).map(ScheduleUnit::Layer));
             return Ok(Schedule {
                 units,
                 cycles,
@@ -633,7 +643,7 @@ impl<'a> Scheduler<'a> {
                 .collect();
             wave_cycles.sort_by_key(|&n| cycles[n].iter().copied().min());
             for n in wave_cycles {
-                units.push(ScheduleUnit::Cycle(cycles[n].clone()));
+                units.push(ScheduleUnit::Cycle(n as u32));
             }
 
             let mut wave_vertices: Vec<VertexId> = current
@@ -645,11 +655,10 @@ impl<'a> Scheduler<'a> {
             if !wave_vertices.is_empty() {
                 // Sort for deterministic output, as in build_layers.
                 wave_vertices.sort();
-                let layer = Layer {
+                units.push(ScheduleUnit::Layer(layers.len() as u32));
+                layers.push(Layer {
                     vertices: wave_vertices,
-                };
-                layers.push(layer.clone());
-                units.push(ScheduleUnit::Layer(layer));
+                });
             }
 
             processed_count += current.len();
