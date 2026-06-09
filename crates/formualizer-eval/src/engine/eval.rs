@@ -7936,6 +7936,7 @@ where
         if vertices.is_empty() {
             return Ok(RecalcPlan {
                 schedule: crate::engine::Schedule {
+                    units: Vec::new(),
                     layers: Vec::new(),
                     cycles: Vec::new(),
                 },

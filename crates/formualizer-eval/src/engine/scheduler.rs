@@ -12,10 +12,43 @@ pub struct Layer {
     pub vertices: Vec<VertexId>,
 }
 
+/// One step of the canonical schedule walk: either an acyclic Kahn wave
+/// (`Layer`) or a cyclic SCC treated as a single super-node (`Cycle`).
+#[derive(Debug, Clone)]
+pub enum ScheduleUnit {
+    Layer(Layer),
+    Cycle(Vec<VertexId>),
+}
+
 #[derive(Debug, Clone)]
 pub struct Schedule {
-    pub layers: Vec<Layer>,
+    /// Canonical walk order: condensation order over the dependency graph.
+    /// Every `Cycle` unit appears after all units containing its external
+    /// dependencies and before all units containing its external dependents.
+    pub units: Vec<ScheduleUnit>,
+    /// All cyclic SCCs (same contents as before `units` existed), for
+    /// consumers that only need the set of cycles.
     pub cycles: Vec<Vec<VertexId>>,
+    /// The `Layer` units in order, for consumers that only walk layers.
+    pub layers: Vec<Layer>,
+}
+
+impl Schedule {
+    fn from_parts(layers: Vec<Layer>, cycles: Vec<Vec<VertexId>>) -> Self {
+        debug_assert!(
+            cycles.is_empty(),
+            "Schedule::from_parts is the cycle-free fast path"
+        );
+        let units = layers
+            .iter()
+            .map(|l| ScheduleUnit::Layer(l.clone()))
+            .collect();
+        Schedule {
+            units,
+            cycles,
+            layers,
+        }
+    }
 }
 
 impl<'a> Scheduler<'a> {
@@ -37,20 +70,47 @@ impl<'a> Scheduler<'a> {
         let (cycles, acyclic_sccs) = self.separate_cycles(sccs);
 
         // 3. Topologically sort acyclic components into layers
-        let layers = if self.graph.dynamic_topo_enabled() {
+        if self.graph.dynamic_topo_enabled() {
+            // Dynamic-topo (PK) branch: pk_layers_for orders only the acyclic
+            // subset, so we cannot interleave Cycle units by condensation
+            // position here. Stay conservative on this experimental path and
+            // emit ALL Cycle units first (matching today's stamp-cycles-first
+            // semantics), then the pk layers as Layer units.
             let subset: Vec<VertexId> = acyclic_sccs.into_iter().flatten().collect();
-            if subset.is_empty() {
+            let layers = if subset.is_empty() {
                 Vec::new()
             } else {
                 self.graph
                     .pk_layers_for(&subset)
                     .unwrap_or(self.build_layers(vec![subset])?)
+            };
+            let mut units = Vec::with_capacity(cycles.len() + layers.len());
+            let mut cycle_order: Vec<usize> = (0..cycles.len()).collect();
+            cycle_order.sort_by_key(|&i| cycles[i].iter().copied().min());
+            for i in cycle_order {
+                units.push(ScheduleUnit::Cycle(cycles[i].clone()));
             }
-        } else {
-            self.build_layers(acyclic_sccs)?
-        };
+            units.extend(layers.iter().map(|l| ScheduleUnit::Layer(l.clone())));
+            return Ok(Schedule {
+                units,
+                cycles,
+                layers,
+            });
+        }
 
-        Ok(Schedule { layers, cycles })
+        if cycles.is_empty() {
+            // Fast path: byte-for-byte today's layer construction.
+            let layers = self.build_layers(acyclic_sccs)?;
+            return Ok(Schedule::from_parts(layers, cycles));
+        }
+
+        // Cycle path: Kahn over the condensation (SCC-as-node).
+        let (units, layers) = self.build_condensation_units(&cycles, acyclic_sccs, None)?;
+        Ok(Schedule {
+            units,
+            cycles,
+            layers,
+        })
     }
 
     /// Create a schedule considering additional ephemeral (virtual) dependencies just for this pass.
@@ -78,10 +138,19 @@ impl<'a> Scheduler<'a> {
         // 3. Build layers over combined adjacency (graph + vdeps)
         #[cfg(feature = "tracing")]
         let _layers_span = tracing::info_span!("build_layers_with_virtual").entered();
-        let layers = self.build_layers_with_virtual(acyclic_sccs, vdeps)?;
-        #[cfg(feature = "tracing")]
-        drop(_layers_span);
-        Ok(Schedule { layers, cycles })
+        if cycles.is_empty() {
+            // Fast path: byte-for-byte today's layer construction.
+            let layers = self.build_layers_with_virtual(acyclic_sccs, vdeps)?;
+            return Ok(Schedule::from_parts(layers, cycles));
+        }
+        // Cycle path: Kahn over the condensation (SCC-as-node), honoring
+        // virtual deps as extra edges.
+        let (units, layers) = self.build_condensation_units(&cycles, acyclic_sccs, Some(vdeps))?;
+        Ok(Schedule {
+            units,
+            cycles,
+            layers,
+        })
     }
 
     /// Tarjan's strongly connected components algorithm
@@ -480,6 +549,132 @@ impl<'a> Scheduler<'a> {
         }
 
         Ok(layers)
+    }
+
+    /// Kahn's algorithm over the condensation of the scheduled subgraph:
+    /// each cyclic SCC is a super-node, each acyclic vertex a singleton node.
+    ///
+    /// Per Kahn wave we emit first the wave's `Cycle` units (ordered by
+    /// smallest member `VertexId` for determinism), then one `Layer` unit with
+    /// the wave's singleton vertices (sorted, as in `build_layers`). Within a
+    /// wave there are no inter-node edges, so this ordering is semantically
+    /// free. The result guarantees every `Cycle` unit appears after all units
+    /// containing its external dependencies and before all units containing
+    /// its external dependents (pinned by tests in
+    /// `engine/tests/schedule_units.rs`).
+    ///
+    /// Returns the unit walk plus the `Layer` units in order (the
+    /// compatibility `Schedule::layers` view).
+    fn build_condensation_units(
+        &self,
+        cycles: &[Vec<VertexId>],
+        acyclic_sccs: Vec<Vec<VertexId>>,
+        vdeps: Option<&FxHashMap<VertexId, Vec<VertexId>>>,
+    ) -> Result<(Vec<ScheduleUnit>, Vec<Layer>), ExcelError> {
+        let singletons: Vec<VertexId> = acyclic_sccs.into_iter().flatten().collect();
+        let cycle_node_count = cycles.len();
+        let node_count = cycle_node_count + singletons.len();
+
+        // Map every scheduled vertex to its condensation node.
+        let mut node_of: FxHashMap<VertexId, usize> = FxHashMap::default();
+        for (i, cycle) in cycles.iter().enumerate() {
+            for &v in cycle {
+                node_of.insert(v, i);
+            }
+        }
+        for (j, &v) in singletons.iter().enumerate() {
+            node_of.insert(v, cycle_node_count + j);
+        }
+
+        // Build in-degrees and the dependents adjacency from a single scan of
+        // the dependency direction, so both sides are guaranteed consistent.
+        // Edges to vertices outside the scheduled set are ignored
+        // (membership == presence in `node_of`); intra-node edges are ignored.
+        let mut in_degrees: Vec<usize> = vec![0; node_count];
+        let mut node_dependents: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+        let scan_dep = |from_node: usize,
+                        dep: VertexId,
+                        in_degrees: &mut Vec<usize>,
+                        node_dependents: &mut Vec<Vec<usize>>| {
+            if let Some(&dep_node) = node_of.get(&dep)
+                && dep_node != from_node
+            {
+                in_degrees[from_node] += 1;
+                node_dependents[dep_node].push(from_node);
+            }
+        };
+        for (&v, &n_v) in node_of.iter() {
+            if let Some(deps) = self.graph.dependencies_slice(v) {
+                for &dep in deps {
+                    scan_dep(n_v, dep, &mut in_degrees, &mut node_dependents);
+                }
+            } else {
+                for dep in self.graph.get_dependencies(v) {
+                    scan_dep(n_v, dep, &mut in_degrees, &mut node_dependents);
+                }
+            }
+            if let Some(extra) = vdeps.and_then(|m| m.get(&v)) {
+                for &dep in extra {
+                    scan_dep(n_v, dep, &mut in_degrees, &mut node_dependents);
+                }
+            }
+        }
+
+        // Kahn by waves over condensation nodes.
+        let mut current: Vec<usize> = (0..node_count).filter(|&n| in_degrees[n] == 0).collect();
+        let mut units = Vec::new();
+        let mut layers = Vec::new();
+        let mut processed_count = 0usize;
+        while !current.is_empty() {
+            let mut wave_cycles: Vec<usize> = current
+                .iter()
+                .copied()
+                .filter(|&n| n < cycle_node_count)
+                .collect();
+            wave_cycles.sort_by_key(|&n| cycles[n].iter().copied().min());
+            for n in wave_cycles {
+                units.push(ScheduleUnit::Cycle(cycles[n].clone()));
+            }
+
+            let mut wave_vertices: Vec<VertexId> = current
+                .iter()
+                .copied()
+                .filter(|&n| n >= cycle_node_count)
+                .map(|n| singletons[n - cycle_node_count])
+                .collect();
+            if !wave_vertices.is_empty() {
+                // Sort for deterministic output, as in build_layers.
+                wave_vertices.sort();
+                let layer = Layer {
+                    vertices: wave_vertices,
+                };
+                layers.push(layer.clone());
+                units.push(ScheduleUnit::Layer(layer));
+            }
+
+            processed_count += current.len();
+            let mut next = Vec::new();
+            for &n in &current {
+                for &dependent in &node_dependents[n] {
+                    in_degrees[dependent] -= 1;
+                    if in_degrees[dependent] == 0 {
+                        next.push(dependent);
+                    }
+                }
+            }
+            current = next;
+        }
+
+        if processed_count != node_count {
+            return Err(
+                ExcelError::new(formualizer_common::ExcelErrorKind::Circ).with_message(
+                    "Unexpected cycle detected in condensation during unit construction"
+                        .to_string(),
+                ),
+            );
+        }
+
+        Ok((units, layers))
     }
 
     pub(crate) fn build_layers_with_virtual(
