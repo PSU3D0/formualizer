@@ -55,7 +55,7 @@ pub use graph::{
     StripeType, block_index,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
-pub use scheduler::{Layer, Schedule, Scheduler};
+pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
 pub use vertex::{VertexId, VertexKind};
 
 pub use graph::editor::{
