@@ -2958,6 +2958,28 @@ impl Workbook {
     }
 
     // Loading via streaming ingest (Arrow base + graph formulas)
+    /// Load a workbook from a backend reader.
+    ///
+    /// # Cycle-config precedence (spec §9, RFC #113)
+    ///
+    /// When the file carries `<calcPr iterate="1">` (XLSX backends), the
+    /// FILE'S iterative-calculation settings override the cycle config in
+    /// `config` — including an explicit caller `Static`/`Error` choice. The
+    /// calcPr element is the document's persisted calculation setting and
+    /// governs how the document computes, matching how Excel opens files.
+    /// A file with `iterate` absent/`0` (or a backend with no calc settings
+    /// at all, e.g. JSON/CSV) leaves the caller's cycle config untouched.
+    /// Callers that must force a policy can adjust the engine config after
+    /// load.
+    ///
+    /// # Self-references in loaded content
+    ///
+    /// Bulk load never rejects formulas for cycle reasons: a direct
+    /// self-reference (`A1 = =A1+1`) loads under ANY cycle config and is
+    /// resolved at evaluation time (`#CIRC!` under the default policy,
+    /// iterated under `Runtime`+`Iterate`). The eager self-reference
+    /// rejection is an interactive-edit nicety on `set_formula`, never a
+    /// load-path gate (see `tests/cycle_persistence.rs`).
     pub fn from_reader<B>(
         backend: B,
         strategy: LoadStrategy,

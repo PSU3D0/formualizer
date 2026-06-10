@@ -141,6 +141,38 @@ fn from_reader_iterate_on_applies_runtime_iterate_config() {
     );
 }
 
+/// Precedence decision (pinned): when the file says `iterate="1"`, the FILE
+/// WINS over an explicit caller cycle config. The calcPr element is the
+/// document's persisted calculation setting — matching how Excel opens files:
+/// the workbook's own iterative-calculation switch governs, not the
+/// application state of whoever opens it. Callers that need to force a
+/// policy can set `engine_mut().config` / rebuild after load.
+#[test]
+fn from_reader_file_iterate_wins_over_explicit_caller_static_config() {
+    let bytes = inject_calc_pr(
+        &simple_fixture(),
+        r#"<calcPr calcId="122211" iterate="1" iterateCount="13" iterateDelta="0.02"/>"#,
+    );
+    let adapter = CalamineAdapter::open_bytes(bytes).unwrap();
+    // Caller explicitly demands the Static/Error compat combo…
+    let mut cfg = WorkbookConfig::ephemeral();
+    cfg.eval.cycle = CycleConfig {
+        detection: CycleDetection::Static,
+        policy: CyclePolicy::Error,
+    };
+    let wb = Workbook::from_reader(adapter, LoadStrategy::EagerAll, cfg).unwrap();
+    // …but the file's persisted iterate setting governs.
+    let cycle = wb.engine().config.cycle;
+    assert_eq!(cycle.detection, CycleDetection::Runtime);
+    assert_eq!(
+        cycle.policy,
+        CyclePolicy::Iterate {
+            max_iterations: 13,
+            max_change: 0.02,
+        }
+    );
+}
+
 #[test]
 fn from_reader_iterate_off_leaves_caller_cycle_config_untouched() {
     let adapter = CalamineAdapter::open_bytes(simple_fixture()).unwrap();

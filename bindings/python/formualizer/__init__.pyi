@@ -9,6 +9,7 @@ __all__ = [
     "ASTNode",
     "Cell",
     "CellRef",
+    "CycleTelemetry",
     "EvaluationConfig",
     "EvaluationPlan",
     "ExcelError",
@@ -141,6 +142,77 @@ class CellRef:
     def from_string(cls, reference: builtins.str, default_sheet: typing.Optional[builtins.str] = None) -> CellRef: ...
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
+
+@typing.final
+class CycleTelemetry:
+    r"""
+    Per-recalc telemetry from runtime SCC evaluation (RFC #113, spec §10).
+    
+    Read-only snapshot of the engine's `CycleTelemetry`, taken by
+    `Workbook.last_cycle_telemetry()`. Counters reset at the start of every
+    evaluation request.
+    """
+    @property
+    def static_sccs(self) -> builtins.int:
+        r"""
+        SCC tasks executed (static SCCs that reached Runtime evaluation).
+        """
+    @property
+    def phantom_sccs(self) -> builtins.int:
+        r"""
+        SCC tasks whose live subgraph was acyclic — values produced.
+        """
+    @property
+    def live_cycles_witnessed(self) -> builtins.int:
+        r"""
+        Distinct live cycles witnessed across all SCC tasks.
+        """
+    @property
+    def circ_cells_stamped(self) -> builtins.int:
+        r"""
+        Cells stamped `#CIRC!` by Runtime SCC tasks.
+        """
+    @property
+    def settle_passes_total(self) -> builtins.int:
+        r"""
+        Evaluation sweeps over (subsets of) SCC members, totalled across tasks.
+        """
+    @property
+    def max_passes_single_scc(self) -> builtins.int:
+        r"""
+        Largest pass count any single SCC task needed.
+        """
+    @property
+    def iterated_sccs(self) -> builtins.int:
+        r"""
+        SCC tasks that entered iterative calculation.
+        """
+    @property
+    def converged_sccs(self) -> builtins.int:
+        r"""
+        Iterating SCC tasks that stopped because every member converged.
+        """
+    @property
+    def capped_sccs(self) -> builtins.int:
+        r"""
+        SCC tasks that stopped at a pass cap (NOT an error under iterate).
+        """
+    @property
+    def max_abs_delta_at_stop(self) -> builtins.float:
+        r"""
+        Largest |delta| observed in any member's final-pass convergence check.
+        """
+    @property
+    def nan_converged(self) -> builtins.int:
+        r"""
+        Identical-bit NaN comparisons treated as converged (spec §6 NaN rule).
+        """
+    @property
+    def elapsed_ms(self) -> builtins.int:
+        r"""
+        Wall-clock milliseconds spent inside Runtime SCC tasks.
+        """
+    def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class EvaluationConfig:
@@ -1176,6 +1248,31 @@ class Workbook:
         ```
         """
     def evaluate_all(self) -> None: ...
+    def last_cycle_telemetry(self) -> CycleTelemetry:
+        r"""
+        Telemetry from runtime SCC / iterative-calculation evaluation during
+        the most recent evaluation request (RFC #113, spec §10).
+        
+        Mirrors the engine accessor of the same name: counters reset at the
+        start of every evaluation request, so this always describes the LAST
+        `evaluate_all()` / `evaluate_cell(s)` call. All-zero when cycle
+        detection is `"static"` or nothing cyclic was evaluated.
+        
+        Example:
+        ```python
+            import formualizer as fz
+        
+            cfg = fz.EvaluationConfig()
+            cfg.cycle_policy = "iterate"
+            wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
+            s = wb.sheet("S")
+            s.set_formula(1, 1, "=B1+1")
+            s.set_formula(1, 2, "=A1/2")
+            wb.evaluate_all()
+            t = wb.last_cycle_telemetry()
+            print(t.iterated_sccs, t.converged_sccs, t.capped_sccs)
+        ```
+        """
     def evaluate_cells(self, targets: list) -> typing.Any: ...
     def get_eval_plan(self, targets: list, *, build_graph_if_needed: builtins.bool = True) -> EvaluationPlan: ...
     def cancel(self) -> None: ...

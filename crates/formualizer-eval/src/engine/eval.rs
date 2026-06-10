@@ -352,7 +352,11 @@ pub struct Engine<R> {
     resolver: R,
     pub config: EvalConfig,
     workbook_load_limits: crate::engine::WorkbookLoadLimits,
-    clock: Arc<dyn crate::timezone::ClockProvider>,
+    /// Clock for volatile date/time builtins, wrapped in a per-recalc
+    /// snapshot: sampled once at the start of every evaluation request
+    /// ([`Self::begin_evaluation_request`]) so all `NOW()`/`TODAY()` reads in
+    /// one recalc — including SCC iteration passes — agree (spec §7.11).
+    clock: crate::timezone::SnapshotClock,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
     pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
@@ -1393,7 +1397,7 @@ where
             resolver,
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
-            clock,
+            clock: crate::timezone::SnapshotClock::new(clock),
             thread_pool,
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -1470,7 +1474,7 @@ where
             resolver,
             config,
             workbook_load_limits: crate::engine::WorkbookLoadLimits::default(),
-            clock,
+            clock: crate::timezone::SnapshotClock::new(clock),
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -1538,13 +1542,18 @@ where
         &self.last_cycle_telemetry
     }
 
-    /// Reset per-recalc cycle telemetry. Called at the start of every
-    /// evaluation request that walks schedule units.
-    fn reset_cycle_telemetry(&mut self) {
+    /// Begin a new evaluation request: reset per-recalc cycle telemetry and
+    /// take the per-recalc volatile clock sample. Called at the start of
+    /// every evaluation request that walks schedule units.
+    fn begin_evaluation_request(&mut self) {
         self.last_cycle_telemetry = CycleTelemetry::default();
         // Defensive: consumed at the end of the previous request; a request
         // that errored out mid-walk must not leak its members into this one.
         self.pending_iterative_redirty.clear();
+        // Spec §7.11: NOW()/TODAY() sample the clock ONCE per recalc; every
+        // read within this request (including SCC iteration passes) observes
+        // this sample.
+        self.clock.refresh();
     }
 
     /// End-of-recalc redirty: volatile vertices (as always) plus members of
@@ -1875,8 +1884,19 @@ where
     ) -> Result<(), ExcelError> {
         let clock = mode.build_clock()?;
         self.config.deterministic_mode = mode;
-        self.clock = clock;
+        self.clock = crate::timezone::SnapshotClock::new(clock);
         Ok(())
+    }
+
+    /// Inject a custom [`ClockProvider`](crate::timezone::ClockProvider) for
+    /// volatile date/time builtins (`NOW()`, `TODAY()`).
+    ///
+    /// The provider is the clock *source*; per spec §7.11 the engine samples
+    /// it once at the start of every evaluation request and all reads within
+    /// that recalc (including SCC iteration passes) observe the frozen
+    /// sample.
+    pub fn set_clock(&mut self, clock: Arc<dyn crate::timezone::ClockProvider>) {
+        self.clock = crate::timezone::SnapshotClock::new(clock);
     }
 
     fn validate_deterministic_mode(&self) -> Result<(), ExcelError> {
@@ -8009,7 +8029,7 @@ where
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         // Fold any pending edge deltas once so scheduling/eval reads use the
         // zero-allocation CSR slices (#125 write-cheap / read-flush split).
         self.graph.flush_pending_edge_deltas();
@@ -8115,7 +8135,7 @@ where
         let _span_eval =
             tracing::info_span!("evaluate_until_with_delta", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         self.graph.flush_pending_edge_deltas();
         let _source_cache = self.source_cache_session();
 
@@ -8212,7 +8232,7 @@ where
 
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
@@ -8299,7 +8319,7 @@ where
         // so the duplicate reset is harmless. The composed legacy primitive
         // below intentionally does not reset, so `evaluate_legacy_cycle_prepass`
         // counts survive into the final telemetry.
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         // The FormulaPlane coordinator is now selected by mode for evaluate_all.
         // SingletonUnique formulas intentionally remain legacy graph vertices;
         // when no spans are active, execute through the private legacy primitive
@@ -8735,7 +8755,7 @@ where
     /// coordinator; the coordinator itself composes with private legacy
     /// primitives for legacy-only work.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
             return self.evaluate_authoritative_formula_plane_all();
         }
@@ -8778,10 +8798,12 @@ where
     /// `AuthoritativeExperimental` mode. This is now an internal primitive; it
     /// must not be invoked directly from public APIs.
     ///
-    /// Does NOT reset `last_cycle_telemetry`: the FormulaPlane coordinator
-    /// composes this primitive *after* `evaluate_legacy_cycle_prepass` may
-    /// have accumulated counts (G8 demotion path); resets happen at the
-    /// public entry points / coordinators instead.
+    /// Does NOT call `begin_evaluation_request` (cycle-telemetry reset +
+    /// per-recalc clock sample): the FormulaPlane coordinator composes this
+    /// primitive *after* `evaluate_legacy_cycle_prepass` may have accumulated
+    /// counts (G8 demotion path), and both sub-passes belong to ONE request /
+    /// one clock sample; request begin happens at the public entry points /
+    /// coordinators instead.
     fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
@@ -8871,7 +8893,7 @@ where
         &mut self,
         delta: &mut DeltaCollector,
     ) -> Result<EvalResult, ExcelError> {
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         if self.config.defer_graph_building {
             self.build_graph_all()?;
@@ -9546,7 +9568,7 @@ where
         &mut self,
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
@@ -9708,7 +9730,7 @@ where
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
         let start = crate::instant::FzInstant::now();
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         self.graph.flush_pending_edge_deltas();
         if self.graph.formula_authority().active_span_count() > 0 {
             if cancel_flag.load(Ordering::Relaxed) {
@@ -11104,7 +11126,7 @@ where
     R: EvaluationContext,
 {
     fn clock(&self) -> &dyn crate::timezone::ClockProvider {
-        self.clock.as_ref()
+        &self.clock
     }
 
     fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
@@ -14022,7 +14044,7 @@ where
     /// This is the same flow as `evaluate_all` but threads a ChangeLog through
     /// every effect application so that spill commits/clears are captured.
     pub fn evaluate_all_logged(&mut self, log: &mut ChangeLog) -> Result<EvalResult, ExcelError> {
-        self.reset_cycle_telemetry();
+        self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {

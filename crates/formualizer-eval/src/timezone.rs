@@ -154,3 +154,56 @@ impl ClockProvider for FixedClock {
         self.now_in_timezone()
     }
 }
+
+/// Per-recalc snapshotting wrapper around a [`ClockProvider`]
+/// (spec `formualizer-cycle-semantics-spec.md` §7.11).
+///
+/// Excel samples the clock ONCE per recalculation: every `NOW()` / `TODAY()`
+/// call within a single recalc — including all iteration passes of an
+/// iterating SCC — observes the same instant, and the sample only advances on
+/// the next recalculation. A raw `SystemClock` violates this (each call reads
+/// the OS clock, so `NOW()` drifts between SCC settle passes and even between
+/// two cells of one acyclic pass).
+///
+/// The engine wraps its configured clock in `SnapshotClock` and calls
+/// [`SnapshotClock::refresh`] once at the start of every evaluation request;
+/// builtins then read the frozen sample via the normal `ClockProvider` API.
+#[derive(Debug)]
+pub struct SnapshotClock {
+    inner: std::sync::Arc<dyn ClockProvider>,
+    /// Timezone cloned from `inner` at construction so `timezone()` can hand
+    /// out a reference without locking.
+    timezone: TimeZoneSpec,
+    /// The frozen per-recalc sample. RwLock (not Cell) because evaluation may
+    /// read the clock from rayon worker threads.
+    sample: std::sync::RwLock<NaiveDateTime>,
+}
+
+impl SnapshotClock {
+    /// Wrap `inner`, taking an initial sample immediately.
+    pub fn new(inner: std::sync::Arc<dyn ClockProvider>) -> Self {
+        let timezone = inner.timezone().clone();
+        let sample = inner.now();
+        Self {
+            inner,
+            timezone,
+            sample: std::sync::RwLock::new(sample),
+        }
+    }
+
+    /// Re-sample the underlying clock. Called once per evaluation request.
+    pub fn refresh(&self) {
+        let now = self.inner.now();
+        *self.sample.write().expect("clock sample lock poisoned") = now;
+    }
+}
+
+impl ClockProvider for SnapshotClock {
+    fn timezone(&self) -> &TimeZoneSpec {
+        &self.timezone
+    }
+
+    fn now(&self) -> NaiveDateTime {
+        *self.sample.read().expect("clock sample lock poisoned")
+    }
+}
