@@ -437,6 +437,17 @@ pub struct Engine<R> {
     /// redirty chain stops by itself.
     pending_iterative_redirty: Vec<VertexId>,
 
+    /// Final committed values of iterating-SCC members as of the end of the
+    /// most recent recalc (spec §4 persistence). In canonical (value-cache
+    /// disabled) mode the computed overlay is the ONLY home of a formula's
+    /// value, and structural edits clear computed overlays wholesale
+    /// (`clear_computed_overlay_after_row/_col`) — destroying iteration
+    /// state (accumulators reset to 0; found by the iterate edge corpus).
+    /// This snapshot, refreshed by [`Self::redirty_for_next_recalc`], lets
+    /// the next SCC task re-seed members whose overlay entry vanished.
+    /// Empty unless something iterated — zero cost otherwise.
+    iterative_state_values: FxHashMap<VertexId, LiteralValue>,
+
     /// FormulaPlane authority `indexes_epoch` observed by the most recent
     /// successful `evaluate_all` pass. Used to schedule whole-span work for
     /// any active span the engine has not yet evaluated under the current
@@ -1427,6 +1438,7 @@ where
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
             pending_iterative_redirty: Vec::new(),
+            iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
@@ -1504,6 +1516,7 @@ where
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
             pending_iterative_redirty: Vec::new(),
+            iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
@@ -1565,6 +1578,26 @@ where
     fn redirty_for_next_recalc(&mut self) {
         self.graph.redirty_volatiles();
         let pending = std::mem::take(&mut self.pending_iterative_redirty);
+        // Refresh the §4-persistence snapshot: these final values survive
+        // structural edits that clear the computed overlay (the only value
+        // home in canonical mode) so the next SCC task can re-seed from them
+        // (see `iterative_state_values`). Replaced wholesale each recalc —
+        // when nothing iterates the map empties and stays free.
+        self.iterative_state_values.clear();
+        for &vertex in &pending {
+            if !self.graph.vertex_exists(vertex) {
+                continue;
+            }
+            if let Some(cell) = self.graph.get_cell_ref(vertex) {
+                let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                if let Some(value) =
+                    self.get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                    && !matches!(value, LiteralValue::Empty)
+                {
+                    self.iterative_state_values.insert(vertex, value);
+                }
+            }
+        }
         if !pending.is_empty() {
             self.graph.redirty_iterative_members(&pending);
         }
@@ -12227,6 +12260,38 @@ where
             ExcelError::new(ExcelErrorKind::Circ)
                 .with_message("Circular dependency detected".to_string()),
         );
+
+        // ── 0b. Spec-§4 persistence repair: structural edits clear computed
+        // overlays wholesale (`clear_computed_overlay_after_row/_col`), but
+        // an iterating member's committed value is cycle STATE, not a
+        // recomputable cache — and in canonical mode the overlay is its ONLY
+        // home. If the overlay entry vanished since the last recalc, re-seed
+        // it from the end-of-recalc snapshot (`iterative_state_values`) so
+        // pass-1 reads (scalar AND range, via the overlay cascade) observe
+        // the persisted value instead of silently restarting at Empty→0.
+        // (Found by the iterate edge corpus: inserting/deleting an unrelated
+        // row reset accumulators, violating spec §4/§7.15.)
+        if !self.iterative_state_values.is_empty() {
+            let restore: Vec<(VertexId, LiteralValue)> = members
+                .iter()
+                .filter_map(|m| {
+                    let cell = m.cell?;
+                    let persisted = self.iterative_state_values.get(&m.vertex)?;
+                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                    let overlay = self
+                        .get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .unwrap_or(LiteralValue::Empty);
+                    if matches!(overlay, LiteralValue::Empty) {
+                        Some((m.vertex, persisted.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for (vertex, value) in restore {
+                self.mirror_vertex_value_to_overlay(vertex, &value);
+            }
+        }
 
         // ── 1. Pre-task value snapshot (overlay-first for cells — G3; the
         // graph value map may be evicted in value-cache-disabled mode).
