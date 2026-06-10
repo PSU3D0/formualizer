@@ -30,9 +30,11 @@ use crate::formula_plane::producer::{
 };
 use crate::formula_plane::region_index::{DirtyDomain, Region};
 use crate::formula_plane::runtime::{
-    FormulaPlane, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
+    FormulaPlane, FormulaSpanId, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
 };
-use crate::formula_plane::scheduler::{MixedSchedule, build_mixed_schedule};
+use crate::formula_plane::scheduler::{
+    MixedSchedule, MixedScheduleFallbackReason, build_mixed_schedule,
+};
 #[cfg(test)]
 use crate::formula_plane::span_eval::SpanEvalReport;
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
@@ -384,6 +386,16 @@ pub struct Engine<R> {
     last_formula_ingest_report: Option<FormulaIngestReport>,
     /// Aggregate centralized formula ingest report for this engine.
     formula_ingest_report_total: FormulaIngestReport,
+    /// Count of FormulaPlane spans demoted to legacy because one or more of
+    /// their member cells participate in a statically-cyclic SCC. A span member
+    /// must never be span-evaluated (gotcha G8 of the cycle-architecture track,
+    /// refs #112): under `CycleDetection::Static` the cycle stamping would race
+    /// span writes, and under `Runtime` SCC members must be evaluated by the
+    /// legacy `evaluate_scc_unit` path. Cyclic spans are demoted at
+    /// schedule-build time (the earliest point cross-cell cycles through span
+    /// producers become visible) so the cycle members land on the legacy graph
+    /// path. Observational only.
+    formula_plane_cycle_member_span_demotions: u64,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
 
@@ -924,6 +936,9 @@ pub struct EngineBaselineStats {
     pub formula_plane_active_span_count: usize,
     pub formula_plane_producer_result_entries: usize,
     pub formula_plane_consumer_read_entries: usize,
+    /// Number of spans demoted to legacy because a member participated in a
+    /// statically-cyclic SCC (gotcha G8, refs #112).
+    pub formula_plane_cycle_member_span_demotions: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1355,6 +1370,7 @@ where
             formula_parse_diagnostics: Vec::new(),
             last_formula_ingest_report: None,
             formula_ingest_report_total: FormulaIngestReport::default(),
+            formula_plane_cycle_member_span_demotions: 0,
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -1424,6 +1440,7 @@ where
             formula_parse_diagnostics: Vec::new(),
             last_formula_ingest_report: None,
             formula_ingest_report_total: FormulaIngestReport::default(),
+            formula_plane_cycle_member_span_demotions: 0,
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -2116,6 +2133,8 @@ where
             formula_plane_active_span_count: formula_authority.active_span_count(),
             formula_plane_producer_result_entries: formula_authority.producer_results.len(),
             formula_plane_consumer_read_entries: formula_authority.consumer_reads.len(),
+            formula_plane_cycle_member_span_demotions: self
+                .formula_plane_cycle_member_span_demotions,
         }
     }
 
@@ -4827,6 +4846,113 @@ where
         }
         self.formula_plane_indexes_epoch_seen = 0;
         Ok(())
+    }
+
+    /// Collect the [`FormulaSpanRef`]s for span producers the mixed scheduler
+    /// reported as cycle members (gotcha G8, refs #112). These spans must be
+    /// demoted to legacy so the cycle members are resolved on the legacy SCC
+    /// path; see [`Self::demote_cyclic_spans`].
+    fn collect_cyclic_span_refs(
+        &self,
+        schedule: &MixedSchedule,
+        span_refs_by_id: &BTreeMap<FormulaSpanId, FormulaSpanRef>,
+    ) -> Vec<FormulaSpanRef> {
+        let mut refs = Vec::new();
+        for fallback in &schedule.fallbacks {
+            if fallback.reason != MixedScheduleFallbackReason::CycleDetected {
+                continue;
+            }
+            if let FormulaProducerId::Span(span_id) = fallback.producer
+                && let Some(span_ref) = span_refs_by_id.get(&span_id)
+                && !refs.contains(span_ref)
+            {
+                refs.push(*span_ref);
+            }
+        }
+        refs
+    }
+
+    /// Demote the given cyclic spans to legacy graph vertices so their member
+    /// cells participate in the legacy Tarjan SCC pass (gotcha G8, refs #112).
+    ///
+    /// Reuses the non-structural demotion seam, which materializes each span's
+    /// cells back onto the legacy graph and re-promotes any acyclic remainder
+    /// that still forms a promotable run. We pass a `Region` that covers exactly
+    /// the demote-target span domains so disjoint spans are left untouched.
+    fn demote_cyclic_spans(&mut self, span_refs: &[FormulaSpanRef]) -> Result<(), ExcelError> {
+        let mut regions: Vec<Region> = Vec::new();
+        {
+            let authority = self.graph.formula_authority();
+            for span_ref in span_refs {
+                if let Some(span) = authority.plane.spans.get(*span_ref) {
+                    regions.push(Region::from_domain(&span.domain));
+                }
+            }
+        }
+        for region in regions {
+            self.demote_spans_preserving_computed_overlays(region.sheet_id(), region)
+                .map_err(|err| {
+                    ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                        "FormulaPlane cycle-member span demotion failed: {err:?}"
+                    ))
+                })?;
+        }
+        self.formula_plane_cycle_member_span_demotions = self
+            .formula_plane_cycle_member_span_demotions
+            .saturating_add(span_refs.len() as u64);
+        // Mirror the demotion into the cumulative ingest report's fallback
+        // histogram so cycle exclusions are visible like every other placement
+        // fallback reason.
+        Self::record_shadow_fallback_reason(
+            &mut self.formula_ingest_report_total,
+            PlacementFallbackReason::CycleMember,
+            span_refs.len() as u64,
+        );
+        Ok(())
+    }
+
+    /// Evaluate residual *legacy-only* cyclic SCCs before the FormulaPlane
+    /// mixed schedule runs (gotcha G8, refs #112).
+    ///
+    /// After cyclic spans are demoted to legacy ([`Self::demote_cyclic_spans`]),
+    /// every cycle member is a graph vertex, so the cycle is now visible to the
+    /// legacy Tarjan pass and lives entirely among legacy producers. The mixed
+    /// schedule treats any cycle as not authoritative-safe; rather than abandon
+    /// the surviving spans by falling through to a pure-legacy `evaluate_all`,
+    /// stamp/evaluate just the cyclic SCC units here (`handle_cycle_unit` honors
+    /// `CycleDetection::Static` vs `Runtime`), clear their dirty flags, and let
+    /// the mixed schedule proceed cycle-free over the surviving spans plus the
+    /// acyclic legacy work.
+    ///
+    /// Returns the number of cyclic SCC units that stamped at least one cell.
+    fn evaluate_legacy_cycle_prepass(&mut self) -> Result<usize, ExcelError> {
+        let dirty = self.graph.get_evaluation_vertices();
+        if dirty.is_empty() {
+            return Ok(0);
+        }
+        let (schedule, _vdeps, _meta) = self.create_evaluation_schedule(&dirty)?;
+        let dirty_set: FxHashSet<VertexId> = dirty.iter().copied().collect();
+        let mut cycle_errors = 0usize;
+        let mut stamped_vertices: Vec<VertexId> = Vec::new();
+        for &unit in &schedule.units {
+            let ScheduleUnit::Cycle(i) = unit else {
+                continue;
+            };
+            let members = schedule.unit_cycle(i);
+            let stamped = self.handle_cycle_unit(members, None, Some(&dirty_set), None)?;
+            if stamped > 0 {
+                cycle_errors += 1;
+            }
+            stamped_vertices.extend(members.iter().copied());
+        }
+        // Clear dirty only on the cyclic members so the subsequent mixed
+        // schedule no longer sees them as dirty legacy producers (which is what
+        // surfaced the cycle). Acyclic legacy work stays dirty and is scheduled
+        // normally alongside the surviving spans.
+        if !stamped_vertices.is_empty() {
+            self.graph.clear_dirty_flags(&stamped_vertices);
+        }
+        Ok(cycle_errors)
     }
 
     /// Insert rows (1-based) and mirror into Arrow store when enabled
@@ -8120,15 +8246,65 @@ where
             .take_pending_changed_regions();
 
         let start = crate::instant::FzInstant::now();
-        let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) =
-            self.build_formula_plane_mixed_schedule(span_seed_mode, &pending_changed_regions)?;
+        let mut span_seed_mode = span_seed_mode;
+        let mut pending_changed_regions = pending_changed_regions;
+        // #CIRC stamps produced by demoting cyclic spans and resolving the
+        // residual legacy-only cycle ahead of the mixed schedule (gotcha G8).
+        let mut prepass_cycle_errors = 0usize;
+        const MAX_CYCLE_DEMOTE_ITERS: usize = 64;
+        let mut cycle_demote_iters = 0usize;
+        let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) = loop {
+            let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) =
+                self.build_formula_plane_mixed_schedule(span_seed_mode, &pending_changed_regions)?;
 
-        if !schedule.is_authoritative_safe() {
-            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
-                "FormulaPlane mixed schedule is not authoritative-safe: {:?}",
-                schedule.fallbacks
-            )));
-        }
+            if schedule.is_authoritative_safe() {
+                break (schedule, span_refs_by_id, plane_epoch, legacy_vertices);
+            }
+
+            // Gotcha G8 (refs #112): a span whose member cell participates in a
+            // statically-cyclic SCC must never be span-evaluated. Cross-cell
+            // cycles that route through a span producer are invisible to the
+            // legacy Tarjan pass (the span member has no graph vertex) and only
+            // surface here, as `CycleDetected` fallbacks in the producer-bounded
+            // mixed schedule. Demote the cyclic spans to legacy graph vertices
+            // so the cycle members move onto the legacy SCC path, then resolve
+            // the now legacy-only cycle ahead of the schedule and rebuild.
+            // Spans that do not touch the cycle are left untouched.
+            let cyclic_spans = self.collect_cyclic_span_refs(&schedule, &span_refs_by_id);
+            if !cyclic_spans.is_empty() {
+                self.demote_cyclic_spans(&cyclic_spans)?;
+            }
+
+            if self.graph.formula_authority().active_span_count() == 0 {
+                // All spans demoted; nothing left for the FP coordinator. The
+                // legacy evaluator resolves the (now fully legacy) cycle.
+                return self.evaluate_all_legacy_impl();
+            }
+
+            // Resolve the residual legacy-only cycle (`handle_cycle_unit`
+            // honors Static vs Runtime) before rebuilding so the mixed schedule
+            // is cycle-free and the surviving spans still get evaluated.
+            prepass_cycle_errors =
+                prepass_cycle_errors.saturating_add(self.evaluate_legacy_cycle_prepass()?);
+
+            // Re-seed every surviving span whole after the geometry/dirty
+            // changes; the demotion already reset
+            // `formula_plane_indexes_epoch_seen` to 0.
+            span_seed_mode = SpanSeedMode::WholeAll;
+            pending_changed_regions = self
+                .graph
+                .formula_authority_mut()
+                .take_pending_changed_regions();
+
+            cycle_demote_iters += 1;
+            if cycle_demote_iters >= MAX_CYCLE_DEMOTE_ITERS {
+                // Defensive bound: every iteration either demotes ≥1 span or
+                // stamps the legacy cycle, both strictly reducing residual work.
+                // If we somehow fail to converge, fall back to pure legacy to
+                // stay correct rather than spin.
+                return self.evaluate_all_legacy_impl();
+            }
+        };
 
         let mut computed_vertices = 0usize;
         #[cfg(test)]
@@ -8243,7 +8419,7 @@ where
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
         Ok(EvalResult {
             computed_vertices,
-            cycle_errors: 0,
+            cycle_errors: prepass_cycle_errors,
             elapsed: start.elapsed(),
         })
     }

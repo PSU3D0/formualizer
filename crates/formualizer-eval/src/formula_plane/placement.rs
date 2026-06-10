@@ -111,6 +111,17 @@ pub(crate) enum PlacementFallbackReason {
     InternalDependency,
     SmallDomain,
     BindingMemoryCapExceeded,
+    /// At least one member of the family participates in a statically-cyclic
+    /// SCC. A cycle member must never be span-evaluated (gotcha G8 of the
+    /// cycle-architecture track, refs #112): under `CycleDetection::Static` the
+    /// cycle stamping would race/overwrite span writes, and under
+    /// `CycleDetection::Runtime` SCC members are evaluated by the legacy
+    /// `evaluate_scc_unit` path and must stay on the graph. Cross-cell cycles
+    /// that pass through a span producer are only observable once the producer
+    /// graph exists, so this reason is recorded when the FP mixed scheduler
+    /// demotes a cyclic span at schedule-build time rather than at initial
+    /// placement.
+    CycleMember,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

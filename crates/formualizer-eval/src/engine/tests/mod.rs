@@ -100,6 +100,7 @@ mod eval_flush_recalc_probe;
 mod formula_edit_propagation;
 mod formula_error_propagation;
 mod formula_overlay_writeback;
+mod formula_plane_cycle_member_exclusion;
 mod formula_plane_demotion_correctness;
 mod formula_plane_dirty_domain_preservation;
 mod formula_plane_index_promotion;
