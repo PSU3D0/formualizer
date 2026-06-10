@@ -291,7 +291,7 @@ fn apply_forward_change_event(
         }
         ChangeEvent::CompoundStart { .. }
         | ChangeEvent::CompoundEnd { .. }
-        | ChangeEvent::StagedFormulaStateChanged { .. } => {}
+        | ChangeEvent::StagedFormulaCellChanged { .. } => {}
     }
     Ok(())
 }

@@ -170,7 +170,7 @@ fn replay_events(graph: &mut DependencyGraph, events: &[ChangeEvent]) {
             // mutate the graph snapshot under test.
             ChangeEvent::EdgeAdded { .. }
             | ChangeEvent::EdgeRemoved { .. }
-            | ChangeEvent::StagedFormulaStateChanged { .. } => {}
+            | ChangeEvent::StagedFormulaCellChanged { .. } => {}
         }
     }
 }

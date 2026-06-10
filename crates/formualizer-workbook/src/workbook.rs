@@ -882,8 +882,6 @@ pub struct Workbook {
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
 }
 
-type StagedFormulaState = Vec<(String, u32, u32, String)>;
-
 trait WorkbookActionOps {
     fn set_value(
         &mut self,
@@ -1503,6 +1501,12 @@ impl Workbook {
     pub fn engine_mut(&mut self) -> &mut formualizer_eval::engine::Engine<WBResolver> {
         &mut self.engine
     }
+    /// Read-only access to the workbook changelog (audit trail of graph/staged mutations).
+    ///
+    /// Primarily for tests and tooling that need to introspect recorded events.
+    pub fn changelog(&self) -> &formualizer_eval::engine::ChangeLog {
+        &self.log
+    }
     pub fn eval_config(&self) -> &formualizer_eval::engine::EvalConfig {
         &self.engine.config
     }
@@ -1553,22 +1557,41 @@ impl Workbook {
         self.log.set_reason(reason);
     }
 
-    fn staged_formula_state_snapshot(&self) -> StagedFormulaState {
-        self.engine.staged_formula_state_snapshot()
+    /// Read the staged formula text for a single cell (cloned), if any.
+    ///
+    /// Cheap O(per-sheet) lookup used to snapshot the *old* staged state of a
+    /// cell before mutating it, so a per-cell delta can be recorded for undo.
+    fn staged_formula_cell(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
+        self.engine.get_staged_formula_text(sheet, row, col)
     }
 
-    fn record_staged_formula_state_change(&mut self, before: StagedFormulaState) {
+    /// Record a per-cell staged-formula delta for undo/redo.
+    ///
+    /// `before` is the staged text prior to the edit; `after` is the staged text
+    /// after the edit. No-op when the value is unchanged or the changelog is off.
+    /// This replaces the former full before/after snapshot pair (see #126), so a
+    /// sequence of N staged-formula edits costs O(N) changelog memory, not O(N^2).
+    fn record_staged_formula_cell_change(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        before: Option<String>,
+        after: Option<String>,
+    ) {
         if !self.enable_changelog {
             return;
         }
-        let after = self.staged_formula_state_snapshot();
         if before == after {
             return;
         }
         self.log.record(
-            formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaStateChanged {
-                before,
-                after,
+            formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaCellChanged {
+                sheet: sheet.to_string(),
+                row,
+                col,
+                old: before,
+                new: after,
             },
         );
     }
@@ -2065,7 +2088,7 @@ impl Workbook {
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
-            .then(|| self.staged_formula_state_snapshot());
+            .then(|| self.staged_formula_cell(sheet, row, col));
         if self.enable_changelog {
             // Use VertexEditor with logging for graph, then mirror overlay and mark edited
             let sheet_id = self
@@ -2094,7 +2117,7 @@ impl Workbook {
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.clear_staged_formula_text(sheet, row, col);
             if let Some(before) = staged_before {
-                self.record_staged_formula_state_change(before);
+                self.record_staged_formula_cell_change(sheet, row, col, before, None);
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -2117,7 +2140,7 @@ impl Workbook {
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
-            .then(|| self.staged_formula_state_snapshot());
+            .then(|| self.staged_formula_cell(sheet, row, col));
         if self.engine.config.defer_graph_building {
             if self.engine.get_cell(sheet, row, col).is_some() {
                 let with_eq = if formula.starts_with('=') {
@@ -2148,7 +2171,7 @@ impl Workbook {
                         .patch_last_cell_event_old_state(cell, old_value, old_formula);
                     self.engine.clear_staged_formula_text(sheet, row, col);
                     if let Some(before) = staged_before {
-                        self.record_staged_formula_state_change(before);
+                        self.record_staged_formula_cell_change(sheet, row, col, before, None);
                     }
                     self.engine.mark_data_edited();
                     Ok(())
@@ -2163,7 +2186,8 @@ impl Workbook {
                 self.engine
                     .stage_formula_text(sheet, row, col, formula.to_string());
                 if let Some(before) = staged_before {
-                    self.record_staged_formula_state_change(before);
+                    let after = self.staged_formula_cell(sheet, row, col);
+                    self.record_staged_formula_cell_change(sheet, row, col, before, after);
                 }
                 Ok(())
             }
@@ -2189,7 +2213,7 @@ impl Workbook {
                 });
                 self.engine.clear_staged_formula_text(sheet, row, col);
                 if let Some(before) = staged_before {
-                    self.record_staged_formula_state_change(before);
+                    self.record_staged_formula_cell_change(sheet, row, col, before, None);
                 }
                 self.engine.mark_data_edited();
                 Ok(())
@@ -2287,9 +2311,6 @@ impl Workbook {
         _start: (u32, u32),
         cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
-        let staged_before = self
-            .enable_changelog
-            .then(|| self.staged_formula_state_snapshot());
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2299,6 +2320,8 @@ impl Workbook {
 
             // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
             // In canonical mode the graph value cache is empty, so ChangeLog old_value must be patched.
+            // `staged_before` is the cell's staged formula text prior to the edit, used to
+            // record a per-cell staged-formula delta for undo/redo (see #126).
             #[allow(clippy::type_complexity)]
             let mut items: Vec<(
                 u32,
@@ -2307,6 +2330,7 @@ impl Workbook {
                 formualizer_eval::reference::CellRef,
                 Option<LiteralValue>,
                 Option<formualizer_parse::ASTNode>,
+                Option<String>,
             )> = Vec::with_capacity(cells.len());
             for ((r, c), d) in cells.into_iter() {
                 let cell = formualizer_eval::reference::CellRef::new(
@@ -2315,7 +2339,8 @@ impl Workbook {
                 );
                 let old_value = self.engine.get_cell_value(sheet, r, c);
                 let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
-                items.push((r, c, d, cell, old_value, old_formula));
+                let staged_before = self.staged_formula_cell(sheet, r, c);
+                items.push((r, c, d, cell, old_value, old_formula, staged_before));
             }
 
             let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
@@ -2323,7 +2348,7 @@ impl Workbook {
 
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
-                    for (r, c, d, cell, _old_value, _old_formula) in items.iter() {
+                    for (r, c, d, cell, _old_value, _old_formula, _staged_before) in items.iter() {
                         if let Some(v) = d.value.clone() {
                             editor.set_cell_value(*cell, v.clone());
                             // If a formula is also being set for this cell, do not mirror the
@@ -2352,7 +2377,7 @@ impl Workbook {
                 })?;
 
             // Patch old_value/old_formula for each cell's last SetValue/SetFormula event.
-            for (_r, _c, _d, cell, old_value, old_formula) in items.iter().rev() {
+            for (_r, _c, _d, cell, old_value, old_formula, _staged_before) in items.iter().rev() {
                 self.log.patch_last_cell_event_old_state(
                     *cell,
                     old_value.clone(),
@@ -2363,7 +2388,7 @@ impl Workbook {
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
             }
-            for (r, c, d, _cell, _old_value, _old_formula) in &items {
+            for (r, c, d, _cell, _old_value, _old_formula, _staged_before) in &items {
                 if d.formula.is_none() && d.value.is_some() {
                     self.engine.clear_staged_formula_text(sheet, *r, *c);
                 }
@@ -2374,8 +2399,19 @@ impl Workbook {
             for (r, c, f) in staged_forms {
                 self.engine.stage_formula_text(sheet, r, c, f);
             }
-            if let Some(before) = staged_before {
-                self.record_staged_formula_state_change(before);
+            // Record a per-cell staged-formula delta for every touched cell whose
+            // staged state changed (see #126: avoids O(N^2) full snapshots).
+            for (r, c, _d, _cell, _old_value, _old_formula, staged_before) in &items {
+                let after = self.staged_formula_cell(sheet, *r, *c);
+                if *staged_before != after {
+                    self.record_staged_formula_cell_change(
+                        sheet,
+                        *r,
+                        *c,
+                        staged_before.clone(),
+                        after,
+                    );
+                }
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -2418,9 +2454,6 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
-        let staged_before = self
-            .enable_changelog
-            .then(|| self.staged_formula_state_snapshot());
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2428,6 +2461,8 @@ impl Workbook {
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
 
             // Capture old state from Arrow truth BEFORE applying the batch.
+            // `staged_before` is the cell's staged formula text prior to the edit,
+            // used to record a per-cell staged-formula delta for undo/redo (see #126).
             #[allow(clippy::type_complexity)]
             let mut items: Vec<(
                 u32,
@@ -2436,6 +2471,7 @@ impl Workbook {
                 formualizer_eval::reference::CellRef,
                 Option<LiteralValue>,
                 Option<formualizer_parse::ASTNode>,
+                Option<String>,
             )> = Vec::new();
             for (ri, rvals) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
@@ -2447,17 +2483,18 @@ impl Workbook {
                     );
                     let old_value = self.engine.get_cell_value(sheet, r, c);
                     let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
-                    items.push((r, c, v.clone(), cell, old_value, old_formula));
+                    let staged_before = self.staged_formula_cell(sheet, r, c);
+                    items.push((r, c, v.clone(), cell, old_value, old_formula, staged_before));
                 }
             }
 
             self.engine.edit_with_logger(&mut self.log, |editor| {
-                for (_r, _c, v, cell, _old_value, _old_formula) in items.iter() {
+                for (_r, _c, v, cell, _old_value, _old_formula, _staged_before) in items.iter() {
                     editor.set_cell_value(*cell, v.clone());
                 }
             });
 
-            for (_r, _c, _v, cell, old_value, old_formula) in items.iter().rev() {
+            for (_r, _c, _v, cell, old_value, old_formula, _staged_before) in items.iter().rev() {
                 self.log.patch_last_cell_event_old_state(
                     *cell,
                     old_value.clone(),
@@ -2465,12 +2502,13 @@ impl Workbook {
                 );
             }
 
-            for (r, c, v, _cell, _old_value, _old_formula) in items {
+            for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
                 self.engine.clear_staged_formula_text(sheet, r, c);
-            }
-            if let Some(before) = staged_before {
-                self.record_staged_formula_state_change(before);
+                // Setting a literal value clears any staged formula for this cell.
+                if staged_before.is_some() {
+                    self.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
+                }
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -2505,20 +2543,24 @@ impl Workbook {
         let end_row = start_row.saturating_add((height - 1) as u32);
         let end_col = start_col.saturating_add((width - 1) as u32);
         self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
-        let staged_before = self
-            .enable_changelog
-            .then(|| self.staged_formula_state_snapshot());
 
         if self.engine.config.defer_graph_building {
+            // Per-cell staged-formula deltas (see #126). Capture each cell's prior
+            // staged text before overwriting so undo/redo can replay precisely.
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, f) in rforms.iter().enumerate() {
                     let c = start_col + ci as u32;
+                    let staged_before = self
+                        .enable_changelog
+                        .then(|| self.staged_formula_cell(sheet, r, c))
+                        .flatten();
                     self.engine.stage_formula_text(sheet, r, c, f.clone());
+                    if self.enable_changelog {
+                        let after = self.staged_formula_cell(sheet, r, c);
+                        self.record_staged_formula_cell_change(sheet, r, c, staged_before, after);
+                    }
                 }
-            }
-            if let Some(before) = staged_before {
-                self.record_staged_formula_state_change(before);
             }
             Ok(())
         } else if self.enable_changelog {
@@ -2526,6 +2568,16 @@ impl Workbook {
                 .engine
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
+
+            // Capture each cell's prior staged text before the batch edit clears it.
+            let mut staged_before: Vec<(u32, u32, Option<String>)> = Vec::new();
+            for (ri, rforms) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for (ci, _f) in rforms.iter().enumerate() {
+                    let c = start_col + ci as u32;
+                    staged_before.push((r, c, self.staged_formula_cell(sheet, r, c)));
+                }
+            }
 
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
@@ -2557,8 +2609,11 @@ impl Workbook {
                     self.engine.clear_staged_formula_text(sheet, r, c);
                 }
             }
-            if let Some(before) = staged_before {
-                self.record_staged_formula_state_change(before);
+            // Setting a graph formula clears any staged text; record per-cell deltas.
+            for (r, c, before) in staged_before {
+                if before.is_some() {
+                    self.record_staged_formula_cell_change(sheet, r, c, before, None);
+                }
             }
             self.engine.mark_data_edited();
             Ok(())

@@ -528,7 +528,7 @@ impl<'g> VertexEditor<'g> {
                     )
                     .map_err(EditorError::Excel)?;
             }
-            ChangeEvent::StagedFormulaStateChanged { .. } => {
+            ChangeEvent::StagedFormulaCellChanged { .. } => {
                 // Workbook-level deferred state is replayed by Engine undo/redo wrappers.
             }
             // Granular events for compound operations
