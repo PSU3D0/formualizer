@@ -137,5 +137,6 @@ mod visibility_mask_cache;
 
 mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
-mod short_circuit_dispatch;
 mod live_edges;
+mod scc_runtime_cycles;
+mod short_circuit_dispatch;

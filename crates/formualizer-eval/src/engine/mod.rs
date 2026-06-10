@@ -45,7 +45,8 @@ mod tests;
 
 pub use arena::AstNodeId;
 pub use eval::{
-    Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan, VirtualDepTelemetry,
+    CycleTelemetry, Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan,
+    VirtualDepTelemetry,
 };
 pub use eval_delta::{DeltaMode, EvalDelta};
 pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
