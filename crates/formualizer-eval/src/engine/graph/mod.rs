@@ -1712,7 +1712,13 @@ impl DependencyGraph {
         // Editing a formula clears any prior structural #REF! marking for this vertex.
         self.ref_error_vertices.remove(&addr_vertex_id);
 
-        if new_dependencies.contains(&addr_vertex_id) {
+        // Under `CyclePolicy::Iterate` (Runtime detection) self-dependencies
+        // are accepted, mirroring Excel with iterative calculation enabled:
+        // the self-edge forms a single-vertex SCC that the scheduler emits as
+        // a Cycle unit and `evaluate_scc_unit` iterates (RFC #113, spec §7.1/
+        // §7.6/§7.8). Everywhere else the edit-time rejection stands.
+        if new_dependencies.contains(&addr_vertex_id) && !self.config.cycle.allows_self_dependency()
+        {
             return Err(ExcelError::new(ExcelErrorKind::Circ)
                 .with_message("Self-reference detected".to_string()));
         }
@@ -2183,6 +2189,19 @@ impl DependencyGraph {
         let volatile_ids: Vec<VertexId> = self.volatile_vertices.iter().copied().collect();
         for id in volatile_ids {
             self.mark_dirty(id);
+        }
+    }
+
+    /// Re-marks members of iterating SCCs (and, via propagation, their
+    /// dependents) dirty for the next evaluation cycle — the volatile-like
+    /// redirty that keeps `CyclePolicy::Iterate` cells re-evaluating every
+    /// recalc (RFC #113; spec §4/§7.6). Vertices deleted since the recalc
+    /// are skipped.
+    pub(crate) fn redirty_iterative_members(&mut self, members: &[VertexId]) {
+        for &id in members {
+            if self.vertex_exists(id) {
+                let _ = self.mark_dirty(id);
+            }
         }
     }
 
@@ -3681,8 +3700,9 @@ impl DependencyGraph {
             }
         };
 
-        // Self-reference / name-cycle safety parity with set_cell_formula.
-        if new_dependencies.contains(&vertex_id) {
+        // Self-reference / name-cycle safety parity with set_cell_formula
+        // (including the `CyclePolicy::Iterate` self-dependency relaxation).
+        if new_dependencies.contains(&vertex_id) && !self.config.cycle.allows_self_dependency() {
             self.mark_as_ref_error(vertex_id);
             return;
         }
