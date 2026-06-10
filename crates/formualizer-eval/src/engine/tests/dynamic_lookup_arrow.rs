@@ -31,12 +31,14 @@ fn take_whole_column_returns_single_cell_without_materializing() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, EvalConfig::default());
 
+    // Placed in column C so the whole-column reference is not self-inclusive
+    // (a `=TAKE(A:A,1)` *in* column A would be circular per #120).
     engine
-        .set_cell_formula("Sheet1", 1, 1, parse("=TAKE(A:A,1)").unwrap())
+        .set_cell_formula("Sheet1", 1, 3, parse("=TAKE(A:A,1)").unwrap())
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 3), None);
 }
 
 #[test]
@@ -44,11 +46,12 @@ fn drop_whole_column_can_return_last_cell_without_materializing() {
     let wb = TestWorkbook::new();
     let mut engine = Engine::new(wb, EvalConfig::default());
 
-    // DROP(A:A,1048575) returns the last row of A:A.
+    // DROP(A:A,1048575) returns the last row of A:A. Placed in column C so the
+    // whole-column reference is not self-inclusive (#120).
     engine
-        .set_cell_formula("Sheet1", 1, 1, parse("=DROP(A:A,1048575)").unwrap())
+        .set_cell_formula("Sheet1", 1, 3, parse("=DROP(A:A,1048575)").unwrap())
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 3), None);
 }

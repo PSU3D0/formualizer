@@ -343,12 +343,16 @@ fn named_range_covering_the_cell_rejected_at_ingest_in_both_modes() {
     }
 }
 
-/// KNOWN GAP (pre-existing, pre-dates #112 — static dependency extraction,
-/// not Runtime evaluation): whole-column self-inclusion `=SUM(B:B)` in B1 is
-/// not detected as a static SCC, so no cycle unit exists for either mode to
-/// handle. Spec §7.8's stripe-path `#CIRC!` is therefore NOT yet delivered;
-/// this test pins that Runtime at least matches Static exactly (no silent
-/// divergence) until the detection gap is fixed.
+/// Spec §7.8 stripe-path self-inclusion (#120): whole-column `=SUM(B:B)` in
+/// B1 references column B, which contains B1 itself. At ingest the stripe
+/// region is detected to cover the formula's own cell, so a SELF-LOOP edge is
+/// recorded; Tarjan then sees a single-vertex SCC with a self-loop and
+/// `separate_cycles` classifies it as a cycle. Both modes resolve to `#CIRC!`
+/// under `CyclePolicy::Error` and Runtime still matches Static exactly.
+///
+/// This pin previously documented the *incorrect* pre-#120 value (silent
+/// `9.0`, 0 cycle errors); it was consciously updated when the detection gap
+/// was closed.
 #[test]
 fn whole_column_self_inclusion_gap_runtime_matches_static() {
     let run = |cfg: EvalConfig| {
@@ -363,10 +367,112 @@ fn whole_column_self_inclusion_gap_runtime_matches_static() {
     let static_out = run(EvalConfig::default());
     let runtime_out = run(runtime_cfg());
     assert_eq!(static_out, runtime_out);
-    // Document today's (incorrect per spec §7.8) value so a future detection
-    // fix must consciously update this pin.
-    assert_eq!(static_out.0, Some(LiteralValue::Number(9.0)));
-    assert_eq!(static_out.1, 0);
+    // Whole-column self-inclusion is now a detected cycle in both modes.
+    assert!(
+        matches!(
+            static_out.0,
+            Some(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Circ
+        ),
+        "expected #CIRC, got {:?}",
+        static_out.0
+    );
+    assert_eq!(static_out.1, 1);
+}
+
+/// #120: whole-column self-inclusion `=SUM(B:B)` placed in column B is a
+/// circular reference (Excel flags it). The stripe region covers the
+/// formula's own cell, so a self-loop is recorded at ingest and the cell
+/// resolves to `#CIRC!` under both detection modes.
+#[test]
+fn whole_column_in_column_self_inclusion_is_circ_both_modes() {
+    for cfg in [EvalConfig::default(), runtime_cfg()] {
+        let mut engine = Engine::new(TestWorkbook::new(), cfg);
+        for r in 2..=4u32 {
+            set_value(&mut engine, "Sheet1", r, 2, LiteralValue::Number(r as f64));
+        }
+        // B1 = SUM(B:B) ⇒ B1 ∈ column B ⇒ self-loop.
+        set_formula(&mut engine, "Sheet1", 1, 2, "=SUM(B:B)");
+        engine.evaluate_all().unwrap();
+        assert!(
+            is_circ(&engine, "Sheet1", 1, 2),
+            "B1=SUM(B:B) must be #CIRC, got {:?}",
+            engine.get_cell_value("Sheet1", 1, 2)
+        );
+    }
+}
+
+/// #120 symmetric whole-row case: `=SUM(2:2)` placed in row 2 is circular.
+#[test]
+fn whole_row_in_row_self_inclusion_is_circ_both_modes() {
+    for cfg in [EvalConfig::default(), runtime_cfg()] {
+        let mut engine = Engine::new(TestWorkbook::new(), cfg);
+        for c in 3..=5u32 {
+            set_value(&mut engine, "Sheet1", 2, c, LiteralValue::Number(c as f64));
+        }
+        // B2 = SUM(2:2) ⇒ B2 ∈ row 2 ⇒ self-loop.
+        set_formula(&mut engine, "Sheet1", 2, 2, "=SUM(2:2)");
+        engine.evaluate_all().unwrap();
+        assert!(
+            is_circ(&engine, "Sheet1", 2, 2),
+            "B2=SUM(2:2) must be #CIRC, got {:?}",
+            engine.get_cell_value("Sheet1", 2, 2)
+        );
+    }
+}
+
+/// #120 large bounded range over the expansion limit: `=SUM(B1:B100000)` in
+/// B5 is stripe-compressed (not expanded to explicit cell edges), so the
+/// pre-#120 ingest self-reference check never saw B5. The stripe region now
+/// covers B5 ⇒ self-loop ⇒ `#CIRC!`.
+#[test]
+fn large_bounded_range_self_inclusion_is_circ_both_modes() {
+    for cfg in [EvalConfig::default(), runtime_cfg()] {
+        let mut engine = Engine::new(TestWorkbook::new(), cfg);
+        for r in 1..=4u32 {
+            set_value(&mut engine, "Sheet1", r, 2, LiteralValue::Number(r as f64));
+        }
+        set_formula(&mut engine, "Sheet1", 5, 2, "=SUM(B1:B100000)");
+        engine.evaluate_all().unwrap();
+        assert!(
+            is_circ(&engine, "Sheet1", 5, 2),
+            "B5=SUM(B1:B100000) must be #CIRC, got {:?}",
+            engine.get_cell_value("Sheet1", 5, 2)
+        );
+    }
+}
+
+/// #120 NEGATIVE control: a whole-column reference consumed from OUTSIDE the
+/// column stays acyclic and computes normally.
+#[test]
+fn whole_column_referenced_from_outside_stays_acyclic() {
+    for cfg in [EvalConfig::default(), runtime_cfg()] {
+        let mut engine = Engine::new(TestWorkbook::new(), cfg);
+        for r in 1..=3u32 {
+            set_value(&mut engine, "Sheet1", r, 2, LiteralValue::Number(r as f64));
+        }
+        // C1 = SUM(B:B): column C is not referenced ⇒ no self-loop.
+        set_formula(&mut engine, "Sheet1", 1, 3, "=SUM(B:B)");
+        let res = engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 1, 3), 6.0);
+        assert_eq!(res.cycle_errors, 0);
+    }
+}
+
+/// #120 NEGATIVE control: a large bounded range NOT intersecting the
+/// formula's own cell is unchanged (computes, no cycle).
+#[test]
+fn large_bounded_range_non_intersecting_stays_acyclic() {
+    for cfg in [EvalConfig::default(), runtime_cfg()] {
+        let mut engine = Engine::new(TestWorkbook::new(), cfg);
+        for r in 1..=4u32 {
+            set_value(&mut engine, "Sheet1", r, 1, LiteralValue::Number(r as f64));
+        }
+        // B5 = SUM(A1:A100000): own cell B5 is in column B, range is column A.
+        set_formula(&mut engine, "Sheet1", 5, 2, "=SUM(A1:A100000)");
+        let res = engine.evaluate_all().unwrap();
+        assert_eq!(num(&engine, "Sheet1", 5, 2), 10.0);
+        assert_eq!(res.cycle_errors, 0);
+    }
 }
 
 /* ──────────────────── 7.9 spill anchor inside an SCC ─────────────────── */

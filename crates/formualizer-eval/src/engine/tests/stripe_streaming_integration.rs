@@ -329,13 +329,15 @@ fn test_streaming_range_shape_variations() {
 
     let dense_formula = "=SUM(B1:Z100)";
     let dense_ast = parse(dense_formula).unwrap();
-    engine.set_cell_formula("Sheet1", 3, 5, dense_ast).unwrap();
+    // Place outside the B1:Z100 rectangle (col 60) so the formula is not
+    // self-inclusive — E3 sits inside B1:Z100 and would be circular per #120.
+    engine.set_cell_formula("Sheet1", 3, 60, dense_ast).unwrap();
 
     engine.evaluate_all().unwrap();
 
     let tall_result = engine.get_cell_value("Sheet1", 1, 5).unwrap();
     let wide_result = engine.get_cell_value("Sheet1", 2, 5).unwrap();
-    let dense_result = engine.get_cell_value("Sheet1", 3, 5).unwrap();
+    let dense_result = engine.get_cell_value("Sheet1", 3, 60).unwrap();
 
     // BUG IDENTIFIED: When multiple streaming formulas are evaluated together,
     // tall and wide ranges return 1 instead of the correct sum.

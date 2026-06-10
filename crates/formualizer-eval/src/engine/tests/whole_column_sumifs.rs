@@ -108,17 +108,19 @@ fn sumifs_whole_columns_empty_vs_populated() {
     // Column C is empty (but referenced in formula)
     // Column D has criteria for column C
 
-    // SUMIFS with empty column reference should still work
+    // SUMIFS with empty column reference should still work. Placed in column E
+    // so the whole-column references (A:A/B:B/C:C) are not self-inclusive — a
+    // SUMIFS *in* one of those columns would be circular per #120.
     let formula = parse("=SUMIFS(A:A, B:B, \"Yes\", C:C, \"\")").unwrap();
 
-    engine.set_cell_formula("Sheet1", 2, 1, formula).unwrap();
+    engine.set_cell_formula("Sheet1", 2, 5, formula).unwrap();
 
-    let result = engine.evaluate_cell("Sheet1", 2, 1);
+    let result = engine.evaluate_cell("Sheet1", 2, 5);
     assert!(result.is_ok(), "SUMIFS with empty column should not error");
 
     // Result should be 300 (both rows match "Yes" and empty matches empty)
     assert_eq!(
-        engine.get_cell_value("Sheet1", 2, 1).unwrap(),
+        engine.get_cell_value("Sheet1", 2, 5).unwrap(),
         LiteralValue::Number(300.0)
     );
 }
