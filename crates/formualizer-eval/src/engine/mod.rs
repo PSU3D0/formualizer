@@ -13,6 +13,7 @@ pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;
 pub mod journal;
 pub mod live_edges;
+pub mod live_graph;
 pub mod lookup_index_cache;
 pub mod plan;
 pub mod range_view;
