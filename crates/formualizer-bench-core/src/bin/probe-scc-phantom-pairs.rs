@@ -107,11 +107,9 @@ struct SccPhantomProbeReport {
     recalc_ms_p95: f64,
     recalc_ms_max: f64,
     recalc_us_per_pair_p50: f64,
-    /// Best-effort SCC telemetry. NOTE: under the arrow-canonical workbook path
-    /// the runtime SCC evaluation produces correct values but does NOT populate
-    /// `last_cycle_telemetry` (the legacy/`TestWorkbook` path does); these
-    /// fields read 0 here even though every pair resolved as a phantom SCC. The
-    /// authoritative correctness signal is the value self-check (`sample_*`).
+    /// SCC telemetry from `last_cycle_telemetry` (populated on the workbook
+    /// path too — the telemetry gap this probe originally surfaced is fixed).
+    /// Runtime mode self-checks `initial_phantom_sccs == pairs`.
     initial_phantom_sccs: usize,
     initial_settle_passes_total: usize,
     /// `#CIRC!` cells observed on the initial eval, counted by reading cells.
@@ -212,9 +210,8 @@ fn run_probe(cli: &Cli) -> Result<SccPhantomProbeReport> {
     let initial_eval_ms = initial_start.elapsed().as_secs_f64() * 1000.0;
 
     let telemetry = workbook.engine().last_cycle_telemetry().clone();
-    // `#CIRC!` count is the authoritative cycle-handling signal here (read from
-    // cells, not telemetry, since the arrow-canonical path leaves telemetry at
-    // 0). Runtime: every pair is phantom → 0 circ. Static: 2 per pair.
+    // `#CIRC!` count is cross-checked from cells AND telemetry. Runtime: every
+    // pair is phantom → 0 circ, `phantom_sccs == pairs`. Static: 2 per pair.
     let initial_circ_cells = count_circ_cells(&workbook, cli.pairs)?;
     match cli.mode {
         Mode::Runtime => {
@@ -227,6 +224,13 @@ fn run_probe(cli: &Cli) -> Result<SccPhantomProbeReport> {
                 bail!(
                     "runtime mode: phantom pairs must not produce cycle errors, got {}",
                     initial_result.cycle_errors
+                );
+            }
+            if telemetry.phantom_sccs != cli.pairs {
+                bail!(
+                    "runtime mode: telemetry must report every pair as a phantom SCC, got {} of {}",
+                    telemetry.phantom_sccs,
+                    cli.pairs
                 );
             }
         }

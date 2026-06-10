@@ -962,10 +962,11 @@ pub struct VirtualDepTelemetry {
 /// (spec `formualizer-cycle-semantics-spec.md` §10, Stage-2 subset; the
 /// `Iterate`-specific fields arrive in Stage 3).
 ///
-/// Collection is gated by the existing telemetry flag
-/// (`EvalConfig::enable_virtual_dep_telemetry`), mirroring
-/// [`VirtualDepTelemetry`]; the struct is always public. Counters reset at
-/// the start of every evaluation request.
+/// Collection is unconditional: SCC tasks are rare relative to ordinary
+/// vertex evaluation and the counters are a handful of integer adds per
+/// task, so no config flag gates them (unlike [`VirtualDepTelemetry`],
+/// which pays per-schedule costs). Counters reset at the start of every
+/// evaluation request.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CycleTelemetry {
     /// SCC tasks executed (static SCCs that reached Runtime evaluation).
@@ -8216,6 +8217,13 @@ where
         })
     }
     fn evaluate_authoritative_formula_plane_all(&mut self) -> Result<EvalResult, ExcelError> {
+        // Fresh per-request cycle counters. Some callers (`evaluate_vertex`,
+        // `evaluate_cells*`) reach this coordinator without an entry-point
+        // reset; callers that did reset have accumulated nothing in between,
+        // so the duplicate reset is harmless. The composed legacy primitive
+        // below intentionally does not reset, so `evaluate_legacy_cycle_prepass`
+        // counts survive into the final telemetry.
+        self.reset_cycle_telemetry();
         // The FormulaPlane coordinator is now selected by mode for evaluate_all.
         // SingletonUnique formulas intentionally remain legacy graph vertices;
         // when no spans are active, execute through the private legacy primitive
@@ -8651,6 +8659,7 @@ where
     /// coordinator; the coordinator itself composes with private legacy
     /// primitives for legacy-only work.
     fn evaluate_all_coordinator(&mut self) -> Result<EvalResult, ExcelError> {
+        self.reset_cycle_telemetry();
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
             return self.evaluate_authoritative_formula_plane_all();
         }
@@ -8692,8 +8701,12 @@ where
     /// when no active spans exist or FormulaPlane authority is not in
     /// `AuthoritativeExperimental` mode. This is now an internal primitive; it
     /// must not be invoked directly from public APIs.
+    ///
+    /// Does NOT reset `last_cycle_telemetry`: the FormulaPlane coordinator
+    /// composes this primitive *after* `evaluate_legacy_cycle_prepass` may
+    /// have accumulated counts (G8 demotion path); resets happen at the
+    /// public entry points / coordinators instead.
     fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
-        self.reset_cycle_telemetry();
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
@@ -12049,7 +12062,6 @@ where
         }
 
         let task_start = crate::instant::FzInstant::now();
-        let collect_telemetry = self.config.enable_virtual_dep_telemetry;
 
         // ── 0. Member order (spec §7.13): cells ascending (sheet, row, col);
         // name vertices after, lexicographic by folded canonical name; any
@@ -12368,7 +12380,7 @@ where
             }
         }
 
-        if collect_telemetry {
+        {
             let t = &mut self.last_cycle_telemetry;
             t.static_sccs += 1;
             if witnessed_cycles == 0 && stamped == 0 && !capped {
