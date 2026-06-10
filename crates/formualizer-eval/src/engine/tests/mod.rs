@@ -139,4 +139,5 @@ mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
 mod live_edges;
 mod scc_runtime_cycles;
+mod scc_runtime_property;
 mod short_circuit_dispatch;
