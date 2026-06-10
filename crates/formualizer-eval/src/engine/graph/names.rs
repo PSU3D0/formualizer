@@ -265,6 +265,15 @@ impl DependencyGraph {
             .map(|nr| &nr.definition)
     }
 
+    /// The folded lookup key (see [`Self::name_lookup_key`]) of the name
+    /// represented by `vertex`, if it is a name vertex. Used by SCC tasks for
+    /// deterministic member ordering and live name-read matching (RFC #112).
+    pub(crate) fn name_key_for_vertex(&self, vertex: VertexId) -> Option<String> {
+        self.name_vertex_lookup
+            .get(&vertex)
+            .map(|(_, name)| self.name_lookup_key(name))
+    }
+
     pub fn named_range_by_vertex(&self, vertex: VertexId) -> Option<&NamedRange> {
         self.name_vertex_lookup
             .get(&vertex)

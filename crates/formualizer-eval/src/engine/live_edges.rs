@@ -83,11 +83,22 @@ struct CollectorState {
 /// * Scalar reads are O(1) (hash lookup keyed by `(sheet, row, col)`).
 /// * Rectangle reads are recorded **once per resolved rect** and intersected
 ///   with the membership in O(|SCC|) — never per cell of the rect.
+/// * Name reads (named-formula SCC members, spec §7.13) are O(1) lookups by
+///   the engine-folded name key.
+///
+/// Member indices are split: cell members occupy `0..cell_count`, name
+/// members occupy `cell_count..cell_count + name_count` (matching the spec
+/// §7.13 member ordering used by SCC tasks: cells first, then names).
 pub struct LiveEdgeCollector {
     /// Iterable membership for rect intersection.
     members: Vec<MemberCell>,
     /// O(1) scalar lookup: (sheet_id, row0, col0) -> member index.
     index: FxHashMap<(SheetId, u32, u32), u32>,
+    /// O(1) name lookup: engine-folded name key -> member index (indices
+    /// start after the cell members).
+    name_index: FxHashMap<String, u32>,
+    /// Total member count (cells + names); valid `set_current` range.
+    total_members: usize,
     /// See module docs: uncontended Mutex forced by `Send + Sync` bounds on
     /// the resolver traits; SCC passes are single-threaded.
     state: Mutex<CollectorState>,
@@ -97,7 +108,15 @@ impl LiveEdgeCollector {
     /// Build a collector for the given SCC membership. Member order defines
     /// the indices used in recorded edges.
     pub fn new(members: &[CellRef]) -> Self {
-        let members: Vec<MemberCell> = members
+        Self::new_with_names(members, &[])
+    }
+
+    /// Build a collector over cell members plus name-vertex members. Cell
+    /// members get indices `0..cells.len()`; name member `j` gets index
+    /// `cells.len() + j`. `names` must already be folded with the engine's
+    /// name-folding rule (see [`Engine::fold_name_key`]).
+    pub fn new_with_names(cells: &[CellRef], names: &[String]) -> Self {
+        let members: Vec<MemberCell> = cells
             .iter()
             .map(|c| MemberCell {
                 sheet_id: c.sheet_id,
@@ -110,22 +129,36 @@ impl LiveEdgeCollector {
         for (i, m) in members.iter().enumerate() {
             index.insert((m.sheet_id, m.row, m.col), i as u32);
         }
+        let mut name_index = FxHashMap::default();
+        name_index.reserve(names.len());
+        for (j, name) in names.iter().enumerate() {
+            name_index.insert(name.clone(), (members.len() + j) as u32);
+        }
+        let total_members = members.len() + names.len();
         Self {
             members,
             index,
+            name_index,
+            total_members,
             state: Mutex::new(CollectorState::default()),
         }
     }
 
     pub fn member_count(&self) -> usize {
-        self.members.len()
+        self.total_members
     }
 
     /// Set the member whose formula is about to be evaluated; subsequent
     /// recorded reads are attributed to it.
     pub fn set_current(&self, member_idx: u32) {
-        debug_assert!((member_idx as usize) < self.members.len());
+        debug_assert!((member_idx as usize) < self.total_members);
         self.state.lock().unwrap().current = Some(member_idx);
+    }
+
+    /// Stop attributing reads to any member (used between passes so that
+    /// out-of-band reads — snapshots, deltas — never record edges).
+    pub fn clear_current(&self) {
+        self.state.lock().unwrap().current = None;
     }
 
     /// Record a scalar read of `(sheet_id, row, col)` (0-based).
@@ -151,6 +184,18 @@ impl LiveEdgeCollector {
             if m.sheet_id == sheet_id && m.row >= sr && m.row <= er && m.col >= sc && m.col <= ec {
                 st.edges.insert((from, i as u32));
             }
+        }
+    }
+
+    /// Record a read of a named entity by folded name key (e.g. a formula
+    /// referencing a named-formula SCC member).
+    pub fn record_name(&self, folded_name: &str) {
+        let Some(&to) = self.name_index.get(folded_name) else {
+            return;
+        };
+        let mut st = self.state.lock().unwrap();
+        if let Some(from) = st.current {
+            st.edges.insert((from, to));
         }
     }
 
@@ -199,6 +244,13 @@ pub struct RecordingContext<'a, R: EvaluationContext> {
 impl<'a, R: EvaluationContext> RecordingContext<'a, R> {
     pub fn new(engine: &'a Engine<R>, collector: &'a LiveEdgeCollector) -> Self {
         Self { engine, collector }
+    }
+
+    /// Record a read of a named entity, folding the raw reference text with
+    /// the engine's name-folding rule so it matches collector name keys.
+    fn record_name(&self, raw_name: &str) {
+        let key = self.engine.graph.name_lookup_key(raw_name);
+        self.collector.record_name(&key);
     }
 
     /// Record a scalar read given Excel 1-based coordinates.
@@ -283,8 +335,10 @@ impl<'a, R: EvaluationContext> NamedRangeResolver for RecordingContext<'a, R> {
         &self,
         name: &str,
     ) -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
-        // Values-only API without sheet/region context; the engine-level
-        // named-range path is intercepted in `resolve_range_view` instead.
+        // Values-only API without sheet/region context; record the *name*
+        // member edge (if the name itself is an SCC member) — region-level
+        // reads flow through `resolve_range_view` instead.
+        self.record_name(name);
         self.engine.resolve_named_range_reference(name)
     }
 }
@@ -332,6 +386,13 @@ impl<'a, R: EvaluationContext> EvaluationContext for RecordingContext<'a, R> {
         reference: &ReferenceType,
         current_sheet: &str,
     ) -> Result<RangeView<'c>, ExcelError> {
+        // Named reads can target a name *vertex* that is itself an SCC member
+        // (a named formula, spec §7.13). Those resolve to owned-row views with
+        // no sheet rect, so they must be recorded by name here in addition to
+        // the rect recording below (which covers Cell/Range definitions).
+        if let ReferenceType::NamedRange(name) = reference {
+            self.record_name(name);
+        }
         let view = self.engine.resolve_range_view(reference, current_sheet)?;
         self.record_view(&view);
         Ok(view)

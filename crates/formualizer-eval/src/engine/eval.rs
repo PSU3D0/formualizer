@@ -3,6 +3,8 @@ use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
+use crate::engine::live_edges::{LiveEdgeCollector, RecordingContext};
+use crate::engine::live_graph::analyze_live_graph;
 use crate::engine::lookup_index_cache::{
     BuildOutcome, LookupAxis, LookupIndex, LookupIndexCache, LookupIndexCacheReport,
     LookupIndexKey, estimate_bytes,
@@ -13,9 +15,10 @@ use crate::engine::row_visibility::RowVisibilityState;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
-    DependencyGraph, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport,
-    FormulaParseDiagnostic, FormulaParsePolicy, FormulaPlaneMode, RowVisibilitySource,
-    ScheduleUnit, Scheduler, VertexId, VertexKind, VisibilityMaskMode,
+    CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, FormulaIngestBatch,
+    FormulaIngestRecord, FormulaIngestReport, FormulaParseDiagnostic, FormulaParsePolicy,
+    FormulaPlaneMode, RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind,
+    VisibilityMaskMode,
 };
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
@@ -393,6 +396,9 @@ pub struct Engine<R> {
     // Phase 3b virtual-dependency convergence telemetry
     last_virtual_dep_telemetry: VirtualDepTelemetry,
     virtual_dep_fallback_activations: u64,
+
+    // Runtime-cycle SCC evaluation telemetry (RFC #112, Stage 2)
+    last_cycle_telemetry: CycleTelemetry,
 
     /// FormulaPlane authority `indexes_epoch` observed by the most recent
     /// successful `evaluate_all` pass. Used to schedule whole-span work for
@@ -937,6 +943,36 @@ pub struct VirtualDepTelemetry {
     pub fallback_mode_activations: u64,
 }
 
+/// Per-recalc telemetry for SCC evaluation under `CycleDetection::Runtime`
+/// (spec `formualizer-cycle-semantics-spec.md` §10, Stage-2 subset; the
+/// `Iterate`-specific fields arrive in Stage 3).
+///
+/// Collection is gated by the existing telemetry flag
+/// (`EvalConfig::enable_virtual_dep_telemetry`), mirroring
+/// [`VirtualDepTelemetry`]; the struct is always public. Counters reset at
+/// the start of every evaluation request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CycleTelemetry {
+    /// SCC tasks executed (static SCCs that reached Runtime evaluation).
+    pub static_sccs: usize,
+    /// SCC tasks whose live subgraph was acyclic — values produced.
+    pub phantom_sccs: usize,
+    /// Distinct live cycles witnessed across all SCC tasks.
+    pub live_cycles_witnessed: usize,
+    /// Cells stamped `#CIRC!` by Runtime SCC tasks.
+    pub circ_cells_stamped: usize,
+    /// Evaluation sweeps over (subsets of) SCC members, totalled across tasks
+    /// (pass 1 included).
+    pub settle_passes_total: usize,
+    /// Largest pass count any single SCC task needed.
+    pub max_passes_single_scc: usize,
+    /// SCC tasks that hit the defensive settle cap (|SCC| + 2). Always 0
+    /// unless a bug exists — the acyclic settle is monotone.
+    pub capped_sccs: usize,
+    /// Total wall-clock time spent inside Runtime SCC tasks.
+    pub elapsed_ms: u128,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ScheduleBuildMeta {
     candidate_vertices: usize,
@@ -1323,6 +1359,7 @@ where
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
+            last_cycle_telemetry: CycleTelemetry::default(),
             formula_plane_indexes_epoch_seen: 0,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
@@ -1391,6 +1428,7 @@ where
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
+            last_cycle_telemetry: CycleTelemetry::default(),
             formula_plane_indexes_epoch_seen: 0,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
@@ -1420,6 +1458,19 @@ where
 
     pub fn last_virtual_dep_telemetry(&self) -> &VirtualDepTelemetry {
         &self.last_virtual_dep_telemetry
+    }
+
+    /// Telemetry from Runtime SCC evaluation during the most recent
+    /// evaluation request (always default-zero under `CycleDetection::Static`
+    /// or when `enable_virtual_dep_telemetry` is off).
+    pub fn last_cycle_telemetry(&self) -> &CycleTelemetry {
+        &self.last_cycle_telemetry
+    }
+
+    /// Reset per-recalc cycle telemetry. Called at the start of every
+    /// evaluation request that walks schedule units.
+    fn reset_cycle_telemetry(&mut self) {
+        self.last_cycle_telemetry = CycleTelemetry::default();
     }
 
     pub fn virtual_dep_fallback_activations(&self) -> u64 {
@@ -7759,6 +7810,7 @@ where
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
+        self.reset_cycle_telemetry();
         let _source_cache = self.source_cache_session();
         if self.graph.formula_authority().active_span_count() > 0 {
             return self.evaluate_authoritative_formula_plane_all();
@@ -7822,8 +7874,9 @@ where
         for &unit in &schedule.units {
             match unit {
                 ScheduleUnit::Cycle(i) => {
-                    self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
-                    cycle_errors += 1;
+                    if self.handle_cycle_unit(schedule.unit_cycle(i), None, None, None)? > 0 {
+                        cycle_errors += 1;
+                    }
                 }
                 ScheduleUnit::Layer(i) => {
                     let layer = schedule.unit_layer(i);
@@ -7860,6 +7913,7 @@ where
         let _span_eval =
             tracing::info_span!("evaluate_until_with_delta", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
+        self.reset_cycle_telemetry();
         let _source_cache = self.source_cache_session();
 
         let mut target_addrs = Vec::new();
@@ -7902,8 +7956,10 @@ where
         for &unit in &schedule.units {
             match unit {
                 ScheduleUnit::Cycle(i) => {
-                    self.apply_cycle_outcome(schedule.unit_cycle(i), Some(delta), None);
-                    cycle_errors += 1;
+                    if self.handle_cycle_unit(schedule.unit_cycle(i), Some(delta), None, None)? > 0
+                    {
+                        cycle_errors += 1;
+                    }
                 }
                 ScheduleUnit::Layer(i) => {
                     let layer = schedule.unit_layer(i);
@@ -7953,6 +8009,7 @@ where
 
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        self.reset_cycle_telemetry();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
@@ -7987,13 +8044,16 @@ where
         for &unit in &plan.schedule.units {
             match unit {
                 ScheduleUnit::Cycle(i) => {
-                    // Recalc-plan quirk: stamp only the DIRTY members of the
-                    // cycle, and count the cycle only when it had any.
-                    let stamped = self.apply_cycle_outcome(
+                    // Recalc-plan quirk (Static): stamp only the DIRTY members
+                    // of the cycle, and count the cycle only when it had any.
+                    // Under Runtime the filter means: skip when no member is
+                    // dirty, evaluate the whole SCC when any is.
+                    let stamped = self.handle_cycle_unit(
                         plan.schedule.unit_cycle(i),
                         None,
                         Some(&dirty_set),
-                    );
+                        None,
+                    )?;
                     if stamped > 0 {
                         cycle_errors += 1;
                     }
@@ -8435,8 +8495,9 @@ where
         for &unit in &schedule.units {
             match unit {
                 ScheduleUnit::Cycle(i) => {
-                    self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
-                    cycle_count += 1;
+                    if self.handle_cycle_unit(schedule.unit_cycle(i), None, None, None)? > 0 {
+                        cycle_count += 1;
+                    }
                 }
                 ScheduleUnit::Layer(i) => {
                     let layer = schedule.unit_layer(i);
@@ -8456,6 +8517,7 @@ where
     /// `AuthoritativeExperimental` mode. This is now an internal primitive; it
     /// must not be invoked directly from public APIs.
     fn evaluate_all_legacy_impl(&mut self) -> Result<EvalResult, ExcelError> {
+        self.reset_cycle_telemetry();
         self.reset_virtual_dep_telemetry_if_disabled();
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_all").entered();
@@ -8544,6 +8606,7 @@ where
         &mut self,
         delta: &mut DeltaCollector,
     ) -> Result<EvalResult, ExcelError> {
+        self.reset_cycle_telemetry();
         let _source_cache = self.source_cache_session();
         if self.config.defer_graph_building {
             self.build_graph_all()?;
@@ -8585,8 +8648,15 @@ where
             for &unit in &schedule.units {
                 match unit {
                     ScheduleUnit::Cycle(i) => {
-                        self.apply_cycle_outcome(schedule.unit_cycle(i), Some(delta), None);
-                        cycle_errors += 1;
+                        if self.handle_cycle_unit(
+                            schedule.unit_cycle(i),
+                            Some(delta),
+                            None,
+                            None,
+                        )? > 0
+                        {
+                            cycle_errors += 1;
+                        }
                     }
                     ScheduleUnit::Layer(i) => {
                         let layer = schedule.unit_layer(i);
@@ -9208,6 +9278,7 @@ where
         &mut self,
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
+        self.reset_cycle_telemetry();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
@@ -9276,8 +9347,15 @@ where
                             ));
                         }
 
-                        self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
-                        cycle_errors += 1;
+                        if self.handle_cycle_unit(
+                            schedule.unit_cycle(i),
+                            None,
+                            None,
+                            Some(cancel_flag),
+                        )? > 0
+                        {
+                            cycle_errors += 1;
+                        }
                     }
                     ScheduleUnit::Layer(i) => {
                         let layer = schedule.unit_layer(i);
@@ -9362,6 +9440,7 @@ where
         cancel_flag: &AtomicBool,
     ) -> Result<EvalResult, ExcelError> {
         let start = crate::instant::FzInstant::now();
+        self.reset_cycle_telemetry();
         if self.graph.formula_authority().active_span_count() > 0 {
             if cancel_flag.load(Ordering::Relaxed) {
                 return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
@@ -9425,8 +9504,15 @@ where
                         ));
                     }
 
-                    self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
-                    cycle_errors += 1;
+                    if self.handle_cycle_unit(
+                        schedule.unit_cycle(i),
+                        None,
+                        None,
+                        Some(cancel_flag),
+                    )? > 0
+                    {
+                        cycle_errors += 1;
+                    }
                 }
                 ScheduleUnit::Layer(i) => {
                     let layer = schedule.unit_layer(i);
@@ -11723,6 +11809,504 @@ where
         self.mirror_vertex_value_to_overlay(vertex_id, circ_error);
     }
 
+    /// Dispatch point for one `ScheduleUnit::Cycle` (RFC #112, Stage 2).
+    ///
+    /// * `CycleDetection::Static` — today's behavior, byte-for-byte: stamp
+    ///   `#CIRC!` on the (optionally dirty-filtered) members.
+    /// * `CycleDetection::Runtime` — evaluate the SCC via
+    ///   [`Self::evaluate_scc_unit`]. The recalc-plan dirty quirk maps to:
+    ///   no dirty member → skip the task entirely (values stand); any dirty
+    ///   member → the whole SCC evaluates (an SCC cannot be partially
+    ///   evaluated).
+    ///
+    /// Returns the number of `#CIRC!`-stamped vertices, so call sites can
+    /// keep their `cycle_errors` accounting (`> 0` ⇒ count the unit).
+    fn handle_cycle_unit(
+        &mut self,
+        cycle: &[VertexId],
+        mut delta: Option<&mut DeltaCollector>,
+        dirty_filter: Option<&FxHashSet<VertexId>>,
+        cancel_flag: Option<&AtomicBool>,
+    ) -> Result<usize, ExcelError> {
+        match self.config.cycle.detection {
+            CycleDetection::Static => {
+                Ok(self.apply_cycle_outcome(cycle, delta.as_deref_mut(), dirty_filter))
+            }
+            CycleDetection::Runtime => {
+                if let Some(filter) = dirty_filter
+                    && !cycle.iter().any(|v| filter.contains(v))
+                {
+                    return Ok(0);
+                }
+                match self.config.cycle.policy {
+                    CyclePolicy::Error => self.evaluate_scc_unit(cycle, delta, cancel_flag),
+                }
+            }
+        }
+    }
+
+    /// Evaluate one statically-cyclic SCC under `CycleDetection::Runtime`
+    /// (design doc `formualizer-stage2-scc-evaluation-design.md` §3; contract
+    /// spec §3, Error-policy subset).
+    ///
+    /// Phantom SCCs (live-acyclic) produce ordinary values; live cycles get
+    /// `#CIRC!` with live-cycle-only blast radius. Runs sequentially on the
+    /// coordinating thread; commits are write-through per member (no
+    /// `ComputedWriteBuffer` — that buffer is scoped to layer evaluation and
+    /// always flushed before a Cycle unit runs, G1), so later members' scalar
+    /// *and* range reads observe earlier members' results through the overlay
+    /// cascade. Deltas are recorded once per member at end of task (G11).
+    ///
+    /// Returns the number of vertices stamped `#CIRC!`.
+    ///
+    /// `pub(crate)` so tests can drive SCC shapes (e.g. name-vertex members)
+    /// that ingest-time cycle rejection makes unreachable via public edits.
+    pub(crate) fn evaluate_scc_unit(
+        &mut self,
+        cycle: &[VertexId],
+        mut delta: Option<&mut DeltaCollector>,
+        cancel_flag: Option<&AtomicBool>,
+    ) -> Result<usize, ExcelError> {
+        struct SccMember {
+            vertex: VertexId,
+            cell: Option<CellRef>,
+        }
+
+        let task_start = crate::instant::FzInstant::now();
+        let collect_telemetry = self.config.enable_virtual_dep_telemetry;
+
+        // ── 0. Member order (spec §7.13): cells ascending (sheet, row, col);
+        // name vertices after, lexicographic by folded canonical name; any
+        // other vertex kind (defensive — `get_evaluation_vertices` only emits
+        // formula/name kinds) last by id, never evaluated.
+        let mut cell_members: Vec<(VertexId, CellRef)> = Vec::new();
+        let mut name_members: Vec<(VertexId, String)> = Vec::new();
+        let mut other_members: Vec<VertexId> = Vec::new();
+        for &v in cycle {
+            match self.graph.get_vertex_kind(v) {
+                VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                    match self.graph.get_cell_ref(v) {
+                        Some(cell) => cell_members.push((v, cell)),
+                        None => other_members.push(v),
+                    }
+                }
+                VertexKind::NamedScalar | VertexKind::NamedArray => {
+                    match self.graph.name_key_for_vertex(v) {
+                        Some(key) => name_members.push((v, key)),
+                        None => other_members.push(v),
+                    }
+                }
+                _ => other_members.push(v),
+            }
+        }
+        cell_members.sort_unstable_by_key(|(_, c)| (c.sheet_id, c.coord.row(), c.coord.col()));
+        name_members.sort_unstable_by(|(av, ak), (bv, bk)| ak.cmp(bk).then(av.cmp(bv)));
+        other_members.sort_unstable();
+
+        let cell_refs: Vec<CellRef> = cell_members.iter().map(|(_, c)| *c).collect();
+        let name_keys: Vec<String> = name_members.iter().map(|(_, k)| k.clone()).collect();
+        let mut members: Vec<SccMember> = Vec::with_capacity(cycle.len());
+        for (v, c) in &cell_members {
+            members.push(SccMember {
+                vertex: *v,
+                cell: Some(*c),
+            });
+        }
+        for (v, _) in &name_members {
+            members.push(SccMember {
+                vertex: *v,
+                cell: None,
+            });
+        }
+        for v in &other_members {
+            members.push(SccMember {
+                vertex: *v,
+                cell: None,
+            });
+        }
+        let n = members.len();
+        // Indices addressable by the collector (cells + names); `other`
+        // members can be neither edge sources nor targets.
+        let recordable = cell_refs.len() + name_keys.len();
+
+        let circ_error = LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Circ)
+                .with_message("Circular dependency detected".to_string()),
+        );
+
+        // ── 1. Pre-task value snapshot (overlay-first for cells — G3; the
+        // graph value map may be evicted in value-cache-disabled mode).
+        let snapshot: Vec<LiteralValue> = members
+            .iter()
+            .map(|m| match m.cell {
+                Some(cell) => {
+                    let sheet_name = self.graph.sheet_name(cell.sheet_id);
+                    self.get_cell_value(sheet_name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .unwrap_or(LiteralValue::Empty)
+                }
+                None => self
+                    .graph
+                    .get_value(m.vertex)
+                    .unwrap_or(LiteralValue::Empty),
+            })
+            .collect();
+
+        // ── 2. Pre-scan: spill anchors (FormulaArray) are stamped `#CIRC!`
+        // with full spill teardown (spec §7.9, #115) and excluded from
+        // evaluation. They stay recordable edge TARGETS (readers see `#CIRC!`
+        // and propagate). Non-evaluable defensive members are excluded too.
+        let mut excluded = vec![false; n];
+        let mut last_value = snapshot.clone();
+        let mut stamped = 0usize;
+        for (i, m) in members.iter().enumerate() {
+            match self.graph.get_vertex_kind(m.vertex) {
+                VertexKind::FormulaArray => {
+                    // Deltas for the cleared spill-region cells (non-members)
+                    // can only be recorded here; the anchor's own delta is
+                    // covered by the end-of-task snapshot comparison (dedup).
+                    self.stamp_cycle_error(m.vertex, &circ_error, delta.as_deref_mut());
+                    excluded[i] = true;
+                    last_value[i] = circ_error.clone();
+                    stamped += 1;
+                }
+                VertexKind::FormulaScalar | VertexKind::NamedScalar | VertexKind::NamedArray => {}
+                _ => excluded[i] = true,
+            }
+        }
+
+        let collector = LiveEdgeCollector::new_with_names(&cell_refs, &name_keys);
+
+        // Per-member live out-edges, refreshed whenever a member re-runs.
+        let mut out_edges: Vec<Vec<u32>> = vec![Vec::new(); n];
+        // Position of each member in the most recent pass (-1 = did not run).
+        let mut pos: Vec<i64> = vec![-1; n];
+        // Whether each member's committed value changed in the most recent pass.
+        let mut changed = vec![false; n];
+
+        // Evaluate-and-commit one member; returns Ok(true) when the member was
+        // stamped `#CIRC!` (array result — would-be spill anchor, spec §7.9).
+        macro_rules! run_member {
+            ($i:expr) => {{
+                let i: usize = $i;
+                let m = &members[i];
+                if i < recordable {
+                    collector.set_current(i as u32);
+                }
+                let value = {
+                    let ctx = RecordingContext::new(&*self, &collector);
+                    match self.evaluate_vertex_recorded(m.vertex, &ctx, &collector) {
+                        Ok(v) => v,
+                        Err(e) => LiteralValue::Error(e),
+                    }
+                };
+                let is_cell_formula = m.cell.is_some();
+                if is_cell_formula && matches!(value, LiteralValue::Array(_)) {
+                    // A member that *would* spill inside an SCC gets the
+                    // conservative §7.9 verdict. It has never spilled before
+                    // (a prior spill would make it FormulaArray, pre-stamped
+                    // above), so there is no projection to tear down.
+                    self.stamp_cycle_error(m.vertex, &circ_error, None);
+                    excluded[i] = true;
+                    stamped += 1;
+                    changed[i] = last_value[i] != circ_error;
+                    last_value[i] = circ_error.clone();
+                } else {
+                    self.graph.update_vertex_value(m.vertex, value.clone());
+                    self.mirror_vertex_value_to_overlay(m.vertex, &value);
+                    // §7.14 invariant (G2): a formula member must never be
+                    // shadowed by a user/delta overlay entry, or iteration
+                    // reads would silently diverge from committed values.
+                    #[cfg(debug_assertions)]
+                    if let Some(cell) = m.cell {
+                        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+                        debug_assert!(
+                            self.read_delta_overlay_cell(
+                                &sheet_name,
+                                cell.coord.row() + 1,
+                                cell.coord.col() + 1
+                            )
+                            .is_none(),
+                            "user overlay must never shadow a formula SCC member ({sheet_name}!r{}c{})",
+                            cell.coord.row() + 1,
+                            cell.coord.col() + 1
+                        );
+                    }
+                    changed[i] = last_value[i] != value;
+                    last_value[i] = value;
+                }
+            }};
+        }
+
+        let check_cancel = |flag: Option<&AtomicBool>| -> Result<(), ExcelError> {
+            if let Some(flag) = flag
+                && flag.load(Ordering::Relaxed)
+            {
+                return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                    .with_message("Evaluation cancelled during SCC evaluation".to_string()));
+            }
+            Ok(())
+        };
+
+        // ── 3. Pass 1: all evaluable members in member order.
+        check_cancel(cancel_flag)?;
+        let mut passes = 1usize;
+        {
+            let mut p = 0i64;
+            for i in 0..n {
+                if excluded[i] {
+                    continue;
+                }
+                run_member!(i);
+                pos[i] = p;
+                p += 1;
+            }
+        }
+
+        // ── 4. Settle loop (design doc §3 step 4). Defensive cap: the
+        // acyclic settle is monotone, so |SCC| + 2 passes can only be
+        // exceeded by a bug; cap hits stamp the remainder and set telemetry.
+        let cap = n + 2;
+        let mut witnessed_cycles = 0usize;
+        let mut capped = false;
+        loop {
+            // Drain this pass's recordings; members that ran replace their
+            // out-edge set, members that didn't keep last-known edges.
+            let drained = collector.take_edges();
+            for i in 0..n {
+                if pos[i] >= 0 {
+                    out_edges[i].clear();
+                }
+            }
+            for (from, to) in drained {
+                debug_assert!(
+                    pos[from as usize] >= 0,
+                    "edge from a member that did not run"
+                );
+                out_edges[from as usize].push(to);
+            }
+            let mut edges: Vec<(u32, u32)> = Vec::new();
+            for (i, outs) in out_edges.iter().enumerate() {
+                if excluded[i] {
+                    continue;
+                }
+                for &t in outs {
+                    edges.push((i as u32, t));
+                }
+            }
+            edges.sort_unstable();
+            edges.dedup();
+
+            let analysis = analyze_live_graph(n, &edges);
+
+            if analysis.cycle_count > 0 {
+                // POLICY (Error): stamp every member of a live cycle, then one
+                // settling pass over the remaining members in live-topological
+                // order so error propagation downstream is consistent
+                // (spec §3.4). Blast radius = live cycles only.
+                witnessed_cycles += analysis.cycle_count;
+                for i in 0..n {
+                    if analysis.in_cycle[i] && !excluded[i] {
+                        self.stamp_cycle_error(members[i].vertex, &circ_error, None);
+                        excluded[i] = true;
+                        last_value[i] = circ_error.clone();
+                        stamped += 1;
+                    }
+                }
+                check_cancel(cancel_flag)?;
+                let order: Vec<usize> = analysis
+                    .topo
+                    .iter()
+                    .map(|&i| i as usize)
+                    .filter(|&i| !excluded[i])
+                    .collect();
+                if !order.is_empty() {
+                    passes += 1;
+                    for i in order {
+                        run_member!(i);
+                    }
+                }
+                break;
+            }
+
+            // Acyclic: find stale readers — members whose live read of `to`
+            // happened before `to`'s value changed in the pass that just ran.
+            let mut stale: Vec<usize> = Vec::new();
+            for i in 0..n {
+                if excluded[i] {
+                    continue;
+                }
+                let is_stale = out_edges[i].iter().any(|&t| {
+                    let t = t as usize;
+                    changed[t] && (pos[i] < 0 || (pos[t] >= 0 && pos[i] < pos[t]))
+                });
+                if is_stale {
+                    stale.push(i);
+                }
+            }
+            if stale.is_empty() {
+                break; // values exact — phantom SCC
+            }
+            if passes >= cap {
+                // Defensive only; hitting this is a bug (loud telemetry).
+                capped = true;
+                for (i, m) in members.iter().enumerate() {
+                    if !excluded[i] {
+                        self.stamp_cycle_error(m.vertex, &circ_error, None);
+                        excluded[i] = true;
+                        last_value[i] = circ_error.clone();
+                        stamped += 1;
+                    }
+                }
+                break;
+            }
+
+            check_cancel(cancel_flag)?;
+            // Re-evaluate stale readers in live-topo order, recording fresh
+            // edges (branches may flip on re-eval — spec §7.3 — which is why
+            // classification repeats).
+            let topo_pos = analysis.topo_positions();
+            stale.sort_unstable_by_key(|&i| topo_pos[i]);
+            for x in pos.iter_mut() {
+                *x = -1;
+            }
+            changed.fill(false);
+            passes += 1;
+            for (p, i) in stale.into_iter().enumerate() {
+                run_member!(i);
+                pos[i] = p as i64;
+            }
+        }
+
+        // ── 5. End of task: one delta per member whose final value differs
+        // from the pre-task snapshot (spec §3 side-effect rule, G11).
+        collector.clear_current();
+        if let Some(d) = delta
+            && d.mode != DeltaMode::Off
+        {
+            for (i, m) in members.iter().enumerate() {
+                if let Some(cell) = m.cell
+                    && last_value[i] != snapshot[i]
+                {
+                    d.record_cell(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                }
+            }
+        }
+
+        if collect_telemetry {
+            let t = &mut self.last_cycle_telemetry;
+            t.static_sccs += 1;
+            if witnessed_cycles == 0 && stamped == 0 && !capped {
+                t.phantom_sccs += 1;
+            }
+            t.live_cycles_witnessed += witnessed_cycles;
+            t.circ_cells_stamped += stamped;
+            t.settle_passes_total += passes;
+            t.max_passes_single_scc = t.max_passes_single_scc.max(passes);
+            if capped {
+                t.capped_sccs += 1;
+            }
+            t.elapsed_ms += task_start.elapsed().as_millis();
+        }
+
+        Ok(stamped)
+    }
+
+    /// Recorded sibling of [`Self::evaluate_vertex_immutable`]: evaluates one
+    /// SCC member's AST via an [`Interpreter`] over a [`RecordingContext`] so
+    /// reads that actually occur are captured as live edges. Value semantics
+    /// must match `evaluate_vertex_immutable` exactly (including the missing-
+    /// AST `Number(0.0)` quirk, G14); named Cell/Range/Literal definitions
+    /// delegate to it after recording the definition region by hand (those
+    /// reads bypass the context).
+    fn evaluate_vertex_recorded(
+        &self,
+        vertex_id: VertexId,
+        ctx: &RecordingContext<'_, R>,
+        collector: &LiveEdgeCollector,
+    ) -> Result<LiteralValue, ExcelError> {
+        if !self.graph.vertex_exists(vertex_id) {
+            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
+                .with_message(format!("Vertex not found: {vertex_id:?}")));
+        }
+
+        let kind = self.graph.get_vertex_kind(vertex_id);
+        let sheet_id = self.graph.get_vertex_sheet_id(vertex_id);
+
+        match kind {
+            VertexKind::FormulaScalar | VertexKind::FormulaArray => {
+                let Some(ast_id) = self.graph.get_formula_id(vertex_id) else {
+                    return Ok(LiteralValue::Number(0.0)); // G14 quirk
+                };
+                let sheet_name = self.graph.sheet_name(sheet_id);
+                let cell_ref = self
+                    .graph
+                    .get_cell_ref(vertex_id)
+                    .expect("cell ref for vertex");
+                let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
+                interpreter
+                    .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
+                    .map(|cv| cv.into_literal())
+            }
+            VertexKind::NamedScalar | VertexKind::NamedArray => {
+                let named_range = self.graph.named_range_by_vertex(vertex_id).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message("Named range metadata missing".to_string())
+                })?;
+
+                match &named_range.definition {
+                    NamedDefinition::Formula { ast, .. } => {
+                        let context_sheet = match named_range.scope {
+                            NameScope::Sheet(id) => id,
+                            NameScope::Workbook => sheet_id,
+                        };
+                        let sheet_name = self.graph.sheet_name(context_sheet);
+                        let cell_ref = self
+                            .graph
+                            .get_cell_ref(vertex_id)
+                            .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
+                        let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
+                        if kind == VertexKind::NamedScalar {
+                            interpreter.evaluate_ast(ast).map(|cv| cv.into_literal())
+                        } else {
+                            match interpreter.evaluate_ast(ast) {
+                                Ok(cv) => match cv.into_literal() {
+                                    v @ LiteralValue::Array(_) => Ok(v),
+                                    other => Ok(LiteralValue::Array(vec![vec![other]])),
+                                },
+                                Err(err) => Ok(LiteralValue::Error(err)),
+                            }
+                        }
+                    }
+                    NamedDefinition::Cell(cell_ref) => {
+                        // The definition is read via direct grid access in
+                        // `evaluate_vertex_immutable`; record the live edge
+                        // by hand before delegating.
+                        collector.record_scalar(
+                            cell_ref.sheet_id,
+                            cell_ref.coord.row(),
+                            cell_ref.coord.col(),
+                        );
+                        self.evaluate_vertex_immutable(vertex_id)
+                    }
+                    NamedDefinition::Range(range_ref) => {
+                        if range_ref.start.sheet_id == range_ref.end.sheet_id {
+                            collector.record_rect(
+                                range_ref.start.sheet_id,
+                                range_ref.start.coord.row(),
+                                range_ref.start.coord.col(),
+                                range_ref.end.coord.row(),
+                                range_ref.end.coord.col(),
+                            );
+                        }
+                        self.evaluate_vertex_immutable(vertex_id)
+                    }
+                    NamedDefinition::Literal(_) => self.evaluate_vertex_immutable(vertex_id),
+                }
+            }
+            _ => self.evaluate_vertex_immutable(vertex_id),
+        }
+    }
+
     /// Helper: commit spill via shim and mirror resulting cells into Arrow overlay when enabled.
     fn commit_spill_and_mirror(
         &mut self,
@@ -13008,6 +13592,7 @@ where
     /// This is the same flow as `evaluate_all` but threads a ChangeLog through
     /// every effect application so that spill commits/clears are captured.
     pub fn evaluate_all_logged(&mut self, log: &mut ChangeLog) -> Result<EvalResult, ExcelError> {
+        self.reset_cycle_telemetry();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
         if self.config.defer_graph_building {
@@ -13051,8 +13636,19 @@ where
             for &unit in &schedule.units {
                 match unit {
                     ScheduleUnit::Cycle(i) => {
-                        self.apply_cycle_outcome(schedule.unit_cycle(i), None, None);
-                        cycle_errors += 1;
+                        // Journal integration (design doc §4 last row): the
+                        // ChangeLog in this path only records SpillClear /
+                        // SpillCommit events; WriteCell effects are never
+                        // logged (see `apply_write_cell`). Runtime SCC tasks
+                        // write values directly and never spill (§7.9 stamps
+                        // would-be anchors), and their spill *teardown* is the
+                        // same unlogged `stamp_cycle_error` the Static path
+                        // already uses here — so direct commits coexist with
+                        // the journal cleanly, with identical semantics to
+                        // Static. Pinned by `scc_runtime_cycles` tests.
+                        if self.handle_cycle_unit(schedule.unit_cycle(i), None, None, None)? > 0 {
+                            cycle_errors += 1;
+                        }
                     }
                     ScheduleUnit::Layer(i) => {
                         computed_vertices +=

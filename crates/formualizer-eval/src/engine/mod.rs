@@ -13,6 +13,7 @@ pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;
 pub mod journal;
 pub mod live_edges;
+pub mod live_graph;
 pub mod lookup_index_cache;
 pub mod plan;
 pub mod range_view;
@@ -44,7 +45,8 @@ mod tests;
 
 pub use arena::AstNodeId;
 pub use eval::{
-    Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan, VirtualDepTelemetry,
+    CycleTelemetry, Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan,
+    VirtualDepTelemetry,
 };
 pub use eval_delta::{DeltaMode, EvalDelta};
 pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
@@ -606,6 +608,11 @@ pub struct EvalConfig {
     /// Spill behavior configuration (conflicts, bounds, buffering)
     pub spill: SpillConfig,
 
+    /// Cycle handling configuration (detection mode + policy). Defaults to
+    /// `CycleDetection::Static` (today's stamp-every-static-SCC behavior);
+    /// `CycleDetection::Runtime` is opt-in (RFC #112).
+    pub cycle: CycleConfig,
+
     /// Use dynamic topological ordering (Pearce-Kelly algorithm)
     pub use_dynamic_topo: bool,
     /// Maximum nodes to visit before falling back to full rebuild
@@ -696,6 +703,7 @@ impl Default for EvalConfig {
             stripe_width: 256,
             enable_block_stripes: false,
             spill: SpillConfig::default(),
+            cycle: CycleConfig::default(),
 
             // Dynamic topology configuration
             use_dynamic_topo: false, // Disabled by default for compatibility
@@ -791,6 +799,46 @@ impl EvalConfig {
         self.formula_plane_mode = mode;
         self
     }
+
+    #[inline]
+    pub fn with_cycle(mut self, cycle: CycleConfig) -> Self {
+        self.cycle = cycle;
+        self
+    }
+}
+
+/// Cycle handling configuration (spec: `formualizer-cycle-semantics-spec.md` §2).
+///
+/// Nested under [`EvalConfig`] like [`SpillConfig`]; flows through
+/// `WorkbookConfig.eval` automatically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CycleConfig {
+    pub detection: CycleDetection,
+    pub policy: CyclePolicy,
+}
+
+/// How statically-cyclic SCCs are treated at evaluation time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CycleDetection {
+    /// Today's behavior: every static SCC is stamped `#CIRC!`. Compat escape
+    /// hatch; no live-edge machinery runs.
+    #[default]
+    Static,
+    /// Static SCCs are candidates; members are evaluated with live-edge
+    /// recording and only *live* cycles get the policy verdict. Phantom
+    /// (live-acyclic) SCCs produce ordinary values (discussion #99).
+    Runtime,
+}
+
+/// What happens to witnessed (live) cycles under `CycleDetection::Runtime`.
+///
+/// `Iterate` (Excel-style iterative calculation) is Stage 3 and intentionally
+/// absent from this enum until then (no dead config).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CyclePolicy {
+    /// Live cycles produce `#CIRC!`.
+    #[default]
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
