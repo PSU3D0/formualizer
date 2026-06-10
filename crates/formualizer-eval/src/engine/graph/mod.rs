@@ -2208,7 +2208,14 @@ impl DependencyGraph {
     /// are skipped.
     pub(crate) fn redirty_iterative_members(&mut self, members: &[VertexId]) {
         for &id in members {
-            if self.vertex_exists(id) {
+            // Skip members an earlier propagation already dirtied:
+            // `mark_dirty`'s BFS marks every transitive dependent, so the
+            // FIRST member of an SCC dirties the whole (strongly connected)
+            // component plus downstream, and re-walking from each remaining
+            // member is pure rework — O(|SCC|²) per recalc for one large SCC
+            // (measured quadratic by the iterate edge corpus: a converged
+            // 1000-member ring cost ~42 ms per no-op recalc, release).
+            if self.vertex_exists(id) && !self.is_dirty(id) {
                 let _ = self.mark_dirty(id);
             }
         }
