@@ -418,6 +418,21 @@ pub struct Engine<R> {
     // Runtime-cycle SCC evaluation telemetry (RFC #112, Stage 2)
     last_cycle_telemetry: CycleTelemetry,
 
+    /// SCC members that entered iterative calculation (`CyclePolicy::Iterate`
+    /// with a witnessed live cycle) during the current evaluation request.
+    ///
+    /// Excel re-evaluates circular cells on EVERY recalc (the accumulator
+    /// contract, spec §4/§7.6), but this engine's dirty model marks SCC
+    /// members clean after a recalc and would otherwise skip them forever.
+    /// Resolution: members of iterating SCCs are redirtied volatile-like at
+    /// the end of the same recalc that iterated them
+    /// ([`Self::redirty_for_next_recalc`], called wherever
+    /// `redirty_volatiles` runs). The set is per-recalc, never persisted:
+    /// if an edit breaks the cycle, the next recalc's SCC task either does
+    /// not exist or settles as phantom, nothing re-registers, and the
+    /// redirty chain stops by itself.
+    pending_iterative_redirty: Vec<VertexId>,
+
     /// FormulaPlane authority `indexes_epoch` observed by the most recent
     /// successful `evaluate_all` pass. Used to schedule whole-span work for
     /// any active span the engine has not yet evaluated under the current
@@ -965,15 +980,14 @@ pub struct VirtualDepTelemetry {
 }
 
 /// Per-recalc telemetry for SCC evaluation under `CycleDetection::Runtime`
-/// (spec `formualizer-cycle-semantics-spec.md` §10, Stage-2 subset; the
-/// `Iterate`-specific fields arrive in Stage 3).
+/// (spec `formualizer-cycle-semantics-spec.md` §10).
 ///
 /// Collection is unconditional: SCC tasks are rare relative to ordinary
 /// vertex evaluation and the counters are a handful of integer adds per
 /// task, so no config flag gates them (unlike [`VirtualDepTelemetry`],
 /// which pays per-schedule costs). Counters reset at the start of every
 /// evaluation request.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CycleTelemetry {
     /// SCC tasks executed (static SCCs that reached Runtime evaluation).
     pub static_sccs: usize,
@@ -988,9 +1002,25 @@ pub struct CycleTelemetry {
     pub settle_passes_total: usize,
     /// Largest pass count any single SCC task needed.
     pub max_passes_single_scc: usize,
-    /// SCC tasks that hit the defensive settle cap (|SCC| + 2). Always 0
-    /// unless a bug exists — the acyclic settle is monotone.
+    /// SCC tasks that entered iterative calculation (`CyclePolicy::Iterate`
+    /// with a witnessed live cycle). RFC #113, Stage 3.
+    pub iterated_sccs: usize,
+    /// Iterating SCC tasks that stopped because every member passed the
+    /// spec-§6 convergence test.
+    pub converged_sccs: usize,
+    /// SCC tasks that stopped at a pass cap. Under `CyclePolicy::Iterate`
+    /// this is the Excel `max_iterations` cap (NOT an error — last values
+    /// are kept; includes the no-convergence-test `max_iterations: 1`
+    /// contract). Under `CyclePolicy::Error` it is the defensive acyclic
+    /// settle cap (|SCC| + 2), which only a bug can hit.
     pub capped_sccs: usize,
+    /// Largest `|Δ|` observed in any member's final-pass convergence
+    /// comparison across iterating SCC tasks (numeric-class members only).
+    /// `0.0` when no comparison ran (e.g. `max_iterations: 1`).
+    pub max_abs_delta_at_stop: f64,
+    /// Identical-bit NaN vs NaN member comparisons that were treated as
+    /// converged (spec §6 NaN rule).
+    pub nan_converged: usize,
     /// Total wall-clock time spent inside Runtime SCC tasks.
     pub elapsed_ms: u128,
 }
@@ -1311,7 +1341,16 @@ impl<R> Engine<R>
 where
     R: EvaluationContext,
 {
+    /// # Panics
+    /// Panics when `config.cycle` is invalid ([`CycleConfig::validate`],
+    /// spec §2): `Iterate` with `detection: Static`, `max_iterations == 0`,
+    /// or a negative/non-finite `max_change`. `EvalConfig::with_cycle`
+    /// rejects these at build; this re-validates configs assembled via
+    /// struct literals.
     pub fn new(resolver: R, config: EvalConfig) -> Self {
+        if let Err(msg) = config.cycle.validate() {
+            panic!("invalid CycleConfig: {msg}");
+        }
         crate::builtins::load_builtins();
 
         let clock = config.deterministic_mode.build_clock().unwrap_or_else(|_| {
@@ -1383,6 +1422,7 @@ where
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
+            pending_iterative_redirty: Vec::new(),
             formula_plane_indexes_epoch_seen: 0,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
@@ -1397,11 +1437,17 @@ where
     }
 
     /// Create an Engine with a custom thread pool (for shared thread pool scenarios)
+    ///
+    /// # Panics
+    /// Panics when `config.cycle` is invalid, exactly like [`Engine::new`].
     pub fn with_thread_pool(
         resolver: R,
         config: EvalConfig,
         thread_pool: Arc<rayon::ThreadPool>,
     ) -> Self {
+        if let Err(msg) = config.cycle.validate() {
+            panic!("invalid CycleConfig: {msg}");
+        }
         crate::builtins::load_builtins();
         let clock = config.deterministic_mode.build_clock().unwrap_or_else(|_| {
             #[cfg(feature = "system-clock")]
@@ -1453,6 +1499,7 @@ where
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
+            pending_iterative_redirty: Vec::new(),
             formula_plane_indexes_epoch_seen: 0,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
@@ -1495,6 +1542,23 @@ where
     /// evaluation request that walks schedule units.
     fn reset_cycle_telemetry(&mut self) {
         self.last_cycle_telemetry = CycleTelemetry::default();
+        // Defensive: consumed at the end of the previous request; a request
+        // that errored out mid-walk must not leak its members into this one.
+        self.pending_iterative_redirty.clear();
+    }
+
+    /// End-of-recalc redirty: volatile vertices (as always) plus members of
+    /// SCCs that iterated this recalc (`CyclePolicy::Iterate`), so circular
+    /// cells re-evaluate on every recalc exactly like Excel's iterative
+    /// calculation (spec §4 persistence / §7.6 accumulator / §7.11 volatile
+    /// redirty). Replaces the bare `graph.redirty_volatiles()` call at every
+    /// evaluation-flow exit; must run AFTER the flow's `clear_dirty_flags`.
+    fn redirty_for_next_recalc(&mut self) {
+        self.graph.redirty_volatiles();
+        let pending = std::mem::take(&mut self.pending_iterative_redirty);
+        if !pending.is_empty() {
+            self.graph.redirty_iterative_members(&pending);
+        }
     }
 
     pub fn virtual_dep_fallback_activations(&self) -> u64 {
@@ -8033,7 +8097,7 @@ where
         self.graph.clear_dirty_flags(&precedents_to_eval);
 
         // Re-dirty volatile vertices
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
 
         Ok(EvalResult {
             computed_vertices,
@@ -8114,7 +8178,7 @@ where
         }
 
         self.graph.clear_dirty_flags(&precedents_to_eval);
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
 
         Ok(EvalResult {
             computed_vertices,
@@ -8220,7 +8284,7 @@ where
         }
 
         self.graph.clear_dirty_flags(&dirty_vertices);
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
 
         Ok(EvalResult {
             computed_vertices,
@@ -8432,7 +8496,7 @@ where
         // Drop dirty flags on any newly-scheduled FP runtime cells whose graph
         // vertices weren't in the dirty subset (e.g. recently-introduced span
         // result cells); legacy clear_dirty_flags is safe over the full set.
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
         // Mark this indexes-epoch as fully evaluated so subsequent passes can
         // use bounded span dirty closures rather than whole-span work.
         self.formula_plane_indexes_epoch_seen = self.graph.formula_authority().indexes_epoch();
@@ -8785,7 +8849,7 @@ where
         }
 
         // Re-dirty volatile vertices for the next evaluation cycle
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
 
         // Advance recalc epoch after a full evaluation pass finishes
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
@@ -8901,7 +8965,7 @@ where
             self.last_virtual_dep_telemetry = t;
         }
 
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
 
         Ok(EvalResult {
@@ -9616,7 +9680,7 @@ where
         }
 
         // Re-dirty volatile vertices for the next evaluation cycle
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
 
         Ok(EvalResult {
@@ -9747,7 +9811,7 @@ where
         self.graph.clear_dirty_flags(&precedents_to_eval);
 
         // Re-dirty volatile vertices
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
 
         Ok(EvalResult {
             computed_vertices,
@@ -12043,19 +12107,23 @@ where
                 {
                     return Ok(0);
                 }
-                match self.config.cycle.policy {
-                    CyclePolicy::Error => self.evaluate_scc_unit(cycle, delta, cancel_flag),
-                }
+                // Both policies share `evaluate_scc_unit`; they differ only
+                // in the settle loop's live-cycle arm (Error stamps,
+                // Iterate keeps passing — RFC #113).
+                self.evaluate_scc_unit(cycle, delta, cancel_flag)
             }
         }
     }
 
     /// Evaluate one statically-cyclic SCC under `CycleDetection::Runtime`
     /// (design doc `formualizer-stage2-scc-evaluation-design.md` §3; contract
-    /// spec §3, Error-policy subset).
+    /// spec §3; Iterate policy arm per RFC #113).
     ///
-    /// Phantom SCCs (live-acyclic) produce ordinary values; live cycles get
-    /// `#CIRC!` with live-cycle-only blast radius. Runs sequentially on the
+    /// Phantom SCCs (live-acyclic) produce ordinary values under both
+    /// policies; live cycles get `#CIRC!` with live-cycle-only blast radius
+    /// under `CyclePolicy::Error`, or Excel-style iterative calculation
+    /// (converge per spec §6 or cap at `max_iterations` passes) under
+    /// `CyclePolicy::Iterate`. Runs sequentially on the
     /// coordinating thread; commits are write-through per member (no
     /// `ComputedWriteBuffer` — that buffer is scoped to layer evaluation and
     /// always flushed before a Cycle unit runs, G1), so later members' scalar
@@ -12266,12 +12334,40 @@ where
             }
         }
 
-        // ── 4. Settle loop (design doc §3 step 4). Defensive cap: the
-        // acyclic settle is monotone, so |SCC| + 2 passes can only be
-        // exceeded by a bug; cap hits stamp the remainder and set telemetry.
+        // ── 4. Settle loop (design doc §3 step 4; RFC #113 policy arm).
+        //
+        // Acyclic classifications settle stale readers exactly (identical
+        // under both policies — phantom SCCs never iterate). A witnessed
+        // live cycle dispatches on policy: `Error` stamps `#CIRC!` and
+        // stops; `Iterate` keeps running full passes over all members in
+        // member order until converged (spec §6) or capped at
+        // `max_iterations` total passes. A live cycle that only appears
+        // mid-settle takes the same arm, and a cycle that dissolves
+        // mid-iteration falls back to exact acyclic settling.
+        //
+        // Defensive acyclic budget: the acyclic settle is monotone, so more
+        // than |SCC| + 2 settle passes can only be a bug; cap hits stamp the
+        // remainder and set telemetry. Tracked via `settle_passes` so
+        // iteration passes (legitimately many) don't consume the budget.
+        let policy = self.config.cycle.policy;
         let cap = n + 2;
         let mut witnessed_cycles = 0usize;
         let mut capped = false;
+        // ── Iterate-policy state ──
+        let mut iterating = false;
+        let mut converged = false;
+        // Values committed by the last *full* pass; `None` until the first
+        // iteration pass runs (pass 1 has no predecessor to compare against)
+        // and reset when a settle pass runs (no cross-kind comparisons).
+        let mut prev_pass: Option<Vec<LiteralValue>> = None;
+        // Final-round convergence stats (overwritten per round so the values
+        // reported are the ones observed at stop).
+        let mut iter_max_delta = 0f64;
+        let mut iter_nan_converged = 0usize;
+        // Acyclic stale-reader re-eval passes (defensive budget; under pure
+        // Error flow `1 + settle_passes == passes`, preserving Stage-2
+        // behavior exactly).
+        let mut settle_passes = 0usize;
         loop {
             // Drain this pass's recordings; members that ran replace their
             // out-edge set, members that didn't keep last-known edges.
@@ -12303,33 +12399,131 @@ where
             let analysis = analyze_live_graph(n, &edges);
 
             if analysis.cycle_count > 0 {
-                // POLICY (Error): stamp every member of a live cycle, then one
-                // settling pass over the remaining members in live-topological
-                // order so error propagation downstream is consistent
-                // (spec §3.4). Blast radius = live cycles only.
-                witnessed_cycles += analysis.cycle_count;
-                for i in 0..n {
-                    if analysis.in_cycle[i] && !excluded[i] {
-                        self.stamp_cycle_error(members[i].vertex, &circ_error, None);
-                        excluded[i] = true;
-                        last_value[i] = circ_error.clone();
-                        stamped += 1;
+                // Classification repeats every iteration pass under
+                // `Iterate`; record the widest single witness instead of
+                // accumulating so the count stays "distinct live cycles".
+                witnessed_cycles = witnessed_cycles.max(analysis.cycle_count);
+                match policy {
+                    CyclePolicy::Error => {
+                        // POLICY (Error): stamp every member of a live cycle,
+                        // then one settling pass over the remaining members in
+                        // live-topological order so error propagation
+                        // downstream is consistent (spec §3.4). Blast radius =
+                        // live cycles only.
+                        for i in 0..n {
+                            if analysis.in_cycle[i] && !excluded[i] {
+                                self.stamp_cycle_error(members[i].vertex, &circ_error, None);
+                                excluded[i] = true;
+                                last_value[i] = circ_error.clone();
+                                stamped += 1;
+                            }
+                        }
+                        check_cancel(cancel_flag)?;
+                        let order: Vec<usize> = analysis
+                            .topo
+                            .iter()
+                            .map(|&i| i as usize)
+                            .filter(|&i| !excluded[i])
+                            .collect();
+                        if !order.is_empty() {
+                            passes += 1;
+                            for i in order {
+                                run_member!(i);
+                            }
+                        }
+                        break;
+                    }
+                    CyclePolicy::Iterate {
+                        max_iterations,
+                        max_change,
+                    } => {
+                        // POLICY (Iterate), spec §3.5/§6.
+                        iterating = true;
+
+                        // Convergence test: the full pass that just completed
+                        // vs the previous full pass, per the spec-§6 rules.
+                        // `prev_pass` is `None` until an iteration pass has
+                        // run — pass 1 has no predecessor, so no convergence
+                        // test occurs before the second pass (spec §6).
+                        if let Some(prev) = &prev_pass {
+                            let mut round_max_delta = 0f64;
+                            let mut round_nan = 0usize;
+                            let mut all_converged = true;
+                            for i in 0..n {
+                                if excluded[i] {
+                                    // Stamped mid-iteration (array result,
+                                    // §7.9): the value is pinned and cannot
+                                    // change again — trivially settled.
+                                    continue;
+                                }
+                                let out = crate::engine::convergence::values_converged(
+                                    &prev[i],
+                                    &last_value[i],
+                                    max_change,
+                                    self.config.date_system,
+                                );
+                                if out.nan_converged {
+                                    round_nan += 1;
+                                }
+                                if let Some(d) = out.abs_delta {
+                                    round_max_delta = round_max_delta.max(d);
+                                }
+                                if !out.converged {
+                                    all_converged = false;
+                                }
+                            }
+                            // Overwrite (not max): telemetry reports the
+                            // round observed at stop.
+                            iter_max_delta = round_max_delta;
+                            iter_nan_converged = round_nan;
+                            if all_converged {
+                                converged = true;
+                                break;
+                            }
+                        }
+
+                        // ── Pass-counting reconciliation (spec §6/§7.6):
+                        // `max_iterations` counts TOTAL passes, pass 1
+                        // included, and pass 1 has already run by the time a
+                        // live cycle is first witnessed here. The budget is
+                        // therefore checked BEFORE evaluating anything more:
+                        // with `max_iterations: 1` we stop right here — each
+                        // member was evaluated exactly once this recalc (the
+                        // Excel accumulator contract) and no convergence test
+                        // ran (`prev_pass` is still `None`). Capping keeps
+                        // the last committed values and is NOT an error
+                        // (Excel parity); telemetry records it.
+                        if passes >= max_iterations as usize {
+                            capped = true;
+                            break;
+                        }
+
+                        check_cancel(cancel_flag)?;
+                        // One more full pass over every evaluable member in
+                        // member order (Gauss–Seidel: each commit is visible
+                        // to later members within the pass). Live edges
+                        // re-record — guards can flip near convergence
+                        // (§7.3) — so classification repeats next time
+                        // around, and a cycle that dissolves drops back to
+                        // the exact acyclic settle below.
+                        prev_pass = Some(last_value.clone());
+                        for x in pos.iter_mut() {
+                            *x = -1;
+                        }
+                        changed.fill(false);
+                        passes += 1;
+                        let mut p = 0i64;
+                        for i in 0..n {
+                            if excluded[i] {
+                                continue;
+                            }
+                            run_member!(i);
+                            pos[i] = p;
+                            p += 1;
+                        }
+                        continue;
                     }
                 }
-                check_cancel(cancel_flag)?;
-                let order: Vec<usize> = analysis
-                    .topo
-                    .iter()
-                    .map(|&i| i as usize)
-                    .filter(|&i| !excluded[i])
-                    .collect();
-                if !order.is_empty() {
-                    passes += 1;
-                    for i in order {
-                        run_member!(i);
-                    }
-                }
-                break;
             }
 
             // Acyclic: find stale readers — members whose live read of `to`
@@ -12348,9 +12542,9 @@ where
                 }
             }
             if stale.is_empty() {
-                break; // values exact — phantom SCC
+                break; // values exact — phantom SCC (or dissolved live cycle)
             }
-            if passes >= cap {
+            if 1 + settle_passes >= cap {
                 // Defensive only; hitting this is a bug (loud telemetry).
                 capped = true;
                 for (i, m) in members.iter().enumerate() {
@@ -12368,6 +12562,10 @@ where
             // Re-evaluate stale readers in live-topo order, recording fresh
             // edges (branches may flip on re-eval — spec §7.3 — which is why
             // classification repeats).
+            // A settle pass is a partial sweep: drop the full-pass baseline
+            // so a live cycle (re)appearing afterwards never compares values
+            // across mixed pass kinds.
+            prev_pass = None;
             let topo_pos = analysis.topo_positions();
             stale.sort_unstable_by_key(|&i| topo_pos[i]);
             for x in pos.iter_mut() {
@@ -12375,10 +12573,19 @@ where
             }
             changed.fill(false);
             passes += 1;
+            settle_passes += 1;
             for (p, i) in stale.into_iter().enumerate() {
                 run_member!(i);
                 pos[i] = p as i64;
             }
+        }
+
+        // Iteration that ended because the live cycle dissolved and the
+        // acyclic settle reached exactness counts as converged (values are
+        // exact, strictly better than threshold-converged). The defensive
+        // settle cap (`capped` + stamping) is not.
+        if iterating && !converged && !capped {
+            converged = true;
         }
 
         // ── 5. End of task: one delta per member whose final value differs
@@ -12396,6 +12603,17 @@ where
             }
         }
 
+        // Members of an SCC that iterated re-evaluate on EVERY recalc, like
+        // Excel's circular cells: register them for the end-of-recalc
+        // volatile-like redirty (see `pending_iterative_redirty`). Marking
+        // any one member propagates around the (strongly connected) SCC and
+        // to downstream dependents, but all members are registered so the
+        // contract survives partial structural edits between recalcs.
+        if iterating {
+            self.pending_iterative_redirty
+                .extend(members.iter().map(|m| m.vertex));
+        }
+
         {
             let t = &mut self.last_cycle_telemetry;
             t.static_sccs += 1;
@@ -12406,6 +12624,14 @@ where
             t.circ_cells_stamped += stamped;
             t.settle_passes_total += passes;
             t.max_passes_single_scc = t.max_passes_single_scc.max(passes);
+            if iterating {
+                t.iterated_sccs += 1;
+                if converged {
+                    t.converged_sccs += 1;
+                }
+                t.max_abs_delta_at_stop = t.max_abs_delta_at_stop.max(iter_max_delta);
+                t.nan_converged += iter_nan_converged;
+            }
             if capped {
                 t.capped_sccs += 1;
             }
@@ -13892,7 +14118,7 @@ where
 
         log.end_compound();
 
-        self.graph.redirty_volatiles();
+        self.redirty_for_next_recalc();
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
 
         Ok(EvalResult {

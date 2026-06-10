@@ -3,6 +3,7 @@
 //! Provides incremental formula evaluation with dependency tracking.
 
 pub mod arrow_ingest;
+pub(crate) mod convergence;
 pub mod effects;
 pub mod eval;
 pub mod eval_delta;
@@ -800,8 +801,19 @@ impl EvalConfig {
         self
     }
 
+    /// Set the cycle configuration.
+    ///
+    /// # Panics
+    /// Panics when `cycle` is invalid (see [`CycleConfig::validate`]):
+    /// `Iterate` with `detection: Static`, `max_iterations == 0`, or a
+    /// negative/non-finite `max_change` are config errors rejected at build
+    /// (spec §2). [`Engine::new`] re-validates for configs assembled via
+    /// struct literals.
     #[inline]
     pub fn with_cycle(mut self, cycle: CycleConfig) -> Self {
+        if let Err(msg) = cycle.validate() {
+            panic!("invalid CycleConfig: {msg}");
+        }
         self.cycle = cycle;
         self
     }
@@ -811,10 +823,68 @@ impl EvalConfig {
 ///
 /// Nested under [`EvalConfig`] like [`SpillConfig`]; flows through
 /// `WorkbookConfig.eval` automatically.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CycleConfig {
     pub detection: CycleDetection,
     pub policy: CyclePolicy,
+}
+
+impl CycleConfig {
+    /// Runtime detection + Excel-default iterative calculation
+    /// (`max_iterations: 100`, `max_change: 0.001`).
+    pub fn iterate_excel_defaults() -> Self {
+        Self {
+            detection: CycleDetection::Runtime,
+            policy: CyclePolicy::iterate_excel_defaults(),
+        }
+    }
+
+    /// Runtime detection + iterative calculation with explicit knobs.
+    pub fn iterate(max_iterations: u32, max_change: f64) -> Self {
+        Self {
+            detection: CycleDetection::Runtime,
+            policy: CyclePolicy::Iterate {
+                max_iterations,
+                max_change,
+            },
+        }
+    }
+
+    /// Validate the configuration (spec §2). Invalid combinations are
+    /// rejected at build: [`EvalConfig::with_cycle`] and engine construction
+    /// both panic on `Err`.
+    pub fn validate(&self) -> Result<(), String> {
+        if let CyclePolicy::Iterate {
+            max_iterations,
+            max_change,
+        } = self.policy
+        {
+            if self.detection == CycleDetection::Static {
+                return Err(
+                    "CyclePolicy::Iterate requires CycleDetection::Runtime (spec §2)".to_string(),
+                );
+            }
+            if max_iterations == 0 {
+                return Err("CyclePolicy::Iterate max_iterations must be >= 1".to_string());
+            }
+            if !max_change.is_finite() || max_change < 0.0 {
+                return Err(format!(
+                    "CyclePolicy::Iterate max_change must be finite and >= 0 (got {max_change})"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether ingest may accept formulas whose dependencies include the
+    /// formula's own cell (`=B1+A1` in B1). Excel accepts these only with
+    /// iterative calculation enabled; everywhere else the edit-time
+    /// "Self-reference detected" rejection stands.
+    #[inline]
+    pub(crate) fn allows_self_dependency(&self) -> bool {
+        self.detection == CycleDetection::Runtime
+            && matches!(self.policy, CyclePolicy::Iterate { .. })
+    }
 }
 
 /// How statically-cyclic SCCs are treated at evaluation time.
@@ -831,14 +901,43 @@ pub enum CycleDetection {
 }
 
 /// What happens to witnessed (live) cycles under `CycleDetection::Runtime`.
-///
-/// `Iterate` (Excel-style iterative calculation) is Stage 3 and intentionally
-/// absent from this enum until then (no dead config).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum CyclePolicy {
     /// Live cycles produce `#CIRC!`.
     #[default]
     Error,
+    /// Excel-style iterative calculation (RFC #113, spec §3.5/§6):
+    /// live cycles keep running full passes over all SCC members in member
+    /// order (Gauss–Seidel: each result is committed before the next member
+    /// runs) until every member converges per the spec-§6 rules or
+    /// `max_iterations` total passes (pass 1 included) have run. Hitting the
+    /// cap keeps the last values and is NOT an error (Excel parity);
+    /// telemetry records `capped_sccs`.
+    Iterate {
+        /// Total passes per SCC per recalc, pass 1 included. `1` means each
+        /// member evaluates exactly once per recalc (the Excel accumulator
+        /// contract, spec §7.6); `0` is a config error.
+        max_iterations: u32,
+        /// Absolute per-member convergence threshold on f64 serial values
+        /// (`|Δ| < max_change`, strict — Excel semantics). Negative or
+        /// non-finite values are config errors.
+        max_change: f64,
+    },
+}
+
+impl CyclePolicy {
+    /// Excel's default iterative-calculation knobs.
+    pub const EXCEL_DEFAULT_MAX_ITERATIONS: u32 = 100;
+    /// Excel's default maximum-change threshold.
+    pub const EXCEL_DEFAULT_MAX_CHANGE: f64 = 0.001;
+
+    /// `Iterate` with Excel's defaults (100 iterations, 0.001 max change).
+    pub fn iterate_excel_defaults() -> Self {
+        CyclePolicy::Iterate {
+            max_iterations: Self::EXCEL_DEFAULT_MAX_ITERATIONS,
+            max_change: Self::EXCEL_DEFAULT_MAX_CHANGE,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
