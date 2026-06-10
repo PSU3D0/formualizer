@@ -125,9 +125,9 @@ impl Function for SumFn {
                 }
             }
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            total,
-        )))
+        Ok(crate::traits::CalcValue::Scalar(
+            super::super::utils::aggregate_result(total),
+        ))
     }
 }
 
@@ -366,9 +366,9 @@ impl Function for AverageFn {
                 ExcelError::new_div(),
             )));
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            sum / (cnt as f64),
-        )))
+        Ok(crate::traits::CalcValue::Scalar(
+            super::super::utils::aggregate_result(sum / (cnt as f64)),
+        ))
     }
 }
 
@@ -534,9 +534,9 @@ impl Function for SumProductFn {
                 total += prod;
             }
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            total,
-        )))
+        Ok(crate::traits::CalcValue::Scalar(
+            super::super::utils::aggregate_result(total),
+        ))
     }
 }
 
@@ -1211,25 +1211,27 @@ impl AggregateCollector {
     }
 
     fn finalize(self, op: AggregateOp) -> LiteralValue {
+        use super::super::utils::aggregate_result;
         match op {
             AggregateOp::Average => {
                 if self.numeric_values.is_empty() {
                     LiteralValue::Error(ExcelError::new_div())
                 } else {
                     let sum = self.numeric_values.iter().copied().sum::<f64>();
-                    LiteralValue::Number(sum / (self.numeric_values.len() as f64))
+                    aggregate_result(sum / (self.numeric_values.len() as f64))
                 }
             }
+            // Counts cannot overflow to non-finite; keep them branch-free.
             AggregateOp::Count => LiteralValue::Number(self.numeric_values.len() as f64),
             AggregateOp::CountA => LiteralValue::Number(self.counta as f64),
-            AggregateOp::Max => LiteralValue::Number(
+            AggregateOp::Max => aggregate_result(
                 self.numeric_values
                     .iter()
                     .copied()
                     .reduce(f64::max)
                     .unwrap_or(0.0),
             ),
-            AggregateOp::Min => LiteralValue::Number(
+            AggregateOp::Min => aggregate_result(
                 self.numeric_values
                     .iter()
                     .copied()
@@ -1240,24 +1242,24 @@ impl AggregateCollector {
                 if self.numeric_values.is_empty() {
                     LiteralValue::Number(0.0)
                 } else {
-                    LiteralValue::Number(self.numeric_values.iter().copied().product::<f64>())
+                    aggregate_result(self.numeric_values.iter().copied().product::<f64>())
                 }
             }
             AggregateOp::StdevSample => match Self::variance(&self.numeric_values, true) {
-                Ok(v) => LiteralValue::Number(v.sqrt()),
+                Ok(v) => aggregate_result(v.sqrt()),
                 Err(e) => LiteralValue::Error(e),
             },
             AggregateOp::StdevPopulation => match Self::variance(&self.numeric_values, false) {
-                Ok(v) => LiteralValue::Number(v.sqrt()),
+                Ok(v) => aggregate_result(v.sqrt()),
                 Err(e) => LiteralValue::Error(e),
             },
-            AggregateOp::Sum => LiteralValue::Number(self.numeric_values.iter().copied().sum()),
+            AggregateOp::Sum => aggregate_result(self.numeric_values.iter().copied().sum()),
             AggregateOp::VarSample => match Self::variance(&self.numeric_values, true) {
-                Ok(v) => LiteralValue::Number(v),
+                Ok(v) => aggregate_result(v),
                 Err(e) => LiteralValue::Error(e),
             },
             AggregateOp::VarPopulation => match Self::variance(&self.numeric_values, false) {
-                Ok(v) => LiteralValue::Number(v),
+                Ok(v) => aggregate_result(v),
                 Err(e) => LiteralValue::Error(e),
             },
         }

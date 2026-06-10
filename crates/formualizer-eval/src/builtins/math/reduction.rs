@@ -131,9 +131,9 @@ impl Function for MinFn {
                 }
             }
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            mv.unwrap_or(0.0),
-        )))
+        Ok(crate::traits::CalcValue::Scalar(
+            super::super::utils::aggregate_result(mv.unwrap_or(0.0)),
+        ))
     }
 }
 
@@ -261,9 +261,9 @@ impl Function for MaxFn {
                 }
             }
         }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            mv.unwrap_or(0.0),
-        )))
+        Ok(crate::traits::CalcValue::Scalar(
+            super::super::utils::aggregate_result(mv.unwrap_or(0.0)),
+        ))
     }
 }
 

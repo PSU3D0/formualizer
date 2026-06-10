@@ -5,6 +5,19 @@ use std::sync::LazyLock;
 /// Small epsilon used to detect near-zero denominators in trig/hyperbolic functions.
 pub const EPSILON_NEAR_ZERO: f64 = 1e-12;
 
+/// Final non-finite guard for numeric aggregate results (SUM/MIN/MAX/...):
+/// Excel never surfaces inf/NaN — an overflowed aggregate is `#NUM\!`, the
+/// same parity rule operators already apply via `coercion::sanitize_numeric`.
+/// One branch per aggregate CALL (apply to the finished reduction, never per
+/// element — arrow kernels stay untouched).
+pub fn aggregate_result(n: f64) -> LiteralValue {
+    if n.is_finite() {
+        LiteralValue::Number(n)
+    } else {
+        LiteralValue::Error(ExcelError::new_num())
+    }
+}
+
 /// Coerce a `LiteralValue` to `f64` using Excel semantics.
 /// - Number/Int map to f64
 /// - Boolean maps to 1.0/0.0

@@ -656,9 +656,10 @@ fn eval_if_family<'a, 'b>(
     }
 
     match agg_type {
-        AggregationType::Sum => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            total_sum,
-        ))),
+        AggregationType::Sum => Ok(crate::traits::CalcValue::Scalar(
+            super::super::utils::aggregate_result(total_sum),
+        )),
+        // Counts cannot overflow to non-finite; keep them branch-free.
         AggregationType::Count => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             total_count as f64,
         ))),
@@ -668,9 +669,9 @@ fn eval_if_family<'a, 'b>(
                     ExcelError::new_div(),
                 )))
             } else {
-                Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-                    total_sum / total_count as f64,
-                )))
+                Ok(crate::traits::CalcValue::Scalar(
+                    super::super::utils::aggregate_result(total_sum / total_count as f64),
+                ))
             }
         }
     }
