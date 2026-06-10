@@ -1024,6 +1024,108 @@ scenarios:
         - peak_rss_mb
         - load_ms
 
+  - id: scc_iterate_pairs_10k
+    name: Iterative-calc SCC cost — 10k convergent 2-member cycles (Iterate policy)
+    profile: formualizer_strength
+    family: nightly_stress
+    tier: nightly_heavy
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: probe
+      workbook_path: target/scc-iterate-fixtures/phase-candidate-pairs-10000.xlsx
+      notes: >-
+        Probe-driven standing regression gate for per-SCC iterative-calculation
+        cost under RFC #113 Stage 3 (`CyclePolicy::Iterate`, refs
+        PSU3D0/formualizer#113, follows #130). Not part of the generate-corpus
+        pipeline; the fixture is produced in-process by the probe binary. Builds
+        N independent *convergent* 2-member cycles in the circular-interest shape
+        (A=0.5*B+10, B=0.5*A+10; analytic fixed point 20,20) plus a downstream
+        consumer per pair so condensation ordering is exercised, then measures
+        initial evaluate_all (cold seed → ~9 passes/SCC) and no-edit recalc rounds
+        (iterating SCCs self-redirty every recalc by design — #130 — and re-iterate
+        from warm seeds → ~2 passes/SCC) plus one small-edit round. Engine-specific
+        iterative-calc capability — no cross-engine comparison claim.
+        Run: `cargo run --release -p formualizer-bench-core --features
+        formualizer_runner --bin probe-scc-iterate -- --workload pairs --pairs
+        10000`. The probe self-checks correctness (sampled pairs near the analytic
+        fixed point) and convergence telemetry (converged_sccs == pairs, 0 capped),
+        emitting one JSON object per run; headline metric is
+        initial_us_per_member_pass.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+      - op: evaluate_all
+    verify:
+      formula_checks:
+        - cell: "Sheet1!C1"
+          type: non_error
+    metrics:
+      primary:
+        - full_eval_ms
+        - initial_us_per_member_pass
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
+  - id: scc_iterate_1k_members
+    name: Iterative-calc SCC cost — 1k-member convergent ring (Iterate policy)
+    profile: formualizer_strength
+    family: nightly_stress
+    tier: nightly_heavy
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: probe
+      workbook_path: target/scc-iterate-fixtures/phase-candidate-big-scc-1000-conv.xlsx
+      notes: >-
+        Probe-driven standing regression gate for a single large iterating SCC
+        under RFC #113 Stage 3 (`CyclePolicy::Iterate`, refs PSU3D0/formualizer#113,
+        follows #130). Not part of the generate-corpus pipeline; the fixture is
+        produced in-process by the probe binary. Builds ONE SCC of N members in a
+        convergent ring (cell_i = 0.9*cell_{i-1}+1, wraparound — contractive,
+        analytic fixed point 10) plus a downstream consumer, and measures initial
+        evaluate_all plus no-edit recalc rounds. This scenario is the cost-model
+        gate (design §9, ~330ms@cap for 1k×100): it surfaces the deferred
+        O(|SCC|) per-member live-edge re-recording term, which on scalar-only refs
+        already makes total cost scale O(passes × |SCC|^2) (measured: total eval
+        ms ~3.8x per member doubling, i.e. near-quadratic). A genuine at-cap
+        (×100 passes) stress number is produced by the `--divergent` variant
+        (a contractive ring converges exactly in ~3 passes so it cannot be forced
+        to the cap even at max_change 1e-300). Engine-specific iterative-calc
+        capability — no cross-engine comparison claim.
+        Run (convergent + at-cap divergent stress):
+        `cargo run --release -p formualizer-bench-core --features formualizer_runner
+        --bin probe-scc-iterate -- --workload big-scc --members 1000` and
+        `--workload big-scc --members 1000 --divergent`. Optional scaling-lever
+        exposure: add `--range-reads 8` (each member reads a small neighbour
+        range). The probe self-checks member values against the analytic fixed
+        point (convergent) or finiteness (divergent) and convergence telemetry
+        (convergent: converged_sccs==1; divergent: capped_sccs==1, 100 passes),
+        emitting one JSON object per run; headline metric is
+        initial_us_per_member_pass.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+      - op: evaluate_all
+    verify:
+      formula_checks:
+        - cell: "Sheet1!A1"
+          type: non_error
+        - cell: "Sheet1!B1"
+          type: non_error
+    metrics:
+      primary:
+        - full_eval_ms
+        - initial_us_per_member_pass
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
   - id: real_finance_model_v1
     name: "Real-world anchor: forecast finance model"
     profile: core
