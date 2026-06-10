@@ -145,10 +145,25 @@ pub enum ChangeEvent {
         anchor: VertexId,
         old: SpillSnapshot,
     },
-    /// Workbook-level staged formula snapshot used to keep deferred edits undoable.
-    StagedFormulaStateChanged {
-        before: Vec<(String, u32, u32, String)>,
-        after: Vec<(String, u32, u32, String)>,
+    /// Workbook-level per-cell staged formula delta used to keep deferred edits
+    /// undoable.
+    ///
+    /// Replaces the former `StagedFormulaStateChanged` full before/after snapshot
+    /// pair (which made interactive `set_formula` O(N) per edit and O(N^2) in
+    /// changelog memory — see #126). Each edit records only the affected cell's
+    /// staged text transition, so a sequence of N edits costs O(N) total.
+    ///
+    /// - `old`: the staged formula text for the cell before the edit, if any.
+    /// - `new`: the staged formula text for the cell after the edit, if any.
+    ///
+    /// Undo restores `old` (re-stage if `Some`, clear if `None`); redo applies
+    /// `new` (re-stage if `Some`, clear if `None`).
+    StagedFormulaCellChanged {
+        sheet: String,
+        row: u32,
+        col: u32,
+        old: Option<String>,
+        new: Option<String>,
     },
 }
 

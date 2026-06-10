@@ -57,6 +57,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 type StagedFormulaEntry = (u32, u32, String);
+// NOTE(#126): the per-sheet `Vec` makes `stage_formula_text`/`clear_staged_formula_text`/
+// `get_staged_formula_text` O(staged-on-sheet) per call. The changelog O(N^2) regression
+// (full before/after snapshots per edit) is fixed via per-cell `StagedFormulaCellChanged`
+// deltas. Converting this Vec to a `(row,col)`-keyed map would make the residual lookups
+// O(1), but it threads through `build_graph_all`/`build_graph_for_sheets`/ingest records,
+// so it is intentionally left as a separate, contained follow-up.
 type StagedFormulaMap = std::collections::HashMap<String, Vec<StagedFormulaEntry>>;
 
 fn producer_dirty_to_span_dirty(
@@ -2775,29 +2781,6 @@ where
         self.staged_formulas.values().map(Vec::len).sum()
     }
 
-    pub fn staged_formula_state_snapshot(&self) -> Vec<(String, u32, u32, String)> {
-        let mut snapshot = Vec::new();
-        for (sheet, entries) in &self.staged_formulas {
-            for (row, col, text) in entries {
-                snapshot.push((sheet.clone(), *row, *col, text.clone()));
-            }
-        }
-        snapshot.sort_by(|a, b| {
-            a.0.cmp(&b.0)
-                .then(a.1.cmp(&b.1))
-                .then(a.2.cmp(&b.2))
-                .then(a.3.cmp(&b.3))
-        });
-        snapshot
-    }
-
-    pub fn restore_staged_formula_state(&mut self, snapshot: &[(String, u32, u32, String)]) {
-        self.staged_formulas.clear();
-        for (sheet, row, col, text) in snapshot {
-            self.stage_formula_text(sheet, *row, *col, text.clone());
-        }
-    }
-
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
     pub fn stage_formula_text(&mut self, sheet: &str, row: u32, col: u32, text: String) {
         let entries = self.staged_formulas.entry(sheet.to_string()).or_default();
@@ -3813,14 +3796,39 @@ where
     }
 
     fn apply_inverse_staged_formula_event(&mut self, event: &crate::engine::ChangeEvent) {
-        if let crate::engine::ChangeEvent::StagedFormulaStateChanged { before, .. } = event {
-            self.restore_staged_formula_state(before);
+        if let crate::engine::ChangeEvent::StagedFormulaCellChanged {
+            sheet,
+            row,
+            col,
+            old,
+            ..
+        } = event
+        {
+            self.apply_staged_formula_cell(sheet, *row, *col, old.as_deref());
         }
     }
 
     fn apply_forward_staged_formula_event(&mut self, event: &crate::engine::ChangeEvent) {
-        if let crate::engine::ChangeEvent::StagedFormulaStateChanged { after, .. } = event {
-            self.restore_staged_formula_state(after);
+        if let crate::engine::ChangeEvent::StagedFormulaCellChanged {
+            sheet,
+            row,
+            col,
+            new,
+            ..
+        } = event
+        {
+            self.apply_staged_formula_cell(sheet, *row, *col, new.as_deref());
+        }
+    }
+
+    /// Set a single cell's staged formula text to `target` (clearing it when
+    /// `None`). Used by undo/redo replay of per-cell staged-formula deltas.
+    fn apply_staged_formula_cell(&mut self, sheet: &str, row: u32, col: u32, target: Option<&str>) {
+        match target {
+            Some(text) => self.stage_formula_text(sheet, row, col, text.to_string()),
+            None => {
+                self.clear_staged_formula_text(sheet, row, col);
+            }
         }
     }
 
@@ -6890,7 +6898,7 @@ where
             | ChangeEvent::EdgeRemoved { .. }
             | ChangeEvent::CompoundStart { .. }
             | ChangeEvent::CompoundEnd { .. }
-            | ChangeEvent::StagedFormulaStateChanged { .. } => {}
+            | ChangeEvent::StagedFormulaCellChanged { .. } => {}
         }
     }
 
