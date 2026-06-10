@@ -207,13 +207,13 @@ fn run_deep_shape_differential() {
             deps[base].push(base - 1);
         }
     }
-    for i in 3 * ring..n {
+    for (i, dep) in deps.iter_mut().enumerate().take(n).skip(3 * ring) {
         // Reverse tail: each tail vertex depends on the NEXT tail vertex;
         // the last tail vertex depends into ring 0.
         if i + 1 < n {
-            deps[i].push(i + 1);
+            dep.push(i + 1);
         } else {
-            deps[i].push(0);
+            dep.push(0);
         }
     }
     let (graph, mut roots) = build_graph(n, &deps);

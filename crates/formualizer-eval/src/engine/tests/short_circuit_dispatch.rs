@@ -112,7 +112,7 @@ fn non_short_circuit_dispatch_evaluates_each_argument_subtree_once() {
             f = format!("SUM({f})");
         }
         engine
-            .set_cell_formula("Sheet1", 1, 1, parse(&format!("={f}")).unwrap())
+            .set_cell_formula("Sheet1", 1, 1, parse(format!("={f}").as_str()).unwrap())
             .unwrap();
         engine.evaluate_all().unwrap();
         assert_eq!(

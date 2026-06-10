@@ -268,9 +268,11 @@ impl<'a> Scheduler<'a> {
                     if !vertex_set.contains(&dependency) {
                         continue;
                     }
-                    if !indices.contains_key(&dependency) {
+                    if let std::collections::hash_map::Entry::Vacant(slot) =
+                        indices.entry(dependency)
+                    {
                         // Not yet visited: descend (the recursive call).
-                        indices.insert(dependency, index_counter);
+                        slot.insert(index_counter);
                         lowlinks.insert(dependency, index_counter);
                         index_counter += 1;
                         stack.push(dependency);
