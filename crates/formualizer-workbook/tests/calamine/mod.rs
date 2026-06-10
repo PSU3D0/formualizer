@@ -17,6 +17,8 @@ mod formulas;
 #[cfg(feature = "calamine")]
 mod it;
 #[cfg(feature = "calamine")]
+mod iterate_corpus_calcpr_fuzz;
+#[cfg(feature = "calamine")]
 mod large;
 #[cfg(feature = "calamine")]
 mod load_fast_batches;
