@@ -33,13 +33,15 @@ fn sumifs_cached_mask_padding_uses_slice_and_padding_branches() {
     }
 
     // Drive SUMIFS through the engine to ensure it uses cached criteria masks.
+    // Placed in column E so the whole-column refs (A:A/B:B) are not
+    // self-inclusive — a SUMIFS *in* column A/B would be circular per #120.
     let formula = parse("=SUMIFS(A:A, B:B, \"Yes\")").unwrap();
-    engine.set_cell_formula("Sheet1", 1, 1, formula).unwrap();
-    engine.evaluate_cell("Sheet1", 1, 1).unwrap();
+    engine.set_cell_formula("Sheet1", 1, 5, formula).unwrap();
+    engine.evaluate_cell("Sheet1", 1, 5).unwrap();
 
     // Result: sum of rows 1, 51, 100 (1-based) => 1 + 51 + 100 = 152
     assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 1).unwrap(),
+        engine.get_cell_value("Sheet1", 1, 5).unwrap(),
         LiteralValue::Number(152.0)
     );
 

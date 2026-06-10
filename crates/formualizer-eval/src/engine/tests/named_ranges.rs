@@ -356,12 +356,16 @@ fn row_and_columns_named_range_track_anchor_and_width_updates() {
 fn rows_full_column_reference_returns_excel_sheet_height() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
 
+    // Placed in column E (not column A): a whole-column ref self-included in
+    // its own column is flagged circular (#120, consistent with bounded
+    // self-inclusion which already errors at ingest regardless of the
+    // shape-only function).
     engine
-        .set_cell_formula("Sheet1", 1, 1, parse("=ROWS(A:A)").unwrap())
+        .set_cell_formula("Sheet1", 1, 5, parse("=ROWS(A:A)").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
 
-    match engine.get_cell_value("Sheet1", 1, 1) {
+    match engine.get_cell_value("Sheet1", 1, 5) {
         Some(LiteralValue::Int(v)) => assert_eq!(v, 1_048_576),
         Some(LiteralValue::Number(v)) => assert!((v - 1_048_576.0).abs() < 1e-9),
         other => panic!("expected 1048576 rows for full-column reference, got {other:?}"),
@@ -372,12 +376,14 @@ fn rows_full_column_reference_returns_excel_sheet_height() {
 fn columns_full_row_reference_returns_excel_sheet_width() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
 
+    // Placed in row 5 (not row 1): a whole-row ref self-included in its own
+    // row is flagged circular (#120, consistent with bounded self-inclusion).
     engine
-        .set_cell_formula("Sheet1", 1, 1, parse("=COLUMNS(1:1)").unwrap())
+        .set_cell_formula("Sheet1", 5, 1, parse("=COLUMNS(1:1)").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
 
-    match engine.get_cell_value("Sheet1", 1, 1) {
+    match engine.get_cell_value("Sheet1", 5, 1) {
         Some(LiteralValue::Int(v)) => assert_eq!(v, 16_384),
         Some(LiteralValue::Number(v)) => assert!((v - 16_384.0).abs() < 1e-9),
         other => panic!("expected 16384 columns for full-row reference, got {other:?}"),

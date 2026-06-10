@@ -33,6 +33,41 @@ impl DependencyGraph {
         &self.stripe_to_dependents
     }
 
+    /// True when a (possibly open-ended) range region on `sheet_id` covers
+    /// the formula vertex's own cell. Used to record a self-loop for
+    /// stripe-compressed / whole-axis self-inclusion (#120): such references
+    /// never produce explicit cell edges, so the ingest self-reference check
+    /// (which scans expanded cell deps) misses them. `None` bounds mean the
+    /// axis is unbounded (whole column/row), which always covers the cell.
+    fn range_region_contains_self(
+        &self,
+        dependent: VertexId,
+        sheet_id: SheetId,
+        s_row: Option<u32>,
+        e_row: Option<u32>,
+        s_col: Option<u32>,
+        e_col: Option<u32>,
+    ) -> bool {
+        if self.store.sheet_id(dependent) != sheet_id {
+            return false;
+        }
+        let coord = self.store.coord(dependent);
+        let r0 = coord.row();
+        let c0 = coord.col();
+        s_row.is_none_or(|s| r0 >= s)
+            && e_row.is_none_or(|e| r0 <= e)
+            && s_col.is_none_or(|s| c0 >= s)
+            && e_col.is_none_or(|e| c0 <= e)
+    }
+
+    /// Record a self-loop edge (vertex → itself). The edge store and Tarjan
+    /// both treat self-loops as cycles (`separate_cycles` via `has_self_loop`).
+    fn record_self_loop(&mut self, vertex: VertexId) {
+        if !self.has_self_loop(vertex) {
+            self.edges.add_edge(vertex, vertex);
+        }
+    }
+
     pub(super) fn add_range_dependent_edges(
         &mut self,
         dependent: VertexId,
@@ -56,6 +91,14 @@ impl DependencyGraph {
             let e_row = range.end_row.map(|b| b.index);
             let s_col = range.start_col.map(|b| b.index);
             let e_col = range.end_col.map(|b| b.index);
+
+            // #120: a compressed range whose region covers this formula's own
+            // cell is a self-reference. Record a self-loop so SCC detection
+            // flags the cycle (the ingest self-ref check only sees expanded
+            // cell edges, which compressed ranges do not produce).
+            if self.range_region_contains_self(dependent, sheet_id, s_row, e_row, s_col, e_col) {
+                self.record_self_loop(dependent);
+            }
 
             let col_stripes = (s_row.is_none() && e_row.is_none())
                 || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none()));
@@ -268,6 +311,12 @@ impl DependencyGraph {
             let e_row = range.end_row.map(|b| b.index);
             let s_col = range.start_col.map(|b| b.index);
             let e_col = range.end_col.map(|b| b.index);
+
+            // #120: see add_range_dependent_edges — compressed range covering
+            // the formula's own cell records a self-loop for SCC detection.
+            if self.range_region_contains_self(dependent, sheet_id, s_row, e_row, s_col, e_col) {
+                self.record_self_loop(dependent);
+            }
 
             let col_stripes = (s_row.is_none() && e_row.is_none())
                 || (s_col.is_some() && e_col.is_some() && (s_row.is_none() || e_row.is_none()));
