@@ -699,6 +699,38 @@ impl PyWorkbook {
         Ok(())
     }
 
+    /// Telemetry from runtime SCC / iterative-calculation evaluation during
+    /// the most recent evaluation request (RFC #113, spec §10).
+    ///
+    /// Mirrors the engine accessor of the same name: counters reset at the
+    /// start of every evaluation request, so this always describes the LAST
+    /// `evaluate_all()` / `evaluate_cell(s)` call. All-zero when cycle
+    /// detection is `"static"` or nothing cyclic was evaluated.
+    ///
+    /// Example:
+    /// ```python
+    ///     import formualizer as fz
+    ///
+    ///     cfg = fz.EvaluationConfig()
+    ///     cfg.cycle_policy = "iterate"
+    ///     wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
+    ///     s = wb.sheet("S")
+    ///     s.set_formula(1, 1, "=B1+1")
+    ///     s.set_formula(1, 2, "=A1/2")
+    ///     wb.evaluate_all()
+    ///     t = wb.last_cycle_telemetry()
+    ///     print(t.iterated_sccs, t.converged_sccs, t.capped_sccs)
+    /// ```
+    pub fn last_cycle_telemetry(&self) -> PyResult<PyCycleTelemetry> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        Ok(PyCycleTelemetry::from_engine(
+            wb.engine().last_cycle_telemetry(),
+        ))
+    }
+
     pub fn evaluate_cells(
         &self,
         py: Python<'_>,
@@ -1042,7 +1074,99 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWorkbook>()?;
     m.add_class::<PyWorkbookConfig>()?;
     m.add_class::<PyRangeAddress>()?;
+    m.add_class::<PyCycleTelemetry>()?;
     Ok(())
+}
+
+/// Per-recalc telemetry from runtime SCC evaluation (RFC #113, spec §10).
+///
+/// Read-only snapshot of the engine's `CycleTelemetry`, taken by
+/// `Workbook.last_cycle_telemetry()`. Counters reset at the start of every
+/// evaluation request.
+#[gen_stub_pyclass]
+#[pyclass(name = "CycleTelemetry", module = "formualizer")]
+#[derive(Clone, Debug)]
+pub struct PyCycleTelemetry {
+    /// SCC tasks executed (static SCCs that reached Runtime evaluation).
+    #[pyo3(get)]
+    pub static_sccs: usize,
+    /// SCC tasks whose live subgraph was acyclic — values produced.
+    #[pyo3(get)]
+    pub phantom_sccs: usize,
+    /// Distinct live cycles witnessed across all SCC tasks.
+    #[pyo3(get)]
+    pub live_cycles_witnessed: usize,
+    /// Cells stamped `#CIRC!` by Runtime SCC tasks.
+    #[pyo3(get)]
+    pub circ_cells_stamped: usize,
+    /// Evaluation sweeps over (subsets of) SCC members, totalled across tasks.
+    #[pyo3(get)]
+    pub settle_passes_total: usize,
+    /// Largest pass count any single SCC task needed.
+    #[pyo3(get)]
+    pub max_passes_single_scc: usize,
+    /// SCC tasks that entered iterative calculation.
+    #[pyo3(get)]
+    pub iterated_sccs: usize,
+    /// Iterating SCC tasks that stopped because every member converged.
+    #[pyo3(get)]
+    pub converged_sccs: usize,
+    /// SCC tasks that stopped at a pass cap (NOT an error under iterate).
+    #[pyo3(get)]
+    pub capped_sccs: usize,
+    /// Largest |delta| observed in any member's final-pass convergence check.
+    #[pyo3(get)]
+    pub max_abs_delta_at_stop: f64,
+    /// Identical-bit NaN comparisons treated as converged (spec §6 NaN rule).
+    #[pyo3(get)]
+    pub nan_converged: usize,
+    /// Wall-clock milliseconds spent inside Runtime SCC tasks.
+    #[pyo3(get)]
+    pub elapsed_ms: u64,
+}
+
+impl PyCycleTelemetry {
+    pub(crate) fn from_engine(t: &formualizer::eval::engine::CycleTelemetry) -> Self {
+        Self {
+            static_sccs: t.static_sccs,
+            phantom_sccs: t.phantom_sccs,
+            live_cycles_witnessed: t.live_cycles_witnessed,
+            circ_cells_stamped: t.circ_cells_stamped,
+            settle_passes_total: t.settle_passes_total,
+            max_passes_single_scc: t.max_passes_single_scc,
+            iterated_sccs: t.iterated_sccs,
+            converged_sccs: t.converged_sccs,
+            capped_sccs: t.capped_sccs,
+            max_abs_delta_at_stop: t.max_abs_delta_at_stop,
+            nan_converged: t.nan_converged,
+            elapsed_ms: u64::try_from(t.elapsed_ms).unwrap_or(u64::MAX),
+        }
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyCycleTelemetry {
+    fn __repr__(&self) -> String {
+        format!(
+            "CycleTelemetry(static_sccs={}, phantom_sccs={}, live_cycles_witnessed={}, \
+             circ_cells_stamped={}, settle_passes_total={}, max_passes_single_scc={}, \
+             iterated_sccs={}, converged_sccs={}, capped_sccs={}, \
+             max_abs_delta_at_stop={}, nan_converged={}, elapsed_ms={})",
+            self.static_sccs,
+            self.phantom_sccs,
+            self.live_cycles_witnessed,
+            self.circ_cells_stamped,
+            self.settle_passes_total,
+            self.max_passes_single_scc,
+            self.iterated_sccs,
+            self.converged_sccs,
+            self.capped_sccs,
+            self.max_abs_delta_at_stop,
+            self.nan_converged,
+            self.elapsed_ms,
+        )
+    }
 }
 
 // Compatibility types used by engine/sheet wrappers
