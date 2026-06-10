@@ -981,6 +981,49 @@ scenarios:
         - cell: "Sheet1!A1"
           type: non_error
 
+  - id: scc_phantom_pairs_10k
+    name: Per-SCC-task overhead — 10k guarded phantom pairs (runtime cycle eval)
+    profile: formualizer_strength
+    family: nightly_stress
+    tier: nightly_heavy
+    comparison_profiles: [native_strength]
+    runtime_modes: [native_best]
+    regression_gate: false
+    source:
+      kind: probe
+      workbook_path: target/scc-phantom-fixtures/scc-phantom-pairs-10000.xlsx
+      notes: >-
+        Probe-driven standing regression gate for per-SCC-task evaluation
+        overhead under RFC #112 runtime cycle detection (refs PSU3D0/formualizer#112,
+        follows #119). Not part of the generate-corpus pipeline; the fixture is
+        produced in-process by the probe binary. Builds N independent guarded
+        phantom pairs (discussion #99 shape: A=IF(g,k,B), B=IF(g,A,k)) plus a
+        downstream consumer per pair so condensation ordering is exercised, then
+        measures initial evaluate_all and guard-flip recalc rounds, reporting
+        per-pair µs. Engine-specific runtime-cycle capability — no cross-engine
+        comparison claim. Run both modes:
+        `cargo run --release -p formualizer-bench-core --features formualizer_runner
+        --bin probe-scc-phantom-pairs -- --pairs 10000 --mode runtime` and
+        `--mode static`. The probe self-checks correctness (runtime: sampled
+        pair values match guard state; static: 2*pairs #CIRC cells) and emits one
+        JSON object per run; headline metric is recalc_us_per_pair_p50.
+    operations:
+      - op: load
+      - op: evaluate_all
+      - op: edit_set_value
+      - op: evaluate_all
+    verify:
+      formula_checks:
+        - cell: "Sheet1!D1"
+          type: non_error
+    metrics:
+      primary:
+        - full_eval_ms
+        - recalc_us_per_pair_p50
+      secondary:
+        - peak_rss_mb
+        - load_ms
+
   - id: real_finance_model_v1
     name: "Real-world anchor: forecast finance model"
     profile: core

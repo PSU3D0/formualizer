@@ -168,6 +168,12 @@ scenarios:
     support_policy: explicit_caveat
     claim_class: claim_safe_with_caveats
     caveat_labels: [real_world_anchor_scope, parity_corpus_constraint, runtime_mode_difference]
+  scc_phantom_pairs_10k:
+    functions: [IF]
+    features: [runtime_cycle_detection, guarded_phantom_scc, scc_task_evaluation, incremental_recalc]
+    support_policy: profile_subset
+    claim_class: internal_only
+    caveat_labels: [runtime_mode_difference]
 
 # Adapter support declaration can be generated dynamically by adapters,
 # but this static template helps track expected support intent.
