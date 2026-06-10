@@ -1,7 +1,7 @@
 use crate::load_limits::enforce_sheet_dimension_limits;
 use crate::traits::{
-    AccessGranularity, AdapterLoadStats, BackendCaps, CellData, DefinedName, DefinedNameDefinition,
-    DefinedNameScope, MergedRange, SheetData, SpreadsheetReader,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CalcSettings, CellData, DefinedName,
+    DefinedNameDefinition, DefinedNameScope, MergedRange, SheetData, SpreadsheetReader,
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
@@ -77,6 +77,7 @@ pub struct CalamineAdapter {
     cached_names: Option<Vec<String>>,
     defined_names: Vec<DefinedName>,
     external_link_targets: BTreeMap<u32, String>,
+    calc_settings: Option<CalcSettings>,
     load_stats: AdapterLoadStats,
 }
 
@@ -387,6 +388,21 @@ impl CalamineAdapter {
         out
     }
 
+    /// Parse the workbook-level `<calcPr>` settings (spec §9) straight from the
+    /// `.xlsx` zip — calamine does not surface these. Reuses the shared
+    /// `calc_pr` parser; returns `None` when `xl/workbook.xml` is missing or has
+    /// no `<calcPr>` element.
+    fn scan_calc_settings_from_reader<R>(reader: R) -> Option<CalcSettings>
+    where
+        R: Read + Seek,
+    {
+        let mut archive = ZipArchive::new(reader).ok()?;
+        let mut entry = archive.by_name("xl/workbook.xml").ok()?;
+        let mut xml = Vec::new();
+        entry.read_to_end(&mut xml).ok()?;
+        crate::calc_pr::parse_calc_pr(&xml)
+    }
+
     fn calamine_error_code(e: &calamine::CellErrorType) -> u8 {
         let kind = match e {
             calamine::CellErrorType::Div0 => ExcelErrorKind::Div,
@@ -531,6 +547,10 @@ impl SpreadsheetReader for CalamineAdapter {
         Ok(self.defined_names.clone())
     }
 
+    fn calc_settings(&self) -> Option<CalcSettings> {
+        self.calc_settings.clone()
+    }
+
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
     where
         Self: Sized,
@@ -540,6 +560,9 @@ impl SpreadsheetReader for CalamineAdapter {
             Ok(file) => Self::scan_external_link_targets_from_reader(BufReader::new(file)),
             Err(_) => BTreeMap::new(),
         };
+        let calc_settings = File::open(path)
+            .ok()
+            .and_then(|file| Self::scan_calc_settings_from_reader(BufReader::new(file)));
         let workbook: Xlsx<BufReader<File>> = open_workbook(path)?;
         let sheet_names = workbook.sheet_names().to_vec();
         let defined_names = if workbook.defined_names().is_empty() {
@@ -563,6 +586,7 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            calc_settings,
             load_stats: AdapterLoadStats::default(),
         })
     }
@@ -582,6 +606,7 @@ impl SpreadsheetReader for CalamineAdapter {
     {
         let external_link_targets =
             Self::scan_external_link_targets_from_reader(Cursor::new(data.as_slice()));
+        let calc_settings = Self::scan_calc_settings_from_reader(Cursor::new(data.as_slice()));
         let workbook: Xlsx<Cursor<Vec<u8>>> = open_workbook_from_rs(Cursor::new(data.clone()))?;
         let sheet_names = workbook.sheet_names().to_vec();
         let defined_names = if workbook.defined_names().is_empty() {
@@ -602,6 +627,7 @@ impl SpreadsheetReader for CalamineAdapter {
             cached_names: Some(sheet_names),
             defined_names,
             external_link_targets,
+            calc_settings,
             load_stats: AdapterLoadStats::default(),
         })
     }

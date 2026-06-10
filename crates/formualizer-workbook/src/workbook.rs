@@ -880,6 +880,12 @@ pub struct Workbook {
     enable_changelog: bool,
     log: formualizer_eval::engine::ChangeLog,
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
+    /// Workbook-level `<calcPr>` settings parsed at load (spec §9). The
+    /// `iterate*` attributes are authoritative on the live engine config, but
+    /// `calcMode`/`fullCalcOnLoad` are round-trip-only and have no engine home;
+    /// we stash them here so the XLSX write path can re-emit them untouched.
+    /// `None` when the workbook was not loaded from an XLSX with a `<calcPr>`.
+    calc_settings: Option<crate::traits::CalcSettings>,
 }
 
 trait WorkbookActionOps {
@@ -1093,6 +1099,7 @@ impl Workbook {
             enable_changelog: config.enable_changelog,
             log,
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
+            calc_settings: None,
         }
     }
     pub fn new_with_mode(mode: WorkbookMode) -> Self {
@@ -1157,9 +1164,24 @@ impl Workbook {
             }
         }
 
-        adapter
+        let bytes = adapter
             .save_to_bytes()
-            .map_err(|e| IoError::from_backend("umya", e))
+            .map_err(|e| IoError::from_backend("umya", e))?;
+
+        // Spec §9 save mapping: rewrite `xl/workbook.xml`'s `<calcPr>` to reflect
+        // the active cycle config's iterate settings. umya hard-codes
+        // `<calcPr calcId="122211"/>` with no API for the iterate attributes, so
+        // we post-process the written zip. iterate*/are sourced from the live
+        // engine config; calcMode/fullCalcOnLoad are preserved from the parsed
+        // load-time settings (umya drops them, so we carry them on `Workbook`).
+        let mut settings = crate::calc_pr::calc_settings_from_cycle(&self.engine.config.cycle);
+        if let Some(parsed) = &self.calc_settings {
+            settings.calc_mode = parsed.calc_mode.clone();
+            settings.full_calc_on_load = parsed.full_calc_on_load;
+        }
+        let bytes = crate::calc_pr::rewrite_calc_pr_in_zip(&bytes, &settings)
+            .map_err(|e| IoError::from_backend("umya", e))?;
+        Ok(bytes)
     }
 
     pub fn register_custom_function(
@@ -2027,6 +2049,14 @@ impl Workbook {
     }
 
     // Sheets
+    /// Calculation settings (`<calcPr>`) parsed from the loaded XLSX, if any.
+    /// After construction the live engine config is the source of truth for
+    /// the iterate settings; `calc_mode`/`full_calc_on_load` are retained here
+    /// for save-time round-trip.
+    pub fn loaded_calc_settings(&self) -> Option<&crate::traits::CalcSettings> {
+        self.calc_settings.as_ref()
+    }
+
     pub fn sheet_names(&self) -> Vec<String> {
         self.engine
             .sheet_store()
@@ -2944,13 +2974,29 @@ impl Workbook {
     pub fn from_reader_with_adapter_stats<B>(
         mut backend: B,
         _strategy: LoadStrategy,
-        config: WorkbookConfig,
+        mut config: WorkbookConfig,
     ) -> Result<(Self, Option<AdapterLoadStats>), IoError>
     where
         B: SpreadsheetReader + formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>,
         IoError: From<<B as formualizer_eval::engine::ingest::EngineLoadStream<WBResolver>>::Error>,
     {
+        // Apply XLSX `<calcPr>` iterative-calculation settings to the cycle
+        // config *before* the engine is built (spec §9). The engine validates
+        // its `CycleConfig` at construction, so this must happen here, not after
+        // `new_with_config`. When `iterate` is enabled the mapper also flips
+        // `detection` to `Runtime` (see `calc_pr` module docs) so the resulting
+        // config is valid and `from_reader` never panics.
+        let parsed_calc = backend.calc_settings();
+        if let Some(settings) = parsed_calc.as_ref() {
+            config.eval.cycle =
+                crate::calc_pr::apply_calc_settings_to_cycle(settings, config.eval.cycle);
+        }
+
         let mut wb = Self::new_with_config(config);
+        // Retain round-trip-only calcPr attributes (calcMode/fullCalcOnLoad) so
+        // the XLSX write path can re-emit them; iterate* are sourced from the
+        // live engine config at save time.
+        wb.calc_settings = parsed_calc;
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;

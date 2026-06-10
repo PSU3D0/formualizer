@@ -53,6 +53,10 @@ pub struct UmyaAdapter {
     // Key: table name (as stored in XLSX); Value: header_row bool.
     table_header_rows: HashMap<String, bool>,
     table_header_rows_available: bool,
+
+    // Workbook `<calcPr>` settings (spec §9). umya neither reads nor exposes
+    // these, so we parse `xl/workbook.xml` straight from the zip.
+    calc_settings: Option<crate::traits::CalcSettings>,
 }
 
 impl UmyaAdapter {
@@ -67,7 +71,20 @@ impl UmyaAdapter {
             load_stats: AdapterLoadStats::default(),
             table_header_rows: HashMap::new(),
             table_header_rows_available: false,
+            calc_settings: None,
         }
+    }
+
+    /// Parse `<calcPr>` settings from the `.xlsx` zip (spec §9). Returns `None`
+    /// when `xl/workbook.xml` is missing or has no `<calcPr>` element.
+    fn read_calc_settings_from_reader<R: Read + Seek>(
+        reader: R,
+    ) -> Option<crate::traits::CalcSettings> {
+        let mut archive = zip::ZipArchive::new(reader).ok()?;
+        let mut entry = archive.by_name("xl/workbook.xml").ok()?;
+        let mut xml = Vec::new();
+        entry.read_to_end(&mut xml).ok()?;
+        crate::calc_pr::parse_calc_pr(&xml)
     }
 
     fn extract_attr(tag: &str, key: &str) -> Option<String> {
@@ -494,6 +511,10 @@ impl SpreadsheetReader for UmyaAdapter {
         Some(self.load_stats.clone())
     }
 
+    fn calc_settings(&self) -> Option<crate::traits::CalcSettings> {
+        self.calc_settings.clone()
+    }
+
     fn defined_names(&mut self) -> Result<Vec<WorkbookDefinedName>, Self::Error> {
         let mut wb = self.workbook.write();
         let count = wb.get_sheet_count();
@@ -571,6 +592,9 @@ impl SpreadsheetReader for UmyaAdapter {
                 Ok(m) => (m, true),
                 Err(_) => (HashMap::new(), false),
             };
+        let calc_settings = std::fs::File::open(path_ref)
+            .ok()
+            .and_then(Self::read_calc_settings_from_reader);
         let table_ms = t_tables.elapsed().as_secs_f64() * 1000.0;
 
         if debug {
@@ -592,6 +616,7 @@ impl SpreadsheetReader for UmyaAdapter {
             load_stats: AdapterLoadStats::default(),
             table_header_rows,
             table_header_rows_available,
+            calc_settings,
         })
     }
 
@@ -618,6 +643,7 @@ impl SpreadsheetReader for UmyaAdapter {
                 Ok(m) => (m, true),
                 Err(_) => (HashMap::new(), false),
             };
+        let calc_settings = Self::read_calc_settings_from_reader(Cursor::new(data.as_slice()));
         let table_ms = t_tables.elapsed().as_secs_f64() * 1000.0;
 
         let t_read = Instant::now();
@@ -642,6 +668,7 @@ impl SpreadsheetReader for UmyaAdapter {
             load_stats: AdapterLoadStats::default(),
             table_header_rows,
             table_header_rows_available,
+            calc_settings,
         })
     }
 

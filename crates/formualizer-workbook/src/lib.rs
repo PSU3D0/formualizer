@@ -2,6 +2,7 @@
 
 pub mod backends;
 pub mod builtins;
+pub mod calc_pr;
 pub mod error;
 #[cfg(any(feature = "calamine", feature = "json", feature = "umya"))]
 pub(crate) mod load_limits;
@@ -38,9 +39,9 @@ pub use recalculate::{
 pub use resolver::IoResolver;
 pub use session::{EditorSession, IoConfig};
 pub use traits::{
-    AccessGranularity, AdapterLoadStats, BackendCaps, CellData, LoadStrategy, MergedRange,
-    NamedRange, NamedRangeScope, SheetData, SpreadsheetIO, SpreadsheetReader, SpreadsheetWriter,
-    TableDefinition,
+    AccessGranularity, AdapterLoadStats, BackendCaps, CalcSettings, CellData, LoadStrategy,
+    MergedRange, NamedRange, NamedRangeScope, SheetData, SpreadsheetIO, SpreadsheetReader,
+    SpreadsheetWriter, TableDefinition,
 };
 pub use transaction::{WriteOp, WriteTransaction};
 
