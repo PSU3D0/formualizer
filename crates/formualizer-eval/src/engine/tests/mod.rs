@@ -38,6 +38,7 @@ mod row_operations;
 mod sheet_duplication_named_range_dependents;
 mod sheet_management;
 mod sources;
+mod staged_formula_scaling;
 mod stripe_streaming_integration;
 mod stripe_tests;
 mod striped_dirty_propagation;

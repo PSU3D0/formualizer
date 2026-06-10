@@ -57,13 +57,68 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 type StagedFormulaEntry = (u32, u32, String);
-// NOTE(#126): the per-sheet `Vec` makes `stage_formula_text`/`clear_staged_formula_text`/
-// `get_staged_formula_text` O(staged-on-sheet) per call. The changelog O(N^2) regression
-// (full before/after snapshots per edit) is fixed via per-cell `StagedFormulaCellChanged`
-// deltas. Converting this Vec to a `(row,col)`-keyed map would make the residual lookups
-// O(1), but it threads through `build_graph_all`/`build_graph_for_sheets`/ingest records,
-// so it is intentionally left as a separate, contained follow-up.
-type StagedFormulaMap = std::collections::HashMap<String, Vec<StagedFormulaEntry>>;
+
+/// Per-sheet staged-formula store (NOTE(#126) follow-up).
+///
+/// Ingest consumers (`build_graph_all`/`build_graph_for_sheets`) walk staged
+/// entries in INSERTION order, so the order-preserving `Vec` stays the
+/// canonical storage; a `(row, col) → index` map removes the linear dup-scan
+/// that made `stage_formula_text`/`get_staged_formula_text` O(staged-on-sheet)
+/// per call (O(n²) for an n-formula deferred load on one sheet — ~570 ms for
+/// 50k stages, release, before the index). `stage`/`get` are O(1);
+/// `remove` keeps the old O(n) `Vec::remove` (rare path, order preserved).
+#[derive(Debug, Default, Clone)]
+pub(crate) struct StagedSheet {
+    entries: Vec<StagedFormulaEntry>,
+    index: FxHashMap<(u32, u32), usize>,
+}
+
+impl StagedSheet {
+    fn stage(&mut self, row: u32, col: u32, text: String) {
+        match self.index.entry((row, col)) {
+            std::collections::hash_map::Entry::Occupied(slot) => {
+                self.entries[*slot.get()].2 = text;
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(self.entries.len());
+                self.entries.push((row, col, text));
+            }
+        }
+    }
+
+    fn remove(&mut self, row: u32, col: u32) -> Option<String> {
+        let idx = self.index.remove(&(row, col))?;
+        let (_, _, text) = self.entries.remove(idx);
+        // `Vec::remove` shifted everything after `idx` left by one.
+        for slot in self.index.values_mut() {
+            if *slot > idx {
+                *slot -= 1;
+            }
+        }
+        Some(text)
+    }
+
+    fn get(&self, row: u32, col: u32) -> Option<&str> {
+        self.index
+            .get(&(row, col))
+            .map(|&i| self.entries[i].2.as_str())
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Consume into the insertion-ordered entry list (ingest order).
+    fn into_entries(self) -> Vec<StagedFormulaEntry> {
+        self.entries
+    }
+}
+
+type StagedFormulaMap = std::collections::HashMap<String, StagedSheet>;
 
 fn producer_dirty_to_span_dirty(
     dirty: ProducerDirtyDomain,
@@ -2895,32 +2950,22 @@ where
     }
 
     pub fn staged_formula_count(&self) -> usize {
-        self.staged_formulas.values().map(Vec::len).sum()
+        self.staged_formulas.values().map(StagedSheet::len).sum()
     }
 
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
     pub fn stage_formula_text(&mut self, sheet: &str, row: u32, col: u32, text: String) {
-        let entries = self.staged_formulas.entry(sheet.to_string()).or_default();
-        if let Some((_, _, existing)) = entries
-            .iter_mut()
-            .find(|(existing_row, existing_col, _)| *existing_row == row && *existing_col == col)
-        {
-            *existing = text;
-        } else {
-            entries.push((row, col, text));
-        }
+        self.staged_formulas
+            .entry(sheet.to_string())
+            .or_default()
+            .stage(row, col, text);
     }
 
     pub fn clear_staged_formula_text(&mut self, sheet: &str, row: u32, col: u32) -> Option<String> {
         let mut removed = None;
         let mut remove_sheet = false;
         if let Some(entries) = self.staged_formulas.get_mut(sheet) {
-            if let Some(idx) = entries.iter().position(|(existing_row, existing_col, _)| {
-                *existing_row == row && *existing_col == col
-            }) {
-                let (_, _, text) = entries.remove(idx);
-                removed = Some(text);
-            }
+            removed = entries.remove(row, col);
             remove_sheet = entries.is_empty();
         }
         if remove_sheet {
@@ -2937,19 +2982,16 @@ where
         let Some(entries) = self.staged_formulas.remove(old) else {
             return;
         };
-        for (row, col, text) in entries {
+        for (row, col, text) in entries.into_entries() {
             self.stage_formula_text(new, row, col, text);
         }
     }
 
     /// Get a staged formula text for a given cell if present (cloned).
     pub fn get_staged_formula_text(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
-        self.staged_formulas.get(sheet).and_then(|v| {
-            v.iter()
-                .rev()
-                .find(|(r, c, _)| *r == row && *c == col)
-                .map(|(_, _, s)| s.clone())
-        })
+        self.staged_formulas
+            .get(sheet)
+            .and_then(|v| v.get(row, col).map(str::to_owned))
     }
 
     pub fn formula_parse_diagnostics(&self) -> &[FormulaParseDiagnostic] {
@@ -3619,7 +3661,7 @@ where
                 rustc_hash::FxHashMap::default();
             cache.reserve(4096);
 
-            for (row, col, txt) in entries {
+            for (row, col, txt) in entries.into_entries() {
                 let key = if txt.starts_with('=') {
                     txt
                 } else {
@@ -3668,7 +3710,7 @@ where
         let mut collected: StagedFormulaBatches = Vec::new();
         for s in sheets {
             if let Some(entries) = self.staged_formulas.remove(s) {
-                collected.push((s.to_string(), entries));
+                collected.push((s.to_string(), entries.into_entries()));
             }
         }
 
@@ -11369,13 +11411,10 @@ where
         let col = cell.coord.col() + 1;
 
         if let Some(entries) = self.staged_formulas.get(sheet_name)
-            && let Some((_, _, text)) = entries
-                .iter()
-                .rev()
-                .find(|(r, c, _)| *r == row && *c == col)
+            && let Some(text) = entries.get(row, col)
         {
             return Ok(Some(if text.starts_with('=') {
-                text.clone()
+                text.to_owned()
             } else {
                 format!("={text}")
             }));
