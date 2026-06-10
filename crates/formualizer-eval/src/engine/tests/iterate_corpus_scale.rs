@@ -180,9 +180,9 @@ fn granularity_shapes_converge_with_expected_telemetry() {
     engine.evaluate_all().unwrap(); // converged-stable recalc
     let many_small_recalc = recalc0.elapsed();
 
-    // 1 × 500-member SCC (ring). NOT 2000: the scheduler's recursive Tarjan
-    // overflows the 2 MiB test-thread stack well before that depth in debug —
-    // see the `tarjan_recursion_overflows_*` repros below.
+    // 1 × 500-member SCC (ring). (Historical: 2000 used to SIGABRT the
+    // recursive Tarjan in debug — now iterative, pinned by the depth
+    // regression tests below; 500 kept for comparable shape timings.)
     let t1 = std::time::Instant::now();
     let mut engine = Engine::new(TestWorkbook::new(), iterate_cfg(100, 0.001));
     build_ring(&mut engine, 1, 500);
@@ -230,26 +230,24 @@ fn granularity_shapes_converge_with_expected_telemetry() {
     );
 }
 
-/* ───────────── BUG REPRO: recursive Tarjan stack overflow ─────────────── */
+/* ───────────── REGRESSION: deep graphs through the (iterative) Tarjan ─── */
 //
-// `Scheduler::tarjan_visit` (scheduler.rs) recurses once per dependency hop.
-// Any SCC of size k forces recursion depth k, and — independent of cycles —
-// any dependency chain visited AGAINST vertex-id order does too (the root
-// loop walks vertices in id order; a chain whose dependencies point at
-// higher ids recurses its full length). Debug builds abort (SIGABRT, stack
-// overflow) around depth ~1500 on the default 2 MiB test stack; release
-// stacks die at larger but still-reachable depths. Real-world trigger:
-// "totals above data" sheets (formulas referencing rows below) and any
-// large iterating SCC. Fix direction: iterative DFS like
-// `live_graph::analyze_live_graph` (already iterative). The fix touches
-// both `tarjan_visit` and `tarjan_visit_with_virtual` and must preserve
-// SCC emission order (schedule determinism) — left for a follow-up, with
-// these repros pinning it.
+// `Scheduler::tarjan_visit` used to recurse once per dependency hop: any SCC
+// of size k forced recursion depth k, and — independent of cycles — so did
+// any dependency chain visited AGAINST vertex-id order (the root loop walks
+// vertices in id order; a chain whose dependencies point at higher ids
+// recursed its full length). Debug builds SIGABRTed around depth ~1500 on
+// the default 2 MiB test stack; real-world trigger: "totals above data"
+// sheets and any large iterating SCC. The scheduler's Tarjan is now
+// iterative (explicit frame stack, `Scheduler::tarjan_scc_impl`) with SCC
+// output byte-identical to the recursive version (differential-tested in
+// `tarjan_differential.rs`); these tests pin the depth fix.
 
 #[test]
 fn forward_built_deep_chain_is_fine_control() {
     // Control: same 2000 depth, dependencies pointing at LOWER ids — the
-    // id-order root loop visits dependencies first, recursion stays shallow.
+    // id-order root loop visits dependencies first, DFS stays shallow even
+    // in the old recursive implementation.
     let mut engine = Engine::new(TestWorkbook::new(), iterate_cfg(100, 0.001));
     set_value(&mut engine, "Sheet1", 1, 1, LiteralValue::Number(1.0));
     for r in 2..=2000u32 {
@@ -260,8 +258,8 @@ fn forward_built_deep_chain_is_fine_control() {
 }
 
 #[test]
-#[ignore = "BUG (pre-existing, scheduler): recursive tarjan_visit overflows the stack on a 2000-member SCC — SIGABRT in debug; see module comment"]
 fn tarjan_recursion_overflows_on_2000_member_scc() {
+    // Formerly #[ignore]d SIGABRT repro (recursive Tarjan, stack overflow).
     let mut engine = Engine::new(TestWorkbook::new(), iterate_cfg(100, 0.001));
     build_ring(&mut engine, 1, 2000);
     engine.evaluate_all().unwrap();
@@ -269,8 +267,8 @@ fn tarjan_recursion_overflows_on_2000_member_scc() {
 }
 
 #[test]
-#[ignore = "BUG (pre-existing, scheduler): recursive tarjan_visit overflows the stack on a reverse-built 2000-deep ACYCLIC chain — not cycle-specific; see module comment"]
 fn tarjan_recursion_overflows_on_reverse_built_acyclic_chain() {
+    // Formerly #[ignore]d SIGABRT repro (recursive Tarjan, stack overflow).
     let mut engine = Engine::new(TestWorkbook::new(), iterate_cfg(100, 0.001));
     for r in 1..2000u32 {
         set_formula(&mut engine, "Sheet1", r, 1, &format!("=A{}+1", r + 1));
@@ -281,14 +279,40 @@ fn tarjan_recursion_overflows_on_reverse_built_acyclic_chain() {
 }
 
 #[test]
+fn tarjan_handles_10_000_deep_reverse_chain_in_debug() {
+    // Depth regression gate for the iterative Tarjan: a "totals above data"
+    // 10_000-deep acyclic chain (every dependency points at a HIGHER vertex
+    // id, so the id-order root loop dives the full depth) schedules and
+    // evaluates on the default debug test stack. The old recursive DFS died
+    // ~6.7× shallower than this.
+    //
+    // Build shape: pre-create rows 1..=depth as values (ascending ids), then
+    // overwrite rows 1..depth with formulas in DESCENDING row order. Same
+    // final graph as an ascending formula build, but each edit-time
+    // `mark_dirty` sees no formula dependents yet, keeping graph
+    // construction O(n) (an ascending build pays the no-early-stop dirty
+    // re-walk per edit — O(n²), ~100 s in debug at this depth).
+    let mut engine = Engine::new(TestWorkbook::new(), iterate_cfg(100, 0.001));
+    let depth = 10_000u32;
+    for r in 1..=depth {
+        set_value(&mut engine, "Sheet1", r, 1, LiteralValue::Number(1.0));
+    }
+    for r in (1..depth).rev() {
+        set_formula(&mut engine, "Sheet1", r, 1, &format!("=A{}+1", r + 1));
+    }
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 1, 1), depth as f64);
+}
+
+#[test]
 fn ring_stable_recalc_cost_scales_linearly_probe() {
     // Perf-shape probe (printed, not gated): a converged ring's no-edit
     // recalc must scale ~linearly in SCC size. Before the
     // `redirty_iterative_members` already-dirty skip this was quadratic
     // (each member's `mark_dirty` re-walked the whole component): release
     // numbers were 12 ms / 42 ms / 83 ms for 500/1000/1500 members; after
-    // the fix ~0.6 ms / 1.2 ms / 2.4 ms. Sizes stay below the recursive-
-    // Tarjan debug stack limit (see the overflow repros above).
+    // the fix ~0.6 ms / 1.2 ms / 2.4 ms. (Sizes predate the iterative
+    // Tarjan; kept small so the probe stays debug-fast.)
     for size in [200u32, 400, 800] {
         let mut engine = Engine::new(TestWorkbook::new(), iterate_cfg(100, 0.001));
         build_ring(&mut engine, 1, size);

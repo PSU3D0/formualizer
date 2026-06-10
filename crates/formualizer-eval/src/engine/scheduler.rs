@@ -165,6 +165,172 @@ impl<'a> Scheduler<'a> {
 
     /// Tarjan's strongly connected components algorithm
     pub fn tarjan_scc(&self, vertices: &[VertexId]) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        self.tarjan_scc_impl(vertices, None)
+    }
+
+    /// Tarjan with virtual deps
+    fn tarjan_scc_with_virtual(
+        &self,
+        vertices: &[VertexId],
+        vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        self.tarjan_scc_impl(vertices, Some(vdeps))
+    }
+
+    /// Iterative Tarjan over the scheduled subgraph, optionally honoring
+    /// per-pass virtual dependency edges.
+    ///
+    /// The DFS uses an explicit frame stack (vertex, dependency list, next
+    /// edge offset) instead of recursion, so depth is bounded by heap, not
+    /// the thread stack — the recursive predecessor SIGABRTed around depth
+    /// ~1500 in debug (2 MiB test stacks) on large SCCs AND on plain acyclic
+    /// chains whose dependencies point at higher vertex ids (see
+    /// `engine/tests/iterate_corpus_scale.rs`).
+    ///
+    /// Determinism contract: SCC emission order and within-SCC member order
+    /// are byte-identical to the recursive version (pinned by the
+    /// differential test in `engine/tests/tarjan_differential.rs` and the
+    /// ordering invariants in `engine/tests/schedule_units.rs`):
+    /// * dependencies are walked in adjacency order (base slice/Vec, then
+    ///   the vertex's virtual deps, exactly as the recursive code iterated);
+    /// * a vertex's SCC is emitted when its frame is exhausted and
+    ///   `lowlink == index` (the same program point as the recursive
+    ///   post-order emission);
+    /// * SCC members are popped off the Tarjan stack in the same order.
+    fn tarjan_scc_impl(
+        &self,
+        vertices: &[VertexId],
+        vdeps: Option<&FxHashMap<VertexId, Vec<VertexId>>>,
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        /// One vertex's dependency list, materialized once per DFS frame.
+        enum DepList<'g> {
+            Slice(&'g [VertexId]),
+            Owned(Vec<VertexId>),
+        }
+        impl DepList<'_> {
+            #[inline]
+            fn get(&self, i: usize) -> Option<VertexId> {
+                match self {
+                    DepList::Slice(s) => s.get(i).copied(),
+                    DepList::Owned(v) => v.get(i).copied(),
+                }
+            }
+        }
+
+        let deps_of = |vertex: VertexId| -> DepList<'_> {
+            // Edge order must match the recursive implementation: the base
+            // adjacency (zero-copy slice when available), with the vertex's
+            // virtual deps appended when present.
+            if let Some(extra) = vdeps.and_then(|m| m.get(&vertex)) {
+                let mut combined: Vec<VertexId> =
+                    if let Some(base) = self.graph.dependencies_slice(vertex) {
+                        base.to_vec()
+                    } else {
+                        self.graph.get_dependencies(vertex)
+                    };
+                combined.extend(extra.iter().copied());
+                DepList::Owned(combined)
+            } else if let Some(base) = self.graph.dependencies_slice(vertex) {
+                DepList::Slice(base)
+            } else {
+                DepList::Owned(self.graph.get_dependencies(vertex))
+            }
+        };
+
+        let mut index_counter = 0usize;
+        let mut stack: Vec<VertexId> = Vec::new();
+        let mut indices: FxHashMap<VertexId, usize> = FxHashMap::default();
+        let mut lowlinks: FxHashMap<VertexId, usize> = FxHashMap::default();
+        let mut on_stack: FxHashSet<VertexId> = FxHashSet::default();
+        let mut sccs: Vec<Vec<VertexId>> = Vec::new();
+        let vertex_set: FxHashSet<VertexId> = vertices.iter().copied().collect();
+
+        // Explicit DFS frames: (vertex, its dependency list, next edge offset).
+        let mut frames: Vec<(VertexId, DepList<'_>, usize)> = Vec::new();
+
+        for &root in vertices {
+            if indices.contains_key(&root) {
+                continue;
+            }
+            indices.insert(root, index_counter);
+            lowlinks.insert(root, index_counter);
+            index_counter += 1;
+            stack.push(root);
+            on_stack.insert(root);
+            frames.push((root, deps_of(root), 0));
+
+            while let Some(frame) = frames.last_mut() {
+                let vertex = frame.0;
+                if let Some(dependency) = frame.1.get(frame.2) {
+                    frame.2 += 1;
+                    // Only consider dependencies that are part of the current
+                    // scheduling task.
+                    if !vertex_set.contains(&dependency) {
+                        continue;
+                    }
+                    if !indices.contains_key(&dependency) {
+                        // Not yet visited: descend (the recursive call).
+                        indices.insert(dependency, index_counter);
+                        lowlinks.insert(dependency, index_counter);
+                        index_counter += 1;
+                        stack.push(dependency);
+                        on_stack.insert(dependency);
+                        frames.push((dependency, deps_of(dependency), 0));
+                    } else if on_stack.contains(&dependency) {
+                        // On the Tarjan stack: in the current SCC.
+                        let dep_index = indices[&dependency];
+                        lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                    }
+                } else {
+                    // Vertex exhausted: emit its SCC if it is a root, then
+                    // return to the parent frame, folding the child lowlink in
+                    // (the post-recursion `min(lowlink[v], lowlink[dep])`).
+                    let vertex_lowlink = lowlinks[&vertex];
+                    if vertex_lowlink == indices[&vertex] {
+                        let mut scc = Vec::new();
+                        loop {
+                            let w = stack.pop().unwrap();
+                            on_stack.remove(&w);
+                            scc.push(w);
+                            if w == vertex {
+                                break;
+                            }
+                        }
+                        sccs.push(scc);
+                    }
+                    frames.pop();
+                    if let Some(parent) = frames.last() {
+                        let parent_vertex = parent.0;
+                        lowlinks
+                            .insert(parent_vertex, lowlinks[&parent_vertex].min(vertex_lowlink));
+                    }
+                }
+            }
+        }
+
+        Ok(sccs)
+    }
+
+    /// Test-only visibility shim over the private virtual-deps entry, used by
+    /// the differential test in `engine/tests/tarjan_differential.rs`.
+    #[cfg(test)]
+    pub(crate) fn tarjan_scc_with_virtual_for_tests(
+        &self,
+        vertices: &[VertexId],
+        vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        self.tarjan_scc_with_virtual(vertices, vdeps)
+    }
+
+    /// Recursive reference implementation, retained ONLY for the differential
+    /// test (`engine/tests/tarjan_differential.rs`) that proves the iterative
+    /// rewrite emits byte-identical SCC output. Never call on deep graphs
+    /// without a large stack: it overflows around depth ~1500 in debug.
+    #[cfg(test)]
+    pub(crate) fn tarjan_scc_recursive_reference(
+        &self,
+        vertices: &[VertexId],
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
         let mut index_counter = 0;
         let mut stack = Vec::new();
         let mut indices = FxHashMap::default();
@@ -191,8 +357,10 @@ impl<'a> Scheduler<'a> {
         Ok(sccs)
     }
 
-    /// Tarjan with virtual deps
-    fn tarjan_scc_with_virtual(
+    /// Recursive reference with virtual deps; see
+    /// [`Self::tarjan_scc_recursive_reference`].
+    #[cfg(test)]
+    pub(crate) fn tarjan_scc_with_virtual_recursive_reference(
         &self,
         vertices: &[VertexId],
         vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
@@ -224,6 +392,8 @@ impl<'a> Scheduler<'a> {
         Ok(sccs)
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn tarjan_visit(
         &self,
         vertex: VertexId,
@@ -317,6 +487,8 @@ impl<'a> Scheduler<'a> {
         Ok(())
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn tarjan_visit_with_virtual(
         &self,
         vertex: VertexId,
