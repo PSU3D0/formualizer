@@ -163,6 +163,29 @@ pub trait Function: Send + Sync + 'static {
         args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
         ctx: &dyn crate::traits::FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // Short-circuit functions (IF/IFS/CHOOSE/SWITCH/AND/OR, ...) evaluate
+        // their arguments lazily inside `eval`; eagerly materializing every
+        // argument here would execute reads in untaken branches (defeating the
+        // documented short-circuit semantics) and double-evaluate taken ones.
+        // Their schemas are Any-kind with no per-arg coercion, so per-argument
+        // validation cannot fail; only the min-arity check is meaningful.
+        // (LET/LAMBDA already bypass validation via `dispatch` overrides for
+        // the same reason.)
+        if self.caps().contains(FnCaps::SHORT_CIRCUIT) {
+            if args.len() < self.min_args() {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(formualizer_common::ExcelErrorKind::Value).with_message(
+                        format!(
+                            "Too few arguments: expected at least {}, got {}",
+                            self.min_args(),
+                            args.len()
+                        ),
+                    ),
+                )));
+            }
+            return self.eval(args, ctx);
+        }
+
         // Central argument validation (includes min-arity check)
         {
             use crate::args::{ValidationOptions, validate_and_prepare};
