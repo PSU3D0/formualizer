@@ -192,8 +192,10 @@ fn run_probe(cli: &Cli) -> Result<SccPhantomProbeReport> {
     };
 
     // Bulk-load via EagerAll: the graph (and its SCCs) is built in one batched
-    // ingest pass, which scales linearly — unlike incremental per-formula edits
-    // under an active cycle config, which re-run detection per edit.
+    // ingest pass, which scales linearly. (Incremental per-formula edits used
+    // to scale quadratically here — not because of per-edit cycle detection,
+    // but because each edit forced a full CSR rebuild (#125) plus redundant
+    // per-edit dependency work (#126).)
     let mut config = WorkbookConfig::ephemeral();
     config.eval = config.eval.with_cycle(cycle);
     let load_start = Instant::now();

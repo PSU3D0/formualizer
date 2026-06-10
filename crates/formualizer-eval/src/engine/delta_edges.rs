@@ -311,6 +311,102 @@ mod tests {
     }
 
     #[test]
+    fn test_merged_in_view_add_and_remove() {
+        let csr = CsrEdges::from_adjacency(
+            vec![(0u32, vec![2u32]), (1u32, vec![2u32])],
+            &[
+                AbsCoord::new(0, 0),
+                AbsCoord::new(0, 1),
+                AbsCoord::new(0, 2),
+                AbsCoord::new(0, 3),
+            ],
+        );
+        let mut delta = DeltaEdgeSlab::new();
+
+        // New incoming edge 3 -> 2, removed incoming edge 0 -> 2.
+        delta.add_edge(VertexId(3), VertexId(2));
+        delta.remove_edge(VertexId(0), VertexId(2));
+
+        let merged = delta.merged_in_view(&csr, VertexId(2));
+        assert_eq!(merged, vec![VertexId(1), VertexId(3)]);
+    }
+
+    #[test]
+    fn test_merged_in_view_last_op_wins() {
+        let csr = CsrEdges::from_adjacency(
+            vec![(0u32, vec![1u32])],
+            &[AbsCoord::new(0, 0), AbsCoord::new(0, 1)],
+        );
+        let mut delta = DeltaEdgeSlab::new();
+
+        delta.remove_edge(VertexId(0), VertexId(1));
+        delta.add_edge(VertexId(0), VertexId(1));
+        assert_eq!(delta.merged_in_view(&csr, VertexId(1)), vec![VertexId(0)]);
+
+        delta.add_edge(VertexId(2), VertexId(1));
+        delta.remove_edge(VertexId(2), VertexId(1));
+        assert_eq!(delta.merged_in_view(&csr, VertexId(1)), vec![VertexId(0)]);
+    }
+
+    #[test]
+    fn test_end_batch_below_threshold_defers_rebuild() {
+        let mut edges = CsrMutableEdges::with_coords(vec![
+            AbsCoord::new(0, 0),
+            AbsCoord::new(0, 1),
+            AbsCoord::new(0, 2),
+        ]);
+        let before = edges.rebuild_count();
+
+        edges.begin_batch();
+        edges.add_edge(VertexId(0), VertexId(1));
+        edges.add_edge(VertexId(0), VertexId(2));
+        edges.end_batch();
+
+        // Small edit bursts must not trigger a full rebuild (#125)...
+        assert_eq!(edges.rebuild_count(), before);
+        // ...while reads stay correct through the merged views.
+        assert_eq!(edges.out_edges(VertexId(0)), vec![VertexId(1), VertexId(2)]);
+        assert_eq!(edges.in_edges_merged(VertexId(1)), vec![VertexId(0)]);
+        assert_eq!(edges.in_edges_merged(VertexId(2)), vec![VertexId(0)]);
+    }
+
+    #[test]
+    fn test_end_batch_rebuilds_at_threshold() {
+        let coords: Vec<AbsCoord> = (0..1200u32).map(|i| AbsCoord::new(i, 0)).collect();
+        let mut edges = CsrMutableEdges::with_coords(coords);
+        let before = edges.rebuild_count();
+
+        edges.begin_batch();
+        for i in 0..1100u32 {
+            edges.add_edge(VertexId(i), VertexId(i + 1));
+        }
+        edges.end_batch();
+
+        assert_eq!(edges.rebuild_count(), before + 1);
+        assert_eq!(edges.delta_size(), 0);
+        assert_eq!(edges.out_edges(VertexId(0)), vec![VertexId(1)]);
+        assert_eq!(edges.in_edges(VertexId(1)), &[VertexId(0)]);
+    }
+
+    #[test]
+    fn test_add_vertex_defers_rebuild() {
+        let mut edges = CsrMutableEdges::new();
+        edges.add_vertex(AbsCoord::new(0, 0), 1024);
+        edges.add_vertex(AbsCoord::new(0, 1), 1025);
+        assert_eq!(edges.rebuild_count(), 0);
+
+        edges.add_edge(VertexId(1024), VertexId(1025));
+        // Reads see the new vertex/edge before any rebuild.
+        assert_eq!(edges.out_edges(VertexId(1024)), vec![VertexId(1025)]);
+        assert_eq!(edges.in_edges_merged(VertexId(1025)), vec![VertexId(1024)]);
+
+        // And the next rebuild folds the vertex into the CSR base.
+        edges.rebuild();
+        assert_eq!(edges.out_edges(VertexId(1024)), vec![VertexId(1025)]);
+        assert_eq!(edges.in_edges(VertexId(1025)), &[VertexId(1024)]);
+    }
+
+    #[test]
     fn test_end_batch_rebuilds_on_coord_change_only() {
         let mut edges =
             CsrMutableEdges::with_coords(vec![AbsCoord::new(0, 0), AbsCoord::new(0, 1)]);
@@ -335,6 +431,13 @@ pub struct DeltaEdgeSlab {
     /// Edges to remove, stored as sets for O(1) lookup
     removals: FxHashMap<VertexId, FxHashSet<VertexId>>,
 
+    /// Reverse index of `additions`: target -> sources. Keeps incoming-edge
+    /// reads delta-aware in O(degree) instead of O(V) scans (#125).
+    additions_in: FxHashMap<VertexId, FxHashSet<VertexId>>,
+
+    /// Reverse index of `removals`: target -> sources.
+    removals_in: FxHashMap<VertexId, FxHashSet<VertexId>>,
+
     /// Total operation count for rebuild threshold
     op_count: usize,
 
@@ -348,6 +451,8 @@ impl DeltaEdgeSlab {
         Self {
             additions: FxHashMap::default(),
             removals: FxHashMap::default(),
+            additions_in: FxHashMap::default(),
+            removals_in: FxHashMap::default(),
             op_count: 0,
             coord_changed: false,
         }
@@ -359,8 +464,12 @@ impl DeltaEdgeSlab {
         if let Some(rem) = self.removals.get_mut(&from) {
             rem.remove(&to);
         }
-        // Insert into additions set
+        if let Some(rem) = self.removals_in.get_mut(&to) {
+            rem.remove(&from);
+        }
+        // Insert into additions set (forward and reverse)
         self.additions.entry(from).or_default().insert(to);
+        self.additions_in.entry(to).or_default().insert(from);
         self.op_count += 1;
     }
 
@@ -370,8 +479,12 @@ impl DeltaEdgeSlab {
         if let Some(adds) = self.additions.get_mut(&from) {
             adds.remove(&to);
         }
-        // Record removal
+        if let Some(adds) = self.additions_in.get_mut(&to) {
+            adds.remove(&from);
+        }
+        // Record removal (forward and reverse)
         self.removals.entry(from).or_default().insert(to);
+        self.removals_in.entry(to).or_default().insert(from);
         self.op_count += 1;
     }
 
@@ -388,6 +501,22 @@ impl DeltaEdgeSlab {
             result.extend(adds.iter().copied());
         }
         // Dedup deterministically and sort by VertexId for stable order
+        let mut seen: FxHashSet<VertexId> = FxHashSet::default();
+        result.retain(|e| seen.insert(*e));
+        result.sort_by_key(|e| e.0);
+        result
+    }
+
+    /// Get a merged view of *incoming* edges for a vertex, combining the CSR
+    /// reverse edges with the delta's reverse index. O(in-degree), not O(V).
+    pub fn merged_in_view(&self, csr: &CsrEdges, v: VertexId) -> Vec<VertexId> {
+        let mut result: Vec<_> = csr.in_edges(v).to_vec();
+        if let Some(removes) = self.removals_in.get(&v) {
+            result.retain(|e| !removes.contains(e));
+        }
+        if let Some(adds) = self.additions_in.get(&v) {
+            result.extend(adds.iter().copied());
+        }
         let mut seen: FxHashSet<VertexId> = FxHashSet::default();
         result.retain(|e| seen.insert(*e));
         result.sort_by_key(|e| e.0);
@@ -413,6 +542,8 @@ impl DeltaEdgeSlab {
     pub fn clear(&mut self) {
         self.additions.clear();
         self.removals.clear();
+        self.additions_in.clear();
+        self.removals_in.clear();
         self.op_count = 0;
         self.coord_changed = false;
     }
@@ -485,6 +616,9 @@ pub struct CsrMutableEdges {
 
     /// Nested batch depth; non-zero defers automatic rebuilds.
     batch_depth: usize,
+
+    /// Number of full CSR rebuilds performed (observability / regression tests).
+    rebuild_count: u64,
 }
 
 impl CsrMutableEdges {
@@ -497,6 +631,7 @@ impl CsrMutableEdges {
             vertex_ids: Vec::new(),
             vertex_pos: FxHashMap::default(),
             batch_depth: 0,
+            rebuild_count: 0,
         }
     }
 
@@ -518,6 +653,7 @@ impl CsrMutableEdges {
             vertex_ids,
             vertex_pos,
             batch_depth: 0,
+            rebuild_count: 0,
         }
     }
 
@@ -558,6 +694,17 @@ impl CsrMutableEdges {
     /// After rebuild, this will include all changes
     pub fn in_edges(&self, v: VertexId) -> &[VertexId] {
         self.base.in_edges(v)
+    }
+
+    /// Get incoming edges for a vertex with pending delta mutations applied.
+    ///
+    /// O(in-degree + pending delta entries for `v`); never scans all vertices.
+    pub fn in_edges_merged(&self, v: VertexId) -> Vec<VertexId> {
+        if self.delta.op_count() == 0 {
+            self.base.in_edges(v).to_vec()
+        } else {
+            self.delta.merged_in_view(&self.base, v)
+        }
     }
 
     /// Borrow incoming edges when no delta mutations are pending.
@@ -601,7 +748,16 @@ impl CsrMutableEdges {
                 .delta
                 .apply_to_csr(&self.base, &self.coords, &self.vertex_ids);
             self.delta.clear();
+            self.rebuild_count += 1;
         }
+    }
+
+    /// Number of full CSR rebuilds performed so far.
+    ///
+    /// Per-edit dependency updates must amortize rebuilds (#125); regression
+    /// tests assert on this counter instead of wall-clock time.
+    pub fn rebuild_count(&self) -> u64 {
+        self.rebuild_count
     }
 
     /// Check and perform rebuild if threshold reached
@@ -616,25 +772,31 @@ impl CsrMutableEdges {
         self.batch_depth = self.batch_depth.saturating_add(1);
     }
 
-    /// Exit batch mode and rebuild if needed.
+    /// Exit batch mode and rebuild only when the amortization threshold (or a
+    /// coordinate change) demands it.
+    ///
+    /// Rebuilding unconditionally here made every single-formula edit O(V)
+    /// and cell-by-cell edit loops O(N^2) (#125). Pending delta mutations are
+    /// visible to readers through the merged out/in views, so deferring the
+    /// rebuild is safe.
     pub fn end_batch(&mut self) {
         self.batch_depth = self.batch_depth.saturating_sub(1);
-        if self.batch_depth == 0 && (self.delta.op_count() > 0 || self.delta.needs_rebuild()) {
+        if self.batch_depth == 0 && self.delta.needs_rebuild() {
             self.rebuild();
         }
     }
 
     /// Add a new vertex with its coordinate and ID
+    ///
+    /// Does NOT rebuild the CSR base: reads of a vertex that is not in the
+    /// base yet gracefully resolve to "no edges" plus any pending delta
+    /// mutations, and the next rebuild picks the vertex up from
+    /// `coords`/`vertex_ids` (#125).
     pub fn add_vertex(&mut self, coord: AbsCoord, vertex_id: u32) -> usize {
         let idx = self.coords.len();
         self.coords.push(coord);
         self.vertex_ids.push(vertex_id);
         self.vertex_pos.insert(vertex_id, idx);
-
-        // Rebuild base to include new vertex
-        // This is necessary to maintain CSR structure consistency
-        self.rebuild();
-
         idx
     }
 
