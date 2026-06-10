@@ -73,7 +73,9 @@ impl Function for ChooseFn {
         2
     }
 
-    func_caps!(PURE, LOOKUP);
+    // SHORT_CIRCUIT: only the selected choice is evaluated; untaken choices
+    // must not be materialized (see `Function::dispatch`).
+    func_caps!(PURE, LOOKUP, SHORT_CIRCUIT);
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;
@@ -123,10 +125,12 @@ impl Function for ChooseFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
 
+        // NumberStrict index semantics (previously enforced by eager dispatch
+        // validation): only genuine numbers are accepted; numeric text,
+        // booleans, etc. yield #VALUE!.
         let index = match index_val {
             LiteralValue::Number(n) => n as i64,
             LiteralValue::Int(i) => i,
-            LiteralValue::Text(s) => s.parse::<f64>().map(|n| n as i64).unwrap_or(-1),
             _ => {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
