@@ -43,11 +43,22 @@ thread_local! {
 #[serde(rename_all = "camelCase")]
 struct JsWorkbookLoadOptions {
     span_evaluation: Option<bool>,
+    /// Cycle detection mode: `"static"` | `"runtime"` (spec §2).
+    cycle_detection: Option<String>,
+    /// Cycle policy for live cycles: `"error"` | `"iterate"` (spec §2).
+    /// `"iterate"` implies runtime detection.
+    cycle_policy: Option<String>,
+    /// Iterative-calculation max passes per SCC per recalc (Excel default 100).
+    iterate_max_iterations: Option<u32>,
+    /// Iterative-calculation absolute convergence threshold (Excel default 0.001).
+    iterate_max_change: Option<f64>,
 }
 
 fn workbook_config_from_options(
     options: Option<JsValue>,
 ) -> Result<formualizer::workbook::WorkbookConfig, JsValue> {
+    use formualizer::eval::engine::{CycleDetection, CyclePolicy};
+
     let parsed = match options {
         Some(value) if !value.is_null() && !value.is_undefined() => {
             serde_wasm_bindgen::from_value::<JsWorkbookLoadOptions>(value)
@@ -59,6 +70,81 @@ fn workbook_config_from_options(
     if let Some(enabled) = parsed.span_evaluation {
         cfg = cfg.with_span_evaluation(enabled);
     }
+
+    // Cycle / iterative-calculation config (RFC #113, spec §2). Build the
+    // CycleConfig from the optional fields, defaulting to the engine's current
+    // value, then validate so an invalid combo surfaces as a JS error instead
+    // of the engine's build-time panic.
+    let mut cycle = cfg.eval.cycle;
+    let mut iterating = matches!(cycle.policy, CyclePolicy::Iterate { .. });
+    let (mut max_iterations, mut max_change) = match cycle.policy {
+        CyclePolicy::Iterate {
+            max_iterations,
+            max_change,
+        } => (max_iterations, max_change),
+        CyclePolicy::Error => (
+            CyclePolicy::EXCEL_DEFAULT_MAX_ITERATIONS,
+            CyclePolicy::EXCEL_DEFAULT_MAX_CHANGE,
+        ),
+    };
+
+    if let Some(detection) = parsed.cycle_detection.as_deref() {
+        cycle.detection = match detection {
+            "static" => CycleDetection::Static,
+            "runtime" => CycleDetection::Runtime,
+            other => {
+                return Err(js_error(format!(
+                    "invalid cycleDetection: {other}. Use 'static' or 'runtime'."
+                )));
+            }
+        };
+    }
+    if let Some(policy) = parsed.cycle_policy.as_deref() {
+        match policy {
+            "error" => iterating = false,
+            "iterate" => {
+                iterating = true;
+                // Iteration requires runtime detection (spec §2): promote it
+                // unless the caller explicitly asked for static (which then
+                // fails validation below with a clear message).
+                if parsed.cycle_detection.is_none() {
+                    cycle.detection = CycleDetection::Runtime;
+                }
+            }
+            other => {
+                return Err(js_error(format!(
+                    "invalid cyclePolicy: {other}. Use 'error' or 'iterate'."
+                )));
+            }
+        }
+    }
+    if let Some(n) = parsed.iterate_max_iterations {
+        iterating = true;
+        max_iterations = n;
+        if parsed.cycle_detection.is_none() {
+            cycle.detection = CycleDetection::Runtime;
+        }
+    }
+    if let Some(d) = parsed.iterate_max_change {
+        iterating = true;
+        max_change = d;
+        if parsed.cycle_detection.is_none() {
+            cycle.detection = CycleDetection::Runtime;
+        }
+    }
+    cycle.policy = if iterating {
+        CyclePolicy::Iterate {
+            max_iterations,
+            max_change,
+        }
+    } else {
+        CyclePolicy::Error
+    };
+    cycle
+        .validate()
+        .map_err(|msg| js_error(format!("invalid cycle config: {msg}")))?;
+    cfg.eval.cycle = cycle;
+
     Ok(cfg)
 }
 

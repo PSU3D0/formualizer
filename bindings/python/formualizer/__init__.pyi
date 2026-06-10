@@ -257,6 +257,45 @@ class EvaluationConfig:
     def date_system(self) -> builtins.str: ...
     @date_system.setter
     def date_system(self, value: builtins.str) -> None: ...
+    @property
+    def cycle_detection(self) -> builtins.str:
+        r"""
+        Cycle detection mode: `"static"` (every static SCC is stamped `#CIRC`,
+        today's compat behavior) or `"runtime"` (only live cycles get the policy
+        verdict; required for iterative calculation).
+        """
+    @cycle_detection.setter
+    def cycle_detection(self, value: builtins.str) -> None: ...
+    @property
+    def cycle_policy(self) -> builtins.str:
+        r"""
+        Cycle policy for witnessed (live) cycles under runtime detection:
+        `"error"` (stamp `#CIRC`) or `"iterate"` (Excel-style iterative
+        calculation). Iterative calculation requires runtime detection (spec
+        §2), so setting `"iterate"` also promotes `cycle_detection` to
+        `"runtime"` (mirroring the engine's `CycleConfig::iterate` helper and the
+        XLSX `calcPr` load mapping).
+        """
+    @cycle_policy.setter
+    def cycle_policy(self, value: builtins.str) -> None: ...
+    @property
+    def iterate_max_iterations(self) -> builtins.int:
+        r"""
+        Maximum iterative-calculation passes per SCC per recalc (Excel default
+        100; `1` is the accumulator pattern). Only meaningful when
+        `cycle_policy = "iterate"`; reads `100` otherwise.
+        """
+    @iterate_max_iterations.setter
+    def iterate_max_iterations(self, value: builtins.int) -> None: ...
+    @property
+    def iterate_max_change(self) -> builtins.float:
+        r"""
+        Absolute per-member convergence threshold (`|Δ| < max_change`, Excel
+        default 0.001). Only meaningful when `cycle_policy = "iterate"`; reads
+        `0.001` otherwise.
+        """
+    @iterate_max_change.setter
+    def iterate_max_change(self, value: builtins.float) -> None: ...
     def __new__(cls) -> EvaluationConfig:
         r"""
         Create a new evaluation configuration
