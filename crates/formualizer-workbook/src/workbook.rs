@@ -2049,6 +2049,14 @@ impl Workbook {
     }
 
     // Sheets
+    /// Calculation settings (`<calcPr>`) parsed from the loaded XLSX, if any.
+    /// After construction the live engine config is the source of truth for
+    /// the iterate settings; `calc_mode`/`full_calc_on_load` are retained here
+    /// for save-time round-trip.
+    pub fn loaded_calc_settings(&self) -> Option<&crate::traits::CalcSettings> {
+        self.calc_settings.as_ref()
+    }
+
     pub fn sheet_names(&self) -> Vec<String> {
         self.engine
             .sheet_store()
@@ -2978,9 +2986,7 @@ impl Workbook {
         // `new_with_config`. When `iterate` is enabled the mapper also flips
         // `detection` to `Runtime` (see `calc_pr` module docs) so the resulting
         // config is valid and `from_reader` never panics.
-        #[cfg(any(feature = "calamine", feature = "umya"))]
         let parsed_calc = backend.calc_settings();
-        #[cfg(any(feature = "calamine", feature = "umya"))]
         if let Some(settings) = parsed_calc.as_ref() {
             config.eval.cycle =
                 crate::calc_pr::apply_calc_settings_to_cycle(settings, config.eval.cycle);
@@ -2990,10 +2996,7 @@ impl Workbook {
         // Retain round-trip-only calcPr attributes (calcMode/fullCalcOnLoad) so
         // the XLSX write path can re-emit them; iterate* are sourced from the
         // live engine config at save time.
-        #[cfg(any(feature = "calamine", feature = "umya"))]
-        {
-            wb.calc_settings = parsed_calc;
-        }
+        wb.calc_settings = parsed_calc;
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;

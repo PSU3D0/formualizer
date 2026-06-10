@@ -2,7 +2,6 @@
 
 pub mod backends;
 pub mod builtins;
-#[cfg(any(feature = "calamine", feature = "umya"))]
 pub mod calc_pr;
 pub mod error;
 #[cfg(any(feature = "calamine", feature = "json", feature = "umya"))]
