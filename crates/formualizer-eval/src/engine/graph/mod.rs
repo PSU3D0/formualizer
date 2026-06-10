@@ -173,6 +173,12 @@ pub struct DependencyGraph {
     dirty_vertices: FxHashSet<VertexId>,
     volatile_vertices: FxHashSet<VertexId>,
 
+    /// Monotonic count of vertices processed by dirty-propagation BFS loops
+    /// (`mark_dirty_many` / `mark_dirty_many_value_cells`). Cheap plain
+    /// counter used by perf-shape tests to assert propagation work is
+    /// O(component), not O(sources × component).
+    dirty_propagation_visits: u64,
+
     /// Vertices explicitly marked as #REF! by structural operations.
     ///
     /// In Arrow-truth mode, the dependency graph does not cache cell/formula values.
@@ -1055,6 +1061,7 @@ impl DependencyGraph {
             cell_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
             load_packed_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
             dirty_vertices: FxHashSet::default(),
+            dirty_propagation_visits: 0,
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
@@ -2089,50 +2096,71 @@ impl DependencyGraph {
 
     /// Mark vertex dirty and propagate to dependents
     fn mark_dirty(&mut self, vertex_id: VertexId) -> Vec<VertexId> {
+        self.mark_dirty_many(&[vertex_id])
+    }
+
+    /// Multi-source `mark_dirty`: one BFS with a shared seen-set across all
+    /// sources, marking exactly the union of per-source `mark_dirty` calls
+    /// but visiting every vertex at most once per call.
+    ///
+    /// Loop-of-`mark_dirty` callers (volatile redirty, iterative-SCC redirty)
+    /// pay O(sources × component) without this — measured quadratic by the
+    /// iterate edge corpus. A BFS that early-stops at already-`is_dirty`
+    /// vertices would also fix that, but it is NOT safe in general: several
+    /// call sites set the dirty flag WITHOUT propagating to dependents
+    /// (`DependencyGraph::set_dirty`, `mark_dependents_dirty`, names.rs
+    /// binding invalidation, eval.rs demand-driven re-marks), so "dirty"
+    /// does not imply "my dependents are already dirty". The per-call shared
+    /// seen-set needs no such invariant.
+    pub(crate) fn mark_dirty_many(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
         let mut affected = FxHashSet::default();
         let mut to_visit = Vec::new();
         let mut visited_for_propagation = FxHashSet::default();
 
-        // Only mark the source vertex as dirty if it's a formula
-        // Value cells don't get marked dirty themselves but are still affected
-        let is_formula = matches!(
-            self.store.kind(vertex_id),
-            VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::NamedScalar
-                | VertexKind::NamedArray
-        );
+        for &vertex_id in vertex_ids {
+            // Only mark the source vertex as dirty if it's a formula.
+            // Value cells don't get marked dirty themselves but are still
+            // affected.
+            let is_formula = matches!(
+                self.store.kind(vertex_id),
+                VertexKind::FormulaScalar
+                    | VertexKind::FormulaArray
+                    | VertexKind::NamedScalar
+                    | VertexKind::NamedArray
+            );
 
-        if is_formula {
-            to_visit.push(vertex_id);
-        } else {
-            // Value cells are affected (for tracking) but not marked dirty
-            affected.insert(vertex_id);
-        }
-
-        // Initial propagation from direct and range dependents
-        {
-            // Get dependents (vertices that depend on this vertex)
-            if let Some(dependents) = self.dependents_slice(vertex_id) {
-                to_visit.extend(dependents.iter().copied());
+            if is_formula {
+                to_visit.push(vertex_id);
             } else {
-                let dependents = self.get_dependents(vertex_id);
-                to_visit.extend(dependents);
+                // Value cells are affected (for tracking) but not marked dirty
+                affected.insert(vertex_id);
             }
 
-            if let Some(name_set) = self.cell_to_name_dependents.get(&vertex_id) {
-                for &name_vertex in name_set {
-                    to_visit.push(name_vertex);
+            // Initial propagation from direct and range dependents
+            {
+                // Get dependents (vertices that depend on this vertex)
+                if let Some(dependents) = self.dependents_slice(vertex_id) {
+                    to_visit.extend(dependents.iter().copied());
+                } else {
+                    let dependents = self.get_dependents(vertex_id);
+                    to_visit.extend(dependents);
                 }
-            }
 
-            to_visit.extend(self.collect_range_dependents_for_vertex(vertex_id));
+                if let Some(name_set) = self.cell_to_name_dependents.get(&vertex_id) {
+                    for &name_vertex in name_set {
+                        to_visit.push(name_vertex);
+                    }
+                }
+
+                to_visit.extend(self.collect_range_dependents_for_vertex(vertex_id));
+            }
         }
 
         while let Some(id) = to_visit.pop() {
             if !visited_for_propagation.insert(id) {
                 continue; // Already processed
             }
+            self.dirty_propagation_visits += 1;
             affected.insert(id);
 
             // Mark vertex as dirty
@@ -2153,6 +2181,12 @@ impl DependencyGraph {
 
         // Return as Vec for compatibility
         affected.into_iter().collect()
+    }
+
+    /// Total vertices processed by dirty-propagation BFS loops since graph
+    /// creation (perf-shape observability; see `dirty_propagation_visits`).
+    pub(crate) fn dirty_propagation_visits(&self) -> u64 {
+        self.dirty_propagation_visits
     }
 
     /// Get all vertices that need evaluation
@@ -2194,11 +2228,12 @@ impl DependencyGraph {
     }
 
     /// Re-marks all volatile vertices as dirty for the next evaluation cycle.
+    /// One multi-source propagation: many volatiles feeding one dependent
+    /// component used to pay O(volatiles × component) (a full `mark_dirty`
+    /// BFS per volatile); `mark_dirty_many` visits the component once.
     pub(crate) fn redirty_volatiles(&mut self) {
         let volatile_ids: Vec<VertexId> = self.volatile_vertices.iter().copied().collect();
-        for id in volatile_ids {
-            self.mark_dirty(id);
-        }
+        let _ = self.mark_dirty_many(&volatile_ids);
     }
 
     /// Re-marks members of iterating SCCs (and, via propagation, their
@@ -2206,19 +2241,20 @@ impl DependencyGraph {
     /// redirty that keeps `CyclePolicy::Iterate` cells re-evaluating every
     /// recalc (RFC #113; spec §4/§7.6). Vertices deleted since the recalc
     /// are skipped.
+    ///
+    /// One multi-source propagation: the old per-member `mark_dirty` loop was
+    /// O(|SCC|²) per recalc for a large SCC (a converged 1000-member ring
+    /// cost ~42 ms per no-op recalc, release); an interim `!is_dirty` skip
+    /// fixed that but leaned on dirty-flag semantics that non-propagating
+    /// `set_dirty` callers do not uphold. The shared seen-set in
+    /// `mark_dirty_many` is O(component) without any such invariant.
     pub(crate) fn redirty_iterative_members(&mut self, members: &[VertexId]) {
-        for &id in members {
-            // Skip members an earlier propagation already dirtied:
-            // `mark_dirty`'s BFS marks every transitive dependent, so the
-            // FIRST member of an SCC dirties the whole (strongly connected)
-            // component plus downstream, and re-walking from each remaining
-            // member is pure rework — O(|SCC|²) per recalc for one large SCC
-            // (measured quadratic by the iterate edge corpus: a converged
-            // 1000-member ring cost ~42 ms per no-op recalc, release).
-            if self.vertex_exists(id) && !self.is_dirty(id) {
-                let _ = self.mark_dirty(id);
-            }
-        }
+        let live: Vec<VertexId> = members
+            .iter()
+            .copied()
+            .filter(|&id| self.vertex_exists(id))
+            .collect();
+        let _ = self.mark_dirty_many(&live);
     }
 
     fn get_or_create_vertex(
@@ -3066,6 +3102,7 @@ impl DependencyGraph {
             if !visited_for_propagation.insert(id) {
                 continue;
             }
+            self.dirty_propagation_visits += 1;
             affected.insert(id);
             self.store.set_dirty(id, true);
             to_visit.extend(self.edges.in_edges(id));

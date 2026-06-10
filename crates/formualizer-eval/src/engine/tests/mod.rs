@@ -18,6 +18,7 @@ mod graph_internal_helpers;
 mod layer_evaluation;
 mod load_fast_mappings;
 //mod mark_dirty_benchmarks;
+mod mark_dirty_multi_source;
 mod parallel;
 mod range_dependencies;
 mod range_property_tests;
