@@ -1717,6 +1717,15 @@ impl DependencyGraph {
         // the self-edge forms a single-vertex SCC that the scheduler emits as
         // a Cycle unit and `evaluate_scc_unit` iterates (RFC #113, spec §7.1/
         // §7.6/§7.8). Everywhere else the edit-time rejection stands.
+        //
+        // Scope note (persistence contract, pinned by
+        // `formualizer-workbook/tests/cycle_persistence.rs`): this rejection
+        // is an INTERACTIVE-EDIT nicety only. Bulk load paths
+        // (`ingest_formula_batches` → `BulkIngestBuilder`, incl. staged
+        // `build_graph_all`) intentionally do not perform it, so workbooks
+        // saved with self-references under an Iterate config always reload —
+        // under any cycle config — and resolve to `#CIRC!`/iteration at
+        // evaluation time per the loaded policy.
         if new_dependencies.contains(&addr_vertex_id) && !self.config.cycle.allows_self_dependency()
         {
             return Err(ExcelError::new(ExcelErrorKind::Circ)
