@@ -7938,6 +7938,9 @@ where
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
         self.reset_cycle_telemetry();
+        // Fold any pending edge deltas once so scheduling/eval reads use the
+        // zero-allocation CSR slices (#125 write-cheap / read-flush split).
+        self.graph.flush_pending_edge_deltas();
         let _source_cache = self.source_cache_session();
         if self.graph.formula_authority().active_span_count() > 0 {
             return self.evaluate_authoritative_formula_plane_all();
@@ -8041,6 +8044,7 @@ where
             tracing::info_span!("evaluate_until_with_delta", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
         self.reset_cycle_telemetry();
+        self.graph.flush_pending_edge_deltas();
         let _source_cache = self.source_cache_session();
 
         let mut target_addrs = Vec::new();
@@ -9204,6 +9208,9 @@ where
         &mut self,
         to_evaluate: &[VertexId],
     ) -> Result<ScheduleBuildOutput, ExcelError> {
+        // Fold pending edge deltas once per schedule build so traversal uses
+        // the zero-allocation CSR slices (#125).
+        self.graph.flush_pending_edge_deltas();
         if self.can_use_static_schedule_cache(to_evaluate) {
             if let Some(cached) = self.cached_static_schedule.as_ref()
                 && cached.topology_epoch == self.topology_epoch
@@ -9630,6 +9637,7 @@ where
     ) -> Result<EvalResult, ExcelError> {
         let start = crate::instant::FzInstant::now();
         self.reset_cycle_telemetry();
+        self.graph.flush_pending_edge_deltas();
         if self.graph.formula_authority().active_span_count() > 0 {
             if cancel_flag.load(Ordering::Relaxed) {
                 return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(

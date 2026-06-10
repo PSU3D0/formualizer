@@ -2978,7 +2978,10 @@ impl DependencyGraph {
             return Vec::new();
         }
 
-        // Ensure reverse edges are usable (delta.in_edges is intentionally not delta-aware).
+        // Fold pending deltas once so the propagation loop below can use the
+        // zero-allocation base `in_edges` slices. This is a deliberate
+        // rebuild-on-read seam: one rebuild per bulk propagation, amortized
+        // (the per-vertex alternative would allocate a merged Vec per visit).
         if self.edges.delta_size() > 0 {
             self.edges.rebuild();
         }
@@ -3303,47 +3306,12 @@ impl DependencyGraph {
     }
 
     /// Get dependents of a vertex (vertices that depend on this vertex)
-    /// Uses reverse edges for O(1) lookup when available
+    ///
+    /// Delta-aware: pending edge mutations that have not been folded into the
+    /// CSR base yet are merged in via the delta slab's reverse index, so this
+    /// is O(in-degree) even mid-edit (no O(V) scan, no forced rebuild; #125).
     pub(crate) fn get_dependents(&self, vertex_id: VertexId) -> Vec<VertexId> {
-        // If there are pending changes in delta, we need to scan
-        // Otherwise we can use the fast reverse edges
-        if self.edges.delta_size() > 0 {
-            #[cfg(test)]
-            {
-                // This scan is intentionally tracked for perf regression tests.
-                // It is expected to be rare in normal operation.
-                if let Ok(mut g) = self.instr.lock() {
-                    g.dependents_scan_fallback_calls += 1;
-                    g.dependents_scan_vertices_scanned += self.cell_to_vertex.len() as u64;
-                }
-            }
-            // Fall back to scanning when delta has changes
-            let mut dependents = Vec::new();
-            for (&_addr, &vid) in &self.cell_to_vertex {
-                let out_edges = self.edges.out_edges(vid);
-                if out_edges.contains(&vertex_id) {
-                    dependents.push(vid);
-                }
-            }
-            for named in self.named_ranges.values() {
-                let vid = named.vertex;
-                let out_edges = self.edges.out_edges(vid);
-                if out_edges.contains(&vertex_id) {
-                    dependents.push(vid);
-                }
-            }
-            for named in self.sheet_named_ranges.values() {
-                let vid = named.vertex;
-                let out_edges = self.edges.out_edges(vid);
-                if out_edges.contains(&vertex_id) {
-                    dependents.push(vid);
-                }
-            }
-            dependents
-        } else {
-            // Fast path: use reverse edges from CSR
-            self.edges.in_edges(vertex_id).to_vec()
-        }
+        self.edges.in_edges_merged(vertex_id)
     }
 
     // Internal helper methods for Milestone 0.4
@@ -3383,11 +3351,8 @@ impl DependencyGraph {
         // Remove outgoing edges (this vertex's dependencies)
         self.remove_dependent_edges(id);
 
-        // Force rebuild to get accurate dependents list
-        // This is necessary because get_dependents uses CSR reverse edges
-        self.edges.rebuild();
-
-        // Remove incoming edges (vertices that depend on this vertex)
+        // Remove incoming edges (vertices that depend on this vertex).
+        // get_dependents is delta-aware, so no rebuild is needed here (#125).
         let dependents = self.get_dependents(id);
         if self.pk_order.is_some()
             && let Some(mut pk) = self.pk_order.take()
@@ -3536,10 +3501,26 @@ impl DependencyGraph {
         self.edges.rebuild();
     }
 
+    /// Fold pending edge deltas into the CSR base ahead of a read-heavy phase
+    /// (scheduling/evaluation), restoring the zero-allocation slice fast
+    /// paths. No-op when no deltas are pending. This is the read-side half of
+    /// the #125 amortization: writes defer rebuilds, read bursts pay for at
+    /// most one.
+    pub fn flush_pending_edge_deltas(&mut self) {
+        self.edges.rebuild();
+    }
+
     /// Get delta size (internal use)
     #[doc(hidden)]
     pub fn edges_delta_size(&self) -> usize {
         self.edges.delta_size()
+    }
+
+    /// Number of full CSR rebuilds performed so far (observability; used by
+    /// the #125 rebuild-amortization regression tests).
+    #[doc(hidden)]
+    pub fn edges_rebuild_count(&self) -> u64 {
+        self.edges.rebuild_count()
     }
 
     /// Get vertex ID for specific cell address

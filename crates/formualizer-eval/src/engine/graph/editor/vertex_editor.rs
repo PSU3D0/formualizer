@@ -661,8 +661,7 @@ impl<'g> VertexEditor<'g> {
             });
         }
 
-        // Get dependents before removing edges
-        // Note: get_dependents may require CSR rebuild if delta has changes
+        // Get dependents before removing edges (delta-aware; no rebuild needed)
         let dependents = self.graph.get_dependents(id);
 
         // Capture old state (dependencies & dependents) BEFORE edge removal
@@ -841,13 +840,8 @@ impl<'g> VertexEditor<'g> {
             self.graph.update_vertex_value(id, value);
             summary.value_changed = true;
 
-            // Force edge rebuild if needed to get accurate dependents
-            // get_dependents may require rebuild when delta has changes
-            if self.graph.edges_delta_size() > 0 {
-                self.graph.rebuild_edges();
-            }
-
-            // Mark dependents as dirty
+            // Mark dependents as dirty. get_dependents is delta-aware, so no
+            // CSR rebuild is required even when edits are pending (#125).
             let dependents = self.graph.get_dependents(id);
             for dep in &dependents {
                 self.graph.set_dirty(*dep, true);

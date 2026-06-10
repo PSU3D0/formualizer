@@ -136,6 +136,7 @@ mod row_visibility_transactions;
 mod subtotal_visibility;
 mod visibility_mask_cache;
 
+mod csr_rebuild_amortization;
 mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
 mod live_edges;
