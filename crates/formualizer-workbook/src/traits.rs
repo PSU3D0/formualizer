@@ -244,6 +244,36 @@ pub struct AdapterLoadStats {
     pub shared_formula_tags_observed: Option<u64>,
 }
 
+/// Workbook-level calculation properties parsed from `xl/workbook.xml`'s
+/// `<calcPr .../>` element (spec §9, RFC #113).
+///
+/// This mirrors the OOXML attributes verbatim — it is a *transport* struct
+/// (parsed values, not yet mapped to engine semantics). The mapping to
+/// [`formualizer_eval::engine::CycleConfig`] is applied during
+/// [`crate::Workbook::from_reader`] (see
+/// `CalcSettings::apply_to_cycle_config`), keeping the backend free of engine
+/// dependencies.
+///
+/// `calc_mode` / `full_calc_on_load` are captured for round-trip fidelity only
+/// and are not interpreted semantically (spec §9: "out of scope semantically").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CalcSettings {
+    /// `iterate` attribute: `true` when iterative calculation is enabled
+    /// (`iterate="1"` or `iterate="true"`).
+    pub iterate: bool,
+    /// `iterateCount` attribute (Excel default 100 when iterate is on but the
+    /// attribute is absent).
+    pub iterate_count: Option<u32>,
+    /// `iterateDelta` attribute (Excel default 0.001 when iterate is on but the
+    /// attribute is absent).
+    pub iterate_delta: Option<f64>,
+    /// `calcMode` attribute (e.g. "auto", "manual"). Preserved for round-trip
+    /// only.
+    pub calc_mode: Option<String>,
+    /// `fullCalcOnLoad` attribute. Preserved for round-trip only.
+    pub full_calc_on_load: Option<bool>,
+}
+
 pub trait SpreadsheetReader: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
@@ -260,6 +290,15 @@ pub trait SpreadsheetReader: Send + Sync {
     /// Default: no defined names.
     fn defined_names(&mut self) -> Result<Vec<DefinedName>, Self::Error> {
         Ok(Vec::new())
+    }
+
+    /// Workbook-level calculation properties (`<calcPr>`), spec §9.
+    ///
+    /// `None` means the backend does not surface calc settings (no `<calcPr>`
+    /// or no support); callers must leave the engine cycle config untouched in
+    /// that case. Only the XLSX backends populate this today.
+    fn calc_settings(&self) -> Option<CalcSettings> {
+        None
     }
 
     /// Constructor variants for different environments
