@@ -29,6 +29,42 @@ use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 use std::collections::HashMap;
 
+/* ─────────────────── generated-array allocation guard ───────────────────
+ *
+ * Generator functions (SEQUENCE, RANDARRAY) materialize their full result
+ * as `Vec<Vec<LiteralValue>>` before the engine ever sees it, so dimension
+ * args taken from user input must be guarded BEFORE allocating — e.g.
+ * `=SEQUENCE(1e6,1e6)` would otherwise attempt a 10^12-cell allocation.
+ *
+ * Cap rationale:
+ * - Per-dimension: Excel sheet limits (1,048,576 rows × 16,384 cols — the
+ *   same values as `EvalConfig::default().max_sheet_rows/max_sheet_cols`).
+ *   A generated array larger than a sheet can never spill successfully
+ *   (`SpillBoundsPolicy::Strict`), so it is `#NUM!` unconditionally.
+ * - Total cells: 2^24 (16,777,216). `LiteralValue` is ≥32 bytes, so this
+ *   already bounds the transient allocation near ~0.5 GiB — three orders
+ *   of magnitude above the engine's default spill cap
+ *   (`SpillConfig::max_spill_cells` = 10,000) which would reject the
+ *   result downstream anyway. Anything larger risks OOM before that
+ *   downstream guard can run.
+ */
+const GENERATED_ARRAY_MAX_ROWS: i64 = 1_048_576;
+const GENERATED_ARRAY_MAX_COLS: i64 = 16_384;
+const GENERATED_ARRAY_MAX_CELLS: i64 = 1 << 24;
+
+/// Returns `Some(#NUM!)` when a `rows x cols` generated array exceeds the
+/// allocation guard; uses checked arithmetic so overflowing products fail
+/// closed. Callers have already rejected `rows <= 0 || cols <= 0`.
+fn generated_array_too_large(rows: i64, cols: i64) -> Option<ExcelError> {
+    if rows > GENERATED_ARRAY_MAX_ROWS || cols > GENERATED_ARRAY_MAX_COLS {
+        return Some(ExcelError::new(ExcelErrorKind::Num));
+    }
+    match rows.checked_mul(cols) {
+        Some(total) if total <= GENERATED_ARRAY_MAX_CELLS => None,
+        _ => Some(ExcelError::new(ExcelErrorKind::Num)),
+    }
+}
+
 /* ───────────────────────── helpers ───────────────────────── */
 
 pub fn super_wildcard_match(pattern: &str, text: &str) -> bool {
@@ -1398,6 +1434,10 @@ impl Function for RandArrayFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
             )));
+        }
+
+        if let Some(e) = generated_array_too_large(rows, cols) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
 
         let mut rng = ctx.rng_for_current(self.function_salt());
@@ -2937,8 +2977,9 @@ impl Function for SequenceFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let total = rows.saturating_mul(cols);
-        // TODO(perf): guard extremely large allocations (#NUM!).
+        if let Some(e) = generated_array_too_large(rows, cols) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows as usize);
         let mut current = start;
         for _r in 0..rows {
@@ -3933,6 +3974,148 @@ mod tests {
             }
             _ => panic!("expected array"),
         }
+    }
+
+    #[test]
+    fn generated_array_guard_boundaries() {
+        // Exactly at the total-cells cap: allowed (4096 * 4096 == 2^24).
+        assert!(generated_array_too_large(4096, 4096).is_none());
+        // One past the cap: #NUM!.
+        assert!(generated_array_too_large(4096, 4097).is_some());
+        // Per-dimension Excel sheet limits.
+        assert!(generated_array_too_large(1_048_576, 1).is_none());
+        assert!(generated_array_too_large(1_048_577, 1).is_some());
+        assert!(generated_array_too_large(1, 16_384).is_none());
+        assert!(generated_array_too_large(1, 16_385).is_some());
+        // checked_mul overflow path fails closed.
+        assert!(generated_array_too_large(i64::MAX, i64::MAX).is_some());
+    }
+
+    #[test]
+    fn sequence_oversized_returns_num_error_quickly() {
+        let wb = TestWorkbook::new().with_function(Arc::new(SequenceFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "SEQUENCE").unwrap();
+        // =SEQUENCE(1e6, 1e6): 10^12 cells must fail fast, not allocate.
+        let rows = lit(LiteralValue::Number(1e6));
+        let cols = lit(LiteralValue::Number(1e6));
+        let args = vec![
+            ArgumentHandle::new(&rows, &ctx),
+            ArgumentHandle::new(&cols, &ctx),
+        ];
+        let started = std::time::Instant::now();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        let elapsed = started.elapsed();
+        match v {
+            LiteralValue::Error(e) => {
+                assert_eq!(e.kind, formualizer_common::ExcelErrorKind::Num)
+            }
+            other => panic!("expected #NUM! got {other:?}"),
+        }
+        assert!(
+            elapsed.as_millis() < 250,
+            "oversized SEQUENCE must short-circuit, took {elapsed:?}"
+        );
+
+        // Total-cells cap: full-sheet request (1,048,576 x 16,384) is #NUM!.
+        let rows = lit(LiteralValue::Int(1_048_576));
+        let cols = lit(LiteralValue::Int(16_384));
+        let args = vec![
+            ArgumentHandle::new(&rows, &ctx),
+            ArgumentHandle::new(&cols, &ctx),
+        ];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => {
+                assert_eq!(e.kind, formualizer_common::ExcelErrorKind::Num)
+            }
+            other => panic!("expected #NUM! got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sequence_large_but_legal_succeeds() {
+        // A full Excel column (1,048,576 x 1) stays under the cap and works.
+        let wb = TestWorkbook::new().with_function(Arc::new(SequenceFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "SEQUENCE").unwrap();
+        let rows = lit(LiteralValue::Int(1_048_576));
+        let args = vec![ArgumentHandle::new(&rows, &ctx)];
+        match f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Array(a) => {
+                assert_eq!(a.len(), 1_048_576);
+                assert_eq!(a[0][0], LiteralValue::Number(1.0));
+            }
+            other => panic!("expected array got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sequence_negative_and_zero_dims_keep_value_error() {
+        let wb = TestWorkbook::new().with_function(Arc::new(SequenceFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "SEQUENCE").unwrap();
+        for (r, c) in [(0i64, 5i64), (-3, 5), (5, 0), (5, -1)] {
+            let rows = lit(LiteralValue::Int(r));
+            let cols = lit(LiteralValue::Int(c));
+            let args = vec![
+                ArgumentHandle::new(&rows, &ctx),
+                ArgumentHandle::new(&cols, &ctx),
+            ];
+            match f
+                .dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal()
+            {
+                LiteralValue::Error(e) => {
+                    assert_eq!(
+                        e.kind,
+                        formualizer_common::ExcelErrorKind::Value,
+                        "SEQUENCE({r},{c})"
+                    )
+                }
+                other => panic!("expected #VALUE! for SEQUENCE({r},{c}), got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn randarray_oversized_returns_num_error_quickly() {
+        let wb = TestWorkbook::new().with_function(Arc::new(RandArrayFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "RANDARRAY").unwrap();
+        let rows = lit(LiteralValue::Number(1e6));
+        let cols = lit(LiteralValue::Number(1e6));
+        let args = vec![
+            ArgumentHandle::new(&rows, &ctx),
+            ArgumentHandle::new(&cols, &ctx),
+        ];
+        let started = std::time::Instant::now();
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        let elapsed = started.elapsed();
+        match v {
+            LiteralValue::Error(e) => {
+                assert_eq!(e.kind, formualizer_common::ExcelErrorKind::Num)
+            }
+            other => panic!("expected #NUM! got {other:?}"),
+        }
+        assert!(
+            elapsed.as_millis() < 250,
+            "oversized RANDARRAY must short-circuit, took {elapsed:?}"
+        );
     }
 
     #[test]
