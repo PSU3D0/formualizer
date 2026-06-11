@@ -7439,6 +7439,31 @@ where
         self.graph.end_batch();
     }
 
+    /// Begin a deferred-dirty scope for a multi-edit batch: while active,
+    /// every edit's dirty propagation queues its sources instead of running
+    /// a full BFS per edit, and the outermost `end_deferred_dirty` flushes
+    /// the union with ONE multi-source propagation (O(component) instead of
+    /// O(edits × component)). See `DependencyGraph::begin_deferred_dirty`.
+    ///
+    /// Callers MUST run `end_deferred_dirty` on every exit path, including
+    /// error returns; evaluation entry points `debug_assert` no scope leaked.
+    pub fn begin_deferred_dirty(&mut self) {
+        self.graph.begin_deferred_dirty();
+    }
+
+    /// End a deferred-dirty scope, flushing the queued propagation when the
+    /// outermost scope closes. See `Engine::begin_deferred_dirty`.
+    pub fn end_deferred_dirty(&mut self) {
+        let _ = self.graph.end_deferred_dirty();
+    }
+
+    /// Total vertices processed by dirty-propagation BFS loops since graph
+    /// creation. Perf-shape observability only (cross-crate tests assert
+    /// batched edits propagate O(component), not O(edits × component)).
+    pub fn dirty_propagation_visits(&self) -> u64 {
+        self.graph.dirty_propagation_visits()
+    }
+
     /// Evaluate a single vertex.
     /// This is the core of the sequential evaluation logic for Milestone 3.1.
     #[inline]
@@ -8815,6 +8840,11 @@ where
 
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        debug_assert!(
+            !self.graph.deferred_dirty_active(),
+            "deferred-dirty scope leaked into evaluate_all: a begin_deferred_dirty \
+             was not balanced by end_deferred_dirty"
+        );
         self.lookup_index_cache.reset_counters();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
@@ -9125,6 +9155,11 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        debug_assert!(
+            !self.graph.deferred_dirty_active(),
+            "deferred-dirty scope leaked into evaluate_cells: a begin_deferred_dirty \
+             was not balanced by end_deferred_dirty"
+        );
         self.validate_deterministic_mode()?;
         if targets.is_empty() {
             return Ok(Vec::new());

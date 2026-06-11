@@ -2341,6 +2341,22 @@ impl Workbook {
         _start: (u32, u32),
         cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        // Deferred-dirty scope: one multi-source propagation for the whole
+        // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
+        // The unconditional end_deferred_dirty below flushes on every exit
+        // path, including the `?` error returns inside the inner body.
+        self.engine.begin_deferred_dirty();
+        let result = self.write_range_inner(sheet, _start, cells);
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn write_range_inner(
+        &mut self,
+        sheet: &str,
+        _start: (u32, u32),
+        cells: BTreeMap<(u32, u32), crate::traits::CellData>,
+    ) -> Result<(), IoError> {
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2484,6 +2500,23 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
+        // Deferred-dirty scope: one multi-source propagation for the whole
+        // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
+        // The unconditional end_deferred_dirty below flushes on every exit
+        // path, including the `?` error returns inside the inner body.
+        self.engine.begin_deferred_dirty();
+        let result = self.set_values_inner(sheet, start_row, start_col, rows);
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn set_values_inner(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        rows: &[Vec<LiteralValue>],
+    ) -> Result<(), IoError> {
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2559,6 +2592,23 @@ impl Workbook {
 
     // Batch set formulas in a rectangle starting at (start_row,start_col)
     pub fn set_formulas(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        rows: &[Vec<String>],
+    ) -> Result<(), IoError> {
+        // Deferred-dirty scope: one multi-source propagation for the whole
+        // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
+        // The unconditional end_deferred_dirty below flushes on every exit
+        // path, including the `?` error returns inside the inner body.
+        self.engine.begin_deferred_dirty();
+        let result = self.set_formulas_inner(sheet, start_row, start_col, rows);
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn set_formulas_inner(
         &mut self,
         sheet: &str,
         start_row: u32,
