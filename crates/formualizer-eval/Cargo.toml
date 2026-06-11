@@ -94,9 +94,13 @@ default = ["system-clock"]
 system-clock = ["chrono/clock"]
 
 # js-runtime: opt into browser/wasm-bindgen execution environment.
-# Activates web-time (performance.now Instant) and JS-backed getrandom entropy.
+# Activates web-time (performance.now Instant), JS-backed getrandom entropy,
+# and chrono's JS Date clock (`wasmbind`) so the system-clock profile's
+# ambient `Local::now()` / `Utc::now()` (e.g. the per-recalc volatile clock
+# sample) works on wasm32-unknown-unknown instead of panicking with
+# "time not implemented on this platform".
 # Used by the formualizer-wasm binding crate; NOT enabled by default.
-js-runtime = ["dep:web-time", "dep:getrandom", "dep:getrandom02"]
+js-runtime = ["dep:web-time", "dep:getrandom", "dep:getrandom02", "chrono/wasmbind"]
 
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
 tracing_chrome = ["tracing", "dep:tracing-chrome"]
