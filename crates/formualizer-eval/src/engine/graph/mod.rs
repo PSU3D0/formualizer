@@ -179,6 +179,15 @@ pub struct DependencyGraph {
     /// O(component), not O(sources × component).
     dirty_propagation_visits: u64,
 
+    /// Nesting depth of active deferred-dirty scopes (`begin_deferred_dirty`
+    /// / `end_deferred_dirty`). While > 0, dirty-propagation entry points
+    /// queue their sources in `deferred_dirty_pending` instead of running a
+    /// BFS per call; the outermost `end_deferred_dirty` flushes the union in
+    /// ONE multi-source `mark_dirty_many`.
+    deferred_dirty_depth: u32,
+    /// Sources queued while a deferred-dirty scope is active.
+    deferred_dirty_pending: Vec<VertexId>,
+
     /// Vertices explicitly marked as #REF! by structural operations.
     ///
     /// In Arrow-truth mode, the dependency graph does not cache cell/formula values.
@@ -1062,6 +1071,8 @@ impl DependencyGraph {
             load_packed_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
             dirty_vertices: FxHashSet::default(),
             dirty_propagation_visits: 0,
+            deferred_dirty_depth: 0,
+            deferred_dirty_pending: Vec::new(),
             volatile_vertices: FxHashSet::default(),
             ref_error_vertices: FxHashSet::default(),
             formula_to_range_deps: FxHashMap::default(),
@@ -2112,7 +2123,17 @@ impl DependencyGraph {
     /// binding invalidation, eval.rs demand-driven re-marks), so "dirty"
     /// does not imply "my dependents are already dirty". The per-call shared
     /// seen-set needs no such invariant.
+    ///
+    /// While a deferred-dirty scope is active (`begin_deferred_dirty`), the
+    /// call queues its sources for the end-of-scope flush and returns ONLY
+    /// the sources as the "affected" set (the full transitive set is
+    /// produced once by the flush). Loop-of-edits callers must not rely on
+    /// per-edit transitive affected sets inside such a scope.
     pub(crate) fn mark_dirty_many(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
+        if self.deferred_dirty_depth > 0 {
+            self.deferred_dirty_pending.extend_from_slice(vertex_ids);
+            return vertex_ids.to_vec();
+        }
         let mut affected = FxHashSet::default();
         let mut to_visit = Vec::new();
         let mut visited_for_propagation = FxHashSet::default();
@@ -2187,6 +2208,62 @@ impl DependencyGraph {
     /// creation (perf-shape observability; see `dirty_propagation_visits`).
     pub(crate) fn dirty_propagation_visits(&self) -> u64 {
         self.dirty_propagation_visits
+    }
+
+    /// Begin a deferred-dirty scope for a multi-edit batch.
+    ///
+    /// While active, `mark_dirty` / `mark_dirty_many` /
+    /// `mark_dirty_many_value_cells` queue their sources instead of running a
+    /// BFS per call; the outermost `end_deferred_dirty` flushes the queued
+    /// union with ONE multi-source `mark_dirty_many`. Union semantics equal
+    /// the sequential per-edit calls (pinned by
+    /// `mark_dirty_many_equals_sequential_single_source_marks` plus the
+    /// deferred-scope tests): any dependent edge removed mid-batch belongs to
+    /// a vertex that was itself edited mid-batch, and edited vertices are
+    /// themselves pending sources, so the flush covers everything a per-edit
+    /// propagation would have reached.
+    ///
+    /// Nesting is depth-counted. The scope also enters the CSR edge batch
+    /// (`begin_batch`) so edge-heavy batches amortize delta rebuilds (#127).
+    ///
+    /// Callers MUST guarantee `end_deferred_dirty` runs on every exit path
+    /// (including `?` early returns): a leaked scope would silently swallow
+    /// future propagations. Evaluation entry points `debug_assert` that no
+    /// scope is active.
+    pub fn begin_deferred_dirty(&mut self) {
+        self.edges.begin_batch();
+        self.deferred_dirty_depth += 1;
+    }
+
+    /// End a deferred-dirty scope. When the outermost scope ends, runs ONE
+    /// multi-source propagation over every source queued while deferred and
+    /// returns its full affected set (sources pointing at vertices deleted
+    /// mid-batch are skipped). Inner (nested) ends return an empty set.
+    pub fn end_deferred_dirty(&mut self) -> Vec<VertexId> {
+        debug_assert!(
+            self.deferred_dirty_depth > 0,
+            "end_deferred_dirty without matching begin_deferred_dirty"
+        );
+        self.edges.end_batch();
+        self.deferred_dirty_depth = self.deferred_dirty_depth.saturating_sub(1);
+        if self.deferred_dirty_depth > 0 {
+            return Vec::new();
+        }
+        let pending = std::mem::take(&mut self.deferred_dirty_pending);
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        let live: Vec<VertexId> = pending
+            .into_iter()
+            .filter(|&id| self.vertex_exists(id))
+            .collect();
+        self.mark_dirty_many(&live)
+    }
+
+    /// True while a deferred-dirty scope is active (see
+    /// `begin_deferred_dirty`). Evaluation must never start in this state.
+    pub fn deferred_dirty_active(&self) -> bool {
+        self.deferred_dirty_depth > 0
     }
 
     /// Get all vertices that need evaluation
@@ -3047,6 +3124,18 @@ impl DependencyGraph {
     fn mark_dirty_many_value_cells(&mut self, vertex_ids: &[VertexId]) -> Vec<VertexId> {
         if vertex_ids.is_empty() {
             return Vec::new();
+        }
+
+        // Deferred-dirty scope (e.g. a spill clear inside a batched
+        // `set_values`): queue the sources for the end-of-scope flush. The
+        // general `mark_dirty_many` flush handles value-cell sources via its
+        // per-source kind check, so one pending list serves both entry
+        // points. (The flush's per-source range-dependent collection is a
+        // subset of this path's bounding-rect collection, which conservatively
+        // over-dirties; the per-source union is the exact required set.)
+        if self.deferred_dirty_depth > 0 {
+            self.deferred_dirty_pending.extend_from_slice(vertex_ids);
+            return vertex_ids.to_vec();
         }
 
         // Fold pending deltas once so the propagation loop below can use the

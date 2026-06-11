@@ -1530,6 +1530,10 @@ impl<'g> VertexEditor<'g> {
         let mut summary = RangeSummary::default();
 
         self.begin_batch();
+        // One multi-source dirty propagation for the whole rectangle instead
+        // of a full BFS per cell (the loop body cannot error, so the scope
+        // always closes before returning).
+        self.graph.begin_deferred_dirty();
 
         for (row_offset, row_values) in values.iter().enumerate() {
             for (col_offset, value) in row_values.iter().enumerate() {
@@ -1548,6 +1552,7 @@ impl<'g> VertexEditor<'g> {
             }
         }
 
+        let _ = self.graph.end_deferred_dirty();
         self.commit_batch();
 
         Ok(summary)
