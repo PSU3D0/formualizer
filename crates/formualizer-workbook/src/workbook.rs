@@ -2139,11 +2139,9 @@ impl Workbook {
                 .and_then(|(ast, _)| ast);
 
             self.engine.edit_with_logger(&mut self.log, |editor| {
-                editor.set_cell_value(cell, value.clone());
+                editor.set_cell_value_with_old_state(cell, value.clone(), old_value, old_formula);
             });
 
-            self.log
-                .patch_last_cell_event_old_state(cell, old_value, old_formula);
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.clear_staged_formula_text(sheet, row, col);
             if let Some(before) = staged_before {
@@ -2194,11 +2192,9 @@ impl Workbook {
                     let old_formula = self.engine.get_cell(sheet, row, col).and_then(|(a, _)| a);
 
                     self.engine.edit_with_logger(&mut self.log, |editor| {
-                        editor.set_cell_formula(cell, ast);
+                        editor.set_cell_formula_with_old_state(cell, ast, old_value, old_formula);
                     });
 
-                    self.log
-                        .patch_last_cell_event_old_state(cell, old_value, old_formula);
                     self.engine.clear_staged_formula_text(sheet, row, col);
                     if let Some(before) = staged_before {
                         self.record_staged_formula_cell_change(sheet, row, col, before, None);
@@ -2365,7 +2361,9 @@ impl Workbook {
             let defer_graph_building = self.engine.config.defer_graph_building;
 
             // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
-            // In canonical mode the graph value cache is empty, so ChangeLog old_value must be patched.
+            // In canonical mode the graph value cache is empty, so the editor cannot see
+            // old values itself; we pass the captured state through to the editor so it
+            // lands on the ChangeLog events directly (no post-hoc log scan).
             // `staged_before` is the cell's staged formula text prior to the edit, used to
             // record a per-cell staged-formula delta for undo/redo (see #126).
             #[allow(clippy::type_complexity)]
@@ -2394,9 +2392,23 @@ impl Workbook {
 
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
-                    for (r, c, d, cell, _old_value, _old_formula, _staged_before) in items.iter() {
+                    for (r, c, d, cell, old_value, old_formula, _staged_before) in items.iter() {
+                        // Old state captured from Arrow truth rides on the cell's
+                        // LAST graph edit of this batch item (matching the historical
+                        // patch-last-event semantics): the formula edit when one goes
+                        // through the editor, otherwise the value edit.
+                        let formula_via_editor = d.formula.is_some() && !defer_graph_building;
                         if let Some(v) = d.value.clone() {
-                            editor.set_cell_value(*cell, v.clone());
+                            if formula_via_editor {
+                                editor.set_cell_value(*cell, v.clone());
+                            } else {
+                                editor.set_cell_value_with_old_state(
+                                    *cell,
+                                    v.clone(),
+                                    old_value.clone(),
+                                    old_formula.clone(),
+                                );
+                            }
                             // If a formula is also being set for this cell, do not mirror the
                             // provided value into the delta overlay. In Arrow-truth mode that
                             // would mask the computed formula result.
@@ -2415,21 +2427,17 @@ impl Workbook {
                                 };
                                 let ast = formualizer_parse::parser::parse(&with_eq)
                                     .map_err(|e| IoError::from_backend("parser", e))?;
-                                editor.set_cell_formula(*cell, ast);
+                                editor.set_cell_formula_with_old_state(
+                                    *cell,
+                                    ast,
+                                    old_value.clone(),
+                                    old_formula.clone(),
+                                );
                             }
                         }
                     }
                     Ok(())
                 })?;
-
-            // Patch old_value/old_formula for each cell's last SetValue/SetFormula event.
-            for (_r, _c, _d, cell, old_value, old_formula, _staged_before) in items.iter().rev() {
-                self.log.patch_last_cell_event_old_state(
-                    *cell,
-                    old_value.clone(),
-                    old_formula.clone(),
-                );
-            }
 
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
@@ -2552,18 +2560,17 @@ impl Workbook {
             }
 
             self.engine.edit_with_logger(&mut self.log, |editor| {
-                for (_r, _c, v, cell, _old_value, _old_formula, _staged_before) in items.iter() {
-                    editor.set_cell_value(*cell, v.clone());
+                for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
+                    // Old state captured from Arrow truth rides directly on the
+                    // event (graph-captured state wins; this only fills `None`).
+                    editor.set_cell_value_with_old_state(
+                        *cell,
+                        v.clone(),
+                        old_value.clone(),
+                        old_formula.clone(),
+                    );
                 }
             });
-
-            for (_r, _c, _v, cell, old_value, old_formula, _staged_before) in items.iter().rev() {
-                self.log.patch_last_cell_event_old_state(
-                    *cell,
-                    old_value.clone(),
-                    old_formula.clone(),
-                );
-            }
 
             for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);

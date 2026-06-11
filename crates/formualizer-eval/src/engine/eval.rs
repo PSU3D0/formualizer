@@ -601,9 +601,13 @@ where
             // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
             let log = unsafe { &mut *log_ptr };
             self.engine.edit_with_logger(log, |editor| {
-                editor.set_cell_value(addr, value.clone());
+                editor.set_cell_value_with_old_state(
+                    addr,
+                    value.clone(),
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
             });
-            log.patch_last_cell_event_old_state(addr, old_value.clone(), old_formula.clone());
             self.engine
                 .record_formula_plane_structural_change(StructuralScope::Cell {
                     sheet: addr.sheet_id,
@@ -675,9 +679,8 @@ where
             // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
             let log = unsafe { &mut *log_ptr };
             self.engine.edit_with_logger(log, |editor| {
-                editor.set_cell_formula(addr, ast.clone());
+                editor.set_cell_formula_with_old_state(addr, ast.clone(), old_value, old_formula);
             });
-            log.patch_last_cell_event_old_state(addr, old_value, old_formula);
             self.engine
                 .record_formula_plane_structural_change(StructuralScope::Cell {
                     sheet: addr.sheet_id,
