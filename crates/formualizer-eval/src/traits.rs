@@ -238,6 +238,15 @@ pub struct ArgumentHandle<'a, 'b> {
     interp: &'a Interpreter<'b>,
     cached_ast: std::cell::OnceCell<ASTNode>,
     cached_ref: std::cell::OnceCell<ReferenceType>,
+    /// Memoized result of [`Self::value`]. `Function::dispatch` evaluates
+    /// every argument once during schema validation and the function's `eval`
+    /// evaluates it again — without this cache that re-entry compounds to
+    /// 2^depth evaluations of the innermost node for nested non-short-circuit
+    /// calls (measured: depth 12 ⇒ 4096 evaluations). The handle is created
+    /// per call site and per evaluation, so the memo can never go stale
+    /// across recalcs. `value_with_env` is intentionally NOT memoized (the
+    /// local env changes the result).
+    cached_value: std::cell::OnceCell<Result<crate::traits::CalcValue<'b>, ExcelError>>,
 }
 
 impl<'a, 'b> ArgumentHandle<'a, 'b> {
@@ -247,6 +256,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             interp,
             cached_ast: std::cell::OnceCell::new(),
             cached_ref: std::cell::OnceCell::new(),
+            cached_value: std::cell::OnceCell::new(),
         }
     }
 
@@ -265,10 +275,17 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             interp,
             cached_ast: std::cell::OnceCell::new(),
             cached_ref: std::cell::OnceCell::new(),
+            cached_value: std::cell::OnceCell::new(),
         }
     }
 
     pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        self.cached_value
+            .get_or_init(|| self.compute_value())
+            .clone()
+    }
+
+    fn compute_value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => {
                 if let ASTNodeType::Literal(ref v) = node.node_type {

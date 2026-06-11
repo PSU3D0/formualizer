@@ -124,14 +124,14 @@ fn operator_overflow_mid_iteration_stabilizes_as_num_error_and_converges() {
 }
 
 #[test]
-fn aggregate_leaked_infinity_pins_the_scc_at_a_permanent_cap() {
-    // SUM does not sanitize overflow, so `Number(inf)` leaks into the cycle:
-    // B1 = MAX(SUM(A1:A2), C1), C1 = B1 with A1 = A2 = 1e308. Both members
-    // commit +inf on pass 1 and never change again — but |inf − inf| = NaN
-    // fails the §6 numeric test, so the SCC caps at max_iterations, and does
-    // so again on EVERY subsequent recalc (the per-recalc redirty re-fires
-    // iterating SCCs). Pinned as spec-§6-correct; flagged in the findings
-    // report as a perf trap + Excel divergence (Excel would show #NUM!).
+fn aggregate_overflow_sanitizes_to_num_error_and_scc_converges() {
+    // SUM (like every numeric aggregate now) sanitizes a non-finite result
+    // to `#NUM!` — Excel parity, matching operator arithmetic. The historic
+    // leak (`Number(inf)` committed into the cycle) pinned this SCC at a
+    // PERMANENT cap: |inf − inf| = NaN fails the §6 numeric test, so every
+    // recalc burned the full pass budget. With the sanitizer, the error
+    // propagates around the cycle and `#NUM!` vs `#NUM!` converges by
+    // error-kind (§6) in a handful of passes.
     let mut engine = iterate_engine(7, 0.001);
     set_value(&mut engine, "Sheet1", 1, 1, LiteralValue::Number(1.0e308));
     set_value(&mut engine, "Sheet1", 2, 1, LiteralValue::Number(1.0e308));
@@ -139,32 +139,57 @@ fn aggregate_leaked_infinity_pins_the_scc_at_a_permanent_cap() {
     set_formula(&mut engine, "Sheet1", 1, 3, "=B1"); // C1
     engine.evaluate_all().unwrap();
 
-    // Documents the leak itself: the committed value really is +inf.
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 1, 2),
-        Some(LiteralValue::Number(f64::INFINITY)),
-        "SUM/MAX leak unsanitized +inf (Excel would have produced #NUM!)"
-    );
+    // SUM(A1:A2) overflows → #NUM!; MAX propagates it; C1 mirrors it.
+    assert_eq!(err_kind(&engine, "Sheet1", 1, 2), ExcelErrorKind::Num);
+    assert_eq!(err_kind(&engine, "Sheet1", 1, 3), ExcelErrorKind::Num);
     let t = engine.last_cycle_telemetry();
     assert_eq!(t.iterated_sccs, 1);
-    assert_eq!(t.converged_sccs, 0, "inf vs inf must not converge (§6)");
-    assert_eq!(t.capped_sccs, 1);
-    assert_eq!(t.settle_passes_total, 7, "runs the full pass budget");
+    assert_eq!(t.converged_sccs, 1, "same-kind errors converge (§6)");
+    assert_eq!(t.capped_sccs, 0, "no longer pinned at the pass-budget cap");
+    assert!(
+        t.settle_passes_total <= 6,
+        "overflow → error → convergence must be quick, got {} passes",
+        t.settle_passes_total
+    );
 
-    // Permanent: a no-edit recalc burns the full budget again.
+    // And stays converged: a no-edit recalc does NOT burn the pass budget
+    // (the old leak capped at 7 passes on every recalc, forever).
     engine.evaluate_all().unwrap();
     let t = engine.last_cycle_telemetry();
-    assert_eq!(t.capped_sccs, 1);
-    assert_eq!(t.settle_passes_total, 7);
+    assert_eq!(t.converged_sccs, 1);
+    assert_eq!(t.capped_sccs, 0);
+    assert!(t.settle_passes_total <= 6);
+}
+
+#[test]
+fn acyclic_aggregate_overflow_is_num_error_excel_parity() {
+    // Aggregate overflow parity outside any cycle: SUM/AVERAGE over values
+    // that overflow f64, and MAX/MIN fed the resulting error, all surface
+    // #NUM!/the propagated error — never Number(inf).
+    let mut engine = iterate_engine(100, 0.001);
+    set_value(&mut engine, "Sheet1", 1, 1, LiteralValue::Number(1.0e308));
+    set_value(&mut engine, "Sheet1", 2, 1, LiteralValue::Number(1.0e308));
+    set_formula(&mut engine, "Sheet1", 1, 2, "=SUM(A1:A2)"); // B1
+    set_formula(&mut engine, "Sheet1", 2, 2, "=AVERAGE(A1:A2)*2"); // B2 (avg finite ×2 overflow stays operator territory)
+    set_formula(&mut engine, "Sheet1", 3, 2, "=MAX(B1,0)"); // B3: error propagates
+    set_formula(&mut engine, "Sheet1", 4, 2, "=SUMIF(A1:A2,\">0\")"); // B4
+    set_formula(&mut engine, "Sheet1", 5, 2, "=SUBTOTAL(9,A1:A2)"); // B5
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(err_kind(&engine, "Sheet1", 1, 2), ExcelErrorKind::Num);
+    assert_eq!(err_kind(&engine, "Sheet1", 2, 2), ExcelErrorKind::Num);
+    assert_eq!(err_kind(&engine, "Sheet1", 3, 2), ExcelErrorKind::Num);
+    assert_eq!(err_kind(&engine, "Sheet1", 4, 2), ExcelErrorKind::Num);
+    assert_eq!(err_kind(&engine, "Sheet1", 5, 2), ExcelErrorKind::Num);
 }
 
 #[test]
 fn sign_oscillating_infinity_caps_deterministically() {
-    // B1 = -C1, C1 = MAX(B1, SUM(A1:A2)) with the SUM forcing +inf into the
-    // cycle: C1 pins at +inf, B1 at −inf (unary negation of inf is not an
-    // operator overflow — the value is already non-finite... but `-C1`
-    // sanitizes too, so expect #NUM! if it does). This test pins whichever
-    // behavior is real: see asserts below (unary minus DOES sanitize).
+    // B1 = -C1, C1 = MAX(B1, SUM(A1:A2)) with the SUM overflowing: SUM now
+    // sanitizes its non-finite result to #NUM! directly (historically the
+    // +inf leaked into MAX and only `-C1`'s operator sanitization produced
+    // the error). Either way the cycle settles on same-kind errors and
+    // converges (§6).
     let mut engine = iterate_engine(5, 0.001);
     set_value(&mut engine, "Sheet1", 1, 1, LiteralValue::Number(1.0e308));
     set_value(&mut engine, "Sheet1", 2, 1, LiteralValue::Number(1.0e308));
@@ -172,9 +197,8 @@ fn sign_oscillating_infinity_caps_deterministically() {
     set_formula(&mut engine, "Sheet1", 1, 3, "=MAX(B1,SUM(A1:A2))"); // C1
     engine.evaluate_all().unwrap();
 
-    // Unary minus routes through numeric sanitization: −inf → #NUM!.
     assert_eq!(err_kind(&engine, "Sheet1", 1, 2), ExcelErrorKind::Num);
-    // C1 = MAX(#NUM!, inf) propagates the error.
+    // C1 = MAX(B1, #NUM!) propagates the error.
     assert_eq!(err_kind(&engine, "Sheet1", 1, 3), ExcelErrorKind::Num);
     let t = engine.last_cycle_telemetry();
     assert_eq!(t.iterated_sccs, 1);

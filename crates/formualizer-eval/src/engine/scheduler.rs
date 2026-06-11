@@ -165,6 +165,196 @@ impl<'a> Scheduler<'a> {
 
     /// Tarjan's strongly connected components algorithm
     pub fn tarjan_scc(&self, vertices: &[VertexId]) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        self.tarjan_scc_impl(vertices, None)
+    }
+
+    /// Tarjan with virtual deps
+    fn tarjan_scc_with_virtual(
+        &self,
+        vertices: &[VertexId],
+        vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        self.tarjan_scc_impl(vertices, Some(vdeps))
+    }
+
+    /// Iterative Tarjan over the scheduled subgraph, optionally honoring
+    /// per-pass virtual dependency edges.
+    ///
+    /// The DFS uses an explicit frame stack (vertex, dependency list, next
+    /// edge offset) instead of recursion, so depth is bounded by heap, not
+    /// the thread stack — the recursive predecessor SIGABRTed around depth
+    /// ~1500 in debug (2 MiB test stacks) on large SCCs AND on plain acyclic
+    /// chains whose dependencies point at higher vertex ids (see
+    /// `engine/tests/iterate_corpus_scale.rs`).
+    ///
+    /// Determinism contract: SCC emission order and within-SCC member order
+    /// are byte-identical to the recursive version (pinned by the
+    /// differential test in `engine/tests/tarjan_differential.rs` and the
+    /// ordering invariants in `engine/tests/schedule_units.rs`):
+    /// * dependencies are walked in adjacency order (base slice/Vec, then
+    ///   the vertex's virtual deps, exactly as the recursive code iterated);
+    /// * a vertex's SCC is emitted when its frame is exhausted and
+    ///   `lowlink == index` (the same program point as the recursive
+    ///   post-order emission);
+    /// * SCC members are popped off the Tarjan stack in the same order.
+    fn tarjan_scc_impl(
+        &self,
+        vertices: &[VertexId],
+        vdeps: Option<&FxHashMap<VertexId, Vec<VertexId>>>,
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        /// One vertex's dependency list, materialized once per DFS frame.
+        enum DepList<'g> {
+            Slice(&'g [VertexId]),
+            Owned(Vec<VertexId>),
+        }
+        impl DepList<'_> {
+            #[inline]
+            fn get(&self, i: usize) -> Option<VertexId> {
+                match self {
+                    DepList::Slice(s) => s.get(i).copied(),
+                    DepList::Owned(v) => v.get(i).copied(),
+                }
+            }
+        }
+
+        let deps_of = |vertex: VertexId| -> DepList<'_> {
+            // Edge order must match the recursive implementation: the base
+            // adjacency (zero-copy slice when available), with the vertex's
+            // virtual deps appended when present.
+            if let Some(extra) = vdeps.and_then(|m| m.get(&vertex)) {
+                let mut combined: Vec<VertexId> =
+                    if let Some(base) = self.graph.dependencies_slice(vertex) {
+                        base.to_vec()
+                    } else {
+                        self.graph.get_dependencies(vertex)
+                    };
+                combined.extend(extra.iter().copied());
+                DepList::Owned(combined)
+            } else if let Some(base) = self.graph.dependencies_slice(vertex) {
+                DepList::Slice(base)
+            } else {
+                DepList::Owned(self.graph.get_dependencies(vertex))
+            }
+        };
+
+        // Compact the candidate set into dense local ids once, up front. All
+        // per-edge / per-frame bookkeeping (index, lowlink, on-stack) then
+        // becomes a plain array op instead of an FxHashMap probe; the only
+        // remaining hash per edge is the `VertexId -> local id` membership
+        // lookup, which doubles as the old `vertex_set.contains` filter.
+        // `VertexId` is a `u32` newtype, so `u32` local ids cannot overflow.
+        const UNVISITED: u32 = u32::MAX;
+        let mut local_of: FxHashMap<VertexId, u32> =
+            FxHashMap::with_capacity_and_hasher(vertices.len(), Default::default());
+        let mut vertex_of_local: Vec<VertexId> = Vec::with_capacity(vertices.len());
+        for &v in vertices {
+            if let std::collections::hash_map::Entry::Vacant(slot) = local_of.entry(v) {
+                slot.insert(vertex_of_local.len() as u32);
+                vertex_of_local.push(v);
+            }
+        }
+        let n = vertex_of_local.len();
+
+        let mut index_counter: u32 = 0;
+        let mut indices: Vec<u32> = vec![UNVISITED; n];
+        let mut lowlinks: Vec<u32> = vec![0; n];
+        let mut on_stack: Vec<bool> = vec![false; n];
+        let mut stack: Vec<u32> = Vec::with_capacity(n);
+        let mut sccs: Vec<Vec<VertexId>> = Vec::new();
+
+        // Explicit DFS frames: (local id, its dependency list, next edge
+        // offset). Pre-sized to the worst case (one frame per vertex, e.g. a
+        // single deep chain) so deep schedules never re-grow the stack.
+        let mut frames: Vec<(u32, DepList<'_>, u32)> = Vec::with_capacity(n);
+
+        for &root_vertex in vertices {
+            let root = local_of[&root_vertex];
+            if indices[root as usize] != UNVISITED {
+                continue;
+            }
+            indices[root as usize] = index_counter;
+            lowlinks[root as usize] = index_counter;
+            index_counter += 1;
+            stack.push(root);
+            on_stack[root as usize] = true;
+            frames.push((root, deps_of(root_vertex), 0));
+
+            while let Some(frame) = frames.last_mut() {
+                let vertex = frame.0 as usize;
+                if let Some(dep_vertex) = frame.1.get(frame.2 as usize) {
+                    frame.2 += 1;
+                    // Only consider dependencies that are part of the current
+                    // scheduling task.
+                    let Some(&dep) = local_of.get(&dep_vertex) else {
+                        continue;
+                    };
+                    let d = dep as usize;
+                    if indices[d] == UNVISITED {
+                        // Not yet visited: descend (the recursive call).
+                        indices[d] = index_counter;
+                        lowlinks[d] = index_counter;
+                        index_counter += 1;
+                        stack.push(dep);
+                        on_stack[d] = true;
+                        frames.push((dep, deps_of(dep_vertex), 0));
+                    } else if on_stack[d] {
+                        // On the Tarjan stack: in the current SCC.
+                        let dep_index = indices[d];
+                        if dep_index < lowlinks[vertex] {
+                            lowlinks[vertex] = dep_index;
+                        }
+                    }
+                } else {
+                    // Vertex exhausted: emit its SCC if it is a root, then
+                    // return to the parent frame, folding the child lowlink in
+                    // (the post-recursion `min(lowlink[v], lowlink[dep])`).
+                    let vertex_lowlink = lowlinks[vertex];
+                    if vertex_lowlink == indices[vertex] {
+                        let mut scc = Vec::new();
+                        loop {
+                            let w = stack.pop().unwrap();
+                            on_stack[w as usize] = false;
+                            scc.push(vertex_of_local[w as usize]);
+                            if w as usize == vertex {
+                                break;
+                            }
+                        }
+                        sccs.push(scc);
+                    }
+                    frames.pop();
+                    if let Some(parent) = frames.last() {
+                        let p = parent.0 as usize;
+                        if vertex_lowlink < lowlinks[p] {
+                            lowlinks[p] = vertex_lowlink;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(sccs)
+    }
+
+    /// Test-only visibility shim over the private virtual-deps entry, used by
+    /// the differential test in `engine/tests/tarjan_differential.rs`.
+    #[cfg(test)]
+    pub(crate) fn tarjan_scc_with_virtual_for_tests(
+        &self,
+        vertices: &[VertexId],
+        vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
+        self.tarjan_scc_with_virtual(vertices, vdeps)
+    }
+
+    /// Recursive reference implementation, retained ONLY for the differential
+    /// test (`engine/tests/tarjan_differential.rs`) that proves the iterative
+    /// rewrite emits byte-identical SCC output. Never call on deep graphs
+    /// without a large stack: it overflows around depth ~1500 in debug.
+    #[cfg(test)]
+    pub(crate) fn tarjan_scc_recursive_reference(
+        &self,
+        vertices: &[VertexId],
+    ) -> Result<Vec<Vec<VertexId>>, ExcelError> {
         let mut index_counter = 0;
         let mut stack = Vec::new();
         let mut indices = FxHashMap::default();
@@ -191,8 +381,10 @@ impl<'a> Scheduler<'a> {
         Ok(sccs)
     }
 
-    /// Tarjan with virtual deps
-    fn tarjan_scc_with_virtual(
+    /// Recursive reference with virtual deps; see
+    /// [`Self::tarjan_scc_recursive_reference`].
+    #[cfg(test)]
+    pub(crate) fn tarjan_scc_with_virtual_recursive_reference(
         &self,
         vertices: &[VertexId],
         vdeps: &FxHashMap<VertexId, Vec<VertexId>>,
@@ -224,6 +416,8 @@ impl<'a> Scheduler<'a> {
         Ok(sccs)
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn tarjan_visit(
         &self,
         vertex: VertexId,
@@ -317,6 +511,8 @@ impl<'a> Scheduler<'a> {
         Ok(())
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     fn tarjan_visit_with_virtual(
         &self,
         vertex: VertexId,

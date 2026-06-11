@@ -85,3 +85,40 @@ fn if_arity_error_is_preserved_with_lazy_dispatch() {
         "arity failure must not evaluate arguments"
     );
 }
+
+/* ──────────── eager validation must not re-evaluate arguments ─────────── */
+
+#[test]
+fn non_short_circuit_dispatch_evaluates_each_argument_subtree_once() {
+    // The eager-validation sibling of the SHORT_CIRCUIT bug: for
+    // non-short-circuit functions, `Function::dispatch` runs
+    // `validate_and_prepare`, which evaluates every argument — and then
+    // discards the prepared args before `eval` evaluates them again. Without
+    // the `ArgumentHandle::value` memo this compounded to 2^depth
+    // evaluations of the innermost node for nested calls (measured: depth
+    // 12 ⇒ 4096 evaluations of COUNTING() inside nested SUMs). Pin: exactly
+    // one evaluation regardless of nesting depth.
+    use crate::engine::{Engine, EvalConfig};
+    use formualizer_parse::parser::parse;
+
+    for depth in [1usize, 4, 12] {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(crate::builtins::math::SumFn))
+            .with_function(Arc::new(CountFn(counter.clone())));
+        let mut engine = Engine::new(wb, EvalConfig::default());
+        let mut f = "COUNTING()".to_string();
+        for _ in 0..depth {
+            f = format!("SUM({f})");
+        }
+        engine
+            .set_cell_formula("Sheet1", 1, 1, parse(format!("={f}").as_str()).unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "depth {depth}: dispatch validation must not re-evaluate argument subtrees"
+        );
+    }
+}
