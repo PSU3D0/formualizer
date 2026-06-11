@@ -1032,9 +1032,13 @@ fn validate_relocatable_arena_ast(
 
 fn validate_relocatable_compact_reference(reference: &CompactRefType) -> Result<(), SpanEvalError> {
     match reference {
-        CompactRefType::Cell { .. } | CompactRefType::Range { .. } => Ok(()),
-        CompactRefType::NamedRange(_)
-        | CompactRefType::Table { .. }
+        // Named references are placement-invariant: relocation passes them
+        // through unchanged and the interpreter resolves the name at
+        // evaluation time with the span's sheet as the current sheet.
+        CompactRefType::Cell { .. }
+        | CompactRefType::Range { .. }
+        | CompactRefType::NamedRange(_) => Ok(()),
+        CompactRefType::Table { .. }
         | CompactRefType::Cell3D { .. }
         | CompactRefType::Range3D { .. }
         | CompactRefType::External { .. } => Err(SpanEvalError::UnsupportedReferenceRelocation),

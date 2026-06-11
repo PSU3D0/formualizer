@@ -104,6 +104,11 @@ pub(crate) enum PlacementFallbackReason {
     /// in the current sheet registry. Keep it legacy so the graph evaluator
     /// preserves existing #REF!/missing-sheet diagnostics.
     UnknownSheetBinding,
+    /// A formula references a defined name that is undefined in the
+    /// placement's scope or whose definition is not a concrete Cell/Range
+    /// (Literal/Formula definitions). Legacy evaluation preserves #NAME? and
+    /// named-formula semantics.
+    UnsupportedNamedReference,
     /// At least one read region intersects the family's own result region.
     /// These families have an internal/self dependency that the current span
     /// runtime cannot evaluate as bounded dirty work and demotes to whole-span
@@ -187,6 +192,11 @@ pub(crate) struct CandidateAnalysis {
     template_slot_map: TemplateSlotMap,
     read_projections: Vec<ReadProjection>,
     read_projections_constant: bool,
+    /// Defined names this formula resolved at ingest (raw text). Used to
+    /// register accepted spans in the FormulaPlane name-dependents map so
+    /// define/update/delete of a name can invalidate them. Empty for
+    /// formulas without names (no allocation on the hot path).
+    resolved_named_refs: Vec<String>,
 }
 
 impl CandidateAnalysis {
@@ -201,15 +211,19 @@ impl CandidateAnalysis {
         if ingested.labels.rejects != 0 {
             return Err(PlacementFallbackReason::UnsupportedCanonicalTemplate);
         }
-        let read_projections = ingested.read_projections.clone().ok_or_else(|| {
-            if ingested.read_projection_fallback
-                == Some(ProjectionFallbackReason::UnsupportedSheetBinding)
-            {
-                PlacementFallbackReason::UnknownSheetBinding
-            } else {
-                PlacementFallbackReason::UnsupportedDependencySummary
-            }
-        })?;
+        let read_projections =
+            ingested
+                .read_projections
+                .clone()
+                .ok_or(match ingested.read_projection_fallback {
+                    Some(ProjectionFallbackReason::UnsupportedSheetBinding) => {
+                        PlacementFallbackReason::UnknownSheetBinding
+                    }
+                    Some(ProjectionFallbackReason::NamedReferenceUnsupported) => {
+                        PlacementFallbackReason::UnsupportedNamedReference
+                    }
+                    _ => PlacementFallbackReason::UnsupportedDependencySummary,
+                })?;
         let is_constant_result = read_projections
             .iter()
             .all(|read_projection| is_constant_projection(&read_projection.rule));
@@ -227,6 +241,7 @@ impl CandidateAnalysis {
             template_slot_map: ingested.template_slot_map.clone(),
             read_projections,
             read_projections_constant: is_constant_result,
+            resolved_named_refs: ingested.dep_plan.resolved_named_refs.clone(),
         })
     }
 }
@@ -333,6 +348,9 @@ pub(crate) fn analyze_candidate(
         template_slot_map: build_template_slot_map(candidate.ast_id, data_store, &template.expr),
         read_projections,
         read_projections_constant: summary.is_constant_result(),
+        // This registry-less analysis path rejects named references at the
+        // dependency-summary gate above, so there are never names to record.
+        resolved_named_refs: Vec::new(),
     })
 }
 
@@ -519,6 +537,12 @@ fn place_analyzed_family(
         is_constant_result,
     });
     plane.set_binding_span_ref(binding_set_id, span);
+    if !origin_analysis.resolved_named_refs.is_empty() {
+        // All family members share the parameterized template (asserted
+        // above) and live on one sheet, so the origin's resolved name set is
+        // the family's name set.
+        plane.register_span_name_dependents(span, &origin_analysis.resolved_named_refs);
+    }
 
     report.counters.spans_created = 1;
     report.counters.accepted_span_cells = candidates.len() as u64;
@@ -1106,6 +1130,9 @@ fn residual_relative_axes(expr: &CanonicalExpr) -> (bool, bool) {
                 matches!(start_col, AxisRef::RelativeToPlacement { .. })
                     || matches!(end_col, AxisRef::RelativeToPlacement { .. }),
             ),
+            // Named references are placement-invariant (all-absolute after
+            // resolution), so they contribute no residual relative axes.
+            CanonicalReference::Named { .. } => (false, false),
             CanonicalReference::Unsupported { .. } => (false, false),
         }
     }

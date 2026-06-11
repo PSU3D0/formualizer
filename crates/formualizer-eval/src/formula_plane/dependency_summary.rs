@@ -623,8 +623,7 @@ impl SummaryAnalyzer {
             CanonicalRejectReason::CallExpression => DependencyRejectReason::UnsupportedAstNode {
                 node: "call_expression".to_string(),
             },
-            CanonicalRejectReason::NamedReference { .. }
-            | CanonicalRejectReason::StructuredReference { .. }
+            CanonicalRejectReason::StructuredReference { .. }
             | CanonicalRejectReason::StructuredReferenceCurrentRow { .. }
             | CanonicalRejectReason::ThreeDReference { .. }
             | CanonicalRejectReason::ExternalReference { .. }
@@ -834,6 +833,21 @@ impl SummaryAnalyzer {
                     false
                 }
             }
+            CanonicalReference::Named { .. } => {
+                // The summary layer is passive classification: it has no
+                // registry access and cannot resolve a defined name to a
+                // concrete region, so it conservatively rejects here. The
+                // authoritative accept decision for named formulas is driven
+                // by the per-cell read projections computed at ingest, which
+                // resolve names against the live registry.
+                let reason = if matches!(context, AnalyzerContext::LocalBinding) {
+                    DependencyRejectReason::LocalEnvUnsupported { function: None }
+                } else {
+                    DependencyRejectReason::NamedRangeUnsupported { context }
+                };
+                self.reasons.insert(reason);
+                false
+            }
             CanonicalReference::Unsupported { kind, diagnostic } => {
                 self.reject_unsupported_reference(kind, diagnostic, context);
                 false
@@ -878,14 +892,6 @@ impl SummaryAnalyzer {
         context: AnalyzerContext,
     ) {
         let reason = match kind {
-            UnsupportedReferenceKind::NamedRange
-                if matches!(context, AnalyzerContext::LocalBinding) =>
-            {
-                DependencyRejectReason::LocalEnvUnsupported { function: None }
-            }
-            UnsupportedReferenceKind::NamedRange => {
-                DependencyRejectReason::NamedRangeUnsupported { context }
-            }
             UnsupportedReferenceKind::StructuredReference => {
                 DependencyRejectReason::StructuredReferenceUnsupported { context }
             }

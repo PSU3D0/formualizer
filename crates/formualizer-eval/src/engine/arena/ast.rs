@@ -195,7 +195,8 @@ impl CanonicalLabels {
     pub(crate) const REJECT_SPILL_RESULT_REGION_OPERATOR: u64 = 1 << 10;
     pub(crate) const REJECT_IMPLICIT_INTERSECTION_OPERATOR: u64 = 1 << 11;
     pub(crate) const REJECT_CALL_EXPRESSION: u64 = 1 << 12;
-    pub(crate) const REJECT_NAMED_REFERENCE: u64 = 1 << 13;
+    // Bit 13 (REJECT_NAMED_REFERENCE) retired: named references canonicalize
+    // by identity and are accepted/rejected at read-projection time instead.
     pub(crate) const REJECT_STRUCTURED_REFERENCE: u64 = 1 << 14;
     pub(crate) const REJECT_STRUCTURED_REFERENCE_CURRENT_ROW: u64 = 1 << 15;
     pub(crate) const REJECT_THREE_D_REFERENCE: u64 = 1 << 16;
