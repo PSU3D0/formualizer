@@ -313,7 +313,7 @@ fn test_error_handling() {
 
 #[wasm_bindgen_test]
 fn test_workbook_rejects_zero_based_coords() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
 
     let err = wb
@@ -336,7 +336,7 @@ fn test_workbook_rejects_zero_based_coords() {
 
 #[wasm_bindgen_test]
 fn test_sheet_rejects_zero_based_coords() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
     let sheet = wb.sheet("Sheet1".to_string()).unwrap();
 
@@ -361,7 +361,7 @@ fn test_array_formula() {
 
 #[wasm_bindgen_test]
 fn test_get_eval_plan_builds_graph_by_default_for_deferred_workbooks() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
     wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(123.0))
         .unwrap();
@@ -386,7 +386,7 @@ fn test_get_eval_plan_builds_graph_by_default_for_deferred_workbooks() {
 
 #[wasm_bindgen_test]
 fn test_get_eval_plan_can_disable_implicit_graph_build() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
     wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(123.0))
         .unwrap();
@@ -415,7 +415,7 @@ fn test_get_eval_plan_can_disable_implicit_graph_build() {
 
 #[wasm_bindgen_test]
 fn test_workbook_sheet_eval() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Data".to_string()).unwrap();
     // Set values via workbook
     wb.set_value("Data".to_string(), 1, 1, JsValue::from_f64(1.0))
@@ -463,7 +463,7 @@ fn test_workbook_from_xlsx_bytes_evaluates_formula() {
 
 #[wasm_bindgen_test]
 fn test_register_simple_function_and_evaluate() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
 
     let callback = Function::new_with_args("a, b", "return a + b;");
@@ -489,7 +489,7 @@ fn test_register_simple_function_and_evaluate() {
 
 #[wasm_bindgen_test]
 fn test_case_insensitive_name_lookup_and_unregistration() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
 
     let callback = Function::new_with_args("x", "return x + 1;");
@@ -521,7 +521,7 @@ fn test_case_insensitive_name_lookup_and_unregistration() {
 
 #[wasm_bindgen_test]
 fn test_override_builtin_requires_explicit_opt_in() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
 
     let blocked = wb.register_function(
@@ -561,7 +561,7 @@ fn test_override_builtin_requires_explicit_opt_in() {
 
 #[wasm_bindgen_test]
 fn test_register_array_mapping_behavior() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
 
     wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(1.0))
@@ -607,7 +607,7 @@ fn test_register_array_mapping_behavior() {
 
 #[wasm_bindgen_test]
 fn test_register_function_js_throw_maps_to_excel_error() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
 
     let callback = Function::new_with_args("x", "throw new Error('kaboom\\ninternal');");
@@ -639,7 +639,7 @@ fn test_register_function_js_throw_maps_to_excel_error() {
 
 #[wasm_bindgen_test]
 fn test_unregister_function_behavior() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Sheet1".to_string()).unwrap();
 
     let callback = Function::new_with_args("", "return 7;");
@@ -667,7 +667,7 @@ fn test_unregister_function_behavior() {
 
 #[wasm_bindgen_test]
 fn test_list_functions_metadata_contents() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
 
     wb.register_function(
         "alpha".to_string(),
@@ -721,7 +721,7 @@ fn test_list_functions_metadata_contents() {
 
 #[wasm_bindgen_test]
 fn test_changelog_undo_redo() {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("S".to_string()).unwrap();
     wb.set_changelog_enabled(true).unwrap();
     wb.set_value("S".to_string(), 1, 1, JsValue::from_f64(10.0))
@@ -818,7 +818,7 @@ ports:
 "#;
 
 fn build_sheetport_workbook() -> Workbook {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Inputs".to_string()).unwrap();
     wb.add_sheet("Outputs".to_string()).unwrap();
 
@@ -834,7 +834,7 @@ fn build_sheetport_workbook() -> Workbook {
 }
 
 fn build_now_today_workbook() -> Workbook {
-    let wb = Workbook::new();
+    let wb = Workbook::new(None).unwrap();
     wb.add_sheet("Outputs".to_string()).unwrap();
     wb.set_formula("Outputs".to_string(), 1, 1, "NOW()".to_string())
         .unwrap();
@@ -1083,6 +1083,109 @@ fn test_sheetport_session_rejects_non_integer_rng_seed() {
             .unwrap()
             .contains("non-negative safe integer")
     );
+}
+
+const CYCLE_TELEMETRY_KEYS: [&str; 12] = [
+    "staticSccs",
+    "phantomSccs",
+    "liveCyclesWitnessed",
+    "circCellsStamped",
+    "settlePassesTotal",
+    "maxPassesSingleScc",
+    "iteratedSccs",
+    "convergedSccs",
+    "cappedSccs",
+    "maxAbsDeltaAtStop",
+    "nanConverged",
+    "elapsedMs",
+];
+
+#[wasm_bindgen_test]
+fn test_constructor_without_options_constructs_and_evaluates() {
+    let wb = Workbook::new(None).unwrap();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+    wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(2.0))
+        .unwrap();
+    wb.set_formula("Sheet1".to_string(), 1, 2, "=A1*3".to_string())
+        .unwrap();
+
+    let value = wb.evaluate_cell("Sheet1".to_string(), 1, 2).unwrap();
+    assert_eq!(value.as_f64().unwrap(), 6.0);
+}
+
+#[wasm_bindgen_test]
+fn test_constructor_with_iterate_options_converges_and_reports_telemetry() {
+    let options = Object::new();
+    set_prop(&options, "cyclePolicy", JsValue::from_str("iterate"));
+    set_prop(&options, "iterateMaxIterations", JsValue::from_f64(50.0));
+    set_prop(&options, "iterateMaxChange", JsValue::from_f64(0.0001));
+
+    let wb = Workbook::new(Some(options.into())).unwrap();
+    wb.add_sheet("S".to_string()).unwrap();
+    // Convergent circular pair: A1 = B1*0.5 + 1, B1 = A1*0.5 + 1 -> both 2.
+    wb.set_formula("S".to_string(), 1, 1, "=B1*0.5+1".to_string())
+        .unwrap();
+    wb.set_formula("S".to_string(), 1, 2, "=A1*0.5+1".to_string())
+        .unwrap();
+    wb.evaluate_all().unwrap();
+
+    let sheet = wb.sheet("S".to_string()).unwrap();
+    let a1 = sheet.get_value(1, 1).unwrap().as_f64().unwrap();
+    let b1 = sheet.get_value(1, 2).unwrap().as_f64().unwrap();
+    assert!(
+        (a1 - 2.0).abs() < 0.01,
+        "A1 should converge near 2, got {a1}"
+    );
+    assert!(
+        (b1 - 2.0).abs() < 0.01,
+        "B1 should converge near 2, got {b1}"
+    );
+
+    let telemetry: Object = wb.last_cycle_telemetry().unwrap().dyn_into().unwrap();
+    assert!(js_get_f64(&telemetry, "iteratedSccs") >= 1.0);
+    assert!(js_get_f64(&telemetry, "convergedSccs") >= 1.0);
+}
+
+#[wasm_bindgen_test]
+fn test_constructor_with_invalid_cycle_policy_throws() {
+    let options = Object::new();
+    set_prop(&options, "cyclePolicy", JsValue::from_str("bogus"));
+
+    let err = Workbook::new(Some(options.into()))
+        .err()
+        .expect("constructor should reject bogus cyclePolicy");
+    let error: js_sys::Error = err.dyn_into().unwrap();
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("invalid cyclePolicy")
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_last_cycle_telemetry_without_cycles_is_all_zero() {
+    let wb = Workbook::new(None).unwrap();
+    wb.add_sheet("Sheet1".to_string()).unwrap();
+    wb.set_value("Sheet1".to_string(), 1, 1, JsValue::from_f64(1.0))
+        .unwrap();
+    wb.set_formula("Sheet1".to_string(), 1, 2, "=A1+1".to_string())
+        .unwrap();
+    wb.evaluate_all().unwrap();
+
+    let telemetry: Object = wb.last_cycle_telemetry().unwrap().dyn_into().unwrap();
+    for key in CYCLE_TELEMETRY_KEYS {
+        assert!(
+            Reflect::has(&telemetry, &JsValue::from_str(key)).unwrap(),
+            "telemetry should expose key {key}"
+        );
+        assert_eq!(
+            js_get_f64(&telemetry, key),
+            0.0,
+            "telemetry key {key} should be zero without cycles"
+        );
+    }
 }
 
 #[wasm_bindgen_test]

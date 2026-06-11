@@ -300,6 +300,56 @@ export interface SheetPortEvaluateOptions {
   deterministicTimezone?: DeterministicTimezone;
 }
 
+/**
+ * Options accepted by the `Workbook` constructor and the
+ * `fromJsonWithOptions` / `fromXlsxBytesWithOptions` loaders.
+ */
+export interface WorkbookLoadOptions {
+  /** Opt into experimental FormulaPlane span evaluation. */
+  spanEvaluation?: boolean;
+  /** Cycle detection mode (spec §2). */
+  cycleDetection?: 'static' | 'runtime';
+  /** Cycle policy for live cycles (spec §2). `'iterate'` implies runtime detection. */
+  cyclePolicy?: 'error' | 'iterate';
+  /** Iterative-calculation max passes per SCC per recalc (Excel default 100). */
+  iterateMaxIterations?: number;
+  /** Iterative-calculation absolute convergence threshold (Excel default 0.001). */
+  iterateMaxChange?: number;
+}
+
+/**
+ * Per-recalc telemetry from runtime SCC / iterative-calculation evaluation
+ * (RFC #113, spec §10). Counters reset at the start of every evaluation
+ * request; all-zero when cycle detection is `'static'` or nothing cyclic
+ * was evaluated.
+ */
+export interface CycleTelemetry {
+  /** SCC tasks executed (static SCCs that reached Runtime evaluation). */
+  staticSccs: number;
+  /** SCC tasks whose live subgraph was acyclic - values produced. */
+  phantomSccs: number;
+  /** Distinct live cycles witnessed across all SCC tasks. */
+  liveCyclesWitnessed: number;
+  /** Cells stamped `#CIRC!` by Runtime SCC tasks. */
+  circCellsStamped: number;
+  /** Evaluation sweeps over (subsets of) SCC members, totalled across tasks. */
+  settlePassesTotal: number;
+  /** Largest pass count any single SCC task needed. */
+  maxPassesSingleScc: number;
+  /** SCC tasks that entered iterative calculation. */
+  iteratedSccs: number;
+  /** Iterating SCC tasks that stopped because every member converged. */
+  convergedSccs: number;
+  /** SCC tasks that stopped at a pass cap (NOT an error under iterate). */
+  cappedSccs: number;
+  /** Largest |delta| observed in any member's final-pass convergence check. */
+  maxAbsDeltaAtStop: number;
+  /** Identical-bit NaN comparisons treated as converged (spec §6 NaN rule). */
+  nanConverged: number;
+  /** Wall-clock milliseconds spent inside Runtime SCC tasks. */
+  elapsedMs: number;
+}
+
 export interface WorkbookApi extends wasm.Workbook {
   registerFunction(
     name: string,
@@ -308,12 +358,13 @@ export interface WorkbookApi extends wasm.Workbook {
   ): void;
   unregisterFunction(name: string): void;
   listFunctions(): RegisteredFunctionInfo[];
+  lastCycleTelemetry(): CycleTelemetry;
 }
 
 export type XlsxBytesSource = Uint8Array | ArrayBufferLike;
 
 export type WorkbookConstructor = {
-  new (): WorkbookApi;
+  new (options?: WorkbookLoadOptions): WorkbookApi;
   fromJson(json: string): WorkbookApi;
   fromXlsxBytes(bytes: XlsxBytesSource): WorkbookApi;
   prototype: WorkbookApi;
@@ -329,7 +380,7 @@ export type SheetPortSessionConstructor = {
 };
 
 const rawWorkbookCtor = wasm.Workbook as unknown as {
-  new (): WorkbookApi;
+  new (options?: WorkbookLoadOptions): WorkbookApi;
   fromJson(json: string): WorkbookApi;
   fromXlsxBytes(bytes: Uint8Array): WorkbookApi;
   prototype: WorkbookApi;
