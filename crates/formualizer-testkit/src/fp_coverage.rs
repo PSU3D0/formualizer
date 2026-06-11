@@ -30,7 +30,7 @@ pub const DATA_SHEET: &str = "Data";
 /// Number of sections emitted with `include_broken = false`.
 ///
 /// Useful for sizing: total formula cells = `SECTION_COUNT * rows_per_section`.
-pub const SECTION_COUNT: usize = 12;
+pub const SECTION_COUNT: usize = 13;
 
 /// Expected FormulaPlane placement verdict for every formula cell of a section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -466,6 +466,37 @@ pub fn generate(rows_per_section: u32, seed: u64, include_broken: bool) -> Cover
             formulas,
             notes: "Self-cumulative =SUM($C$1:$C{r-1})*0+B{r} reading its own result column; \
                     the InternalDependency guard must reject the span.",
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // (m) chain — incremental chain within the section's own column
+    // (=A{r-1}+1): every cell reads its predecessor, so the family's read
+    // region intersects its own result region. Expected: REJECT with
+    // placement `InternalDependency` (the span runtime cannot express the
+    // cell-by-cell sequencing; legacy graph scheduling handles it). This
+    // section also keeps the reject-path ingest cost visible in the
+    // probe's timing output (the family-rejection path was once O(N²)).
+    // ------------------------------------------------------------------
+    {
+        let mut values = Vec::new();
+        let mut formulas = Vec::new();
+        // Chain base lives in the reserved header/aux row 1.
+        values.push(val("Chain", 1, 1, 1.0));
+        for r in rows.clone() {
+            formulas.push(formula("Chain", r, 1, format!("=A{}+1", r - 1)));
+        }
+        sections.push(Section {
+            name: "chain",
+            sheet: "Chain",
+            verdict: SectionVerdict::Reject {
+                placement_reason: "InternalDependency",
+            },
+            expected_canonical_reject_kinds: &[],
+            values,
+            formulas,
+            notes: "Incremental chain =A{r-1}+1 in its own column; read region intersects the \
+                    family's result region, placement rejects with InternalDependency.",
         });
     }
 
