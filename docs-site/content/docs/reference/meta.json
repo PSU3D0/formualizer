@@ -5,6 +5,7 @@
     "rust-api-map",
     "python-api-map",
     "js-wasm-api-map",
+    "cycle-config",
     "errors-and-types",
     "functions"
   ]

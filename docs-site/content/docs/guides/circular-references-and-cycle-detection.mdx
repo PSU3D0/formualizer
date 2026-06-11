@@ -1,0 +1,141 @@
+---
+title: Circular References and Runtime Cycle Detection
+description: Resolve guarded and routing-switch cycles to values with runtime cycle detection, while real cycles still surface #CIRC!.
+---
+
+By default, Formualizer treats every statically circular group of cells as an error: it stamps each member `#CIRC!` the moment the dependency graph closes a loop. That is correct for genuine circular references, but it is too aggressive for a common class of spreadsheet that is only *structurally* circular — the live data path never actually loops.
+
+**Runtime cycle detection** (RFC [#112](https://github.com/PSU3D0/formualizer/pull/112)) keeps the static cycle as a *candidate*, then watches the edges that actually fire during evaluation. If the live edges are acyclic, the cells get ordinary values; only cells that participate in a real, live cycle receive `#CIRC!`.
+
+## The problem: guarded and routing-switch cycles
+
+Consider the classic guarded pair from discussion [#99](https://github.com/PSU3D0/formualizer/discussions/99):
+
+```text
+A1 = TRUE              (a boolean guard)
+A2 = IF(A1, 555, A3)
+A3 = IF(A1, A2, 999)
+```
+
+A2 references A3 and A3 references A2, so the *static* graph has a cycle. But for any concrete value of the guard, only one branch of each `IF` is live:
+
+- `A1 = TRUE`  → A2 takes `555`, A3 takes `A2` → both resolve to `555`.
+- `A1 = FALSE` → A2 takes `A3`, A3 takes `999` → both resolve to `999`.
+
+The same shape shows up in routing switches (a `CHOOSE`/`SWITCH` that selects one of several mutually-referencing branches) and in many financial models. Under static detection these all collapse to `#CIRC!`, even though no value ever depends on itself.
+
+## Static vs Runtime detection
+
+`CycleDetection` has two modes:
+
+| Mode | Behavior | Default |
+|------|----------|---------|
+| `Static` | Every static SCC is stamped `#CIRC!` on sight. No live-edge machinery runs. | Yes |
+| `Runtime` | Static SCCs are candidates; members evaluate with live-edge recording, and only *live* cycles get the policy verdict. | Opt-in |
+
+`Static` remains the default, byte-for-byte compatible with prior releases. `Runtime` is strictly opt-in.
+
+Under `Runtime`, a static SCC whose live edges turn out to be acyclic is called a **phantom cycle**. Phantom cycles produce ordinary values; they are not errors and do not count toward cycle telemetry.
+
+## Try it
+
+Toggle the guard cell and watch the values flip. Switch the detection mode to **Static** to see the same workbook collapse to `#CIRC!`.
+
+<GuardedPairSandbox />
+
+## Configuration
+
+Runtime detection is set on the engine's cycle config. The policy for *live* cycles stays `Error` here — we are only changing how candidates are confirmed, not what happens to real cycles.
+
+<CodeTabs
+  title="Enable runtime cycle detection"
+  rust={`use formualizer_eval::engine::{CycleConfig, CycleDetection, CyclePolicy, EvalConfig};
+use formualizer_workbook::{Workbook, WorkbookConfig};
+
+let mut cfg = WorkbookConfig::interactive();
+cfg.eval = cfg.eval.with_cycle(CycleConfig {
+    detection: CycleDetection::Runtime,
+    policy: CyclePolicy::Error, // live cycles still produce #CIRC!
+});
+
+let mut wb = Workbook::new_with_config(cfg);
+wb.add_sheet("Sheet1")?;
+wb.set_value("Sheet1", 1, 1, true.into())?;            // A1 guard
+wb.set_formula("Sheet1", 2, 1, "=IF(A1,555,A3)")?;     // A2
+wb.set_formula("Sheet1", 3, 1, "=IF(A1,A2,999)")?;     // A3
+wb.evaluate_all()?;
+assert_eq!(wb.evaluate_cell("Sheet1", 2, 1)?, 555.0.into());`}
+  python={`import formualizer as fz
+
+cfg = fz.EvaluationConfig()
+cfg.cycle_detection = "runtime"   # "static" (default) | "runtime"
+cfg.cycle_policy = "error"        # live cycles still produce #CIRC!
+
+wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
+wb.add_sheet("Sheet1")
+wb.set_value("Sheet1", 1, 1, True)              # A1 guard
+wb.set_formula("Sheet1", 2, 1, "=IF(A1,555,A3)")  # A2
+wb.set_formula("Sheet1", 3, 1, "=IF(A1,A2,999)")  # A3
+wb.evaluate_all()
+assert wb.get_value("Sheet1", 2, 1) == 555.0`}
+  ts={`import init, { Workbook } from "formualizer";
+
+await init();
+
+// The cycle config flows through the *load* entry points
+// (fromJsonWithOptions / fromXlsxBytesWithOptions), not the plain
+// constructor. Build a small JSON workbook and pass the options.
+const json = JSON.stringify({
+  version: 1,
+  sheets: {
+    Sheet1: {
+      cells: [
+        { row: 1, col: 1, value: { type: "Boolean", value: true } }, // A1
+        { row: 2, col: 1, formula: "=IF(A1,555,A3)" },                // A2
+        { row: 3, col: 1, formula: "=IF(A1,A2,999)" },                // A3
+      ],
+    },
+  },
+});
+
+const wb = Workbook.fromJsonWithOptions(json, { cycleDetection: "runtime" });
+wb.evaluateAll();
+console.log(wb.evaluateCell("Sheet1", 2, 1)); // 555`}
+  runnable={false}
+/>
+
+<Callout type="info">
+In the WASM binding, cycle config is accepted only through the load entry points
+(`fromJsonWithOptions`, `fromXlsxBytesWithOptions`). The plain `new Workbook()`
+constructor always uses the default (`Static` / `Error`). Build a JSON or XLSX
+workbook and load it with options to opt into runtime detection.
+</Callout>
+
+## What changes (and what does not)
+
+- **Phantom cycles produce values.** A static SCC whose live edges are acyclic resolves to ordinary values.
+- **Real cycles still get `#CIRC!`.** A genuinely live cycle (for example `A1 = B1 + 1`, `B1 = A1 + 1`) is confined to its live-cycle members and stamped `#CIRC!`.
+- **Blast radius is the live cycle, not the static SCC.** Only cells on the live loop are stamped. A member of the static SCC that is *not* on the live loop keeps its value.
+- **Direct self-reference is still rejected at edit time.** Writing `=A1+1` into `A1` is refused when the formula is set ("Self-reference detected") in both modes; runtime detection does not relax that ingest rule. (Iterative calculation is the exception — see the [iterative calculation guide](/docs/guides/iterative-calculation).)
+- **Determinism is preserved.** Members are evaluated in a stable order, so a given workbook + guard state always produces the same values.
+
+## Telemetry
+
+Under runtime detection the engine records per-recalc cycle counters. The Python binding exposes them via `Workbook.last_cycle_telemetry()`:
+
+```python
+t = wb.last_cycle_telemetry()
+print(t.static_sccs)          # static SCCs considered this recalc
+print(t.phantom_sccs)         # SCCs that turned out acyclic at runtime
+print(t.live_cycles_witnessed)
+print(t.circ_cells_stamped)   # cells stamped #CIRC!
+```
+
+The WASM binding does not expose telemetry today; its cycle surface is config-only.
+
+## Related
+
+- [Iterative Calculation (Excel Parity)](/docs/guides/iterative-calculation)
+- [Cycle Configuration Reference](/docs/reference/cycle-config)
+- [Dependency Graph and Recalculation](/docs/core-concepts/dependency-graph-and-recalc)
+- [Errors and Types](/docs/reference/errors-and-types)

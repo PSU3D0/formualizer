@@ -1,0 +1,153 @@
+---
+title: Iterative Calculation (Excel Parity)
+description: Enable Excel-style iterative calculation for convergent cycles, accumulators, and self-referential timestamps, with convergence semantics and XLSX calcPr round-trip.
+---
+
+Some spreadsheets *intentionally* depend on a value computed from themselves: a circular interest calculation, a mutual fixed-point, an accumulator that advances one step per recalc, or a self-referential timestamp. Excel supports these through **iterative calculation** — it re-runs the circular group until the numbers settle or a pass budget is exhausted.
+
+Formualizer ships the same behavior under `CyclePolicy::Iterate` (RFC [#113](https://github.com/PSU3D0/formualizer/pull/113)). It builds on [runtime cycle detection](/docs/guides/circular-references-and-cycle-detection): iteration requires `CycleDetection::Runtime`, and selecting the iterate policy promotes detection to runtime automatically.
+
+## Enabling iterative calculation
+
+Iterative calculation has two knobs, with Excel's defaults:
+
+- **`max_iterations`** — total passes per cycle per recalc (Excel default **100**). `1` means each member evaluates exactly once per recalc (the accumulator contract). `0` is a config error.
+- **`max_change`** — the absolute convergence threshold (Excel default **0.001**). A member is settled when `|Δ| < max_change`. Negative or non-finite values are config errors.
+
+<CodeTabs
+  title="Enable Excel-default iterative calculation"
+  rust={`use formualizer_eval::engine::CycleConfig;
+use formualizer_workbook::{Workbook, WorkbookConfig};
+
+let mut cfg = WorkbookConfig::interactive();
+// Runtime detection + Iterate { max_iterations: 100, max_change: 0.001 }
+cfg.eval = cfg.eval.with_cycle(CycleConfig::iterate_excel_defaults());
+// ...or explicit knobs: CycleConfig::iterate(50, 0.0001)
+
+let mut wb = Workbook::new_with_config(cfg);`}
+  python={`import formualizer as fz
+
+cfg = fz.EvaluationConfig()
+cfg.cycle_policy = "iterate"        # promotes detection to "runtime"
+cfg.iterate_max_iterations = 100    # Excel default
+cfg.iterate_max_change = 0.001      # Excel default
+
+wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))`}
+  ts={`import init, { Workbook } from "formualizer";
+
+await init();
+
+// Cycle config flows through the load entry points. Setting cyclePolicy
+// "iterate" (or any iterate* knob) implies runtime detection.
+const wb = Workbook.fromJsonWithOptions(json, {
+  cyclePolicy: "iterate",
+  iterateMaxIterations: 100,
+  iterateMaxChange: 0.001,
+});`}
+  runnable={false}
+/>
+
+## Convergence semantics, in user terms
+
+- **`max_change` is absolute.** A member converges when its value moves by less than `max_change` between passes — there is no relative/percentage mode. The comparison is strict (`|Δ| < max_change`), matching Excel.
+- **Members run in a stable order, committing as they go.** Within a pass the engine evaluates each cycle member in order and commits each result before the next member runs (Gauss–Seidel), so later members in the same pass already see the updated values.
+- **Hitting the cap is not an error.** When a cycle does not converge within `max_iterations` passes, the engine keeps the last values and moves on — exactly like Excel. Telemetry records it as a "capped" cycle, but no `#CIRC!` is stamped.
+
+## Worked examples
+
+### Circular interest / mutual fixed-point
+
+A pair that settles on a fixed point: `B1 = 0.5*A1 + 0.5*C1`, `C1 = 0.5*B1 + 0.5*D1`, with `A1 = 10`, `D1 = 20`. The exact solution is `B1 = 40/3 ≈ 13.3333`, `C1 = 50/3 ≈ 16.6667`. Drag the max-change slider to watch convergence tighten or loosen.
+
+<ConvergentCycleSandbox />
+
+<CodeTabs
+  title="Convergent pair + read telemetry (Python)"
+  python={`import formualizer as fz
+
+cfg = fz.EvaluationConfig()
+cfg.cycle_policy = "iterate"
+wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
+wb.add_sheet("S")
+wb.set_value("S", 1, 1, 10)   # A1
+wb.set_value("S", 1, 4, 20)   # D1
+wb.set_formula("S", 1, 2, "=0.5*A1 + 0.5*C1")  # B1
+wb.set_formula("S", 1, 3, "=0.5*B1 + 0.5*D1")  # C1
+wb.evaluate_all()
+
+assert abs(wb.get_value("S", 1, 2) - 40 / 3) < 0.01
+
+t = wb.last_cycle_telemetry()
+print("converged:", t.converged_sccs == 1)   # did it converge?
+print("capped:", t.capped_sccs)               # 0 -> settled before the cap
+print("final delta:", t.max_abs_delta_at_stop)`}
+  runnable={false}
+/>
+
+### The accumulator (`=A2+1`, one step per recalc)
+
+With `max_iterations: 1`, a self-referential cell advances exactly one step per recalculation request. Click **Recalc** to tick it up by one each time.
+
+<AccumulatorSandbox />
+
+<CodeTabs
+  title="Accumulator advances once per recalc"
+  python={`import formualizer as fz
+
+cfg = fz.EvaluationConfig()
+cfg.cycle_policy = "iterate"
+cfg.iterate_max_iterations = 1   # one pass per recalc
+wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
+wb.add_sheet("S")
+wb.set_formula("S", 1, 1, "=A1+1")
+
+wb.evaluate_all()
+assert wb.get_value("S", 1, 1) == 1.0   # one step
+wb.evaluate_all()
+assert wb.get_value("S", 1, 1) == 2.0   # another step
+
+# The accumulator never converges, so each recalc caps at one pass.
+assert wb.last_cycle_telemetry().capped_sccs == 1`}
+  runnable={false}
+/>
+
+<Callout type="info">
+With iterative calculation enabled, a direct self-reference like `=A1+1` in `A1`
+is accepted at edit time — this is the one case where the normal
+"Self-reference detected" ingest rejection is lifted, matching Excel.
+</Callout>
+
+### The self-referential timestamp
+
+A cell that stamps "now" the first time it is touched and then holds steady is the iterative form of an audit timestamp: `=IF(A1=0, NOW(), A1)`. With iteration enabled and the input guard transitioning once, the cell records a value and subsequent recalcs leave it in place (the live edge keeps reading the already-stamped value). This is the iterative-calculation idiom behind Excel's "timestamp on entry" trick.
+
+## Reading convergence telemetry
+
+The engine records a `CycleTelemetry` snapshot per recalc, reset at the start of every evaluation request. Useful fields for answering "did it converge?":
+
+| Field | Meaning |
+|-------|---------|
+| `iterated_sccs` | cycles that ran the iterate policy this recalc |
+| `converged_sccs` | cycles that settled within the cap |
+| `capped_sccs` | cycles that hit `max_iterations` (kept last values, not an error) |
+| `settle_passes_total` | total passes across all cycles |
+| `max_passes_single_scc` | worst-case passes for one cycle |
+| `max_abs_delta_at_stop` | largest per-member delta at the stopping point |
+| `elapsed_ms` | wall time spent in cycle settling |
+
+The Python binding exposes this via `Workbook.last_cycle_telemetry()` (see examples above). **The WASM binding is config-only today** — it accepts the iterate config but does not yet surface telemetry.
+
+## XLSX `calcPr` round-trip
+
+Iterative calculation is part of the workbook file format. Formualizer round-trips the `<calcPr>` element (spec §9):
+
+- **Save:** when the active policy is `Iterate`, the written `.xlsx` carries `iterate="1" iterateCount="<max_iterations>" iterateDelta="<max_change>"`. Files saved with iteration enabled open correctly in Excel with the same settings.
+- **Load:** when a loaded `.xlsx` has `iterate="1"`, the engine adopts `Iterate { max_iterations: iterateCount ?? 100, max_change: iterateDelta ?? 0.001 }` and promotes detection to `Runtime`. Files saved by Excel with iteration enabled open correctly here.
+- **File-wins precedence on load.** A loaded file with `iterate="1"` turns iteration on even if your config requested the `Error` policy — the file's calculation settings take precedence. A file with `iterate="0"` (or no `<calcPr>`) leaves your configured policy untouched.
+
+## Related
+
+- [Circular References and Runtime Cycle Detection](/docs/guides/circular-references-and-cycle-detection)
+- [Cycle Configuration Reference](/docs/reference/cycle-config)
+- [Workbook Edits and Batching](/docs/guides/workbook-edits-and-batching)
+- [Python API Map](/docs/reference/python-api-map)
