@@ -5,8 +5,12 @@
 //! PERCENTILE.INC, PERCENTILE.EXC, QUARTILE.INC, QUARTILE.EXC.
 //!
 //! Notes:
-//! - We currently materialize numeric values into a Vec<f64>. For large ranges this could be
-//!   optimized with streaming selection algorithms (nth_element / partial sort). TODO(perf).
+//! - We materialize numeric values into a Vec<f64>. Functions that need only one or two order
+//!   statistics (LARGE, SMALL, MEDIAN, PERCENTILE.INC/.EXC, QUARTILE.INC/.EXC) use quickselect
+//!   (`select_nth_unstable_by`) instead of a full sort. Functions that need the complete sorted
+//!   order keep the sort: RANK.EQ/RANK.AVG (positional scan), MODE.SNGL/MODE.MULT (run-length
+//!   over sorted order), TRIMMEAN (f64 summation order over the sorted middle slice must stay
+//!   bit-identical), PERCENTRANK.INC/.EXC (interpolating scan), FREQUENCY (sorted bins).
 //! - Text/boolean coercion nuance: For Excel statistical functions, values coming from range
 //!   references should ignore text and logical values (they are skipped), while direct scalar
 //!   arguments still coerce (e.g. =STDEV(1,TRUE) treats TRUE as 1). This file now implements that
@@ -87,36 +91,79 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
     Ok(out)
 }
 
-fn percentile_inc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
-    if sorted.is_empty() {
+/* ─────────────── order-statistic selection (quickselect) ───────────────
+ *
+ * LARGE/SMALL/MEDIAN and the PERCENTILE/QUARTILE family need at most two
+ * adjacent order statistics, so a full O(n log n) sort is wasted work;
+ * `select_nth_unstable_by` (quickselect) finds them in expected O(n).
+ *
+ * The comparator is byte-for-byte the one used by the full sorts it
+ * replaces (`partial_cmp().unwrap()`): `collect_numeric_stats` only yields
+ * coerced finite numerics, and a NaN would have panicked the old sort the
+ * same way. Ties are exact duplicates for f64s compared `Equal` (modulo
+ * the ±0.0 sign bit), so the selected element is bit-identical to the
+ * sorted element at the same index.
+ */
+
+/// k-th order statistic (0-based, ascending). Reorders `nums` in place.
+fn nth_smallest(nums: &mut [f64], k: usize) -> f64 {
+    let (_, kth, _) = nums.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
+    *kth
+}
+
+/// The adjacent order statistics (k, k+1) ascending: one quickselect for k,
+/// then the (k+1)-th is the minimum of the right partition.
+/// Requires `k + 1 < nums.len()`.
+fn adjacent_smallest(nums: &mut [f64], k: usize) -> (f64, f64) {
+    let (_, kth, right) = nums.select_nth_unstable_by(k, |a, b| a.partial_cmp(b).unwrap());
+    let kth = *kth;
+    let mut next = right[0];
+    for &v in &right[1..] {
+        if v < next {
+            next = v;
+        }
+    }
+    (kth, next)
+}
+
+/// PERCENTILE.INC over unsorted data (reorders `nums`): rank = p*(n-1) on
+/// the ascending order needs at most the two adjacent order statistics
+/// around the rank. The interpolation formula is unchanged from the old
+/// full-sort implementation.
+fn percentile_inc(nums: &mut [f64], p: f64) -> Result<f64, ExcelError> {
+    if nums.is_empty() {
         return Err(ExcelError::new_num());
     }
     if !(0.0..=1.0).contains(&p) {
         return Err(ExcelError::new_num());
     }
-    if sorted.len() == 1 {
-        return Ok(sorted[0]);
+    if nums.len() == 1 {
+        return Ok(nums[0]);
     }
-    let n = sorted.len() as f64;
+    let n = nums.len() as f64;
     let rank = p * (n - 1.0); // 0-based rank
     let lo = rank.floor() as usize;
     let hi = rank.ceil() as usize;
     if lo == hi {
-        return Ok(sorted[lo]);
+        return Ok(nth_smallest(nums, lo));
     }
+    // hi == lo + 1 whenever rank is fractional.
     let frac = rank - (lo as f64);
-    Ok(sorted[lo] + (sorted[hi] - sorted[lo]) * frac)
+    let (lo_v, hi_v) = adjacent_smallest(nums, lo);
+    Ok(lo_v + (hi_v - lo_v) * frac)
 }
 
-fn percentile_exc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
-    // Excel PERCENTILE.EXC requires 0 < p < 1 and uses (n+1) basis; invalid if rank<1 or >n
-    if sorted.is_empty() {
+/// PERCENTILE.EXC over unsorted data (reorders `nums`); (n+1) rank basis,
+/// invalid when rank < 1 or > n. Same selection strategy as
+/// [`percentile_inc`]; interpolation formula unchanged.
+fn percentile_exc(nums: &mut [f64], p: f64) -> Result<f64, ExcelError> {
+    if nums.is_empty() {
         return Err(ExcelError::new_num());
     }
     if !(0.0..=1.0).contains(&p) || p <= 0.0 || p >= 1.0 {
         return Err(ExcelError::new_num());
     }
-    let n = sorted.len() as f64;
+    let n = nums.len() as f64;
     let rank = p * (n + 1.0); // 1..n domain
     if rank < 1.0 || rank > n {
         return Err(ExcelError::new_num());
@@ -124,12 +171,13 @@ fn percentile_exc(sorted: &[f64], p: f64) -> Result<f64, ExcelError> {
     let lo = rank.floor();
     let hi = rank.ceil();
     if (lo - hi).abs() < f64::EPSILON {
-        return Ok(sorted[(lo as usize) - 1]);
+        return Ok(nth_smallest(nums, (lo as usize) - 1));
     }
+    // hi_idx == lo_idx + 1 whenever rank is fractional.
     let frac = rank - lo;
     let lo_idx = (lo as usize) - 1;
-    let hi_idx = (hi as usize) - 1;
-    Ok(sorted[lo_idx] + (sorted[hi_idx] - sorted[lo_idx]) * frac)
+    let (lo_v, hi_v) = adjacent_smallest(nums, lo_idx);
+    Ok(lo_v + (hi_v - lo_v) * frac)
 }
 
 /// Returns the rank position of a number within a data set, with ties sharing the same rank.
@@ -464,10 +512,10 @@ impl Function for LARGE {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| b.partial_cmp(a).unwrap());
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            nums[(k as usize) - 1],
-        )))
+        // k-th largest == (n-k)-th smallest: quickselect instead of full sort.
+        let idx = nums.len() - k as usize;
+        let v = nth_smallest(&mut nums, idx);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v)))
     }
 }
 
@@ -564,10 +612,9 @@ impl Function for SMALL {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            nums[(k as usize) - 1],
-        )))
+        // k-th smallest: quickselect instead of full sort.
+        let v = nth_smallest(&mut nums, k as usize - 1);
+        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v)))
     }
 }
 
@@ -645,13 +692,14 @@ impl Function for MEDIAN {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // Middle one/two order statistics: quickselect instead of full sort.
         let n = nums.len();
         let mid = n / 2;
         let med = if n % 2 == 1 {
-            nums[mid]
+            nth_smallest(&mut nums, mid)
         } else {
-            (nums[mid - 1] + nums[mid]) / 2.0
+            let (lo, hi) = adjacent_smallest(&mut nums, mid - 1);
+            (lo + hi) / 2.0
         };
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(med)))
     }
@@ -1323,8 +1371,7 @@ impl Function for PercentileInc {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        match percentile_inc(&nums, p) {
+        match percentile_inc(&mut nums, p) {
             Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
             Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
@@ -1420,8 +1467,7 @@ impl Function for PercentileExc {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        match percentile_exc(&nums, p) {
+        match percentile_exc(&mut nums, p) {
             Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
             Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
@@ -1526,17 +1572,15 @@ impl Function for QuartileInc {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = match q_i {
             0 => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-                    nums[0],
-                )));
+                let v = nth_smallest(&mut nums, 0);
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v)));
             }
             4 => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-                    nums[nums.len() - 1],
-                )));
+                let idx = nums.len() - 1;
+                let v = nth_smallest(&mut nums, idx);
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v)));
             }
             1 => 0.25,
             2 => 0.5,
@@ -1547,7 +1591,7 @@ impl Function for QuartileInc {
                 )));
             }
         };
-        match percentile_inc(&nums, p) {
+        match percentile_inc(&mut nums, p) {
             Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
             Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
@@ -1653,7 +1697,6 @@ impl Function for QuartileExc {
                 ExcelError::new_num(),
             )));
         }
-        nums.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = match q_i {
             1 => 0.25,
             2 => 0.5,
@@ -1664,7 +1707,7 @@ impl Function for QuartileExc {
                 )));
             }
         };
-        match percentile_exc(&nums, p) {
+        match percentile_exc(&mut nums, p) {
             Ok(v) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(v))),
             Err(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         }
@@ -10880,5 +10923,223 @@ mod tests_basic_stats {
             .unwrap()
             .into_literal();
         assert_eq!(out, LiteralValue::Number(0.0));
+    }
+}
+
+#[cfg(test)]
+mod tests_selection_vs_sort_oracle {
+    //! Property tests: the quickselect paths must be bit-identical to the
+    //! previous full-sort implementations (the "oracle" below reproduces the
+    //! removed sort-based code exactly).
+
+    use super::*;
+    use rand::rngs::SmallRng;
+    use rand::{Rng, SeedableRng};
+
+    /* ───── full-sort reference oracle (the pre-quickselect implementation) ───── */
+
+    fn sorted_asc(data: &[f64]) -> Vec<f64> {
+        let mut s = data.to_vec();
+        s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        s
+    }
+
+    fn oracle_large(data: &[f64], k: usize) -> f64 {
+        let mut s = data.to_vec();
+        s.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        s[k - 1]
+    }
+
+    fn oracle_small(data: &[f64], k: usize) -> f64 {
+        sorted_asc(data)[k - 1]
+    }
+
+    fn oracle_median(data: &[f64]) -> f64 {
+        let s = sorted_asc(data);
+        let n = s.len();
+        let mid = n / 2;
+        if n % 2 == 1 {
+            s[mid]
+        } else {
+            (s[mid - 1] + s[mid]) / 2.0
+        }
+    }
+
+    fn oracle_percentile_inc(data: &[f64], p: f64) -> Result<f64, ExcelError> {
+        let sorted = sorted_asc(data);
+        if sorted.is_empty() || !(0.0..=1.0).contains(&p) {
+            return Err(ExcelError::new_num());
+        }
+        if sorted.len() == 1 {
+            return Ok(sorted[0]);
+        }
+        let n = sorted.len() as f64;
+        let rank = p * (n - 1.0);
+        let lo = rank.floor() as usize;
+        let hi = rank.ceil() as usize;
+        if lo == hi {
+            return Ok(sorted[lo]);
+        }
+        let frac = rank - (lo as f64);
+        Ok(sorted[lo] + (sorted[hi] - sorted[lo]) * frac)
+    }
+
+    fn oracle_percentile_exc(data: &[f64], p: f64) -> Result<f64, ExcelError> {
+        let sorted = sorted_asc(data);
+        if sorted.is_empty() || !(0.0..=1.0).contains(&p) || p <= 0.0 || p >= 1.0 {
+            return Err(ExcelError::new_num());
+        }
+        let n = sorted.len() as f64;
+        let rank = p * (n + 1.0);
+        if rank < 1.0 || rank > n {
+            return Err(ExcelError::new_num());
+        }
+        let lo = rank.floor();
+        let hi = rank.ceil();
+        if (lo - hi).abs() < f64::EPSILON {
+            return Ok(sorted[(lo as usize) - 1]);
+        }
+        let frac = rank - lo;
+        let lo_idx = (lo as usize) - 1;
+        let hi_idx = (hi as usize) - 1;
+        Ok(sorted[lo_idx] + (sorted[hi_idx] - sorted[lo_idx]) * frac)
+    }
+
+    fn assert_bits_eq(new: f64, old: f64, what: &str, data: &[f64]) {
+        assert_eq!(
+            new.to_bits(),
+            old.to_bits(),
+            "{what}: selection {new:?} != sort oracle {old:?} for {data:?}"
+        );
+    }
+
+    /// 1000 seeded random vectors (mixed continuous values and a small grid
+    /// to force exact-duplicate ties) x random k / percentile.
+    #[test]
+    fn quickselect_paths_match_full_sort_oracle_bitwise() {
+        let mut rng = SmallRng::seed_from_u64(0x5EED_57A7_u64);
+        for _case in 0..1000 {
+            let n = rng.gen_range(1..=64);
+            let data: Vec<f64> = (0..n)
+                .map(|_| {
+                    if rng.gen_bool(0.35) {
+                        // Tie-heavy grid: exact duplicates are common.
+                        f64::from(rng.gen_range(-4i32..=4)) * 0.5
+                    } else {
+                        rng.gen_range(-1.0e6..1.0e6)
+                    }
+                })
+                .collect();
+
+            // LARGE / SMALL across every k (includes k == 1 and k == n).
+            for k in 1..=n {
+                let mut buf = data.clone();
+                let idx = buf.len() - k;
+                assert_bits_eq(
+                    nth_smallest(&mut buf, idx),
+                    oracle_large(&data, k),
+                    "LARGE",
+                    &data,
+                );
+                let mut buf = data.clone();
+                assert_bits_eq(
+                    nth_smallest(&mut buf, k - 1),
+                    oracle_small(&data, k),
+                    "SMALL",
+                    &data,
+                );
+            }
+
+            // MEDIAN (odd and even n both covered across cases).
+            {
+                let mut buf = data.clone();
+                let mid = buf.len() / 2;
+                let med = if buf.len() % 2 == 1 {
+                    nth_smallest(&mut buf, mid)
+                } else if buf.len() >= 2 {
+                    let (lo, hi) = adjacent_smallest(&mut buf, mid - 1);
+                    (lo + hi) / 2.0
+                } else {
+                    buf[0]
+                };
+                assert_bits_eq(med, oracle_median(&data), "MEDIAN", &data);
+            }
+
+            // PERCENTILE.INC / .EXC with random p, plus the exact endpoints
+            // and quartile points (0.25/0.5/0.75 also covers QUARTILE.*).
+            let ps = [
+                rng.r#gen::<f64>(),
+                0.0,
+                0.25,
+                0.5,
+                0.75,
+                1.0,
+                rng.gen_range(-0.5..1.5), // sometimes out of range
+            ];
+            for p in ps {
+                let mut buf = data.clone();
+                match (percentile_inc(&mut buf, p), oracle_percentile_inc(&data, p)) {
+                    (Ok(a), Ok(b)) => assert_bits_eq(a, b, "PERCENTILE.INC", &data),
+                    (Err(ea), Err(eb)) => assert_eq!(ea.kind, eb.kind),
+                    (a, b) => panic!("PERCENTILE.INC divergence p={p}: {a:?} vs {b:?}"),
+                }
+                let mut buf = data.clone();
+                match (percentile_exc(&mut buf, p), oracle_percentile_exc(&data, p)) {
+                    (Ok(a), Ok(b)) => assert_bits_eq(a, b, "PERCENTILE.EXC", &data),
+                    (Err(ea), Err(eb)) => assert_eq!(ea.kind, eb.kind),
+                    (a, b) => panic!("PERCENTILE.EXC divergence p={p}: {a:?} vs {b:?}"),
+                }
+            }
+        }
+    }
+
+    /// Empty input keeps the error contract.
+    #[test]
+    fn percentile_empty_input_still_num_error() {
+        let mut empty: Vec<f64> = vec![];
+        assert!(percentile_inc(&mut empty, 0.5).is_err());
+        assert!(percentile_exc(&mut empty, 0.5).is_err());
+    }
+
+    /// Perf probe (run explicitly):
+    /// `cargo test -p formualizer-eval --release --lib large_quickselect_perf_probe -- --ignored --nocapture`
+    #[test]
+    #[ignore = "perf probe; run manually with --release --nocapture"]
+    fn large_quickselect_perf_probe() {
+        let mut rng = SmallRng::seed_from_u64(42);
+        let data: Vec<f64> = (0..100_000).map(|_| rng.gen_range(-1.0e9..1.0e9)).collect();
+        let k = 50usize;
+        let rounds = 50u32;
+
+        let t = std::time::Instant::now();
+        let mut old_v = 0.0;
+        for _ in 0..rounds {
+            let mut s = data.clone();
+            s.sort_by(|a, b| b.partial_cmp(a).unwrap());
+            old_v = s[k - 1];
+        }
+        let old_t = t.elapsed();
+
+        let t = std::time::Instant::now();
+        let mut new_v = 0.0;
+        for _ in 0..rounds {
+            let mut s = data.clone();
+            let idx = s.len() - k;
+            new_v = nth_smallest(&mut s, idx);
+        }
+        let new_t = t.elapsed();
+
+        println!(
+            "LARGE over 100k x{rounds}: full-sort {:?} ({:?}/op), quickselect {:?} ({:?}/op)",
+            old_t,
+            old_t / rounds,
+            new_t,
+            new_t / rounds
+        );
+        assert_eq!(new_v.to_bits(), old_v.to_bits());
+        assert!(
+            new_t < old_t,
+            "quickselect should beat a full sort on 100k values"
+        );
     }
 }

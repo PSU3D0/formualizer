@@ -287,10 +287,13 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 /// Variadic: false
 /// Signature: IFERROR(arg1: any@scalar, arg2: any@scalar)
 /// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
-/// Caps: PURE
+/// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfErrorFn {
-    func_caps!(PURE);
+    // SHORT_CIRCUIT: dispatch must not eagerly evaluate the fallback arm —
+    // the eval body below evaluates arg0 first and touches arg1 only when
+    // arg0 produced an error (same defect class as the IF fix in #118).
+    func_caps!(PURE, SHORT_CIRCUIT);
     fn name(&self) -> &'static str {
         "IFERROR"
     }
@@ -370,10 +373,12 @@ pub struct IfNaFn; // IFNA(value, fallback)
 /// Variadic: false
 /// Signature: IFNA(arg1: any@scalar, arg2: any@scalar)
 /// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
-/// Caps: PURE
+/// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfNaFn {
-    func_caps!(PURE);
+    // SHORT_CIRCUIT: the fallback arm is evaluated only when arg0 is #N/A;
+    // all other values/errors pass through without touching arg1.
+    func_caps!(PURE, SHORT_CIRCUIT);
     fn name(&self) -> &'static str {
         "IFNA"
     }

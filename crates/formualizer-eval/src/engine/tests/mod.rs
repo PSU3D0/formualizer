@@ -144,6 +144,7 @@ mod visibility_mask_cache;
 mod csr_rebuild_amortization;
 mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
+mod iferror_ifna_lazy;
 mod iterate_corpus_chains;
 mod iterate_corpus_interactions;
 mod iterate_corpus_numeric;
