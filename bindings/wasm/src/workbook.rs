@@ -521,9 +521,22 @@ impl Drop for Workbook {
 
 #[wasm_bindgen]
 impl Workbook {
+    /// Construct an empty workbook, optionally with load options, e.g.
+    /// `{ cyclePolicy: "iterate", iterateMaxIterations: 50 }` to enable
+    /// iterative calculation for circular references (RFC #113, spec §2).
+    ///
+    /// `new Workbook()` (no arguments) behaves exactly as before: the
+    /// missing/undefined/null options map to the default interactive config.
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Workbook {
-        Workbook::default()
+    pub fn new(options: Option<JsValue>) -> Result<Workbook, JsValue> {
+        let cfg = workbook_config_from_options(options)?;
+        Ok(Workbook {
+            inner: Arc::new(RwLock::new(
+                formualizer::workbook::Workbook::new_with_config(cfg),
+            )),
+            cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
+        })
     }
 
     /// Construct from a JSON workbook string (feature: json)
@@ -1066,6 +1079,79 @@ impl Workbook {
             .map_err(|_| js_error("failed to lock workbook for write"))?
             .redo()
             .map_err(|e| js_error(format!("redo failed: {e}")))
+    }
+
+    /// Telemetry from runtime SCC / iterative-calculation evaluation during
+    /// the most recent evaluation request (RFC #113, spec §10).
+    ///
+    /// Mirrors the engine accessor of the same name: counters reset at the
+    /// start of every evaluation request, so this always describes the LAST
+    /// `evaluateAll()` / `evaluateCell(s)` call. All-zero when cycle
+    /// detection is `"static"` or nothing cyclic was evaluated.
+    #[wasm_bindgen(js_name = "lastCycleTelemetry")]
+    pub fn last_cycle_telemetry(&self) -> Result<JsValue, JsValue> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let t = wb.engine().last_cycle_telemetry();
+
+        let obj = js_sys::Object::new();
+        set(&obj, "staticSccs", JsValue::from_f64(t.static_sccs as f64))?;
+        set(
+            &obj,
+            "phantomSccs",
+            JsValue::from_f64(t.phantom_sccs as f64),
+        )?;
+        set(
+            &obj,
+            "liveCyclesWitnessed",
+            JsValue::from_f64(t.live_cycles_witnessed as f64),
+        )?;
+        set(
+            &obj,
+            "circCellsStamped",
+            JsValue::from_f64(t.circ_cells_stamped as f64),
+        )?;
+        set(
+            &obj,
+            "settlePassesTotal",
+            JsValue::from_f64(t.settle_passes_total as f64),
+        )?;
+        set(
+            &obj,
+            "maxPassesSingleScc",
+            JsValue::from_f64(t.max_passes_single_scc as f64),
+        )?;
+        set(
+            &obj,
+            "iteratedSccs",
+            JsValue::from_f64(t.iterated_sccs as f64),
+        )?;
+        set(
+            &obj,
+            "convergedSccs",
+            JsValue::from_f64(t.converged_sccs as f64),
+        )?;
+        set(&obj, "cappedSccs", JsValue::from_f64(t.capped_sccs as f64))?;
+        set(
+            &obj,
+            "maxAbsDeltaAtStop",
+            JsValue::from_f64(t.max_abs_delta_at_stop),
+        )?;
+        set(
+            &obj,
+            "nanConverged",
+            JsValue::from_f64(t.nan_converged as f64),
+        )?;
+        // u128 -> u64 saturation mirrors the Python binding; the u64 -> f64
+        // conversion is then lossless for any realistic duration.
+        set(
+            &obj,
+            "elapsedMs",
+            JsValue::from_f64(u64::try_from(t.elapsed_ms).unwrap_or(u64::MAX) as f64),
+        )?;
+        Ok(obj.into())
     }
 
     pub(crate) fn inner_arc(&self) -> Arc<RwLock<formualizer::workbook::Workbook>> {
