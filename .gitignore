@@ -10,6 +10,10 @@ opencode.json
 
 *coverage*
 !tests/formula_tests/extended_coverage.json
+# FormulaPlane span-coverage measurement sources (not coverage artifacts)
+!**/fp_coverage.rs
+!**/probe-fp-coverage.rs
+!**/formula_plane_coverage_pinning.rs
 *.xlsx
 test-wb/
 tickets/

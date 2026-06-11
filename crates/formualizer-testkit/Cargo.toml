@@ -9,6 +9,12 @@ repository.workspace = true
 documentation.workspace = true
 publish = false
 
+[features]
+# xlsx fixture helpers (umya-backed). Default-on; disable for dependents that
+# only need the pure generators (e.g. formualizer-eval dev-deps).
+default = ["xlsx"]
+xlsx = ["dep:umya-spreadsheet", "dep:tempfile"]
+
 [dependencies]
-tempfile = { workspace = true }
-umya-spreadsheet = "=2.3.2"
+tempfile = { workspace = true, optional = true }
+umya-spreadsheet = { version = "=2.3.2", optional = true }
