@@ -535,11 +535,6 @@ impl DirtyProjectionRule {
                 col_start,
                 col_end,
             } => {
-                if !row_start.same_kind(row_end) || !col_start.same_kind(col_end) {
-                    return ProjectionResult::Unsupported(
-                        ProjectionFallbackReason::UnsupportedAxis,
-                    );
-                }
                 let dirty_rows =
                     match project_changed_range_axis(row_start, row_end, changed_rows, result_rows)
                     {
@@ -601,14 +596,6 @@ impl AxisProjection {
         }
     }
 
-    fn same_kind(self, other: Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Relative { .. }, Self::Relative { .. })
-                | (Self::Absolute { .. }, Self::Absolute { .. })
-        )
-    }
-
     fn project_changed_axis(
         self,
         changed: AxisRange,
@@ -642,9 +629,12 @@ fn range_source_extent_for_result(
     end: AxisProjection,
     result: BoundedRange,
 ) -> Result<BoundedRange, ProjectionFallbackReason> {
-    if !start.same_kind(end) {
-        return Err(ProjectionFallbackReason::UnsupportedAxis);
-    }
+    // Per placement the read interval on this axis is
+    // [min(start(p), end(p)), max(start(p), end(p))]; both bounds are affine
+    // in the placement index (Relative tracks p, Absolute is constant), so the
+    // union over the bounded result extent is exactly the union of each
+    // bound's own extent. This holds for uniform AND mixed-anchor bounds
+    // (e.g. `$A$2:$A{r}` running totals or `$A{r}:$A$N` tail reads).
     let start_extent = start.source_extent_for_result(result)?;
     let end_extent = end.source_extent_for_result(result)?;
     Ok(start_extent.union(end_extent))
@@ -695,7 +685,31 @@ fn project_changed_range_axis(
             let source = AxisRange::Span(start_index.min(end_index), start_index.max(end_index));
             Ok(source.intersects(changed).then_some(result))
         }
-        _ => Ok(None),
+        // Mixed-anchor axis: one bound pinned (Absolute), one moving with the
+        // placement (Relative). Placement p reads
+        // [min(p + offset, index), max(p + offset, index)] on this axis, so the
+        // inverse of a changed interval [a, b] is a half-open placement
+        // interval:
+        // - index in [a, b]: every placement reads the pinned bound -> all;
+        // - index < a: intersects iff max(p + offset, index) >= a, i.e.
+        //   p + offset >= a (running totals `$2:{p}` with the change below);
+        // - index > b: intersects iff min(p + offset, index) <= b, i.e.
+        //   p + offset <= b (tail reads `{p}:$N` with the change above).
+        (AxisProjection::Relative { offset }, AxisProjection::Absolute { index })
+        | (AxisProjection::Absolute { index }, AxisProjection::Relative { offset }) => {
+            let (changed_low, changed_high) = changed.query_bounds();
+            let projection_offset = offset
+                .checked_neg()
+                .ok_or(ProjectionFallbackReason::CoordinateOverflow)?;
+            let dirty = if changed_low <= index && index <= changed_high {
+                Some(AxisRange::All)
+            } else if index < changed_low {
+                project_axis_range_through_offset(AxisRange::From(changed_low), projection_offset)
+            } else {
+                project_axis_range_through_offset(AxisRange::To(changed_high), projection_offset)
+            };
+            Ok(dirty.and_then(|dirty| intersect_axis_ranges(dirty, result)))
+        }
     }
 }
 
@@ -1418,18 +1432,92 @@ mod tests {
     }
 
     #[test]
-    fn mixed_axis_range_projection_rejects() {
+    fn mixed_axis_running_total_range_projects_half_open_placement_interval() {
+        // `=SUM($A$2:$A{r})` style: absolute start row, placement-relative end
+        // row, fixed column. Result placements rows 1..=120 (0-based) in col 2.
         let projection = DirtyProjectionRule::AffineRange {
-            row_start: AxisProjection::Absolute { index: 0 },
+            row_start: AxisProjection::Absolute { index: 1 },
             row_end: AxisProjection::Relative { offset: 0 },
             col_start: AxisProjection::Absolute { index: 0 },
             col_end: AxisProjection::Absolute { index: 0 },
         };
-        let result = Region::col_interval(0, 2, 0, 9);
+        let result = Region::col_interval(0, 2, 1, 120);
 
+        // Union read region is the full bounding rect [2..=r_max] x col A.
+        let read = projection.read_region_for_result(0, result).unwrap();
+        assert_eq!(read, Region::col_interval(0, 0, 1, 120));
+
+        // A change at row 50 dirties exactly the placements whose expanding
+        // range reaches it: rows 50..=120.
         assert_eq!(
-            projection.read_region_for_result(0, result),
-            Err(ProjectionFallbackReason::UnsupportedAxis)
+            projection.project_changed_region(Region::point(0, 50, 0), read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![Region::col_interval(
+                0, 2, 50, 120
+            )]))
+        );
+        // A change at the pinned start row dirties every placement.
+        assert_eq!(
+            projection.project_changed_region(Region::point(0, 1, 0), read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result]))
+        );
+        // A change outside the union read region is not an intersection.
+        assert_eq!(
+            projection.project_changed_region(Region::point(0, 200, 0), read, result),
+            ProjectionResult::NoIntersection
+        );
+    }
+
+    #[test]
+    fn mixed_axis_tail_read_range_projects_half_open_placement_interval() {
+        // `=SUM($A{r}:$A$N)` style: placement-relative start row, absolute end
+        // row. Result placements rows 1..=100 in col 2; pinned end row 120.
+        let projection = DirtyProjectionRule::AffineRange {
+            row_start: AxisProjection::Relative { offset: 0 },
+            row_end: AxisProjection::Absolute { index: 120 },
+            col_start: AxisProjection::Absolute { index: 0 },
+            col_end: AxisProjection::Absolute { index: 0 },
+        };
+        let result = Region::col_interval(0, 2, 1, 100);
+
+        let read = projection.read_region_for_result(0, result).unwrap();
+        assert_eq!(read, Region::col_interval(0, 0, 1, 120));
+
+        // A change at row 50 dirties exactly the placements whose shrinking
+        // tail still covers it: rows 1..=50.
+        assert_eq!(
+            projection.project_changed_region(Region::point(0, 50, 0), read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![Region::col_interval(
+                0, 2, 1, 50
+            )]))
+        );
+        // A change at the pinned end row dirties every placement.
+        assert_eq!(
+            projection.project_changed_region(Region::point(0, 120, 0), read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![result]))
+        );
+    }
+
+    #[test]
+    fn mixed_axis_range_with_negative_relative_offset_projects_and_clips() {
+        // `=SUM($C$1:$C{r-1})` style self-cumulative shape (here pointed at a
+        // different column so it is a plain consumer): end row offset -1.
+        let projection = DirtyProjectionRule::AffineRange {
+            row_start: AxisProjection::Absolute { index: 0 },
+            row_end: AxisProjection::Relative { offset: -1 },
+            col_start: AxisProjection::Absolute { index: 0 },
+            col_end: AxisProjection::Absolute { index: 0 },
+        };
+        let result = Region::col_interval(0, 2, 1, 100);
+
+        let read = projection.read_region_for_result(0, result).unwrap();
+        assert_eq!(read, Region::col_interval(0, 0, 0, 99));
+
+        // A change at row 40 affects placements with r - 1 >= 40 -> rows 41..
+        assert_eq!(
+            projection.project_changed_region(Region::point(0, 40, 0), read, result),
+            ProjectionResult::Exact(ProducerDirtyDomain::Regions(vec![Region::col_interval(
+                0, 2, 41, 100
+            )]))
         );
     }
 

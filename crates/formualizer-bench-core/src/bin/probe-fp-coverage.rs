@@ -50,7 +50,7 @@ mod probe {
     #[derive(Debug, Parser)]
     #[command(about = "FormulaPlane span-coverage probe over the shared fp_coverage mixed corpus")]
     pub struct Cli {
-        /// Formula cells per section (10 sections; default ~20k cells total).
+        /// Formula cells per section (12 sections; default ~24k cells total).
         #[arg(long, default_value_t = 2_000)]
         rows_per_section: u32,
         /// Seed perturbing data values (formula structure is seed-independent).

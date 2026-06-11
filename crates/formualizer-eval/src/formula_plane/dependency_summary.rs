@@ -809,7 +809,7 @@ impl SummaryAnalyzer {
                 {
                     return false;
                 }
-                if !axis_kinds_match(start_row, end_row) || !axis_kinds_match(start_col, end_col) {
+                if !range_axis_kinds_supported(start_row, end_row, start_col, end_col) {
                     self.reasons
                         .insert(DependencyRejectReason::MixedAxisRangeUnsupported { context });
                     return false;
@@ -990,6 +990,37 @@ fn axis_is_finite_cell(axis: &AxisRef) -> bool {
 
 fn axis_is_placement_invariant(axis: &AxisRef) -> bool {
     matches!(axis, AxisRef::AbsoluteVc { .. } | AxisRef::WholeAxis)
+}
+
+/// Range bound combinations a precedent pattern can carry.
+///
+/// All-finite ranges may mix placement-relative and absolute bounds freely
+/// within an axis: mixed-anchor ranges like `$A$2:$A{r}` (running total) and
+/// `$A{r}:$A$N` (tail read) are affine in the placement index per bound, so
+/// every downstream consumer (region instantiation, forward read-region
+/// projection, inverse dirty projection) handles them per bound.
+///
+/// Ranges involving `WholeAxis` keep the stricter per-axis kind uniformity:
+/// `A:A` is fine, but `A:$A` (whole-column with mixed column anchors) stays
+/// rejected — the ingest read-projection path does not model it either, and
+/// accepting it here only would make the two analyses disagree.
+fn range_axis_kinds_supported(
+    start_row: &AxisRef,
+    end_row: &AxisRef,
+    start_col: &AxisRef,
+    end_col: &AxisRef,
+) -> bool {
+    let any_whole = [start_row, end_row, start_col, end_col]
+        .iter()
+        .any(|axis| matches!(axis, AxisRef::WholeAxis));
+    if any_whole {
+        axis_kinds_match(start_row, end_row) && axis_kinds_match(start_col, end_col)
+    } else {
+        // Open/unsupported bounds were rejected by `reject_non_finite_range`;
+        // every remaining bound is RelativeToPlacement or AbsoluteVc and any
+        // mixture is supported.
+        true
+    }
 }
 
 fn axis_kinds_match(left: &AxisRef, right: &AxisRef) -> bool {
@@ -1953,7 +1984,52 @@ fn inverse_range_axis_changed_range(
                 && ranges_intersect(changed_start, changed_end, range_start, range_end))
             .then_some((1, u32::MAX))
         }
+        // Mixed-anchor axis: placement p reads
+        // [min(p + offset, index), max(p + offset, index)], so the inverse of
+        // a changed interval is a half-open placement interval (clamped to the
+        // valid 1-based coordinate space; out-of-range bounds saturate
+        // conservatively rather than dropping placements).
+        (AxisRef::RelativeToPlacement { offset }, AxisRef::AbsoluteVc { index })
+        | (AxisRef::AbsoluteVc { index }, AxisRef::RelativeToPlacement { offset }) => {
+            if *index == 0 {
+                return None;
+            }
+            if changed_start <= *index && *index <= changed_end {
+                // Every placement's read interval contains the pinned bound.
+                Some((1, u32::MAX))
+            } else if *index < changed_start {
+                // Affected iff p + offset >= changed_start.
+                let start = clamped_inverse_offset_floor(changed_start, *offset)?;
+                Some((start, u32::MAX))
+            } else {
+                // index > changed_end: affected iff p + offset <= changed_end.
+                let end = clamped_inverse_offset_ceil(changed_end, *offset)?;
+                Some((1, end))
+            }
+        }
         _ => None,
+    }
+}
+
+/// `coordinate - offset` clamped low to 1; `None` when the bound exceeds
+/// `u32::MAX` (no placement can satisfy `p >= bound`).
+fn clamped_inverse_offset_floor(coordinate: u32, offset: i64) -> Option<u32> {
+    let value = i128::from(coordinate) - i128::from(offset);
+    if value > i128::from(u32::MAX) {
+        None
+    } else {
+        Some(value.max(1) as u32)
+    }
+}
+
+/// `coordinate - offset` clamped high to `u32::MAX`; `None` when the bound is
+/// below 1 (no placement can satisfy `p <= bound`).
+fn clamped_inverse_offset_ceil(coordinate: u32, offset: i64) -> Option<u32> {
+    let value = i128::from(coordinate) - i128::from(offset);
+    if value < 1 {
+        None
+    } else {
+        Some(value.min(i128::from(u32::MAX)) as u32)
     }
 }
 
@@ -2796,16 +2872,45 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_dependency_summary_rejects_mixed_axis_range() {
+    fn formula_plane_dependency_summary_accepts_mixed_axis_running_total_range() {
+        // `=SUM($A$1:$A1)` at row 1: absolute start row, placement-relative
+        // end row (offset 0) — the expanding running-total idiom.
         let summary = summary("=SUM($A$1:$A1)", 1, 2);
 
-        assert_eq!(summary.formula_class, FormulaClass::Rejected);
-        assert!(has_reason(
-            &summary,
-            &DependencyRejectReason::MixedAxisRangeUnsupported {
-                context: AnalyzerContext::Value
-            }
-        ));
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(
+            summary.precedent_patterns,
+            vec![range(
+                SheetBinding::CurrentSheet,
+                AxisRef::AbsoluteVc { index: 1 },
+                AxisRef::AbsoluteVc { index: 1 },
+                AxisRef::RelativeToPlacement { offset: 0 },
+                AxisRef::AbsoluteVc { index: 1 },
+            )]
+        );
+        assert!(!summary.is_constant_result());
+    }
+
+    #[test]
+    fn formula_plane_dependency_summary_accepts_mixed_axis_tail_read_range() {
+        // `=SUM($A1:$A$100)` at row 1: placement-relative start row, absolute
+        // end row — the shrinking tail-read idiom.
+        let summary = summary("=SUM($A1:$A$100)", 1, 2);
+
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(
+            summary.precedent_patterns,
+            vec![range(
+                SheetBinding::CurrentSheet,
+                AxisRef::RelativeToPlacement { offset: 0 },
+                AxisRef::AbsoluteVc { index: 1 },
+                AxisRef::AbsoluteVc { index: 100 },
+                AxisRef::AbsoluteVc { index: 1 },
+            )]
+        );
+        assert!(!summary.is_constant_result());
     }
 
     #[test]
@@ -3120,6 +3225,86 @@ mod tests {
         assert_eq!(arena.reverse_counters.reverse_max_overage, 24);
         assert_eq!(arena.reverse_counters.reverse_median_overage, 24);
         assert_eq!(arena.reverse_counters.global_dirty_fallback_count, 0);
+    }
+
+    #[test]
+    fn formula_plane_reverse_query_inverts_mixed_anchor_running_total_to_half_open_interval() {
+        // `=SUM($A$1:$A1)` over C1..C100: placement row r reads A1..A{r}.
+        let cells = (1..=100)
+            .map(|row| candidate_cell(row, 3, "tpl_running_total"))
+            .collect::<Vec<_>>();
+        let store = run_store(cells, 25);
+        let summaries =
+            template_summary_map(vec![("tpl_running_total", summary("=SUM($A$1:$A1)", 1, 3))]);
+        let mut arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        assert_eq!(arena.counters.supported_run_summary_count, 1);
+        // Union read region is the full bounding rect over the run.
+        assert_eq!(
+            arena.run_summaries[0].precedent_regions[0].region.region,
+            FiniteRegion::new("Sheet1", 1, 1, 100, 1)
+        );
+
+        // A change at A50 affects exactly the placements with r >= 50.
+        let query = arena.query_changed_cell("Sheet1", 50, 1);
+        assert!(!query.global_dirty_fallback);
+        assert_eq!(query.dependent_partitions.len(), 3);
+        let matched: Vec<_> = query
+            .dependent_partitions
+            .iter()
+            .flat_map(|partition| partition.matched_result_regions.iter().cloned())
+            .collect();
+        assert_eq!(
+            matched,
+            vec![
+                FiniteRegion::cell("Sheet1", 50, 3),
+                FiniteRegion::new("Sheet1", 51, 3, 75, 3),
+                FiniteRegion::new("Sheet1", 76, 3, 100, 3),
+            ]
+        );
+        // A change above the run's read region maps to no placements.
+        let above = arena.query_changed_cell("Sheet1", 101, 1);
+        assert!(above.dependent_partitions.is_empty());
+    }
+
+    #[test]
+    fn formula_plane_reverse_query_inverts_mixed_anchor_tail_read_to_half_open_interval() {
+        // `=SUM($A1:$A$100)` over C1..C100: placement row r reads A{r}..A100.
+        let cells = (1..=100)
+            .map(|row| candidate_cell(row, 3, "tpl_tail_read"))
+            .collect::<Vec<_>>();
+        let store = run_store(cells, 25);
+        let summaries =
+            template_summary_map(vec![("tpl_tail_read", summary("=SUM($A1:$A$100)", 1, 3))]);
+        let mut arena = instantiate_run_dependency_summaries(&store, &summaries);
+
+        assert_eq!(arena.counters.supported_run_summary_count, 1);
+
+        // A change at A50 affects exactly the placements with r <= 50.
+        let query = arena.query_changed_cell("Sheet1", 50, 1);
+        assert!(!query.global_dirty_fallback);
+        assert_eq!(query.dependent_partitions.len(), 2);
+        let matched: Vec<_> = query
+            .dependent_partitions
+            .iter()
+            .flat_map(|partition| partition.matched_result_regions.iter().cloned())
+            .collect();
+        assert_eq!(
+            matched,
+            vec![
+                FiniteRegion::new("Sheet1", 1, 3, 25, 3),
+                FiniteRegion::new("Sheet1", 26, 3, 50, 3),
+            ]
+        );
+        assert!(
+            query
+                .dependent_partitions
+                .iter()
+                .all(|partition| partition.is_exact)
+        );
+        // A change at the pinned end row affects every placement.
+        let pinned = arena.query_changed_cell("Sheet1", 100, 1);
+        assert_eq!(pinned.dependent_partitions.len(), 4);
     }
 
     #[test]

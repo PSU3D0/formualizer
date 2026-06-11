@@ -951,9 +951,12 @@ fn compute_read_projections(
                         else {
                             return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                         };
-                        if start_row_abs != end_row_abs || start_col_abs != end_col_abs {
-                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
-                        }
+                        // Mixed-anchor bounds (one absolute, one placement-
+                        // relative per axis, e.g. `$A$2:$A2` running totals or
+                        // `$A2:$A$100` tail reads) are supported: the read
+                        // region is the per-bound extent union and the dirty
+                        // projection inverts them as half-open placement
+                        // intervals.
                         push_projection(
                             projections,
                             ReadProjection {
@@ -1559,22 +1562,18 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_ingest_read_projections_reject_top_level_and_mixed_ranges() {
+    fn formula_plane_ingest_read_projections_reject_top_level_and_open_ranges() {
         let mut sheet_registry = SheetRegistry::new();
         let sheet = sheet_registry.id_for("Sheet1");
         let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
         let top_level = parse("=A1:A10").unwrap();
-        let mixed = parse("=SUM($A$1:$A1)").unwrap();
         let top_level_whole_column = parse("=$A:$A").unwrap();
         let open_whole_column = parse("=SUM($A$1:$A)").unwrap();
         let whole_row = parse("=SUM($1:$1)").unwrap();
+        let mixed_whole_column = parse("=SUM(A:$A)").unwrap();
 
         assert_eq!(
             compute_read_projections(&top_level, placement, &sheet_registry),
-            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
-        );
-        assert_eq!(
-            compute_read_projections(&mixed, placement, &sheet_registry),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         assert_eq!(
@@ -1588,6 +1587,48 @@ mod tests {
         assert_eq!(
             compute_read_projections(&whole_row, placement, &sheet_registry),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+        );
+        // Whole-column ranges with mixed column anchors stay rejected to match
+        // the dependency-summary analyzer.
+        assert_eq!(
+            compute_read_projections(&mixed_whole_column, placement, &sheet_registry),
+            Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+        );
+    }
+
+    #[test]
+    fn formula_plane_ingest_read_projections_accept_mixed_anchor_ranges() {
+        let mut sheet_registry = SheetRegistry::new();
+        let sheet = sheet_registry.id_for("Sheet1");
+        let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
+
+        // Running total `=SUM($A$1:$A1)`: absolute start row, relative end row.
+        let running_total = parse("=SUM($A$1:$A1)").unwrap();
+        let projections =
+            compute_read_projections(&running_total, placement, &sheet_registry).unwrap();
+        assert_eq!(projections.len(), 1);
+        assert_eq!(
+            projections[0].rule,
+            DirtyProjectionRule::AffineRange {
+                row_start: AxisProjection::Absolute { index: 0 },
+                row_end: AxisProjection::Relative { offset: 0 },
+                col_start: AxisProjection::Absolute { index: 0 },
+                col_end: AxisProjection::Absolute { index: 0 },
+            }
+        );
+
+        // Tail read `=SUM($A1:$A$100)`: relative start row, absolute end row.
+        let tail_read = parse("=SUM($A1:$A$100)").unwrap();
+        let projections = compute_read_projections(&tail_read, placement, &sheet_registry).unwrap();
+        assert_eq!(projections.len(), 1);
+        assert_eq!(
+            projections[0].rule,
+            DirtyProjectionRule::AffineRange {
+                row_start: AxisProjection::Relative { offset: 0 },
+                row_end: AxisProjection::Absolute { index: 99 },
+                col_start: AxisProjection::Absolute { index: 0 },
+                col_end: AxisProjection::Absolute { index: 0 },
+            }
         );
     }
 
