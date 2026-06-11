@@ -237,64 +237,85 @@ impl<'a> Scheduler<'a> {
             }
         };
 
-        let mut index_counter = 0usize;
-        let mut stack: Vec<VertexId> = Vec::new();
-        let mut indices: FxHashMap<VertexId, usize> = FxHashMap::default();
-        let mut lowlinks: FxHashMap<VertexId, usize> = FxHashMap::default();
-        let mut on_stack: FxHashSet<VertexId> = FxHashSet::default();
+        // Compact the candidate set into dense local ids once, up front. All
+        // per-edge / per-frame bookkeeping (index, lowlink, on-stack) then
+        // becomes a plain array op instead of an FxHashMap probe; the only
+        // remaining hash per edge is the `VertexId -> local id` membership
+        // lookup, which doubles as the old `vertex_set.contains` filter.
+        // `VertexId` is a `u32` newtype, so `u32` local ids cannot overflow.
+        const UNVISITED: u32 = u32::MAX;
+        let mut local_of: FxHashMap<VertexId, u32> =
+            FxHashMap::with_capacity_and_hasher(vertices.len(), Default::default());
+        let mut vertex_of_local: Vec<VertexId> = Vec::with_capacity(vertices.len());
+        for &v in vertices {
+            if let std::collections::hash_map::Entry::Vacant(slot) = local_of.entry(v) {
+                slot.insert(vertex_of_local.len() as u32);
+                vertex_of_local.push(v);
+            }
+        }
+        let n = vertex_of_local.len();
+
+        let mut index_counter: u32 = 0;
+        let mut indices: Vec<u32> = vec![UNVISITED; n];
+        let mut lowlinks: Vec<u32> = vec![0; n];
+        let mut on_stack: Vec<bool> = vec![false; n];
+        let mut stack: Vec<u32> = Vec::with_capacity(n);
         let mut sccs: Vec<Vec<VertexId>> = Vec::new();
-        let vertex_set: FxHashSet<VertexId> = vertices.iter().copied().collect();
 
-        // Explicit DFS frames: (vertex, its dependency list, next edge offset).
-        let mut frames: Vec<(VertexId, DepList<'_>, usize)> = Vec::new();
+        // Explicit DFS frames: (local id, its dependency list, next edge
+        // offset). Pre-sized to the worst case (one frame per vertex, e.g. a
+        // single deep chain) so deep schedules never re-grow the stack.
+        let mut frames: Vec<(u32, DepList<'_>, u32)> = Vec::with_capacity(n);
 
-        for &root in vertices {
-            if indices.contains_key(&root) {
+        for &root_vertex in vertices {
+            let root = local_of[&root_vertex];
+            if indices[root as usize] != UNVISITED {
                 continue;
             }
-            indices.insert(root, index_counter);
-            lowlinks.insert(root, index_counter);
+            indices[root as usize] = index_counter;
+            lowlinks[root as usize] = index_counter;
             index_counter += 1;
             stack.push(root);
-            on_stack.insert(root);
-            frames.push((root, deps_of(root), 0));
+            on_stack[root as usize] = true;
+            frames.push((root, deps_of(root_vertex), 0));
 
             while let Some(frame) = frames.last_mut() {
-                let vertex = frame.0;
-                if let Some(dependency) = frame.1.get(frame.2) {
+                let vertex = frame.0 as usize;
+                if let Some(dep_vertex) = frame.1.get(frame.2 as usize) {
                     frame.2 += 1;
                     // Only consider dependencies that are part of the current
                     // scheduling task.
-                    if !vertex_set.contains(&dependency) {
+                    let Some(&dep) = local_of.get(&dep_vertex) else {
                         continue;
-                    }
-                    if let std::collections::hash_map::Entry::Vacant(slot) =
-                        indices.entry(dependency)
-                    {
+                    };
+                    let d = dep as usize;
+                    if indices[d] == UNVISITED {
                         // Not yet visited: descend (the recursive call).
-                        slot.insert(index_counter);
-                        lowlinks.insert(dependency, index_counter);
+                        indices[d] = index_counter;
+                        lowlinks[d] = index_counter;
                         index_counter += 1;
-                        stack.push(dependency);
-                        on_stack.insert(dependency);
-                        frames.push((dependency, deps_of(dependency), 0));
-                    } else if on_stack.contains(&dependency) {
+                        stack.push(dep);
+                        on_stack[d] = true;
+                        frames.push((dep, deps_of(dep_vertex), 0));
+                    } else if on_stack[d] {
                         // On the Tarjan stack: in the current SCC.
-                        let dep_index = indices[&dependency];
-                        lowlinks.insert(vertex, lowlinks[&vertex].min(dep_index));
+                        let dep_index = indices[d];
+                        if dep_index < lowlinks[vertex] {
+                            lowlinks[vertex] = dep_index;
+                        }
                     }
                 } else {
                     // Vertex exhausted: emit its SCC if it is a root, then
                     // return to the parent frame, folding the child lowlink in
                     // (the post-recursion `min(lowlink[v], lowlink[dep])`).
-                    let vertex_lowlink = lowlinks[&vertex];
-                    if vertex_lowlink == indices[&vertex] {
+                    let vertex_lowlink = lowlinks[vertex];
+                    if vertex_lowlink == indices[vertex] {
                         let mut scc = Vec::new();
                         loop {
                             let w = stack.pop().unwrap();
-                            on_stack.remove(&w);
-                            scc.push(w);
-                            if w == vertex {
+                            on_stack[w as usize] = false;
+                            scc.push(vertex_of_local[w as usize]);
+                            if w as usize == vertex {
                                 break;
                             }
                         }
@@ -302,9 +323,10 @@ impl<'a> Scheduler<'a> {
                     }
                     frames.pop();
                     if let Some(parent) = frames.last() {
-                        let parent_vertex = parent.0;
-                        lowlinks
-                            .insert(parent_vertex, lowlinks[&parent_vertex].min(vertex_lowlink));
+                        let p = parent.0 as usize;
+                        if vertex_lowlink < lowlinks[p] {
+                            lowlinks[p] = vertex_lowlink;
+                        }
                     }
                 }
             }
