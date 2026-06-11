@@ -1224,7 +1224,7 @@ impl DependencyGraph {
         policy: formualizer_parse::parser::CollectPolicy,
     ) -> crate::engine::ingest_pipeline::IngestPipeline<'a> {
         use crate::engine::ingest_pipeline::{
-            NameRegistryView, NamedEntryRef, SourceEntryRef, SourceRegistryView,
+            NameRegistryView, NamedEntryRef, NamedTarget, SourceEntryRef, SourceRegistryView,
             TableEntrySnapshot, TableRegistryView,
         };
 
@@ -1262,6 +1262,18 @@ impl DependencyGraph {
             };
             found.map(|entry| NamedEntryRef {
                 vertex: entry.vertex,
+                target: match &entry.definition {
+                    crate::engine::named_range::NamedDefinition::Cell(cell) => {
+                        NamedTarget::Cell(*cell)
+                    }
+                    crate::engine::named_range::NamedDefinition::Range(range) => {
+                        NamedTarget::Range(*range)
+                    }
+                    crate::engine::named_range::NamedDefinition::Literal(_)
+                    | crate::engine::named_range::NamedDefinition::Formula { .. } => {
+                        NamedTarget::Other
+                    }
+                },
             })
         });
 

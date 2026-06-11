@@ -42,6 +42,19 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NamedEntryRef {
     pub(crate) vertex: VertexId,
+    /// Concrete resolution target snapshot for FormulaPlane read projections.
+    pub(crate) target: NamedTarget,
+}
+
+/// Snapshot of what a defined name resolves to, taken at ingest time.
+///
+/// Only `Cell` and `Range` definitions are FormulaPlane-supported; `Other`
+/// covers Literal/Formula definitions, which fall back to legacy evaluation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NamedTarget {
+    Cell(CellRef),
+    Range(RangeRef),
+    Other,
 }
 
 #[derive(Clone, Debug)]
@@ -227,11 +240,15 @@ impl<'a> IngestPipeline<'a> {
         dep_plan.dynamic = metadata.labels.has_flag(CanonicalLabels::FLAG_DYNAMIC);
         dep_plan.dedup_and_sort();
 
-        let (read_projections, read_projection_fallback) =
-            match compute_read_projections(&ast_for_oracles, placement, self.sheet_registry) {
-                Ok(projections) => (Some(projections), None),
-                Err(reason) => (None, Some(reason)),
-            };
+        let (read_projections, read_projection_fallback) = match compute_read_projections(
+            &ast_for_oracles,
+            placement,
+            self.sheet_registry,
+            &self.names,
+        ) {
+            Ok(projections) => (Some(projections), None),
+            Err(reason) => (None, Some(reason)),
+        };
         let read_summary = read_projections.as_ref().and_then(|projections| {
             span_read_summary_from_projections(placement, projections).ok()
         });
@@ -816,6 +833,7 @@ fn compute_read_projections(
     ast: &ASTNode,
     placement: CellRef,
     sheet_registry: &SheetRegistry,
+    names: &NameRegistryView<'_>,
 ) -> Result<Vec<ReadProjection>, ProjectionFallbackReason> {
     fn axis_projection(index: u32, is_abs: bool, anchor: i64) -> AxisProjection {
         if is_abs {
@@ -839,6 +857,7 @@ fn compute_read_projections(
         ast: &ASTNode,
         placement: CellRef,
         sheet_registry: &SheetRegistry,
+        names: &NameRegistryView<'_>,
         projections: &mut Vec<ReadProjection>,
         context: AnalyzerContext,
         in_function_arg: bool,
@@ -852,6 +871,79 @@ fn compute_read_projections(
                     Ok(())
                 } else {
                     Err(ProjectionFallbackReason::UnsupportedDependencySummary)
+                }
+            }
+            ASTNodeType::Reference {
+                reference: ReferenceType::NamedRange(name),
+                ..
+            } => {
+                // Resolve the name with the placement's sheet scope (the same
+                // resolution legacy dependency planning uses, so sheet-scoped
+                // names shadow workbook-scoped names identically). A resolved
+                // Cell/Range definition is an all-absolute read region; the
+                // resolved target's sheet need not be the placement sheet.
+                let entry = names
+                    .resolve(name, placement.sheet_id)
+                    .ok_or(ProjectionFallbackReason::NamedReferenceUnsupported)?;
+                match entry.target {
+                    NamedTarget::Cell(cell) => {
+                        // A named CELL behaves like a concrete cell reference:
+                        // no extra context gating beyond what cells get.
+                        push_projection(
+                            projections,
+                            ReadProjection {
+                                target_sheet_id: cell.sheet_id,
+                                rule: DirtyProjectionRule::AffineCell {
+                                    row: AxisProjection::Absolute {
+                                        index: cell.coord.row(),
+                                    },
+                                    col: AxisProjection::Absolute {
+                                        index: cell.coord.col(),
+                                    },
+                                },
+                            },
+                        );
+                        Ok(())
+                    }
+                    NamedTarget::Range(range) => {
+                        // A named RANGE behaves like its underlying range
+                        // reference: only valid as a function argument in a
+                        // range-accepting position (same gating as concrete
+                        // ranges below).
+                        if !in_function_arg
+                            || !matches!(
+                                context,
+                                AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
+                            )
+                        {
+                            return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
+                        }
+                        if range.start.sheet_id != range.end.sheet_id {
+                            return Err(ProjectionFallbackReason::NamedReferenceUnsupported);
+                        }
+                        let (row_min, row_max) = (
+                            range.start.coord.row().min(range.end.coord.row()),
+                            range.start.coord.row().max(range.end.coord.row()),
+                        );
+                        let (col_min, col_max) = (
+                            range.start.coord.col().min(range.end.coord.col()),
+                            range.start.coord.col().max(range.end.coord.col()),
+                        );
+                        push_projection(
+                            projections,
+                            ReadProjection {
+                                target_sheet_id: range.start.sheet_id,
+                                rule: DirtyProjectionRule::AffineRange {
+                                    row_start: AxisProjection::Absolute { index: row_min },
+                                    row_end: AxisProjection::Absolute { index: row_max },
+                                    col_start: AxisProjection::Absolute { index: col_min },
+                                    col_end: AxisProjection::Absolute { index: col_max },
+                                },
+                            },
+                        );
+                        Ok(())
+                    }
+                    NamedTarget::Other => Err(ProjectionFallbackReason::NamedReferenceUnsupported),
                 }
             }
             ASTNodeType::Reference { reference, .. } => {
@@ -987,6 +1079,7 @@ fn compute_read_projections(
                     expr,
                     placement,
                     sheet_registry,
+                    names,
                     projections,
                     context,
                     in_function_arg,
@@ -1004,6 +1097,7 @@ fn compute_read_projections(
                     left,
                     placement,
                     sheet_registry,
+                    names,
                     projections,
                     context,
                     in_function_arg,
@@ -1012,6 +1106,7 @@ fn compute_read_projections(
                     right,
                     placement,
                     sheet_registry,
+                    names,
                     projections,
                     context,
                     in_function_arg,
@@ -1028,6 +1123,7 @@ fn compute_read_projections(
                         arg,
                         placement,
                         sheet_registry,
+                        names,
                         projections,
                         arg_context,
                         function_accepts_range_at(&canonical_name, arg_index),
@@ -1050,6 +1146,7 @@ fn compute_read_projections(
         ast,
         placement,
         sheet_registry,
+        names,
         &mut projections,
         AnalyzerContext::Value,
         false,
@@ -1515,6 +1612,10 @@ mod tests {
     use crate::test_workbook::TestWorkbook;
     use formualizer_parse::parser::parse;
 
+    fn empty_names() -> NameRegistryView<'static> {
+        NameRegistryView::new(|_, _| None)
+    }
+
     fn read_projections_for(formula: &str, row: u32, col: u32) -> Vec<ReadProjection> {
         let mut sheet_registry = SheetRegistry::new();
         let sheet = sheet_registry.id_for("Sheet1");
@@ -1523,6 +1624,7 @@ mod tests {
             &ast,
             CellRef::new(sheet, Coord::from_excel(row, col, true, true)),
             &sheet_registry,
+            &empty_names(),
         )
         .unwrap()
     }
@@ -1573,25 +1675,40 @@ mod tests {
         let mixed_whole_column = parse("=SUM(A:$A)").unwrap();
 
         assert_eq!(
-            compute_read_projections(&top_level, placement, &sheet_registry),
+            compute_read_projections(&top_level, placement, &sheet_registry, &empty_names()),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         assert_eq!(
-            compute_read_projections(&top_level_whole_column, placement, &sheet_registry),
+            compute_read_projections(
+                &top_level_whole_column,
+                placement,
+                &sheet_registry,
+                &empty_names()
+            ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         assert_eq!(
-            compute_read_projections(&open_whole_column, placement, &sheet_registry),
+            compute_read_projections(
+                &open_whole_column,
+                placement,
+                &sheet_registry,
+                &empty_names()
+            ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         assert_eq!(
-            compute_read_projections(&whole_row, placement, &sheet_registry),
+            compute_read_projections(&whole_row, placement, &sheet_registry, &empty_names()),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         // Whole-column ranges with mixed column anchors stay rejected to match
         // the dependency-summary analyzer.
         assert_eq!(
-            compute_read_projections(&mixed_whole_column, placement, &sheet_registry),
+            compute_read_projections(
+                &mixed_whole_column,
+                placement,
+                &sheet_registry,
+                &empty_names()
+            ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
     }
@@ -1605,7 +1722,8 @@ mod tests {
         // Running total `=SUM($A$1:$A1)`: absolute start row, relative end row.
         let running_total = parse("=SUM($A$1:$A1)").unwrap();
         let projections =
-            compute_read_projections(&running_total, placement, &sheet_registry).unwrap();
+            compute_read_projections(&running_total, placement, &sheet_registry, &empty_names())
+                .unwrap();
         assert_eq!(projections.len(), 1);
         assert_eq!(
             projections[0].rule,
@@ -1619,7 +1737,9 @@ mod tests {
 
         // Tail read `=SUM($A1:$A$100)`: relative start row, absolute end row.
         let tail_read = parse("=SUM($A1:$A$100)").unwrap();
-        let projections = compute_read_projections(&tail_read, placement, &sheet_registry).unwrap();
+        let projections =
+            compute_read_projections(&tail_read, placement, &sheet_registry, &empty_names())
+                .unwrap();
         assert_eq!(projections.len(), 1);
         assert_eq!(
             projections[0].rule,

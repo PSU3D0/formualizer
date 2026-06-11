@@ -116,6 +116,7 @@ mod formula_plane_lookup_family_promotion;
 mod formula_plane_lookup_semantics;
 mod formula_plane_mixed_anchor_spans;
 mod formula_plane_mixed_legacy_tail_reads;
+mod formula_plane_named_ranges;
 mod formula_plane_parallel_span_eval;
 mod formula_plane_per_placement_literal_bindings;
 mod formula_plane_per_span_overhead;

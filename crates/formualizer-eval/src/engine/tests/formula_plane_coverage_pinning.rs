@@ -72,23 +72,36 @@ fn build_engine(
             continue;
         }
         let sheet_id = engine.graph.sheet_id_mut(named.sheet);
-        let start = CellRef::new(
-            sheet_id,
-            Coord::new(named.start_row - 1, named.start_col - 1, true, true),
-        );
-        let end = CellRef::new(
-            sheet_id,
-            Coord::new(named.end_row - 1, named.end_col - 1, true, true),
-        );
         engine
             .define_name(
                 named.name,
-                NamedDefinition::Range(RangeRef::new(start, end)),
+                named_definition_for_spec(sheet_id, named),
                 NameScope::Workbook,
             )
             .unwrap();
     }
     engine
+}
+
+/// 1x1 specs define a named CELL, larger specs a named RANGE, so the corpus
+/// exercises both FormulaPlane-supported definition shapes.
+fn named_definition_for_spec(
+    sheet_id: crate::SheetId,
+    named: &fp_coverage::NamedRangeSpec,
+) -> NamedDefinition {
+    let start = CellRef::new(
+        sheet_id,
+        Coord::new(named.start_row - 1, named.start_col - 1, true, true),
+    );
+    let end = CellRef::new(
+        sheet_id,
+        Coord::new(named.end_row - 1, named.end_col - 1, true, true),
+    );
+    if start == end {
+        NamedDefinition::Cell(start)
+    } else {
+        NamedDefinition::Range(RangeRef::new(start, end))
+    }
 }
 
 fn ingest_section(
@@ -250,18 +263,10 @@ fn fp_coverage_corpus_combined_totals() {
     }
     for named in &corpus.named_ranges {
         let sheet_id = engine.graph.sheet_id_mut(named.sheet);
-        let start = CellRef::new(
-            sheet_id,
-            Coord::new(named.start_row - 1, named.start_col - 1, true, true),
-        );
-        let end = CellRef::new(
-            sheet_id,
-            Coord::new(named.end_row - 1, named.end_col - 1, true, true),
-        );
         engine
             .define_name(
                 named.name,
-                NamedDefinition::Range(RangeRef::new(start, end)),
+                named_definition_for_spec(sheet_id, named),
                 NameScope::Workbook,
             )
             .unwrap();

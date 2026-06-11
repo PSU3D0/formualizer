@@ -1469,19 +1469,6 @@ where
             }
         }
 
-        if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
-            let t_bulk = Instant::now();
-            engine
-                .ingest_formula_batches(eager_formula_batches)
-                .map_err(IoError::Engine)?;
-            if debug {
-                eprintln!(
-                    "[fz][load] umya: bulk formula ingest finished in {:.1} ms",
-                    t_bulk.elapsed().as_secs_f64() * 1000.0,
-                );
-            }
-        }
-
         let t_defined = Instant::now();
         {
             use rustc_hash::FxHashSet;
@@ -1554,6 +1541,22 @@ where
                 "[fz][load] umya: defined names registered in {:.1} ms",
                 t_defined.elapsed().as_secs_f64() * 1000.0,
             );
+        }
+
+        // Defined names are registered BEFORE the eager formula ingest so
+        // ingest-time name resolution (legacy resolved-name dep plans and
+        // FormulaPlane named read projections) sees the loaded registry.
+        if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+            let t_bulk = Instant::now();
+            engine
+                .ingest_formula_batches(eager_formula_batches)
+                .map_err(IoError::Engine)?;
+            if debug {
+                eprintln!(
+                    "[fz][load] umya: bulk formula ingest finished in {:.1} ms",
+                    t_bulk.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
         }
 
         let t_finalize = Instant::now();

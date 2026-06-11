@@ -197,6 +197,14 @@ pub(crate) enum CanonicalReference {
         end_row: AxisRef,
         end_col: AxisRef,
     },
+    /// A defined-name reference, canonicalized by identity. The raw name
+    /// string is preserved exactly as parsed (no case normalization): the
+    /// engine supports a case-sensitive-names config, and folding two
+    /// distinct case-sensitive names would merge fingerprints and wrongly
+    /// group cells into one span family. Preserving raw text means the worst
+    /// case is reduced sharing, never wrong sharing. Resolution to a concrete
+    /// region happens later, at per-cell read-projection time.
+    Named { name: String },
     Unsupported {
         kind: UnsupportedReferenceKind,
         diagnostic: String,
@@ -228,7 +236,6 @@ pub(crate) enum AxisRef {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum UnsupportedReferenceKind {
-    NamedRange,
     StructuredReference,
     ThreeDReference,
     ExternalReference,
@@ -275,7 +282,6 @@ pub(crate) enum CanonicalRejectKind {
     SpillReference,
     ImplicitIntersection,
     CallExpression,
-    NamedReference,
     StructuredReference,
     StructuredReferenceCurrentRow,
     ThreeDReference,
@@ -300,7 +306,6 @@ pub(crate) enum CanonicalRejectReason {
     SpillResultRegionOperator,
     ImplicitIntersectionOperator,
     CallExpression,
-    NamedReference { name: String },
     StructuredReference { diagnostic: String },
     StructuredReferenceCurrentRow { diagnostic: String },
     ThreeDReference { diagnostic: String },
@@ -342,7 +347,6 @@ impl CanonicalRejectReason {
                 CanonicalRejectKind::ImplicitIntersection
             }
             CanonicalRejectReason::CallExpression => CanonicalRejectKind::CallExpression,
-            CanonicalRejectReason::NamedReference { .. } => CanonicalRejectKind::NamedReference,
             CanonicalRejectReason::StructuredReference { .. } => {
                 CanonicalRejectKind::StructuredReference
             }
@@ -376,6 +380,10 @@ pub(crate) enum CanonicalTemplateFlag {
     AbsoluteReferenceAxis,
     MixedAnchors,
     FiniteRangeReference,
+    /// The template contains at least one defined-name reference. Names
+    /// canonicalize by identity (raw text); whether they resolve to a
+    /// supported concrete region is decided per cell at projection time.
+    NamedReference,
 }
 
 /// Canonicalize a parsed formula AST at a one-based formula placement anchor.
@@ -736,13 +744,11 @@ impl Canonicalizer {
                 }
             }
             ReferenceType::NamedRange(name) => {
-                self.labels.reject(CanonicalRejectReason::NamedReference {
-                    name: name.to_ascii_uppercase(),
-                });
-                CanonicalReference::Unsupported {
-                    kind: UnsupportedReferenceKind::NamedRange,
-                    diagnostic: name.to_ascii_uppercase(),
-                }
+                // Names are canonicalized by identity with the RAW parsed
+                // text (no case folding; see `CanonicalReference::Named`).
+                // Resolution happens at per-cell read-projection time.
+                self.labels.flag(CanonicalTemplateFlag::NamedReference);
+                CanonicalReference::Named { name: name.clone() }
             }
         }
     }
@@ -1348,6 +1354,11 @@ fn write_reference_key(reference: &CanonicalReference, out: &mut String) {
             write_axis_key(end_col, out);
             out.push(')');
         }
+        CanonicalReference::Named { name } => {
+            out.push_str("named(");
+            write_string_key(name, out);
+            out.push(')');
+        }
         CanonicalReference::Unsupported { kind, diagnostic } => {
             out.push_str("unsupported_ref(");
             write_unsupported_reference_kind_key(kind, out);
@@ -1387,7 +1398,6 @@ fn write_axis_key(axis: &AxisRef, out: &mut String) {
 
 fn write_unsupported_reference_kind_key(kind: &UnsupportedReferenceKind, out: &mut String) {
     out.push_str(match kind {
-        UnsupportedReferenceKind::NamedRange => "named_range",
         UnsupportedReferenceKind::StructuredReference => "structured_reference",
         UnsupportedReferenceKind::ThreeDReference => "three_d_reference",
         UnsupportedReferenceKind::ExternalReference => "external_reference",
@@ -1459,10 +1469,6 @@ fn write_reject_reason_key(reason: &CanonicalRejectReason, out: &mut String) {
             out.push_str("implicit_intersection_operator")
         }
         CanonicalRejectReason::CallExpression => out.push_str("call_expression"),
-        CanonicalRejectReason::NamedReference { name } => {
-            out.push_str("name_ref:");
-            write_string_key(name, out);
-        }
         CanonicalRejectReason::StructuredReference { diagnostic } => {
             out.push_str("structured_ref:");
             write_string_key(diagnostic, out);
@@ -1504,6 +1510,7 @@ fn write_template_flag_key(flag: &CanonicalTemplateFlag, out: &mut String) {
         CanonicalTemplateFlag::AbsoluteReferenceAxis => "absolute_axis",
         CanonicalTemplateFlag::MixedAnchors => "mixed_anchors",
         CanonicalTemplateFlag::FiniteRangeReference => "finite_range",
+        CanonicalTemplateFlag::NamedReference => "named_reference",
     });
 }
 
@@ -1873,6 +1880,34 @@ mod tests {
             template
                 .labels
                 .contains_reject_kind(CanonicalRejectKind::OpenRangeReference)
+        );
+    }
+
+    #[test]
+    fn formula_plane_named_references_canonicalize_by_identity() {
+        let one = canonical("=SUM(MyData)+A2", 2, 3);
+        let two = canonical("=SUM(MyData)+A3", 3, 3);
+
+        assert_eq!(one.key, two.key);
+        assert!(one.labels.is_authority_supported());
+        assert!(
+            one.labels
+                .flags
+                .contains(&CanonicalTemplateFlag::NamedReference)
+        );
+    }
+
+    #[test]
+    fn formula_plane_named_reference_raw_case_is_preserved_in_keys() {
+        let lower = canonical("=myname", 1, 1);
+        let upper = canonical("=MYNAME", 1, 1);
+
+        assert_ne!(lower.key, upper.key);
+        assert_eq!(
+            only_reference(&lower),
+            &CanonicalReference::Named {
+                name: "myname".to_string(),
+            }
         );
     }
 }

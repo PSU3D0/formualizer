@@ -337,6 +337,7 @@ fn template_flag_label(flag: &CanonicalTemplateFlag) -> &'static str {
         CanonicalTemplateFlag::AbsoluteReferenceAxis => "absolute_reference_axis",
         CanonicalTemplateFlag::MixedAnchors => "mixed_anchors",
         CanonicalTemplateFlag::FiniteRangeReference => "finite_range_reference",
+        CanonicalTemplateFlag::NamedReference => "named_reference",
     }
 }
 
@@ -353,7 +354,6 @@ fn reject_kind_label(kind: CanonicalRejectKind) -> &'static str {
         CanonicalRejectKind::SpillReference => "spill_reference",
         CanonicalRejectKind::ImplicitIntersection => "implicit_intersection",
         CanonicalRejectKind::CallExpression => "call_expression",
-        CanonicalRejectKind::NamedReference => "named_reference",
         CanonicalRejectKind::StructuredReference => "structured_reference",
         CanonicalRejectKind::StructuredReferenceCurrentRow => "structured_reference_current_row",
         CanonicalRejectKind::ThreeDReference => "three_d_reference",
@@ -395,7 +395,6 @@ fn reject_reason_label(reason: &CanonicalRejectReason) -> String {
             "implicit_intersection_operator".to_string()
         }
         CanonicalRejectReason::CallExpression => "call_expression".to_string(),
-        CanonicalRejectReason::NamedReference { name } => format!("named_reference:{name}"),
         CanonicalRejectReason::StructuredReference { diagnostic } => {
             format!("structured_reference:{diagnostic}")
         }

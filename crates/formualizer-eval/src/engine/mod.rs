@@ -173,11 +173,20 @@ pub mod fp8_parity_test_support {
                     "canonical label rejects differ for {formula} at {placement:?}\nold={:?}\nnew={:#x}",
                     old.labels.reject_reasons, new.labels.rejects
                 );
-                assert_eq!(
-                    old.read_summary_debug,
-                    new.read_summary.as_ref().map(|s| format!("{s:?}")),
-                    "read summary differs for {formula} at {placement:?}"
-                );
+                // The passive summary oracle cannot resolve defined names, so
+                // a named formula that the ingest pipeline resolved to a
+                // concrete region is an intentional superset: old None / new
+                // Some is allowed exactly when the only blocking reason was a
+                // named reference.
+                let named_resolution_superset = old.summary_rejected_only_for_named_reference
+                    && old.read_summary_debug.is_none();
+                if !named_resolution_superset {
+                    assert_eq!(
+                        old.read_summary_debug,
+                        new.read_summary.as_ref().map(|s| format!("{s:?}")),
+                        "read summary differs for {formula} at {placement:?}"
+                    );
+                }
                 assert_eq!(new.formula_text.as_deref(), Some(formula));
                 assert_eq!(new.placement, placement);
                 Fp8ParityObservation {
@@ -219,6 +228,7 @@ pub mod fp8_parity_test_support {
         volatile: bool,
         dynamic: bool,
         read_summary_debug: Option<String>,
+        summary_rejected_only_for_named_reference: bool,
     }
 
     fn old_path<R: EvaluationContext>(
@@ -248,6 +258,14 @@ pub mod fp8_parity_test_support {
             engine.graph.sheet_reg(),
         )
         .ok();
+        let summary_rejected_only_for_named_reference = !summary.reject_reasons.is_empty()
+            && summary.reject_reasons.iter().all(|reason| {
+                matches!(
+                    reason,
+                    crate::formula_plane::dependency_summary::DependencyRejectReason
+                        ::NamedRangeUnsupported { .. }
+                )
+            });
         Ok(OldOutput {
             payload: template.key.payload().to_string(),
             labels: template.labels,
@@ -257,6 +275,7 @@ pub mod fp8_parity_test_support {
             volatile,
             dynamic,
             read_summary_debug: read_summary.as_ref().map(|s| format!("{s:?}")),
+            summary_rejected_only_for_named_reference,
         })
     }
 
@@ -280,6 +299,7 @@ pub mod fp8_parity_test_support {
                 CanonicalTemplateFlag::AbsoluteReferenceAxis => CanonicalLabels::FLAG_ABSOLUTE_ONLY,
                 CanonicalTemplateFlag::MixedAnchors => CanonicalLabels::FLAG_MIXED_ANCHORS,
                 CanonicalTemplateFlag::FiniteRangeReference => CanonicalLabels::FLAG_CONTAINS_RANGE,
+                CanonicalTemplateFlag::NamedReference => CanonicalLabels::FLAG_CONTAINS_NAME,
             };
         }
         for reason in &old.reject_reasons {
@@ -294,7 +314,6 @@ pub mod fp8_parity_test_support {
                 }
                 CanonicalRejectReason::ArrayOrSpillFunction { .. }
                 | CanonicalRejectReason::ArrayLiteral => CanonicalLabels::FLAG_CONTAINS_ARRAY,
-                CanonicalRejectReason::NamedReference { .. } => CanonicalLabels::FLAG_CONTAINS_NAME,
                 CanonicalRejectReason::StructuredReference { .. }
                 | CanonicalRejectReason::StructuredReferenceCurrentRow { .. } => {
                     CanonicalLabels::FLAG_CONTAINS_TABLE
@@ -342,9 +361,6 @@ pub mod fp8_parity_test_support {
                     CanonicalLabels::REJECT_IMPLICIT_INTERSECTION_OPERATOR
                 }
                 CanonicalRejectReason::CallExpression => CanonicalLabels::REJECT_CALL_EXPRESSION,
-                CanonicalRejectReason::NamedReference { .. } => {
-                    CanonicalLabels::REJECT_NAMED_REFERENCE
-                }
                 CanonicalRejectReason::StructuredReference { .. } => {
                     CanonicalLabels::REJECT_STRUCTURED_REFERENCE
                 }

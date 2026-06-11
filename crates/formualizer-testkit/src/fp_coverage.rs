@@ -299,34 +299,36 @@ pub fn generate(rows_per_section: u32, seed: u64, include_broken: bool) -> Cover
     }
 
     // ------------------------------------------------------------------
-    // (g) named_range — reference through a workbook-scoped defined name.
-    // Expected: REJECT (canonical NamedReference -> placement
-    // UnsupportedCanonicalTemplate). Flips to SPAN when named-range
-    // fingerprinting lands.
+    // (g) named_range — references through workbook-scoped defined names:
+    // a named RANGE (CovNamedData = column B) and a named CELL
+    // (CovNamedCell = $E$1). Expected: SPAN. Names canonicalize by identity
+    // and resolve to all-absolute read regions at projection time (named
+    // -range fingerprinting, pinned empirically on 2026-06-11).
     // ------------------------------------------------------------------
     {
         let mut values = Vec::new();
         let mut formulas = Vec::new();
+        // Named-cell target lives in the reserved header/aux row 1.
+        values.push(val("NamedRange", 1, 5, 2.5)); // E1 = CovNamedCell
         for r in rows.clone() {
             values.push(val("NamedRange", r, 2, mix(seed, r as u64, 7))); // B
             formulas.push(formula(
                 "NamedRange",
                 r,
                 3,
-                format!("=SUM(CovNamedData)+A{r}"),
+                format!("=SUM(CovNamedData)+CovNamedCell*2+A{r}"),
             ));
             values.push(val("NamedRange", r, 1, r as f64)); // A
         }
         sections.push(Section {
             name: "named_range",
             sheet: "NamedRange",
-            verdict: SectionVerdict::Reject {
-                placement_reason: "UnsupportedCanonicalTemplate",
-            },
-            expected_canonical_reject_kinds: &["named_reference"],
+            verdict: SectionVerdict::Span,
+            expected_canonical_reject_kinds: &[],
             values,
             formulas,
-            notes: "=SUM(CovNamedData)+A{r}; canonical reject NamedReference.",
+            notes: "=SUM(CovNamedData)+CovNamedCell*2+A{r}; named range + named cell resolve to \
+                    all-absolute read regions, span family.",
         });
     }
 
@@ -510,14 +512,27 @@ pub fn generate(rows_per_section: u32, seed: u64, include_broken: bool) -> Cover
         .map(|r| val(DATA_SHEET, r, 2, mix(seed, r as u64, 10)))
         .collect();
 
-    let named_ranges = vec![NamedRangeSpec {
-        name: "CovNamedData",
-        sheet: "NamedRange",
-        start_row: first,
-        start_col: 2,
-        end_row: last,
-        end_col: 2,
-    }];
+    let named_ranges = vec![
+        NamedRangeSpec {
+            name: "CovNamedData",
+            sheet: "NamedRange",
+            start_row: first,
+            start_col: 2,
+            end_row: last,
+            end_col: 2,
+        },
+        // Single-cell name (1x1 bounds): loaders/engines may define this as a
+        // Cell definition; both Cell and 1x1 Range resolve to the same
+        // absolute read region.
+        NamedRangeSpec {
+            name: "CovNamedCell",
+            sheet: "NamedRange",
+            start_row: 1,
+            start_col: 5,
+            end_row: 1,
+            end_col: 5,
+        },
+    ];
 
     debug_assert_eq!(sections.len(), SECTION_COUNT);
 

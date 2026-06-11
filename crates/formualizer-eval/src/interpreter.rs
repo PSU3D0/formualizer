@@ -1604,8 +1604,10 @@ fn relocate_reference_for_offset(
             end_row_abs: *end_row_abs,
             end_col_abs: *end_col_abs,
         }),
-        ReferenceType::NamedRange(_)
-        | ReferenceType::Table(_)
+        // Defined names are placement-invariant: a relocated copy of the
+        // formula references the same name, resolved at evaluation time.
+        ReferenceType::NamedRange(name) => Ok(ReferenceType::NamedRange(name.clone())),
+        ReferenceType::Table(_)
         | ReferenceType::Cell3D { .. }
         | ReferenceType::Range3D { .. }
         | ReferenceType::External(_) => Err(unsupported_reference_relocation_error()),

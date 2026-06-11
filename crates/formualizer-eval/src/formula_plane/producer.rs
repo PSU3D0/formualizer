@@ -728,6 +728,10 @@ pub(crate) enum ProjectionResult {
 pub(crate) enum ProjectionFallbackReason {
     UnsupportedDependencySummary,
     UnsupportedSheetBinding,
+    /// A defined-name reference whose definition is not a concrete Cell or
+    /// Range (Literal/Formula definitions), or which does not resolve at all
+    /// in the placement's scope. Such formulas stay on the legacy graph.
+    NamedReferenceUnsupported,
     UnsupportedAxis,
     UnboundedResultRegion,
     UnsupportedChangedRegion,

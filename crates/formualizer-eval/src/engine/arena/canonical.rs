@@ -204,8 +204,11 @@ fn mix_reference(
         }
         CompactRefType::NamedRange(name_id) => {
             hasher.mix_u8(REF_NAMED);
+            // Named references no longer reject at the canonical-label layer:
+            // they canonicalize by identity and the accept decision is made by
+            // the per-cell read projections (which resolve the name against
+            // the live registry at ingest time).
             labels.flags |= CanonicalLabels::FLAG_CONTAINS_NAME;
-            labels.rejects |= CanonicalLabels::REJECT_NAMED_REFERENCE;
             let normalized = strings
                 .get(name_id)
                 .map(|name| name.to_ascii_uppercase())

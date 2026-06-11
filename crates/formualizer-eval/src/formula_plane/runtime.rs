@@ -1152,6 +1152,16 @@ pub(crate) struct FormulaPlane {
     pub(crate) formula_overlay: FormulaOverlay,
     pub(crate) projection_cache: SpanProjectionCache,
     pub(crate) dirty: SpanDirtyStore,
+    /// Defined-name dependents: lowercased name key -> spans whose read
+    /// projections resolved that name at ingest. Keys are always lowercased
+    /// regardless of the engine's case-sensitive-names config: under a
+    /// case-sensitive config two distinct names can share a bucket, which
+    /// only over-invalidates (conservative, never incorrect). The map is also
+    /// deliberately scope-blind: any define/update/delete of a name in ANY
+    /// scope invalidates every span under that key, so a sheet-scoped define
+    /// finds spans that previously resolved through workbook scope.
+    name_dependent_spans: FxHashMap<String, Vec<FormulaSpanRef>>,
+    span_name_keys: FxHashMap<FormulaSpanId, Vec<String>>,
     epoch: FormulaPlaneEpoch,
 }
 
@@ -1290,9 +1300,57 @@ impl FormulaPlane {
             if let Some(binding_set_id) = binding_set_id {
                 self.binding_sets.remove(binding_set_id);
             }
+            self.unregister_span_name_dependents(span_ref);
             self.bump_epoch();
         }
         removed
+    }
+
+    /// Record that `span` resolved `names` (raw text) at ingest. See
+    /// `name_dependent_spans` for the keying contract.
+    pub(crate) fn register_span_name_dependents(&mut self, span: FormulaSpanRef, names: &[String]) {
+        let mut keys = Vec::with_capacity(names.len());
+        for name in names {
+            let key = name.to_lowercase();
+            let entry = self.name_dependent_spans.entry(key.clone()).or_default();
+            if !entry.contains(&span) {
+                entry.push(span);
+            }
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        if !keys.is_empty() {
+            self.span_name_keys.insert(span.id, keys);
+        }
+    }
+
+    fn unregister_span_name_dependents(&mut self, span_ref: FormulaSpanRef) {
+        let Some(keys) = self.span_name_keys.remove(&span_ref.id) else {
+            return;
+        };
+        for key in keys {
+            if let Some(entry) = self.name_dependent_spans.get_mut(&key) {
+                entry.retain(|candidate| candidate.id != span_ref.id);
+                if entry.is_empty() {
+                    self.name_dependent_spans.remove(&key);
+                }
+            }
+        }
+    }
+
+    /// Spans whose ingest-time read projections resolved `name` (any scope).
+    pub(crate) fn name_dependent_span_refs(&self, name: &str) -> Vec<FormulaSpanRef> {
+        self.name_dependent_spans
+            .get(&name.to_lowercase())
+            .map(|spans| {
+                spans
+                    .iter()
+                    .copied()
+                    .filter(|span_ref| self.spans.get(*span_ref).is_some())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn insert_overlay(

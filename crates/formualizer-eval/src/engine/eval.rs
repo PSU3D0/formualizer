@@ -2203,6 +2203,12 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
+        // A new define can flip resolution for spans that previously resolved
+        // the same name through another scope (e.g. a sheet-scoped name
+        // shadowing a workbook-scoped one). Demote those spans BEFORE the
+        // registry changes so their cells re-ingest and re-resolve through
+        // the normal legacy path.
+        self.invalidate_formula_plane_spans_for_name(name)?;
         self.graph.define_name(name, definition, scope)?;
         self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
@@ -2215,6 +2221,12 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
+        // Demote name-dependent spans BEFORE the registry update: the demoted
+        // cells re-materialize as legacy vertices attached to the name vertex
+        // (via their resolved-name dep plans), so the registry update's
+        // dependent dirtying reaches them exactly like long-lived legacy
+        // formulas.
+        self.invalidate_formula_plane_spans_for_name(name)?;
         self.graph.update_name(name, definition, scope)?;
         self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
@@ -2222,9 +2234,40 @@ where
     }
 
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
+        // Demote first (see update_name): the demoted legacy vertices become
+        // dependents of the name vertex, so delete_name dirties them and they
+        // re-evaluate to #NAME? exactly as legacy formulas do.
+        self.invalidate_formula_plane_spans_for_name(name)?;
         self.graph.delete_name(name, scope)?;
         self.record_formula_plane_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
+        Ok(())
+    }
+
+    /// Demote every FormulaPlane span whose ingest-time read projections
+    /// resolved `name` (any scope; see the FormulaPlane name-dependents map
+    /// for the conservative keying contract). Demotion materializes the span
+    /// placements as legacy graph formulas through the existing demotion
+    /// machinery, preserving computed values; the subsequent registry change
+    /// then dirties them through the legacy name-dependents path.
+    fn invalidate_formula_plane_spans_for_name(&mut self, name: &str) -> Result<(), ExcelError> {
+        if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+            return Ok(());
+        }
+        let regions: Vec<Region> = {
+            let authority = self.graph.formula_authority();
+            authority
+                .plane
+                .name_dependent_span_refs(name)
+                .into_iter()
+                .filter_map(|span_ref| authority.plane.spans.get(span_ref))
+                .map(|span| Region::from_domain(span.result_region.domain()))
+                .collect()
+        };
+        for region in regions {
+            self.demote_spans_preserving_computed_overlays(region.sheet_id(), region)
+                .map_err(Self::editor_error_to_excel)?;
+        }
         Ok(())
     }
 
