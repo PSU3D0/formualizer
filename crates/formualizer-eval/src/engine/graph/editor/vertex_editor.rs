@@ -1396,12 +1396,36 @@ impl<'g> VertexEditor<'g> {
 
     /// Set a cell value, creating the vertex if it doesn't exist
     pub fn set_cell_value(&mut self, cell_ref: CellRef, value: LiteralValue) -> VertexId {
+        self.set_cell_value_with_old_state(cell_ref, value, None, None)
+    }
+
+    /// Like [`set_cell_value`](Self::set_cell_value), but lets the caller
+    /// supply old state captured from an external source of truth (e.g. the
+    /// Arrow store, whose values are invisible here when the graph value cache
+    /// is disabled) for the change-log event.
+    ///
+    /// Precedence matches the historical append-then-patch flow
+    /// (`ChangeLog::patch_last_cell_event_old_state`): state the editor
+    /// captures from the graph wins; caller-supplied state only fills fields
+    /// the graph left `None`.
+    pub fn set_cell_value_with_old_state(
+        &mut self,
+        cell_ref: CellRef,
+        value: LiteralValue,
+        fallback_old_value: Option<LiteralValue>,
+        fallback_old_formula: Option<ASTNode>,
+    ) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
-        // Capture old state before modification (value + formula).
+        // Capture old state before modification (value + formula); fall back
+        // to caller-supplied state for anything the graph cannot see.
         let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
-        let old_value = old_id.and_then(|id| self.graph.get_value(id));
-        let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
+        let old_value = old_id
+            .and_then(|id| self.graph.get_value(id))
+            .or(fallback_old_value);
+        let old_formula = old_id
+            .and_then(|id| self.get_formula_ast(id))
+            .or(fallback_old_formula);
 
         // If this cell currently anchors a spill, clear the spill first and log it.
         // This keeps spill ownership maps and children consistent under undo/redo.
@@ -1458,12 +1482,32 @@ impl<'g> VertexEditor<'g> {
 
     /// Set a cell formula, creating the vertex if it doesn't exist
     pub fn set_cell_formula(&mut self, cell_ref: CellRef, formula: ASTNode) -> VertexId {
+        self.set_cell_formula_with_old_state(cell_ref, formula, None, None)
+    }
+
+    /// Like [`set_cell_formula`](Self::set_cell_formula), but lets the caller
+    /// supply old state captured from an external source of truth (e.g. the
+    /// Arrow store) for the change-log event. Same precedence as
+    /// [`set_cell_value_with_old_state`](Self::set_cell_value_with_old_state):
+    /// graph-captured state wins, caller state only fills `None` fields.
+    pub fn set_cell_formula_with_old_state(
+        &mut self,
+        cell_ref: CellRef,
+        formula: ASTNode,
+        fallback_old_value: Option<LiteralValue>,
+        fallback_old_formula: Option<ASTNode>,
+    ) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
-        // Capture old state before modification (value + formula).
+        // Capture old state before modification (value + formula); fall back
+        // to caller-supplied state for anything the graph cannot see.
         let old_id = self.graph.get_vertex_id_for_address(&cell_ref).copied();
-        let old_value = old_id.and_then(|id| self.graph.get_value(id));
-        let old_formula = old_id.and_then(|id| self.get_formula_ast(id));
+        let old_value = old_id
+            .and_then(|id| self.graph.get_value(id))
+            .or(fallback_old_value);
+        let old_formula = old_id
+            .and_then(|id| self.get_formula_ast(id))
+            .or(fallback_old_formula);
 
         // If this cell currently anchors a spill, clear it before updating the formula.
         let spill_snapshot =

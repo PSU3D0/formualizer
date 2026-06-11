@@ -28,7 +28,10 @@ fn wb_changelog_graph_mode() -> Workbook {
 /// Render one change event as a stable, content-complete line.
 fn render_event(ev: &ChangeEvent) -> String {
     let fmt_ast = |a: &Option<formualizer_parse::ASTNode>| match a {
-        Some(ast) => format!("Some({})", formualizer_parse::pretty::canonical_formula(ast)),
+        Some(ast) => format!(
+            "Some({})",
+            formualizer_parse::pretty::canonical_formula(ast)
+        ),
         None => "None".to_string(),
     };
     match ev {
