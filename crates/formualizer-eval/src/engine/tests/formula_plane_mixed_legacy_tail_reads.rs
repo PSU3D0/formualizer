@@ -68,6 +68,13 @@ fn numeric_value(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> f64 {
 
 /// `A{r} = r`; span-accepted `B{r} = A{r}+1`; legacy tail readers in the
 /// given column reading the given range template.
+///
+/// Mixed-anchor tail-read families are span-supported now, so a uniform
+/// `=SUM($A{r}:$A$N)` column would be promoted and stop exercising the
+/// legacy-interaction path this net pins. Alternate odd rows to a structurally
+/// different but value-identical template (`...+0`): each resulting family has
+/// row gaps (`UnsupportedShapeOrGaps`), keeping all tail readers legacy while
+/// preserving the original read-region geometry and candidate counts.
 fn build_mixed_engine(tail_formula: impl Fn(u32) -> String) -> Engine<TestWorkbook> {
     let config =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
@@ -78,11 +85,23 @@ fn build_mixed_engine(tail_formula: impl Fn(u32) -> String) -> Engine<TestWorkbo
             .set_cell_value(SHEET, row, 1, LiteralValue::Number(row as f64))
             .unwrap();
         formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
-        formulas.push(record(&mut engine, row, 4, &tail_formula(row)));
+        let tail = if row % 2 == 0 {
+            format!("{}+0", tail_formula(row))
+        } else {
+            tail_formula(row)
+        };
+        formulas.push(record(&mut engine, row, 4, &tail));
     }
-    engine
+    let report = engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
         .expect("ingest formulas");
+    assert_eq!(
+        report.shadow_accepted_span_cells,
+        u64::from(ROWS),
+        "only the B column family may span; tail readers must stay legacy \
+         (histogram: {:?})",
+        report.fallback_reasons
+    );
     engine
 }
 

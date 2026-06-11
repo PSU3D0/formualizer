@@ -30,7 +30,7 @@ pub const DATA_SHEET: &str = "Data";
 /// Number of sections emitted with `include_broken = false`.
 ///
 /// Useful for sizing: total formula cells = `SECTION_COUNT * rows_per_section`.
-pub const SECTION_COUNT: usize = 10;
+pub const SECTION_COUNT: usize = 12;
 
 /// Expected FormulaPlane placement verdict for every formula cell of a section.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -332,9 +332,10 @@ pub fn generate(rows_per_section: u32, seed: u64, include_broken: bool) -> Cover
 
     // ------------------------------------------------------------------
     // (h) mixed_anchor — range with relative start / absolute end
-    // (=SUM($A{r}:$A$last)): the read region shrinks as the row advances,
-    // so member templates are not row-translation-equivalent.
-    // Expected: REJECT.
+    // (=SUM($A{r}:$A$last)): the per-row read region is a shrinking tail,
+    // affine in the placement index. Expected: SPAN. Mixed-anchor ranges
+    // gained dependency-summary + half-open dirty-projection support;
+    // pinned empirically on 2026-06-11.
     // ------------------------------------------------------------------
     {
         let mut values = Vec::new();
@@ -351,14 +352,12 @@ pub fn generate(rows_per_section: u32, seed: u64, include_broken: bool) -> Cover
         sections.push(Section {
             name: "mixed_anchor",
             sheet: "MixedAnchor",
-            verdict: SectionVerdict::Reject {
-                placement_reason: "UnsupportedDependencySummary",
-            },
+            verdict: SectionVerdict::Span,
             expected_canonical_reject_kinds: &[],
             values,
             formulas,
-            notes: "Mixed-anchor =SUM($A{r}:$A$last); canonical OK (MixedAnchors flag) but the \
-                    per-row shrinking-tail read region has no supported dependency summary.",
+            notes: "Mixed-anchor tail read =SUM($A{r}:$A$last); shrinking read region, span via \
+                    half-open placement-interval dirty projection.",
         });
     }
 
@@ -406,6 +405,67 @@ pub fn generate(rows_per_section: u32, seed: u64, include_broken: bool) -> Cover
             values: Vec::new(),
             formulas,
             notes: "Row-shifted cross-sheet =Data!B{r}*2; explicit sheet binding is supported.",
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // (k) running_total — expanding mixed-anchor range reading a DIFFERENT
+    // column (=SUM($B$2:$B{r})): absolute start, relative end. Expected:
+    // SPAN — the opposite polarity of mixed_anchor's shrinking tail.
+    // ------------------------------------------------------------------
+    {
+        let mut values = Vec::new();
+        let mut formulas = Vec::new();
+        for r in rows.clone() {
+            values.push(val("RunningTotal", r, 2, mix(seed, r as u64, 11))); // B
+            formulas.push(formula("RunningTotal", r, 3, format!("=SUM($B$2:$B{r})")));
+        }
+        sections.push(Section {
+            name: "running_total",
+            sheet: "RunningTotal",
+            verdict: SectionVerdict::Span,
+            expected_canonical_reject_kinds: &[],
+            values,
+            formulas,
+            notes: "Running total =SUM($B$2:$B{r}) over a data column; expanding read region, \
+                    span via half-open placement-interval dirty projection.",
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // (l) self_cumulative — expanding mixed-anchor range reading the
+    // family's OWN result column (=SUM($C$1:$C{r-1})*0+B{r} in column C).
+    // The union read region intersects the result region, so the
+    // InternalDependency placement guard must keep the family legacy.
+    // (`*0+B{r}` keeps the evaluated values bounded and per-row distinct —
+    // a raw cumulative self-sum doubles every row and overflows to +inf,
+    // which defeats the ON-vs-OFF value-equality check.)
+    // Expected: REJECT (InternalDependency).
+    // ------------------------------------------------------------------
+    {
+        let mut values = Vec::new();
+        let mut formulas = Vec::new();
+        for r in rows.clone() {
+            values.push(val("SelfCumulative", r, 2, mix(seed, r as u64, 12))); // B
+            let rm1 = r - 1;
+            formulas.push(formula(
+                "SelfCumulative",
+                r,
+                3,
+                format!("=SUM($C$1:$C{rm1})*0+B{r}"),
+            ));
+        }
+        sections.push(Section {
+            name: "self_cumulative",
+            sheet: "SelfCumulative",
+            verdict: SectionVerdict::Reject {
+                placement_reason: "InternalDependency",
+            },
+            expected_canonical_reject_kinds: &[],
+            values,
+            formulas,
+            notes: "Self-cumulative =SUM($C$1:$C{r-1})*0+B{r} reading its own result column; \
+                    the InternalDependency guard must reject the span.",
         });
     }
 
