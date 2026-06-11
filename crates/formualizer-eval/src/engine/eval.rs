@@ -461,6 +461,12 @@ pub struct Engine<R> {
     /// producers become visible) so the cycle members land on the legacy graph
     /// path. Observational only.
     formula_plane_cycle_member_span_demotions: u64,
+    /// Times the FormulaPlane coordinator failed over to the legacy
+    /// primitive because the mixed schedule reported only non-cycle
+    /// fallbacks (capacity caps, unsupported projections, missing result
+    /// regions). One increment per `evaluate_all`-level bailout — the
+    /// cyclic-span demote loop must never spin on these. Observational only.
+    formula_plane_capacity_bailouts: u64,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
 
@@ -1490,6 +1496,7 @@ where
             last_formula_ingest_report: None,
             formula_ingest_report_total: FormulaIngestReport::default(),
             formula_plane_cycle_member_span_demotions: 0,
+            formula_plane_capacity_bailouts: 0,
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -1568,6 +1575,7 @@ where
             last_formula_ingest_report: None,
             formula_ingest_report_total: FormulaIngestReport::default(),
             formula_plane_cycle_member_span_demotions: 0,
+            formula_plane_capacity_bailouts: 0,
             active_cancel_flag: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
@@ -3025,6 +3033,11 @@ where
     #[cfg(test)]
     pub(crate) fn formula_plane_indexes_epoch(&self) -> u64 {
         self.graph.formula_authority().indexes_epoch()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn formula_plane_capacity_bailouts(&self) -> u64 {
+        self.formula_plane_capacity_bailouts
     }
 
     fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
@@ -8452,6 +8465,23 @@ where
             .formula_authority_mut()
             .take_pending_changed_regions();
 
+        // Steady-state shortcut: in `DirtyClosure` mode span work is derived
+        // exclusively from pending changed regions, so with none pending the
+        // mixed schedule could only ever contain dirty legacy vertices (e.g.
+        // re-dirtied volatiles). Skip the O(all formula vertices)
+        // producer/consumer index rebuild and run them through the legacy
+        // primitive directly — identical evaluation set, with the legacy
+        // path's native cycle/virtual-dep handling.
+        if matches!(span_seed_mode, SpanSeedMode::DirtyClosure)
+            && pending_changed_regions.is_empty()
+        {
+            #[cfg(test)]
+            {
+                self.last_formula_plane_span_eval_report = None;
+            }
+            return self.evaluate_all_legacy_impl();
+        }
+
         let start = crate::instant::FzInstant::now();
         let mut span_seed_mode = span_seed_mode;
         let mut pending_changed_regions = pending_changed_regions;
@@ -8466,6 +8496,30 @@ where
 
             if schedule.is_authoritative_safe() {
                 break (schedule, span_refs_by_id, plane_epoch, legacy_vertices);
+            }
+
+            // The demote loop below can only make progress on cycles: it
+            // demotes cyclic spans and stamps residual legacy-only cycles.
+            // Every other fallback reason (capacity caps, unsupported
+            // projections, missing result regions) is a property of the
+            // inputs — rebuilding the schedule from identical state
+            // reproduces the identical fallback, so iterating would spin
+            // `MAX_CYCLE_DEMOTE_ITERS` times doing O(graph) schedule builds
+            // per iteration before giving up anyway. Fail over to the legacy
+            // primitive immediately instead.
+            let has_cycle_fallback = schedule.stats.cycle_count > 0
+                || schedule
+                    .fallbacks
+                    .iter()
+                    .any(|fb| fb.reason == MixedScheduleFallbackReason::CycleDetected);
+            if !has_cycle_fallback {
+                self.formula_plane_capacity_bailouts =
+                    self.formula_plane_capacity_bailouts.saturating_add(1);
+                #[cfg(test)]
+                {
+                    self.last_formula_plane_span_eval_report = None;
+                }
+                return self.evaluate_all_legacy_impl();
             }
 
             // Gotcha G8 (refs #112): a span whose member cell participates in a
@@ -8605,10 +8659,33 @@ where
                             }
                         }
                     }
-                    FormulaProducerId::Legacy(vertex_id) => {
-                        let _ = self.evaluate_vertex_impl(vertex_id, None)?;
-                        computed_vertices = computed_vertices.saturating_add(1);
-                        work_index = work_index.saturating_add(1);
+                    FormulaProducerId::Legacy(_) => {
+                        // Batch the contiguous run of legacy work items into a
+                        // synthetic layer and evaluate it through the same
+                        // coalesced effects pipeline as the legacy scheduler.
+                        // Items in one mixed layer have no edges between them
+                        // (same invariant the legacy Kahn layers rely on), so
+                        // batching preserves ordering semantics while
+                        // amortizing per-write overlay mirroring that makes
+                        // one-vertex-at-a-time evaluation ~30x slower.
+                        let mut vertices = Vec::new();
+                        while work_index < work_items.len() {
+                            let FormulaProducerId::Legacy(vertex_id) =
+                                work_items[work_index].producer
+                            else {
+                                break;
+                            };
+                            vertices.push(vertex_id);
+                            work_index = work_index.saturating_add(1);
+                        }
+                        let legacy_layer = crate::engine::scheduler::Layer { vertices };
+                        let evaluated =
+                            if self.thread_pool.is_some() && legacy_layer.vertices.len() > 1 {
+                                self.evaluate_layer_parallel(&legacy_layer)?
+                            } else {
+                                self.evaluate_layer_sequential(&legacy_layer)?
+                            };
+                        computed_vertices = computed_vertices.saturating_add(evaluated);
                     }
                 }
             }
