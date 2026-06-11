@@ -213,6 +213,22 @@ impl Region {
         }
     }
 
+    /// Canonical axis-kind form: degenerate one-cell spans (`Span(x, x)`)
+    /// become `Point(x)` on each axis. Semantically a no-op
+    /// (`intersects`/`contains` already treat them identically), but the
+    /// index's routing is kind-driven: a single-column finite range left as
+    /// `(Span, Span)` lands in the coarse 64x16 rect buckets where it
+    /// over-candidates every point query in the same bucket column, instead
+    /// of the precise per-column interval tree.
+    #[inline]
+    pub(crate) fn normalized(self) -> Self {
+        Self {
+            sheet_id: self.sheet_id,
+            rows: self.rows.normalized(),
+            cols: self.cols.normalized(),
+        }
+    }
+
     #[inline]
     pub(crate) fn as_point(self) -> Option<RegionKey> {
         if let (AxisRange::Point(row), AxisRange::Point(col)) = (self.rows, self.cols) {
@@ -360,6 +376,16 @@ impl AxisRange {
         }
     }
 
+    /// Degenerate one-coordinate spans become points; see
+    /// [`Region::normalized`].
+    #[inline]
+    pub(crate) fn normalized(self) -> Self {
+        match self {
+            Self::Span(start, end) if start == end => Self::Point(start),
+            other => other,
+        }
+    }
+
     #[inline]
     pub(crate) fn kind(self) -> AxisKind {
         match self {
@@ -481,7 +507,12 @@ impl<T: Clone> SheetRegionIndex<T> {
     pub(crate) fn insert(&mut self, region: Region, value: T) -> usize {
         let id = self.entries.len();
         self.entries.push(RegionEntry { value, region });
-        self.index_entry(id, region);
+        // Index routing is axis-kind-driven; normalize degenerate one-cell
+        // spans to points so single-column/row finite ranges use the precise
+        // interval trees instead of the coarse rect buckets. The stored
+        // entry (and therefore `indexed_region` in matches) keeps the
+        // caller's original region.
+        self.index_entry(id, region.normalized());
         self.epoch = self.epoch.saturating_add(1);
         id
     }
@@ -515,7 +546,9 @@ impl<T: Clone> SheetRegionIndex<T> {
 
     pub(crate) fn query(&self, query: Region) -> RegionQueryResult<T> {
         let mut candidate_ids = FxHashSet::default();
-        self.collect_candidates(query, &mut candidate_ids);
+        // Match the normalization applied at insert so degenerate-span
+        // queries route through the same precise structures.
+        self.collect_candidates(query.normalized(), &mut candidate_ids);
 
         let candidate_count = candidate_ids.len();
         let mut matches = Vec::new();
@@ -1765,6 +1798,49 @@ mod tests {
     }
 
     #[test]
+    fn degenerate_single_col_rects_index_as_intervals_not_rect_buckets() {
+        // Regression: mixed-mode legacy interaction (perf). Finite
+        // single-column ranges built via `Region::rect` (e.g. legacy
+        // `=SUM($A{r}:$A$N)` reads routed through
+        // `shared_range_to_region_pattern`) used to keep their degenerate
+        // `Span(c, c)` col axis and land in the 64x16 rect buckets. With N
+        // overlapping tail reads, every point query in the same bucket
+        // column (e.g. the formula result column) collected O(N) candidates
+        // that the exact filter then dropped — O(N^2) cumulative candidates
+        // across a scheduling pass, tripping the mixed scheduler's
+        // `max_candidates` fail-closed cap. Normalization must route these
+        // entries through the per-column interval trees so unrelated point
+        // queries see zero candidates, not O(N) dropped ones.
+        let mut index = SheetRegionIndex::new();
+        let n = 2_000;
+        for r in 1..=n {
+            index.insert(Region::rect(1, r, n, 1, 1), r);
+        }
+
+        // Point queries on a *different* column inside the same 16-col rect
+        // bucket column must not even see the tail reads as candidates.
+        for r in [1, 64, 1_000, n] {
+            let result = index.query(Region::point(1, r, 3));
+            assert_eq!(
+                result.stats.candidate_count, 0,
+                "row {r}: point query on col 3 must be O(1), got {} candidates \
+                 ({} dropped by the exact filter)",
+                result.stats.candidate_count, result.stats.exact_filter_drop_count
+            );
+        }
+
+        // Queries on the indexed column still see exactly the true
+        // intersections (every read whose row range covers the point).
+        let hit = index.query(Region::point(1, 5, 1));
+        assert_eq!(hit.matches.len(), 5);
+        assert_eq!(hit.stats.exact_filter_drop_count, 0);
+
+        // Degenerate-span queries are normalized symmetrically.
+        let span_query = index.query(Region::rect(1, 5, 5, 3, 3));
+        assert_eq!(span_query.stats.candidate_count, 0);
+    }
+
+    #[test]
     fn sheet_region_index_does_not_return_other_sheet_entries() {
         let mut index = SheetRegionIndex::with_rect_bucket_size(10, 10);
         index.insert(Region::point(1, 0, 0), "sheet_1_point");
@@ -1933,9 +2009,11 @@ mod tests {
 
     #[test]
     fn sheet_region_index_may_overreturn_rect_bucket_but_never_misses_intersection() {
+        // True (multi-cell) rects: degenerate 1xN/Nx1 rects normalize to
+        // points/intervals and never reach the rect buckets.
         let mut index = SheetRegionIndex::with_rect_bucket_size(10, 10);
-        index.insert(Region::rect(1, 0, 0, 0, 0), "hit");
-        index.insert(Region::rect(1, 9, 9, 9, 9), "same_bucket_drop");
+        index.insert(Region::rect(1, 0, 1, 0, 1), "hit");
+        index.insert(Region::rect(1, 8, 9, 8, 9), "same_bucket_drop");
 
         let result = index.query(Region::point(1, 0, 0));
 
@@ -2070,14 +2148,16 @@ mod tests {
         let mut index = SpanDependencyIndex::default();
         let hit = span_ref(8);
         let drop = span_ref(9);
+        // True (multi-cell) rects: degenerate 1xN/Nx1 rects normalize to
+        // points/intervals and never reach the rect buckets.
         index.insert_dependency(
             hit,
-            Region::rect(4, 0, 0, 0, 0),
+            Region::rect(4, 0, 1, 0, 1),
             DirtyProjection::WholeTarget,
         );
         index.insert_dependency(
             drop,
-            Region::rect(4, 63, 63, 15, 15),
+            Region::rect(4, 62, 63, 14, 15),
             DirtyProjection::WholeTarget,
         );
 
