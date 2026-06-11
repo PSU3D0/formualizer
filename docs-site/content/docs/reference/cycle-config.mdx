@@ -1,0 +1,117 @@
+---
+title: Cycle Configuration Reference
+description: The CycleConfig surface — detection modes, policies, iterative-calculation knobs, and how it maps across Rust, Python, and JS/WASM.
+---
+
+Cycle handling is configured through `CycleConfig`, nested under the engine's `EvalConfig` (and therefore reachable from `WorkbookConfig.eval`). It has two parts: a **detection mode** and a **policy** for live cycles.
+
+```text
+CycleConfig {
+  detection: CycleDetection,  // Static (default) | Runtime
+  policy:    CyclePolicy,      // Error (default) | Iterate { max_iterations, max_change }
+}
+```
+
+See the guides for the conceptual model:
+
+- [Circular References and Runtime Cycle Detection](/docs/guides/circular-references-and-cycle-detection)
+- [Iterative Calculation (Excel Parity)](/docs/guides/iterative-calculation)
+
+## `CycleDetection`
+
+| Value | Behavior |
+|-------|----------|
+| `Static` *(default)* | Every static SCC is stamped `#CIRC!`. No live-edge machinery runs. Byte-for-byte compatible with prior releases. |
+| `Runtime` | Static SCCs are candidates; members evaluate with live-edge recording, and only *live* cycles get the policy verdict. Phantom (live-acyclic) SCCs produce ordinary values. |
+
+## `CyclePolicy`
+
+Applies to cycles confirmed *live* under `Runtime` detection.
+
+| Value | Behavior |
+|-------|----------|
+| `Error` *(default)* | Live cycles produce `#CIRC!`. |
+| `Iterate { max_iterations, max_change }` | Excel-style iterative calculation. Live cycles run repeated passes until every member converges or the pass cap is reached. Requires `Runtime` detection. |
+
+### Iterate knobs
+
+| Knob | Excel default | Notes |
+|------|---------------|-------|
+| `max_iterations` | `100` | Total passes per cycle per recalc (pass 1 included). `1` = each member evaluates once per recalc (accumulator contract). `0` is a config error. |
+| `max_change` | `0.001` | Absolute per-member convergence threshold (`|Δ| < max_change`, strict). Negative or non-finite is a config error. |
+
+## Validation rules
+
+A `CycleConfig` is rejected at build time (engine construction, `with_cycle`, or the binding setter) when:
+
+- `Iterate` is combined with `detection: Static` (iteration requires `Runtime`).
+- `Iterate` has `max_iterations == 0`.
+- `Iterate` has a negative or non-finite `max_change`.
+
+Selecting the iterate policy through a binding promotes detection to `Runtime` automatically, so you rarely set both by hand.
+
+## Surface map
+
+<CodeTabs
+  title="Equivalent configuration in each binding"
+  rust={`use formualizer_eval::engine::{CycleConfig, CycleDetection, CyclePolicy};
+
+// Runtime detection only (live cycles still #CIRC!)
+let cfg = CycleConfig { detection: CycleDetection::Runtime, policy: CyclePolicy::Error };
+
+// Excel-default iterative calculation (Runtime + 100 / 0.001)
+let cfg = CycleConfig::iterate_excel_defaults();
+
+// Explicit knobs
+let cfg = CycleConfig::iterate(50, 0.0001);
+
+// Applied via EvalConfig::with_cycle (panics on invalid combos)
+let eval = formualizer_eval::engine::EvalConfig::default().with_cycle(cfg);`}
+  python={`import formualizer as fz
+
+cfg = fz.EvaluationConfig()
+cfg.cycle_detection = "static" | "runtime"   # mode
+cfg.cycle_policy = "error" | "iterate"        # policy ("iterate" -> runtime)
+cfg.iterate_max_iterations = 100              # only meaningful when iterating
+cfg.iterate_max_change = 0.001
+
+wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))`}
+  ts={`// JS/WASM accepts cycle config only on the load entry points.
+// The plain \`new Workbook()\` constructor always uses defaults.
+const wb = Workbook.fromJsonWithOptions(json, {
+  cycleDetection: "runtime",       // "static" | "runtime"
+  cyclePolicy: "iterate",          // "error" | "iterate" (implies runtime)
+  iterateMaxIterations: 100,
+  iterateMaxChange: 0.001,
+});
+// Also available: Workbook.fromXlsxBytesWithOptions(bytes, options)`}
+  runnable={false}
+/>
+
+## Binding parity notes
+
+| Capability | Rust | Python | JS/WASM |
+|-----------|------|--------|---------|
+| Set detection mode | ✅ | ✅ `cycle_detection` | ✅ `cycleDetection` (load only) |
+| Set policy / iterate knobs | ✅ | ✅ `cycle_policy`, `iterate_*` | ✅ `cyclePolicy`, `iterate*` (load only) |
+| Configure on programmatic (empty) workbook | ✅ | ✅ `Workbook(config=...)` | ❌ constructor takes no options |
+| Read `CycleTelemetry` | ✅ `engine().last_cycle_telemetry()` | ✅ `wb.last_cycle_telemetry()` | ❌ config-only today |
+| XLSX `<calcPr>` round-trip | ✅ | ✅ (via load/save) | ✅ (via `fromXlsxBytesWithOptions`) |
+
+## XLSX `<calcPr>` mapping
+
+| `<calcPr>` attribute | `CycleConfig` |
+|----------------------|---------------|
+| `iterate="1"` | `policy = Iterate`, `detection = Runtime` |
+| `iterateCount="N"` | `max_iterations = N` (defaults to 100 if absent) |
+| `iterateDelta="D"` | `max_change = D` (defaults to 0.001 if absent) |
+| `iterate="0"` / absent `<calcPr>` | config left unchanged on load |
+
+On load, a file with `iterate="1"` wins over a configured `Error` policy (file-wins precedence). On save, an active `Iterate` policy writes the matching `iterate`/`iterateCount`/`iterateDelta` attributes.
+
+## Related
+
+- [Errors and Types](/docs/reference/errors-and-types)
+- [Rust API Map](/docs/reference/rust-api-map)
+- [Python API Map](/docs/reference/python-api-map)
+- [JS/WASM API Map](/docs/reference/js-wasm-api-map)
