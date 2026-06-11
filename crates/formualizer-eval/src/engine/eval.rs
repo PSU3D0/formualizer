@@ -3318,7 +3318,9 @@ where
             let sheet_name = pending_candidates[candidate_indices[0]].0.clone();
             let mut plans_by_coord: BTreeMap<(u32, u32), Vec<DependencyPlanRow>> = BTreeMap::new();
             for idx in &candidate_indices {
-                if let Some(plan) = plans_by_index[*idx].clone() {
+                // Each candidate index belongs to exactly one group, so the
+                // plan row can be moved out instead of deep-cloned.
+                if let Some(plan) = plans_by_index[*idx].take() {
                     let candidate = &pending_candidates[*idx].1;
                     plans_by_coord
                         .entry((candidate.row, candidate.col))
@@ -3387,14 +3389,27 @@ where
                     };
                     Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
 
+                    // Index candidates by placement once per component. The
+                    // previous per-result linear `find` made this fallback
+                    // mapping O(N²) for rejected families (e.g. an N-cell
+                    // chain rejected with `InternalDependency`), dominating
+                    // first-eval ingest cost on large rejected families.
+                    // First insert wins, matching the old `Iterator::find`
+                    // semantics for duplicate placements.
+                    let mut candidate_by_placement: FxHashMap<
+                        crate::formula_plane::runtime::PlacementCoord,
+                        &FormulaPlacementCandidate,
+                    > = FxHashMap::with_capacity_and_hasher(component.len(), Default::default());
+                    for candidate in &component {
+                        candidate_by_placement
+                            .entry(candidate.placement())
+                            .or_insert(candidate);
+                    }
                     for result in &placement_report.results {
                         let FormulaPlacementResult::Legacy { placement, .. } = result else {
                             continue;
                         };
-                        if let Some(candidate) = component
-                            .iter()
-                            .find(|candidate| candidate.placement() == *placement)
-                        {
+                        if let Some(&candidate) = candidate_by_placement.get(placement) {
                             let plan = plans_by_coord
                                 .get_mut(&(candidate.row, candidate.col))
                                 .and_then(Vec::pop);
@@ -3499,6 +3514,19 @@ where
         candidates: Vec<FormulaPlacementCandidate>,
     ) -> Vec<Vec<FormulaPlacementCandidate>> {
         if candidates.len() <= 1 {
+            return vec![candidates];
+        }
+
+        // Fast path: candidates already ordered as one contiguous
+        // single-column (or single-row) run form exactly one 4-connected
+        // component in their existing (row, col) order; skip the BFS.
+        let is_row_run = candidates.windows(2).all(|w| {
+            w[0].sheet_id == w[1].sheet_id && w[0].col == w[1].col && w[0].row + 1 == w[1].row
+        });
+        let is_col_run = candidates.windows(2).all(|w| {
+            w[0].sheet_id == w[1].sheet_id && w[0].row == w[1].row && w[0].col + 1 == w[1].col
+        });
+        if is_row_run || is_col_run {
             return vec![candidates];
         }
 
