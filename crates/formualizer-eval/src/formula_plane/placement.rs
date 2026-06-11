@@ -915,6 +915,16 @@ pub(crate) fn split_candidate_affine_literal_runs(
     }
     debug_assert_eq!(candidates.len(), analyses.len());
 
+    // Fast path: identical literal bindings across the family mean every
+    // adjacent step is zero, so the family never splits. Skip the per-pair
+    // step computation (which allocates a Vec per window) entirely.
+    if analyses
+        .windows(2)
+        .all(|pair| pair[0].literal_bindings == pair[1].literal_bindings)
+    {
+        return vec![(candidates, analyses)];
+    }
+
     let is_row_run = candidates.windows(2).all(|w| {
         w[0].sheet_id == w[1].sheet_id && w[0].col == w[1].col && w[0].row + 1 == w[1].row
     });
