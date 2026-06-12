@@ -2,6 +2,56 @@
 
 All notable changes to Formualizer will be documented in this file.
 
+## [0.7.0] - 2026-06-12
+
+### Breaking changes
+
+- Added the `Iterate` variant to the public `CyclePolicy` enum; downstream code matching `CyclePolicy` exhaustively must add an arm. (#130)
+
+### Added
+
+- Added Excel-style iterative calculation: `CyclePolicy::Iterate` evaluates intentional circular references with configurable max-iteration and convergence-threshold settings, built on runtime SCC cycle detection via live-edge iteration so only genuinely cyclic cells iterate and short-circuited branches never create false cycles. (#118, #119, #130)
+- Added XLSX `calcPr` round-trip so workbooks authored with iterative calculation enabled in Excel load and save with the same cycle configuration, plus Python and WASM/JS cycle-configuration surfaces. (#131)
+- Added WASM cycle configuration on the plain `new Workbook(options)` constructor and a `lastCycleTelemetry()` accessor exposing iteration, convergence, and cycle-outcome telemetry for the most recent evaluation. (#138)
+- Added FormulaPlane named-range support: formulas referencing defined names with concrete cell or range definitions now canonicalize, fingerprint, and evaluate as spans; names resolve per cell at projection time with the same scope/shadowing semantics as legacy evaluation, and define/update/delete of a name invalidates affected spans. (#147)
+- Added FormulaPlane mixed-anchor range support so tail reads (e.g. `$A2:$A$100`) and running totals (e.g. `$B$2:$B2`) evaluate as spans with placement-precise dirty projection. (#145)
+- Added MIT and Apache-2.0 license files to the repository.
+
+### Improved
+
+- Improved cycle evaluation infrastructure with condensation-ordered schedule units, per-SCC cycle outcomes, and a live-edge collector with lazy `SHORT_CIRCUIT` dispatch. (#116, #117, #118)
+- Excluded FormulaPlane span members from static cycle detection so span-covered families do not produce spurious cycle verdicts. (#121)
+
+### Performance
+
+- Batched cell edits now run one multi-source dirty propagation per bulk operation instead of one per cell, making large `write_range`/`set_values` calls up to ~270x faster (15.9 s to 59 ms for a 20k-cell batch with changelog off). (#139)
+- Changelog old-state capture is recorded directly at edit time instead of patched by an O(N²) reverse scan, reducing a 20k-cell batch with changelog on from 506 ms to 112 ms (combined with #139, ~144x end to end). (#140)
+- Hot-path improvements from profiling: iterative Tarjan SCC (no recursion-depth limits), fixed exponentially repeated dispatch on deeply nested expressions, multi-source dirty marking, and aggregate infinity sanitization. (#136)
+- Amortized CSR edge rebuilds across per-cell formula edits instead of rebuilding per edit. (#127)
+- Recorded per-cell staged-formula deltas in the changelog instead of whole-sheet snapshots. (#128)
+- Stored schedule units as indices instead of cloned layers. (#117)
+- `IFERROR`/`IFNA` now short-circuit (the fallback branch is not evaluated when the value is clean), `SEQUENCE`/`RANDARRAY` reject array shapes beyond Excel grid limits before allocating, and order-statistic functions (`LARGE`, `SMALL`, `MEDIAN`, `PERCENTILE.*`, `QUARTILE.*`) use quickselect instead of full sorts (~12x on large ranges). (#141)
+- Fixed a FormulaPlane mixed-mode interaction (degenerate rectangle routing and a repeated demote spin) that made authoritative evaluation slower than Off on mixed workbooks; the mixed corpus improved from 996 ms to 26 ms, faster than Off. (#143)
+- Linearized the FormulaPlane reject path with O(1) candidate mapping on family rejection, reducing the ingest penalty of a 50k-cell dependent chain from 863 ms to 112 ms. (#146)
+
+### Fixed
+
+- Fixed unqualified references in cross-sheet formula contexts leaking to the default sheet. (#110, #114)
+- Fixed spill projections and region locks not being torn down when a cycle stamps `#CIRC!`. (#115)
+- Fixed whole-axis and stripe self-inclusion not being detected as circular references. (#129)
+- Fixed `CycleTelemetry` not being populated on the workbook/Arrow evaluate path. (#124)
+- Fixed two iterative-calculation edge-case bugs found by corpus testing, and hardened the pre-ship surface with per-cycle clock snapshots, Python telemetry, and persistence pins. (#134, #135)
+- Fixed a wasm32 panic from clock access during evaluation under the JS runtime. (#138)
+- Fixed the Umya XLSX loader registering defined names after eager formula ingest, which prevented named formulas from resolving at ingest time. (#147)
+
+### Tooling and quality
+
+- Added a property-test oracle evaluating random guarded workbooks against a reference lazy interpreter. (#122)
+- Added standing SCC cost-model probes (phantom pairs, iterate workloads) and an iterative-calculation edge-case corpus. (#123, #132, #135)
+- Added the FormulaPlane span-coverage corpus, `probe-fp-coverage`, and generator-driven pinning tests as the standing coverage measurement for fingerprint expansions. (#142)
+- Added the adaptive formula partition architecture document describing the unified evaluation end state. (#148)
+- Added cycle detection and iterative calculation guides, reference pages, and interactive sandboxes to the docs site. (#137)
+
 ## [0.6.0] - 2026-06-03
 
 ### Breaking changes
@@ -202,7 +252,9 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.5.9...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/PSU3D0/formualizer/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/PSU3D0/formualizer/compare/v0.5.9...v0.6.0
 [0.5.9]: https://github.com/PSU3D0/formualizer/compare/v0.5.8...v0.5.9
 [0.5.8]: https://github.com/PSU3D0/formualizer/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/PSU3D0/formualizer/compare/v0.5.6...v0.5.7
