@@ -669,9 +669,17 @@ impl Function for IndirectFn {
         };
 
         if !a1_style {
-            return Some(Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                "INDIRECT with R1C1 style (second argument FALSE) is not yet supported",
-            )));
+            // The A1/R1C1 flag does not apply to defined names or tables (they are
+            // neither A1 nor R1C1 syntax). Excel resolves `INDIRECT(name, FALSE)`
+            // exactly like `INDIRECT(name)`, so handle those before refusing R1C1.
+            // Real R1C1 cell/range text remains unsupported.
+            return match formualizer_parse::parser::ReferenceType::from_string(&ref_text) {
+                Ok(ReferenceType::NamedRange(name)) => Some(Ok(ReferenceType::NamedRange(name))),
+                Ok(ReferenceType::Table(tref)) => Some(Ok(ReferenceType::Table(tref))),
+                _ => Some(Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                    "INDIRECT with R1C1 style (second argument FALSE) is not yet supported",
+                ))),
+            };
         }
 
         let parsed = formualizer_parse::parser::ReferenceType::parse_sheet_ref(&ref_text);
