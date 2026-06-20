@@ -298,14 +298,14 @@ impl Function for TextFn {
         let num = match val {
             LiteralValue::Number(f) => f,
             LiteralValue::Int(i) => i as f64,
-            LiteralValue::Text(t) => {
-                let Some(n) = ctx.locale().parse_number_invariant(&t) else {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new_value(),
-                    )));
-                };
-                n
-            }
+            LiteralValue::Text(t) => match ctx.locale().parse_number_invariant(&t) {
+                Some(n) => n,
+                // Excel: TEXT() on text that is not a parseable number returns the
+                // text unchanged (e.g. =TEXT("abc","00") -> "abc"), it does not error.
+                None => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(t)));
+                }
+            },
             LiteralValue::Boolean(b) => {
                 if b {
                     1.0
@@ -550,5 +550,30 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(out, LiteralValue::Text("12.34".into()));
+    }
+
+    #[test]
+    fn text_non_numeric_text_passes_through() {
+        // Excel returns the text argument unchanged when it is not a parseable
+        // number: =TEXT("abc","00") -> "abc" (not #VALUE!). A numeric format does
+        // not coerce arbitrary text. Regression test for that behavior.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TextFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXT").unwrap();
+        for input in ["abc", "3-1", "10-"] {
+            let v = lit(LiteralValue::Text(input.into()));
+            let fmt = lit(LiteralValue::Text("00".into()));
+            let out = f
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&v, &ctx),
+                        ArgumentHandle::new(&fmt, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal();
+            assert_eq!(out, LiteralValue::Text(input.into()), "TEXT({input:?},\"00\")");
+        }
     }
 }
