@@ -98,7 +98,9 @@ pub struct IndexFn;
 /// - If `column_num` is omitted for a single-row or single-column input, `row_num` selects the
 ///   position along that 1D vector.
 /// - For rectangular 2D inputs, omitted `column_num` defaults to the first column.
-/// - `row_num <= 0`, `column_num <= 0`, or out-of-bounds indexes return `#REF!`.
+/// - A `row_num` or `column_num` of `0` selects the entire column or row respectively
+///   (both `0` selects the whole range), matching Excel.
+/// - Negative or out-of-bounds indexes return `#REF!`.
 /// - Non-numeric index arguments return `#VALUE!`.
 ///
 /// # Examples
@@ -134,7 +136,7 @@ pub struct IndexFn;
 ///   - q: "How does INDEX behave when column_num is omitted?"
 ///     a: "For single-row or single-column inputs, row_num selects the position along that vector; for 2D inputs, omitted column_num defaults to the first column."
 ///   - q: "Which errors indicate bad indexes?"
-///     a: "Non-numeric index arguments return #VALUE!, while 0/negative or out-of-bounds indexes return #REF!."
+///     a: "Non-numeric index arguments return #VALUE!. A 0 row_num/column_num selects an entire column/row (Excel behavior); negative or out-of-bounds indexes return #REF!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: INDEX
