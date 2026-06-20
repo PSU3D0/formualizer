@@ -232,7 +232,8 @@ pub struct TextFn;
 ///
 /// # Remarks
 /// - Requires exactly two arguments: value and format text.
-/// - Numeric text is parsed before formatting; invalid numeric text returns `#VALUE!`.
+/// - Numeric text is parsed before formatting; text that is not a parseable number is
+///   returned unchanged (e.g. `=TEXT("abc","00")` -> `"abc"`), matching Excel.
 /// - Error inputs are propagated unchanged.
 /// - Supported patterns are intentionally limited compared with full Excel formatting.
 ///
