@@ -229,9 +229,52 @@ impl Function for IndexFn {
             }
         };
 
-        // 1-based indexing per Excel
-        if row <= 0 || col <= 0 {
+        // 1-based indexing per Excel. A 0 means "the entire row" (column_num == 0)
+        // or "the entire column" (row_num == 0); 0 for both yields the whole range.
+        // Negative indices are #REF!.
+        if row < 0 || col < 0 {
             return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+        }
+        let range_ref = |sheet, sr, sc, er, ec| ReferenceType::Range {
+            sheet,
+            start_row: Some(sr),
+            start_col: Some(sc),
+            end_row: Some(er),
+            end_col: Some(ec),
+            start_row_abs: false,
+            start_col_abs: false,
+            end_row_abs: false,
+            end_col_abs: false,
+        };
+        if col == 0 {
+            if row == 0 {
+                // INDEX(range, 0, 0) -> the entire range.
+                return Some(Ok(range_ref(sheet, sr, sc, er, ec)));
+            }
+            // INDEX(range, r, 0) -> the entire row r (degenerates to a cell for a
+            // single-column range).
+            let r = sr + (row as u32) - 1;
+            if r > er {
+                return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+            }
+            return Some(Ok(if sc == ec {
+                ReferenceType::cell(sheet, r, sc)
+            } else {
+                range_ref(sheet, r, sc, r, ec)
+            }));
+        }
+        if row == 0 {
+            // INDEX(range, 0, c) -> the entire column c (degenerates to a cell for a
+            // single-row range).
+            let c = sc + (col as u32) - 1;
+            if c > ec {
+                return Some(Err(ExcelError::new(ExcelErrorKind::Ref)));
+            }
+            return Some(Ok(if sr == er {
+                ReferenceType::cell(sheet, sr, c)
+            } else {
+                range_ref(sheet, sr, c, er, c)
+            }));
         }
         let r = sr + (row as u32) - 1;
         let c = sc + (col as u32) - 1;
@@ -967,6 +1010,73 @@ mod tests {
             .with_function(std::sync::Arc::new(IndexFn));
 
         let value = evaluate_formula("=INDEX(A1:C1,4)", &wb).unwrap();
+        match value {
+            LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
+            other => panic!("expected #REF!, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn index_zero_column_degenerates_to_cell_in_single_column_range() {
+        // INDEX(B1:B5, 2, 0) -> entire row 2 of a single-column range = B2.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(B1:B5,2,0)", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_zero_row_degenerates_to_cell_in_single_row_range() {
+        // INDEX(A1:C1, 0, 2) -> entire column 2 of a single-row range = B1.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Int(30))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:C1,0,2)", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(20.0));
+    }
+
+    #[test]
+    fn index_zero_column_returns_entire_row_range() {
+        // INDEX(A1:C3, 2, 0) -> entire row 2 (A2:C2); SUM materializes it.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(2))
+            .with_cell_a1("Sheet1", "C2", LiteralValue::Int(3))
+            .with_function(std::sync::Arc::new(IndexFn))
+            .with_function(std::sync::Arc::new(crate::builtins::math::aggregate::SumFn));
+
+        let value = evaluate_formula("=SUM(INDEX(A1:C3,2,0))", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(6.0));
+    }
+
+    #[test]
+    fn index_zero_row_returns_entire_column_range() {
+        // INDEX(A1:C3, 0, 2) -> entire column 2 (B1:B3); SUM materializes it.
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Int(4))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Int(5))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Int(6))
+            .with_function(std::sync::Arc::new(IndexFn))
+            .with_function(std::sync::Arc::new(crate::builtins::math::aggregate::SumFn));
+
+        let value = evaluate_formula("=SUM(INDEX(A1:C3,0,2))", &wb).unwrap();
+        assert_eq!(value, LiteralValue::Number(15.0));
+    }
+
+    #[test]
+    fn index_negative_index_is_ref() {
+        let wb = TestWorkbook::new()
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX(A1:C3,-1,2)", &wb).unwrap();
         match value {
             LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
             other => panic!("expected #REF!, got {other:?}"),
