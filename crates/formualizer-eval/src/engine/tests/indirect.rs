@@ -251,19 +251,32 @@ fn indirect_supports_named_ranges_and_maps_missing_name_to_ref() {
 }
 
 #[test]
-fn indirect_a1_false_returns_not_implemented_error() {
+fn indirect_a1_false_resolves_named_range() {
+    // The a1_style flag (FALSE = R1C1) only governs how a literal cell/range ADDRESS is
+    // parsed; it does not apply to defined names or tables. INDIRECT(name, FALSE) must
+    // therefore resolve the name exactly like INDIRECT(name). This used to return #N/IMPL!,
+    // breaking workbooks that defensively pass the R1C1 flag, e.g.
+    // INDIRECT("SomeName"&Sheet!E39, 0).
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
 
     engine
-        .set_cell_formula("Sheet1", 1, 1, parse("=INDIRECT(\"R1C1\",FALSE)"))
+        .define_name(
+            "MyValue",
+            NamedDefinition::Literal(LiteralValue::Number(77.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=INDIRECT(\"MyValue\",FALSE)"))
         .unwrap();
 
     engine.evaluate_all().unwrap();
 
-    match engine.get_cell_value("Sheet1", 1, 1) {
-        Some(LiteralValue::Error(err)) => assert_eq!(err.kind, ExcelErrorKind::NImpl),
-        other => panic!("expected #NIMPL error, got {other:?}"),
-    }
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(77.0))
+    );
 }
 
 #[test]
