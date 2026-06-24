@@ -69,6 +69,10 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
     error_summary: Dict[str, Dict[str, Any]] = {}
     modified_entries: Dict[str, bytes] = {}
     removed_entries: set[str] = set()
+    sheet_updates: list[tuple[str, ET.Element]] = []
+    formula_targets: list[tuple[str, int, int]] = []
+    formula_cells: list[tuple[str, int, int, ET.Element, str]] = []
+    has_xlfn_formula = False
 
     with zipfile.ZipFile(in_path, "r") as zin:
         sheet_path_by_name = _sheet_path_map(zin)
@@ -77,12 +81,13 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
             sheet_xml = zin.read(sheet_part)
             root = ET.fromstring(sheet_xml)
             sheet_eval = 0
-            sheet_err = 0
 
             for cell in root.iter(f"{{{NS_MAIN}}}c"):
                 formula = cell.find(f"{{{NS_MAIN}}}f")
                 if formula is None:
                     continue
+                if "_xlfn." in (formula.text or "").lower():
+                    has_xlfn_formula = True
 
                 ref = cell.attrib.get("r")
                 if not ref:
@@ -93,30 +98,48 @@ def recalculate_file(path: os.PathLike[str] | str, output: os.PathLike[str] | st
                     continue
                 row, col = coord
                 sheet_eval += 1
+                formula_targets.append((sheet_name, row, col))
+                formula_cells.append((sheet_name, row, col, cell, ref))
 
-                value = _evaluate_cell_with_xlfn_fallback(wb, sheet_name, row, col)
-                if _is_error_dict(value):
-                    sheet_err += 1
-                    error_token = _error_token_for(value)
-                    bucket = error_summary.setdefault(
-                        error_token, {"count": 0, "locations": []}
-                    )
-                    bucket["count"] += 1
-                    locations = bucket["locations"]
-                    if len(locations) < DEFAULT_ERROR_LOCATION_LIMIT:
-                        locations.append(f"{sheet_name}!{ref}")
-                _write_cached_value(cell, value)
-
-            summary["sheets"][sheet_name] = {"evaluated": sheet_eval, "errors": sheet_err}
+            summary["sheets"][sheet_name] = {"evaluated": sheet_eval, "errors": 0}
             summary["evaluated"] += sheet_eval
-            summary["errors"] += sheet_err
             summary["total_formulas"] += sheet_eval
-            summary["total_errors"] += sheet_err
 
             if sheet_eval > 0:
-                modified_entries[sheet_part] = ET.tostring(
-                    root, encoding="utf-8", xml_declaration=True
+                sheet_updates.append((sheet_part, root))
+
+    if formula_targets:
+        if has_xlfn_formula:
+            values = [
+                _evaluate_cell_with_xlfn_fallback(wb, sheet_name, row, col)
+                for sheet_name, row, col, _, _ in formula_cells
+            ]
+        else:
+            values = wb.recalculate_formula_cells(formula_targets)
+            if len(values) != len(formula_cells):
+                raise RuntimeError(
+                    "Formula recalculation returned a different number of values "
+                    f"({len(values)}) than requested targets ({len(formula_cells)})"
                 )
+        for value, (sheet_name, row, col, cell, ref) in zip(values, formula_cells):
+            if _is_error_dict(value):
+                summary["sheets"][sheet_name]["errors"] += 1
+                summary["errors"] += 1
+                summary["total_errors"] += 1
+                error_token = _error_token_for(value)
+                bucket = error_summary.setdefault(
+                    error_token, {"count": 0, "locations": []}
+                )
+                bucket["count"] += 1
+                locations = bucket["locations"]
+                if len(locations) < DEFAULT_ERROR_LOCATION_LIMIT:
+                    locations.append(f"{sheet_name}!{ref}")
+            _write_cached_value(cell, value)
+
+        for sheet_part, root in sheet_updates:
+            modified_entries[sheet_part] = ET.tostring(
+                root, encoding="utf-8", xml_declaration=True
+            )
 
     if summary["evaluated"] > 0:
         _strip_calc_chain_parts(in_path, modified_entries, removed_entries)

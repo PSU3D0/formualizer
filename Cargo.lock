@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "formualizer-common",
  "formualizer-eval",
@@ -1040,7 +1040,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-python"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "chrono",
  "formualizer",

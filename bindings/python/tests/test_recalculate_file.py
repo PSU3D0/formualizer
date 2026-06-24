@@ -171,6 +171,46 @@ def test_recalculate_file_xlfn_retry_keeps_formula_text(tmp_path: Path):
     assert with_formula["Sheet1"]["B1"].value == "=_xlfn.SUM(A1:A3)"
 
 
+def test_recalculate_file_xlfn_retry_handles_dependents(tmp_path: Path):
+    path = tmp_path / "xlfn_dependent.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = 1
+    ws["A2"] = 2
+    ws["A3"] = 3
+    ws["B1"] = "=_xlfn.SUM(A1:A3)"
+    ws["C1"] = "=B1+1"
+    wb.save(path)
+
+    result = fz.recalculate_file(path)
+    assert result["status"] == "success"
+    assert result["evaluated"] == 2
+    assert result["errors"] == 0
+
+    data_only = openpyxl.load_workbook(path, data_only=True)
+    assert data_only["Sheet1"]["B1"].value == 6
+    assert data_only["Sheet1"]["C1"].value == 7
+
+
+def test_workbook_recalculate_formula_cells_batches_targets(tmp_path: Path):
+    path = tmp_path / "batch_targets.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = 4
+    ws["A2"] = 9
+    ws["B1"] = "=A1+A2"
+    ws["B2"] = "=A2-A1"
+    wb.save(path)
+
+    workbook = fz.Workbook.from_path(str(path))
+
+    assert workbook.recalculate_formula_cells(
+        [("Sheet1", 1, 2), ("Sheet1", 2, 2)]
+    ) == [13, 5]
+
+
 def test_recalculate_file_maps_name_errors(tmp_path: Path):
     path = tmp_path / "name_error.xlsx"
     wb = openpyxl.Workbook()

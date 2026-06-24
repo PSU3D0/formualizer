@@ -253,39 +253,15 @@ impl PyWorkbook {
         py: Python<'_>,
         targets: &Bound<'_, pyo3::types::PyList>,
     ) -> PyResult<PyObject> {
-        let mut target_vec = Vec::with_capacity(targets.len());
-        for item in targets.iter() {
-            let tuple: &Bound<'_, pyo3::types::PyTuple> = item.cast()?;
-            let sheet: String = tuple.get_item(0)?.extract()?;
-            let row: u32 = tuple.get_item(1)?.extract()?;
-            let col: u32 = tuple.get_item(2)?.extract()?;
-            target_vec.push((sheet, row, col));
-        }
+        self.evaluate_target_cells(py, targets)
+    }
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-
-        // Ensure flag is reset
-        self.cancel_flag
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-
-        // We use a temporary vector of (&str, u32, u32) because Workbook::evaluate_cells expects that
-        let refs: Vec<(&str, u32, u32)> = target_vec
-            .iter()
-            .map(|(s, r, c)| (s.as_str(), *r, *c))
-            .collect();
-
-        let results = wb
-            .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-
-        let py_results = pyo3::types::PyList::empty(py);
-        for v in results {
-            py_results.append(literal_to_py(py, &v)?)?;
-        }
-        Ok(py_results.into())
+    pub fn recalculate_formula_cells(
+        &self,
+        py: Python<'_>,
+        targets: &Bound<'_, pyo3::types::PyList>,
+    ) -> PyResult<PyObject> {
+        self.evaluate_target_cells(py, targets)
     }
 
     pub fn get_eval_plan(
@@ -608,6 +584,44 @@ impl PyRangeAddress {
 
 // Non-Python methods for internal use
 impl PyWorkbook {
+    fn evaluate_target_cells(
+        &self,
+        py: Python<'_>,
+        targets: &Bound<'_, pyo3::types::PyList>,
+    ) -> PyResult<PyObject> {
+        let mut target_vec = Vec::with_capacity(targets.len());
+        for item in targets.iter() {
+            let tuple: &Bound<'_, pyo3::types::PyTuple> = item.cast()?;
+            let sheet: String = tuple.get_item(0)?.extract()?;
+            let row: u32 = tuple.get_item(1)?.extract()?;
+            let col: u32 = tuple.get_item(2)?.extract()?;
+            target_vec.push((sheet, row, col));
+        }
+
+        let mut wb = self
+            .inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+
+        self.cancel_flag
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        let refs: Vec<(&str, u32, u32)> = target_vec
+            .iter()
+            .map(|(s, r, c)| (s.as_str(), *r, *c))
+            .collect();
+
+        let results = wb
+            .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+
+        let py_results = pyo3::types::PyList::empty(py);
+        for v in results {
+            py_results.append(literal_to_py(py, &v)?)?;
+        }
+        Ok(py_results.into())
+    }
+
     pub(crate) fn with_workbook_mut<T, F>(&self, f: F) -> PyResult<T>
     where
         F: FnOnce(&mut formualizer::workbook::Workbook) -> PyResult<T>,
