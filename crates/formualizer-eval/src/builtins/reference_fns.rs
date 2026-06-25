@@ -336,53 +336,98 @@ impl Function for IndexFn {
                 }
             };
 
-            // Determine if this is a 1D array (single row or single column)
-            let is_single_row = table.len() == 1;
-            let is_single_col = table.iter().all(|r| r.len() == 1);
-
-            // For 1D arrays with 2 args, index is position in the array
-            if args.len() == 2 && (is_single_row || is_single_col) {
-                if index <= 0 {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Ref),
-                    )));
-                }
-                let idx = (index - 1) as usize;
-                let val = if is_single_row {
-                    table[0].get(idx).cloned()
-                } else {
-                    table.get(idx).and_then(|r| r.first()).cloned()
-                };
-                return Ok(crate::traits::CalcValue::Scalar(val.unwrap_or_else(|| {
-                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref))
-                })));
-            }
-
-            // 2D array or 3 arguments: use row and col indexing
-            let row = index as usize;
-            let col = if args.len() >= 3 {
-                match args[2].value()?.into_literal() {
-                    LiteralValue::Number(n) => n as usize,
-                    LiteralValue::Int(i) => i as usize,
+            // Optional explicit column_num (third argument).
+            let explicit_col = if args.len() >= 3 {
+                Some(match args[2].value()?.into_literal() {
+                    LiteralValue::Number(n) => n as i64,
+                    LiteralValue::Int(i) => i,
                     _ => {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                             ExcelError::new(ExcelErrorKind::Value),
                         )));
                     }
-                }
+                })
             } else {
-                1
+                None
             };
 
-            // 1-based indexing
-            if row == 0 || col == 0 {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Ref),
-                )));
+            let nrows = table.len();
+            let ncols = table.iter().map(|r| r.len()).max().unwrap_or(0);
+            let single_row = nrows == 1;
+
+            // Map (index, optional column) to (row, col) exactly like eval_reference:
+            // for a single-row input the lone index selects the column, otherwise it
+            // selects the row and the column defaults to 1.
+            let (row, col) = match explicit_col {
+                Some(c) => (index, c),
+                None if single_row => (1, index),
+                None => (index, 1),
+            };
+
+            // Negative indices are #REF!. A 0 selects the entire row (column_num == 0)
+            // or entire column (row_num == 0); 0 for both yields the whole array.
+            // This mirrors the reference path so the two don't drift apart.
+            let ref_err = || {
+                crate::traits::CalcValue::Scalar(LiteralValue::Error(ExcelError::new(
+                    ExcelErrorKind::Ref,
+                )))
+            };
+            if row < 0 || col < 0 {
+                return Ok(ref_err());
+            }
+
+            // Wrap a multi-cell array result in a RangeView so aggregations
+            // (SUM, etc.) iterate it, matching how the reference path returns
+            // CalcValue::Range. A literal LiteralValue::Array would otherwise be
+            // strict-coerced as a single scalar by numeric callers.
+            let as_range = |rows: Vec<Vec<LiteralValue>>| {
+                crate::traits::CalcValue::Range(
+                    crate::engine::range_view::RangeView::from_owned_rows(rows, ctx.date_system()),
+                )
+            };
+
+            if col == 0 {
+                if row == 0 {
+                    // INDEX(array, 0, 0) -> the whole array.
+                    return Ok(as_range(table));
+                }
+                // INDEX(array, r, 0) -> the entire row r (scalar for a single-column array).
+                if row as usize > nrows {
+                    return Ok(ref_err());
+                }
+                let r = &table[row as usize - 1];
+                if ncols == 1 {
+                    return Ok(crate::traits::CalcValue::Scalar(
+                        r.first().cloned().unwrap_or(LiteralValue::Empty),
+                    ));
+                }
+                return Ok(as_range(vec![r.clone()]));
+            }
+            if row == 0 {
+                // INDEX(array, 0, c) -> the entire column c (scalar for a single-row array).
+                if col as usize > ncols {
+                    return Ok(ref_err());
+                }
+                let cidx = col as usize - 1;
+                if single_row {
+                    return Ok(crate::traits::CalcValue::Scalar(
+                        table[0].get(cidx).cloned().unwrap_or(LiteralValue::Empty),
+                    ));
+                }
+                let column: Vec<Vec<LiteralValue>> = table
+                    .iter()
+                    .map(|r| vec![r.get(cidx).cloned().unwrap_or(LiteralValue::Empty)])
+                    .collect();
+                return Ok(as_range(column));
+            }
+
+            // 1-based positive indexing.
+            if row as usize > nrows || col as usize > ncols {
+                return Ok(ref_err());
             }
             let val = table
-                .get(row - 1)
-                .and_then(|r| r.get(col - 1))
+                .get(row as usize - 1)
+                .and_then(|r| r.get(col as usize - 1))
                 .cloned()
                 .unwrap_or_else(|| LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)));
             Ok(crate::traits::CalcValue::Scalar(val))
@@ -1079,6 +1124,73 @@ mod tests {
             .with_function(std::sync::Arc::new(IndexFn));
 
         let value = evaluate_formula("=INDEX(A1:C3,-1,2)", &wb).unwrap();
+        match value {
+            LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
+            other => panic!("expected #REF!, got {other:?}"),
+        }
+    }
+
+    fn as_number(v: &LiteralValue) -> f64 {
+        match v {
+            LiteralValue::Number(n) => *n,
+            LiteralValue::Int(i) => *i as f64,
+            other => panic!("expected number, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn index_array_constant_zero_column_returns_entire_row() {
+        // INDEX({1,2,3},0) over an array constant -> the whole row {1,2,3}.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let raw = evaluate_formula("=INDEX({1,2,3},0)", &wb).unwrap();
+        let LiteralValue::Array(rows) = raw else {
+            panic!("expected a 1x3 array, got {raw:?}");
+        };
+        assert_eq!(rows.len(), 1);
+        let flat: Vec<f64> = rows[0].iter().map(as_number).collect();
+        assert_eq!(flat, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn index_array_constant_zero_row_returns_entire_column() {
+        // INDEX({1,2;3,4},0,2) over an array constant -> the whole column {2;4}.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let raw = evaluate_formula("=INDEX({1,2;3,4},0,2)", &wb).unwrap();
+        let LiteralValue::Array(rows) = raw else {
+            panic!("expected a 2x1 array, got {raw:?}");
+        };
+        let flat: Vec<f64> = rows.iter().map(|r| as_number(&r[0])).collect();
+        assert_eq!(flat, vec![2.0, 4.0]);
+    }
+
+    #[test]
+    fn index_array_constant_zero_zero_returns_whole_array() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let raw = evaluate_formula("=INDEX({1,2;3,4},0,0)", &wb).unwrap();
+        let LiteralValue::Array(rows) = raw else {
+            panic!("expected the whole 2x2 array, got {raw:?}");
+        };
+        let flat: Vec<f64> = rows.iter().flatten().map(as_number).collect();
+        assert_eq!(flat, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn index_array_constant_row_zero_for_single_row_degenerates_to_scalar() {
+        // INDEX({1,2,3},0,2): single-row array, entire column 2 -> scalar 2.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX({1,2,3},0,2)", &wb).unwrap();
+        assert_eq!(as_number(&value), 2.0);
+    }
+
+    #[test]
+    fn index_array_constant_negative_is_ref() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(IndexFn));
+
+        let value = evaluate_formula("=INDEX({1,2,3},-1)", &wb).unwrap();
         match value {
             LiteralValue::Error(err) => assert_eq!(err.kind, ExcelErrorKind::Ref),
             other => panic!("expected #REF!, got {other:?}"),
