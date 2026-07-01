@@ -1326,6 +1326,7 @@ fn compute_criteria_mask(
         _ => return None,
     };
 
+    let ne_matches_blank = text_kind == 1 && !text_pat.is_empty();
     let pat = StringArray::new_scalar(text_pat);
     let mut bool_parts: Vec<BooleanArray> = Vec::new();
 
@@ -1348,7 +1349,7 @@ fn compute_criteria_mask(
             None => {
                 #[cfg(test)]
                 criteria_mask_test_hooks::inc_all_null();
-                if text_kind == 0 && empty_special {
+                if (text_kind == 0 && empty_special) || ne_matches_blank {
                     // Eq("") treats nulls (Empty) as equal.
                     let mut bb = BooleanBuilder::with_capacity(cs.row_len);
                     bb.append_n(cs.row_len, true);
@@ -1369,7 +1370,7 @@ fn compute_criteria_mask(
             _ => return None,
         };
 
-        if text_kind == 0 && empty_special {
+        if (text_kind == 0 && empty_special) || ne_matches_blank {
             // Treat nulls as equal to empty string
             let mut bb = BooleanBuilder::with_capacity(seg_sa.len());
             for i in 0..seg_sa.len() {
