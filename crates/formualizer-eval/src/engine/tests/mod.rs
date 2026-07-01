@@ -135,6 +135,7 @@ mod sumif_arrow_used_bounds;
 mod sumifs_arrow_edits;
 mod sumifs_arrow_fastpath;
 mod sumifs_cached_mask_padding;
+mod sumifs_ne_blank_158;
 mod used_bounds_cache;
 mod whole_column_sumifs;
 
