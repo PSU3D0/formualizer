@@ -1305,11 +1305,22 @@ fn compute_criteria_mask(
 
     // TEXT PATH: build masks per row-chunk using lowered text slices.
     // This avoids concatenating full-string columns just to compute a boolean mask.
+    //
+    // `ne_null_fill` is the value a blank/Empty cell must take under a `<>` criterion.
+    // Excel treats a blank as equal to the empty string, so:
+    //   - `<>X` (non-empty pattern): blank != "X" is TRUE  -> blank SATISFIES the criterion
+    //   - `<>`  (empty pattern):     blank == ""  is TRUE   -> blank does NOT satisfy `<>`
+    // Arrow's `nilike` returns NULL (not TRUE) for NULL inputs, so without this fill the
+    // vectorized path silently drops blanks for `<>X` (issue #158). This is bounded to the
+    // view's materialized rows because `iter_row_chunks`/`build_criteria_mask` only iterate
+    // the used region — a whole-column `A:A` ref never counts the millions of trailing blanks.
+    let mut ne_null_fill = false;
     let (text_kind, text_pat, empty_special) = match pred {
         crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(t)) => {
             (0u8, t.to_lowercase(), t.is_empty())
         }
         crate::args::CriteriaPredicate::Ne(formualizer_common::LiteralValue::Text(t)) => {
+            ne_null_fill = !t.is_empty();
             (1u8, t.to_lowercase(), false)
         }
         crate::args::CriteriaPredicate::TextLike {
@@ -1353,6 +1364,13 @@ fn compute_criteria_mask(
                     let mut bb = BooleanBuilder::with_capacity(cs.row_len);
                     bb.append_n(cs.row_len, true);
                     bool_parts.push(bb.finish());
+                } else if text_kind == 1 {
+                    // `<>X`: an all-blank column segment is entirely blanks. Fill with the
+                    // Excel `<>`-vs-blank verdict (TRUE for `<>X`, FALSE for `<>`) instead of
+                    // dropping the rows to NULL (issue #158).
+                    let mut bb = BooleanBuilder::with_capacity(cs.row_len);
+                    bb.append_n(cs.row_len, ne_null_fill);
+                    bool_parts.push(bb.finish());
                 } else {
                     // For non-empty patterns, ilike/nilike return null on null inputs.
                     bool_parts.push(BooleanArray::new_null(cs.row_len));
@@ -1377,6 +1395,19 @@ fn compute_criteria_mask(
             }
             let nulls = bb.finish();
             m = boolean::or_kleene(&m, &nulls).ok()?;
+        } else if text_kind == 1 && m.null_count() > 0 {
+            // `<>X`: `nilike` yields NULL for blank/Empty cells (NULL NOT ILIKE 'x' -> NULL).
+            // Excel counts a blank as satisfying `<>X`, so replace those NULLs with the
+            // `<>`-vs-blank verdict (`ne_null_fill`) rather than dropping the rows (issue #158).
+            let mut bb = BooleanBuilder::with_capacity(m.len());
+            for i in 0..m.len() {
+                if m.is_valid(i) {
+                    bb.append_value(m.value(i));
+                } else {
+                    bb.append_value(ne_null_fill);
+                }
+            }
+            m = bb.finish();
         }
 
         bool_parts.push(m);

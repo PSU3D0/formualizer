@@ -47,13 +47,19 @@ fn criteria_mask_text_is_built_per_chunk_and_handles_empty_string_semantics() {
         assert!(mask_eq.value(i));
     }
 
-    // Ne("") should yield all nulls on an all-empty column (nilike(null, "") == null).
+    // Ne("") i.e. `<>` means "non-blank". A blank cell equals the empty string, so it
+    // does NOT satisfy `<>`. Arrow's nilike(null, "") returns NULL, but the correct
+    // spreadsheet verdict is a definite FALSE (issue #158 fix fills the blank verdict),
+    // so the mask is all-valid / all-false on an all-empty column.
     let pred_ne_empty = crate::args::parse_criteria(&LiteralValue::Text("<>".into())).unwrap();
     let mask_ne = engine
         .build_criteria_mask(&view, 0, &pred_ne_empty)
         .expect("mask");
     assert_eq!(mask_ne.len(), total_rows as usize);
-    assert_eq!(mask_ne.null_count(), total_rows as usize);
+    assert_eq!(mask_ne.null_count(), 0);
+    for i in 0..mask_ne.len() {
+        assert!(!mask_ne.value(i), "blank must not satisfy <>");
+    }
 
     // Ensure we actually walked chunks and hit the all-null segment fast path.
     let (segments_total, segments_all_null) =
