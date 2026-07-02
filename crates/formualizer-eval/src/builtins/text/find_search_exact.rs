@@ -445,16 +445,17 @@ mod tests {
         let ctx = wb.interpreter();
         let f = ctx.context.get_function("", "FIND").unwrap();
         let s = ctx.context.get_function("", "SEARCH").unwrap();
-        let call = |func: &std::sync::Arc<dyn crate::function::Function>, needle: &str, hay: &str| {
-            let n = lit(LiteralValue::Text(needle.into()));
-            let h = lit(LiteralValue::Text(hay.into()));
-            func.dispatch(
-                &[ArgumentHandle::new(&n, &ctx), ArgumentHandle::new(&h, &ctx)],
-                &ctx.function_context(None),
-            )
-            .unwrap()
-            .into_literal()
-        };
+        let call =
+            |func: &std::sync::Arc<dyn crate::function::Function>, needle: &str, hay: &str| {
+                let n = lit(LiteralValue::Text(needle.into()));
+                let h = lit(LiteralValue::Text(hay.into()));
+                func.dispatch(
+                    &[ArgumentHandle::new(&n, &ctx), ArgumentHandle::new(&h, &ctx)],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal()
+            };
 
         // "éz": 'z' is the 2nd CHARACTER (but starts at byte 2 because 'é' is 2 bytes).
         // Byte-based FIND returned 3; the correct Excel answer is 2.
