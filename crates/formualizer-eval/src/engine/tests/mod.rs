@@ -59,6 +59,7 @@ mod engine_transactions_617;
 mod engine_action_log_sink_618;
 mod engine_atomic_actions_618;
 
+mod index_unbounded_ranges;
 mod infinite_ranges;
 mod spill_atomic;
 mod spill_basic;
