@@ -120,19 +120,15 @@ impl Function for FindFn {
         if needle.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)));
         }
-        if start > hay.len() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+        // FIND renvoie une position en CARACTERES (pas en octets) : indexer par char
+        // evite la panique "char boundary" sur l'accentue et donne la position Excel.
+        match char_find(&hay, &needle, start) {
+            Some(idx) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                (idx + 1) as i64,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
-            )));
-        }
-        if let Some(pos) = hay[start..].find(&needle) {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-                (start + pos + 1) as i64,
-            )))
-        } else {
-            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_value(),
-            )))
+            ))),
         }
     }
 }
@@ -224,70 +220,76 @@ impl Function for SearchFn {
         if needle.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)));
         }
-        if start > hay.len() {
+        // SEARCH renvoie une position en CARACTERES et accepte les jokers * et ?.
+        // On indexe par char (pas par octet) -> pas de panique "char boundary" sur
+        // l'accentue, et ? compte bien pour UN caractere (sémantique Excel).
+        let hay_chars: Vec<char> = hay.chars().collect();
+        if start > hay_chars.len() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
-        // Convert wildcard to regex-like simple pattern
-        // We'll implement manual scanning.
-        let is_wild = needle.contains('*') || needle.contains('?');
-        if !is_wild {
-            if let Some(pos) = hay[start..].find(&needle) {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-                    (start + pos + 1) as i64,
-                )));
-            } else {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value(),
-                )));
-            }
+        let found = if needle.contains('*') || needle.contains('?') {
+            let pat: Vec<char> = needle.chars().collect();
+            char_wildcard_search(&pat, &hay_chars, start)
+        } else {
+            char_find(&hay, &needle, start)
+        };
+        match found {
+            Some(idx) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
+                (idx + 1) as i64,
+            ))),
+            None => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::from_error_string("#VALUE!"),
+            ))),
         }
-        // Wildcard scan
-        for offset in start..=hay.len() {
-            if wildcard_match(&needle, &hay[offset..]) {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
-                    (offset + 1) as i64,
-                )));
-            }
-        }
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-            ExcelError::from_error_string("#VALUE!"),
-        )))
     }
 }
 
-fn wildcard_match(pat: &str, text: &str) -> bool {
-    fn rec(p: &[u8], t: &[u8]) -> bool {
-        if p.is_empty() {
-            return true;
-        }
-        match p[0] {
-            b'*' => {
-                for i in 0..=t.len() {
-                    if rec(&p[1..], &t[i..]) {
-                        return true;
-                    }
-                }
-                false
-            }
-            b'?' => {
-                if t.is_empty() {
-                    false
-                } else {
-                    rec(&p[1..], &t[1..])
-                }
-            }
-            c => {
-                if !t.is_empty() && t[0] == c {
-                    rec(&p[1..], &t[1..])
-                } else {
-                    false
-                }
-            }
-        }
+/// Recherche en espace CARACTERES (Excel) : position 0-based du 1er match de `needle`
+/// dans `hay` a partir du caractere `start`. Indexer par char (et non par octet) evite
+/// la panique "byte index is not a char boundary" sur les chaines accentuees.
+fn char_find(hay: &str, needle: &str, start: usize) -> Option<usize> {
+    let hay_chars: Vec<char> = hay.chars().collect();
+    let needle_chars: Vec<char> = needle.chars().collect();
+    if needle_chars.is_empty() {
+        return Some(start.min(hay_chars.len()));
     }
-    rec(pat.as_bytes(), text.as_bytes())
+    if needle_chars.len() > hay_chars.len() || start > hay_chars.len() {
+        return None;
+    }
+    let last = hay_chars.len() - needle_chars.len();
+    let mut i = start;
+    while i <= last {
+        if hay_chars[i..i + needle_chars.len()] == needle_chars[..] {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Recherche joker (* / ?) en espace CARACTERES. `?` = exactement un caractere.
+fn char_wildcard_search(pat: &[char], hay: &[char], start: usize) -> Option<usize> {
+    let mut i = start;
+    while i <= hay.len() {
+        if wildcard_match_chars(pat, &hay[i..]) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn wildcard_match_chars(p: &[char], t: &[char]) -> bool {
+    if p.is_empty() {
+        return true;
+    }
+    match p[0] {
+        '*' => (0..=t.len()).any(|i| wildcard_match_chars(&p[1..], &t[i..])),
+        '?' => !t.is_empty() && wildcard_match_chars(&p[1..], &t[1..]),
+        c => !t.is_empty() && t[0] == c && wildcard_match_chars(&p[1..], &t[1..]),
+    }
 }
 
 // EXACT(text1,text2)
@@ -429,5 +431,41 @@ mod tests {
             .into_literal(),
             LiteralValue::Int(7)
         );
+    }
+
+    /// Regression: FIND/SEARCH must index by CHARACTER (Excel), not by byte.
+    /// On multi-byte UTF-8 (accents), the old byte-based implementation returned wrong
+    /// positions and, in SEARCH's wildcard scan, panicked when a byte offset landed inside
+    /// a multi-byte char ("byte index N is not a char boundary").
+    #[test]
+    fn find_search_utf8_char_positions() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(FindFn))
+            .with_function(std::sync::Arc::new(SearchFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "FIND").unwrap();
+        let s = ctx.context.get_function("", "SEARCH").unwrap();
+        let call =
+            |func: &std::sync::Arc<dyn crate::function::Function>, needle: &str, hay: &str| {
+                let n = lit(LiteralValue::Text(needle.into()));
+                let h = lit(LiteralValue::Text(hay.into()));
+                func.dispatch(
+                    &[ArgumentHandle::new(&n, &ctx), ArgumentHandle::new(&h, &ctx)],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal()
+            };
+
+        // "éz": 'z' is the 2nd CHARACTER (but starts at byte 2 because 'é' is 2 bytes).
+        // Byte-based FIND returned 3; the correct Excel answer is 2.
+        assert_eq!(call(&f, "z", "éz"), LiteralValue::Int(2));
+
+        // SEARCH wildcard scan over an accented haystack. The byte-based loop sliced
+        // &hay[1..] at offset 1 — inside 'é' — and panicked. Must return char position 1.
+        assert_eq!(call(&s, "?z", "éz"), LiteralValue::Int(1));
+
+        // '?' matches exactly one CHARACTER (not one byte) even when that char is multi-byte.
+        assert_eq!(call(&s, "c?fé", "cafés"), LiteralValue::Int(1));
     }
 }
