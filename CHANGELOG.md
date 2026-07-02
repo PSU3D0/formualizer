@@ -2,6 +2,21 @@
 
 All notable changes to Formualizer will be documented in this file.
 
+## [0.7.1] - 2026-07-02
+
+### Fixed
+
+- INDEX and OFFSET now clamp unbounded whole-column/whole-row range arguments (`B:B`, `2:2`, `Data!$A:$C`) to the sheet's used region instead of returning `#REF!`, restoring the common `INDEX(range, MATCH(...), MATCH(...))` lookup pattern. (#162, #163)
+- INDEX supports `row_num`/`column_num` of 0 to return the entire column or row, matching Excel, in both the reference and array-constant paths. (#156)
+- FIND and SEARCH index by character rather than byte, fixing incorrect positions and a panic on multi-byte UTF-8 text (e.g. `SEARCH("?z","éz")`). (#153)
+- TEXT returns non-numeric text unchanged instead of `#VALUE!`, matching Excel; locale-ambiguous numeric-looking strings such as `"1.234,56"` still error. (#155)
+- SUMIFS/COUNTIFS/SUMIF `<>text` criteria now match blank cells, matching Excel, with whole-column and edge-case coverage. (#160, #161)
+- INDIRECT resolves defined names and tables when `a1_style` is FALSE. (#154)
+
+### Performance
+
+- Release builds (crates, Python wheels, npm/WASM packages) now compile with fat LTO and `codegen-units = 1` for smaller, faster artifacts. (#19, #20)
+
 ## [0.7.0] - 2026-06-12
 
 ### Breaking changes
