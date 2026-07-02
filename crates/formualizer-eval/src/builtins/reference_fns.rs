@@ -84,6 +84,51 @@ fn arg_byref_reference() -> Vec<ArgSchema> {
     ]
 }
 
+/// Resolve a reference's concrete 1-based inclusive bounds as
+/// `(sheet, start_row, start_col, end_row, end_col)`.
+///
+/// Fully bounded ranges use their declared bounds directly. Unbounded
+/// whole-column/whole-row (or open-ended) ranges are clamped to the used
+/// region via `ctx.resolve_range_view`, mirroring how MATCH/VLOOKUP resolve
+/// the same references. An empty resolved view yields `#REF!`.
+fn resolve_reference_bounds<'b>(
+    ctx: &dyn FunctionContext<'b>,
+    base: &ReferenceType,
+) -> Result<(Option<String>, u32, u32, u32, u32), ExcelError> {
+    match base {
+        ReferenceType::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } => {
+            if let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                (start_row, start_col, end_row, end_col)
+            {
+                return Ok((sheet.clone(), *sr, *sc, *er, *ec));
+            }
+            let rv = ctx.resolve_range_view(base, ctx.current_sheet())?;
+            if rv.is_empty() {
+                return Err(ExcelError::new(ExcelErrorKind::Ref));
+            }
+            // RangeView exposes absolute 0-based coordinates; ReferenceType is 1-based.
+            Ok((
+                sheet.clone(),
+                rv.start_row() as u32 + 1,
+                rv.start_col() as u32 + 1,
+                rv.end_row() as u32 + 1,
+                rv.end_col() as u32 + 1,
+            ))
+        }
+        ReferenceType::Cell {
+            sheet, row, col, ..
+        } => Ok((sheet.clone(), *row, *col, *row, *col)),
+        _ => Err(ExcelError::new(ExcelErrorKind::Ref)),
+    }
+}
+
 #[derive(Debug)]
 pub struct IndexFn;
 
@@ -167,7 +212,7 @@ impl Function for IndexFn {
     fn eval_reference<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Option<Result<ReferenceType, ExcelError>> {
         // args: array(by_ref), row, col (col optional for 1D)
         if args.len() < 2 {
@@ -199,23 +244,11 @@ impl Function for IndexFn {
             None
         };
 
-        // Only Range supported for now
-        let (sheet, sr, sc, er, ec) = match base {
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                ..
-            } => match (start_row, start_col, end_row, end_col) {
-                (Some(sr), Some(sc), Some(er), Some(ec)) => (sheet, sr, sc, er, ec),
-                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
-            },
-            ReferenceType::Cell {
-                sheet, row, col, ..
-            } => (sheet, row, col, row, col),
-            _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
+        // Only Range/Cell supported for now; unbounded ranges (e.g. B:B, 2:2)
+        // are clamped to the used region instead of erroring.
+        let (sheet, sr, sc, er, ec) = match resolve_reference_bounds(ctx, &base) {
+            Ok(bounds) => bounds,
+            Err(e) => return Some(Err(e)),
         };
 
         let (row, col) = match explicit_col {
@@ -514,7 +547,7 @@ impl Function for OffsetFn {
     fn eval_reference<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Option<Result<ReferenceType, ExcelError>> {
         if args.len() < 3 {
             return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
@@ -540,22 +573,11 @@ impl Function for OffsetFn {
             Err(e) => return Some(Err(e)),
         };
 
-        let (sheet, sr, sc, er, ec) = match base {
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                ..
-            } => match (start_row, start_col, end_row, end_col) {
-                (Some(sr), Some(sc), Some(er), Some(ec)) => (sheet, sr, sc, er, ec),
-                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
-            },
-            ReferenceType::Cell {
-                sheet, row, col, ..
-            } => (sheet, row, col, row, col),
-            _ => return Some(Err(ExcelError::new(ExcelErrorKind::Ref))),
+        // Unbounded ranges (e.g. B:B, 2:2) are clamped to the used region
+        // instead of erroring.
+        let (sheet, sr, sc, er, ec) = match resolve_reference_bounds(ctx, &base) {
+            Ok(bounds) => bounds,
+            Err(e) => return Some(Err(e)),
         };
 
         let nsr = (sr as i64) + dr;

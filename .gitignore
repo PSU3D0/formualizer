@@ -15,6 +15,8 @@ opencode.json
 !**/probe-fp-coverage.rs
 !**/formula_plane_coverage_pinning.rs
 *.xlsx
+# Checked-in xlsx test fixtures (e.g. issue repros) are allowed
+!crates/formualizer-workbook/tests/fixtures/*.xlsx
 test-wb/
 tickets/
 

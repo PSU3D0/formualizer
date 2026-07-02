@@ -15,6 +15,8 @@ mod engine;
 #[cfg(feature = "calamine")]
 mod formulas;
 #[cfg(feature = "calamine")]
+mod issue162_unbounded_index;
+#[cfg(feature = "calamine")]
 mod it;
 #[cfg(feature = "calamine")]
 mod iterate_corpus_calcpr_fuzz;
