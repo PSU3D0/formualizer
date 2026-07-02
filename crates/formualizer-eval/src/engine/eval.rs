@@ -1370,7 +1370,12 @@ fn compute_criteria_mask(
             _ => return None,
         };
 
-        if (text_kind == 0 && empty_special) || ne_matches_blank {
+        // Only fold blank/Empty (null) cells into the mask when the segment
+        // actually contains any. The null-fill loop + or_kleene are pure
+        // overhead on blank-free chunks, so a `<>text` (or `=""`) aggregation
+        // over a column with no blanks stays fully vectorized on the ilike/
+        // nilike result.
+        if ((text_kind == 0 && empty_special) || ne_matches_blank) && seg_sa.null_count() > 0 {
             // Treat nulls as equal to empty string
             let mut bb = BooleanBuilder::with_capacity(seg_sa.len());
             for i in 0..seg_sa.len() {
