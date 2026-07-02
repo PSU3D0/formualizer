@@ -168,6 +168,18 @@
       "description": "INDEX 1D array second element"
     },
     {
+      "formula": "=INDEX({2,3,4}, 0, 2)",
+      "result": 3,
+      "result_type": "int",
+      "description": "INDEX array row_num=0 on single-row array selects entire column 2 -> scalar"
+    },
+    {
+      "formula": "=INDEX({2;3;4}, 2, 0)",
+      "result": 3,
+      "result_type": "int",
+      "description": "INDEX array column_num=0 on single-column array selects entire row 2 -> scalar"
+    },
+    {
       "formula": "=CHOOSE(1, \"Wide\", 115, \"world\", 8)",
       "result": "Wide",
       "result_type": "str",
