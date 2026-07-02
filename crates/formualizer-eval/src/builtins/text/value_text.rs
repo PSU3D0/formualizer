@@ -232,7 +232,10 @@ pub struct TextFn;
 ///
 /// # Remarks
 /// - Requires exactly two arguments: value and format text.
-/// - Numeric text is parsed before formatting; invalid numeric text returns `#VALUE!`.
+/// - Numeric text is parsed before formatting. Text that is *clearly* non-numeric (no
+///   digits) is returned unchanged (e.g. `=TEXT("abc","00")` -> `"abc"`), matching Excel.
+///   Digit-bearing text that is not a plain number (dates, currency, fractions, or
+///   locale-ambiguous values like `"1.234,56"`) still returns `#VALUE!` for now.
 /// - Error inputs are propagated unchanged.
 /// - Supported patterns are intentionally limited compared with full Excel formatting.
 ///
@@ -298,14 +301,25 @@ impl Function for TextFn {
         let num = match val {
             LiteralValue::Number(f) => f,
             LiteralValue::Int(i) => i as f64,
-            LiteralValue::Text(t) => {
-                let Some(n) = ctx.locale().parse_number_invariant(&t) else {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new_value(),
-                    )));
-                };
-                n
-            }
+            LiteralValue::Text(t) => match ctx.locale().parse_number_invariant(&t) {
+                Some(n) => n,
+                None => {
+                    // Excel returns the text argument unchanged only when it is
+                    // *clearly* non-numeric (e.g. =TEXT("abc","00") -> "abc"). Text
+                    // that contains digits may be a number, date, currency or
+                    // fraction that Excel would coerce and format (e.g. "3-1",
+                    // "$5", "1/2", or locale-ambiguous "1.234,56"); handling those
+                    // requires a shared TEXT/VALUE coercion that does not exist yet,
+                    // so we conservatively keep returning #VALUE! for them rather
+                    // than passing them through unformatted.
+                    if t.chars().any(|c| c.is_ascii_digit()) {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new_value(),
+                        )));
+                    }
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(t)));
+                }
+            },
             LiteralValue::Boolean(b) => {
                 if b {
                     1.0
@@ -550,5 +564,65 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(out, LiteralValue::Text("12.34".into()));
+    }
+
+    #[test]
+    fn text_clearly_non_numeric_text_passes_through() {
+        // Excel returns the text argument unchanged when it is *clearly* not a
+        // number (no digits): =TEXT("abc","00") -> "abc" (not #VALUE!). A numeric
+        // format does not coerce arbitrary letters.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TextFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXT").unwrap();
+        for input in ["abc", "N/A", "hello world"] {
+            let v = lit(LiteralValue::Text(input.into()));
+            let fmt = lit(LiteralValue::Text("00".into()));
+            let out = f
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&v, &ctx),
+                        ArgumentHandle::new(&fmt, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal();
+            assert_eq!(
+                out,
+                LiteralValue::Text(input.into()),
+                "TEXT({input:?},\"00\")"
+            );
+        }
+    }
+
+    #[test]
+    fn text_digit_bearing_text_still_errors() {
+        // Text that contains digits may be a number/date/currency/fraction that
+        // Excel would coerce and format. Until a shared TEXT/VALUE coercion exists
+        // we keep returning #VALUE! rather than passing it through unformatted,
+        // and we must not change the locale-ambiguous "1.234,56" case.
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(TextFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXT").unwrap();
+        for input in ["3-1", "10-", "1.234,56", "$5", "1/2"] {
+            let v = lit(LiteralValue::Text(input.into()));
+            let fmt = lit(LiteralValue::Text("00".into()));
+            let out = f
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&v, &ctx),
+                        ArgumentHandle::new(&fmt, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal();
+            match out {
+                LiteralValue::Error(e) => {
+                    assert_eq!(e.to_string(), "#VALUE!", "TEXT({input:?},\"00\")")
+                }
+                other => panic!("expected #VALUE! for TEXT({input:?},\"00\"), got {other:?}"),
+            }
+        }
     }
 }
