@@ -1090,6 +1090,31 @@ impl FormulaOverlay {
         })
     }
 
+    /// Re-point an overlay entry's provenance at a different span, e.g. when a
+    /// span split transfers ownership of punch-outs to the new half. Returns
+    /// false for stale refs.
+    pub(crate) fn set_source_span(
+        &mut self,
+        overlay_ref: FormulaOverlayRef,
+        source_span: Option<FormulaSpanRef>,
+    ) -> bool {
+        let Some(slot) = self.slots.get_mut(overlay_ref.id.0 as usize) else {
+            return false;
+        };
+        if slot.generation != overlay_ref.generation {
+            return false;
+        }
+        let Some(entry) = slot.entry.as_mut() else {
+            return false;
+        };
+        if entry.source_span == source_span {
+            return true;
+        }
+        entry.source_span = source_span;
+        self.epoch = self.epoch.saturating_add(1);
+        true
+    }
+
     pub(crate) fn refs_for_source_span(&self, span_ref: FormulaSpanRef) -> Vec<FormulaOverlayRef> {
         self.slots
             .iter()
@@ -1388,6 +1413,30 @@ impl FormulaPlane {
             self.bump_epoch();
         }
         removed
+    }
+
+    pub(crate) fn set_overlay_source_span(
+        &mut self,
+        overlay_ref: FormulaOverlayRef,
+        source_span: Option<FormulaSpanRef>,
+    ) -> bool {
+        let updated = self
+            .formula_overlay
+            .set_source_span(overlay_ref, source_span);
+        if updated {
+            self.bump_epoch();
+        }
+        updated
+    }
+
+    /// Lowercased defined-name keys the span registered at ingest (see
+    /// `name_dependent_spans`). Used to carry name-dependent invalidation over
+    /// to spans that inherit part of an existing span's domain.
+    pub(crate) fn span_registered_name_keys(&self, span_id: FormulaSpanId) -> Vec<String> {
+        self.span_name_keys
+            .get(&span_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub(crate) fn remove_overlays_for_source_span(&mut self, span_ref: FormulaSpanRef) -> usize {

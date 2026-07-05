@@ -4523,6 +4523,26 @@ where
             force_binding_residual_axes: bool,
         }
 
+        /// Split a straddled span into an unshifted upper half (which keeps the
+        /// span id via `replace_span_geometry`) and a shifted lower half (a
+        /// fresh span). Domains and origins here are POST-insert for the lower
+        /// half, mirroring `ShiftPlan`.
+        struct SplitPlan {
+            span_ref: FormulaSpanRef,
+            sheet_id: SheetId,
+            template_id: crate::formula_plane::ids::FormulaTemplateId,
+            binding_set_id: Option<crate::formula_plane::runtime::SpanBindingSetId>,
+            is_constant_result: bool,
+            upper_domain: crate::formula_plane::runtime::PlacementDomain,
+            upper_read_summary: Option<SpanReadSummary>,
+            lower_new_origin_row: u32,
+            lower_new_origin_col: u32,
+            lower_new_domain: crate::formula_plane::runtime::PlacementDomain,
+            lower_new_read_summary: Option<SpanReadSummary>,
+            lower_force_binding_residual_axes: bool,
+            lower_overlay_refs: Vec<crate::formula_plane::runtime::FormulaOverlayRef>,
+        }
+
         fn checked_shift_u32(value: u32, delta: i64) -> Option<u32> {
             u32::try_from(i64::from(value).checked_add(delta)?).ok()
         }
@@ -4732,6 +4752,173 @@ where
             })
         }
 
+        /// Re-derive a span read summary for a sub-domain of the original
+        /// result region by replaying each retained projection rule against
+        /// the half's result region — the same derivation ingest performs in
+        /// `SpanReadSummary::from_formula_summary`, minus the dependency
+        /// re-analysis. Returns None (caller demotes) when any rule cannot
+        /// produce explicit read regions.
+        fn rederive_read_summary_for_result(
+            read_summary: &SpanReadSummary,
+            result_region: Region,
+        ) -> Option<SpanReadSummary> {
+            let mut dependencies = Vec::with_capacity(read_summary.dependencies.len());
+            for dependency in &read_summary.dependencies {
+                let sheet_id = dependency.read_region.sheet_id();
+                let read_regions = dependency
+                    .projection
+                    .read_regions_for_result(sheet_id, result_region)
+                    .ok()?;
+                for read_region in read_regions {
+                    let dependency = crate::formula_plane::producer::SpanReadDependency {
+                        read_region,
+                        projection: dependency.projection,
+                    };
+                    if !dependencies.contains(&dependency) {
+                        dependencies.push(dependency);
+                    }
+                }
+            }
+            Some(SpanReadSummary {
+                result_region,
+                dependencies,
+            })
+        }
+
+        /// Plan a conservative span split for a mid-domain insert. Returns
+        /// None whenever the split is not provably clean — missing template,
+        /// masked span, non-trivial literal bindings, an unsplittable domain,
+        /// a half that does not re-classify to NoOp (upper) / Shift (lower),
+        /// or an overlay punch-out that straddles the boundary — in which case
+        /// the caller falls back to demoting the whole span.
+        fn plan_span_split(
+            authority: &crate::formula_plane::authority::FormulaAuthority,
+            span: &crate::formula_plane::runtime::FormulaSpan,
+            span_ref: FormulaSpanRef,
+            read_summary: Option<&SpanReadSummary>,
+            op: StructuralOp,
+        ) -> Option<SplitPlan> {
+            use crate::formula_plane::structural_shift::{AxisShiftCase, split_domain_at};
+
+            if span.intrinsic_mask_id.is_some() {
+                // v1 does not slice intrinsic masks.
+                return None;
+            }
+            let binding_set = span
+                .binding_set_id
+                .and_then(|id| authority.plane.binding_sets.get(id));
+            if binding_set.is_some_and(|binding_set| !binding_set.is_single_literal_binding()) {
+                // Dictionary/affine per-placement literal bindings are keyed by
+                // domain ordinal; splitting re-bases the lower half's ordinals.
+                // Only trivially-uniform bindings are safe to carry across.
+                return None;
+            }
+
+            let (upper_domain, lower_domain) = split_domain_at(&span.domain, op)?;
+            let upper_result_region = Region::from_domain(&upper_domain);
+            let lower_result_region = Region::from_domain(&lower_domain);
+            let (upper_read_summary, lower_read_summary) = match read_summary {
+                Some(summary) => (
+                    Some(rederive_read_summary_for_result(
+                        summary,
+                        upper_result_region,
+                    )?),
+                    Some(rederive_read_summary_for_result(
+                        summary,
+                        lower_result_region,
+                    )?),
+                ),
+                None => (None, None),
+            };
+
+            // Re-classify each half in the pre-insert frame. The upper half
+            // must be a strict no-op (unshifted result, unshifted reads); the
+            // lower half must be a clean whole-span shift.
+            let upper_span = crate::formula_plane::runtime::FormulaSpan {
+                domain: upper_domain.clone(),
+                result_region: ResultRegion::scalar_cells(upper_domain.clone()),
+                ..span.clone()
+            };
+            if classify_span_for_op(&upper_span, upper_read_summary.as_ref(), op)
+                != SpanShiftPlan::NoOp
+            {
+                return None;
+            }
+            let lower_span = crate::formula_plane::runtime::FormulaSpan {
+                domain: lower_domain.clone(),
+                result_region: ResultRegion::scalar_cells(lower_domain.clone()),
+                ..span.clone()
+            };
+            let SpanShiftPlan::Shift {
+                row_delta,
+                col_delta,
+                origin_row_delta,
+                origin_col_delta,
+            } = classify_span_for_op(&lower_span, lower_read_summary.as_ref(), op)
+            else {
+                return None;
+            };
+
+            let template = authority.plane.templates.get(span.template_id)?;
+            let lower_new_origin_row = checked_shift_u32(template.origin_row, origin_row_delta)?;
+            let lower_new_origin_col = checked_shift_u32(template.origin_col, origin_col_delta)?;
+            let lower_new_domain = lower_domain.project_through_axis_shift(row_delta, col_delta)?;
+            let lower_new_result_region = Region::from_domain(&lower_new_domain);
+            let lower_new_read_summary = match lower_read_summary.as_ref() {
+                Some(summary) => Some(shifted_read_summary(
+                    summary,
+                    lower_new_result_region,
+                    op,
+                    row_delta,
+                    col_delta,
+                )?),
+                None => None,
+            };
+
+            // Overlay punch-outs sourced from this span: entries entirely
+            // before the boundary stay with the (id-retaining) upper half;
+            // entries at/after the boundary transfer to the new lower span.
+            // A straddling entry means the split is not clean.
+            let mut lower_overlay_refs = Vec::new();
+            for overlay_ref in authority
+                .plane
+                .formula_overlay
+                .refs_for_source_span(span_ref)
+            {
+                let entry = authority.plane.formula_overlay.get(overlay_ref)?;
+                match op.classify_region(Region::from_domain(&entry.domain)) {
+                    AxisShiftCase::OtherSheet | AxisShiftCase::EntirelyBelow => {}
+                    AxisShiftCase::EntirelyAboveShift { .. } => {
+                        lower_overlay_refs.push(overlay_ref);
+                    }
+                    AxisShiftCase::Straddles | AxisShiftCase::DeleteFullyContains => {
+                        return None;
+                    }
+                }
+            }
+
+            let lower_force_binding_residual_axes = binding_set.is_some_and(|binding_set| {
+                !binding_set.value_ref_slots.is_empty()
+                    && (origin_row_delta != 0 || origin_col_delta != 0)
+            });
+
+            Some(SplitPlan {
+                span_ref,
+                sheet_id: span.sheet_id,
+                template_id: span.template_id,
+                binding_set_id: span.binding_set_id,
+                is_constant_result: span.is_constant_result,
+                upper_domain,
+                upper_read_summary,
+                lower_new_origin_row,
+                lower_new_origin_col,
+                lower_new_domain,
+                lower_new_read_summary,
+                lower_force_binding_residual_axes,
+                lower_overlay_refs,
+            })
+        }
+
         fn domain_origin_1_based(domain: &PlacementDomain) -> (u32, u32) {
             match domain {
                 PlacementDomain::RowRun { row_start, col, .. } => (row_start + 1, col + 1),
@@ -4745,6 +4932,7 @@ where
         }
 
         let mut shift_plans = Vec::new();
+        let mut split_plans = Vec::new();
         let mut remove_refs = Vec::new();
         let mut demote_refs = Vec::new();
         for span_ref in span_refs {
@@ -4832,6 +5020,14 @@ where
                 SpanShiftPlan::Demote { .. } => {
                     demote_refs.push(span_ref);
                 }
+                SpanShiftPlan::Split => {
+                    match plan_span_split(authority, span, span_ref, read_summary, op) {
+                        Some(plan) => split_plans.push(plan),
+                        // Not provably clean: demote the whole span (the
+                        // pre-split conservative path).
+                        None => demote_refs.push(span_ref),
+                    }
+                }
                 SpanShiftPlan::Shift {
                     row_delta,
                     col_delta,
@@ -4903,7 +5099,7 @@ where
                 }
             }
         }
-        if !shift_plans.is_empty() || !remove_refs.is_empty() {
+        if !shift_plans.is_empty() || !split_plans.is_empty() || !remove_refs.is_empty() {
             let authority = self.graph.formula_authority_mut();
             for span_ref in remove_refs {
                 authority.plane.remove_overlays_for_source_span(span_ref);
@@ -4961,6 +5157,115 @@ where
                     // to per-placement work rather than broadcasting stale
                     // representative values.
                     authority.plane.force_binding_residual_axes(binding_set_id);
+                }
+            }
+            for plan in split_plans {
+                // Lower half: a fresh span at the POST-insert coordinates,
+                // mirroring the Shift arm's template/binding handling.
+                let Some(lower_template_id) = authority.plane.intern_shifted_template_origin(
+                    plan.template_id,
+                    plan.lower_new_origin_row,
+                    plan.lower_new_origin_col,
+                ) else {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane split could not clone template origin")
+                        .into());
+                };
+                let lower_binding_set_id = if let Some(binding_set_id) = plan.binding_set_id {
+                    let Some(source) = authority.plane.binding_sets.get(binding_set_id) else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(
+                                "FormulaPlane split found a span with a missing binding set",
+                            )
+                            .into());
+                    };
+                    // Safe to clone wholesale: `plan_span_split` only accepts
+                    // single-literal-binding sets, whose per-placement lookups
+                    // are ordinal-independent.
+                    let clone = source.clone();
+                    let new_binding_set_id = authority.plane.insert_binding_set(clone);
+                    let Some(template) = authority.plane.templates.get(lower_template_id) else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("FormulaPlane split could not find shifted template")
+                            .into());
+                    };
+                    let (ast_id, origin_row, origin_col) =
+                        (template.ast_id, template.origin_row, template.origin_col);
+                    authority.plane.set_binding_template_anchor(
+                        new_binding_set_id,
+                        ast_id,
+                        origin_row,
+                        origin_col,
+                    );
+                    Some(new_binding_set_id)
+                } else {
+                    None
+                };
+                let lower_read_summary_id = plan
+                    .lower_new_read_summary
+                    .map(|summary| authority.plane.insert_span_read_summary(summary));
+                let lower_result_region = ResultRegion::scalar_cells(plan.lower_new_domain.clone());
+                let lower_ref =
+                    authority
+                        .plane
+                        .insert_span(crate::formula_plane::runtime::NewFormulaSpan {
+                            sheet_id: plan.sheet_id,
+                            template_id: lower_template_id,
+                            domain: plan.lower_new_domain,
+                            result_region: lower_result_region,
+                            intrinsic_mask_id: None,
+                            read_summary_id: lower_read_summary_id,
+                            binding_set_id: lower_binding_set_id,
+                            is_constant_result: plan.is_constant_result,
+                        });
+                if let Some(binding_set_id) = lower_binding_set_id {
+                    authority
+                        .plane
+                        .set_binding_span_ref(binding_set_id, lower_ref);
+                    if plan.lower_force_binding_residual_axes {
+                        // Same contract as the Shift arm: a moved origin with
+                        // stationary value-ref precedents invalidates
+                        // placement-relative memoization keys.
+                        authority.plane.force_binding_residual_axes(binding_set_id);
+                    }
+                }
+                // The lower half inherits the parent's defined-name
+                // invalidation registrations; the upper half keeps them by
+                // retaining the span id.
+                let name_keys = authority.plane.span_registered_name_keys(plan.span_ref.id);
+                if !name_keys.is_empty() {
+                    authority
+                        .plane
+                        .register_span_name_dependents(lower_ref, &name_keys);
+                }
+                for overlay_ref in plan.lower_overlay_refs {
+                    if !authority
+                        .plane
+                        .set_overlay_source_span(overlay_ref, Some(lower_ref))
+                    {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(
+                                "FormulaPlane split could not re-point overlay provenance",
+                            )
+                            .into());
+                    }
+                }
+                // Upper half: keep the span id, truncate the domain, and swap
+                // in a summary re-derived for the truncated result region.
+                let upper_read_summary_id = plan
+                    .upper_read_summary
+                    .map(|summary| authority.plane.insert_span_read_summary(summary));
+                let upper_result_region = ResultRegion::scalar_cells(plan.upper_domain.clone());
+                if !authority.plane.replace_span_geometry(
+                    plan.span_ref,
+                    plan.template_id,
+                    plan.upper_domain,
+                    upper_result_region,
+                    upper_read_summary_id,
+                ) {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("FormulaPlane split could not update span geometry")
+                        .into());
                 }
             }
             authority.rebuild_indexes();
