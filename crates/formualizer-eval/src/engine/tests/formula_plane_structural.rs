@@ -1232,3 +1232,137 @@ fn formula_plane_repeated_mid_span_row_inserts_stay_split_and_linear() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Delete compaction must carry the template origin (not rebase to the new
+// domain start), which the split path makes load-bearing: split lower halves
+// keep their original origin while their domain starts elsewhere.
+// ---------------------------------------------------------------------------
+
+fn span_off_engine() -> Engine<TestWorkbook> {
+    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Off);
+    Engine::new(TestWorkbook::default(), cfg)
+}
+
+fn assert_value_parity(
+    span_on: &Engine<TestWorkbook>,
+    span_off: &Engine<TestWorkbook>,
+    rows: u32,
+    cols: u32,
+) {
+    for row in 1..=rows {
+        for col in 1..=cols {
+            assert_eq!(
+                span_on.get_cell_value("Sheet1", row, col),
+                span_off.get_cell_value("Sheet1", row, col),
+                "span-on/off divergence at row={row} col={col}"
+            );
+        }
+    }
+}
+
+#[test]
+fn formula_plane_split_then_inner_delete_matches_span_off_engine() {
+    // Split lower halves keep the original template origin (row 1) while
+    // their domain starts at the split boundary. A later delete strictly
+    // inside the lower half must carry that origin through compaction;
+    // rebasing it to the compacted domain start silently re-anchors every
+    // relative read (=A{p-41}*2 instead of =A{p}*2).
+    let mut span_on = build_single_formula_column_family(100);
+    let mut span_off = span_off_engine();
+    add_single_formula_column_family(&mut span_off, "Sheet1", 100);
+    span_off.evaluate_all().unwrap();
+
+    for engine in [&mut span_on, &mut span_off] {
+        engine.insert_rows("Sheet1", 40, 2).unwrap();
+        engine.delete_rows("Sheet1", 60, 2).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+
+    // The upper half stays put and the lower half compacts in place: the
+    // sequence never materializes legacy vertices on the span-on engine.
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(span_on.baseline_stats().graph_formula_vertex_count, 0);
+    assert_span_read_summaries_exact(&span_on);
+    assert_value_parity(&span_on, &span_off, 104, 2);
+}
+
+#[test]
+fn formula_plane_delete_overlapping_span_head_matches_span_off_engine() {
+    // A delete that starts above the span and cuts into its head moves the
+    // compacted domain start away from the template origin; the origin must
+    // not be rebased to the new start. The delete removes the origin row
+    // itself here, so the fixed path demotes rather than guessing an anchor.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        let mut formulas = Vec::new();
+        for row in 1..=120 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+        // Promotion requires at least 100 non-constant cells; anchor the span
+        // at row 5 so a delete starting at row 3 cuts into its head.
+        for row in 5..=120 {
+            formulas.push(record(engine, row, 2, &format!("=A{row}*2")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+
+    for engine in [&mut span_on, &mut span_off] {
+        engine.delete_rows("Sheet1", 3, 4).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+
+    assert_value_parity(&span_on, &span_off, 120, 2);
+}
+
+#[test]
+fn formula_plane_mixed_read_row_insert_still_demotes() {
+    // v1 scope pin: a template with mixed reads (relative A{r}/B{r} shift with
+    // the block, absolute $F$1 stays put) does NOT split — the lower half
+    // classifies Demote(MixedReadRegionShift), so the whole span demotes
+    // exactly as before the split feature. Mixed-read splitting is a
+    // follow-up phase.
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
+        .unwrap();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", row, 2, LiteralValue::Number(row as f64 + 1.0))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 3, &format!("=A{row}*B{row}*$F$1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.insert_rows("Sheet1", 40, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 10, 3),
+        Some(LiteralValue::Number(10.0 * 11.0 * 3.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 41, 3),
+        Some(LiteralValue::Number(40.0 * 41.0 * 3.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 101, 3),
+        Some(LiteralValue::Number(100.0 * 101.0 * 3.0))
+    );
+}

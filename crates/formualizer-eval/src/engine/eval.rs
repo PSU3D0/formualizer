@@ -4919,15 +4919,44 @@ where
             })
         }
 
-        fn domain_origin_1_based(domain: &PlacementDomain) -> (u32, u32) {
-            match domain {
-                PlacementDomain::RowRun { row_start, col, .. } => (row_start + 1, col + 1),
-                PlacementDomain::ColRun { row, col_start, .. } => (row + 1, col_start + 1),
-                PlacementDomain::Rect {
-                    row_start,
-                    col_start,
-                    ..
-                } => (row_start + 1, col_start + 1),
+        /// Carry a 1-based template origin coordinate through a delete of
+        /// `count` rows/columns starting at 0-based `start`. Returns None when
+        /// the delete removes the origin coordinate itself: the template's
+        /// relative reference deltas are anchored there, so the caller must
+        /// demote rather than guess a new anchor.
+        fn origin_coord_through_delete(origin: u32, start: u32, count: u32) -> Option<u32> {
+            let origin0 = origin.checked_sub(1)?;
+            let end = start.saturating_add(count);
+            if origin0 < start {
+                Some(origin)
+            } else if origin0 >= end {
+                Some(origin - count)
+            } else {
+                None
+            }
+        }
+
+        /// Carry the template origin through a delete instead of rebasing it
+        /// to the compacted domain's start. Rebasing is only correct when the
+        /// origin coincides with the domain start; split/shifted spans keep
+        /// their original origin (Shift{origin_delta: 0} convention), and a
+        /// head-overlapping delete moves the domain start away from the
+        /// origin, so rebasing silently re-anchors every relative read.
+        fn origin_through_delete(
+            origin_row: u32,
+            origin_col: u32,
+            op: StructuralOp,
+        ) -> Option<(u32, u32)> {
+            match op {
+                StructuralOp::DeleteRows { start, count, .. } => Some((
+                    origin_coord_through_delete(origin_row, start, count)?,
+                    origin_col,
+                )),
+                StructuralOp::DeleteColumns { start, count, .. } => Some((
+                    origin_row,
+                    origin_coord_through_delete(origin_col, start, count)?,
+                )),
+                StructuralOp::InsertRows { .. } | StructuralOp::InsertColumns { .. } => None,
             }
         }
 
@@ -4982,16 +5011,18 @@ where
                         } else {
                             None
                         };
-                        if read_summary.is_none() || new_read_summary.is_some() {
-                            let (new_origin_row, new_origin_col) = domain_origin_1_based(&new_domain);
-                            let Some(template) = authority.plane.templates.get(span.template_id)
-                            else {
-                                return Err(ExcelError::new(ExcelErrorKind::Ref)
-                                    .with_message(
-                                        "FormulaPlane delete compaction found a span with a missing template",
-                                    )
-                                    .into());
-                            };
+                        let Some(template) = authority.plane.templates.get(span.template_id) else {
+                            return Err(ExcelError::new(ExcelErrorKind::Ref)
+                                .with_message(
+                                    "FormulaPlane delete compaction found a span with a missing template",
+                                )
+                                .into());
+                        };
+                        let carried_origin =
+                            origin_through_delete(template.origin_row, template.origin_col, op);
+                        if (read_summary.is_none() || new_read_summary.is_some())
+                            && let Some((new_origin_row, new_origin_col)) = carried_origin
+                        {
                             let force_binding_residual_axes = span
                                 .binding_set_id
                                 .and_then(|id| authority.plane.binding_sets.get(id))
