@@ -378,24 +378,40 @@ pub(crate) struct SpanReadSummaryId(pub(crate) u32);
 
 #[derive(Debug, Default)]
 pub(crate) struct SpanReadSummaryStore {
-    records: Vec<SpanReadSummary>,
+    records: Vec<Option<SpanReadSummary>>,
+    live: usize,
     epoch: u64,
 }
 
 impl SpanReadSummaryStore {
     pub(crate) fn insert(&mut self, summary: SpanReadSummary) -> SpanReadSummaryId {
         let id = SpanReadSummaryId(self.records.len() as u32);
-        self.records.push(summary);
+        self.records.push(Some(summary));
+        self.live = self.live.saturating_add(1);
         self.epoch = self.epoch.saturating_add(1);
         id
     }
 
     pub(crate) fn get(&self, id: SpanReadSummaryId) -> Option<&SpanReadSummary> {
-        self.records.get(id.0 as usize)
+        self.records.get(id.0 as usize)?.as_ref()
+    }
+
+    /// Release a summary that is no longer referenced by any span. Ids are
+    /// never reused; the slot becomes a tombstone.
+    pub(crate) fn remove(&mut self, id: SpanReadSummaryId) -> bool {
+        let Some(slot) = self.records.get_mut(id.0 as usize) else {
+            return false;
+        };
+        let removed = slot.take().is_some();
+        if removed {
+            self.live = self.live.saturating_sub(1);
+            self.epoch = self.epoch.saturating_add(1);
+        }
+        removed
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.records.len()
+        self.live
     }
 
     pub(crate) fn epoch(&self) -> u64 {

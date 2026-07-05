@@ -1243,6 +1243,10 @@ impl FormulaPlane {
         result_region: ResultRegion,
         read_summary_id: Option<SpanReadSummaryId>,
     ) -> bool {
+        let old_read_summary_id = self
+            .spans
+            .get(span_ref)
+            .and_then(|span| span.read_summary_id);
         let replaced = self.spans.replace_geometry(
             span_ref,
             template_id,
@@ -1251,6 +1255,13 @@ impl FormulaPlane {
             read_summary_id,
         );
         if replaced {
+            // Summaries are per-span (never interned/shared); release the one
+            // the replaced geometry no longer references.
+            if let Some(old_id) = old_read_summary_id
+                && read_summary_id != Some(old_id)
+            {
+                self.span_read_summaries.remove(old_id);
+            }
             self.bump_epoch();
         }
         replaced
@@ -1291,14 +1302,18 @@ impl FormulaPlane {
     }
 
     pub(crate) fn remove_span(&mut self, span_ref: FormulaSpanRef) -> bool {
-        let binding_set_id = self
+        let (binding_set_id, read_summary_id) = self
             .spans
             .get(span_ref)
-            .and_then(|span| span.binding_set_id);
+            .map(|span| (span.binding_set_id, span.read_summary_id))
+            .unwrap_or((None, None));
         let removed = self.spans.remove(span_ref);
         if removed {
             if let Some(binding_set_id) = binding_set_id {
                 self.binding_sets.remove(binding_set_id);
+            }
+            if let Some(read_summary_id) = read_summary_id {
+                self.span_read_summaries.remove(read_summary_id);
             }
             self.unregister_span_name_dependents(span_ref);
             self.bump_epoch();
