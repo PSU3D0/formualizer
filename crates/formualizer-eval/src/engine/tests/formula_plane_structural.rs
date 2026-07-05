@@ -521,7 +521,11 @@ fn formula_plane_authoritative_row_insert_shifts_span_outputs_correctly() {
     let mut engine = build_single_formula_column_family(100);
 
     engine.insert_rows("Sheet1", 3, 1).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    // A mid-domain row insert splits the span at the boundary: the upper half
+    // keeps its rows in place, the lower half shifts down. No placement is
+    // materialized as a legacy graph formula.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
     engine.evaluate_all().unwrap();
 
     assert_eq!(
@@ -859,4 +863,372 @@ fn formula_plane_origin_shift_with_stationary_value_ref_does_not_memo_broadcast_
         engine.get_cell_value("Sheet1", 50, 3),
         Some(LiteralValue::Number(51.0))
     );
+}
+
+// ---------------------------------------------------------------------------
+// Mid-domain insert span splitting (SpanShiftPlan::Split, conservative v1)
+// ---------------------------------------------------------------------------
+
+/// Seed a span with an absolute `$A$1` read directly into the authority
+/// plane. Engine batch ingest groups families per column (so it only ever
+/// produces RowRun spans); this helper lets structural tests exercise ColRun
+/// and Rect domains through the real engine insert path.
+fn seed_absolute_read_span(
+    engine: &mut Engine<TestWorkbook>,
+    formula: &str,
+    domain: crate::formula_plane::runtime::PlacementDomain,
+) {
+    use crate::formula_plane::producer::{
+        AxisProjection, DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
+    };
+    use crate::formula_plane::region_index::Region;
+    use crate::formula_plane::runtime::{NewFormulaSpan, PlacementDomain, ResultRegion};
+
+    let ast = parse(formula).unwrap();
+    let ast_id = engine.intern_formula_ast(&ast);
+    let (origin_row, origin_col) = match &domain {
+        PlacementDomain::RowRun { row_start, col, .. } => (*row_start + 1, *col + 1),
+        PlacementDomain::ColRun { row, col_start, .. } => (*row + 1, *col_start + 1),
+        PlacementDomain::Rect {
+            row_start,
+            col_start,
+            ..
+        } => (*row_start + 1, *col_start + 1),
+    };
+    let authority = engine.graph.formula_authority_mut();
+    let template_id = authority.plane.intern_template(
+        Arc::<str>::from(format!("seeded:{formula}:{domain:?}")),
+        ast_id,
+        origin_row,
+        origin_col,
+        Some(Arc::<str>::from(formula)),
+    );
+    let result_region = Region::from_domain(&domain);
+    let summary = SpanReadSummary {
+        result_region,
+        dependencies: vec![SpanReadDependency {
+            read_region: Region::point(domain.sheet_id(), 0, 0),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Absolute { index: 0 },
+                col: AxisProjection::Absolute { index: 0 },
+            },
+        }],
+    };
+    let read_summary_id = authority.plane.insert_span_read_summary(summary);
+    authority.plane.insert_span(NewFormulaSpan {
+        sheet_id: domain.sheet_id(),
+        template_id,
+        result_region: ResultRegion::scalar_cells(domain.clone()),
+        domain,
+        intrinsic_mask_id: None,
+        read_summary_id: Some(read_summary_id),
+        binding_set_id: None,
+        is_constant_result: false,
+    });
+    authority.rebuild_indexes();
+}
+
+/// Every active span must retain a read summary whose `result_region` exactly
+/// equals the span's result region: `FormulaAuthority::rebuild_indexes` drops
+/// mismatched spans from the consumer read index silently, and the mixed
+/// scheduler treats the mismatch as a hard error.
+fn assert_span_read_summaries_exact(engine: &Engine<TestWorkbook>) {
+    use crate::formula_plane::region_index::Region;
+    let plane = &engine.graph.formula_authority().plane;
+    for span in plane.spans.active_spans() {
+        let result_region = Region::from_domain(span.result_region.domain());
+        let summary_id = span
+            .read_summary_id
+            .expect("split halves must retain read summaries");
+        let summary = plane
+            .span_read_summaries
+            .get(summary_id)
+            .expect("read summary id must resolve");
+        assert_eq!(
+            summary.result_region, result_region,
+            "span {:?} read summary result region must match span geometry",
+            span.id
+        );
+    }
+}
+
+#[test]
+fn formula_plane_row_insert_split_halves_have_exact_read_summaries() {
+    let mut engine = build_single_formula_column_family(100);
+
+    engine.insert_rows("Sheet1", 40, 2).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_span_read_summaries_exact(&engine);
+
+    {
+        use crate::formula_plane::runtime::PlacementDomain;
+        let plane = &engine.graph.formula_authority().plane;
+        let mut domains: Vec<PlacementDomain> = plane
+            .spans
+            .active_spans()
+            .map(|span| span.domain.clone())
+            .collect();
+        domains.sort_by_key(|domain| match domain {
+            PlacementDomain::RowRun { row_start, .. } => *row_start,
+            _ => u32::MAX,
+        });
+        // 0-based: upper rows 0..=38 stay; lower rows 39..=99 shift by +2.
+        assert_eq!(domains[0], PlacementDomain::row_run(0, 0, 38, 1));
+        assert_eq!(domains[1], PlacementDomain::row_run(0, 41, 101, 1));
+    }
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 39, 2),
+        Some(LiteralValue::Number(78.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 40, 2), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 41, 2), None);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 42, 2),
+        Some(LiteralValue::Number(80.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 102, 2),
+        Some(LiteralValue::Number(200.0))
+    );
+
+    // The rederived summaries must keep driving precedent dirty propagation
+    // for both halves after the split.
+    engine
+        .set_cell_value("Sheet1", 10, 1, LiteralValue::Number(1000.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 50, 1, LiteralValue::Number(2000.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 10, 2),
+        Some(LiteralValue::Number(2000.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(4000.0))
+    );
+}
+
+#[test]
+fn formula_plane_column_insert_splits_col_run_span_with_stationary_reads() {
+    use crate::formula_plane::runtime::PlacementDomain;
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(21.0))
+        .unwrap();
+    // Engine batch ingest groups families per column, so ColRun spans never
+    // form through the public path; seed one directly through the authority
+    // plane to exercise the engine's structural split on the column axis.
+    seed_absolute_read_span(
+        &mut engine,
+        "=$A$1*2",
+        PlacementDomain::col_run(0, 0, 1, 100),
+    );
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 51),
+        Some(LiteralValue::Number(42.0))
+    );
+
+    // Insert before column 50 (1-based): straddles the col run. The read
+    // ($A$1) stays put, so the lower half shifts with a moving origin.
+    engine.insert_columns("Sheet1", 50, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_span_read_summaries_exact(&engine);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 49),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 50), None);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 51),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 102),
+        Some(LiteralValue::Number(42.0))
+    );
+
+    // Both halves must still track the shared precedent.
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(20.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 102),
+        Some(LiteralValue::Number(20.0))
+    );
+}
+
+#[test]
+fn formula_plane_rect_span_row_insert_splits_into_two_rects() {
+    use crate::formula_plane::runtime::PlacementDomain;
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(7.0))
+        .unwrap();
+    // Engine batch ingest groups families per column, so Rect spans never
+    // form through the public path; seed one directly through the authority
+    // plane to exercise the engine's structural split on a rect domain.
+    seed_absolute_read_span(
+        &mut engine,
+        "=$A$1+1",
+        PlacementDomain::rect(0, 0, 99, 1, 3),
+    );
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 3),
+        Some(LiteralValue::Number(8.0))
+    );
+
+    engine.insert_rows("Sheet1", 50, 3).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_span_read_summaries_exact(&engine);
+    {
+        let plane = &engine.graph.formula_authority().plane;
+        let mut domains: Vec<PlacementDomain> = plane
+            .spans
+            .active_spans()
+            .map(|span| span.domain.clone())
+            .collect();
+        domains.sort_by_key(|domain| match domain {
+            PlacementDomain::Rect { row_start, .. } => *row_start,
+            _ => u32::MAX,
+        });
+        assert_eq!(domains[0], PlacementDomain::rect(0, 0, 48, 1, 3));
+        assert_eq!(domains[1], PlacementDomain::rect(0, 52, 102, 1, 3));
+    }
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 49, 3),
+        Some(LiteralValue::Number(8.0))
+    );
+    assert_eq!(engine.get_cell_value("Sheet1", 50, 3), None);
+    assert_eq!(engine.get_cell_value("Sheet1", 52, 3), None);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 53, 3),
+        Some(LiteralValue::Number(8.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 103, 4),
+        Some(LiteralValue::Number(8.0))
+    );
+}
+
+#[test]
+fn formula_plane_row_insert_split_demotes_unique_literal_bindings() {
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        // Per-placement literal parameters produce a multi-binding dictionary,
+        // which is not safe to re-base across a split: the whole span must
+        // fall back to demotion.
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+{}", row * 7)));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let promoted = engine.baseline_stats().formula_plane_active_span_count;
+
+    engine.insert_rows("Sheet1", 40, 1).unwrap();
+    if promoted == 1 {
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    }
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 10, 2),
+        Some(LiteralValue::Number(10.0 + 70.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 41, 2),
+        Some(LiteralValue::Number(40.0 + 280.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 101, 2),
+        Some(LiteralValue::Number(100.0 + 700.0))
+    );
+}
+
+#[test]
+fn formula_plane_repeated_mid_span_row_inserts_stay_split_and_linear() {
+    let rows = 5_000;
+    let mut engine = authoritative_engine();
+    let mut formulas = Vec::with_capacity(rows as usize);
+    for row in 1..=rows {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}*2")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    // Each mid-span insert splits exactly one span; nothing demotes to legacy
+    // vertices and the structural edit itself stays fast.
+    let insert_sequence = [2_500u32, 1_200, 3_800, 600, 4_600];
+    for (edit_idx, before) in insert_sequence.into_iter().enumerate() {
+        let started = std::time::Instant::now();
+        engine.insert_rows("Sheet1", before, 1).unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            engine.baseline_stats().formula_plane_active_span_count,
+            edit_idx + 2,
+            "each mid-span insert must split one span into two"
+        );
+        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+
+        if !cfg!(debug_assertions) {
+            let limit = std::time::Duration::from_secs(1);
+            assert!(
+                elapsed < limit,
+                "split edit_{edit_idx} took {elapsed:?}, expected below {limit:?}"
+            );
+        }
+
+        engine.evaluate_all().unwrap();
+    }
+
+    // Rows 1..=rows carried their values through five splices; spot-check the
+    // moved tail against column A, which shifted congruently.
+    for row in [1u32, 1_000, 2_400, 3_200, rows + 5] {
+        let a = engine.get_cell_value("Sheet1", row, 1);
+        let b = engine.get_cell_value("Sheet1", row, 2);
+        match a {
+            Some(LiteralValue::Number(a)) => {
+                assert_eq!(
+                    b,
+                    Some(LiteralValue::Number(a * 2.0)),
+                    "row {row} must track its shifted precedent"
+                );
+            }
+            _ => assert_eq!(b, None, "row {row} must be empty after the splice"),
+        }
+    }
 }
