@@ -208,6 +208,25 @@ fn rule_axis_bound_kinds(rule: DirtyProjectionRule, axis: AxisKindForOp) -> (boo
     }
 }
 
+/// Whether the op displaces the target of any absolute-anchored read in the
+/// summary. Used by the delete-compaction path (which never reaches
+/// `classify_span_for_op`'s read partition because the result-region
+/// straddle is classified first): compaction projects read REGIONS through
+/// the delete but keeps the template AST, so a displaced absolute read must
+/// force a demote to the per-cell path where the shared adjuster repoints
+/// the reference (issue #168).
+pub(crate) fn summary_has_displaced_absolute_read(
+    read_summary: &SpanReadSummary,
+    op: StructuralOp,
+) -> bool {
+    read_summary.dependencies.iter().any(|dependency| {
+        matches!(
+            op.classify_region(dependency.read_region),
+            AxisShiftCase::EntirelyAboveShift { .. }
+        ) && rule_axis_bound_kinds(dependency.projection, op.axis_kind()).1
+    })
+}
+
 pub(crate) fn classify_span_for_op(
     span: &FormulaSpan,
     read_summary: Option<&SpanReadSummary>,

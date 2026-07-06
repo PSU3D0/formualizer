@@ -255,7 +255,9 @@ fn oracle_insert_rows_above_absolute_target_span_on() {
 /// `insert_columns` before column A displaces the scalar's target.
 fn assert_insert_columns_before_absolute_target_oracle(mode: FormulaPlaneMode) {
     const COL_START: u32 = 2;
-    const COLS: u32 = 40;
+    // Above the 100-cell span promotion threshold so span-ON exercises the
+    // span path rather than falling back to legacy vertices.
+    const COLS: u32 = 120;
     let col_end = COL_START + COLS - 1;
 
     let cfg = EvalConfig::default().with_formula_plane_mode(mode);
