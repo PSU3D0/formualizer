@@ -667,6 +667,24 @@ impl BindingStore {
         }
     }
 
+    /// Swap in template-derived slot data rebuilt for a structurally
+    /// rewritten template AST (issue #168): the literal slot map is keyed by
+    /// arena node ids of the template AST, and value-ref slot patterns carry
+    /// canonical reference coordinates — both go stale when the template is
+    /// rewritten and re-interned.
+    pub(crate) fn set_template_slots(
+        &mut self,
+        id: SpanBindingSetId,
+        template_slot_map: TemplateSlotMap,
+        value_ref_slots: Arc<[ValueRefSlotDescriptor]>,
+    ) {
+        if let Some(Some(set)) = self.records.get_mut(id.0 as usize) {
+            set.template_slot_map = template_slot_map;
+            set.value_ref_slots = value_ref_slots;
+            self.epoch = self.epoch.saturating_add(1);
+        }
+    }
+
     pub(crate) fn force_residual_axes(&mut self, id: SpanBindingSetId) {
         if let Some(Some(set)) = self.records.get_mut(id.0 as usize)
             && (!set.template_slot_map.residual_relative_row
@@ -793,6 +811,58 @@ impl TemplateStore {
         let parameterized_canonical_key = Arc::clone(&source.parameterized_canonical_key);
         let formula_text = source.formula_text.clone();
         let ast_id = source.ast_id;
+        self.records.push(TemplateRecord {
+            id: new_id,
+            generation: 0,
+            version: 0,
+            ast_id,
+            origin_row,
+            origin_col,
+            exact_canonical_key,
+            parameterized_canonical_key,
+            formula_text,
+            relocatable_ast_validated: OnceLock::new(),
+        });
+        self.epoch = self.epoch.saturating_add(1);
+        Some((new_id, true))
+    }
+
+    /// Intern a structurally rewritten clone of `id`: a NEW arena AST (the
+    /// source template adjusted through the shared `ReferenceAdjuster` for a
+    /// structural op that displaced an absolute read's target, issue #168)
+    /// with canonical keys re-derived from the rewritten AST at the new
+    /// origin. Source records are immutable and may be shared across spans,
+    /// so this never mutates `id`.
+    ///
+    /// Like `intern_shifted_origin_clone`, the clone is deliberately NOT
+    /// added to the intern map: the map's parameterized-key lookup returns a
+    /// single record regardless of origin, and hijacking the key could hand
+    /// future ingests a template anchored at the wrong origin. Duplicate
+    /// records for the same rewritten shape are deduped by linear scan.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn intern_rewritten_clone(
+        &mut self,
+        id: FormulaTemplateId,
+        ast_id: AstNodeId,
+        exact_canonical_key: Arc<str>,
+        parameterized_canonical_key: Arc<str>,
+        formula_text: Option<Arc<str>>,
+        origin_row: u32,
+        origin_col: u32,
+    ) -> Option<(FormulaTemplateId, bool)> {
+        // Validate the source still exists (mirrors intern_shifted_origin_clone).
+        self.get(id)?;
+        if let Some(existing) = self.records.iter().find(|record| {
+            record.ast_id == ast_id
+                && record.exact_canonical_key == exact_canonical_key
+                && record.parameterized_canonical_key == parameterized_canonical_key
+                && record.origin_row == origin_row
+                && record.origin_col == origin_col
+        }) {
+            return Some((existing.id, false));
+        }
+
+        let new_id = FormulaTemplateId(self.records.len() as u32);
         self.records.push(TemplateRecord {
             id: new_id,
             generation: 0,
@@ -1260,6 +1330,33 @@ impl FormulaPlane {
         Some(id)
     }
 
+    /// See [`TemplateStore::intern_rewritten_clone`].
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn intern_rewritten_template(
+        &mut self,
+        template_id: FormulaTemplateId,
+        ast_id: AstNodeId,
+        exact_canonical_key: Arc<str>,
+        parameterized_canonical_key: Arc<str>,
+        formula_text: Option<Arc<str>>,
+        origin_row: u32,
+        origin_col: u32,
+    ) -> Option<FormulaTemplateId> {
+        let (id, inserted) = self.templates.intern_rewritten_clone(
+            template_id,
+            ast_id,
+            exact_canonical_key,
+            parameterized_canonical_key,
+            formula_text,
+            origin_row,
+            origin_col,
+        )?;
+        if inserted {
+            self.bump_epoch();
+        }
+        Some(id)
+    }
+
     pub(crate) fn replace_span_geometry(
         &mut self,
         span_ref: FormulaSpanRef,
@@ -1317,6 +1414,18 @@ impl FormulaPlane {
     ) {
         self.binding_sets
             .set_template_anchor(id, ast_id, origin_row, origin_col);
+        self.bump_epoch();
+    }
+
+    /// See [`SpanBindingSetStore::set_template_slots`].
+    pub(crate) fn set_binding_template_slots(
+        &mut self,
+        id: SpanBindingSetId,
+        template_slot_map: TemplateSlotMap,
+        value_ref_slots: Arc<[ValueRefSlotDescriptor]>,
+    ) {
+        self.binding_sets
+            .set_template_slots(id, template_slot_map, value_ref_slots);
         self.bump_epoch();
     }
 

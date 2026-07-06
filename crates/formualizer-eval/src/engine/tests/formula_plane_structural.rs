@@ -720,9 +720,12 @@ fn formula_plane_delete_on_read_range_sheet_straddles_and_demotes() {
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
+    // Issue #168 policy: absolute bounds track structural deletes, so
+    // `$A$1:$A$10` contracts to `$A$1:$A$9` when row 5 is deleted. The
+    // surviving values in rows 1..=9 are 1,2,3,4,6,7,8,9,10 → 50.
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Number(61.0))
+        Some(LiteralValue::Number(50.0))
     );
 }
 
@@ -1323,12 +1326,177 @@ fn formula_plane_delete_overlapping_span_head_matches_span_off_engine() {
 }
 
 #[test]
-fn formula_plane_mixed_read_row_insert_still_demotes() {
-    // v1 scope pin: a template with mixed reads (relative A{r}/B{r} shift with
-    // the block, absolute $F$1 stays put) does NOT split — the lower half
-    // classifies Demote(MixedReadRegionShift), so the whole span demotes
-    // exactly as before the split feature. Mixed-read splitting is a
-    // follow-up phase.
+fn formula_plane_absolute_read_insert_above_rewrites_template_and_keeps_span() {
+    // Issue #168, span-preserving fix: inserting rows above the whole span
+    // displaces both the span and its absolute read target ($F$1 -> $F$3).
+    // The span must SHIFT with a template AST rewrite — not demote — and
+    // keep computing the same values against the physically moved scalar.
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
+        .unwrap();
+    let mut formulas = Vec::new();
+    // 120 rows: comfortably above the 100-cell span promotion threshold.
+    for row in 2..=121 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", row, 2, LiteralValue::Number(row as f64 + 1.0))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 3, &format!("=A{row}*B{row}*$F$1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.insert_rows("Sheet1", 1, 2).unwrap();
+    // The span survives as a single shifted span with a rewritten template.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    engine.evaluate_all().unwrap();
+
+    // The scalar physically moved to F3; every formula (now rows 4..=102)
+    // must keep reading it through the rewritten $F$3.
+    for row in [2u32, 50, 121] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row + 2, 3),
+            Some(LiteralValue::Number(row as f64 * (row as f64 + 1.0) * 3.0)),
+            "original row {row} (now {})",
+            row + 2
+        );
+    }
+
+    // A follow-up structural op on the rewritten span keeps working: a
+    // mid-domain insert must split it (stationary $F$3 read, shifting
+    // relative reads).
+    engine.insert_rows("Sheet1", 50, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    engine.evaluate_all().unwrap();
+    // Original row 50 sat at row 52 and shifted once more to row 53.
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 53, 3),
+        Some(LiteralValue::Number(50.0 * 51.0 * 3.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 124, 3),
+        Some(LiteralValue::Number(121.0 * 122.0 * 3.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 4, 3),
+        Some(LiteralValue::Number(2.0 * 3.0 * 3.0))
+    );
+}
+
+#[test]
+fn formula_plane_absolute_read_column_insert_rewrites_template_and_keeps_span() {
+    // Column-axis mirror of the #168 fix, on a vertical (RowRun) span:
+    // engine ingest only forms column families, so the column-axis rewrite
+    // is exercised by inserting columns before a RowRun span whose template
+    // reads relative columns (A{r}, B{r}) plus an absolute column ($F$1).
+    // Everything shifts right by 2: inputs to C/D, formulas to E, the
+    // scalar to H — the template must be rewritten to read $H$1.
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
+        .unwrap();
+    let mut formulas = Vec::new();
+    for row in 2..=121 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", row, 2, LiteralValue::Number(row as f64 + 1.0))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 3, &format!("=A{row}*B{row}*$F$1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.insert_columns("Sheet1", 1, 2).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    engine.evaluate_all().unwrap();
+
+    // Scalar physically moved to H1.
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 8),
+        Some(LiteralValue::Number(3.0))
+    );
+    for row in [2u32, 60, 121] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 5),
+            Some(LiteralValue::Number(row as f64 * (row as f64 + 1.0) * 3.0)),
+            "row {row} at shifted column E"
+        );
+    }
+}
+#[test]
+fn formula_plane_partial_absolute_displacement_rewrites_selectively() {
+    // Two absolute reads, only one displaced: $F$1 sits above the insert
+    // (stationary), $F$5 below it (displaced), and the span shifts. The
+    // template rewrite must repoint ONLY $F$5 (per-reference selectivity of
+    // the shared adjuster) while $F$1 keeps its coordinate.
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 5, 6, LiteralValue::Number(7.0))
+        .unwrap();
+    let mut formulas = Vec::new();
+    for row in 10..=150 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 3, &format!("=A{row}*$F$1*$F$5")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    // Insert two rows between the scalars (1-based row 3): $F$1 stays,
+    // $F$5's value physically moves to F7, the span shifts to rows 12..=152.
+    engine.insert_rows("Sheet1", 3, 2).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 6),
+        Some(LiteralValue::Number(3.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 7, 6),
+        Some(LiteralValue::Number(7.0))
+    );
+    for row in [10u32, 80, 150] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row + 2, 3),
+            Some(LiteralValue::Number(row as f64 * 3.0 * 7.0)),
+            "original row {row} (now {})",
+            row + 2
+        );
+    }
+}
+
+#[test]
+fn formula_plane_mixed_read_row_insert_splits_span() {
+    // P2.5: this INVERTS the v1 scope pin (previously
+    // `formula_plane_mixed_read_row_insert_still_demotes`). A template with
+    // mixed reads — relative A{r}/B{r} shift with the block, absolute $F$1
+    // stays put — now SPLITS on a mid-domain insert: the stationary
+    // absolute read imposes no constraint (its AST coordinate still points
+    // at the unmoved target), so the lower half classifies as a clean
+    // shift with a stationary origin and the span stays on the fast path.
     let mut engine = authoritative_engine();
     engine
         .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
@@ -1350,13 +1518,24 @@ fn formula_plane_mixed_read_row_insert_still_demotes() {
     engine.evaluate_all().unwrap();
 
     engine.insert_rows("Sheet1", 40, 1).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    // Split, not demote: upper half rows 1..=39 keeps the span id, lower
+    // half rows 41..=101 is a fresh span.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
     engine.evaluate_all().unwrap();
 
+    // Upper half (unmoved).
     assert_eq!(
         engine.get_cell_value("Sheet1", 10, 3),
         Some(LiteralValue::Number(10.0 * 11.0 * 3.0))
     );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 39, 3),
+        Some(LiteralValue::Number(39.0 * 40.0 * 3.0))
+    );
+    // The inserted row has no formula.
+    assert_eq!(engine.get_cell_value("Sheet1", 40, 3), None);
+    // Lower half (shifted down one row, still reading $F$1).
     assert_eq!(
         engine.get_cell_value("Sheet1", 41, 3),
         Some(LiteralValue::Number(40.0 * 41.0 * 3.0))
@@ -1365,4 +1544,199 @@ fn formula_plane_mixed_read_row_insert_still_demotes() {
         engine.get_cell_value("Sheet1", 101, 3),
         Some(LiteralValue::Number(100.0 * 101.0 * 3.0))
     );
+}
+
+#[test]
+fn formula_plane_split_then_insert_displacing_absolute_matches_span_off_engine() {
+    // Frame-divergence composition regression (issue #168 review): op1
+    // splits the span, leaving the lower half with its template origin at
+    // row 1 while its domain starts at row 51. Op2 inserts rows BETWEEN
+    // the stale origin and the domain start while displacing the absolute
+    // target $F$30, routing the lower half into the
+    // Shift{rewrite_absolute_reads} arm. The shared adjuster relocates by
+    // AUTHORED coordinate (A1 sits below the insert point), so an
+    // unguarded rewrite shears every relative read by the insert count.
+    // rewrite_frame_is_sound must refuse the rewrite (demote instead) and
+    // keep span-ON byte-identical to span-OFF.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        let mut formulas = Vec::new();
+        for row in 1..=120 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+        engine
+            .set_cell_value("Sheet1", 30, 6, LiteralValue::Number(1000.0))
+            .unwrap();
+        for row in 1..=120 {
+            formulas.push(record(engine, row, 3, &format!("=A{row}+$F$30")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+
+    for engine in [&mut span_on, &mut span_off] {
+        engine.insert_rows("Sheet1", 50, 1).unwrap();
+        engine.insert_rows("Sheet1", 10, 3).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_value_parity(&span_on, &span_off, 124, 6);
+}
+
+#[test]
+fn formula_plane_origin_follows_shift_keeps_incremental_dirty_projection() {
+    // Second frame bug pinned during the #168 review: projection rules
+    // store PLACEMENT-relative offsets (= authored - origin). An
+    // origin-follows shift (stationary relative reads, shifted span) moves
+    // the origin over an unchanged AST, so the stored offsets must shift
+    // by -origin_delta or incremental dirty projection maps changed
+    // regions to the wrong result rows and the span silently keeps stale
+    // values. Span rows 150..=270 read A10..A130 (stationary under the
+    // insert at 140); after the shift, a write to A10 must still re-dirty
+    // the span.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        let mut formulas = Vec::new();
+        for row in 10..=130 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+        for row in 150..=270 {
+            formulas.push(record(engine, row, 3, &format!("=A{}", row - 140)));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    for engine in [&mut span_on, &mut span_off] {
+        engine.insert_rows("Sheet1", 140, 1).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    // The span survives the shift (origin follows the block).
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    // Incremental dirty: change a read target, re-evaluate.
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 10, 1, LiteralValue::Number(999.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 151, 3),
+        Some(LiteralValue::Number(999.0)),
+        "the shifted span must observe the incremental write"
+    );
+    assert_value_parity(&span_on, &span_off, 275, 6);
+}
+
+#[test]
+fn formula_plane_rewrite_keeps_incremental_dirty_on_moved_absolute() {
+    // Companion to the frame-invariant fix: after a template rewrite the
+    // span's read summary must be RE-DERIVED from the rewritten canonical
+    // template — a structural transform would keep the old Absolute rule
+    // indices, and an incremental write to the MOVED scalar would silently
+    // fail to dirty the span.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
+            .unwrap();
+        let mut formulas = Vec::new();
+        for row in 2..=121 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+            formulas.push(record(engine, row, 3, &format!("=A{row}*$F$1")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        engine.insert_rows("Sheet1", 1, 2).unwrap();
+        engine.evaluate_all().unwrap();
+        // Incremental write to the MOVED absolute target (now F3).
+        engine
+            .set_cell_value("Sheet1", 3, 6, LiteralValue::Number(5.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 4, 3),
+        Some(LiteralValue::Number(2.0 * 5.0)),
+        "the rewritten span must observe the incremental write to $F$3"
+    );
+    assert_value_parity(&span_on, &span_off, 125, 6);
+}
+
+#[test]
+fn formula_plane_column_pinned_origin_shifts_compose_and_match_span_off_engine() {
+    // Column-axis mirror of the frame-divergence composition. Engine ingest
+    // only forms vertical families, and every column-op sequence that could
+    // displace an absolute target through a diverged column origin first
+    // routes the span through the rewrite arm (which re-aligns the origin),
+    // so the row repro's shear is not reachable on this axis — pinned at
+    // unit level in rewrite_frame_soundness_matrix. What IS reachable is
+    // composing pinned-origin column shifts: op1 diverges origin_col from
+    // the domain column, op2 shifts again through the diverged frame. Both
+    // must stay on the span fast path and match span-OFF.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1000.0))
+            .unwrap();
+        let mut formulas = Vec::new();
+        for row in 1..=120 {
+            engine
+                .set_cell_value("Sheet1", row, 3, LiteralValue::Number(row as f64))
+                .unwrap();
+            formulas.push(record(engine, row, 4, &format!("=C{row}+$A$1")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+
+    for engine in [&mut span_on, &mut span_off] {
+        // op1: insert between $A$1 and the inputs — inputs and formulas
+        // shift right, the scalar stays: pinned-origin column shift
+        // (origin_col keeps the authored anchor while the domain moves).
+        engine.insert_columns("Sheet1", 2, 1).unwrap();
+        // op2: insert at the (shifted) input column — shifts inputs and
+        // formulas again through the diverged column frame.
+        engine.insert_columns("Sheet1", 4, 1).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    // Both ops are mixed-read fast-path shifts: the span survives.
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    // Incremental writes through the diverged frame must still re-dirty
+    // the span (rule offsets track the pinned origin).
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 5, 5, LiteralValue::Number(500.0))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2000.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 5, 6),
+        Some(LiteralValue::Number(500.0 + 2000.0)),
+        "shifted formula must track both incremental writes"
+    );
+    assert_value_parity(&span_on, &span_off, 125, 8);
 }

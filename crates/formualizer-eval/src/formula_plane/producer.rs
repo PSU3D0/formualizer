@@ -445,6 +445,52 @@ pub(crate) enum DirtyProjectionRule {
 }
 
 impl DirtyProjectionRule {
+    /// Shift every `Relative` bound by the given per-axis deltas, leaving
+    /// `Absolute` bounds untouched.
+    ///
+    /// Rules store PLACEMENT-relative offsets, which equal
+    /// `authored_coordinate - template_origin`. A structural shift that
+    /// moves the template origin without rewriting the AST (the
+    /// origin-follows arm) changes that difference by `-origin_delta`;
+    /// without this transform the rule silently diverges from the template
+    /// frame, and incremental dirty projection maps changed regions to the
+    /// wrong result rows (stale span values — issue #168 family).
+    pub(crate) fn with_relative_offsets_shifted(self, row_delta: i64, col_delta: i64) -> Self {
+        fn shift(projection: AxisProjection, delta: i64) -> AxisProjection {
+            match projection {
+                AxisProjection::Relative { offset } => AxisProjection::Relative {
+                    offset: offset.saturating_add(delta),
+                },
+                AxisProjection::Absolute { .. } => projection,
+            }
+        }
+        if row_delta == 0 && col_delta == 0 {
+            return self;
+        }
+        match self {
+            Self::AffineCell { row, col } => Self::AffineCell {
+                row: shift(row, row_delta),
+                col: shift(col, col_delta),
+            },
+            Self::AffineRange {
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+            } => Self::AffineRange {
+                row_start: shift(row_start, row_delta),
+                row_end: shift(row_end, row_delta),
+                col_start: shift(col_start, col_delta),
+                col_end: shift(col_end, col_delta),
+            },
+            Self::WholeColumnRange { col_start, col_end } => Self::WholeColumnRange {
+                col_start: shift(col_start, col_delta),
+                col_end: shift(col_end, col_delta),
+            },
+            Self::WholeResult => Self::WholeResult,
+        }
+    }
+
     pub(crate) fn read_region_for_result(
         self,
         sheet_id: SheetId,

@@ -1,4 +1,4 @@
-use super::producer::SpanReadSummary;
+use super::producer::{AxisProjection, DirtyProjectionRule, SpanReadSummary};
 use super::region_index::{AxisRange, Region};
 use super::runtime::{FormulaSpan, PlacementDomain};
 use crate::SheetId;
@@ -44,6 +44,16 @@ pub(crate) enum SpanShiftPlan {
         col_delta: i64,
         origin_row_delta: i64,
         origin_col_delta: i64,
+        /// The op displaces the target of at least one absolute-anchored
+        /// read. Origin relocation cannot repoint absolute references, so
+        /// the apply site must rewrite the template AST through the shared
+        /// `ReferenceAdjuster` (issue #168). Whenever this is set the origin
+        /// deltas equal the result deltas: a full-AST rewrite shifts the
+        /// template's displaced relative references too, and moving the
+        /// origin with the block exactly cancels that for stationary
+        /// relative reads while composing correctly with shifted ones —
+        /// replicating per-cell adjustment semantics.
+        rewrite_absolute_reads: bool,
     },
     /// A mid-domain insert straddles the span's result domain. The apply site
     /// may split the domain at the insert boundary into an unshifted upper
@@ -62,6 +72,10 @@ pub(crate) enum SpanDemoteReason {
     ReadRegionStraddles,
     OriginNotShiftedButReadRegionShifts,
     DeletePartiallyOverlaps,
+    /// The template mixes relative reads whose targets the op displaces
+    /// with relative reads whose targets stay put. No origin choice can
+    /// satisfy both, and (unlike absolute reads) a template rewrite for
+    /// relative references is deferred, so the span demotes.
     MixedReadRegionShift,
 }
 
@@ -153,6 +167,184 @@ impl StructuralOp {
     }
 }
 
+/// The anchor kinds a dirty-projection rule uses on the op's axis:
+/// `(has_relative, has_absolute)`. Relative bounds are relocated by the
+/// span's origin choice; absolute bounds can only be repointed by a template
+/// AST rewrite. Bounds on the other axis are unaffected by the op.
+///
+/// `WholeResult` is a test-only rule with no axis information; it is treated
+/// as relative to preserve the legacy region-level classification.
+fn rule_axis_bound_kinds(rule: DirtyProjectionRule, axis: AxisKindForOp) -> (bool, bool) {
+    fn is_abs(projection: AxisProjection) -> bool {
+        matches!(projection, AxisProjection::Absolute { .. })
+    }
+    fn kinds(bounds: &[AxisProjection]) -> (bool, bool) {
+        let has_absolute = bounds.iter().copied().any(is_abs);
+        let has_relative = bounds.iter().copied().any(|bound| !is_abs(bound));
+        (has_relative, has_absolute)
+    }
+    match (rule, axis) {
+        (DirtyProjectionRule::AffineCell { row, .. }, AxisKindForOp::Row) => kinds(&[row]),
+        (DirtyProjectionRule::AffineCell { col, .. }, AxisKindForOp::Col) => kinds(&[col]),
+        (
+            DirtyProjectionRule::AffineRange {
+                row_start, row_end, ..
+            },
+            AxisKindForOp::Row,
+        ) => kinds(&[row_start, row_end]),
+        (
+            DirtyProjectionRule::AffineRange {
+                col_start, col_end, ..
+            },
+            AxisKindForOp::Col,
+        ) => kinds(&[col_start, col_end]),
+        (DirtyProjectionRule::WholeColumnRange { col_start, col_end }, AxisKindForOp::Col) => {
+            kinds(&[col_start, col_end])
+        }
+        // A whole-column read has no row bounds to displace; row-op regions
+        // for it are whole-axis and classify as straddles before this check.
+        (DirtyProjectionRule::WholeColumnRange { .. }, AxisKindForOp::Row) => (true, false),
+        (DirtyProjectionRule::WholeResult, _) => (true, false),
+    }
+}
+
+/// Whether the op displaces the target of any absolute-anchored read in the
+/// summary. Used by the delete-compaction path (which never reaches
+/// `classify_span_for_op`'s read partition because the result-region
+/// straddle is classified first): compaction projects read REGIONS through
+/// the delete but keeps the template AST, so a displaced absolute read must
+/// force a demote to the per-cell path where the shared adjuster repoints
+/// the reference (issue #168).
+pub(crate) fn summary_has_displaced_absolute_read(
+    read_summary: &SpanReadSummary,
+    op: StructuralOp,
+) -> bool {
+    read_summary.dependencies.iter().any(|dependency| {
+        matches!(
+            op.classify_region(dependency.read_region),
+            AxisShiftCase::EntirelyAboveShift { .. }
+        ) && rule_axis_bound_kinds(dependency.projection, op.axis_kind()).1
+    })
+}
+
+/// Relative-anchored bounds of `rule` on the op axis, as authored-frame
+/// offsets from the template origin. Returns `None` when the rule carries no
+/// usable axis information (`WholeResult`), which callers must treat as
+/// unverifiable.
+fn rule_relative_offsets_on_op_axis(
+    rule: DirtyProjectionRule,
+    axis: AxisKindForOp,
+) -> Option<[Option<i64>; 2]> {
+    fn offset(projection: AxisProjection) -> Option<i64> {
+        match projection {
+            AxisProjection::Relative { offset } => Some(offset),
+            AxisProjection::Absolute { .. } => None,
+        }
+    }
+    match (rule, axis) {
+        (DirtyProjectionRule::AffineCell { row, .. }, AxisKindForOp::Row) => {
+            Some([offset(row), None])
+        }
+        (DirtyProjectionRule::AffineCell { col, .. }, AxisKindForOp::Col) => {
+            Some([offset(col), None])
+        }
+        (
+            DirtyProjectionRule::AffineRange {
+                row_start, row_end, ..
+            },
+            AxisKindForOp::Row,
+        ) => Some([offset(row_start), offset(row_end)]),
+        (
+            DirtyProjectionRule::AffineRange {
+                col_start, col_end, ..
+            },
+            AxisKindForOp::Col,
+        ) => Some([offset(col_start), offset(col_end)]),
+        (DirtyProjectionRule::WholeColumnRange { col_start, col_end }, AxisKindForOp::Col) => {
+            Some([offset(col_start), offset(col_end)])
+        }
+        // A whole-column read has no row bounds; row-op regions for it are
+        // whole-axis and classify as straddles before rewrite planning.
+        (DirtyProjectionRule::WholeColumnRange { .. }, AxisKindForOp::Row) => Some([None, None]),
+        (DirtyProjectionRule::WholeResult, _) => None,
+    }
+}
+
+/// FRAME INVARIANT (issue #168 rewrite arm). A template's AST authoring
+/// frame and its `origin_{row,col}` fields may legitimately diverge:
+/// `intern_shifted_origin_clone` reuses the source `ast_id` with a new
+/// origin, the mixed-read fast path shifts a domain while pinning the origin
+/// (`origin_delta: 0`), and split lower halves keep the original anchor
+/// while their domain starts at the split boundary. Evaluation only
+/// guarantees that `authored_coord + (placement - origin)` names the right
+/// cell for placements IN THE DOMAIN — the authored coordinates themselves
+/// need not lie inside the read regions.
+///
+/// The shared `ReferenceAdjuster` relocates by AUTHORED coordinate, so a
+/// whole-template rewrite is only equivalent to per-cell adjustment when
+/// every relative-anchored bound on the op axis classifies against the op
+/// boundary exactly the way its read region does (displaced ⟺ displaced,
+/// stationary ⟺ stationary, and never inside a deleted band). When the
+/// frames disagree — e.g. a split lower half whose stale origin sits below a
+/// later insert point that displaces its reads — the rewrite would shear
+/// every relative read by the op count. This check refuses those rewrites
+/// (the caller demotes, which is correct via the per-cell adjuster).
+///
+/// Absolute bounds need no check: their authored coordinate IS the read
+/// region coordinate. Cross-sheet reads are refused outright: the adjuster
+/// relocates by coordinate without honoring the reference's sheet, so their
+/// frame cannot be verified here.
+pub(crate) fn rewrite_frame_is_sound(
+    read_summary: &SpanReadSummary,
+    origin_row: u32,
+    origin_col: u32,
+    op: StructuralOp,
+) -> bool {
+    let axis = op.axis_kind();
+    // Template origins are 1-based; regions and op boundaries are 0-based.
+    let origin_axis0 = match axis {
+        AxisKindForOp::Row => i64::from(origin_row) - 1,
+        AxisKindForOp::Col => i64::from(origin_col) - 1,
+    };
+    for dependency in &read_summary.dependencies {
+        let region_displaced = match op.classify_region(dependency.read_region) {
+            AxisShiftCase::EntirelyBelow => false,
+            AxisShiftCase::EntirelyAboveShift { .. } => true,
+            AxisShiftCase::OtherSheet
+            | AxisShiftCase::Straddles
+            | AxisShiftCase::DeleteFullyContains => return false,
+        };
+        let Some(offsets) = rule_relative_offsets_on_op_axis(dependency.projection, axis) else {
+            return false;
+        };
+        for offset in offsets.into_iter().flatten() {
+            let authored0 = origin_axis0 + offset;
+            if authored0 < 0 {
+                return false;
+            }
+            let authored_displaced = match op {
+                StructuralOp::InsertRows { before, .. }
+                | StructuralOp::InsertColumns { before, .. } => authored0 >= i64::from(before),
+                StructuralOp::DeleteRows { start, count, .. }
+                | StructuralOp::DeleteColumns { start, count, .. } => {
+                    let start = i64::from(start);
+                    let end = start + i64::from(count);
+                    if authored0 >= start && authored0 < end {
+                        // The authored coordinate would become #REF! while
+                        // the read region is uniformly intact.
+                        return false;
+                    }
+                    authored0 >= end
+                }
+            };
+            if authored_displaced != region_displaced {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 pub(crate) fn classify_span_for_op(
     span: &FormulaSpan,
     read_summary: Option<&SpanReadSummary>,
@@ -181,16 +373,30 @@ pub(crate) fn classify_span_for_op(
     };
     let result_shifts = row_delta != 0 || col_delta != 0;
 
-    let mut saw_read_shift = false;
-    let mut saw_read_no_shift = false;
+    // Partition read dependencies by (displaced-by-op × anchor kind on the
+    // op axis). Stationary absolute reads impose no constraint: the AST
+    // coordinate already points at the unmoved target and origin relocation
+    // never touches absolute references.
+    let mut saw_shifting_relative = false;
+    let mut saw_stationary_relative = false;
+    let mut saw_displaced_absolute = false;
     if let Some(read_summary) = read_summary {
         for dependency in &read_summary.dependencies {
+            let (has_relative, has_absolute) =
+                rule_axis_bound_kinds(dependency.projection, op.axis_kind());
             match op.classify_region(dependency.read_region) {
                 AxisShiftCase::OtherSheet | AxisShiftCase::EntirelyBelow => {
-                    saw_read_no_shift = true;
+                    if has_relative {
+                        saw_stationary_relative = true;
+                    }
                 }
                 AxisShiftCase::EntirelyAboveShift { .. } => {
-                    saw_read_shift = true;
+                    if has_relative {
+                        saw_shifting_relative = true;
+                    }
+                    if has_absolute {
+                        saw_displaced_absolute = true;
+                    }
                 }
                 AxisShiftCase::Straddles | AxisShiftCase::DeleteFullyContains => {
                     return SpanShiftPlan::Demote {
@@ -201,25 +407,61 @@ pub(crate) fn classify_span_for_op(
         }
     }
 
-    match (result_shifts, saw_read_shift, saw_read_no_shift) {
-        (false, false, _) => SpanShiftPlan::NoOp,
-        (false, true, _) => SpanShiftPlan::Demote {
-            reason: SpanDemoteReason::OriginNotShiftedButReadRegionShifts,
-        },
-        (true, false, _) => SpanShiftPlan::Shift {
+    if !result_shifts {
+        // The span itself does not move. Any displaced read target (relative
+        // or absolute) would require per-read relocation that origin choice
+        // cannot express for a stationary span; demote conservatively.
+        return if saw_shifting_relative || saw_displaced_absolute {
+            SpanShiftPlan::Demote {
+                reason: SpanDemoteReason::OriginNotShiftedButReadRegionShifts,
+            }
+        } else {
+            SpanShiftPlan::NoOp
+        };
+    }
+
+    if saw_displaced_absolute {
+        // A displaced absolute read needs a template AST rewrite (issue
+        // #168). The rewrite runs the shared `ReferenceAdjuster` over the
+        // whole template, which also relocates displaced relative reads and
+        // leaves stationary ones alone — so pairing it with an origin that
+        // moves with the block is correct for every read kind (see the
+        // `rewrite_absolute_reads` field docs).
+        return SpanShiftPlan::Shift {
             row_delta,
             col_delta,
             origin_row_delta: row_delta,
             origin_col_delta: col_delta,
+            rewrite_absolute_reads: true,
+        };
+    }
+
+    match (saw_shifting_relative, saw_stationary_relative) {
+        // Mixed relative kinds: no origin choice satisfies both, and the
+        // relative-rewrite upgrade is deferred.
+        (true, true) => SpanShiftPlan::Demote {
+            reason: SpanDemoteReason::MixedReadRegionShift,
         },
-        (true, true, false) => SpanShiftPlan::Shift {
+        // All displaced reads are relative and move with the block: keep the
+        // origin stationary so evaluated relative references shift with the
+        // placements. Stationary absolute reads (e.g. the flagship `$F$1`)
+        // are untouched by the origin and stay correct — this is the P2.5
+        // mixed-read fast path.
+        (true, false) => SpanShiftPlan::Shift {
             row_delta,
             col_delta,
             origin_row_delta: 0,
             origin_col_delta: 0,
+            rewrite_absolute_reads: false,
         },
-        (true, true, true) => SpanShiftPlan::Demote {
-            reason: SpanDemoteReason::MixedReadRegionShift,
+        // No displaced reads at all: move the origin with the block so
+        // stationary relative reads keep pointing at their unmoved targets.
+        (false, _) => SpanShiftPlan::Shift {
+            row_delta,
+            col_delta,
+            origin_row_delta: row_delta,
+            origin_col_delta: col_delta,
+            rewrite_absolute_reads: false,
         },
     }
 }
@@ -479,6 +721,7 @@ mod tests {
                 col_delta: 1,
                 origin_row_delta: 0,
                 origin_col_delta: 1,
+                rewrite_absolute_reads: false,
             }
         );
     }
@@ -499,6 +742,7 @@ mod tests {
                 col_delta: 1,
                 origin_row_delta: 0,
                 origin_col_delta: 0,
+                rewrite_absolute_reads: false,
             }
         );
     }
@@ -724,6 +968,288 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn classify_span_routes_absolute_reads_to_rewrite_or_mixed_fast_path() {
+        // Flagship shape (issue #168 / P2.5): a vertical run reading
+        // relative inputs plus an absolute scalar `$F$1`.
+        let s = span(PlacementDomain::row_run(0, 10, 99, 2));
+        let relative_dep = SpanReadDependency {
+            read_region: Region::col_interval(0, 0, 10, 99),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Relative { offset: 0 },
+                col: AxisProjection::Relative { offset: -2 },
+            },
+        };
+        let absolute_dep = SpanReadDependency {
+            read_region: Region::point(0, 0, 5),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Absolute { index: 0 },
+                col: AxisProjection::Absolute { index: 5 },
+            },
+        };
+        let rs = SpanReadSummary {
+            result_region: Region::col_interval(0, 2, 10, 99),
+            dependencies: vec![relative_dep, absolute_dep],
+        };
+
+        // Insert above the absolute target: everything (span, relative
+        // inputs, scalar target) shifts. The absolute read requires a
+        // template AST rewrite, which pairs with an origin that moves with
+        // the block.
+        let insert_above_all = StructuralOp::InsertRows {
+            sheet_id: 0,
+            before: 0,
+            count: 2,
+        };
+        assert_eq!(
+            classify_span_for_op(&s, Some(&rs), insert_above_all),
+            SpanShiftPlan::Shift {
+                row_delta: 2,
+                col_delta: 0,
+                origin_row_delta: 2,
+                origin_col_delta: 0,
+                rewrite_absolute_reads: true,
+            }
+        );
+
+        // Insert between the absolute target and the span: the scalar's
+        // target is stationary (absolute reads impose no constraint), the
+        // relative reads shift with the block — the P2.5 mixed-read fast
+        // path: shift with a stationary origin, no rewrite, no demote.
+        let insert_between = StructuralOp::InsertRows {
+            sheet_id: 0,
+            before: 5,
+            count: 2,
+        };
+        assert_eq!(
+            classify_span_for_op(&s, Some(&rs), insert_between),
+            SpanShiftPlan::Shift {
+                row_delta: 2,
+                col_delta: 0,
+                origin_row_delta: 0,
+                origin_col_delta: 0,
+                rewrite_absolute_reads: false,
+            }
+        );
+    }
+
+    #[test]
+    fn classify_span_column_absolute_read_displaced_routes_to_rewrite() {
+        // Column-axis mirror: a horizontal run reading `$A$1` under a
+        // column insert that displaces column A.
+        let s = span(PlacementDomain::col_run(0, 2, 10, 99));
+        let absolute_dep = SpanReadDependency {
+            read_region: Region::point(0, 0, 0),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Absolute { index: 0 },
+                col: AxisProjection::Absolute { index: 0 },
+            },
+        };
+        let relative_dep = SpanReadDependency {
+            read_region: Region::row_interval(0, 0, 10, 99),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Relative { offset: -2 },
+                col: AxisProjection::Relative { offset: 0 },
+            },
+        };
+        let rs = SpanReadSummary {
+            result_region: Region::row_interval(0, 2, 10, 99),
+            dependencies: vec![absolute_dep, relative_dep],
+        };
+        let op = StructuralOp::InsertColumns {
+            sheet_id: 0,
+            before: 0,
+            count: 2,
+        };
+        assert_eq!(
+            classify_span_for_op(&s, Some(&rs), op),
+            SpanShiftPlan::Shift {
+                row_delta: 0,
+                col_delta: 2,
+                origin_row_delta: 0,
+                origin_col_delta: 2,
+                rewrite_absolute_reads: true,
+            }
+        );
+    }
+
+    #[test]
+    fn classify_span_mixed_relative_reads_still_demote() {
+        // One relative read shifts with the block, another relative read's
+        // target stays put: no origin choice satisfies both and the
+        // relative-rewrite upgrade is deferred, so the span demotes.
+        // Span rows 50..=80 reading A{r} (shifts with the block) and a far
+        // stationary relative read at rows 0..=5; the insert at row 20 sits
+        // strictly between them so both classify uniformly.
+        let s = span(PlacementDomain::row_run(0, 50, 80, 2));
+        let shifting_rel = SpanReadDependency {
+            read_region: Region::col_interval(0, 0, 50, 80),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Relative { offset: 0 },
+                col: AxisProjection::Relative { offset: -2 },
+            },
+        };
+        let stationary_rel = SpanReadDependency {
+            read_region: Region::col_interval(0, 1, 0, 5),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Relative { offset: -50 },
+                col: AxisProjection::Relative { offset: -1 },
+            },
+        };
+        let rs = SpanReadSummary {
+            result_region: Region::col_interval(0, 2, 50, 80),
+            dependencies: vec![shifting_rel, stationary_rel],
+        };
+        let op = StructuralOp::InsertRows {
+            sheet_id: 0,
+            before: 20,
+            count: 1,
+        };
+        assert_eq!(
+            classify_span_for_op(&s, Some(&rs), op),
+            SpanShiftPlan::Demote {
+                reason: SpanDemoteReason::MixedReadRegionShift
+            }
+        );
+    }
+
+    #[test]
+    fn rewrite_frame_soundness_matrix() {
+        fn rel_cell_dep(
+            read_region: Region,
+            row_offset: i64,
+            col_offset: i64,
+        ) -> SpanReadDependency {
+            SpanReadDependency {
+                read_region,
+                projection: DirtyProjectionRule::AffineCell {
+                    row: AxisProjection::Relative { offset: row_offset },
+                    col: AxisProjection::Relative { offset: col_offset },
+                },
+            }
+        }
+        fn summary_of(dependencies: Vec<SpanReadDependency>) -> SpanReadSummary {
+            SpanReadSummary {
+                result_region: Region::col_interval(0, 2, 50, 119),
+                dependencies,
+            }
+        }
+        let insert_rows = |before: u32| StructuralOp::InsertRows {
+            sheet_id: 0,
+            before,
+            count: 3,
+        };
+
+        // Split-lower-half divergence (the #168 composition repro): domain
+        // reads rows 50..119 but the stale origin authors A1 (row 0); an
+        // insert at row 9 displaces the region while the authored coordinate
+        // stays put — rewriting would shear relative reads.
+        let displaced_region = summary_of(vec![rel_cell_dep(
+            Region::col_interval(0, 0, 50, 119),
+            0,
+            -2,
+        )]);
+        assert!(!rewrite_frame_is_sound(
+            &displaced_region,
+            1,
+            3,
+            insert_rows(9)
+        ));
+        // Aligned frame (origin at the domain start): sound.
+        assert!(rewrite_frame_is_sound(
+            &displaced_region,
+            51,
+            3,
+            insert_rows(9)
+        ));
+
+        // Column-axis mirror: relative column bound authored at
+        // origin_col-1; the insert displaces the read region's column but
+        // not the authored column.
+        let displaced_col_region =
+            summary_of(vec![rel_cell_dep(Region::row_interval(0, 10, 3, 3), 0, -1)]);
+        let insert_cols = StructuralOp::InsertColumns {
+            sheet_id: 0,
+            before: 3,
+            count: 1,
+        };
+        assert!(!rewrite_frame_is_sound(
+            &displaced_col_region,
+            11,
+            4,
+            insert_cols
+        ));
+        assert!(rewrite_frame_is_sound(
+            &displaced_col_region,
+            11,
+            5,
+            insert_cols
+        ));
+
+        // Spurious-stationary direction: the region is stationary but the
+        // authored coordinate sits at/above the insert point (requires
+        // origin > domain end, unreachable via engine ops today, covered
+        // defensively).
+        let stationary_region = summary_of(vec![rel_cell_dep(
+            Region::col_interval(0, 0, 44, 54),
+            0,
+            -2,
+        )]);
+        assert!(!rewrite_frame_is_sound(
+            &stationary_region,
+            61,
+            3,
+            insert_rows(56)
+        ));
+        assert!(rewrite_frame_is_sound(
+            &stationary_region,
+            45,
+            3,
+            insert_rows(56)
+        ));
+
+        // Delete removing the authored coordinate while the region is
+        // uniformly displaced.
+        let delete = StructuralOp::DeleteRows {
+            sheet_id: 0,
+            start: 0,
+            count: 1,
+        };
+        assert!(!rewrite_frame_is_sound(&displaced_region, 1, 3, delete));
+
+        // Absolute-only dependencies carry their coordinate in the rule and
+        // never need frame verification.
+        let absolute_only = summary_of(vec![SpanReadDependency {
+            read_region: Region::point(0, 29, 5),
+            projection: DirtyProjectionRule::AffineCell {
+                row: AxisProjection::Absolute { index: 29 },
+                col: AxisProjection::Absolute { index: 5 },
+            },
+        }]);
+        assert!(rewrite_frame_is_sound(&absolute_only, 1, 3, insert_rows(9)));
+
+        // WholeResult rules have no axis information: unverifiable.
+        let whole_result = summary_of(vec![SpanReadDependency {
+            read_region: Region::col_interval(0, 0, 50, 119),
+            projection: DirtyProjectionRule::WholeResult,
+        }]);
+        assert!(!rewrite_frame_is_sound(
+            &whole_result,
+            51,
+            3,
+            insert_rows(9)
+        ));
+
+        // Cross-sheet reads are refused: the shared adjuster relocates by
+        // coordinate without honoring the reference's sheet.
+        let cross_sheet = summary_of(vec![rel_cell_dep(
+            Region::col_interval(1, 0, 50, 119),
+            0,
+            -2,
+        )]);
+        assert!(!rewrite_frame_is_sound(&cross_sheet, 51, 3, insert_rows(9)));
     }
 
     #[test]
