@@ -182,3 +182,138 @@ fn split_acceptance_delete_strictly_inside_span() {
         engine.delete_rows(SHEET, mid, 1).unwrap();
     });
 }
+
+// ---------------------------------------------------------------------------
+// Absolute-reference tracking oracles (issue #168).
+//
+// Policy (pinned on the issue): absolute references TRACK structural
+// inserts/deletes — inserting rows above `$F$1`'s target moves both the value
+// and the reference, so formulas keep reading the same logical cell. The `$`
+// pins copy/fill relocation only. A delete that removes the target yields
+// `#REF!`.
+//
+// These are value oracles with HARDCODED expected numbers, deliberately not
+// parity assertions: the parity harness above compares span-ON to span-OFF
+// and would stay green if both modes shared the same wrong answer (which is
+// exactly how the pre-fix behavior slipped through).
+// ---------------------------------------------------------------------------
+
+fn expected_c_value(r: u32) -> LiteralValue {
+    // C{r} = A{r} * B{r} * $F$1 = r * 2r * 3.
+    LiteralValue::Number((r as f64) * (2 * r) as f64 * 3.0)
+}
+
+fn expected_tail_sum() -> LiteralValue {
+    let mut sum = 0.0;
+    for r in SPAN_START..=span_end() {
+        sum += (r as f64) * (2 * r) as f64 * 3.0;
+    }
+    LiteralValue::Number(sum)
+}
+
+fn assert_insert_above_header_oracle(mode: FormulaPlaneMode) {
+    let mut engine = build_engine(mode);
+    // Insert 2 rows above everything: the header row holding `$F$1`'s target
+    // moves to row 3, the span moves to rows 4..=203. Every formula must
+    // keep reading the (moved) scalar and the (moved) inputs.
+    engine.insert_rows(SHEET, 1, 2).unwrap();
+    engine.evaluate_all().expect("post-insert evaluate_all");
+
+    // The scalar value physically moved to F3.
+    assert_eq!(
+        engine.get_cell_value(SHEET, 3, 6),
+        Some(LiteralValue::Number(3.0)),
+        "scalar value should have physically moved to F3 ({mode:?})"
+    );
+    for r in [SPAN_START, SPAN_START + N / 2, span_end()] {
+        assert_eq!(
+            engine.get_cell_value(SHEET, r + 2, 3),
+            Some(expected_c_value(r)),
+            "C for original row {r} (now row {}) must track $F$1 ({mode:?})",
+            r + 2
+        );
+    }
+    assert_eq!(
+        engine.get_cell_value(SHEET, 3, 5),
+        Some(expected_tail_sum()),
+        "tail SUM must track the moved span ({mode:?})"
+    );
+}
+
+#[test]
+fn oracle_insert_rows_above_absolute_target_span_off() {
+    assert_insert_above_header_oracle(FormulaPlaneMode::Off);
+}
+
+#[test]
+fn oracle_insert_rows_above_absolute_target_span_on() {
+    assert_insert_above_header_oracle(FormulaPlaneMode::AuthoritativeExperimental);
+}
+
+/// Column-axis mirror: a horizontal formula family in row 3 reading a
+/// relative input above (`{col}1`) times an absolute scalar (`$A$1`), then
+/// `insert_columns` before column A displaces the scalar's target.
+fn assert_insert_columns_before_absolute_target_oracle(mode: FormulaPlaneMode) {
+    const COL_START: u32 = 2;
+    const COLS: u32 = 40;
+    let col_end = COL_START + COLS - 1;
+
+    let cfg = EvalConfig::default().with_formula_plane_mode(mode);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.add_sheet(SHEET).ok();
+
+    // Scalar multiplier in A1, inputs along row 1, formulas along row 3.
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(3.0))
+        .unwrap();
+    let mut formulas = Vec::with_capacity(COLS as usize);
+    for c in COL_START..=col_end {
+        engine
+            .set_cell_value(SHEET, 1, c, LiteralValue::Number(c as f64))
+            .unwrap();
+        let col_name = crate::reference::Coord::col_to_letters(c - 1);
+        formulas.push(record(&mut engine, 3, c, &format!("={col_name}1*$A$1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
+        .expect("ingest column family");
+    engine.evaluate_all().expect("baseline evaluate_all");
+    for c in [COL_START, COL_START + COLS / 2, col_end] {
+        assert_eq!(
+            engine.get_cell_value(SHEET, 3, c),
+            Some(LiteralValue::Number(c as f64 * 3.0)),
+            "baseline value at row 3 col {c} ({mode:?})"
+        );
+    }
+
+    // Insert 2 columns before column A: scalar target moves to C1, inputs
+    // and formulas shift right by 2.
+    engine.insert_columns(SHEET, 1, 2).unwrap();
+    engine.evaluate_all().expect("post-insert evaluate_all");
+
+    assert_eq!(
+        engine.get_cell_value(SHEET, 1, 3),
+        Some(LiteralValue::Number(3.0)),
+        "scalar value should have physically moved to C1 ({mode:?})"
+    );
+    for c in [COL_START, COL_START + COLS / 2, col_end] {
+        assert_eq!(
+            engine.get_cell_value(SHEET, 3, c + 2),
+            Some(LiteralValue::Number(c as f64 * 3.0)),
+            "formula for original col {c} (now col {}) must track $A$1 ({mode:?})",
+            c + 2
+        );
+    }
+}
+
+#[test]
+fn oracle_insert_columns_before_absolute_target_span_off() {
+    assert_insert_columns_before_absolute_target_oracle(FormulaPlaneMode::Off);
+}
+
+#[test]
+fn oracle_insert_columns_before_absolute_target_span_on() {
+    assert_insert_columns_before_absolute_target_oracle(
+        FormulaPlaneMode::AuthoritativeExperimental,
+    );
+}

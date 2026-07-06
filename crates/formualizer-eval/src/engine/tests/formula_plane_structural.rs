@@ -720,9 +720,12 @@ fn formula_plane_delete_on_read_range_sheet_straddles_and_demotes() {
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
 
+    // Issue #168 policy: absolute bounds track structural deletes, so
+    // `$A$1:$A$10` contracts to `$A$1:$A$9` when row 5 is deleted. The
+    // surviving values in rows 1..=9 are 1,2,3,4,6,7,8,9,10 → 50.
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
-        Some(LiteralValue::Number(61.0))
+        Some(LiteralValue::Number(50.0))
     );
 }
 

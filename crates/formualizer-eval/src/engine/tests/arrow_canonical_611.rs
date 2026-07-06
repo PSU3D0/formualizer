@@ -264,12 +264,15 @@ fn canonical_insert_rows_shifts_values_and_formulas_and_rewrites_references() {
 }
 
 #[test]
-fn canonical_insert_rows_does_not_move_fully_absolute_reference_address() {
+fn canonical_insert_rows_moves_fully_absolute_reference_with_its_target() {
     let cfg = arrow_eval_config();
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
 
-    // A2 = $A$1. After inserting a row before row 1, the formula cell shifts to A3,
-    // but $A$1 should remain $A$1 (so it now points at an empty cell).
+    // A2 = $A$1. After inserting a row before row 1, the referenced value
+    // physically moves to A2 and the formula cell shifts to A3. Policy
+    // pinned on issue #168: absolute references TRACK structural
+    // inserts/deletes (the `$` pins copy/fill relocation only), so the
+    // formula must now reference $A$2 and keep computing 99.
     engine
         .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(99.0))
         .unwrap();
@@ -292,15 +295,18 @@ fn canonical_insert_rows_does_not_move_fully_absolute_reference_address() {
         Some(LiteralValue::Number(99.0))
     );
 
-    // Formula moved to A3 and still references $A$1, which is now empty.
+    // Formula moved to A3 and its absolute reference tracked the target.
     let (ast_opt, _) = engine.get_cell("Sheet1", 3, 1).expect("A3 exists");
     let ast = ast_opt.expect("A3 has formula");
     let f = canonical_formula(&ast);
     assert!(
-        f.contains("$A$1"),
-        "expected absolute ref to remain, got: {f}"
+        f.contains("$A$2"),
+        "expected absolute ref to track its moved target, got: {f}"
     );
-    assert_eq!(engine.get_cell_value("Sheet1", 3, 1), None);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 3, 1),
+        Some(LiteralValue::Number(99.0))
+    );
 }
 
 #[test]

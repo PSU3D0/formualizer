@@ -45,22 +45,33 @@ fn is_valid_excel_name(name: &str) -> bool {
 }
 
 /// Helper function to adjust a named definition during structural operations.
+///
+/// Named definitions deliberately keep the legacy `Pin` policy for absolute
+/// anchors: formula reference adjustment now tracks absolute refs through
+/// structural shifts (issue #168), but flipping named-range definitions to
+/// the same semantics is a separate policy decision that has not been made —
+/// see `AbsShiftPolicy` and the #168 discussion.
 fn adjust_named_definition(
     definition: &mut NamedDefinition,
     adjuster: &crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster,
     operation: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
 ) -> Result<(), ExcelError> {
+    use crate::engine::graph::editor::reference_adjuster::AbsShiftPolicy;
     match definition {
         NamedDefinition::Cell(cell_ref) => {
-            if let Some(adjusted) = adjuster.adjust_cell_ref(cell_ref, operation) {
+            if let Some(adjusted) =
+                adjuster.adjust_cell_ref_with_policy(cell_ref, operation, AbsShiftPolicy::Pin)
+            {
                 *cell_ref = adjusted;
             } else {
                 return Err(ExcelError::new(ExcelErrorKind::Ref));
             }
         }
         NamedDefinition::Range(range_ref) => {
-            let adjusted_start = adjuster.adjust_cell_ref(&range_ref.start, operation);
-            let adjusted_end = adjuster.adjust_cell_ref(&range_ref.end, operation);
+            let adjusted_start =
+                adjuster.adjust_cell_ref_with_policy(&range_ref.start, operation, AbsShiftPolicy::Pin);
+            let adjusted_end =
+                adjuster.adjust_cell_ref_with_policy(&range_ref.end, operation, AbsShiftPolicy::Pin);
 
             if let (Some(start), Some(end)) = (adjusted_start, adjusted_end) {
                 range_ref.start = start;
@@ -77,7 +88,8 @@ fn adjust_named_definition(
             dependencies,
             range_deps,
         } => {
-            let adjusted_ast = adjuster.adjust_ast(ast, operation);
+            let adjusted_ast =
+                adjuster.adjust_ast_with_policy(ast, operation, AbsShiftPolicy::Pin);
             *ast = adjusted_ast;
 
             dependencies.clear();
