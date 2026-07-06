@@ -319,3 +319,214 @@ fn oracle_insert_columns_before_absolute_target_span_on() {
         FormulaPlaneMode::AuthoritativeExperimental,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Mixed-read / absolute-target edge matrix (P2.5, issue #168): every case is
+// pinned as span-ON == span-OFF parity over a full-sheet snapshot, plus a
+// hardcoded value oracle on the span-ON engine (parity alone cannot detect
+// shared corruption — see the oracle block above).
+// ---------------------------------------------------------------------------
+
+/// A vertical span rows 2..=201 in column C reading `=A{r}*$F$<scalar_row>`
+/// with `A{r} = r` and the scalar `3.0` at `F<scalar_row>`.
+fn build_abs_target_engine(mode: FormulaPlaneMode, scalar_row: u32) -> Engine<TestWorkbook> {
+    let cfg = EvalConfig::default().with_formula_plane_mode(mode);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.add_sheet(SHEET).ok();
+    engine
+        .set_cell_value(SHEET, scalar_row, 6, LiteralValue::Number(3.0))
+        .unwrap();
+    let mut formulas = Vec::with_capacity(N as usize);
+    for r in SPAN_START..=span_end() {
+        engine
+            .set_cell_value(SHEET, r, 1, LiteralValue::Number(r as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, r, 3, &format!("=A{r}*$F${scalar_row}")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
+        .expect("ingest abs-target span");
+    engine.evaluate_all().expect("baseline evaluate_all");
+    engine
+}
+
+fn snapshot_rect(
+    engine: &Engine<TestWorkbook>,
+    rows_hi: u32,
+    cols_hi: u32,
+) -> Vec<Option<LiteralValue>> {
+    let mut out = Vec::new();
+    for r in 1..=rows_hi {
+        for c in 1..=cols_hi {
+            out.push(engine.get_cell_value(SHEET, r, c));
+        }
+    }
+    out
+}
+
+/// Apply `op` to both modes of the abs-target fixture, assert full-sheet
+/// parity, and hand the span-ON engine back for hardcoded value oracles.
+fn assert_abs_target_op_parity(
+    scalar_row: u32,
+    rows_hi: u32,
+    op: impl Fn(&mut Engine<TestWorkbook>),
+) -> Engine<TestWorkbook> {
+    let mut off = build_abs_target_engine(FormulaPlaneMode::Off, scalar_row);
+    let mut on = build_abs_target_engine(FormulaPlaneMode::AuthoritativeExperimental, scalar_row);
+    op(&mut off);
+    op(&mut on);
+    off.evaluate_all().expect("post-op evaluate_all (off)");
+    on.evaluate_all().expect("post-op evaluate_all (on)");
+    assert_eq!(
+        snapshot_rect(&off, rows_hi, 6),
+        snapshot_rect(&on, rows_hi, 6),
+        "span-ON vs span-OFF diverged after structural op"
+    );
+    on
+}
+
+#[test]
+fn edge_insert_exactly_at_absolute_target_row_below_span() {
+    // `before == abs_target_row`: the scalar sits BELOW the span (row 250)
+    // and the insert lands exactly on its row — the target shifts, the span
+    // does not. (Stationary span + displaced absolute read: demote path.)
+    let on = assert_abs_target_op_parity(250, 260, |engine| {
+        engine.insert_rows(SHEET, 250, 1).unwrap();
+    });
+    // Scalar value physically moved to F251; formulas must follow it.
+    assert_eq!(
+        on.get_cell_value(SHEET, 251, 6),
+        Some(LiteralValue::Number(3.0))
+    );
+    for r in [SPAN_START, span_end()] {
+        assert_eq!(
+            on.get_cell_value(SHEET, r, 3),
+            Some(LiteralValue::Number(r as f64 * 3.0)),
+            "row {r} must keep tracking the moved scalar"
+        );
+    }
+}
+
+#[test]
+fn edge_absolute_target_in_inserted_gap_mid_span() {
+    // The absolute target (row 100) sits INSIDE the span's row range and the
+    // insert lands exactly on it: the span straddles (split candidate), but
+    // the upper half would keep reading the now-displaced target, so the
+    // whole span must fall back to demotion — with values still tracking
+    // the moved scalar (now F101).
+    let on = assert_abs_target_op_parity(100, 210, |engine| {
+        engine.insert_rows(SHEET, 100, 1).unwrap();
+    });
+    assert_eq!(
+        on.get_cell_value(SHEET, 101, 6),
+        Some(LiteralValue::Number(3.0))
+    );
+    // Upper region (unmoved rows) and lower region (shifted rows).
+    assert_eq!(
+        on.get_cell_value(SHEET, 2, 3),
+        Some(LiteralValue::Number(2.0 * 3.0))
+    );
+    assert_eq!(
+        on.get_cell_value(SHEET, span_end() + 1, 3),
+        Some(LiteralValue::Number(span_end() as f64 * 3.0))
+    );
+}
+
+#[test]
+fn edge_delete_absolute_target_yields_ref_error() {
+    // Policy pinned on issue #168: a delete removing the absolute target
+    // yields #REF!, exactly like a relative reference.
+    use formualizer_common::ExcelErrorKind;
+    let on = assert_abs_target_op_parity(1, 205, |engine| {
+        engine.delete_rows(SHEET, 1, 1).unwrap();
+    });
+    for r in [SPAN_START - 1, span_end() - 1] {
+        let value = on.get_cell_value(SHEET, r, 3);
+        assert!(
+            matches!(
+                &value,
+                Some(LiteralValue::Error(err)) if err.kind == ExcelErrorKind::Ref
+            ),
+            "row {r} must be #REF! after the absolute target row was deleted, got {value:?}"
+        );
+    }
+}
+
+#[test]
+fn edge_delete_inside_span_with_displaced_absolute_target() {
+    // Delete strictly inside the span, above an absolute target that also
+    // sits inside the span's row range: compaction would keep the template
+    // AST while the target moves up, so the span must demote and the
+    // per-cell adjuster repoints $F$150 -> $F$149.
+    let on = assert_abs_target_op_parity(150, 205, |engine| {
+        engine.delete_rows(SHEET, 50, 1).unwrap();
+    });
+    assert_eq!(
+        on.get_cell_value(SHEET, 149, 6),
+        Some(LiteralValue::Number(3.0))
+    );
+    // Row above the delete: unmoved. Rows below: shifted up, values follow
+    // their (moved) relative inputs and the (moved) scalar.
+    assert_eq!(
+        on.get_cell_value(SHEET, 2, 3),
+        Some(LiteralValue::Number(2.0 * 3.0))
+    );
+    assert_eq!(
+        on.get_cell_value(SHEET, span_end() - 1, 3),
+        Some(LiteralValue::Number(span_end() as f64 * 3.0))
+    );
+}
+
+#[test]
+fn edge_column_insert_before_flagship_span_parity() {
+    // Column-axis mirror on the flagship fixture: inserting columns before
+    // everything displaces the absolute COLUMN target ($F$1 -> $H$1) while
+    // the whole span shifts right (rewrite path on a RowRun span).
+    let rows_hi = span_end() + 2;
+    let mut off = build_engine(FormulaPlaneMode::Off);
+    let mut on = build_engine(FormulaPlaneMode::AuthoritativeExperimental);
+    for engine in [&mut off, &mut on] {
+        engine.insert_columns(SHEET, 1, 2).unwrap();
+        engine.evaluate_all().expect("post-op evaluate_all");
+    }
+    assert_eq!(
+        snapshot_rect(&off, rows_hi, 9),
+        snapshot_rect(&on, rows_hi, 9),
+        "span-ON vs span-OFF diverged after insert_columns"
+    );
+    // Oracle: original C{r} moved to column E, still r * 2r * 3.
+    for r in [SPAN_START, span_end()] {
+        assert_eq!(
+            on.get_cell_value(SHEET, r, 5),
+            Some(expected_c_value(r)),
+            "row {r} at shifted column E"
+        );
+    }
+}
+
+#[test]
+fn edge_column_delete_of_absolute_target_column_parity() {
+    // Deleting column F removes the absolute target's column: #REF! in both
+    // modes (issue #168 policy).
+    use formualizer_common::ExcelErrorKind;
+    let rows_hi = span_end() + 2;
+    let mut off = build_engine(FormulaPlaneMode::Off);
+    let mut on = build_engine(FormulaPlaneMode::AuthoritativeExperimental);
+    for engine in [&mut off, &mut on] {
+        engine.delete_columns(SHEET, 6, 1).unwrap();
+        engine.evaluate_all().expect("post-op evaluate_all");
+    }
+    assert_eq!(
+        snapshot_rect(&off, rows_hi, 6),
+        snapshot_rect(&on, rows_hi, 6),
+        "span-ON vs span-OFF diverged after delete_columns"
+    );
+    let value = on.get_cell_value(SHEET, SPAN_START, 3);
+    assert!(
+        matches!(
+            &value,
+            Some(LiteralValue::Error(err)) if err.kind == ExcelErrorKind::Ref
+        ),
+        "expected #REF! after deleting the absolute target column, got {value:?}"
+    );
+}

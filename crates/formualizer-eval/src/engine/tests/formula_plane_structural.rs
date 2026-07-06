@@ -1438,6 +1438,57 @@ fn formula_plane_absolute_read_column_insert_rewrites_template_and_keeps_span() 
     }
 }
 #[test]
+fn formula_plane_partial_absolute_displacement_rewrites_selectively() {
+    // Two absolute reads, only one displaced: $F$1 sits above the insert
+    // (stationary), $F$5 below it (displaced), and the span shifts. The
+    // template rewrite must repoint ONLY $F$5 (per-reference selectivity of
+    // the shared adjuster) while $F$1 keeps its coordinate.
+    let mut engine = authoritative_engine();
+    engine
+        .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 5, 6, LiteralValue::Number(7.0))
+        .unwrap();
+    let mut formulas = Vec::new();
+    for row in 10..=150 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 3, &format!("=A{row}*$F$1*$F$5")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    // Insert two rows between the scalars (1-based row 3): $F$1 stays,
+    // $F$5's value physically moves to F7, the span shifts to rows 12..=152.
+    engine.insert_rows("Sheet1", 3, 2).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 6),
+        Some(LiteralValue::Number(3.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 7, 6),
+        Some(LiteralValue::Number(7.0))
+    );
+    for row in [10u32, 80, 150] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row + 2, 3),
+            Some(LiteralValue::Number(row as f64 * 3.0 * 7.0)),
+            "original row {row} (now {})",
+            row + 2
+        );
+    }
+}
+
+#[test]
 fn formula_plane_mixed_read_row_insert_splits_span() {
     // P2.5: this INVERTS the v1 scope pin (previously
     // `formula_plane_mixed_read_row_insert_still_demotes`). A template with
