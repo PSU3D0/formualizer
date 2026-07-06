@@ -5309,11 +5309,12 @@ where
             for plan in shift_plans {
                 let rewrite_prepared = plan.rewrite.as_ref().map(|rewrite| {
                     let ast_id = self.graph.store_ast(&rewrite.adjusted_ast);
-                    let template_slot_map = crate::formula_plane::placement::build_template_slot_map(
-                        ast_id,
-                        self.graph.data_store(),
-                        &rewrite.canonical_expr,
-                    );
+                    let template_slot_map =
+                        crate::formula_plane::placement::build_template_slot_map(
+                            ast_id,
+                            self.graph.data_store(),
+                            &rewrite.canonical_expr,
+                        );
                     (ast_id, template_slot_map)
                 });
                 prepared_shift_plans.push((plan, rewrite_prepared));

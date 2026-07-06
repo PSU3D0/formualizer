@@ -194,7 +194,9 @@ impl ReferenceAdjuster {
                 let adjusted_args = args
                     .iter()
                     .map(|arg| {
-                        if let Some(adjusted) = self.adjust_ast_if_changed_with_policy(arg, op, policy) {
+                        if let Some(adjusted) =
+                            self.adjust_ast_if_changed_with_policy(arg, op, policy)
+                        {
                             changed = true;
                             adjusted
                         } else {

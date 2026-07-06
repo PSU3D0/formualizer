@@ -68,10 +68,16 @@ fn adjust_named_definition(
             }
         }
         NamedDefinition::Range(range_ref) => {
-            let adjusted_start =
-                adjuster.adjust_cell_ref_with_policy(&range_ref.start, operation, AbsShiftPolicy::Pin);
-            let adjusted_end =
-                adjuster.adjust_cell_ref_with_policy(&range_ref.end, operation, AbsShiftPolicy::Pin);
+            let adjusted_start = adjuster.adjust_cell_ref_with_policy(
+                &range_ref.start,
+                operation,
+                AbsShiftPolicy::Pin,
+            );
+            let adjusted_end = adjuster.adjust_cell_ref_with_policy(
+                &range_ref.end,
+                operation,
+                AbsShiftPolicy::Pin,
+            );
 
             if let (Some(start), Some(end)) = (adjusted_start, adjusted_end) {
                 range_ref.start = start;
@@ -88,8 +94,7 @@ fn adjust_named_definition(
             dependencies,
             range_deps,
         } => {
-            let adjusted_ast =
-                adjuster.adjust_ast_with_policy(ast, operation, AbsShiftPolicy::Pin);
+            let adjusted_ast = adjuster.adjust_ast_with_policy(ast, operation, AbsShiftPolicy::Pin);
             *ast = adjusted_ast;
 
             dependencies.clear();
