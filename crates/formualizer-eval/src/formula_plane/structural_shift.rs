@@ -1,6 +1,6 @@
 use super::producer::SpanReadSummary;
 use super::region_index::{AxisRange, Region};
-use super::runtime::FormulaSpan;
+use super::runtime::{FormulaSpan, PlacementDomain};
 use crate::SheetId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +45,12 @@ pub(crate) enum SpanShiftPlan {
         origin_row_delta: i64,
         origin_col_delta: i64,
     },
+    /// A mid-domain insert straddles the span's result domain. The apply site
+    /// may split the domain at the insert boundary into an unshifted upper
+    /// half and a shifted lower half, re-derive each half's read summary, and
+    /// re-classify each half; it must fall back to demoting the whole span
+    /// when either half does not classify cleanly.
+    Split,
     Demote {
         reason: SpanDemoteReason,
     },
@@ -53,7 +59,6 @@ pub(crate) enum SpanShiftPlan {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SpanDemoteReason {
-    ResultDomainStraddles,
     ReadRegionStraddles,
     OriginNotShiftedButReadRegionShifts,
     DeletePartiallyOverlaps,
@@ -165,12 +170,12 @@ pub(crate) fn classify_span_for_op(
         AxisShiftCase::EntirelyAboveShift { .. } => op.axis_shift_delta(),
         AxisShiftCase::DeleteFullyContains => return SpanShiftPlan::Remove,
         AxisShiftCase::Straddles => {
-            return SpanShiftPlan::Demote {
-                reason: if op.is_delete() {
-                    SpanDemoteReason::DeletePartiallyOverlaps
-                } else {
-                    SpanDemoteReason::ResultDomainStraddles
-                },
+            return if op.is_delete() {
+                SpanShiftPlan::Demote {
+                    reason: SpanDemoteReason::DeletePartiallyOverlaps,
+                }
+            } else {
+                SpanShiftPlan::Split
             };
         }
     };
@@ -216,6 +221,100 @@ pub(crate) fn classify_span_for_op(
         (true, true, true) => SpanShiftPlan::Demote {
             reason: SpanDemoteReason::MixedReadRegionShift,
         },
+    }
+}
+
+fn split_axis_at(min: u32, max: u32, before: u32) -> Option<((u32, u32), (u32, u32))> {
+    if min < before && before <= max {
+        Some(((min, before - 1), (before, max)))
+    } else {
+        None
+    }
+}
+
+/// Split `domain` at an insert boundary into (upper, lower) halves in the
+/// PRE-insert coordinate frame: the upper half is untouched by the insert,
+/// the lower half starts at the insert boundary and shifts by the insert
+/// count. Sibling of the delete-compaction domain surgery in
+/// `demote_spans_for_structural_op_impl` (deliberately not merged: compaction
+/// yields one domain, splitting yields two). Returns None whenever the domain
+/// cannot be split cleanly along the insert axis; callers fall back to
+/// demoting the whole span.
+pub(crate) fn split_domain_at(
+    domain: &PlacementDomain,
+    op: StructuralOp,
+) -> Option<(PlacementDomain, PlacementDomain)> {
+    if domain.sheet_id() != op.sheet_id() {
+        return None;
+    }
+    match (domain, op) {
+        (
+            PlacementDomain::RowRun {
+                sheet_id,
+                row_start,
+                row_end,
+                col,
+            },
+            StructuralOp::InsertRows { before, .. },
+        ) => {
+            let ((upper_start, upper_end), (lower_start, lower_end)) =
+                split_axis_at(*row_start, *row_end, before)?;
+            Some((
+                PlacementDomain::row_run(*sheet_id, upper_start, upper_end, *col),
+                PlacementDomain::row_run(*sheet_id, lower_start, lower_end, *col),
+            ))
+        }
+        (
+            PlacementDomain::Rect {
+                sheet_id,
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+            },
+            StructuralOp::InsertRows { before, .. },
+        ) => {
+            let ((upper_start, upper_end), (lower_start, lower_end)) =
+                split_axis_at(*row_start, *row_end, before)?;
+            Some((
+                PlacementDomain::rect(*sheet_id, upper_start, upper_end, *col_start, *col_end),
+                PlacementDomain::rect(*sheet_id, lower_start, lower_end, *col_start, *col_end),
+            ))
+        }
+        (
+            PlacementDomain::ColRun {
+                sheet_id,
+                row,
+                col_start,
+                col_end,
+            },
+            StructuralOp::InsertColumns { before, .. },
+        ) => {
+            let ((upper_start, upper_end), (lower_start, lower_end)) =
+                split_axis_at(*col_start, *col_end, before)?;
+            Some((
+                PlacementDomain::col_run(*sheet_id, *row, upper_start, upper_end),
+                PlacementDomain::col_run(*sheet_id, *row, lower_start, lower_end),
+            ))
+        }
+        (
+            PlacementDomain::Rect {
+                sheet_id,
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+            },
+            StructuralOp::InsertColumns { before, .. },
+        ) => {
+            let ((upper_start, upper_end), (lower_start, lower_end)) =
+                split_axis_at(*col_start, *col_end, before)?;
+            Some((
+                PlacementDomain::rect(*sheet_id, *row_start, *row_end, upper_start, upper_end),
+                PlacementDomain::rect(*sheet_id, *row_start, *row_end, lower_start, lower_end),
+            ))
+        }
+        _ => None,
     }
 }
 
@@ -414,9 +513,7 @@ mod tests {
         let result_straddle = span(PlacementDomain::col_run(0, 0, 2, 4));
         assert_eq!(
             classify_span_for_op(&result_straddle, None, insert),
-            SpanShiftPlan::Demote {
-                reason: SpanDemoteReason::ResultDomainStraddles
-            }
+            SpanShiftPlan::Split
         );
 
         let result_above = span(PlacementDomain::col_run(0, 0, 5, 7));
@@ -438,6 +535,25 @@ mod tests {
             SpanShiftPlan::Demote {
                 reason: SpanDemoteReason::DeletePartiallyOverlaps
             }
+        );
+    }
+
+    #[test]
+    fn classify_span_returns_split_for_mid_domain_row_insert() {
+        let s = span(PlacementDomain::row_run(0, 0, 99, 1));
+        let op = StructuralOp::InsertRows {
+            sheet_id: 0,
+            before: 50,
+            count: 2,
+        };
+        // Result-domain straddle on an insert is now a split candidate even
+        // when reads would straddle: the apply site re-classifies each half
+        // and falls back to demoting the whole span.
+        assert_eq!(classify_span_for_op(&s, None, op), SpanShiftPlan::Split);
+        let read_straddle = summary(vec![Region::col_interval(0, 0, 0, 99)]);
+        assert_eq!(
+            classify_span_for_op(&s, Some(&read_straddle), op),
+            SpanShiftPlan::Split
         );
     }
 
@@ -477,6 +593,136 @@ mod tests {
             SpanShiftPlan::Demote {
                 reason: SpanDemoteReason::DeletePartiallyOverlaps
             }
+        );
+    }
+
+    #[test]
+    fn split_domain_at_covers_row_and_column_axes() {
+        // RowRun / row insert: rows [10, 99] split before row 40.
+        assert_eq!(
+            split_domain_at(
+                &PlacementDomain::row_run(0, 10, 99, 2),
+                StructuralOp::InsertRows {
+                    sheet_id: 0,
+                    before: 40,
+                    count: 3,
+                },
+            ),
+            Some((
+                PlacementDomain::row_run(0, 10, 39, 2),
+                PlacementDomain::row_run(0, 40, 99, 2),
+            ))
+        );
+        // Rect / row insert keeps the column extent on both halves.
+        assert_eq!(
+            split_domain_at(
+                &PlacementDomain::rect(0, 0, 99, 1, 3),
+                StructuralOp::InsertRows {
+                    sheet_id: 0,
+                    before: 50,
+                    count: 1,
+                },
+            ),
+            Some((
+                PlacementDomain::rect(0, 0, 49, 1, 3),
+                PlacementDomain::rect(0, 50, 99, 1, 3),
+            ))
+        );
+        // ColRun / column insert.
+        assert_eq!(
+            split_domain_at(
+                &PlacementDomain::col_run(0, 5, 1, 100),
+                StructuralOp::InsertColumns {
+                    sheet_id: 0,
+                    before: 49,
+                    count: 2,
+                },
+            ),
+            Some((
+                PlacementDomain::col_run(0, 5, 1, 48),
+                PlacementDomain::col_run(0, 5, 49, 100),
+            ))
+        );
+        // Rect / column insert keeps the row extent on both halves.
+        assert_eq!(
+            split_domain_at(
+                &PlacementDomain::rect(0, 0, 9, 2, 8),
+                StructuralOp::InsertColumns {
+                    sheet_id: 0,
+                    before: 4,
+                    count: 1,
+                },
+            ),
+            Some((
+                PlacementDomain::rect(0, 0, 9, 2, 3),
+                PlacementDomain::rect(0, 0, 9, 4, 8),
+            ))
+        );
+    }
+
+    #[test]
+    fn split_domain_at_rejects_non_straddling_and_cross_axis_cases() {
+        let row_run = PlacementDomain::row_run(0, 10, 99, 2);
+        // Boundary at/above the start or beyond the end is not a straddle.
+        for before in [5, 10, 100, 200] {
+            assert_eq!(
+                split_domain_at(
+                    &row_run,
+                    StructuralOp::InsertRows {
+                        sheet_id: 0,
+                        before,
+                        count: 1,
+                    },
+                ),
+                None
+            );
+        }
+        // A row insert cannot split a single-row ColRun; a column insert
+        // cannot split a single-column RowRun; deletes never split.
+        assert_eq!(
+            split_domain_at(
+                &PlacementDomain::col_run(0, 5, 1, 100),
+                StructuralOp::InsertRows {
+                    sheet_id: 0,
+                    before: 5,
+                    count: 1,
+                },
+            ),
+            None
+        );
+        assert_eq!(
+            split_domain_at(
+                &row_run,
+                StructuralOp::InsertColumns {
+                    sheet_id: 0,
+                    before: 2,
+                    count: 1,
+                },
+            ),
+            None
+        );
+        assert_eq!(
+            split_domain_at(
+                &row_run,
+                StructuralOp::DeleteRows {
+                    sheet_id: 0,
+                    start: 40,
+                    count: 1,
+                },
+            ),
+            None
+        );
+        // Other-sheet ops never split.
+        assert_eq!(
+            split_domain_at(
+                &row_run,
+                StructuralOp::InsertRows {
+                    sheet_id: 1,
+                    before: 40,
+                    count: 1,
+                },
+            ),
+            None
         );
     }
 

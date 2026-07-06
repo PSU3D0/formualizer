@@ -1090,6 +1090,31 @@ impl FormulaOverlay {
         })
     }
 
+    /// Re-point an overlay entry's provenance at a different span, e.g. when a
+    /// span split transfers ownership of punch-outs to the new half. Returns
+    /// false for stale refs.
+    pub(crate) fn set_source_span(
+        &mut self,
+        overlay_ref: FormulaOverlayRef,
+        source_span: Option<FormulaSpanRef>,
+    ) -> bool {
+        let Some(slot) = self.slots.get_mut(overlay_ref.id.0 as usize) else {
+            return false;
+        };
+        if slot.generation != overlay_ref.generation {
+            return false;
+        }
+        let Some(entry) = slot.entry.as_mut() else {
+            return false;
+        };
+        if entry.source_span == source_span {
+            return true;
+        }
+        entry.source_span = source_span;
+        self.epoch = self.epoch.saturating_add(1);
+        true
+    }
+
     pub(crate) fn refs_for_source_span(&self, span_ref: FormulaSpanRef) -> Vec<FormulaOverlayRef> {
         self.slots
             .iter()
@@ -1243,6 +1268,10 @@ impl FormulaPlane {
         result_region: ResultRegion,
         read_summary_id: Option<SpanReadSummaryId>,
     ) -> bool {
+        let old_read_summary_id = self
+            .spans
+            .get(span_ref)
+            .and_then(|span| span.read_summary_id);
         let replaced = self.spans.replace_geometry(
             span_ref,
             template_id,
@@ -1251,6 +1280,13 @@ impl FormulaPlane {
             read_summary_id,
         );
         if replaced {
+            // Summaries are per-span (never interned/shared); release the one
+            // the replaced geometry no longer references.
+            if let Some(old_id) = old_read_summary_id
+                && read_summary_id != Some(old_id)
+            {
+                self.span_read_summaries.remove(old_id);
+            }
             self.bump_epoch();
         }
         replaced
@@ -1291,14 +1327,18 @@ impl FormulaPlane {
     }
 
     pub(crate) fn remove_span(&mut self, span_ref: FormulaSpanRef) -> bool {
-        let binding_set_id = self
+        let (binding_set_id, read_summary_id) = self
             .spans
             .get(span_ref)
-            .and_then(|span| span.binding_set_id);
+            .map(|span| (span.binding_set_id, span.read_summary_id))
+            .unwrap_or((None, None));
         let removed = self.spans.remove(span_ref);
         if removed {
             if let Some(binding_set_id) = binding_set_id {
                 self.binding_sets.remove(binding_set_id);
+            }
+            if let Some(read_summary_id) = read_summary_id {
+                self.span_read_summaries.remove(read_summary_id);
             }
             self.unregister_span_name_dependents(span_ref);
             self.bump_epoch();
@@ -1373,6 +1413,30 @@ impl FormulaPlane {
             self.bump_epoch();
         }
         removed
+    }
+
+    pub(crate) fn set_overlay_source_span(
+        &mut self,
+        overlay_ref: FormulaOverlayRef,
+        source_span: Option<FormulaSpanRef>,
+    ) -> bool {
+        let updated = self
+            .formula_overlay
+            .set_source_span(overlay_ref, source_span);
+        if updated {
+            self.bump_epoch();
+        }
+        updated
+    }
+
+    /// Lowercased defined-name keys the span registered at ingest (see
+    /// `name_dependent_spans`). Used to carry name-dependent invalidation over
+    /// to spans that inherit part of an existing span's domain.
+    pub(crate) fn span_registered_name_keys(&self, span_id: FormulaSpanId) -> Vec<String> {
+        self.span_name_keys
+            .get(&span_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub(crate) fn remove_overlays_for_source_span(&mut self, span_ref: FormulaSpanRef) -> usize {
