@@ -4614,12 +4614,24 @@ where
             u32::try_from(i64::from(value).checked_add(delta)?).ok()
         }
 
+        /// Structural transform of a read summary for a NO-REWRITE shift.
+        /// Regions move with the op; projection rules keep their absolute
+        /// bounds (the AST is untouched) but must shift their RELATIVE
+        /// bounds by `-origin_delta`: rules store placement-relative
+        /// offsets, which equal `authored_coordinate - template_origin`,
+        /// and a moved origin over an unchanged AST changes that difference
+        /// (otherwise incremental dirty projection silently goes stale —
+        /// issue #168 family). Rewrite plans do NOT use this transform;
+        /// their summaries are re-derived from the rewritten canonical
+        /// template instead.
         fn shifted_read_summary(
             read_summary: &SpanReadSummary,
             new_result_region: Region,
             op: StructuralOp,
             row_delta: i64,
             col_delta: i64,
+            origin_row_delta: i64,
+            origin_col_delta: i64,
         ) -> Option<SpanReadSummary> {
             let mut dependencies = Vec::with_capacity(read_summary.dependencies.len());
             for dependency in &read_summary.dependencies {
@@ -4640,7 +4652,9 @@ where
                 };
                 dependencies.push(crate::formula_plane::producer::SpanReadDependency {
                     read_region,
-                    projection: dependency.projection,
+                    projection: dependency
+                        .projection
+                        .with_relative_offsets_shifted(-origin_row_delta, -origin_col_delta),
                 });
             }
             Some(SpanReadSummary {
@@ -4947,6 +4961,8 @@ where
                     op,
                     row_delta,
                     col_delta,
+                    origin_row_delta,
+                    origin_col_delta,
                 )?),
                 None => None,
             };
@@ -5180,24 +5196,6 @@ where
                             .into());
                     };
                     let new_result_region = Region::from_domain(&new_domain);
-                    let new_read_summary = if let Some(summary) = read_summary {
-                        Some(
-                            shifted_read_summary(
-                                summary,
-                                new_result_region,
-                                op,
-                                row_delta,
-                                col_delta,
-                            )
-                            .ok_or_else(|| {
-                                ExcelError::new(ExcelErrorKind::Ref).with_message(
-                                    "FormulaPlane shift could not project read summary",
-                                )
-                            })?,
-                        )
-                    } else {
-                        None
-                    };
                     let force_binding_residual_axes = span
                         .binding_set_id
                         .and_then(|id| authority.plane.binding_sets.get(id))
@@ -5205,7 +5203,7 @@ where
                             !binding_set.value_ref_slots.is_empty()
                                 && (origin_row_delta != 0 || origin_col_delta != 0)
                         });
-                    let rewrite = if rewrite_absolute_reads {
+                    let rewrite_and_summary = if rewrite_absolute_reads {
                         // Reify the (immutable, possibly shared) template
                         // AST and repoint its displaced references through
                         // the shared adjuster — the same relocation the
@@ -5214,6 +5212,30 @@ where
                         // re-derived from the rewritten AST at the new
                         // origin, so the fresh record cannot collide with
                         // the pre-rewrite template.
+                        //
+                        // FRAME GUARD: the adjuster relocates by AUTHORED
+                        // coordinate, but a template's authoring frame may
+                        // diverge from its domain (split lower halves keep
+                        // the original anchor; pinned-origin shifts move the
+                        // domain without the origin). The rewrite is only
+                        // equivalent to per-cell adjustment when every
+                        // relative read's authored coordinate classifies
+                        // against the op boundary the same way its read
+                        // region does — otherwise the rewrite shears
+                        // relative reads by the op count. Demote instead;
+                        // see rewrite_frame_is_sound for the full invariant.
+                        let frame_sound = read_summary.is_some_and(|summary| {
+                            crate::formula_plane::structural_shift::rewrite_frame_is_sound(
+                                summary,
+                                template.origin_row,
+                                template.origin_col,
+                                op,
+                            )
+                        });
+                        if !frame_sound {
+                            demote_refs.push(span_ref);
+                            continue;
+                        }
                         let Some(ast) = self
                             .graph
                             .data_store()
@@ -5271,21 +5293,75 @@ where
                             )
                             .into_boxed_slice(),
                         );
+                        // The read summary is RE-DERIVED from the rewritten
+                        // canonical template rather than structurally
+                        // transformed: a structural transform would keep the
+                        // old projection rules, whose absolute indices (and
+                        // relative offsets, via the moved origin) no longer
+                        // match the rewritten AST — incremental writes to
+                        // the repointed targets would then silently fail to
+                        // dirty the span. Re-derivation rebuilds rules in
+                        // the (rewritten AST, new origin) frame, keeping
+                        // `result_region == domain region` by construction.
+                        let dependency_summary =
+                            crate::formula_plane::dependency_summary::summarize_canonical_template(
+                                &canonical,
+                            );
+                        let rewritten_result_region =
+                            ResultRegion::scalar_cells(new_domain.clone());
+                        let Ok(rederived_summary) = SpanReadSummary::from_formula_summary(
+                            span.sheet_id,
+                            &rewritten_result_region,
+                            &dependency_summary,
+                            self.graph.sheet_reg(),
+                        ) else {
+                            demote_refs.push(span_ref);
+                            continue;
+                        };
                         let formula_text = Some(Arc::<str>::from(
                             formualizer_parse::pretty::canonical_formula(&adjusted_ast),
                         ));
-                        Some(SpanTemplateRewrite {
-                            exact_canonical_key: Arc::<str>::from(canonical.key.payload()),
-                            parameterized_canonical_key: Arc::<str>::from(
-                                canonical.parameterized_key.payload(),
-                            ),
-                            formula_text,
-                            canonical_expr: canonical.expr,
-                            value_ref_slots,
-                            adjusted_ast,
-                        })
+                        Some((
+                            SpanTemplateRewrite {
+                                exact_canonical_key: Arc::<str>::from(canonical.key.payload()),
+                                parameterized_canonical_key: Arc::<str>::from(
+                                    canonical.parameterized_key.payload(),
+                                ),
+                                formula_text,
+                                canonical_expr: canonical.expr,
+                                value_ref_slots,
+                                adjusted_ast,
+                            },
+                            rederived_summary,
+                        ))
                     } else {
                         None
+                    };
+                    let (rewrite, new_read_summary) = match rewrite_and_summary {
+                        Some((rewrite, summary)) => (Some(rewrite), Some(summary)),
+                        None => {
+                            let new_read_summary = if let Some(summary) = read_summary {
+                                Some(
+                                    shifted_read_summary(
+                                        summary,
+                                        new_result_region,
+                                        op,
+                                        row_delta,
+                                        col_delta,
+                                        origin_row_delta,
+                                        origin_col_delta,
+                                    )
+                                    .ok_or_else(|| {
+                                        ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                            "FormulaPlane shift could not project read summary",
+                                        )
+                                    })?,
+                                )
+                            } else {
+                                None
+                            };
+                            (None, new_read_summary)
+                        }
                     };
                     shift_plans.push(ShiftPlan {
                         span_ref,

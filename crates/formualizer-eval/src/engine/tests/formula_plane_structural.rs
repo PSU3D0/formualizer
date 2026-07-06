@@ -1545,3 +1545,198 @@ fn formula_plane_mixed_read_row_insert_splits_span() {
         Some(LiteralValue::Number(100.0 * 101.0 * 3.0))
     );
 }
+
+#[test]
+fn formula_plane_split_then_insert_displacing_absolute_matches_span_off_engine() {
+    // Frame-divergence composition regression (issue #168 review): op1
+    // splits the span, leaving the lower half with its template origin at
+    // row 1 while its domain starts at row 51. Op2 inserts rows BETWEEN
+    // the stale origin and the domain start while displacing the absolute
+    // target $F$30, routing the lower half into the
+    // Shift{rewrite_absolute_reads} arm. The shared adjuster relocates by
+    // AUTHORED coordinate (A1 sits below the insert point), so an
+    // unguarded rewrite shears every relative read by the insert count.
+    // rewrite_frame_is_sound must refuse the rewrite (demote instead) and
+    // keep span-ON byte-identical to span-OFF.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        let mut formulas = Vec::new();
+        for row in 1..=120 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+        engine
+            .set_cell_value("Sheet1", 30, 6, LiteralValue::Number(1000.0))
+            .unwrap();
+        for row in 1..=120 {
+            formulas.push(record(engine, row, 3, &format!("=A{row}+$F$30")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+
+    for engine in [&mut span_on, &mut span_off] {
+        engine.insert_rows("Sheet1", 50, 1).unwrap();
+        engine.insert_rows("Sheet1", 10, 3).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_value_parity(&span_on, &span_off, 124, 6);
+}
+
+#[test]
+fn formula_plane_origin_follows_shift_keeps_incremental_dirty_projection() {
+    // Second frame bug pinned during the #168 review: projection rules
+    // store PLACEMENT-relative offsets (= authored - origin). An
+    // origin-follows shift (stationary relative reads, shifted span) moves
+    // the origin over an unchanged AST, so the stored offsets must shift
+    // by -origin_delta or incremental dirty projection maps changed
+    // regions to the wrong result rows and the span silently keeps stale
+    // values. Span rows 150..=270 read A10..A130 (stationary under the
+    // insert at 140); after the shift, a write to A10 must still re-dirty
+    // the span.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        let mut formulas = Vec::new();
+        for row in 10..=130 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+        for row in 150..=270 {
+            formulas.push(record(engine, row, 3, &format!("=A{}", row - 140)));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    for engine in [&mut span_on, &mut span_off] {
+        engine.insert_rows("Sheet1", 140, 1).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    // The span survives the shift (origin follows the block).
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    // Incremental dirty: change a read target, re-evaluate.
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 10, 1, LiteralValue::Number(999.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 151, 3),
+        Some(LiteralValue::Number(999.0)),
+        "the shifted span must observe the incremental write"
+    );
+    assert_value_parity(&span_on, &span_off, 275, 6);
+}
+
+#[test]
+fn formula_plane_rewrite_keeps_incremental_dirty_on_moved_absolute() {
+    // Companion to the frame-invariant fix: after a template rewrite the
+    // span's read summary must be RE-DERIVED from the rewritten canonical
+    // template — a structural transform would keep the old Absolute rule
+    // indices, and an incremental write to the MOVED scalar would silently
+    // fail to dirty the span.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
+            .unwrap();
+        let mut formulas = Vec::new();
+        for row in 2..=121 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+            formulas.push(record(engine, row, 3, &format!("=A{row}*$F$1")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        engine.insert_rows("Sheet1", 1, 2).unwrap();
+        engine.evaluate_all().unwrap();
+        // Incremental write to the MOVED absolute target (now F3).
+        engine
+            .set_cell_value("Sheet1", 3, 6, LiteralValue::Number(5.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 4, 3),
+        Some(LiteralValue::Number(2.0 * 5.0)),
+        "the rewritten span must observe the incremental write to $F$3"
+    );
+    assert_value_parity(&span_on, &span_off, 125, 6);
+}
+
+#[test]
+fn formula_plane_column_pinned_origin_shifts_compose_and_match_span_off_engine() {
+    // Column-axis mirror of the frame-divergence composition. Engine ingest
+    // only forms vertical families, and every column-op sequence that could
+    // displace an absolute target through a diverged column origin first
+    // routes the span through the rewrite arm (which re-aligns the origin),
+    // so the row repro's shear is not reachable on this axis — pinned at
+    // unit level in rewrite_frame_soundness_matrix. What IS reachable is
+    // composing pinned-origin column shifts: op1 diverges origin_col from
+    // the domain column, op2 shifts again through the diverged frame. Both
+    // must stay on the span fast path and match span-OFF.
+    let mut span_on = authoritative_engine();
+    let mut span_off = span_off_engine();
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1000.0))
+            .unwrap();
+        let mut formulas = Vec::new();
+        for row in 1..=120 {
+            engine
+                .set_cell_value("Sheet1", row, 3, LiteralValue::Number(row as f64))
+                .unwrap();
+            formulas.push(record(engine, row, 4, &format!("=C{row}+$A$1")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+
+    for engine in [&mut span_on, &mut span_off] {
+        // op1: insert between $A$1 and the inputs — inputs and formulas
+        // shift right, the scalar stays: pinned-origin column shift
+        // (origin_col keeps the authored anchor while the domain moves).
+        engine.insert_columns("Sheet1", 2, 1).unwrap();
+        // op2: insert at the (shifted) input column — shifts inputs and
+        // formulas again through the diverged column frame.
+        engine.insert_columns("Sheet1", 4, 1).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    // Both ops are mixed-read fast-path shifts: the span survives.
+    assert_eq!(span_on.baseline_stats().formula_plane_active_span_count, 1);
+    // Incremental writes through the diverged frame must still re-dirty
+    // the span (rule offsets track the pinned origin).
+    for engine in [&mut span_on, &mut span_off] {
+        engine
+            .set_cell_value("Sheet1", 5, 5, LiteralValue::Number(500.0))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2000.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    assert_eq!(
+        span_on.get_cell_value("Sheet1", 5, 6),
+        Some(LiteralValue::Number(500.0 + 2000.0)),
+        "shifted formula must track both incremental writes"
+    );
+    assert_value_parity(&span_on, &span_off, 125, 8);
+}
