@@ -114,7 +114,7 @@ fn build_flagship(engine: &mut Engine<TestWorkbook>, span_start: u32, span_end: 
             SHEET,
             1,
             5,
-            parse(&format!("=SUM(C{span_start}:C{span_end})")).unwrap(),
+            parse(format!("=SUM(C{span_start}:C{span_end})")).unwrap(),
         )
         .unwrap();
     engine.evaluate_all().unwrap();
