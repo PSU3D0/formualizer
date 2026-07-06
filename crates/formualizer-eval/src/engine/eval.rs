@@ -4854,10 +4854,19 @@ where
                 col_delta,
                 origin_row_delta,
                 origin_col_delta,
+                rewrite_absolute_reads,
             } = classify_span_for_op(&lower_span, lower_read_summary.as_ref(), op)
             else {
                 return None;
             };
+            if rewrite_absolute_reads {
+                // A displaced absolute read in the lower half implies the
+                // upper half reads it too and cannot be a NoOp, so this is
+                // unreachable when the upper check above passed; keep the
+                // guard so a future classifier change cannot silently skip
+                // the template rewrite.
+                return None;
+            }
 
             let template = authority.plane.templates.get(span.template_id)?;
             let lower_new_origin_row = checked_shift_u32(template.origin_row, origin_row_delta)?;
@@ -5064,7 +5073,17 @@ where
                     col_delta,
                     origin_row_delta,
                     origin_col_delta,
+                    rewrite_absolute_reads,
                 } => {
+                    if rewrite_absolute_reads {
+                        // The op displaces an absolute read's target; the
+                        // span-preserving template AST rewrite lands in a
+                        // follow-up commit. Until then demote so the
+                        // per-cell adjuster repoints the reference
+                        // (issue #168 correctness over speed).
+                        demote_refs.push(span_ref);
+                        continue;
+                    }
                     let Some(template) = authority.plane.templates.get(span.template_id) else {
                         return Err(ExcelError::new(ExcelErrorKind::Ref)
                             .with_message("FormulaPlane shift found a span with a missing template")

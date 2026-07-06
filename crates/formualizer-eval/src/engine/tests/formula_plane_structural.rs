@@ -1326,12 +1326,14 @@ fn formula_plane_delete_overlapping_span_head_matches_span_off_engine() {
 }
 
 #[test]
-fn formula_plane_mixed_read_row_insert_still_demotes() {
-    // v1 scope pin: a template with mixed reads (relative A{r}/B{r} shift with
-    // the block, absolute $F$1 stays put) does NOT split — the lower half
-    // classifies Demote(MixedReadRegionShift), so the whole span demotes
-    // exactly as before the split feature. Mixed-read splitting is a
-    // follow-up phase.
+fn formula_plane_mixed_read_row_insert_splits_span() {
+    // P2.5: this INVERTS the v1 scope pin (previously
+    // `formula_plane_mixed_read_row_insert_still_demotes`). A template with
+    // mixed reads — relative A{r}/B{r} shift with the block, absolute $F$1
+    // stays put — now SPLITS on a mid-domain insert: the stationary
+    // absolute read imposes no constraint (its AST coordinate still points
+    // at the unmoved target), so the lower half classifies as a clean
+    // shift with a stationary origin and the span stays on the fast path.
     let mut engine = authoritative_engine();
     engine
         .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(3.0))
@@ -1353,13 +1355,24 @@ fn formula_plane_mixed_read_row_insert_still_demotes() {
     engine.evaluate_all().unwrap();
 
     engine.insert_rows("Sheet1", 40, 1).unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    // Split, not demote: upper half rows 1..=39 keeps the span id, lower
+    // half rows 41..=101 is a fresh span.
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
     engine.evaluate_all().unwrap();
 
+    // Upper half (unmoved).
     assert_eq!(
         engine.get_cell_value("Sheet1", 10, 3),
         Some(LiteralValue::Number(10.0 * 11.0 * 3.0))
     );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 39, 3),
+        Some(LiteralValue::Number(39.0 * 40.0 * 3.0))
+    );
+    // The inserted row has no formula.
+    assert_eq!(engine.get_cell_value("Sheet1", 40, 3), None);
+    // Lower half (shifted down one row, still reading $F$1).
     assert_eq!(
         engine.get_cell_value("Sheet1", 41, 3),
         Some(LiteralValue::Number(40.0 * 41.0 * 3.0))
