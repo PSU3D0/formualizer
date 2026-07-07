@@ -1,10 +1,8 @@
 import { RootProvider } from 'fumadocs-ui/provider/next';
-import { Analytics } from '@vercel/analytics/next';
 import './global.css';
 import { Inter } from 'next/font/google';
 import type { Metadata } from 'next';
 import { siteUrl } from '@/lib/env';
-import { AiReferralTracker } from '@/components/analytics/ai-referral-tracker';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -63,9 +61,7 @@ export default function Layout({ children }: LayoutProps<'/'>) {
   return (
     <html lang="en" className={inter.className} suppressHydrationWarning>
       <body className="flex min-h-screen flex-col overflow-x-clip">
-        <RootProvider>{children}</RootProvider>
-        <Analytics />
-        <AiReferralTracker />
+        <RootProvider search={{ options: { type: 'static' } }}>{children}</RootProvider>
       </body>
     </html>
   );

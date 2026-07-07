@@ -7,6 +7,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
 const config = {
+  // Static export for Cloudflare Workers static-assets hosting.
+  output: 'export',
+  // next/image optimization is unavailable in a static export; serve images as-is.
+  images: { unoptimized: true },
   reactStrictMode: true,
   turbopack: {
     root: path.join(__dirname, '..'),
@@ -26,14 +30,9 @@ const config = {
 
     return config;
   },
-  async rewrites() {
-    return [
-      {
-        source: '/docs/:path*.mdx',
-        destination: '/llms.mdx/docs/:path*',
-      },
-    ];
-  },
+  // NOTE: The `/docs/*.mdx` -> `/llms.mdx/docs/*` rewrite is unavailable under
+  // `output: 'export'`. It is reproduced at the edge via docs-site/public/_redirects
+  // (a Cloudflare static-assets rewrite).
 };
 
 export default withMDX(config);
