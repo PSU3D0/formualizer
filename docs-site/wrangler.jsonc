@@ -7,7 +7,11 @@
 	"assets": {
 		"directory": "./out",
 		"not_found_handling": "404-page"
-	}
-	// No `routes` / custom_domain: deploy to workers.dev only.
-	// The orchestrator performs the www.formualizer.dev cutover afterward.
+	},
+	"routes": [
+		{ "pattern": "www.formualizer.dev", "custom_domain": true },
+		// Apex is 301'd to www by a zone redirect rule; the custom domain
+		// exists so the hostname resolves and the rule has an edge to run on.
+		{ "pattern": "formualizer.dev", "custom_domain": true }
+	]
 }
