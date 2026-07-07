@@ -25,12 +25,14 @@ export const metadata: Metadata = {
       'Parse and inspect Excel-style formulas in-browser with AST, references, and evaluation flow.',
     url: '/formula-parser',
     type: 'website',
+    images: ['/opengraph-image.png'],
   },
   twitter: {
     card: 'summary_large_image',
     title: 'Formula Parser | Formualizer',
     description:
       'Parse and inspect Excel-style formulas with AST, token stream, and diagnostics.',
+    images: ['/twitter-image.png'],
   },
 };
 

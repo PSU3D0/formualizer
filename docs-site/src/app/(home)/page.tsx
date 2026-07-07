@@ -296,6 +296,21 @@ export default function HomePage() {
       </section>
 
       <WorkflowTabs />
+
+      <section className="rounded-2xl border bg-fd-card p-8 text-center">
+        <h2 className="text-2xl font-semibold tracking-tight">Formualizer in production</h2>
+        <p className="mx-auto mt-2 max-w-2xl text-fd-muted-foreground">
+          This engine powers{' '}
+          <a
+            href="https://formualizer.com"
+            className="font-medium text-fd-foreground underline underline-offset-4"
+          >
+            formualizer.com
+          </a>
+          {' '}— permissioned, traceable statements published straight from Excel models, where
+          every figure traces to the cells that produced it.
+        </p>
+      </section>
     </div>
     </>
   );
