@@ -6,7 +6,7 @@ import { siteUrl } from '@/lib/env';
 export const metadata: Metadata = {
   title: 'Evaluate Excel Formulas in Python',
   description:
-    'Calculate Excel formulas in Python without Excel installed. Formualizer is a Rust engine with Python bindings — 320+ Excel-compatible functions, incremental recalc, and Arrow-backed storage.',
+    'Calculate Excel formulas in Python without Excel installed. Formualizer is a Rust engine with Python bindings — 400+ Excel-compatible functions, incremental recalc, and Arrow-backed storage.',
   keywords: [
     'evaluate excel formulas python',
     'excel formula evaluation library',
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Evaluate Excel Formulas in Python | Formualizer',
     description:
-      'Calculate Excel formulas in Python — no Excel, LibreOffice, or JVM. 320+ Excel-compatible functions, incremental recalculation, Arrow-backed storage.',
+      'Calculate Excel formulas in Python — no Excel, LibreOffice, or JVM. 400+ Excel-compatible functions, incremental recalculation, Arrow-backed storage.',
     url: '/evaluate-excel-formulas-python',
     type: 'website',
     images: ['/opengraph-image.png'],
@@ -54,7 +54,7 @@ const faqs = [
   {
     question: 'Which Excel functions are supported?',
     answer:
-      '320+ built-ins across math, lookup (VLOOKUP/XLOOKUP/INDEX/MATCH), text, date/time, financial, statistical, and dynamic arrays. See the function reference for the full list.',
+      '400+ built-ins across math, lookup (VLOOKUP/XLOOKUP/INDEX/MATCH), text, date/time, financial, statistical, and dynamic arrays. See the function reference for the full list.',
   },
   {
     question: 'Is it fast enough for large workbooks?',
@@ -68,7 +68,7 @@ const comparison = {
   rows: [
     {
       label: 'Evaluates formulas',
-      cells: ['yes — 320+ functions', 'partial', 'partial', 'partial', 'no'],
+      cells: ['yes — 400+ functions', 'partial', 'partial', 'partial', 'no'],
     },
     {
       label: 'Core',
@@ -127,7 +127,7 @@ export default function EvaluateExcelFormulasPythonPage() {
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Cross-platform',
       description:
-        'Evaluate Excel formulas in Python with a Rust engine: 320+ Excel-compatible functions, incremental dependency graph, and Arrow-backed columnar storage. No Excel, LibreOffice, or JVM.',
+        'Evaluate Excel formulas in Python with a Rust engine: 400+ Excel-compatible functions, incremental dependency graph, and Arrow-backed columnar storage. No Excel, LibreOffice, or JVM.',
       url: `${base}/evaluate-excel-formulas-python`,
       offers: {
         '@type': 'Offer',
@@ -139,7 +139,7 @@ export default function EvaluateExcelFormulasPythonPage() {
       license: 'https://opensource.org/licenses/MIT',
       codeRepository: 'https://github.com/psu3d0/formualizer',
       featureList: [
-        '320+ Excel-compatible built-in functions',
+        '400+ Excel-compatible built-in functions',
         'Incremental dependency graph with cycle detection',
         'Arrow-powered columnar storage',
         'Deterministic evaluation controls',
@@ -201,7 +201,7 @@ export default function EvaluateExcelFormulasPythonPage() {
             </p>
             <p>
               Formualizer is a spreadsheet engine written in Rust with first-class Python bindings:
-              320+ Excel-compatible functions, an incremental dependency graph, and Arrow-backed
+              400+ Excel-compatible functions, an incremental dependency graph, and Arrow-backed
               columnar storage. <code>pip install formualizer</code> — no Excel, no LibreOffice, no
               JVM.
             </p>
@@ -354,7 +354,7 @@ export default function EvaluateExcelFormulasPythonPage() {
             <div>
               <h3 className="font-semibold">Which Excel functions are supported?</h3>
               <p className="mt-2 text-fd-muted-foreground">
-                320+ built-ins across math, lookup (VLOOKUP/XLOOKUP/INDEX/MATCH), text, date/time,
+                400+ built-ins across math, lookup (VLOOKUP/XLOOKUP/INDEX/MATCH), text, date/time,
                 financial, statistical, and dynamic arrays. See the{' '}
                 <Link
                   href="/docs/reference/functions"

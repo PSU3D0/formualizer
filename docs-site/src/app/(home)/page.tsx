@@ -30,7 +30,7 @@ const runtimeCards = [
 
 const featureCards = [
   {
-    title: '320+ Excel-compatible built-ins',
+    title: '400+ Excel-compatible built-ins',
     href: '/docs/reference/functions',
     image: '/home/feature-builtins-v1.png',
     badge: 'Function depth',
@@ -64,7 +64,7 @@ export default function HomePage() {
     applicationCategory: 'DeveloperApplication',
     operatingSystem: 'Cross-platform',
     description:
-      'Embeddable spreadsheet formula engine with 320+ Excel-compatible functions, Arrow-powered storage, and deterministic evaluation. Available for Rust, Python, and JavaScript/WASM.',
+      'Embeddable spreadsheet formula engine with 400+ Excel-compatible functions, Arrow-powered storage, and deterministic evaluation. Available for Rust, Python, and JavaScript/WASM.',
     url: base,
     offers: {
       '@type': 'Offer',
@@ -76,7 +76,7 @@ export default function HomePage() {
     license: 'https://opensource.org/licenses/MIT',
     codeRepository: 'https://github.com/psu3d0/formualizer',
     featureList: [
-      '320+ Excel-compatible built-in functions',
+      '400+ Excel-compatible built-in functions',
       'Incremental dependency graph with cycle detection',
       'SheetPort: treat spreadsheets as typed deterministic functions',
       'Arrow-powered columnar storage',
@@ -183,7 +183,7 @@ export default function HomePage() {
               <p className="text-xs font-medium uppercase tracking-wide text-violet-800 dark:text-violet-300">
                 Function depth
               </p>
-              <p className="mt-1 text-lg font-semibold">320+ Excel-compatible built-ins</p>
+              <p className="mt-1 text-lg font-semibold">400+ Excel-compatible built-ins</p>
               <p className="mt-1 text-sm text-fd-muted-foreground">
                 Math, lookup, text, financial, stats, and dynamic arrays in one registry.
               </p>
