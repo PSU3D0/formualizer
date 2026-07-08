@@ -24,6 +24,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'weekly',
       priority: 0.9,
     },
+    {
+      url: `${base}/evaluate-excel-formulas-python`,
+      changeFrequency: 'weekly',
+      priority: 0.9,
+    },
+    {
+      url: `${base}/spreadsheet-engine-for-ai-agents`,
+      changeFrequency: 'weekly',
+      priority: 0.9,
+    },
   ];
 
   const docsRoutes: MetadataRoute.Sitemap = source
