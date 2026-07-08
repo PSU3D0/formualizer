@@ -1,0 +1,17 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "formualizer-docs",
+	// Same Cloudflare account as formualizer-web.
+	"account_id": "4597ed26ea326a831e21b9898376ef59",
+	"compatibility_date": "2026-07-03",
+	"assets": {
+		"directory": "./out",
+		"not_found_handling": "404-page"
+	},
+	"routes": [
+		{ "pattern": "www.formualizer.dev", "custom_domain": true },
+		// Apex is 301'd to www by a zone redirect rule; the custom domain
+		// exists so the hostname resolves and the rule has an edge to run on.
+		{ "pattern": "formualizer.dev", "custom_domain": true }
+	]
+}

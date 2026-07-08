@@ -1,0 +1,29 @@
+# Cloudflare Workers static-assets response headers.
+# https://developers.cloudflare.com/workers/static-assets/headers/
+
+# Per-page Open Graph images. The next/og ImageResponse route emits PNG bytes
+# under an `image.webp` filename; force the correct Content-Type so scrapers
+# (and nosniff below) treat them as PNG, matching the previous Vercel behavior.
+/og/docs/*
+  Content-Type: image/png
+
+# Static search index (extensionless route asset) consumed by the Orama client.
+/api/search
+  Content-Type: application/json; charset=utf-8
+
+# Per-page Markdown (Copy Markdown / Open in ... actions and llms.mdx passthrough).
+/docs/*.mdx
+  Content-Type: text/markdown; charset=utf-8
+/llms.mdx/*
+  Content-Type: text/markdown; charset=utf-8
+
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+/llms-full.txt
+  Content-Type: text/plain; charset=utf-8
+
+# Baseline security headers (mirrors the formualizer.com deployment).
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY

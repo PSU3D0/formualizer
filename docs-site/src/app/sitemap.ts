@@ -2,6 +2,9 @@ import type { MetadataRoute } from 'next';
 import { source } from '@/lib/source';
 import { siteUrl } from '@/lib/env';
 
+// Required for `output: 'export'` — emit sitemap.xml as a static file at build.
+export const dynamic = 'force-static';
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const base = siteUrl.replace(/\/$/, '');
 
