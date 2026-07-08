@@ -220,7 +220,13 @@ export default function HomePage() {
         <p className="text-2xl leading-relaxed text-fd-muted-foreground md:text-4xl md:leading-snug">
           Formualizer is a permissively licensed spreadsheet engine with{' '}
           <span className="font-semibold text-fd-foreground">Arrow-powered performance</span>,{' '}
-          <span className="font-semibold text-fd-foreground">deterministic evaluation for agents</span>, and{' '}
+          <Link
+            href="/spreadsheet-engine-for-ai-agents"
+            className="font-semibold text-fd-foreground underline decoration-fd-muted-foreground/40 underline-offset-4 hover:decoration-fd-foreground"
+          >
+            deterministic evaluation for agents
+          </Link>
+          , and{' '}
           <span className="font-semibold text-fd-foreground">consistent Rust, Python, and WASM APIs</span>.
         </p>
       </section>
