@@ -267,22 +267,33 @@ impl PyWorkbook {
         let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
         match backend {
             "calamine" => {
-                use formualizer::workbook::backends::CalamineAdapter;
-                use formualizer::workbook::traits::SpreadsheetReader;
-                let adapter =
-                    <CalamineAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
-                        .map_err(|e| {
+                #[cfg(target_os = "emscripten")]
+                {
+                    let _ = (path, cfg);
+                    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                        "backend='calamine' is unavailable in the Pyodide build; use backend='umya' with in-memory XLSX bytes",
+                    ))
+                }
+                #[cfg(not(target_os = "emscripten"))]
+                {
+                    use formualizer::workbook::backends::CalamineAdapter;
+                    use formualizer::workbook::traits::SpreadsheetReader;
+                    let adapter = <CalamineAdapter as SpreadsheetReader>::open_path(
+                        std::path::Path::new(path),
+                    )
+                    .map_err(|e| {
                         PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
                     })?;
-                let wb = formualizer::workbook::Workbook::from_reader(
-                    adapter,
-                    formualizer::workbook::LoadStrategy::EagerAll,
-                    cfg,
-                )
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
-                })?;
-                Ok(Self::from_inner_workbook(wb))
+                    let wb = formualizer::workbook::Workbook::from_reader(
+                        adapter,
+                        formualizer::workbook::LoadStrategy::EagerAll,
+                        cfg,
+                    )
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
+                    })?;
+                    Ok(Self::from_inner_workbook(wb))
+                }
             }
             "umya" => {
                 use formualizer::workbook::backends::UmyaAdapter;
