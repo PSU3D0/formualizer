@@ -3,8 +3,8 @@ use std::mem::size_of;
 use std::sync::Arc;
 
 use formualizer_eval::engine::{
-    CompressedPlacementDomain, CompressedSharedFamily, FormulaCompressedSourceReport, SourceCoord,
-    SourceFamilyId, SourceRect,
+    FormulaCompressedSourceReport, PlacementDomainTransport, SourceCoord, SourceFamilyId,
+    SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 
 const DEFAULT_EVIDENCE_LIMIT: u64 = 8 * 1024 * 1024;
@@ -287,13 +287,27 @@ impl MonotonicFormulaEvidence {
                 report.source_clean_families = report.source_clean_families.saturating_add(1);
                 report.source_clean_cells =
                     report.source_clean_cells.saturating_add(family.members);
-                families.push(CompressedSharedFamily {
+                let rect = family.range.expect("clean family has range");
+                let domain = if rect.start.col == rect.end.col {
+                    PlacementDomainTransport::RowRun {
+                        row_start: rect.start.row,
+                        row_end: rect.end.row,
+                        col: rect.start.col,
+                    }
+                } else if rect.start.row == rect.end.row {
+                    PlacementDomainTransport::ColRun {
+                        row: rect.start.row,
+                        col_start: rect.start.col,
+                        col_end: rect.end.col,
+                    }
+                } else {
+                    PlacementDomainTransport::Rect(rect)
+                };
+                families.push(SourceFormulaFamily {
                     source_id,
                     anchor_coord0: family.anchor.expect("clean family has anchor"),
                     anchor_text: family.anchor_text.expect("clean family has anchor text"),
-                    domain: CompressedPlacementDomain::from_rect(
-                        family.range.expect("clean family has range"),
-                    ),
+                    members: SourceFamilyMembers::CompleteDomain(domain),
                     member_count: family.members,
                 });
             }
@@ -336,7 +350,7 @@ impl MonotonicFormulaEvidence {
 
 pub(super) struct CompressedEvidenceOutput {
     pub(super) report: FormulaCompressedSourceReport,
-    pub(super) families: Vec<CompressedSharedFamily>,
+    pub(super) families: Vec<SourceFormulaFamily>,
 }
 
 fn valid_rect(rect: SourceRect) -> bool {
@@ -395,7 +409,7 @@ mod tests {
     fn family(index: usize) -> SourceFamilyId {
         SourceFamilyId {
             sheet_instance: 0,
-            shared_index: index,
+            source_index: index,
         }
     }
 

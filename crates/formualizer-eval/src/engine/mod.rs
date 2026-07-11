@@ -7,7 +7,6 @@ pub(crate) mod convergence;
 pub mod effects;
 pub mod eval;
 pub mod eval_delta;
-mod formula_family;
 pub mod formula_ingest;
 mod formula_source;
 pub mod graph;
@@ -49,17 +48,16 @@ mod tests;
 pub use arena::AstNodeId;
 pub use eval::{
     CycleTelemetry, Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan,
-    VirtualDepTelemetry,
+    SourceFormulaIngress, VirtualDepTelemetry,
 };
 pub use eval_delta::{DeltaMode, EvalDelta};
 pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
 #[doc(hidden)]
 pub use formula_source::{
-    CompressedPlacementDomain, CompressedSharedFamily, DeferredFormulaPackage,
-    DeferredFormulaReplay, DeferredReplayFormula, FormulaCompressedPreparation,
-    FormulaCompressedSourceBatch, FormulaCompressedSourceReport, FormulaMetadataEnvelope,
-    FormulaSourceEvent, FormulaSourceIngestBatch, FormulaSourceKind, SourceCachedValue,
-    SourceCoord, SourceFamilyId, SourceRect,
+    DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
+    ExplicitSourceFamilyMembers, FormulaCompressedPreparation, FormulaCompressedSourceBatch,
+    FormulaCompressedSourceReport, MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS, PlacementDomainTransport,
+    SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation

@@ -23,8 +23,7 @@ use crate::engine::{
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
     commit_prepared_anchor_once_family, place_candidate_family_with_analyses,
-    prepare_anchor_once_family, prepare_compressed_family_shadow,
-    split_candidate_affine_literal_runs, validate_anchor_once_syntax,
+    prepare_anchor_once_family, split_candidate_affine_literal_runs, validate_anchor_once_syntax,
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
@@ -61,9 +60,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 type StagedFormulaEntry = (u32, u32, String);
 type StagedSheetParts = (
     Vec<StagedFormulaEntry>,
-    Vec<crate::engine::FormulaSourceEvent>,
-    Option<crate::engine::FormulaCompressedSourceReport>,
-    Vec<crate::engine::CompressedSharedFamily>,
     Option<crate::engine::DeferredFormulaPackage>,
 );
 
@@ -80,22 +76,10 @@ type StagedSheetParts = (
 pub(crate) struct StagedSheet {
     entries: Vec<StagedFormulaEntry>,
     index: FxHashMap<(u32, u32), usize>,
-    source_events: Vec<Option<crate::engine::FormulaSourceEvent>>,
-    source_event_indices: FxHashMap<(u32, u32), Vec<usize>>,
-    compressed_source_report: Option<crate::engine::FormulaCompressedSourceReport>,
-    compressed_families: Vec<crate::engine::CompressedSharedFamily>,
     deferred_package: Option<crate::engine::DeferredFormulaPackage>,
 }
 
 impl StagedSheet {
-    fn clear_source_at(&mut self, row: u32, col: u32) {
-        if let Some(indices) = self.source_event_indices.remove(&(row, col)) {
-            for index in indices {
-                self.source_events[index] = None;
-            }
-        }
-    }
-
     fn invalidate_deferred_at(&mut self, row: u32, col: u32) {
         let Some(package) = self.deferred_package.as_mut() else {
             return;
@@ -122,7 +106,6 @@ impl StagedSheet {
 
     fn stage(&mut self, row: u32, col: u32, text: String) {
         self.invalidate_deferred_at(row, col);
-        self.clear_source_at(row, col);
         match self.index.entry((row, col)) {
             std::collections::hash_map::Entry::Occupied(slot) => {
                 self.entries[*slot.get()].2 = text;
@@ -134,34 +117,9 @@ impl StagedSheet {
         }
     }
 
-    fn set_compressed_source(
-        &mut self,
-        report: crate::engine::FormulaCompressedSourceReport,
-        families: Vec<crate::engine::CompressedSharedFamily>,
-    ) {
-        self.compressed_source_report = Some(report);
-        self.compressed_families = families;
-    }
-
-    fn add_source_events(&mut self, events: Vec<crate::engine::FormulaSourceEvent>) {
-        for event in events {
-            let coord = (
-                event.coord0.row.saturating_add(1),
-                event.coord0.col.saturating_add(1),
-            );
-            let index = self.source_events.len();
-            self.source_events.push(Some(event));
-            self.source_event_indices
-                .entry(coord)
-                .or_default()
-                .push(index);
-        }
-    }
-
     fn remove(&mut self, row: u32, col: u32) -> Option<String> {
         let deferred_text = self.get(row, col);
         self.invalidate_deferred_at(row, col);
-        self.clear_source_at(row, col);
         let Some(idx) = self.index.remove(&(row, col)) else {
             return deferred_text;
         };
@@ -207,15 +165,8 @@ impl StagedSheet {
         self.entries.is_empty() && self.deferred_package.is_none()
     }
 
-    /// Consume formulas and source events in their respective ingest orders.
     fn into_parts(self) -> StagedSheetParts {
-        (
-            self.entries,
-            self.source_events.into_iter().flatten().collect(),
-            self.compressed_source_report,
-            self.compressed_families,
-            self.deferred_package,
-        )
+        (self.entries, self.deferred_package)
     }
 }
 
@@ -231,15 +182,53 @@ fn producer_dirty_to_span_dirty(
         ProducerDirtyDomain::Regions(regions) => DirtyDomain::Regions(regions),
     }
 }
-type PreparedFormulaBatches = Vec<crate::engine::FormulaSourceIngestBatch>;
-type StagedFormulaBatches = Vec<(
-    String,
-    Vec<StagedFormulaEntry>,
-    Vec<crate::engine::FormulaSourceEvent>,
-    Option<crate::engine::FormulaCompressedSourceReport>,
-    Vec<crate::engine::CompressedSharedFamily>,
-    Option<crate::engine::DeferredFormulaPackage>,
-)>;
+type PreparedFormulaBatches = Vec<FormulaIngestBatch>;
+type StagedFormulaBatches = Vec<(String, StagedSheet)>;
+struct SourceFamilyPreparationError {
+    reason: String,
+    parse_attempted: bool,
+    ast_created: bool,
+    analysis_created: bool,
+}
+
+impl SourceFamilyPreparationError {
+    fn contract(reason: &'static str) -> Self {
+        Self {
+            reason: reason.to_string(),
+            parse_attempted: false,
+            ast_created: false,
+            analysis_created: false,
+        }
+    }
+
+    fn parse(reason: &'static str) -> Self {
+        Self {
+            reason: reason.to_string(),
+            parse_attempted: true,
+            ast_created: false,
+            analysis_created: false,
+        }
+    }
+
+    fn ast(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            parse_attempted: true,
+            ast_created: true,
+            analysis_created: false,
+        }
+    }
+
+    fn analysis(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+            parse_attempted: true,
+            ast_created: true,
+            analysis_created: true,
+        }
+    }
+}
+
 type FormulaPlaneMixedScheduleBuild = (
     MixedSchedule,
     BTreeMap<crate::formula_plane::runtime::FormulaSpanId, FormulaSpanRef>,
@@ -248,6 +237,67 @@ type FormulaPlaneMixedScheduleBuild = (
 );
 
 type PlannedFormulaMaterialize = BTreeMap<String, Vec<(u32, u32, AstNodeId, DependencyPlanRow)>>;
+type CompressedReplayBatch = (
+    FormulaIngestBatch,
+    crate::engine::FormulaCompressedSourceBatch,
+);
+type PreparedSourceBatch = (
+    FormulaIngestBatch,
+    crate::engine::FormulaCompressedSourceReport,
+    crate::engine::FormulaCompressedPreparation,
+);
+type PreparedStagedFormulaBatches = (
+    PreparedFormulaBatches,
+    Vec<CompressedReplayBatch>,
+    Vec<PreparedSourceBatch>,
+);
+
+/// Backend-neutral source-family ingress. Adapters may prepare candidates and
+/// submit exact replay, but FormulaPlane authority remains engine-owned.
+#[doc(hidden)]
+pub struct SourceFormulaIngress<'a, R> {
+    engine: &'a mut Engine<R>,
+}
+
+impl<R> SourceFormulaIngress<'_, R>
+where
+    R: EvaluationContext,
+{
+    pub fn prepare_families(
+        &mut self,
+        sheet_name: &str,
+        families: &[crate::engine::SourceFormulaFamily],
+    ) -> crate::engine::FormulaCompressedPreparation {
+        self.engine
+            .prepare_source_formula_families(sheet_name, families)
+    }
+
+    pub fn stage_deferred(&mut self, package: crate::engine::DeferredFormulaPackage) {
+        self.engine.stage_deferred_formula_package(package);
+    }
+
+    pub fn ingest_replay_batches(
+        &mut self,
+        batches: Vec<(
+            FormulaIngestBatch,
+            crate::engine::FormulaCompressedSourceBatch,
+        )>,
+    ) -> Result<FormulaIngestReport, ExcelError> {
+        self.engine
+            .ingest_compressed_formula_source_batches(batches)
+    }
+
+    pub fn finish_prepared(
+        &mut self,
+        batches: Vec<(
+            FormulaIngestBatch,
+            crate::engine::FormulaCompressedSourceReport,
+            crate::engine::FormulaCompressedPreparation,
+        )>,
+    ) -> Result<FormulaIngestReport, ExcelError> {
+        self.engine.finish_eager_compressed_formula_sources(batches)
+    }
+}
 
 // Computed-write coalescing pays a fixed grouping/planning cost. For very narrow
 // layers there is not enough work to amortize it, and the direct point-write path
@@ -545,6 +595,8 @@ pub struct Engine<R> {
     used_axis_bounds_cache: std::sync::RwLock<Option<UsedAxisBoundsCache>>,
     lookup_index_cache: LookupIndexCache,
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
+    /// Identity binding for opaque source-family preparations.
+    source_formula_token: Arc<()>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: StagedFormulaMap,
     /// Per-sheet row visibility sidecar state.
@@ -1605,6 +1657,7 @@ where
             used_axis_bounds_cache: std::sync::RwLock::new(None),
             lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
+            source_formula_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
@@ -1686,6 +1739,7 @@ where
             used_axis_bounds_cache: std::sync::RwLock::new(None),
             lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
+            source_formula_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
@@ -3140,51 +3194,15 @@ where
     }
 
     #[doc(hidden)]
-    pub fn stage_compressed_formula_source_report(
-        &mut self,
-        sheet: &str,
-        report: crate::engine::FormulaCompressedSourceReport,
-    ) {
-        self.stage_compressed_formula_source(sheet, report, Vec::new());
+    pub fn source_formula_ingress(&mut self) -> SourceFormulaIngress<'_, R> {
+        SourceFormulaIngress { engine: self }
     }
 
-    #[doc(hidden)]
-    pub fn stage_compressed_formula_source(
-        &mut self,
-        sheet: &str,
-        report: crate::engine::FormulaCompressedSourceReport,
-        families: Vec<crate::engine::CompressedSharedFamily>,
-    ) {
-        self.staged_formulas
-            .entry(sheet.to_string())
-            .or_default()
-            .set_compressed_source(report, families);
-    }
-
-    #[doc(hidden)]
-    pub fn stage_deferred_formula_package(
-        &mut self,
-        package: crate::engine::DeferredFormulaPackage,
-    ) {
+    fn stage_deferred_formula_package(&mut self, package: crate::engine::DeferredFormulaPackage) {
         let sheet = package.sheet_name.clone();
         let staged = self.staged_formulas.entry(sheet).or_default();
         debug_assert!(staged.deferred_package.is_none());
         staged.deferred_package = Some(package);
-    }
-
-    #[doc(hidden)]
-    pub fn stage_formula_source_events(
-        &mut self,
-        sheet: &str,
-        events: Vec<crate::engine::FormulaSourceEvent>,
-    ) {
-        if events.is_empty() {
-            return;
-        }
-        self.staged_formulas
-            .entry(sheet.to_string())
-            .or_default()
-            .add_source_events(events);
     }
 
     pub fn clear_staged_formula_text(&mut self, sheet: &str, row: u32, col: u32) -> Option<String> {
@@ -3208,17 +3226,9 @@ where
         let Some(entries) = self.staged_formulas.remove(old) else {
             return;
         };
-        let (formulas, mut source_events, compressed, compressed_families, mut package) =
-            entries.into_parts();
+        let (formulas, mut package) = entries.into_parts();
         for (row, col, text) in formulas {
             self.stage_formula_text(new, row, col, text);
-        }
-        for event in &mut source_events {
-            event.sheet_name = Arc::from(new);
-        }
-        self.stage_formula_source_events(new, source_events);
-        if let Some(report) = compressed {
-            self.stage_compressed_formula_source(new, report, compressed_families);
         }
         if let Some(package) = package.as_mut() {
             package.sheet_name = new.to_string();
@@ -3281,9 +3291,85 @@ where
         self.last_formula_ingest_report = Some(report);
     }
 
+    fn prepare_source_formula_family(
+        &mut self,
+        sheet_id: SheetId,
+        family: &crate::engine::SourceFormulaFamily,
+    ) -> Result<
+        crate::formula_plane::placement::PreparedAnchorOncePlacement,
+        SourceFamilyPreparationError,
+    > {
+        let transport = family
+            .validated_complete_domain(&self.workbook_load_limits)
+            .map_err(SourceFamilyPreparationError::contract)?;
+        let domain = match transport {
+            crate::engine::PlacementDomainTransport::RowRun {
+                row_start,
+                row_end,
+                col,
+            } => PlacementDomain::row_run(sheet_id, row_start, row_end, col),
+            crate::engine::PlacementDomainTransport::ColRun {
+                row,
+                col_start,
+                col_end,
+            } => PlacementDomain::col_run(sheet_id, row, col_start, col_end),
+            crate::engine::PlacementDomainTransport::Rect(rect) => PlacementDomain::rect(
+                sheet_id,
+                rect.start.row,
+                rect.end.row,
+                rect.start.col,
+                rect.end.col,
+            ),
+        };
+        let formula = if family.anchor_text.starts_with('=') {
+            family.anchor_text.to_string()
+        } else {
+            format!("={}", family.anchor_text)
+        };
+        let ast = formualizer_parse::parser::parse(&formula)
+            .map_err(|_| SourceFamilyPreparationError::parse("AnchorParseRejected"))?;
+        validate_anchor_once_syntax(
+            &ast,
+            family.anchor_coord0.row,
+            family.anchor_coord0.col,
+            &domain,
+        )
+        .map_err(SourceFamilyPreparationError::ast)?;
+        let ast_id = self.intern_formula_ast(&ast);
+        let placement = CellRef::new(
+            sheet_id,
+            Coord::from_excel(
+                family.anchor_coord0.row + 1,
+                family.anchor_coord0.col + 1,
+                true,
+                true,
+            ),
+        );
+        let ingested = {
+            let mut pipeline = self.ingest_pipeline();
+            pipeline.ingest_formula(
+                FormulaAstInput::RawArena(ast_id),
+                placement,
+                Some(family.anchor_text.clone()),
+            )
+        }
+        .map_err(|_| SourceFamilyPreparationError::ast("UnsupportedCanonicalTemplate"))?;
+        let candidate = FormulaPlacementCandidate::new(
+            sheet_id,
+            family.anchor_coord0.row,
+            family.anchor_coord0.col,
+            ingested.ast_id,
+            Some(family.anchor_text.clone()),
+        );
+        let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested)
+            .map_err(|reason| SourceFamilyPreparationError::ast(format!("{reason:?}")))?;
+        prepare_anchor_once_family(candidate, analysis, domain, family.member_count)
+            .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))
+    }
+
     fn analyze_compressed_formula_plane_shadow(
         &mut self,
-        batches: &[(String, Vec<crate::engine::CompressedSharedFamily>)],
+        batches: &[(String, Vec<crate::engine::SourceFormulaFamily>)],
     ) -> FormulaIngestReport {
         let mut report = FormulaIngestReport::with_mode(FormulaPlaneMode::Shadow);
         let _active_epoch = self.graph.formula_authority().plane.epoch();
@@ -3292,146 +3378,58 @@ where
             let sheet_id = self.graph.sheet_id_mut(sheet_name);
             for family in families {
                 let descendants = family.member_count.saturating_sub(1);
-                report.source_anchor_parses = report.source_anchor_parses.saturating_add(1);
-                report.source_descendant_strings_avoided = report
-                    .source_descendant_strings_avoided
-                    .saturating_add(descendants);
-                report.source_descendant_events_avoided = report
-                    .source_descendant_events_avoided
-                    .saturating_add(descendants);
-                report.source_descendant_analyses_avoided = report
-                    .source_descendant_analyses_avoided
-                    .saturating_add(descendants);
                 report.shadow_candidate_cells = report
                     .shadow_candidate_cells
                     .saturating_add(family.member_count);
 
-                let formula = if family.anchor_text.starts_with('=') {
-                    family.anchor_text.to_string()
-                } else {
-                    format!("={}", family.anchor_text)
-                };
-                let ast = match formualizer_parse::parser::parse(&formula) {
-                    Ok(ast) => ast,
-                    Err(_) => {
+                match self.prepare_source_formula_family(sheet_id, family) {
+                    Ok(_) => {
+                        report.source_descendant_strings_avoided = report
+                            .source_descendant_strings_avoided
+                            .saturating_add(descendants);
+                        report.source_descendant_events_avoided = report
+                            .source_descendant_events_avoided
+                            .saturating_add(descendants);
+                        report.source_descendant_analyses_avoided = report
+                            .source_descendant_analyses_avoided
+                            .saturating_add(descendants);
+                        report.source_anchor_parses = report.source_anchor_parses.saturating_add(1);
+                        report.source_anchor_asts = report.source_anchor_asts.saturating_add(1);
+                        report.source_anchor_analyses =
+                            report.source_anchor_analyses.saturating_add(1);
+                        report.shadow_accepted_span_cells = report
+                            .shadow_accepted_span_cells
+                            .saturating_add(family.member_count);
+                        report.source_compressed_families_prepared =
+                            report.source_compressed_families_prepared.saturating_add(1);
+                        report.source_compressed_cells_prepared = report
+                            .source_compressed_cells_prepared
+                            .saturating_add(family.member_count);
+                        report.graph_formula_vertices_avoided_shadow = report
+                            .graph_formula_vertices_avoided_shadow
+                            .saturating_add(family.member_count);
+                        report.ast_roots_avoided_shadow =
+                            report.ast_roots_avoided_shadow.saturating_add(descendants);
+                        report.edge_rows_avoided_shadow = report
+                            .edge_rows_avoided_shadow
+                            .saturating_add(family.member_count);
+                    }
+                    Err(error) => {
+                        if error.parse_attempted {
+                            report.source_anchor_parses =
+                                report.source_anchor_parses.saturating_add(1);
+                        }
+                        if error.ast_created {
+                            report.source_anchor_asts = report.source_anchor_asts.saturating_add(1);
+                        }
+                        if error.analysis_created {
+                            report.source_anchor_analyses =
+                                report.source_anchor_analyses.saturating_add(1);
+                        }
                         report.shadow_fallback_cells = report
                             .shadow_fallback_cells
                             .saturating_add(family.member_count);
-                        *report
-                            .fallback_reasons
-                            .entry("AnchorParseRejected".to_string())
-                            .or_default() += 1;
-                        continue;
-                    }
-                };
-                report.source_anchor_asts = report.source_anchor_asts.saturating_add(1);
-
-                let rect = family.domain.rect();
-                let domain = if rect.start.col == rect.end.col {
-                    PlacementDomain::row_run(sheet_id, rect.start.row, rect.end.row, rect.start.col)
-                } else if rect.start.row == rect.end.row {
-                    PlacementDomain::col_run(sheet_id, rect.start.row, rect.start.col, rect.end.col)
-                } else {
-                    PlacementDomain::rect(
-                        sheet_id,
-                        rect.start.row,
-                        rect.end.row,
-                        rect.start.col,
-                        rect.end.col,
-                    )
-                };
-                if let Err(reason) = validate_anchor_once_syntax(
-                    &ast,
-                    family.anchor_coord0.row,
-                    family.anchor_coord0.col,
-                    &domain,
-                ) {
-                    report.shadow_fallback_cells = report
-                        .shadow_fallback_cells
-                        .saturating_add(family.member_count);
-                    *report
-                        .fallback_reasons
-                        .entry(reason.to_string())
-                        .or_default() += 1;
-                    continue;
-                }
-
-                let ast_id = self.intern_formula_ast(&ast);
-                let placement = CellRef::new(
-                    sheet_id,
-                    Coord::from_excel(
-                        family.anchor_coord0.row.saturating_add(1),
-                        family.anchor_coord0.col.saturating_add(1),
-                        true,
-                        true,
-                    ),
-                );
-                let ingested = {
-                    let mut pipeline = self.ingest_pipeline();
-                    pipeline.ingest_formula(
-                        FormulaAstInput::RawArena(ast_id),
-                        placement,
-                        Some(family.anchor_text.clone()),
-                    )
-                };
-                let Ok(ingested) = ingested else {
-                    report.shadow_fallback_cells = report
-                        .shadow_fallback_cells
-                        .saturating_add(family.member_count);
-                    Self::record_shadow_fallback_reason(
-                        &mut report,
-                        PlacementFallbackReason::UnsupportedCanonicalTemplate,
-                        1,
-                    );
-                    continue;
-                };
-                let candidate = FormulaPlacementCandidate::new(
-                    sheet_id,
-                    family.anchor_coord0.row,
-                    family.anchor_coord0.col,
-                    ingested.ast_id,
-                    Some(family.anchor_text.clone()),
-                );
-                let analysis = match CandidateAnalysis::from_ingested(&candidate, &ingested) {
-                    Ok(analysis) => analysis,
-                    Err(reason) => {
-                        report.shadow_fallback_cells = report
-                            .shadow_fallback_cells
-                            .saturating_add(family.member_count);
-                        Self::record_shadow_fallback_reason(&mut report, reason, 1);
-                        continue;
-                    }
-                };
-                report.source_anchor_analyses = report.source_anchor_analyses.saturating_add(1);
-                let prepared = prepare_compressed_family_shadow(
-                    &candidate,
-                    &analysis,
-                    domain,
-                    family.member_count,
-                );
-                if prepared.accepted {
-                    report.shadow_accepted_span_cells = report
-                        .shadow_accepted_span_cells
-                        .saturating_add(family.member_count);
-                    report.source_compressed_families_prepared =
-                        report.source_compressed_families_prepared.saturating_add(1);
-                    report.source_compressed_cells_prepared = report
-                        .source_compressed_cells_prepared
-                        .saturating_add(family.member_count);
-                    report.graph_formula_vertices_avoided_shadow = report
-                        .graph_formula_vertices_avoided_shadow
-                        .saturating_add(family.member_count);
-                    report.ast_roots_avoided_shadow =
-                        report.ast_roots_avoided_shadow.saturating_add(descendants);
-                    report.edge_rows_avoided_shadow = report
-                        .edge_rows_avoided_shadow
-                        .saturating_add(family.member_count);
-                } else {
-                    report.shadow_fallback_cells = report
-                        .shadow_fallback_cells
-                        .saturating_add(family.member_count);
-                    if let Some(reason) = prepared.fallback_reason {
-                        Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                        *report.fallback_reasons.entry(error.reason).or_default() += 1;
                     }
                 }
             }
@@ -3586,8 +3584,6 @@ where
     fn analyze_formula_plane_authoritative_ingest(
         &mut self,
         batches: &[FormulaIngestBatch],
-        source_families: &[crate::engine::formula_family::EligibleSourceFamily],
-        source_events: &[crate::engine::FormulaSourceEvent],
     ) -> (
         FormulaIngestReport,
         Vec<FormulaIngestBatch>,
@@ -3632,95 +3628,7 @@ where
             }
         }
 
-        // Resolve collector-approved source sets against the exact ingest records before
-        // analysis. Once claimed, every member is either committed together or materialized.
-        let mut indices_by_sheet_coord: BTreeMap<(String, u32, u32), Vec<usize>> = BTreeMap::new();
-        for (idx, (sheet_name, candidate)) in pending_candidates.iter().enumerate() {
-            indices_by_sheet_coord
-                .entry((sheet_name.clone(), candidate.row, candidate.col))
-                .or_default()
-                .push(idx);
-        }
-        // Every source-family coordinate is reserved, including coordinates from a
-        // collector-rejected family. Reserved records never enter ordinary grouping.
-        let source_coords: BTreeSet<_> = source_events
-            .iter()
-            .filter_map(|event| match event.formula {
-                crate::engine::FormulaSourceKind::SharedAnchor { .. }
-                | crate::engine::FormulaSourceKind::SharedDescendant { .. } => Some((
-                    event.sheet_name.to_string(),
-                    event.coord0.row,
-                    event.coord0.col,
-                )),
-                _ => None,
-            })
-            .collect();
-        let source_claimed: BTreeSet<usize> = pending_candidates
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, (sheet, candidate))| {
-                source_coords
-                    .contains(&(sheet.clone(), candidate.row, candidate.col))
-                    .then_some(idx)
-            })
-            .collect();
-        let parse_recovered_coords: BTreeSet<_> = self
-            .formula_parse_diagnostics
-            .iter()
-            .map(|diagnostic| {
-                (
-                    diagnostic.sheet.clone(),
-                    diagnostic.row.saturating_sub(1),
-                    diagnostic.col.saturating_sub(1),
-                )
-            })
-            .collect();
-        let mut source_handled = BTreeSet::new();
-        let mut exact_source_sets = Vec::new();
-        for family in source_families {
-            let parse_recovered = family.coords0.iter().any(|coord| {
-                parse_recovered_coords.contains(&(family.sheet_name.clone(), coord.row, coord.col))
-            });
-            let mut indices = Vec::with_capacity(family.coords0.len());
-            let exact_match = family.coords0.iter().all(|coord| {
-                let key = (family.sheet_name.clone(), coord.row, coord.col);
-                let Some(matches) = indices_by_sheet_coord.get(&key) else {
-                    return false;
-                };
-                if matches.len() != 1 {
-                    return false;
-                }
-                indices.push(matches[0]);
-                true
-            });
-            let exact_match = exact_match && !parse_recovered;
-            #[cfg(test)]
-            let exact_match = exact_match && !self.force_source_family_fallback;
-            if exact_match && indices.len() == family.coords0.len() {
-                indices.sort_unstable_by_key(|idx| {
-                    let candidate = &pending_candidates[*idx].1;
-                    (candidate.row, candidate.col)
-                });
-                exact_source_sets.push((family, indices));
-            } else {
-                report.source_family_fallback = report.source_family_fallback.saturating_add(1);
-                report.source_family_fallback_cells = report
-                    .source_family_fallback_cells
-                    .saturating_add(family.coords0.len() as u64);
-                let reason = if parse_recovered {
-                    "ParseRecovered"
-                } else {
-                    "ExactRecordResolution"
-                };
-                *report
-                    .fallback_reasons
-                    .entry(reason.to_string())
-                    .or_default() += 1;
-            }
-        }
-
         let mut groups: BTreeMap<(SheetId, u64, u32), Vec<usize>> = BTreeMap::new();
-        let mut analysis_fallback_by_index = vec![None; pending_candidates.len()];
         let mut analyses_by_index: Vec<Option<CandidateAnalysis>> =
             (0..pending_candidates.len()).map(|_| None).collect();
         let mut plans_by_index: Vec<Option<DependencyPlanRow>> =
@@ -3752,179 +3660,45 @@ where
                                 plans_by_index[idx] = Some(dep_plan);
                             }
                             Err(reason) => {
-                                if source_claimed.contains(&idx) {
-                                    analysis_fallback_by_index[idx] = Some(reason);
-                                    plans_by_index[idx] = Some(dep_plan);
-                                } else {
-                                    report.shadow_candidate_cells =
-                                        report.shadow_candidate_cells.saturating_add(1);
-                                    report.shadow_fallback_cells =
-                                        report.shadow_fallback_cells.saturating_add(1);
-                                    Self::record_shadow_fallback_reason(&mut report, reason, 1);
-                                    planned_fallback
-                                        .entry(sheet_name.clone())
-                                        .or_default()
-                                        .push((
-                                            candidate.row.saturating_add(1),
-                                            candidate.col.saturating_add(1),
-                                            candidate.ast_id,
-                                            dep_plan,
-                                        ));
-                                }
+                                report.shadow_candidate_cells =
+                                    report.shadow_candidate_cells.saturating_add(1);
+                                report.shadow_fallback_cells =
+                                    report.shadow_fallback_cells.saturating_add(1);
+                                Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                                planned_fallback
+                                    .entry(sheet_name.clone())
+                                    .or_default()
+                                    .push((
+                                        candidate.row.saturating_add(1),
+                                        candidate.col.saturating_add(1),
+                                        candidate.ast_id,
+                                        dep_plan,
+                                    ));
                             }
                         }
                     }
                     Err(_) => {
                         let reason = PlacementFallbackReason::UnsupportedCanonicalTemplate;
-                        if source_claimed.contains(&idx) {
-                            analysis_fallback_by_index[idx] = Some(reason);
-                        } else {
-                            report.shadow_candidate_cells =
-                                report.shadow_candidate_cells.saturating_add(1);
-                            report.shadow_fallback_cells =
-                                report.shadow_fallback_cells.saturating_add(1);
-                            Self::record_shadow_fallback_reason(&mut report, reason, 1);
-                            fallback.entry(sheet_name.clone()).or_default().push(
-                                FormulaIngestRecord::new(
-                                    candidate.row.saturating_add(1),
-                                    candidate.col.saturating_add(1),
-                                    candidate.ast_id,
-                                    candidate.formula_text.clone(),
-                                ),
-                            );
-                        }
+                        report.shadow_candidate_cells =
+                            report.shadow_candidate_cells.saturating_add(1);
+                        report.shadow_fallback_cells =
+                            report.shadow_fallback_cells.saturating_add(1);
+                        Self::record_shadow_fallback_reason(&mut report, reason, 1);
+                        fallback.entry(sheet_name.clone()).or_default().push(
+                            FormulaIngestRecord::new(
+                                candidate.row.saturating_add(1),
+                                candidate.col.saturating_add(1),
+                                candidate.ast_id,
+                                candidate.formula_text.clone(),
+                            ),
+                        );
                     }
                 }
-            }
-        }
-
-        // Source metadata selects only the exact set. Canonical identity, shape, bindings,
-        // dependencies, memory and minimum-domain policy remain placement decisions.
-        for (family, family_indices) in exact_source_sets {
-            source_handled.extend(family_indices.iter().copied());
-            let candidates: Vec<_> = family_indices
-                .iter()
-                .map(|idx| pending_candidates[*idx].1.clone())
-                .collect();
-            let all_analyzed = family_indices
-                .iter()
-                .all(|idx| analyses_by_index[*idx].is_some());
-            let placement_report = if all_analyzed {
-                let analyses = family_indices
-                    .iter()
-                    .map(|idx| {
-                        analyses_by_index[*idx]
-                            .take()
-                            .expect("checked source candidate analysis")
-                    })
-                    .collect();
-                let authority = self.graph.formula_authority_mut();
-                place_candidate_family_with_analyses(
-                    &mut authority.plane,
-                    candidates.clone(),
-                    analyses,
-                )
-            } else {
-                let mut placement_report =
-                    crate::formula_plane::placement::FormulaPlacementReport::default();
-                placement_report.counters.formula_cells_seen = candidates.len() as u64;
-                placement_report.counters.legacy_cells = candidates.len() as u64;
-                for idx in &family_indices {
-                    if let Some(reason) = analysis_fallback_by_index[*idx] {
-                        let count = placement_report
-                            .counters
-                            .fallback_reasons
-                            .entry(reason)
-                            .or_default();
-                        *count = count.saturating_add(1);
-                    }
-                }
-                placement_report
-            };
-            let promoted = placement_report.counters.accepted_span_cells == candidates.len() as u64;
-            Self::accumulate_formula_plane_placement_report(&mut report, &placement_report);
-            if promoted {
-                report.source_family_promoted = report.source_family_promoted.saturating_add(1);
-                report.source_family_promoted_cells = report
-                    .source_family_promoted_cells
-                    .saturating_add(candidates.len() as u64);
-                continue;
-            }
-
-            report.source_family_fallback = report.source_family_fallback.saturating_add(1);
-            report.source_family_fallback_cells = report
-                .source_family_fallback_cells
-                .saturating_add(candidates.len() as u64);
-            let source_reason = if placement_report
-                .counters
-                .fallback_reasons
-                .contains_key(&PlacementFallbackReason::NonEquivalentTemplate)
-            {
-                "CanonicalMismatch"
-            } else {
-                "ExistingPlacementGate"
-            };
-            let count = report
-                .fallback_reasons
-                .entry(source_reason.to_string())
-                .or_default();
-            *count = count.saturating_add(1);
-            for (idx, candidate) in family_indices.into_iter().zip(candidates) {
-                if let Some(plan) = plans_by_index[idx].take() {
-                    planned_fallback
-                        .entry(family.sheet_name.clone())
-                        .or_default()
-                        .push((
-                            candidate.row.saturating_add(1),
-                            candidate.col.saturating_add(1),
-                            candidate.ast_id,
-                            plan,
-                        ));
-                } else {
-                    fallback.entry(family.sheet_name.clone()).or_default().push(
-                        FormulaIngestRecord::new(
-                            candidate.row.saturating_add(1),
-                            candidate.col.saturating_add(1),
-                            candidate.ast_id,
-                            candidate.formula_text.clone(),
-                        ),
-                    );
-                }
-            }
-        }
-
-        // Rejected, forced, and exact-resolution-failed source families use the exact
-        // per-cell materialization path for every available analyzed record.
-        for idx in source_claimed.iter().copied() {
-            if source_handled.contains(&idx) {
-                continue;
-            }
-            let (sheet_name, candidate) = &pending_candidates[idx];
-            if let Some(plan) = plans_by_index[idx].take() {
-                planned_fallback
-                    .entry(sheet_name.clone())
-                    .or_default()
-                    .push((
-                        candidate.row.saturating_add(1),
-                        candidate.col.saturating_add(1),
-                        candidate.ast_id,
-                        plan,
-                    ));
-            } else {
-                fallback
-                    .entry(sheet_name.clone())
-                    .or_default()
-                    .push(FormulaIngestRecord::new(
-                        candidate.row.saturating_add(1),
-                        candidate.col.saturating_add(1),
-                        candidate.ast_id,
-                        candidate.formula_text.clone(),
-                    ));
             }
         }
 
         for (idx, (_, candidate)) in pending_candidates.iter().enumerate() {
-            if source_claimed.contains(&idx) || analyses_by_index[idx].is_none() {
+            if analyses_by_index[idx].is_none() {
                 continue;
             }
             let canonical_hash = analyses_by_index[idx]
@@ -4208,74 +3982,13 @@ where
         components
     }
 
-    #[doc(hidden)]
-    pub fn ingest_formula_source_batches(
-        &mut self,
-        batches: Vec<crate::engine::FormulaSourceIngestBatch>,
-    ) -> Result<FormulaIngestReport, ExcelError> {
-        for source_batch in &batches {
-            if source_batch
-                .source_events()
-                .iter()
-                .any(|event| event.sheet_name.as_ref() != source_batch.batch().sheet_name)
-            {
-                return Err(ExcelError::new(ExcelErrorKind::Value)
-                    .with_message("formula source event sheet does not match its ingest batch"));
-            }
-        }
-
-        let mut source_counts = [0_u64; 10];
-        let mut formula_batches = Vec::with_capacity(batches.len());
-        let collect_families = self.config.formula_plane_mode != FormulaPlaneMode::Off;
-        let mut source_events = Vec::new();
-        for source_batch in batches {
-            let (batch, events) = source_batch.into_parts();
-            for event in &events {
-                source_counts[0] = source_counts[0].saturating_add(1);
-                match &event.formula {
-                    crate::engine::FormulaSourceKind::Ordinary { .. } => {
-                        source_counts[1] = source_counts[1].saturating_add(1)
-                    }
-                    crate::engine::FormulaSourceKind::SharedAnchor { .. } => {
-                        source_counts[2] = source_counts[2].saturating_add(1)
-                    }
-                    crate::engine::FormulaSourceKind::SharedDescendant { .. } => {
-                        source_counts[3] = source_counts[3].saturating_add(1)
-                    }
-                    crate::engine::FormulaSourceKind::Unsupported { .. } => {
-                        source_counts[4] = source_counts[4].saturating_add(1)
-                    }
-                }
-            }
-            if collect_families {
-                source_events.extend(events);
-            }
-            formula_batches.push(batch);
-        }
-        let family_report = collect_families.then(|| {
-            crate::engine::formula_family::collect_formula_families(
-                &source_events,
-                crate::engine::formula_family::FormulaFamilyLimits::from_workbook(
-                    &self.workbook_load_limits,
-                ),
-            )
-        });
-        self.ingest_formula_batches_inner(
-            formula_batches,
-            source_counts,
-            family_report,
-            source_events,
-            Vec::new(),
-        )
-    }
-
-    #[doc(hidden)]
-    pub fn prepare_eager_compressed_formula_families(
+    pub(crate) fn prepare_source_formula_families(
         &mut self,
         sheet_name: &str,
-        families: &[crate::engine::CompressedSharedFamily],
+        families: &[crate::engine::SourceFormulaFamily],
     ) -> crate::engine::FormulaCompressedPreparation {
         let mut preparation = crate::engine::FormulaCompressedPreparation {
+            engine_token: Arc::clone(&self.source_formula_token),
             sheet_name: Arc::from(sheet_name),
             prepared: Vec::new(),
             rejected: BTreeMap::new(),
@@ -4299,99 +4012,17 @@ where
                     .insert(family.source_id, "ForcedReplay".to_string());
                 continue;
             }
-            let formula = if family.anchor_text.starts_with('=') {
-                family.anchor_text.to_string()
-            } else {
-                format!("={}", family.anchor_text)
-            };
-            let ast = match formualizer_parse::parser::parse(&formula) {
-                Ok(ast) => ast,
-                Err(_) => {
-                    preparation
-                        .rejected
-                        .insert(family.source_id, "AnchorParseRejected".to_string());
-                    continue;
-                }
-            };
-            let rect = family.domain.rect();
-            let domain = if rect.start.col == rect.end.col {
-                PlacementDomain::row_run(sheet_id, rect.start.row, rect.end.row, rect.start.col)
-            } else if rect.start.row == rect.end.row {
-                PlacementDomain::col_run(sheet_id, rect.start.row, rect.start.col, rect.end.col)
-            } else {
-                PlacementDomain::rect(
-                    sheet_id,
-                    rect.start.row,
-                    rect.end.row,
-                    rect.start.col,
-                    rect.end.col,
-                )
-            };
-            if let Err(reason) = validate_anchor_once_syntax(
-                &ast,
-                family.anchor_coord0.row,
-                family.anchor_coord0.col,
-                &domain,
-            ) {
-                preparation
-                    .rejected
-                    .insert(family.source_id, reason.to_string());
-                continue;
-            }
-            let ast_id = self.intern_formula_ast(&ast);
-            let placement = CellRef::new(
-                sheet_id,
-                Coord::from_excel(
-                    family.anchor_coord0.row + 1,
-                    family.anchor_coord0.col + 1,
-                    true,
-                    true,
-                ),
-            );
-            let ingested = {
-                let mut pipeline = self.ingest_pipeline();
-                pipeline.ingest_formula(
-                    FormulaAstInput::RawArena(ast_id),
-                    placement,
-                    Some(family.anchor_text.clone()),
-                )
-            };
-            let Ok(ingested) = ingested else {
-                preparation
-                    .rejected
-                    .insert(family.source_id, "UnsupportedCanonicalTemplate".to_string());
-                continue;
-            };
-            let candidate = FormulaPlacementCandidate::new(
-                sheet_id,
-                family.anchor_coord0.row,
-                family.anchor_coord0.col,
-                ingested.ast_id,
-                Some(family.anchor_text.clone()),
-            );
-            let analysis = match CandidateAnalysis::from_ingested(&candidate, &ingested) {
-                Ok(analysis) => analysis,
-                Err(reason) => {
-                    preparation
-                        .rejected
-                        .insert(family.source_id, format!("{reason:?}"));
-                    continue;
-                }
-            };
-            match prepare_anchor_once_family(candidate, analysis, domain, family.member_count) {
+            match self.prepare_source_formula_family(sheet_id, family) {
                 Ok(prepared) => preparation.prepared.push((family.source_id, prepared)),
-                Err(reason) => {
-                    preparation
-                        .rejected
-                        .insert(family.source_id, format!("{reason:?}"));
+                Err(error) => {
+                    preparation.rejected.insert(family.source_id, error.reason);
                 }
             }
         }
         preparation
     }
 
-    #[doc(hidden)]
-    pub fn finish_eager_compressed_formula_sources(
+    fn finish_eager_compressed_formula_sources(
         &mut self,
         batches: Vec<(
             FormulaIngestBatch,
@@ -4399,13 +4030,21 @@ where
             crate::engine::FormulaCompressedPreparation,
         )>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        if batches.iter().any(|(_, _, preparation)| {
+            !Arc::ptr_eq(&preparation.engine_token, &self.source_formula_token)
+        }) {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("compressed formula preparation belongs to another engine"));
+        }
+        if batches.iter().any(|(fallback, _, preparation)| {
+            preparation.sheet_name.as_ref() != fallback.sheet_name
+        }) {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("compressed formula preparation sheet mismatch"));
+        }
         let mut fallback_batches = Vec::with_capacity(batches.len());
         let mut prepared_families = Vec::new();
         for (fallback, mut source, preparation) in batches {
-            if preparation.sheet_name.as_ref() != fallback.sheet_name {
-                return Err(ExcelError::new(ExcelErrorKind::Value)
-                    .with_message("compressed formula preparation sheet mismatch"));
-            }
             for reason in preparation.rejected.values() {
                 *source.fallback_reasons.entry(reason.clone()).or_default() += 1;
             }
@@ -4476,8 +4115,7 @@ where
     }
 
     /// Ingest replayed per-cell formulas while preserving compressed source counters.
-    #[doc(hidden)]
-    pub fn ingest_compressed_formula_source_batches(
+    pub(crate) fn ingest_compressed_formula_source_batches(
         &mut self,
         batches: Vec<(
             FormulaIngestBatch,
@@ -4485,7 +4123,7 @@ where
         )>,
     ) -> Result<FormulaIngestReport, ExcelError> {
         let mut source_counts = [0_u64; 10];
-        let mut family = crate::engine::formula_family::FormulaFamilyCollection::default();
+        let mut source_report = crate::engine::FormulaCompressedSourceReport::default();
         let mut formula_batches = Vec::with_capacity(batches.len());
         let mut compressed_families = Vec::new();
         for (batch, compressed_batch) in batches {
@@ -4511,44 +4149,42 @@ where
             source_counts[8] =
                 source_counts[8].saturating_add(compressed.source_spool_spilled_bytes);
             source_counts[9] = source_counts[9].saturating_add(compressed.source_spool_replays);
-            family.report.families_seen = family
-                .report
+            source_report.families_seen = source_report
                 .families_seen
                 .saturating_add(compressed.families_seen);
-            family.report.family_cells_seen = family
-                .report
+            source_report.family_cells_seen = source_report
                 .family_cells_seen
                 .saturating_add(compressed.family_cells_seen);
-            family.report.fallback_families = family
-                .report
-                .fallback_families
+            source_report.source_clean_families = source_report
+                .source_clean_families
+                .saturating_add(compressed.source_clean_families);
+            source_report.source_clean_cells = source_report
+                .source_clean_cells
+                .saturating_add(compressed.source_clean_cells);
+            source_report.replay_families = source_report
+                .replay_families
                 .saturating_add(compressed.replay_families);
-            family.report.fallback_cells = family
-                .report
-                .fallback_cells
+            source_report.replay_cells = source_report
+                .replay_cells
                 .saturating_add(compressed.replay_cells);
-            family.report.forward_descendants = family
-                .report
+            source_report.forward_descendants = source_report
                 .forward_descendants
                 .saturating_add(compressed.forward_descendants);
-            family.report.evidence_limit_fallbacks = family
-                .report
+            source_report.evidence_limit_fallbacks = source_report
                 .evidence_limit_fallbacks
                 .saturating_add(compressed.evidence_limit_fallbacks);
-            family.report.evidence_peak_bytes = family
-                .report
+            source_report.evidence_peak_bytes = source_report
                 .evidence_peak_bytes
                 .max(compressed.evidence_peak_bytes);
             for (reason, count) in compressed.fallback_reasons {
-                *family.report.fallback_reasons.entry(reason).or_default() += count;
+                *source_report.fallback_reasons.entry(reason).or_default() += count;
             }
             formula_batches.push(batch);
         }
         self.ingest_formula_batches_inner(
             formula_batches,
             source_counts,
-            Some(family),
-            Vec::new(),
+            Some(source_report),
             compressed_families,
         )
     }
@@ -4557,21 +4193,15 @@ where
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        self.ingest_formula_source_batches(
-            batches
-                .into_iter()
-                .map(crate::engine::FormulaSourceIngestBatch::without_source)
-                .collect(),
-        )
+        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new())
     }
 
     fn ingest_formula_batches_inner(
         &mut self,
         batches: Vec<FormulaIngestBatch>,
         source_counts: [u64; 10],
-        family_report: Option<crate::engine::formula_family::FormulaFamilyCollection>,
-        source_events: Vec<crate::engine::FormulaSourceEvent>,
-        compressed_families: Vec<(String, Vec<crate::engine::CompressedSharedFamily>)>,
+        source_report: Option<crate::engine::FormulaCompressedSourceReport>,
+        compressed_families: Vec<(String, Vec<crate::engine::SourceFormulaFamily>)>,
     ) -> Result<FormulaIngestReport, ExcelError> {
         let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
         #[cfg(feature = "benchmark_internal")]
@@ -4604,14 +4234,9 @@ where
                     batches,
                     BTreeMap::new(),
                 ),
-                FormulaPlaneMode::AuthoritativeExperimental => self
-                    .analyze_formula_plane_authoritative_ingest(
-                        &batches,
-                        family_report
-                            .as_ref()
-                            .map_or(&[], |collection| collection.eligible.as_slice()),
-                        &source_events,
-                    ),
+                FormulaPlaneMode::AuthoritativeExperimental => {
+                    self.analyze_formula_plane_authoritative_ingest(&batches)
+                }
             }
         };
         report.formula_cells_seen = formula_cells_seen;
@@ -4625,22 +4250,21 @@ where
         report.source_spool_peak_memory_bytes = source_counts[7];
         report.source_spool_spilled_bytes = source_counts[8];
         report.source_spool_replays = source_counts[9];
-        if let Some(collection) = family_report {
-            let family = collection.report;
-            report.source_families_seen = family.families_seen;
-            report.source_family_cells_seen = family.family_cells_seen;
-            report.source_family_shadow_eligible = family.eligible_families;
-            report.source_family_shadow_eligible_cells = family.eligible_cells;
+        if let Some(source) = source_report {
+            report.source_families_seen = source.families_seen;
+            report.source_family_cells_seen = source.family_cells_seen;
+            report.source_family_shadow_eligible = source.source_clean_families;
+            report.source_family_shadow_eligible_cells = source.source_clean_cells;
             report.source_family_fallback = report
                 .source_family_fallback
-                .saturating_add(family.fallback_families);
+                .saturating_add(source.replay_families);
             report.source_family_fallback_cells = report
                 .source_family_fallback_cells
-                .saturating_add(family.fallback_cells);
-            report.source_forward_descendants = family.forward_descendants;
-            report.source_evidence_limit_fallbacks = family.evidence_limit_fallbacks;
-            report.source_evidence_peak_bytes = family.evidence_peak_bytes;
-            for (reason, count) in family.fallback_reasons {
+                .saturating_add(source.replay_cells);
+            report.source_forward_descendants = source.forward_descendants;
+            report.source_evidence_limit_fallbacks = source.evidence_limit_fallbacks;
+            report.source_evidence_peak_bytes = source.evidence_peak_bytes;
+            for (reason, count) in source.fallback_reasons {
                 let total = report.fallback_reasons.entry(reason).or_default();
                 *total = total.saturating_add(count);
             }
@@ -4726,141 +4350,10 @@ where
 
     /// Build graph for all staged formulas.
     pub fn build_graph_all(&mut self) -> Result<(), formualizer_parse::ExcelError> {
-        if self.staged_formulas.is_empty() {
-            return Ok(());
-        }
-        // Take staged formulas before borrowing graph via builder.
-        let staged = std::mem::take(&mut self.staged_formulas);
-        for sheet in staged.keys() {
-            let _ = self.add_sheet(sheet);
-        }
-
-        // Parse/recover first, then pass prepared batches through the centralized ingest seam.
-        let mut prepared: PreparedFormulaBatches = Vec::new();
-        let mut compressed_prepared: Vec<(
-            FormulaIngestBatch,
-            crate::engine::FormulaCompressedSourceBatch,
-        )> = Vec::new();
-        let mut deferred_direct = Vec::new();
-        for (sheet, staged_sheet) in staged {
-            let (mut entries, source_events, compressed, compressed_families, package) =
-                staged_sheet.into_parts();
-            let mut deferred_source = None;
-            let mut deferred_fallback = None;
-            if let Some(mut package) = package {
-                if package.sheet_name != sheet {
-                    return Err(ExcelError::new(ExcelErrorKind::Value)
-                        .with_message("deferred formula package sheet mismatch"));
-                }
-                let eligible: Vec<_> = package
-                    .families
-                    .iter()
-                    .filter(|family| !package.invalidated.contains(&family.source_id))
-                    .cloned()
-                    .collect();
-                let preparation = (self.config.formula_plane_mode
-                    == FormulaPlaneMode::AuthoritativeExperimental)
-                    .then(|| self.prepare_eager_compressed_formula_families(&sheet, &eligible));
-                let direct: BTreeSet<_> = preparation
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|preparation| preparation.prepared.iter())
-                    .map(|(family, _)| *family)
-                    .collect();
-                let replayed = package
-                    .replay
-                    .lock()
-                    .map_err(|_| {
-                        ExcelError::new(ExcelErrorKind::Value)
-                            .with_message("deferred formula spool lock poisoned")
-                    })?
-                    .replay(&direct, &package.suppressed)
-                    .map_err(|message| {
-                        ExcelError::new(ExcelErrorKind::Value).with_message(message)
-                    })?;
-                package.report.source_spool_replays =
-                    package.report.source_spool_replays.saturating_add(1);
-                entries.extend(
-                    replayed
-                        .into_iter()
-                        .map(|record| (record.row, record.col, record.text)),
-                );
-                if let Some(preparation) = preparation {
-                    deferred_source = Some((package.report, preparation));
-                } else {
-                    deferred_fallback = Some((package.report, package.families));
-                }
-            }
-            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
-            let mut cache: rustc_hash::FxHashMap<String, Option<crate::engine::arena::AstNodeId>> =
-                rustc_hash::FxHashMap::default();
-            cache.reserve(4096);
-
-            for (row, col, txt) in entries {
-                let key = if txt.starts_with('=') {
-                    txt
-                } else {
-                    format!("={txt}")
-                };
-                let ast_id = if let Some(cached) = cache.get(&key) {
-                    *cached
-                } else {
-                    let parsed = match formualizer_parse::parser::parse(&key) {
-                        Ok(parsed) => Some(parsed),
-                        Err(e) => {
-                            self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
-                        }
-                    };
-                    let ast_id = parsed.as_ref().map(|ast| self.intern_formula_ast(ast));
-                    cache.insert(key.clone(), ast_id);
-                    ast_id
-                };
-
-                if let Some(ast_id) = ast_id {
-                    formulas.push(FormulaIngestRecord::new(
-                        row,
-                        col,
-                        ast_id,
-                        Some(Arc::<str>::from(key.clone())),
-                    ));
-                }
-            }
-
-            let batch = FormulaIngestBatch::new(sheet, formulas);
-            if let Some((report, preparation)) = deferred_source {
-                deferred_direct.push((batch, report, preparation));
-            } else if let Some((report, families)) = deferred_fallback {
-                let compressed = crate::engine::FormulaCompressedSourceBatch::with_families(
-                    batch.sheet_name.clone(),
-                    report,
-                    families,
-                );
-                compressed_prepared.push((batch, compressed));
-            } else if let Some(report) = compressed {
-                let compressed = crate::engine::FormulaCompressedSourceBatch::with_families(
-                    batch.sheet_name.clone(),
-                    report,
-                    compressed_families,
-                );
-                compressed_prepared.push((batch, compressed));
-            } else if !batch.is_empty() || !source_events.is_empty() {
-                prepared.push(crate::engine::FormulaSourceIngestBatch::new(
-                    batch,
-                    source_events,
-                ));
-            }
-        }
-
-        if !prepared.is_empty() {
-            let _ = self.ingest_formula_source_batches(prepared)?;
-        }
-        if !compressed_prepared.is_empty() {
-            let _ = self.ingest_compressed_formula_source_batches(compressed_prepared)?;
-        }
-        if !deferred_direct.is_empty() {
-            let _ = self.finish_eager_compressed_formula_sources(deferred_direct)?;
-        }
-        Ok(())
+        let collected = std::mem::take(&mut self.staged_formulas)
+            .into_iter()
+            .collect();
+        self.build_graph_from_staged_batches(collected, false)
     }
 
     /// Build graph for specific sheets (consuming only those staged entries).
@@ -4868,48 +4361,78 @@ where
         &mut self,
         sheets: I,
     ) -> Result<(), formualizer_parse::ExcelError> {
-        let mut collected: StagedFormulaBatches = Vec::new();
-        for s in sheets {
-            if let Some(entries) = self.staged_formulas.remove(s) {
-                let (formulas, source_events, compressed, compressed_families, package) =
-                    entries.into_parts();
-                collected.push((
-                    s.to_string(),
-                    formulas,
-                    source_events,
-                    compressed,
-                    compressed_families,
-                    package,
-                ));
+        let mut collected = Vec::new();
+        for sheet in sheets {
+            if let Some(staged) = self.staged_formulas.remove(sheet) {
+                collected.push((sheet.to_string(), staged));
             }
         }
+        self.build_graph_from_staged_batches(collected, true)
+    }
 
+    fn build_graph_from_staged_batches(
+        &mut self,
+        collected: StagedFormulaBatches,
+        share_parse_cache_across_sheets: bool,
+    ) -> Result<(), formualizer_parse::ExcelError> {
         if collected.is_empty() {
             return Ok(());
         }
-
-        for (sheet, _, _, _, _, _) in &collected {
+        for (sheet, _) in &collected {
             let _ = self.add_sheet(sheet);
         }
 
-        // Parse/recover first, then pass prepared batches through the centralized ingest seam.
-        let mut prepared: PreparedFormulaBatches = Vec::new();
-        let mut compressed_prepared: Vec<(
-            FormulaIngestBatch,
-            crate::engine::FormulaCompressedSourceBatch,
-        )> = Vec::new();
+        let diagnostics_len = self.formula_parse_diagnostics.len();
+        let mut collected = collected;
+        let prepared = match self
+            .prepare_staged_formula_batches(&mut collected, share_parse_cache_across_sheets)
+        {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.formula_parse_diagnostics.truncate(diagnostics_len);
+                for (sheet, staged) in collected {
+                    self.staged_formulas.insert(sheet, staged);
+                }
+                return Err(error);
+            }
+        };
+        let (ordinary, compressed, direct) = prepared;
+
+        // Deferred packages are consumed exactly once once authority commit starts.
+        // Pre-commit lock, replay, and parse failures restore them above for retry.
+        if !ordinary.is_empty() {
+            let _ = self.ingest_formula_batches(ordinary)?;
+        }
+        if !compressed.is_empty() {
+            let _ = self.ingest_compressed_formula_source_batches(compressed)?;
+        }
+        if !direct.is_empty() {
+            let _ = self.finish_eager_compressed_formula_sources(direct)?;
+        }
+        Ok(())
+    }
+
+    fn prepare_staged_formula_batches(
+        &mut self,
+        collected: &mut StagedFormulaBatches,
+        share_parse_cache_across_sheets: bool,
+    ) -> Result<PreparedStagedFormulaBatches, formualizer_parse::ExcelError> {
+        let mut ordinary = Vec::new();
+        let mut compressed = Vec::new();
+        let mut direct = Vec::new();
         let mut cache: rustc_hash::FxHashMap<String, Option<crate::engine::arena::AstNodeId>> =
             rustc_hash::FxHashMap::default();
         cache.reserve(4096);
-        let mut deferred_direct = Vec::new();
 
-        for (sheet, mut entries, source_events, compressed, compressed_families, package) in
-            collected
-        {
+        for (sheet, staged) in collected {
+            if !share_parse_cache_across_sheets {
+                cache.clear();
+            }
+            let mut entries = staged.entries.clone();
             let mut deferred_source = None;
             let mut deferred_fallback = None;
-            if let Some(mut package) = package {
-                if package.sheet_name != sheet {
+            if let Some(package) = staged.deferred_package.as_mut() {
+                if package.sheet_name != *sheet {
                     return Err(ExcelError::new(ExcelErrorKind::Value)
                         .with_message("deferred formula package sheet mismatch"));
                 }
@@ -4921,8 +4444,8 @@ where
                     .collect();
                 let preparation = (self.config.formula_plane_mode
                     == FormulaPlaneMode::AuthoritativeExperimental)
-                    .then(|| self.prepare_eager_compressed_formula_families(&sheet, &eligible));
-                let direct: BTreeSet<_> = preparation
+                    .then(|| self.prepare_source_formula_families(sheet, &eligible));
+                let direct_families: BTreeSet<_> = preparation
                     .as_ref()
                     .into_iter()
                     .flat_map(|preparation| preparation.prepared.iter())
@@ -4935,24 +4458,25 @@ where
                         ExcelError::new(ExcelErrorKind::Value)
                             .with_message("deferred formula spool lock poisoned")
                     })?
-                    .replay(&direct, &package.suppressed)
+                    .replay(&direct_families, &package.suppressed)
                     .map_err(|message| {
                         ExcelError::new(ExcelErrorKind::Value).with_message(message)
                     })?;
-                package.report.source_spool_replays =
-                    package.report.source_spool_replays.saturating_add(1);
                 entries.extend(
                     replayed
                         .into_iter()
                         .map(|record| (record.row, record.col, record.text)),
                 );
+                let mut report = package.report.clone();
+                report.source_spool_replays = report.source_spool_replays.saturating_add(1);
                 if let Some(preparation) = preparation {
-                    deferred_source = Some((package.report, preparation));
+                    deferred_source = Some((report, preparation));
                 } else {
-                    deferred_fallback = Some((package.report, package.families));
+                    deferred_fallback = Some((report, package.families.clone()));
                 }
             }
-            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
+
+            let mut formulas = Vec::new();
             for (row, col, txt) in entries {
                 let key = if txt.starts_with('=') {
                     txt
@@ -4964,9 +4488,13 @@ where
                 } else {
                     let parsed = match formualizer_parse::parser::parse(&key) {
                         Ok(parsed) => Some(parsed),
-                        Err(e) => {
-                            self.handle_formula_parse_error(&sheet, row, col, &key, e.to_string())?
-                        }
+                        Err(error) => self.handle_formula_parse_error(
+                            sheet,
+                            row,
+                            col,
+                            &key,
+                            error.to_string(),
+                        )?,
                     };
                     let ast_id = parsed.as_ref().map(|ast| self.intern_formula_ast(ast));
                     cache.insert(key.clone(), ast_id);
@@ -4982,41 +4510,22 @@ where
                     ));
                 }
             }
-            let batch = FormulaIngestBatch::new(sheet, formulas);
+
+            let batch = FormulaIngestBatch::new(sheet.clone(), formulas);
             if let Some((report, preparation)) = deferred_source {
-                deferred_direct.push((batch, report, preparation));
+                direct.push((batch, report, preparation));
             } else if let Some((report, families)) = deferred_fallback {
-                let compressed = crate::engine::FormulaCompressedSourceBatch::with_families(
+                let source_batch = crate::engine::FormulaCompressedSourceBatch::with_families(
                     batch.sheet_name.clone(),
                     report,
                     families,
                 );
-                compressed_prepared.push((batch, compressed));
-            } else if let Some(report) = compressed {
-                let compressed = crate::engine::FormulaCompressedSourceBatch::with_families(
-                    batch.sheet_name.clone(),
-                    report,
-                    compressed_families,
-                );
-                compressed_prepared.push((batch, compressed));
-            } else if !batch.is_empty() || !source_events.is_empty() {
-                prepared.push(crate::engine::FormulaSourceIngestBatch::new(
-                    batch,
-                    source_events,
-                ));
+                compressed.push((batch, source_batch));
+            } else if !batch.is_empty() {
+                ordinary.push(batch);
             }
         }
-
-        if !prepared.is_empty() {
-            let _ = self.ingest_formula_source_batches(prepared)?;
-        }
-        if !compressed_prepared.is_empty() {
-            let _ = self.ingest_compressed_formula_source_batches(compressed_prepared)?;
-        }
-        if !deferred_direct.is_empty() {
-            let _ = self.finish_eager_compressed_formula_sources(deferred_direct)?;
-        }
-        Ok(())
+        Ok((ordinary, compressed, direct))
     }
 
     /// Begin bulk Arrow ingest for base values (Phase A)

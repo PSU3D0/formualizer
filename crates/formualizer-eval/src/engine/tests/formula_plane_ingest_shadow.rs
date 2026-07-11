@@ -1,13 +1,68 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::engine::{
-    Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaMetadataEnvelope,
-    FormulaPlaneMode, FormulaSourceEvent, FormulaSourceKind, RowVisibilitySource,
-    SourceCachedValue, SourceCoord, SourceFamilyId, SourceRect,
+    DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
+    ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
+    PlacementDomainTransport, RowVisibilitySource, SourceCoord, SourceFamilyId,
+    SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
+
+struct TestDeferredReplay {
+    text: &'static str,
+    fail_once: bool,
+    panic_at: bool,
+}
+
+impl DeferredFormulaReplay for TestDeferredReplay {
+    fn replay(
+        &mut self,
+        _skip_families: &BTreeSet<SourceFamilyId>,
+        _suppressed: &BTreeSet<(u32, u32)>,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        if self.fail_once {
+            self.fail_once = false;
+            return Err("injected replay failure".to_string());
+        }
+        Ok(vec![DeferredReplayFormula {
+            row: 1,
+            col: 1,
+            text: self.text.to_string(),
+            family: None,
+        }])
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        assert!(!self.panic_at, "injected formula_at panic");
+        Ok(Some(DeferredReplayFormula {
+            row,
+            col,
+            text: self.text.to_string(),
+            family: None,
+        }))
+    }
+}
+
+fn deferred_package(text: &'static str, fail_once: bool, panic_at: bool) -> DeferredFormulaPackage {
+    let report = FormulaCompressedSourceReport {
+        source_formula_records_spooled: 1,
+        ..FormulaCompressedSourceReport::default()
+    };
+    DeferredFormulaPackage::new(
+        "Sheet1".to_string(),
+        report,
+        Vec::new(),
+        Box::new(TestDeferredReplay {
+            text,
+            fail_once,
+            panic_at,
+        }),
+    )
+}
 
 fn record(
     engine: &mut Engine<TestWorkbook>,
@@ -826,712 +881,300 @@ fn formula_plane_remove_sheet_hosting_span_removes_active_span() {
     assert!(engine.graph.sheet_id("Other").is_none());
 }
 
-fn source_event(sheet: &str, row0: u32, col0: u32, sequence: u64) -> FormulaSourceEvent {
-    FormulaSourceEvent {
-        sheet_name: Arc::from(sheet),
-        coord0: SourceCoord {
-            row: row0,
-            col: col0,
-        },
-        source_sequence: sequence,
-        formula: FormulaSourceKind::Ordinary {
-            formula: Arc::from("1+1"),
-            metadata: FormulaMetadataEnvelope::XlsxOrdinary,
-        },
-        cached: SourceCachedValue::AbsentOrEmpty,
-    }
-}
-
-fn shared_source_events(sheet: &str) -> Vec<FormulaSourceEvent> {
-    let family = SourceFamilyId {
-        sheet_instance: 0,
-        shared_index: 9,
-    };
-    let range = SourceRect {
-        start: SourceCoord { row: 0, col: 0 },
-        end: SourceCoord { row: 1, col: 0 },
-    };
-    vec![
-        FormulaSourceEvent {
-            sheet_name: Arc::from(sheet),
-            coord0: SourceCoord { row: 0, col: 0 },
-            source_sequence: 0,
-            formula: FormulaSourceKind::SharedAnchor {
-                family,
-                declared_range: Some(range),
-                formula: Arc::from("1+1"),
-                metadata: FormulaMetadataEnvelope::XlsxShared {
-                    shared_index: 9,
-                    parsed_range: Some(range),
-                },
-            },
-            cached: SourceCachedValue::AbsentOrEmpty,
-        },
-        FormulaSourceEvent {
-            sheet_name: Arc::from(sheet),
-            coord0: SourceCoord { row: 1, col: 0 },
-            source_sequence: 1,
-            formula: FormulaSourceKind::SharedDescendant {
-                family,
-                metadata: FormulaMetadataEnvelope::XlsxShared {
-                    shared_index: 9,
-                    parsed_range: None,
-                },
-            },
-            cached: SourceCachedValue::AbsentOrEmpty,
-        },
-    ]
-}
-
 #[test]
-fn shadow_family_collection_has_eager_deferred_parity_and_no_output_authority() {
-    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
-    let mut eager = Engine::new(TestWorkbook::default(), cfg.clone());
-    let eager_records = vec![
-        record(&mut eager, 1, 1, "=1+1"),
-        record(&mut eager, 2, 1, "=1+1"),
-    ];
-    let eager_report = eager
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            FormulaIngestBatch::new("Sheet1", eager_records),
-            shared_source_events("Sheet1"),
-        )])
-        .unwrap();
-    eager.evaluate_all().unwrap();
-
-    let mut deferred = Engine::new(TestWorkbook::default(), cfg);
-    deferred.stage_formula_text("Sheet1", 1, 1, "=1+1".into());
-    deferred.stage_formula_text("Sheet1", 2, 1, "=1+1".into());
-    deferred.stage_formula_source_events("Sheet1", shared_source_events("Sheet1"));
-    deferred.build_graph_all().unwrap();
-    deferred.evaluate_all().unwrap();
-
-    assert_eq!(deferred.last_formula_ingest_report(), Some(&eager_report));
-    assert_eq!(eager_report.source_families_seen, 1);
-    assert_eq!(eager_report.source_family_shadow_eligible, 1);
-    assert_eq!(eager_report.source_family_shadow_eligible_cells, 2);
-    assert_eq!(eager_report.source_family_fallback_cells, 0);
-    assert_eq!(eager_report.graph_formula_cells_materialized, 2);
-    assert_eq!(eager.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(deferred.baseline_stats().formula_plane_active_span_count, 0);
-    assert_eq!(
-        eager.get_cell_value("Sheet1", 2, 1),
-        deferred.get_cell_value("Sheet1", 2, 1)
-    );
-}
-
-#[test]
-fn off_mode_skips_family_collection_but_preserves_source_event_counts() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
-    let records = vec![
-        record(&mut engine, 1, 1, "=1+1"),
-        record(&mut engine, 2, 1, "=1+1"),
-    ];
-    let report = engine
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            FormulaIngestBatch::new("Sheet1", records),
-            shared_source_events("Sheet1"),
-        )])
-        .unwrap();
-    assert_eq!(report.source_formula_events, 2);
-    assert_eq!(report.source_families_seen, 0);
-    assert_eq!(report.source_evidence_peak_bytes, 0);
-    assert_eq!(report.graph_formula_cells_materialized, 2);
-}
-
-#[test]
-fn authoritative_source_collection_does_not_change_existing_placement() {
+fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explicit_authority() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut plain = Engine::new(TestWorkbook::default(), cfg.clone());
-    let mut sourced = Engine::new(TestWorkbook::default(), cfg);
-    let mut plain_records = Vec::new();
-    let mut sourced_records = Vec::new();
-    let family = SourceFamilyId {
-        sheet_instance: 0,
-        shared_index: 3,
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let id = |source_index| SourceFamilyId {
+        sheet_instance: 1,
+        source_index,
     };
-    let range = SourceRect {
-        start: SourceCoord { row: 0, col: 1 },
-        end: SourceCoord { row: 99, col: 1 },
-    };
-    let mut events = Vec::new();
-    for row in 1..=100 {
-        plain
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
-        sourced
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
-        let formula = format!("=A{row}+1");
-        plain_records.push(record(&mut plain, row, 2, &formula));
-        sourced_records.push(record(&mut sourced, row, 2, &formula));
-        events.push(FormulaSourceEvent {
-            sheet_name: Arc::from("Sheet1"),
-            coord0: SourceCoord {
-                row: row - 1,
-                col: 1,
-            },
-            source_sequence: u64::from(row - 1),
-            formula: if row == 1 {
-                FormulaSourceKind::SharedAnchor {
-                    family,
-                    declared_range: Some(range),
-                    formula: Arc::from("A1+1"),
-                    metadata: FormulaMetadataEnvelope::XlsxShared {
-                        shared_index: 3,
-                        parsed_range: Some(range),
-                    },
-                }
-            } else {
-                FormulaSourceKind::SharedDescendant {
-                    family,
-                    metadata: FormulaMetadataEnvelope::XlsxShared {
-                        shared_index: 3,
-                        parsed_range: None,
-                    },
-                }
-            },
-            cached: SourceCachedValue::AbsentOrEmpty,
-        });
-    }
-    let plain_report = plain
-        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", plain_records)])
-        .unwrap();
-    let source_report = sourced
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            FormulaIngestBatch::new("Sheet1", sourced_records),
-            events,
-        )])
-        .unwrap();
-
-    assert_eq!(
-        source_report.graph_formula_cells_materialized,
-        plain_report.graph_formula_cells_materialized
-    );
-    assert_eq!(
-        source_report.shadow_accepted_span_cells,
-        plain_report.shadow_accepted_span_cells
-    );
-    assert_eq!(sourced.baseline_stats(), plain.baseline_stats());
-    assert_eq!(source_report.source_family_shadow_eligible, 1);
-    plain.evaluate_all().unwrap();
-    sourced.evaluate_all().unwrap();
-    assert_eq!(
-        sourced.get_cell_value("Sheet1", 100, 2),
-        plain.get_cell_value("Sheet1", 100, 2)
-    );
-}
-
-#[test]
-fn deferred_source_events_reach_central_ingest_with_eager_parity() {
-    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
-    let mut eager = Engine::new(TestWorkbook::default(), cfg.clone());
-    let eager_record = record(&mut eager, 1, 1, "=1+1");
-    let eager_report = eager
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            FormulaIngestBatch::new("Sheet1", vec![eager_record]),
-            vec![source_event("Sheet1", 0, 0, 0)],
-        )])
-        .unwrap();
-
-    let mut deferred = Engine::new(TestWorkbook::default(), cfg);
-    deferred.stage_formula_text("Sheet1", 1, 1, "=1+1".into());
-    deferred.stage_formula_source_events("Sheet1", vec![source_event("Sheet1", 0, 0, 0)]);
-    deferred.build_graph_all().unwrap();
-    let deferred_report = deferred.last_formula_ingest_report().unwrap();
-
-    assert_eq!(deferred_report, &eager_report);
-    assert_eq!(deferred_report.source_formula_events, 1);
-    assert_eq!(deferred_report.source_ordinary_events, 1);
-    assert!(!deferred.has_staged_formulas());
-}
-
-#[test]
-fn deferred_selected_build_isolates_source_events() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
-    for sheet in ["Selected", "Other"] {
-        engine.stage_formula_text(sheet, 1, 1, "=1+1".into());
-        engine.stage_formula_source_events(sheet, vec![source_event(sheet, 0, 0, 0)]);
-    }
-
-    engine.build_graph_for_sheets(["Selected"]).unwrap();
-    assert_eq!(
-        engine
-            .last_formula_ingest_report()
-            .unwrap()
-            .source_formula_events,
-        1
-    );
-    assert_eq!(engine.staged_formula_count(), 1);
-    assert_eq!(
-        engine.get_staged_formula_text("Other", 1, 1).as_deref(),
-        Some("=1+1")
-    );
-
-    engine.build_graph_all().unwrap();
-    assert_eq!(
-        engine
-            .last_formula_ingest_report()
-            .unwrap()
-            .source_formula_events,
-        1
-    );
-    assert!(!engine.has_staged_formulas());
-}
-
-#[test]
-fn staged_rename_moves_and_remove_clears_source_events() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
-    engine.stage_formula_text("Old", 1, 1, "=1+1".into());
-    engine.stage_formula_source_events("Old", vec![source_event("Old", 0, 0, 0)]);
-    engine.rename_staged_formula_sheet("Old", "New");
-    assert_eq!(
-        engine.get_staged_formula_text("New", 1, 1).as_deref(),
-        Some("=1+1")
-    );
-    engine.build_graph_all().unwrap();
-    assert_eq!(
-        engine
-            .last_formula_ingest_report()
-            .unwrap()
-            .source_formula_events,
-        1
-    );
-
-    engine.stage_formula_text("Gone", 1, 1, "=2+2".into());
-    engine.stage_formula_source_events("Gone", vec![source_event("Gone", 0, 0, 0)]);
-    assert_eq!(
-        engine.clear_staged_formula_text("Gone", 1, 1).as_deref(),
-        Some("=2+2")
-    );
-    assert!(!engine.has_staged_formulas());
-}
-
-#[test]
-fn interactive_replacement_preserves_text_and_clears_source_provenance() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
-    engine.stage_formula_text("Sheet1", 1, 1, "=1+1".into());
-    engine.stage_formula_source_events("Sheet1", vec![source_event("Sheet1", 0, 0, 0)]);
-    engine.stage_formula_text("Sheet1", 1, 1, "=3+4".into());
-
-    assert_eq!(
-        engine.get_staged_formula_text("Sheet1", 1, 1).as_deref(),
-        Some("=3+4")
-    );
-    engine.build_graph_all().unwrap();
-    assert_eq!(
-        engine
-            .last_formula_ingest_report()
-            .unwrap()
-            .source_formula_events,
-        0
-    );
-}
-
-#[test]
-fn duplicate_replacement_keeps_latest_text_and_raw_source_events() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
-    engine.stage_formula_text("Sheet1", 1, 1, "=1+1".into());
-    engine.stage_formula_text("Sheet1", 1, 1, "=2+2".into());
-    engine.stage_formula_source_events(
-        "Sheet1",
-        vec![
-            source_event("Sheet1", 0, 0, 0),
-            source_event("Sheet1", 0, 0, 1),
-        ],
-    );
-    assert_eq!(engine.staged_formula_count(), 1);
-    assert_eq!(
-        engine.get_staged_formula_text("Sheet1", 1, 1).as_deref(),
-        Some("=2+2")
-    );
-    engine.build_graph_all().unwrap();
-    assert_eq!(
-        engine
-            .last_formula_ingest_report()
-            .unwrap()
-            .source_formula_events,
-        2
-    );
-}
-
-#[test]
-fn deferred_parse_error_does_not_report_or_retain_source_events() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
-    engine.stage_formula_text("Sheet1", 1, 1, "=SUM(".into());
-    engine.stage_formula_source_events("Sheet1", vec![source_event("Sheet1", 0, 0, 0)]);
-    assert!(engine.build_graph_all().is_err());
-    assert!(engine.last_formula_ingest_report().is_none());
-    assert!(!engine.has_staged_formulas());
-}
-
-#[test]
-fn source_metadata_validation_precedes_graph_ingest() {
-    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
-    let formula = record(&mut engine, 1, 1, "=1+1");
-    let result =
-        engine.ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            FormulaIngestBatch::new("Sheet1", vec![formula]),
-            vec![source_event("WrongSheet", 0, 0, 0)],
-        )]);
-    assert!(result.is_err());
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
-    assert!(engine.last_formula_ingest_report().is_none());
-}
-
-fn direct_source_family(
-    engine: &mut Engine<TestWorkbook>,
-    id: SourceFamilyId,
-    coords0: &[(u32, u32)],
-    formulas: &[&str],
-) -> (FormulaIngestBatch, Vec<FormulaSourceEvent>) {
-    let min_row = coords0.iter().map(|coord| coord.0).min().unwrap();
-    let min_col = coords0.iter().map(|coord| coord.1).min().unwrap();
-    let max_row = coords0.iter().map(|coord| coord.0).max().unwrap();
-    let max_col = coords0.iter().map(|coord| coord.1).max().unwrap();
-    let range = SourceRect {
-        start: SourceCoord {
-            row: min_row,
-            col: min_col,
+    let complete = vec![
+        SourceFormulaFamily {
+            source_id: id(1),
+            anchor_coord0: SourceCoord { row: 0, col: 0 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 2,
+                col: 0,
+            }),
+            member_count: 3,
         },
-        end: SourceCoord {
-            row: max_row,
-            col: max_col,
+        SourceFormulaFamily {
+            source_id: id(2),
+            anchor_coord0: SourceCoord { row: 0, col: 2 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::ColRun {
+                row: 0,
+                col_start: 2,
+                col_end: 4,
+            }),
+            member_count: 3,
         },
-    };
-    let records = coords0
-        .iter()
-        .zip(formulas)
-        .map(|(&(row, col), formula)| record(engine, row + 1, col + 1, formula))
-        .collect();
-    let events = coords0
-        .iter()
-        .zip(formulas)
-        .enumerate()
-        .map(|(sequence, (&(row, col), formula))| FormulaSourceEvent {
-            sheet_name: Arc::from("Sheet1"),
-            coord0: SourceCoord { row, col },
-            source_sequence: sequence as u64,
-            formula: if sequence == 0 {
-                FormulaSourceKind::SharedAnchor {
-                    family: id,
-                    declared_range: Some(range),
-                    formula: Arc::from(formula.trim_start_matches('=')),
-                    metadata: FormulaMetadataEnvelope::XlsxShared {
-                        shared_index: id.shared_index,
-                        parsed_range: Some(range),
-                    },
-                }
-            } else {
-                FormulaSourceKind::SharedDescendant {
-                    family: id,
-                    metadata: FormulaMetadataEnvelope::XlsxShared {
-                        shared_index: id.shared_index,
-                        parsed_range: None,
-                    },
-                }
-            },
-            cached: SourceCachedValue::AbsentOrEmpty,
-        })
-        .collect();
-    (FormulaIngestBatch::new("Sheet1", records), events)
+        SourceFormulaFamily {
+            source_id: id(3),
+            anchor_coord0: SourceCoord { row: 4, col: 4 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::Rect(
+                SourceRect {
+                    start: SourceCoord { row: 4, col: 4 },
+                    end: SourceCoord { row: 5, col: 5 },
+                },
+            )),
+            member_count: 4,
+        },
+        SourceFormulaFamily {
+            source_id: id(4),
+            anchor_coord0: SourceCoord { row: 8, col: 8 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::ExplicitMembers(
+                ExplicitSourceFamilyMembers::try_new(vec![
+                    SourceCoord { row: 8, col: 8 },
+                    SourceCoord { row: 9, col: 8 },
+                ])
+                .unwrap(),
+            ),
+            member_count: 2,
+        },
+    ];
+
+    let preparation = engine.prepare_source_formula_families("Sheet1", &complete);
+    assert_eq!(preparation.direct_family_count(), 3);
+    assert_eq!(preparation.direct_cell_count(), 10);
+    assert_eq!(
+        preparation.rejected.get(&id(4)).map(String::as_str),
+        Some("ExplicitMembersRequireExactRecords")
+    );
+
+    let mut limits = engine.workbook_load_limits().clone();
+    limits.max_sheet_rows = 2;
+    limits.max_sheet_logical_cells = 2;
+    engine.set_workbook_load_limits(limits);
+    let limited = engine.prepare_source_formula_families("Sheet1", &complete[..1]);
+    assert_eq!(
+        limited.rejected.get(&id(1)).map(String::as_str),
+        Some("CompleteDomainOutOfBounds")
+    );
+
+    engine.force_source_family_fallback_for_test(true);
+    let forced = engine.prepare_source_formula_families("Sheet1", &complete[..1]);
+    assert_eq!(forced.direct_family_count(), 0);
+    assert_eq!(
+        forced.rejected.get(&id(1)).map(String::as_str),
+        Some("ForcedReplay")
+    );
 }
 
 #[test]
-fn authoritative_direct_source_promotes_vertical_horizontal_and_rectangular_sets() {
-    for coords in [
-        vec![(0, 0), (1, 0)],
-        vec![(0, 0), (0, 1)],
-        vec![(0, 0), (0, 1), (1, 0), (1, 1)],
-    ] {
-        let cfg = EvalConfig::default()
-            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+fn selected_multi_sheet_build_preserves_caller_order_and_shared_parse_cache() {
+    fn engine() -> Engine<TestWorkbook> {
+        let cfg = EvalConfig {
+            defer_graph_building: true,
+            formula_parse_policy: FormulaParsePolicy::KeepCachedValue,
+            ..EvalConfig::default()
+        };
         let mut engine = Engine::new(TestWorkbook::default(), cfg);
-        let formulas = vec!["=1+1"; coords.len()];
-        let (batch, events) = direct_source_family(
-            &mut engine,
-            SourceFamilyId {
-                sheet_instance: 0,
-                shared_index: 41,
-            },
-            &coords,
-            &formulas,
-        );
-        let report = engine
-            .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-                batch, events,
-            )])
-            .unwrap();
-        assert_eq!(report.source_family_promoted, 1);
-        assert_eq!(report.source_family_promoted_cells, coords.len() as u64);
-        assert_eq!(report.source_family_fallback_cells, 0);
-        assert_eq!(
-            report.source_family_promoted_cells + report.source_family_fallback_cells,
-            report.source_family_cells_seen
-        );
-        assert_eq!(report.graph_formula_cells_materialized, 0);
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-        engine.evaluate_all().unwrap();
-        for (row, col) in coords {
-            assert_eq!(
-                engine.get_cell_value("Sheet1", row + 1, col + 1),
-                Some(LiteralValue::Number(2.0))
-            );
+        for sheet in ["Sheet1", "Other"] {
+            engine.stage_formula_text(sheet, 1, 1, "=1+".to_string());
+            engine.stage_formula_text(sheet, 2, 1, "=1+1".to_string());
         }
+        engine
     }
-}
 
-#[test]
-fn source_direct_force_fallback_and_canonical_rejection_are_atomic() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut forced = Engine::new(TestWorkbook::default(), cfg.clone());
-    forced.force_source_family_fallback_for_test(true);
-    let forced_coords: Vec<_> = (0..100).map(|row| (row, 0)).collect();
-    let forced_formulas = vec!["=1+1"; forced_coords.len()];
-    let (batch, events) = direct_source_family(
-        &mut forced,
-        SourceFamilyId {
-            sheet_instance: 9,
-            shared_index: 1,
-        },
-        &forced_coords,
-        &forced_formulas,
-    );
-    let forced_report = forced
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            batch, events,
-        )])
-        .unwrap();
-    assert_eq!(forced_report.source_family_promoted, 0);
-    assert_eq!(forced_report.source_family_fallback_cells, 100);
-    assert_eq!(forced_report.graph_formula_cells_materialized, 100);
-    assert_eq!(forced.baseline_stats().formula_plane_active_span_count, 0);
-
-    let mut mismatch = Engine::new(TestWorkbook::default(), cfg);
-    let coords = [(0, 0), (0, 1)];
-    let mismatch_formulas = ["=1+1", "=SUM(1,1)"];
-    let (batch, events) = direct_source_family(
-        &mut mismatch,
-        SourceFamilyId {
-            sheet_instance: 9,
-            shared_index: 999,
-        },
-        &coords,
-        &mismatch_formulas,
-    );
-    let report = mismatch
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            batch, events,
-        )])
-        .unwrap();
-    assert_eq!(report.source_family_promoted, 0, "{report:?}");
-    assert_eq!(report.source_family_fallback_cells, 2, "{report:?}");
-    assert_eq!(report.fallback_reasons.get("CanonicalMismatch"), Some(&1));
-    assert_eq!(report.graph_formula_cells_materialized, 2);
-    assert_eq!(mismatch.baseline_stats().formula_plane_active_span_count, 0);
-}
-
-#[test]
-fn collector_rejected_vertical_family_is_reserved_from_ordinary_authority() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let coords: Vec<_> = (0..100).map(|row| (row, 0)).collect();
-    let formulas = vec!["=1+1"; coords.len()];
-    let family = SourceFamilyId {
-        sheet_instance: 0,
-        shared_index: 314,
-    };
-    let (batch, mut events) = direct_source_family(&mut engine, family, &coords, &formulas);
-    events[0].formula = FormulaSourceKind::SharedDescendant {
-        family,
-        metadata: FormulaMetadataEnvelope::XlsxShared {
-            shared_index: family.shared_index,
-            parsed_range: None,
-        },
-    };
-
-    let report = engine
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            batch, events,
-        )])
-        .unwrap();
-    assert_eq!(report.fallback_reasons.get("MissingAnchor"), Some(&1));
-    assert_eq!(report.source_family_promoted, 0);
-    assert_eq!(report.source_family_fallback_cells, 100);
-    assert_eq!(report.graph_formula_cells_materialized, 100);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-}
-
-#[test]
-fn eligible_family_with_missing_analyzed_record_gets_no_partial_authority() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let coords: Vec<_> = (0..100).map(|row| (row, 0)).collect();
-    let formulas = vec!["=1+1"; coords.len()];
-    let (mut batch, events) = direct_source_family(
-        &mut engine,
-        SourceFamilyId {
-            sheet_instance: 0,
-            shared_index: 315,
-        },
-        &coords,
-        &formulas,
-    );
-    batch.formulas.pop();
-
-    let report = engine
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            batch, events,
-        )])
-        .unwrap();
+    let mut all = engine();
+    all.build_graph_all().unwrap();
+    assert_eq!(all.formula_parse_diagnostics().len(), 2);
     assert_eq!(
-        report.fallback_reasons.get("ExactRecordResolution"),
-        Some(&1)
+        all.formula_parse_diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.sheet.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["Other", "Sheet1"])
     );
-    assert_eq!(report.source_family_promoted, 0);
-    assert_eq!(report.source_family_fallback_cells, 100);
-    assert_eq!(report.graph_formula_cells_materialized, 99);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-}
 
-#[test]
-fn source_family_identity_does_not_merge_equal_templates() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let mut source_batches = Vec::new();
-    for (shared_index, coords) in [(7, [(0, 0), (0, 1)]), (8, [(1, 0), (1, 1)])] {
-        let formulas = ["=1+1", "=1+1"];
-        let (batch, events) = direct_source_family(
-            &mut engine,
-            SourceFamilyId {
-                sheet_instance: 0,
-                shared_index,
-            },
-            &coords,
-            &formulas,
-        );
-        source_batches.push(crate::engine::FormulaSourceIngestBatch::new(batch, events));
-    }
-    let report = engine
-        .ingest_formula_source_batches(source_batches)
-        .unwrap();
-    assert_eq!(report.source_family_promoted, 2);
-    assert_eq!(report.source_family_promoted_cells, 4);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
-}
-
-#[test]
-fn source_direct_current_small_domain_gate_falls_back_without_partial_authority() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    engine
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(3.0))
-        .unwrap();
-    engine
-        .set_cell_value("Sheet1", 1, 2, LiteralValue::Number(4.0))
-        .unwrap();
-    let coords = [(9, 0), (9, 1)];
-    let formulas = ["=A1+1", "=B1+1"];
-    let (batch, events) = direct_source_family(
-        &mut engine,
-        SourceFamilyId {
-            sheet_instance: 0,
-            shared_index: 44,
-        },
-        &coords,
-        &formulas,
-    );
-    let report = engine
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            batch, events,
-        )])
-        .unwrap();
-    assert_eq!(report.source_family_promoted, 0, "{report:?}");
-    assert_eq!(report.source_family_fallback_cells, 2, "{report:?}");
-    assert_eq!(
-        report.fallback_reasons.get("ExistingPlacementGate"),
-        Some(&1)
-    );
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
-    engine.evaluate_all().unwrap();
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 10, 1),
-        Some(LiteralValue::Number(4.0))
-    );
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 10, 2),
-        Some(LiteralValue::Number(5.0))
-    );
-}
-
-#[test]
-fn authoritative_direct_source_eager_deferred_parity() {
-    let cfg =
-        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let coords = [(0, 0), (0, 1)];
-    let formulas = ["=1+1", "=1+1"];
-    let family = SourceFamilyId {
-        sheet_instance: 0,
-        shared_index: 70,
-    };
-
-    let mut eager = Engine::new(TestWorkbook::default(), cfg.clone());
-    let (batch, events) = direct_source_family(&mut eager, family, &coords, &formulas);
-    let eager_report = eager
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            batch,
-            events.clone(),
-        )])
-        .unwrap();
-
-    let mut deferred = Engine::new(TestWorkbook::default(), cfg);
-    for (&(row, col), formula) in coords.iter().zip(formulas) {
-        deferred.stage_formula_text("Sheet1", row + 1, col + 1, formula.to_string());
-    }
-    deferred.stage_formula_source_events("Sheet1", events);
-    deferred.build_graph_all().unwrap();
-    assert_eq!(deferred.last_formula_ingest_report(), Some(&eager_report));
-    assert_eq!(eager_report.source_family_promoted, 1);
-
-    eager.evaluate_all().unwrap();
-    deferred.evaluate_all().unwrap();
-    for &(row, col) in &coords {
+    for (order, diagnostic_sheet) in [
+        (["Sheet1", "Other"], "Sheet1"),
+        (["Other", "Sheet1"], "Other"),
+    ] {
+        let mut selected = engine();
+        selected.build_graph_for_sheets(order).unwrap();
+        assert_eq!(selected.formula_parse_diagnostics().len(), 1);
         assert_eq!(
-            eager.get_cell_value("Sheet1", row + 1, col + 1),
-            deferred.get_cell_value("Sheet1", row + 1, col + 1)
+            selected.formula_parse_diagnostics()[0].sheet,
+            diagnostic_sheet
         );
+        assert_eq!(
+            selected.formula_ingest_report_total(),
+            all.formula_ingest_report_total()
+        );
+        assert_eq!(selected.staged_formula_count(), 0);
     }
 }
 
 #[test]
-fn source_direct_analysis_rejection_falls_back_the_entire_family() {
+fn deferred_replay_failure_restores_package_and_retry_publishes_once() {
+    let cfg = EvalConfig {
+        defer_graph_building: true,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_package("1+1", true, false));
+    let before = engine.formula_ingest_report_total().clone();
+
+    let error = engine.build_graph_all().unwrap_err();
+    assert!(error.to_string().contains("injected replay failure"));
+    assert_eq!(engine.staged_formula_count(), 1);
+    assert_eq!(engine.formula_ingest_report_total(), &before);
+    assert!(engine.last_formula_ingest_report().is_none());
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+
+    engine.build_graph_all().unwrap();
+    assert_eq!(engine.staged_formula_count(), 0);
+    assert_eq!(
+        engine
+            .last_formula_ingest_report()
+            .unwrap()
+            .source_spool_replays,
+        1
+    );
+    assert_eq!(engine.formula_ingest_report_total().source_spool_replays, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+}
+
+#[test]
+fn deferred_strict_parse_failure_restores_package_without_diagnostics_or_telemetry() {
+    let cfg = EvalConfig {
+        defer_graph_building: true,
+        formula_parse_policy: FormulaParsePolicy::Strict,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_package("1+", false, false));
+    let before = engine.formula_ingest_report_total().clone();
+
+    assert!(engine.build_graph_all().is_err());
+    assert_eq!(engine.staged_formula_count(), 1);
+    assert!(engine.formula_parse_diagnostics().is_empty());
+    assert_eq!(engine.formula_ingest_report_total(), &before);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+
+    engine.config.formula_parse_policy = FormulaParsePolicy::AsText;
+    engine.build_graph_all().unwrap();
+    assert_eq!(engine.staged_formula_count(), 0);
+    assert_eq!(engine.formula_parse_diagnostics().len(), 1);
+    assert_eq!(engine.formula_ingest_report_total().source_spool_replays, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+}
+
+#[test]
+fn deferred_poisoned_lock_failure_restores_package_without_publication() {
+    let cfg = EvalConfig {
+        defer_graph_building: true,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_package("1+1", false, true));
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        engine.stage_formula_text("Sheet1", 1, 1, "=2+2".to_string());
+    }));
+    assert!(panic.is_err());
+    let before = engine.formula_ingest_report_total().clone();
+
+    for _ in 0..2 {
+        let error = engine.build_graph_all().unwrap_err();
+        assert!(error.to_string().contains("lock poisoned"));
+        assert_eq!(engine.staged_formula_count(), 1);
+        assert_eq!(engine.formula_ingest_report_total(), &before);
+        assert!(engine.last_formula_ingest_report().is_none());
+        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    }
+}
+
+#[test]
+fn source_family_preparation_rejects_cross_engine_finalization_before_authority() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    let coords = [(0, 0), (0, 1)];
-    let formulas = ["=RAND()", "=1+1"];
-    let (batch, events) = direct_source_family(
-        &mut engine,
-        SourceFamilyId {
-            sheet_instance: 0,
-            shared_index: 91,
+    let mut origin = Engine::new(TestWorkbook::default(), cfg.clone());
+    let mut other = Engine::new(TestWorkbook::default(), cfg);
+    let family = SourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 1,
         },
-        &coords,
-        &formulas,
-    );
-    let report = engine
-        .ingest_formula_source_batches(vec![crate::engine::FormulaSourceIngestBatch::new(
-            batch, events,
+        anchor_coord0: SourceCoord { row: 0, col: 0 },
+        anchor_text: Arc::from("1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 2,
+            col: 0,
+        }),
+        member_count: 3,
+    };
+    let preparation = origin.prepare_source_formula_families("Sheet1", &[family]);
+    assert_eq!(preparation.direct_family_count(), 1);
+    let before = other.formula_ingest_report_total().clone();
+
+    let error = other
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport::default(),
+            preparation,
         )])
+        .unwrap_err();
+
+    assert!(error.to_string().contains("belongs to another engine"));
+    assert_eq!(other.formula_ingest_report_total(), &before);
+    assert!(other.last_formula_ingest_report().is_none());
+    assert_eq!(other.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(other.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
+fn compressed_shadow_counts_only_preparation_work_that_occurs() {
+    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let family = SourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 1, col: 0 },
+        anchor_text: Arc::from("1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 2,
+            col: 0,
+        }),
+        member_count: 3,
+    };
+    let batch = FormulaIngestBatch::new("Sheet1", Vec::new());
+    let compressed = FormulaCompressedSourceBatch::with_families(
+        "Sheet1",
+        FormulaCompressedSourceReport::default(),
+        vec![family],
+    );
+
+    let report = engine
+        .ingest_compressed_formula_source_batches(vec![(batch, compressed)])
         .unwrap();
-    assert_eq!(report.source_family_promoted, 0);
-    assert_eq!(report.source_family_fallback_cells, 2);
-    assert_eq!(report.graph_formula_cells_materialized, 2);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+
+    assert_eq!(report.source_anchor_parses, 0);
+    assert_eq!(report.source_anchor_asts, 0);
+    assert_eq!(report.source_anchor_analyses, 0);
+    assert_eq!(report.source_descendant_strings_avoided, 0);
+    assert_eq!(report.source_descendant_events_avoided, 0);
+    assert_eq!(report.source_descendant_analyses_avoided, 0);
+    assert_eq!(
+        report.fallback_reasons.get("CompleteDomainMemberMismatch"),
+        Some(&1)
+    );
 }

@@ -18,14 +18,10 @@ use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
-    CompressedSharedFamily, DeferredFormulaPackage, Engine as EvalEngine,
-    FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
-    FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy, SourceCoord, SourceFamilyId,
+    DeferredFormulaPackage, Engine as EvalEngine, FormulaCompressedPreparation,
+    FormulaCompressedSourceBatch, FormulaCompressedSourceReport, FormulaIngestBatch,
+    FormulaIngestRecord, FormulaSpoolDiskPolicy, SourceCoord, SourceFamilyId, SourceFormulaFamily,
     SourceRect,
-};
-#[cfg(test)]
-use formualizer_eval::engine::{
-    FormulaMetadataEnvelope, FormulaSourceEvent, FormulaSourceKind, SourceCachedValue,
 };
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::ReferenceType;
@@ -38,14 +34,10 @@ mod compressed_evidence;
 mod formula_replay;
 
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
-#[cfg(test)]
-use formula_replay::MemoryFormulaReplaySpool;
 use formula_replay::{
     CalamineDeferredFormulaReplay, FormulaReplaySpool, FormulaSpoolLimits,
     HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered,
 };
-#[cfg(test)]
-use formula_replay::{SourceFormulaError, expand_source_events_per_cell};
 
 enum CalamineWorkbook {
     File(Xlsx<BufReader<File>>),
@@ -118,7 +110,7 @@ struct StreamedSheet {
     formulas_handed_to_engine: usize,
     formulas: Vec<FormulaIngestRecord>,
     formula_source_report: FormulaCompressedSourceReport,
-    compressed_families: Vec<CompressedSharedFamily>,
+    compressed_families: Vec<SourceFormulaFamily>,
     direct_preparation: Option<FormulaCompressedPreparation>,
     deferred_package: Option<DeferredFormulaPackage>,
     shared_formula_tags: usize,
@@ -404,7 +396,7 @@ impl CalamineAdapter {
                         });
                         let family = SourceFamilyId {
                             sheet_instance,
-                            shared_index,
+                            source_index: shared_index,
                         };
                         formula_evidence.observe(
                             coord0,
@@ -429,7 +421,7 @@ impl CalamineAdapter {
                             EvidenceRecord::Descendant {
                                 family: SourceFamilyId {
                                     sheet_instance,
-                                    shared_index,
+                                    source_index: shared_index,
                                 },
                             },
                         );
@@ -587,7 +579,11 @@ impl CalamineAdapter {
             == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
             && !engine.config.defer_graph_building
         {
-            Some(engine.prepare_eager_compressed_formula_families(sheet, &compressed_families))
+            Some(
+                engine
+                    .source_formula_ingress()
+                    .prepare_families(sheet, &compressed_families),
+            )
         } else {
             None
         };
@@ -603,7 +599,7 @@ impl CalamineAdapter {
                     direct_preparation.as_ref().is_some_and(|preparation| {
                         preparation.is_direct(SourceFamilyId {
                             sheet_instance,
-                            shared_index,
+                            source_index: shared_index,
                         })
                     })
                 },
@@ -1433,7 +1429,7 @@ where
 
                 if engine.config.defer_graph_building {
                     if let Some(package) = deferred_package {
-                        engine.stage_deferred_formula_package(package);
+                        engine.source_formula_ingress().stage_deferred(package);
                     }
                 } else if !formulas.is_empty() || formula_source_report.source_formula_events != 0 {
                     let batch = FormulaIngestBatch::new(n.clone(), formulas);
@@ -1498,12 +1494,14 @@ where
 
             if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
                 engine
-                    .ingest_compressed_formula_source_batches(eager_formula_batches)
+                    .source_formula_ingress()
+                    .ingest_replay_batches(eager_formula_batches)
                     .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
             }
             if !eager_direct_batches.is_empty() {
                 engine
-                    .finish_eager_compressed_formula_sources(eager_direct_batches)
+                    .source_formula_ingress()
+                    .finish_prepared(eager_direct_batches)
                     .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
             }
 
@@ -1611,289 +1609,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn event(sequence: u64, coord: (u32, u32), formula: FormulaSourceKind) -> FormulaSourceEvent {
-        FormulaSourceEvent {
-            sheet_name: Arc::from("Sheet1"),
-            coord0: SourceCoord {
-                row: coord.0,
-                col: coord.1,
-            },
-            source_sequence: sequence,
-            formula,
-            cached: SourceCachedValue::AbsentOrEmpty,
-        }
-    }
-
-    fn ordinary(sequence: u64, coord: (u32, u32), formula: &str) -> FormulaSourceEvent {
-        event(
-            sequence,
-            coord,
-            FormulaSourceKind::Ordinary {
-                formula: Arc::from(formula),
-                metadata: FormulaMetadataEnvelope::XlsxOrdinary,
-            },
-        )
-    }
-
-    fn anchor(
-        sequence: u64,
-        coord: (u32, u32),
-        shared_index: usize,
-        formula: &str,
-        declared_range: Option<SourceRect>,
-    ) -> FormulaSourceEvent {
-        event(
-            sequence,
-            coord,
-            FormulaSourceKind::SharedAnchor {
-                family: SourceFamilyId {
-                    sheet_instance: 3,
-                    shared_index,
-                },
-                declared_range,
-                formula: Arc::from(formula),
-                metadata: FormulaMetadataEnvelope::XlsxShared {
-                    shared_index,
-                    parsed_range: declared_range,
-                },
-            },
-        )
-    }
-
-    fn descendant(sequence: u64, coord: (u32, u32), shared_index: usize) -> FormulaSourceEvent {
-        event(
-            sequence,
-            coord,
-            FormulaSourceKind::SharedDescendant {
-                family: SourceFamilyId {
-                    sheet_instance: 3,
-                    shared_index,
-                },
-                metadata: FormulaMetadataEnvelope::XlsxShared {
-                    shared_index,
-                    parsed_range: None,
-                },
-            },
-        )
-    }
-
-    fn expanded(events: &[FormulaSourceEvent]) -> Vec<((u32, u32), String)> {
-        expand_source_events_per_cell(events)
-            .unwrap()
-            .into_iter()
-            .map(|cell| ((cell.coord0.row, cell.coord0.col), cell.formula.to_string()))
-            .collect()
-    }
-
-    #[test]
-    fn spool_replay_preserves_bounded_parse_cache_reuse() {
-        let mut spool = MemoryFormulaReplaySpool::for_logical_cell_limit(2);
-        for (sequence, coord) in [
-            (0, SourceCoord { row: 0, col: 0 }),
-            (1, SourceCoord { row: 1, col: 0 }),
-        ] {
-            let event = ordinary(sequence, (coord.row, coord.col), "1+1");
-            spool.append_source_event(&event).unwrap();
-        }
-        let events = spool.replay_events("Sheet1", 0).unwrap();
-        let cells = expand_source_events_per_cell(&events).unwrap();
-        let mut engine = EvalEngine::new(
-            formualizer_eval::test_workbook::TestWorkbook::new(),
-            formualizer_eval::engine::EvalConfig::default(),
-        );
-        let mut staging = FormulaStaging::new();
-        for cell in cells {
-            CalamineAdapter::stage_formula(
-                &mut engine,
-                "Sheet1",
-                (cell.coord0.row, cell.coord0.col),
-                &cell.formula,
-                false,
-                &mut staging,
-            )
-            .unwrap();
-        }
-        assert_eq!(staging.parse_cache.len(), 1);
-        assert_eq!(staging.formulas.len(), 2);
-    }
-
-    #[test]
-    fn source_event_contract_and_exact_expansion_cover_ordinary_shared_and_mixed() {
-        let range = SourceRect {
-            start: SourceCoord { row: 0, col: 1 },
-            end: SourceCoord { row: 2, col: 1 },
-        };
-        let mut ordinary_event = ordinary(0, (0, 3), "SUM(A1:B1)");
-        ordinary_event.cached = SourceCachedValue::Present(LiteralValue::Number(30.0));
-        let events = vec![
-            ordinary_event,
-            anchor(1, (0, 1), 9, "A1+$C$1", Some(range)),
-            descendant(2, (1, 1), 9),
-            ordinary(3, (1, 4), "B2*2"),
-            descendant(4, (2, 1), 9),
-        ];
-
-        assert_eq!(events[0].source_sequence, 0);
-        assert_eq!(events[0].coord0, SourceCoord { row: 0, col: 3 });
-        assert_eq!(
-            events[0].cached,
-            SourceCachedValue::Present(LiteralValue::Number(30.0))
-        );
-        assert!(matches!(
-            &events[1].formula,
-            FormulaSourceKind::SharedAnchor {
-                family: SourceFamilyId { sheet_instance: 3, shared_index: 9 },
-                declared_range: Some(found),
-                formula,
-                ..
-            } if *found == range && formula.as_ref() == "A1+$C$1"
-        ));
-        assert_eq!(
-            expanded(&events),
-            vec![
-                ((0, 3), "SUM(A1:B1)".to_string()),
-                ((0, 1), "A1+$C$1".to_string()),
-                ((1, 1), "A2+$C$1".to_string()),
-                ((1, 4), "B2*2".to_string()),
-                ((2, 1), "A3+$C$1".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn forward_anchor_and_non_monotonic_coordinates_preserve_stage1_order() {
-        let events = vec![
-            descendant(0, (8, 4), 2),
-            ordinary(1, (2, 7), "1+1"),
-            anchor(2, (7, 4), 2, "D8+$A$1", None),
-            descendant(3, (6, 4), 2),
-        ];
-        assert_eq!(
-            expanded(&events),
-            vec![
-                ((2, 7), "1+1".to_string()),
-                ((7, 4), "D8+$A$1".to_string()),
-                ((8, 4), "D9+$A$1".to_string()),
-                ((6, 4), "D7+$A$1".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn missing_duplicate_anchor_and_duplicate_member_pin_stage1_behavior() {
-        assert!(expanded(&[descendant(0, (1, 1), 44)]).is_empty());
-
-        let events = vec![
-            descendant(0, (1, 1), 4),
-            anchor(1, (0, 1), 4, "A1", None),
-            anchor(2, (4, 1), 4, "A5*10", None),
-            descendant(3, (5, 1), 4),
-            descendant(4, (5, 1), 4),
-        ];
-        assert_eq!(
-            expanded(&events),
-            vec![
-                ((0, 1), "A1".to_string()),
-                ((1, 1), "A2".to_string()),
-                ((4, 1), "A5*10".to_string()),
-                ((5, 1), "A6*10".to_string()),
-                ((5, 1), "A6*10".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn range_holes_exceptions_and_out_of_range_are_provenance_not_expansion_authority() {
-        let range = SourceRect {
-            start: SourceCoord { row: 0, col: 1 },
-            end: SourceCoord { row: 3, col: 1 },
-        };
-        let events = vec![
-            anchor(0, (0, 1), 1, "A1", Some(range)),
-            ordinary(1, (1, 1), "99"),
-            descendant(2, (3, 1), 1),
-            descendant(3, (5, 1), 1),
-        ];
-        assert_eq!(
-            expanded(&events),
-            vec![
-                ((0, 1), "A1".to_string()),
-                ((1, 1), "99".to_string()),
-                ((3, 1), "A4".to_string()),
-                ((5, 1), "A6".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn empty_anchor_and_range_start_mismatch_are_sequence_only_oracle_inputs() {
-        let range = SourceRect {
-            start: SourceCoord { row: 10, col: 10 },
-            end: SourceCoord { row: 11, col: 10 },
-        };
-        let events = vec![
-            anchor(0, (0, 0), 1, "", Some(range)),
-            descendant(1, (1, 0), 1),
-        ];
-        assert_eq!(
-            expanded(&events),
-            vec![((0, 0), String::new()), ((1, 0), String::new())]
-        );
-    }
-
-    #[test]
-    fn ordinary_formula_duplicates_preserve_source_order() {
-        assert_eq!(
-            expanded(&[ordinary(0, (2, 3), "1+1"), ordinary(1, (2, 3), "2+2"),]),
-            vec![((2, 3), "1+1".to_string()), ((2, 3), "2+2".to_string()),]
-        );
-    }
-
-    #[test]
-    fn boundary_references_at_maximum_coordinates_remain_exact() {
-        let max = (1_048_575, 16_383);
-        let formula = "$XFD$1048576+XFD1048576";
-        let actual = expanded(&[anchor(0, max, 8, formula, None), descendant(1, max, 8)]);
-        assert_eq!(actual[0], (max, formula.to_string()));
-        assert_eq!(actual[1], (max, formula.to_string()));
-    }
-
-    #[test]
-    fn exact_expander_matches_calamine_for_relative_and_absolute_references() {
-        let anchor_coord = (3, 4);
-        let target = (7, 8);
-        let template = "$A1+B$2+$C$3+D4";
-        let mut expected = String::new();
-        calamine::expand_shared_formula_into(template, anchor_coord, target, &mut expected)
-            .unwrap();
-        let actual = expanded(&[
-            anchor(0, anchor_coord, 7, template, None),
-            descendant(1, target, 7),
-        ]);
-        assert_eq!(actual[1], (target, expected));
-        assert_eq!(actual[1].1, "$A5+F$2+$C$3+H8");
-    }
-
-    #[test]
-    fn synthetic_unknown_metadata_fails_before_materialization() {
-        let unsupported = event(
-            0,
-            (4, 6),
-            FormulaSourceKind::Unsupported {
-                formula_if_available: None,
-                metadata: FormulaMetadataEnvelope::XlsxUnknown,
-            },
-        );
-        let error = expand_source_events_per_cell(&[unsupported]).unwrap_err();
-        assert!(matches!(
-            error,
-            SourceFormulaError::UnsupportedMetadata {
-                sheet_name,
-                coord0: SourceCoord { row: 4, col: 6 }
-            } if sheet_name.as_ref() == "Sheet1"
-        ));
-    }
 
     #[test]
     fn new_calamine_error_variants_preserve_generic_error_semantics() {

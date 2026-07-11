@@ -9,10 +9,49 @@ use calamine::expand_shared_formula_into;
 use formualizer_eval::engine::{
     DeferredFormulaReplay, DeferredReplayFormula, SourceCoord, SourceFamilyId, SourceRect,
 };
+
 #[cfg(test)]
-use formualizer_eval::engine::{
-    FormulaMetadataEnvelope, FormulaSourceEvent, FormulaSourceKind, SourceCachedValue,
-};
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum FormulaMetadataEnvelope {
+    Ordinary,
+    Shared {
+        shared_index: usize,
+        parsed_range: Option<SourceRect>,
+    },
+    Unknown,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum FormulaSourceKind {
+    Ordinary {
+        formula: Arc<str>,
+        metadata: FormulaMetadataEnvelope,
+    },
+    SharedAnchor {
+        family: SourceFamilyId,
+        declared_range: Option<SourceRect>,
+        formula: Arc<str>,
+        metadata: FormulaMetadataEnvelope,
+    },
+    SharedDescendant {
+        family: SourceFamilyId,
+        metadata: FormulaMetadataEnvelope,
+    },
+    Unsupported {
+        formula_if_available: Option<Arc<str>>,
+        metadata: FormulaMetadataEnvelope,
+    },
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct FormulaSourceEvent {
+    pub(super) sheet_name: Arc<str>,
+    pub(super) coord0: SourceCoord,
+    pub(super) source_sequence: u64,
+    pub(super) formula: FormulaSourceKind,
+}
 
 const MAGIC: &[u8; 4] = b"FZFR";
 const VERSION: u8 = 1;
@@ -170,11 +209,6 @@ pub(super) struct MemoryFormulaReplaySpool {
 
 #[cfg(test)]
 impl MemoryFormulaReplaySpool {
-    #[cfg(test)]
-    pub(super) fn for_logical_cell_limit(max_sheet_logical_cells: u64) -> Self {
-        Self::with_max_bytes(max_sheet_logical_cells.saturating_mul(16 * 1024))
-    }
-
     fn with_max_bytes(max_bytes: u64) -> Self {
         Self {
             bytes: [MAGIC.as_slice(), &[VERSION]].concat(),
@@ -194,43 +228,6 @@ impl MemoryFormulaReplaySpool {
             fail_append: false,
             fail_replay: false,
         }
-    }
-
-    pub(super) fn append_source_event(
-        &mut self,
-        event: &FormulaSourceEvent,
-    ) -> Result<SpoolOffset, SpoolError> {
-        let record = match &event.formula {
-            FormulaSourceKind::Ordinary { formula, .. } => SpoolFormulaRecord::Ordinary {
-                sequence: event.source_sequence,
-                coord0: event.coord0,
-                text: formula,
-            },
-            FormulaSourceKind::SharedAnchor {
-                family,
-                declared_range,
-                formula,
-                ..
-            } => SpoolFormulaRecord::SharedAnchor {
-                sequence: event.source_sequence,
-                coord0: event.coord0,
-                shared_index: family.shared_index,
-                declared_range: *declared_range,
-                text: formula,
-            },
-            FormulaSourceKind::SharedDescendant { family, .. } => {
-                SpoolFormulaRecord::SharedDescendant {
-                    sequence: event.source_sequence,
-                    coord0: event.coord0,
-                    shared_index: family.shared_index,
-                }
-            }
-            FormulaSourceKind::Unsupported { .. } => SpoolFormulaRecord::Unsupported {
-                sequence: event.source_sequence,
-                coord0: event.coord0,
-            },
-        };
-        self.append(record)
     }
 
     pub(super) fn replay_events(
@@ -255,14 +252,8 @@ impl FormulaReplaySpool for MemoryFormulaReplaySpool {
             return Err(SpoolError::InjectedAppendFailure);
         }
 
-        let mut payload = Vec::new();
-        encode_record(record, &mut payload)?;
-        let mut frame = Vec::with_capacity(payload.len().saturating_add(10));
-        put_varint(
-            u64::try_from(payload.len()).map_err(|_| SpoolError::OffsetOverflow)?,
-            &mut frame,
-        );
-        frame.extend_from_slice(&payload);
+        let mut frame = Vec::new();
+        append_frame_to_vec(&mut frame, record)?;
 
         let offset = u64::try_from(self.bytes.len()).map_err(|_| SpoolError::OffsetOverflow)?;
         let attempted = checked_next_offset(offset, frame.len())?;
@@ -409,13 +400,13 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
             |shared_index| {
                 skip_families.contains(&SourceFamilyId {
                     sheet_instance,
-                    shared_index,
+                    source_index: shared_index,
                 })
             },
             |coord0, text, family| {
                 let family = family.map(|shared_index| SourceFamilyId {
                     sheet_instance,
-                    shared_index,
+                    source_index: shared_index,
                 });
                 if suppressed.contains(&(coord0.row + 1, coord0.col + 1)) {
                     return Ok(());
@@ -448,7 +439,7 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
                         text: text.to_string(),
                         family: family.map(|shared_index| SourceFamilyId {
                             sheet_instance,
-                            shared_index,
+                            source_index: shared_index,
                         }),
                     });
                 }
@@ -822,14 +813,8 @@ fn append_frame_to_vec(
 
 #[cfg(test)]
 fn encode_frame(record: SpoolFormulaRecord<'_>) -> Result<Vec<u8>, SpoolError> {
-    let mut payload = Vec::new();
-    encode_record(record, &mut payload)?;
-    let mut frame = Vec::with_capacity(payload.len().saturating_add(10));
-    put_varint(
-        u64::try_from(payload.len()).map_err(|_| SpoolError::OffsetOverflow)?,
-        &mut frame,
-    );
-    frame.extend_from_slice(&payload);
+    let mut frame = Vec::new();
+    append_frame_to_vec(&mut frame, record)?;
     Ok(frame)
 }
 
@@ -899,7 +884,7 @@ impl OwnedSpoolFormulaRecord {
                 coord0,
                 FormulaSourceKind::Ordinary {
                     formula: Arc::from(text),
-                    metadata: FormulaMetadataEnvelope::XlsxOrdinary,
+                    metadata: FormulaMetadataEnvelope::Ordinary,
                 },
             ),
             Self::SharedAnchor {
@@ -914,11 +899,11 @@ impl OwnedSpoolFormulaRecord {
                 FormulaSourceKind::SharedAnchor {
                     family: SourceFamilyId {
                         sheet_instance,
-                        shared_index,
+                        source_index: shared_index,
                     },
                     declared_range,
                     formula: Arc::from(text),
-                    metadata: FormulaMetadataEnvelope::XlsxShared {
+                    metadata: FormulaMetadataEnvelope::Shared {
                         shared_index,
                         parsed_range: declared_range,
                     },
@@ -934,9 +919,9 @@ impl OwnedSpoolFormulaRecord {
                 FormulaSourceKind::SharedDescendant {
                     family: SourceFamilyId {
                         sheet_instance,
-                        shared_index,
+                        source_index: shared_index,
                     },
-                    metadata: FormulaMetadataEnvelope::XlsxShared {
+                    metadata: FormulaMetadataEnvelope::Shared {
                         shared_index,
                         parsed_range: None,
                     },
@@ -947,7 +932,7 @@ impl OwnedSpoolFormulaRecord {
                 coord0,
                 FormulaSourceKind::Unsupported {
                     formula_if_available: None,
-                    metadata: FormulaMetadataEnvelope::XlsxUnknown,
+                    metadata: FormulaMetadataEnvelope::Unknown,
                 },
             ),
         };
@@ -956,97 +941,8 @@ impl OwnedSpoolFormulaRecord {
             coord0,
             source_sequence,
             formula,
-            // Cached values have already been deliberately suppressed from the
-            // value plane and are not consumed by fallback or family analysis.
-            cached: SourceCachedValue::AbsentOrEmpty,
         }
     }
-}
-
-#[cfg(test)]
-fn encode_record(record: SpoolFormulaRecord<'_>, out: &mut Vec<u8>) -> Result<(), SpoolError> {
-    match record {
-        SpoolFormulaRecord::Ordinary {
-            sequence,
-            coord0,
-            text,
-        } => {
-            out.push(0);
-            encode_common(sequence, coord0, out);
-            put_text(text, out)?;
-        }
-        SpoolFormulaRecord::SharedAnchor {
-            sequence,
-            coord0,
-            shared_index,
-            declared_range,
-            text,
-        } => {
-            out.push(1);
-            encode_common(sequence, coord0, out);
-            put_varint(
-                u64::try_from(shared_index).map_err(|_| SpoolError::OffsetOverflow)?,
-                out,
-            );
-            match declared_range {
-                Some(range) => {
-                    out.push(1);
-                    put_coord(range.start, out);
-                    put_coord(range.end, out);
-                }
-                None => out.push(0),
-            }
-            put_text(text, out)?;
-        }
-        SpoolFormulaRecord::SharedDescendant {
-            sequence,
-            coord0,
-            shared_index,
-        } => {
-            out.push(2);
-            encode_common(sequence, coord0, out);
-            put_varint(
-                u64::try_from(shared_index).map_err(|_| SpoolError::OffsetOverflow)?,
-                out,
-            );
-        }
-        SpoolFormulaRecord::Unsupported { sequence, coord0 } => {
-            out.push(3);
-            encode_common(sequence, coord0, out);
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn encode_common(sequence: u64, coord0: SourceCoord, out: &mut Vec<u8>) {
-    put_varint(sequence, out);
-    put_coord(coord0, out);
-}
-
-#[cfg(test)]
-fn put_coord(coord: SourceCoord, out: &mut Vec<u8>) {
-    put_varint(u64::from(coord.row), out);
-    put_varint(u64::from(coord.col), out);
-}
-
-#[cfg(test)]
-fn put_text(text: &str, out: &mut Vec<u8>) -> Result<(), SpoolError> {
-    put_varint(
-        u64::try_from(text.len()).map_err(|_| SpoolError::OffsetOverflow)?,
-        out,
-    );
-    out.extend_from_slice(text.as_bytes());
-    Ok(())
-}
-
-#[cfg(test)]
-fn put_varint(mut value: u64, out: &mut Vec<u8>) {
-    while value >= 0x80 {
-        out.push((value as u8) | 0x80);
-        value >>= 7;
-    }
-    out.push(value as u8);
 }
 
 fn decode_frame(bytes: &[u8], cursor: &mut usize) -> Result<OwnedSpoolFormulaRecord, SpoolError> {
@@ -1311,10 +1207,10 @@ pub(super) fn expand_source_events_per_cell(
                     coord0: event.coord0,
                     formula: Arc::clone(formula),
                 });
-                shared.insert(family.shared_index, (event.coord0, Arc::clone(formula)));
-                if let Some(waiting) = pending.remove(&family.shared_index) {
+                shared.insert(family.source_index, (event.coord0, Arc::clone(formula)));
+                if let Some(waiting) = pending.remove(&family.source_index) {
                     let (anchor, template) = shared
-                        .get(&family.shared_index)
+                        .get(&family.source_index)
                         .expect("shared anchor inserted");
                     for target in waiting {
                         expand_shared_formula_into(
@@ -1332,7 +1228,7 @@ pub(super) fn expand_source_events_per_cell(
                 }
             }
             FormulaSourceKind::SharedDescendant { family, .. } => {
-                if let Some((anchor, template)) = shared.get(&family.shared_index) {
+                if let Some((anchor, template)) = shared.get(&family.source_index) {
                     expand_shared_formula_into(
                         template,
                         (anchor.row, anchor.col),
@@ -1346,7 +1242,7 @@ pub(super) fn expand_source_events_per_cell(
                     });
                 } else {
                     pending
-                        .entry(family.shared_index)
+                        .entry(family.source_index)
                         .or_default()
                         .push(event.coord0);
                 }
@@ -1708,6 +1604,29 @@ mod tests {
         assert!(!path.lock().unwrap().as_ref().unwrap().exists());
     }
 
+    type ReplayedFormula = ((u32, u32), String);
+
+    fn replay_production(
+        records: Vec<SpoolFormulaRecord<'static>>,
+    ) -> Result<Vec<ReplayedFormula>, calamine::Error> {
+        let mut spool =
+            HybridFormulaReplaySpool::new(hybrid_limits(16_384, 16_384, u64::MAX, 16_384, false));
+        for record in records {
+            spool.append(record).unwrap();
+        }
+        let mut output = Vec::new();
+        replay_spool_per_cell_filtered(
+            &mut spool,
+            "Sheet1",
+            |_| false,
+            |coord, text| {
+                output.push(((coord.row, coord.col), text.to_string()));
+                Ok(())
+            },
+        )?;
+        Ok(output)
+    }
+
     #[test]
     fn replayed_events_preserve_oracle_order_and_missing_anchor_omission() {
         let mut spool = MemoryFormulaReplaySpool::with_max_bytes(1024);
@@ -1744,17 +1663,176 @@ mod tests {
 
         let events = spool.replay_events("Sheet1", 42).unwrap();
         let expanded = expand_source_events_per_cell(&events).unwrap();
-        let output: Vec<_> = expanded
+        let oracle: Vec<_> = expanded
             .into_iter()
             .map(|cell| ((cell.coord0.row, cell.coord0.col), cell.formula.to_string()))
             .collect();
+        let mut production = Vec::new();
+        replay_spool_per_cell_filtered(
+            &mut spool,
+            "Sheet1",
+            |_| false,
+            |coord, text| {
+                production.push(((coord.row, coord.col), text.to_string()));
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(production, oracle);
         assert_eq!(
-            output,
+            production,
             vec![
                 ((0, 4), "1+1".to_string()),
                 ((1, 1), "A2".to_string()),
                 ((2, 1), "A3".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn production_replay_preserves_duplicate_anchor_member_and_ordinary_order() {
+        let output = replay_production(vec![
+            SpoolFormulaRecord::Ordinary {
+                sequence: 0,
+                coord0: coord(2, 3),
+                text: "1+1",
+            },
+            SpoolFormulaRecord::Ordinary {
+                sequence: 1,
+                coord0: coord(2, 3),
+                text: "2+2",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 2,
+                coord0: coord(1, 1),
+                shared_index: 4,
+            },
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 3,
+                coord0: coord(0, 1),
+                shared_index: 4,
+                declared_range: None,
+                text: "A1",
+            },
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 4,
+                coord0: coord(4, 1),
+                shared_index: 4,
+                declared_range: None,
+                text: "A5*10",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 5,
+                coord0: coord(5, 1),
+                shared_index: 4,
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 6,
+                coord0: coord(5, 1),
+                shared_index: 4,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            output,
+            vec![
+                ((2, 3), "1+1".to_string()),
+                ((2, 3), "2+2".to_string()),
+                ((0, 1), "A1".to_string()),
+                ((1, 1), "A2".to_string()),
+                ((4, 1), "A5*10".to_string()),
+                ((5, 1), "A6*10".to_string()),
+                ((5, 1), "A6*10".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn production_replay_never_synthesizes_declared_holes_or_clips_members() {
+        let range = SourceRect {
+            start: coord(0, 1),
+            end: coord(3, 1),
+        };
+        let output = replay_production(vec![
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 0,
+                coord0: coord(0, 1),
+                shared_index: 1,
+                declared_range: Some(range),
+                text: "A1",
+            },
+            SpoolFormulaRecord::Ordinary {
+                sequence: 1,
+                coord0: coord(1, 1),
+                text: "99",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 2,
+                coord0: coord(3, 1),
+                shared_index: 1,
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 3,
+                coord0: coord(5, 1),
+                shared_index: 1,
+            },
+        ])
+        .unwrap();
+        assert_eq!(
+            output,
+            vec![
+                ((0, 1), "A1".to_string()),
+                ((1, 1), "99".to_string()),
+                ((3, 1), "A4".to_string()),
+                ((5, 1), "A6".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn production_replay_preserves_empty_anchor_boundaries_and_unsupported_errors() {
+        let max = coord(1_048_575, 16_383);
+        let output = replay_production(vec![
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 0,
+                coord0: coord(0, 0),
+                shared_index: 1,
+                declared_range: None,
+                text: "",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 1,
+                coord0: coord(1, 0),
+                shared_index: 1,
+            },
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 2,
+                coord0: max,
+                shared_index: 8,
+                declared_range: None,
+                text: "$XFD$1048576+XFD1048576",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 3,
+                coord0: max,
+                shared_index: 8,
+            },
+        ])
+        .unwrap();
+        assert_eq!(output[0], ((0, 0), String::new()));
+        assert_eq!(output[1], ((1, 0), String::new()));
+        assert_eq!(output[2].1, "$XFD$1048576+XFD1048576");
+        assert_eq!(output[3].1, "$XFD$1048576+XFD1048576");
+
+        let error = replay_production(vec![SpoolFormulaRecord::Unsupported {
+            sequence: 0,
+            coord0: coord(4, 6),
+        }])
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported Calamine formula metadata at Sheet1!R5C7")
         );
     }
 }

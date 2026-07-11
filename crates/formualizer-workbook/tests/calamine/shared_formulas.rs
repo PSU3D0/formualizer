@@ -251,6 +251,21 @@ fn duplicate_formula_literal_xlsx(formula_first: bool) -> Vec<u8> {
     })
 }
 
+fn cached_malformed_formula_xlsx() -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    book.get_sheet_by_name_mut("Sheet1")
+        .unwrap()
+        .get_cell_mut("A1")
+        .set_formula("1+1");
+    let mut original = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut original).unwrap();
+    rewrite_sheet_xml(original, |xml| {
+        let xml = xml.replace("<f>1+1</f><v/>", "<f>1+</f><v>99</v>");
+        assert!(xml.contains("<f>1+</f><v>99</v>"));
+        xml
+    })
+}
+
 fn malformed_shared_attribute_xlsx(attribute: &str) -> Vec<u8> {
     let mut book = umya_spreadsheet::new_file();
     book.get_sheet_by_name_mut("Sheet1")
@@ -290,6 +305,31 @@ fn assert_shared_load(mut adapter: CalamineAdapter) {
     assert_eq!(stats.formula_cells_observed, Some(6));
     assert_eq!(stats.formula_cells_handed_to_engine, Some(6));
     assert_eq!(stats.shared_formula_tags_observed, Some(6));
+}
+
+#[test]
+fn cached_formula_values_remain_suppressed_when_parse_policy_keeps_cached_value() {
+    for deferred in [false, true] {
+        let config = EvalConfig {
+            formula_parse_policy: FormulaParsePolicy::KeepCachedValue,
+            defer_graph_building: deferred,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+        let mut adapter = CalamineAdapter::open_bytes(cached_malformed_formula_xlsx()).unwrap();
+        adapter.stream_into_engine(&mut engine).unwrap();
+        if deferred {
+            engine.build_graph_all().unwrap();
+        }
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 1, 1),
+            None,
+            "deferred={deferred}"
+        );
+        let stats = adapter.load_stats().unwrap();
+        assert_eq!(stats.formula_cells_observed, Some(1));
+        assert_eq!(stats.value_cells_observed, Some(0));
+    }
 }
 
 #[test]
@@ -480,6 +520,51 @@ fn authoritative_deferred_package_builds_direct_without_descendant_staging() {
     assert_eq!(report.source_descendant_strings_avoided, 99);
     assert_eq!(report.graph_formula_cells_materialized, 0);
     assert!(!engine.has_staged_formulas());
+}
+
+#[test]
+fn deferred_all_and_selected_builds_are_differentially_identical() {
+    fn loaded() -> Engine<formualizer_eval::test_workbook::TestWorkbook> {
+        let config = EvalConfig {
+            formula_plane_mode: FormulaPlaneMode::AuthoritativeExperimental,
+            defer_graph_building: true,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+        let mut adapter = CalamineAdapter::open_bytes(two_shared_sheets_xlsx()).unwrap();
+        adapter.stream_into_engine(&mut engine).unwrap();
+        engine
+    }
+
+    let mut all = loaded();
+    let mut selected = loaded();
+    all.build_graph_all().unwrap();
+    selected.build_graph_for_sheets(["Sheet1"]).unwrap();
+    assert!(selected.has_staged_formulas());
+    selected.build_graph_for_sheets(["Other"]).unwrap();
+    assert!(!selected.has_staged_formulas());
+
+    all.evaluate_all().unwrap();
+    selected.evaluate_all().unwrap();
+    for sheet in ["Sheet1", "Other"] {
+        for row in 1..=2 {
+            for col in 1..=2 {
+                assert_eq!(
+                    selected.get_cell_value(sheet, row, col),
+                    all.get_cell_value(sheet, row, col),
+                    "{sheet}!R{row}C{col}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        selected.formula_ingest_report_total(),
+        all.formula_ingest_report_total()
+    );
+    assert_eq!(
+        selected.baseline_stats().formula_plane_active_span_count,
+        all.baseline_stats().formula_plane_active_span_count
+    );
 }
 
 #[test]
