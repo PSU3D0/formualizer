@@ -6,7 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
-- Added anchor-once FormulaPlane ingest for clean OOXML shared-formula families, including eager and deferred loading, bounded replay spooling, exact conservative fallback, structural-edit and cycle-demotion support, and source-family telemetry.
+- Added backend-neutral source-family ingest with anchor-once FormulaPlane authority for proven complete domains. Calamine supplies bounded XLSX evidence and exact replay for eager and deferred loading, with structural-edit, cycle-demotion, and source-family telemetry support.
 
 ### Improved
 
@@ -14,7 +14,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Performance
 
-- Compressed shared-formula families now parse and analyze one anchor and avoid per-descendant strings, ASTs, staging entries, and graph vertices. In same-machine release probes, a clean 100k-family load improved from 997 ms and 313 MiB RSS under forced replay to 129 ms and 26 MiB RSS; a 1M-family load completed in 2.2 s at 167 MiB RSS instead of 13.1 s at 3.0 GiB.
+- Proven complete source-formula families now parse and analyze one anchor and avoid per-descendant strings, ASTs, staging entries, and graph vertices. In same-machine release probes, a clean 100k-family load improved from 997 ms and 313 MiB RSS under forced replay to 129 ms and 26 MiB RSS; a 1M-family load completed in 2.2 s at 167 MiB RSS instead of 13.1 s at 3.0 GiB.
 
 ## [0.7.1] - 2026-07-02
 
