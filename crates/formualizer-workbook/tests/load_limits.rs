@@ -1,5 +1,5 @@
 use formualizer_common::LiteralValue;
-#[cfg(any(feature = "umya", feature = "calamine"))]
+#[cfg(feature = "umya")]
 use formualizer_workbook::SpreadsheetReader;
 use formualizer_workbook::{
     CellData, LoadStrategy, SpreadsheetWriter, Workbook, WorkbookConfig, WorkbookLoadLimits,
@@ -155,6 +155,22 @@ fn shared_formula_xlsx_bytes(rows: u32) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+#[cfg(all(feature = "calamine", feature = "umya"))]
+fn two_sheet_formula_xlsx_bytes() -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    book.get_sheet_by_name_mut("Sheet1")
+        .unwrap()
+        .get_cell_mut((1, 1))
+        .set_formula("=1+1");
+    book.new_sheet("Sheet2")
+        .unwrap()
+        .get_cell_mut((1, 1))
+        .set_formula("=2+2");
+    let mut bytes = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut bytes).unwrap();
+    bytes
+}
+
 #[cfg(feature = "umya")]
 fn sparse_whole_column_summary_xlsx_bytes() -> Vec<u8> {
     let mut book = umya_spreadsheet::new_file();
@@ -180,6 +196,7 @@ fn sparse_limits() -> WorkbookLoadLimits {
         max_sheet_logical_cells: u64::MAX,
         sparse_sheet_cell_threshold: 100,
         max_sparse_cell_ratio: 10,
+        ..WorkbookLoadLimits::default()
     }
 }
 
@@ -202,6 +219,7 @@ fn json_loader_rejects_dense_sheet_over_logical_budget() {
         max_sheet_logical_cells: 100,
         sparse_sheet_cell_threshold: u64::MAX,
         max_sparse_cell_ratio: u64::MAX,
+        ..WorkbookLoadLimits::default()
     };
 
     let err = match Workbook::from_reader(adapter, LoadStrategy::EagerAll, cfg) {
@@ -317,6 +335,37 @@ fn calamine_loader_preserves_out_of_order_sparse_cells() {
 
 #[cfg(all(feature = "calamine", feature = "umya"))]
 #[test]
+fn calamine_formula_source_records_enforce_logical_budget_at_the_boundary() {
+    let rows = 8;
+    let bytes = shared_formula_xlsx_bytes(rows);
+    for (limit, should_load) in [
+        (u64::from(rows) * 2, true),
+        (u64::from(rows) * 2 - 1, false),
+    ] {
+        let adapter = CalamineAdapter::open_bytes(bytes.clone()).expect("open shared workbook");
+        let limits = WorkbookLoadLimits {
+            max_sheet_logical_cells: limit,
+            ..WorkbookLoadLimits::default()
+        };
+        let result = Workbook::from_reader(
+            adapter,
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral().with_ingest_limits(limits),
+        );
+        if should_load {
+            result.expect("at-limit formula records should load");
+        } else {
+            let error = match result {
+                Ok(_) => panic!("above-limit formula record should fail immediately"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("logical-cell budget"));
+        }
+    }
+}
+
+#[cfg(all(feature = "calamine", feature = "umya"))]
+#[test]
 fn calamine_loader_loads_shared_formula_semantics() {
     use std::io::Write;
 
@@ -348,6 +397,88 @@ fn calamine_loader_loads_shared_formula_semantics() {
     assert_eq!(
         wb.get_value("Sheet1", rows, 2),
         Some(LiteralValue::Number((rows * 2) as f64))
+    );
+}
+
+#[cfg(all(feature = "calamine", feature = "umya"))]
+#[test]
+fn calamine_formula_spool_enforces_sheet_workbook_file_and_no_disk_limits() {
+    use formualizer_workbook::FormulaSpoolDiskPolicy;
+
+    let zero_limits = WorkbookLoadLimits {
+        max_formula_spool_bytes_per_sheet: 0,
+        max_formula_spool_bytes_per_workbook: 0,
+        max_formula_spool_files_per_workbook: 0,
+        max_formula_spool_memory_bytes: 0,
+        ..WorkbookLoadLimits::default()
+    };
+    let literal_adapter = CalamineAdapter::open_bytes(out_of_order_sparse_xlsx_bytes()).unwrap();
+    Workbook::from_reader(
+        literal_adapter,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral().with_ingest_limits(zero_limits),
+    )
+    .expect("formula spool limits must not charge literal-only sheets");
+
+    let one_sheet = shared_formula_xlsx_bytes(1);
+    let cases = [
+        (
+            WorkbookLoadLimits {
+                max_formula_spool_bytes_per_sheet: 5,
+                ..WorkbookLoadLimits::default()
+            },
+            "per-sheet limit",
+        ),
+        (
+            WorkbookLoadLimits {
+                formula_spool_memory_prefix_bytes: 5,
+                max_formula_spool_files_per_workbook: 0,
+                ..WorkbookLoadLimits::default()
+            },
+            "file limit",
+        ),
+        (
+            WorkbookLoadLimits {
+                formula_spool_disk_policy: FormulaSpoolDiskPolicy::MemoryOnly,
+                max_formula_spool_memory_bytes: 5,
+                ..WorkbookLoadLimits::default()
+            },
+            "memory-only limit",
+        ),
+    ];
+    for (limits, expected) in cases {
+        let adapter = CalamineAdapter::open_bytes(one_sheet.clone()).unwrap();
+        let error = match Workbook::from_reader(
+            adapter,
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral().with_ingest_limits(limits),
+        ) {
+            Ok(_) => panic!("spool limit must reject the workbook"),
+            Err(error) => error,
+        };
+        assert!(
+            error.to_string().contains(expected),
+            "unexpected error: {error}"
+        );
+    }
+
+    let adapter = CalamineAdapter::open_bytes(two_sheet_formula_xlsx_bytes()).unwrap();
+    let limits = WorkbookLoadLimits {
+        max_formula_spool_bytes_per_sheet: 1024,
+        max_formula_spool_bytes_per_workbook: 20,
+        ..WorkbookLoadLimits::default()
+    };
+    let error = match Workbook::from_reader(
+        adapter,
+        LoadStrategy::EagerAll,
+        WorkbookConfig::ephemeral().with_ingest_limits(limits),
+    ) {
+        Ok(_) => panic!("aggregate spool limit must include both sheets"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("per-workbook limit"),
+        "unexpected error: {error}"
     );
 }
 

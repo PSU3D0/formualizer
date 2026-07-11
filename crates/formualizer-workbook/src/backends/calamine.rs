@@ -11,11 +11,22 @@ use std::io::{BufRead, BufReader, Cursor, Read, Seek};
 use std::path::Path;
 use std::sync::Arc;
 
-use calamine::{Data, Range, Reader, Xlsx, open_workbook, open_workbook_from_rs};
+use calamine::{
+    Data, DataRef, Range, Reader, Xlsx, XlsxFormulaMetadata, open_workbook, open_workbook_from_rs,
+};
 use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
-use formualizer_eval::engine::{Engine as EvalEngine, FormulaIngestBatch, FormulaIngestRecord};
+use formualizer_eval::engine::{
+    CompressedSharedFamily, DeferredFormulaPackage, Engine as EvalEngine,
+    FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy, SourceCoord, SourceFamilyId,
+    SourceRect,
+};
+#[cfg(test)]
+use formualizer_eval::engine::{
+    FormulaMetadataEnvelope, FormulaSourceEvent, FormulaSourceKind, SourceCachedValue,
+};
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::ReferenceType;
 use quick_xml::Reader as XmlReader;
@@ -23,7 +34,18 @@ use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::QName;
 use zip::ZipArchive;
 
-type FormulaBatch = FormulaIngestBatch;
+mod compressed_evidence;
+mod formula_replay;
+
+use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
+#[cfg(test)]
+use formula_replay::MemoryFormulaReplaySpool;
+use formula_replay::{
+    CalamineDeferredFormulaReplay, FormulaReplaySpool, FormulaSpoolLimits,
+    HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered,
+};
+#[cfg(test)]
+use formula_replay::{SourceFormulaError, expand_source_events_per_cell};
 
 enum CalamineWorkbook {
     File(Xlsx<BufReader<File>>),
@@ -49,6 +71,107 @@ impl CalamineWorkbook {
 struct DebugTimer {
     #[cfg(not(target_arch = "wasm32"))]
     started: std::time::Instant,
+}
+
+struct DenseState {
+    aib: IngestBuilder,
+    row_vals: Vec<LiteralValue>,
+    current_row0: usize,
+    rows_appended: usize,
+    row_started: bool,
+}
+
+#[derive(Clone, Copy)]
+struct WorkbookSpoolUsage {
+    bytes: u64,
+    files: u32,
+}
+
+struct FormulaStaging {
+    parse_cache: rustc_hash::FxHashMap<String, Option<formualizer_eval::engine::AstNodeId>>,
+    formulas: Vec<FormulaIngestRecord>,
+    observed: usize,
+    handed_to_engine: usize,
+}
+
+impl FormulaStaging {
+    fn new() -> Self {
+        let mut parse_cache = rustc_hash::FxHashMap::default();
+        parse_cache.reserve(4096);
+        Self {
+            parse_cache,
+            formulas: Vec::new(),
+            observed: 0,
+            handed_to_engine: 0,
+        }
+    }
+}
+
+struct StreamedSheet {
+    arrow_sheet: formualizer_eval::arrow_store::ArrowSheet,
+    dimensions: (usize, usize),
+    max_col_seen: usize,
+    used_sparse_fallback: bool,
+    value_cells_observed: usize,
+    values_handed_to_engine: usize,
+    formulas_observed: usize,
+    formulas_handed_to_engine: usize,
+    formulas: Vec<FormulaIngestRecord>,
+    formula_source_report: FormulaCompressedSourceReport,
+    compressed_families: Vec<CompressedSharedFamily>,
+    direct_preparation: Option<FormulaCompressedPreparation>,
+    deferred_package: Option<DeferredFormulaPackage>,
+    shared_formula_tags: usize,
+    formula_spool_bytes: u64,
+    formula_spool_spilled: bool,
+    stream_millis: u128,
+}
+
+#[inline]
+fn data_ref_to_literal(value: &DataRef<'_>) -> Option<LiteralValue> {
+    match value {
+        DataRef::Empty => None,
+        DataRef::String(s) if s.is_empty() => None,
+        DataRef::SharedString("") => None,
+        DataRef::String(s) => Some(LiteralValue::Text(s.clone())),
+        DataRef::SharedString(s) => Some(LiteralValue::Text((*s).to_string())),
+        DataRef::Float(f) => Some(LiteralValue::Number(*f)),
+        DataRef::Int(i) => Some(LiteralValue::Number(*i as f64)),
+        DataRef::Bool(b) => Some(LiteralValue::Boolean(*b)),
+        DataRef::Error(e) => Some(LiteralValue::Error(ExcelError::new(
+            match CalamineAdapter::calamine_error_code(e) {
+                1 => ExcelErrorKind::Null,
+                2 => ExcelErrorKind::Ref,
+                3 => ExcelErrorKind::Name,
+                4 => ExcelErrorKind::Value,
+                5 => ExcelErrorKind::Div,
+                6 => ExcelErrorKind::Na,
+                7 => ExcelErrorKind::Num,
+                _ => ExcelErrorKind::Error,
+            },
+        ))),
+        DataRef::DateTime(dt) => Some(LiteralValue::from_serial_number(dt.as_f64())),
+        DataRef::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
+        DataRef::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
+    }
+}
+
+#[inline]
+fn data_ref_to_overlay(value: &DataRef<'_>) -> Option<OverlayValue> {
+    match value {
+        DataRef::Empty => None,
+        DataRef::String(s) if s.is_empty() => None,
+        DataRef::SharedString("") => None,
+        DataRef::String(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+        DataRef::SharedString(s) => Some(OverlayValue::Text(Arc::from(*s))),
+        DataRef::Float(f) => Some(OverlayValue::Number(*f)),
+        DataRef::Int(i) => Some(OverlayValue::Number(*i as f64)),
+        DataRef::Bool(b) => Some(OverlayValue::Boolean(*b)),
+        DataRef::Error(e) => Some(OverlayValue::Error(CalamineAdapter::calamine_error_code(e))),
+        DataRef::DateTime(dt) => Some(OverlayValue::DateTime(dt.as_f64())),
+        DataRef::DateTimeIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+        DataRef::DurationIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+    }
 }
 
 impl DebugTimer {
@@ -84,6 +207,490 @@ pub struct CalamineAdapter {
 impl CalamineAdapter {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
     const EXCEL_MAX_COLS: u32 = 16_384;
+
+    fn stage_formula<C: EvaluationContext>(
+        engine: &mut EvalEngine<C>,
+        sheet: &str,
+        position: (u32, u32),
+        formula: &str,
+        debug: bool,
+        staging: &mut FormulaStaging,
+    ) -> Result<(), calamine::Error> {
+        let excel_row = position.0 + 1;
+        let excel_col = position.1 + 1;
+        let normalized = if formula.starts_with('=') {
+            formula.to_string()
+        } else {
+            format!("={formula}")
+        };
+        if debug && staging.observed < 16 {
+            eprintln!("[fz][load] formula observed at R{excel_row}C{excel_col}");
+        }
+        if engine.config.defer_graph_building {
+            engine.stage_formula_text(sheet, excel_row, excel_col, normalized);
+            staging.handed_to_engine += 1;
+        } else {
+            let ast_id = if let Some(cached) = staging.parse_cache.get(&normalized) {
+                *cached
+            } else {
+                let parsed = match formualizer_parse::parser::parse(&normalized) {
+                    Ok(parsed) => Some(parsed),
+                    Err(error) => engine
+                        .handle_formula_parse_error(
+                            sheet,
+                            excel_row,
+                            excel_col,
+                            &normalized,
+                            error.to_string(),
+                        )
+                        .map_err(|error| {
+                            calamine::Error::Io(std::io::Error::other(error.to_string()))
+                        })?,
+                };
+                let ast_id = parsed.as_ref().map(|ast| engine.intern_formula_ast(ast));
+                staging.parse_cache.insert(normalized.clone(), ast_id);
+                ast_id
+            };
+            if let Some(ast_id) = ast_id {
+                staging.formulas.push(FormulaIngestRecord::new(
+                    excel_row,
+                    excel_col,
+                    ast_id,
+                    Some(Arc::<str>::from(normalized)),
+                ));
+                staging.handed_to_engine += 1;
+            }
+        }
+        staging.observed += 1;
+        Ok(())
+    }
+
+    fn stream_worksheet<RS, C>(
+        workbook: &mut Xlsx<RS>,
+        sheet: &str,
+        engine: &mut EvalEngine<C>,
+        sheet_instance: u32,
+        chunk_rows: usize,
+        debug: bool,
+        workbook_spool_usage: WorkbookSpoolUsage,
+    ) -> Result<StreamedSheet, calamine::Error>
+    where
+        RS: Read + Seek,
+        C: EvaluationContext,
+    {
+        let timer = DebugTimer::start();
+        let mut reader = workbook
+            .worksheet_cells_reader(sheet)
+            .map_err(calamine::Error::Xlsx)?;
+        let declared = reader.dimensions();
+        let mut dims_rows = (declared.end.0 as usize + 1).max(1);
+        let mut dims_cols = (declared.end.1 as usize + 1).max(1);
+        enforce_sheet_dimension_limits(
+            "calamine",
+            sheet,
+            dims_rows as u32,
+            dims_cols as u32,
+            engine.workbook_load_limits(),
+        )
+        .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+
+        let force_sparse_from_start = (dims_rows as u64).saturating_mul(dims_cols as u64)
+            > engine.workbook_load_limits().max_sheet_logical_cells;
+        let mut dense = (!force_sparse_from_start).then(|| DenseState {
+            aib: IngestBuilder::new(sheet, dims_cols, chunk_rows, engine.config.date_system),
+            row_vals: vec![LiteralValue::Empty; dims_cols],
+            current_row0: 0,
+            rows_appended: 0,
+            row_started: false,
+        });
+        let mut sparse = force_sparse_from_start.then(|| {
+            formualizer_eval::arrow_store::ArrowSheet::new_sparse(
+                sheet, dims_cols, dims_rows, chunk_rows,
+            )
+        });
+        let mut used_sparse_fallback = force_sparse_from_start;
+        let mut max_row_seen = 0usize;
+        let mut max_col_seen = 0usize;
+        let mut value_cells_observed = 0usize;
+        let mut values_handed_to_engine = 0usize;
+        let mut formula_staging = FormulaStaging::new();
+        let mut formula_count = 0usize;
+        let mut formula_evidence = MonotonicFormulaEvidence::new();
+        let spool_limits = engine.workbook_load_limits();
+        let workbook_bytes_remaining = spool_limits
+            .max_formula_spool_bytes_per_workbook
+            .saturating_sub(workbook_spool_usage.bytes);
+        let spill_files_remaining = spool_limits
+            .max_formula_spool_files_per_workbook
+            .saturating_sub(workbook_spool_usage.files);
+        let mut formula_spool = HybridFormulaReplaySpool::new(FormulaSpoolLimits {
+            sheet_bytes: spool_limits.max_formula_spool_bytes_per_sheet,
+            workbook_bytes_remaining,
+            workbook_bytes_used: workbook_spool_usage.bytes,
+            memory_prefix_bytes: spool_limits.formula_spool_memory_prefix_bytes,
+            memory_only_bytes: spool_limits.max_formula_spool_memory_bytes,
+            allow_disk: spool_limits.formula_spool_disk_policy
+                == FormulaSpoolDiskPolicy::NativeSpill,
+            spill_files_remaining,
+            spill_files_limit: spool_limits.max_formula_spool_files_per_workbook,
+        });
+        let mut last_formula_coord = None;
+        let mut shared_formula_tags = 0usize;
+
+        while let Some(record) = reader
+            .next_cell_with_formula_metadata()
+            .map_err(calamine::Error::Xlsx)?
+        {
+            let (row0, col0) = record.pos;
+            let row = row0 as usize;
+            let col = col0 as usize;
+            if row >= dims_rows || col >= dims_cols {
+                dims_rows = dims_rows.max(row + 1);
+                dims_cols = dims_cols.max(col + 1);
+                enforce_sheet_dimension_limits(
+                    "calamine",
+                    sheet,
+                    dims_rows as u32,
+                    dims_cols as u32,
+                    engine.workbook_load_limits(),
+                )
+                .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+            }
+            max_row_seen = max_row_seen.max(row);
+            max_col_seen = max_col_seen.max(col);
+
+            let has_formula = record.formula.is_some();
+            if let Some(metadata) = record.formula {
+                if u64::try_from(value_cells_observed)
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(u64::try_from(formula_count).unwrap_or(u64::MAX))
+                    .saturating_add(1)
+                    > engine.workbook_load_limits().max_sheet_logical_cells
+                {
+                    return Err(calamine::Error::Io(std::io::Error::other(format!(
+                        "Workbook load budget exceeded in calamine for sheet {sheet}: observed populated cell count exceeds configured logical-cell budget of {}",
+                        engine.workbook_load_limits().max_sheet_logical_cells
+                    ))));
+                }
+                let coord0 = SourceCoord {
+                    row: row0,
+                    col: col0,
+                };
+                let source_sequence = formula_count as u64;
+                match metadata {
+                    XlsxFormulaMetadata::Normal { formula } => {
+                        formula_evidence.observe(coord0, EvidenceRecord::Ordinary);
+                        formula_spool.append(SpoolFormulaRecord::Ordinary {
+                            sequence: source_sequence,
+                            coord0,
+                            text: &formula,
+                        })
+                    }
+                    XlsxFormulaMetadata::Shared {
+                        shared_index,
+                        range,
+                        formula,
+                    } => {
+                        shared_formula_tags += 1;
+                        let declared_range = range.map(|range| SourceRect {
+                            start: SourceCoord {
+                                row: range.start.0,
+                                col: range.start.1,
+                            },
+                            end: SourceCoord {
+                                row: range.end.0,
+                                col: range.end.1,
+                            },
+                        });
+                        let family = SourceFamilyId {
+                            sheet_instance,
+                            shared_index,
+                        };
+                        formula_evidence.observe(
+                            coord0,
+                            EvidenceRecord::Anchor {
+                                family,
+                                range: declared_range,
+                                text: &formula,
+                            },
+                        );
+                        formula_spool.append(SpoolFormulaRecord::SharedAnchor {
+                            sequence: source_sequence,
+                            coord0,
+                            shared_index,
+                            declared_range,
+                            text: &formula,
+                        })
+                    }
+                    XlsxFormulaMetadata::SharedDerived { shared_index } => {
+                        shared_formula_tags += 1;
+                        formula_evidence.observe(
+                            coord0,
+                            EvidenceRecord::Descendant {
+                                family: SourceFamilyId {
+                                    sheet_instance,
+                                    shared_index,
+                                },
+                            },
+                        );
+                        formula_spool.append(SpoolFormulaRecord::SharedDescendant {
+                            sequence: source_sequence,
+                            coord0,
+                            shared_index,
+                        })
+                    }
+                    _ => {
+                        formula_evidence.observe(coord0, EvidenceRecord::Unsupported);
+                        formula_spool.append(SpoolFormulaRecord::Unsupported {
+                            sequence: source_sequence,
+                            coord0,
+                        })
+                    }
+                }
+                .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+                last_formula_coord = Some((row, col));
+                if let Some(state) = dense.as_mut()
+                    && state.row_started
+                    && state.current_row0 == row
+                    && col < state.row_vals.len()
+                {
+                    state.row_vals[col] = LiteralValue::Empty;
+                }
+                formula_count += 1;
+            }
+
+            // Preserve existing KeepCachedValue behavior: a formula's cached
+            // value is not handed to the value plane.
+            if has_formula {
+                continue;
+            }
+            let Some(literal) = data_ref_to_literal(&record.value) else {
+                continue;
+            };
+            value_cells_observed += 1;
+            if u64::try_from(value_cells_observed)
+                .unwrap_or(u64::MAX)
+                .saturating_add(u64::try_from(formula_count).unwrap_or(u64::MAX))
+                > engine.workbook_load_limits().max_sheet_logical_cells
+            {
+                return Err(calamine::Error::Io(std::io::Error::other(format!(
+                    "Workbook load budget exceeded in calamine for sheet {sheet}: observed populated cell count exceeds configured logical-cell budget of {}",
+                    engine.workbook_load_limits().max_sheet_logical_cells
+                ))));
+            }
+            if last_formula_coord == Some((row, col)) {
+                continue;
+            }
+
+            if let Some(arrow_sheet) = sparse.as_mut() {
+                if let Some(value) = data_ref_to_overlay(&record.value) {
+                    arrow_sheet.set_sparse_overlay_value(row, col, value);
+                    values_handed_to_engine += 1;
+                }
+                continue;
+            }
+
+            let state = dense.as_mut().expect("dense or sparse ingest mode");
+            let non_monotonic = state.row_started && row < state.current_row0;
+            let col_overflow = col >= state.row_vals.len();
+            let gap_rows = if state.row_started {
+                row.saturating_sub(state.current_row0)
+            } else {
+                row
+            };
+            let large_gap = gap_rows > 128;
+            let would_exceed_dense_budget =
+                u64::try_from(state.rows_appended.saturating_mul(state.row_vals.len()))
+                    .unwrap_or(u64::MAX)
+                    > engine.workbook_load_limits().max_sheet_logical_cells;
+            if non_monotonic || col_overflow || large_gap || would_exceed_dense_budget {
+                let mut state = dense.take().expect("dense state present");
+                if state.row_started && state.current_row0 == state.rows_appended {
+                    state.aib.append_row(&state.row_vals).map_err(|error| {
+                        calamine::Error::Io(std::io::Error::other(error.to_string()))
+                    })?;
+                    state.rows_appended += 1;
+                }
+                let mut arrow_sheet = state.aib.finish();
+                arrow_sheet.ensure_row_capacity(dims_rows.max(row + 1));
+                if col >= arrow_sheet.columns.len() {
+                    arrow_sheet.insert_columns(
+                        arrow_sheet.columns.len(),
+                        col + 1 - arrow_sheet.columns.len(),
+                    );
+                }
+                if let Some(value) = data_ref_to_overlay(&record.value) {
+                    arrow_sheet.set_sparse_overlay_value(row, col, value);
+                    values_handed_to_engine += 1;
+                }
+                sparse = Some(arrow_sheet);
+                used_sparse_fallback = true;
+                continue;
+            }
+
+            if !state.row_started {
+                while state.rows_appended < row {
+                    state
+                        .aib
+                        .append_row(&vec![LiteralValue::Empty; state.row_vals.len()])
+                        .map_err(|error| {
+                            calamine::Error::Io(std::io::Error::other(error.to_string()))
+                        })?;
+                    state.rows_appended += 1;
+                }
+                state.current_row0 = row;
+                state.row_started = true;
+            } else if row > state.current_row0 {
+                state.aib.append_row(&state.row_vals).map_err(|error| {
+                    calamine::Error::Io(std::io::Error::other(error.to_string()))
+                })?;
+                state.rows_appended += 1;
+                state.row_vals.fill(LiteralValue::Empty);
+                while state.rows_appended < row {
+                    state
+                        .aib
+                        .append_row(&vec![LiteralValue::Empty; state.row_vals.len()])
+                        .map_err(|error| {
+                            calamine::Error::Io(std::io::Error::other(error.to_string()))
+                        })?;
+                    state.rows_appended += 1;
+                }
+                state.current_row0 = row;
+            }
+            state.row_vals[col] = literal;
+            values_handed_to_engine += 1;
+        }
+
+        // Replay and validate the complete sheet-local source stream before any
+        // formula staging, parsing, or graph mutation. The Arrow result is also
+        // still local and is installed by the caller only after this succeeds.
+        let compressed_evidence = formula_evidence.finish();
+        let mut formula_source_report = compressed_evidence.report;
+        let compressed_families = compressed_evidence.families;
+        let formula_spool_bytes = if formula_count == 0 {
+            0
+        } else {
+            formula_spool.encoded_bytes()
+        };
+        let formula_spool_spilled = formula_spool.spilled();
+        formula_source_report.source_formula_records_spooled = formula_count as u64;
+        formula_source_report.source_spool_encoded_bytes = formula_spool_bytes;
+        formula_source_report.source_spool_peak_memory_bytes = formula_spool.peak_memory_bytes();
+        formula_source_report.source_spool_spilled_bytes = if formula_spool_spilled {
+            formula_spool_bytes
+        } else {
+            0
+        };
+        let _formula_spool_storage = formula_spool.storage_kind();
+        debug_assert!(formula_count == 0 || formula_spool_bytes >= 5);
+        let direct_preparation = if engine.config.formula_plane_mode
+            == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
+            && !engine.config.defer_graph_building
+        {
+            Some(engine.prepare_eager_compressed_formula_families(sheet, &compressed_families))
+        } else {
+            None
+        };
+        let all_formulas_direct = direct_preparation
+            .as_ref()
+            .is_some_and(|preparation| preparation.direct_cell_count() == formula_count as u64);
+        if !all_formulas_direct && !engine.config.defer_graph_building {
+            formula_source_report.source_spool_replays = 1;
+            replay_spool_per_cell_filtered(
+                &mut formula_spool,
+                sheet,
+                |shared_index| {
+                    direct_preparation.as_ref().is_some_and(|preparation| {
+                        preparation.is_direct(SourceFamilyId {
+                            sheet_instance,
+                            shared_index,
+                        })
+                    })
+                },
+                |coord0, formula| {
+                    Self::stage_formula(
+                        engine,
+                        sheet,
+                        (coord0.row, coord0.col),
+                        formula,
+                        debug,
+                        &mut formula_staging,
+                    )
+                },
+            )?;
+        }
+
+        if u64::try_from(value_cells_observed)
+            .unwrap_or(u64::MAX)
+            .saturating_add(u64::try_from(formula_count).unwrap_or(u64::MAX))
+            > engine.workbook_load_limits().max_sheet_logical_cells
+        {
+            return Err(calamine::Error::Io(std::io::Error::other(format!(
+                "Workbook load budget exceeded in calamine for sheet {sheet}: observed populated cell count exceeds configured logical-cell budget of {}",
+                engine.workbook_load_limits().max_sheet_logical_cells
+            ))));
+        }
+        enforce_sheet_dimension_limits(
+            "calamine",
+            sheet,
+            dims_rows as u32,
+            dims_cols as u32,
+            engine.workbook_load_limits(),
+        )
+        .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
+
+        let mut arrow_sheet = if let Some(mut arrow_sheet) = sparse {
+            arrow_sheet.ensure_row_capacity(dims_rows.max(max_row_seen + 1));
+            arrow_sheet
+        } else {
+            let mut state = dense.take().expect("dense state present");
+            if state.row_started {
+                state.aib.append_row(&state.row_vals).map_err(|error| {
+                    calamine::Error::Io(std::io::Error::other(error.to_string()))
+                })?;
+            }
+            let mut arrow_sheet = state.aib.finish();
+            arrow_sheet.ensure_row_capacity(dims_rows.max(max_row_seen + 1));
+            arrow_sheet
+        };
+        if dims_cols > arrow_sheet.columns.len() {
+            arrow_sheet.insert_columns(
+                arrow_sheet.columns.len(),
+                dims_cols - arrow_sheet.columns.len(),
+            );
+        }
+        let deferred_package = engine.config.defer_graph_building.then(|| {
+            DeferredFormulaPackage::new(
+                sheet.to_string(),
+                formula_source_report.clone(),
+                compressed_families.clone(),
+                Box::new(CalamineDeferredFormulaReplay::new(
+                    formula_spool,
+                    sheet.to_string(),
+                    sheet_instance,
+                )),
+            )
+        });
+        Ok(StreamedSheet {
+            arrow_sheet,
+            dimensions: (dims_rows, dims_cols),
+            max_col_seen,
+            used_sparse_fallback,
+            value_cells_observed,
+            values_handed_to_engine,
+            formulas_observed: formula_count,
+            formulas_handed_to_engine: formula_count,
+            formulas: formula_staging.formulas,
+            formula_source_report,
+            compressed_families,
+            direct_preparation,
+            deferred_package,
+            shared_formula_tags,
+            formula_spool_bytes,
+            formula_spool_spilled,
+            stream_millis: timer.elapsed_millis(),
+        })
+    }
 
     pub fn external_link_target(&self, index: u32) -> Option<&str> {
         self.external_link_targets.get(&index).map(|s| s.as_str())
@@ -412,7 +1019,7 @@ impl CalamineAdapter {
             calamine::CellErrorType::Num => ExcelErrorKind::Num,
             calamine::CellErrorType::Ref => ExcelErrorKind::Ref,
             calamine::CellErrorType::Value => ExcelErrorKind::Value,
-            _ => ExcelErrorKind::Value,
+            _ => ExcelErrorKind::Error,
         };
         map_error_code(kind)
     }
@@ -700,15 +1307,13 @@ where
         let _span_load = tracing::info_span!(
             "io_stream_into_engine",
             backend = "calamine",
-            formula_records = false,
+            formula_records = true,
         )
         .entered();
 
-        // Publishable Calamine path: crates.io Calamine currently exposes values
-        // and formulas as separate ranges. Keep this path compatible with that API
-        // while preserving the same sparse/dense engine ingest semantics used by
-        // the FormulaPlane-aware loaders. Once Calamine publishes XLSX formula
-        // record streaming, this seam can switch back to a single-pass reader.
+        // Calamine 0.36 streams cached values and formula metadata from each XLSX
+        // cell record in one pass. FormulaPlane staging and authoritative family
+        // grouping remain unchanged downstream.
         let debug = std::env::var("FZ_DEBUG_LOAD")
             .ok()
             .is_some_and(|v| v != "0");
@@ -729,486 +1334,577 @@ where
         engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);
         let prev_range_limit = engine.config.range_expansion_limit;
         engine.config.range_expansion_limit = 0;
+        let prev_first_load = engine.first_load_assume_new();
         engine.set_first_load_assume_new(true);
         engine.reset_ensure_touched();
 
-        let chunk_rows: usize = 32 * 1024;
-        let mut total_values = 0usize;
-        let mut total_value_cells_observed = 0usize;
-        let mut total_formulas = 0usize;
-        let mut total_formula_handed_to_engine = 0usize;
-        let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
+        let load_result = (|| -> Result<(), calamine::Error> {
+            let chunk_rows: usize = 32 * 1024;
+            let mut total_values = 0usize;
+            let mut total_value_cells_observed = 0usize;
+            let mut total_formulas = 0usize;
+            let mut total_formula_handed_to_engine = 0usize;
+            let mut total_shared_formula_tags = 0usize;
+            let mut workbook_spool_bytes_used = 0u64;
+            let mut workbook_spill_files_used = 0u32;
+            let mut eager_formula_batches: Vec<(FormulaIngestBatch, FormulaCompressedSourceBatch)> =
+                Vec::new();
+            let mut eager_direct_batches: Vec<(
+                FormulaIngestBatch,
+                FormulaCompressedSourceReport,
+                FormulaCompressedPreparation,
+            )> = Vec::new();
 
-        #[inline]
-        fn data_to_literal(value: &Data) -> Option<LiteralValue> {
-            match value {
-                Data::Empty => None,
-                Data::String(s) if s.is_empty() => None,
-                Data::String(s) => Some(LiteralValue::Text(s.clone())),
-                Data::Float(f) => Some(LiteralValue::Number(*f)),
-                Data::Int(i) => Some(LiteralValue::Number(*i as f64)),
-                Data::Bool(b) => Some(LiteralValue::Boolean(*b)),
-                Data::Error(e) => Some(LiteralValue::Error(ExcelError::new(
-                    match CalamineAdapter::calamine_error_code(e) {
-                        1 => ExcelErrorKind::Null,
-                        2 => ExcelErrorKind::Ref,
-                        3 => ExcelErrorKind::Name,
-                        4 => ExcelErrorKind::Value,
-                        5 => ExcelErrorKind::Div,
-                        6 => ExcelErrorKind::Na,
-                        7 => ExcelErrorKind::Num,
-                        _ => ExcelErrorKind::Error,
-                    },
-                ))),
-                Data::DateTime(dt) => Some(LiteralValue::from_serial_number(dt.as_f64())),
-                Data::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
-                Data::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
-            }
-        }
-
-        #[inline]
-        fn data_to_overlay(value: &Data) -> Option<OverlayValue> {
-            match value {
-                Data::Empty => None,
-                Data::String(s) if s.is_empty() => None,
-                Data::String(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
-                Data::Float(f) => Some(OverlayValue::Number(*f)),
-                Data::Int(i) => Some(OverlayValue::Number(*i as f64)),
-                Data::Bool(b) => Some(OverlayValue::Boolean(*b)),
-                Data::Error(e) => {
-                    Some(OverlayValue::Error(CalamineAdapter::calamine_error_code(e)))
+            for (sheet_instance, n) in names.iter().enumerate() {
+                let t_sheet = DebugTimer::start();
+                if debug {
+                    eprintln!("[fz][load] >> sheet '{n}'");
                 }
-                Data::DateTime(dt) => Some(OverlayValue::DateTime(dt.as_f64())),
-                Data::DateTimeIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
-                Data::DurationIso(s) => Some(OverlayValue::Text(Arc::from(s.as_str()))),
+                #[cfg(feature = "tracing")]
+                let _span_sheet =
+                    tracing::info_span!("io_populate_sheet", sheet = n.as_str()).entered();
+
+                let streamed = {
+                    let mut workbook = self.workbook.write();
+                    match &mut *workbook {
+                        CalamineWorkbook::File(workbook) => Self::stream_worksheet(
+                            workbook,
+                            n,
+                            engine,
+                            sheet_instance as u32,
+                            chunk_rows,
+                            debug,
+                            WorkbookSpoolUsage {
+                                bytes: workbook_spool_bytes_used,
+                                files: workbook_spill_files_used,
+                            },
+                        ),
+                        CalamineWorkbook::Bytes(workbook) => Self::stream_worksheet(
+                            workbook,
+                            n,
+                            engine,
+                            sheet_instance as u32,
+                            chunk_rows,
+                            debug,
+                            WorkbookSpoolUsage {
+                                bytes: workbook_spool_bytes_used,
+                                files: workbook_spill_files_used,
+                            },
+                        ),
+                    }?
+                };
+                let StreamedSheet {
+                    arrow_sheet: asheet,
+                    dimensions: (dims_rows, dims_cols),
+                    max_col_seen,
+                    used_sparse_fallback,
+                    value_cells_observed: sheet_value_cells_observed,
+                    values_handed_to_engine,
+                    formulas_observed: parsed_n,
+                    formulas_handed_to_engine: formula_handed_to_engine,
+                    formulas,
+                    formula_source_report,
+                    compressed_families,
+                    direct_preparation,
+                    deferred_package,
+                    shared_formula_tags,
+                    formula_spool_bytes,
+                    formula_spool_spilled,
+                    stream_millis,
+                } = streamed;
+                workbook_spool_bytes_used = workbook_spool_bytes_used
+                    .checked_add(formula_spool_bytes)
+                    .expect("spool workbook accounting was preflighted");
+                if formula_spool_spilled {
+                    workbook_spill_files_used = workbook_spill_files_used
+                        .checked_add(1)
+                        .expect("spool file accounting was preflighted");
+                }
+                total_values += values_handed_to_engine;
+                total_value_cells_observed += sheet_value_cells_observed;
+                total_shared_formula_tags += shared_formula_tags;
+
+                let store = engine.sheet_store_mut();
+                if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
+                    store.sheets[pos] = asheet;
+                } else {
+                    store.sheets.push(asheet);
+                }
+
+                if engine.config.defer_graph_building {
+                    if let Some(package) = deferred_package {
+                        engine.stage_deferred_formula_package(package);
+                    }
+                } else if !formulas.is_empty() || formula_source_report.source_formula_events != 0 {
+                    let batch = FormulaIngestBatch::new(n.clone(), formulas);
+                    if let Some(preparation) = direct_preparation {
+                        eager_direct_batches.push((batch, formula_source_report, preparation));
+                    } else {
+                        eager_formula_batches.push((
+                            batch,
+                            FormulaCompressedSourceBatch::with_families(
+                                n.clone(),
+                                formula_source_report,
+                                compressed_families,
+                            ),
+                        ));
+                    }
+                }
+
+                total_formulas += parsed_n;
+                total_formula_handed_to_engine += formula_handed_to_engine;
+                if debug {
+                    eprintln!(
+                        "[fz][load]    streamed rows={} cols={} max_record_col={} sparse_fallback={} values={} formulas={} in {} ms",
+                        dims_rows,
+                        dims_cols,
+                        max_col_seen + 1,
+                        used_sparse_fallback,
+                        sheet_value_cells_observed,
+                        parsed_n,
+                        stream_millis,
+                    );
+                    eprintln!(
+                        "[fz][load] << sheet '{}' staged in {} ms",
+                        n,
+                        t_sheet.elapsed_millis()
+                    );
+                }
+                self.loaded_sheets.insert(n.to_string());
+
+                let row_hidden_manual: &[u32] = &[];
+                let row_hidden_filter: &[u32] = &[];
+                for row in row_hidden_manual {
+                    engine
+                        .set_row_hidden(
+                            n,
+                            *row,
+                            true,
+                            formualizer_eval::engine::RowVisibilitySource::Manual,
+                        )
+                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                }
+                for row in row_hidden_filter {
+                    engine
+                        .set_row_hidden(
+                            n,
+                            *row,
+                            true,
+                            formualizer_eval::engine::RowVisibilitySource::Filter,
+                        )
+                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                }
             }
-        }
 
-        struct DenseState {
-            aib: IngestBuilder,
-            row_vals: Vec<LiteralValue>,
-            current_row0: usize,
-            rows_appended: usize,
-            row_started: bool,
-        }
-
-        for n in &names {
-            let t_sheet = DebugTimer::start();
-            if debug {
-                eprintln!("[fz][load] >> sheet '{n}'");
+            if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
+                engine
+                    .ingest_compressed_formula_source_batches(eager_formula_batches)
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
             }
-            #[cfg(feature = "tracing")]
-            let _span_sheet =
-                tracing::info_span!("io_populate_sheet", sheet = n.as_str()).entered();
+            if !eager_direct_batches.is_empty() {
+                engine
+                    .finish_eager_compressed_formula_sources(eager_direct_batches)
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+            }
 
-            let (range, formula_range) = {
-                let mut wb_guard = self.workbook.write();
-                let range = wb_guard.worksheet_range(n)?;
-                let formula_range = wb_guard.worksheet_formula(n).ok();
-                (range, formula_range)
-            };
-
-            let mut dims_rows = range.end().map(|end| end.0 + 1).unwrap_or(1) as usize;
-            let mut abs_cols = range.end().map(|end| end.1 + 1).unwrap_or(1) as usize;
-            if let Some(frm_range) = formula_range.as_ref()
-                && let Some(end) = frm_range.end()
             {
-                dims_rows = dims_rows.max(end.0 as usize + 1);
-                abs_cols = abs_cols.max(end.1 as usize + 1);
-            }
-            dims_rows = dims_rows.max(1);
-            abs_cols = abs_cols.max(1);
+                use rustc_hash::FxHashSet;
 
-            let tf0 = DebugTimer::start();
-            let mut parsed_n = 0usize;
-            let mut formula_handed_to_engine = 0usize;
-            let mut parse_cache: rustc_hash::FxHashMap<
-                String,
-                Option<formualizer_eval::engine::AstNodeId>,
-            > = rustc_hash::FxHashMap::default();
-            parse_cache.reserve(4096);
-            let mut formulas: Vec<FormulaIngestRecord> = Vec::new();
-            let mut formula_coords: rustc_hash::FxHashSet<(usize, usize)> =
-                rustc_hash::FxHashSet::default();
+                let defined = self.defined_names()?;
+                let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> =
+                    FxHashSet::default();
 
-            if let Some(frm_range) = formula_range.as_ref() {
-                let start_row = frm_range.start().unwrap_or_default().0 as usize;
-                let start_col = frm_range.start().unwrap_or_default().1 as usize;
-                for (row, col, formula) in frm_range.used_cells() {
-                    if formula.is_empty() {
+                for dn in defined {
+                    let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
+                    if !seen.insert(key) {
                         continue;
                     }
-                    let row0 = row + start_row;
-                    let col0 = col + start_col;
-                    formula_coords.insert((row0, col0));
-                    dims_rows = dims_rows.max(row0 + 1);
-                    abs_cols = abs_cols.max(col0 + 1);
-                    let excel_row = (row0 + 1) as u32;
-                    let excel_col = (col0 + 1) as u32;
-                    let key_owned: String = if formula.starts_with('=') {
-                        formula.clone()
-                    } else {
-                        format!("={formula}")
-                    };
-                    if debug && parsed_n < 16 {
-                        eprintln!("[fz][load] formula R{excel_row}C{excel_col} = {key_owned:?}");
-                    }
-                    if engine.config.defer_graph_building {
-                        engine.stage_formula_text(n, excel_row, excel_col, key_owned);
-                        formula_handed_to_engine += 1;
-                    } else {
-                        let ast_id = if let Some(cached) = parse_cache.get(&key_owned) {
-                            *cached
-                        } else {
-                            let parsed = match formualizer_parse::parser::parse(&key_owned) {
-                                Ok(parsed) => Some(parsed),
-                                Err(e) => engine
-                                    .handle_formula_parse_error(
-                                        n,
-                                        excel_row,
-                                        excel_col,
-                                        &key_owned,
-                                        e.to_string(),
-                                    )
-                                    .map_err(|e| {
-                                        calamine::Error::Io(std::io::Error::other(e.to_string()))
-                                    })?,
-                            };
-                            let ast_id = parsed.as_ref().map(|ast| engine.intern_formula_ast(ast));
-                            parse_cache.insert(key_owned.clone(), ast_id);
-                            ast_id
-                        };
-                        if let Some(ast_id) = ast_id {
-                            formulas.push(FormulaIngestRecord::new(
-                                excel_row,
-                                excel_col,
-                                ast_id,
-                                Some(Arc::<str>::from(key_owned.clone())),
-                            ));
-                            formula_handed_to_engine += 1;
-                        }
-                    }
-                    parsed_n += 1;
-                    if debug && parsed_n.is_multiple_of(5000) {
-                        eprintln!("[fz][load]    parsed formulas: {parsed_n}");
-                    }
-                }
-            }
 
-            if debug {
-                eprintln!("[fz][load]    dims={}x{}", dims_rows, abs_cols);
-            }
-            enforce_sheet_dimension_limits(
-                "calamine",
-                n,
-                dims_rows as u32,
-                abs_cols as u32,
-                engine.workbook_load_limits(),
-            )
-            .map_err(|err| calamine::Error::Io(std::io::Error::other(err.to_string())))?;
-
-            let logical_cells = (dims_rows as u64).saturating_mul(abs_cols as u64);
-            let force_sparse_from_start =
-                logical_cells > engine.workbook_load_limits().max_sheet_logical_cells;
-
-            let tv0 = DebugTimer::start();
-            let mut dense = (!force_sparse_from_start).then(|| DenseState {
-                aib: IngestBuilder::new(n, abs_cols, chunk_rows, engine.config.date_system),
-                row_vals: vec![LiteralValue::Empty; abs_cols],
-                current_row0: 0,
-                rows_appended: 0,
-                row_started: false,
-            });
-            let mut sparse: Option<formualizer_eval::arrow_store::ArrowSheet> =
-                force_sparse_from_start.then(|| {
-                    formualizer_eval::arrow_store::ArrowSheet::new_sparse(
-                        n, abs_cols, dims_rows, chunk_rows,
-                    )
-                });
-            let mut used_sparse_fallback = force_sparse_from_start;
-            let mut max_row_seen = 0usize;
-            let mut max_col_seen = 0usize;
-            let mut sheet_value_cells_observed = 0usize;
-
-            let start_row = range.start().unwrap_or_default().0 as usize;
-            let start_col = range.start().unwrap_or_default().1 as usize;
-            for (row, col, val) in range.used_cells() {
-                let row0 = row + start_row;
-                let col0 = col + start_col;
-                if formula_coords.contains(&(row0, col0)) {
-                    continue;
-                }
-                let Some(literal) = data_to_literal(val) else {
-                    continue;
-                };
-                max_row_seen = max_row_seen.max(row0);
-                max_col_seen = max_col_seen.max(col0);
-                dims_rows = dims_rows.max(row0 + 1);
-                abs_cols = abs_cols.max(col0 + 1);
-
-                total_value_cells_observed += 1;
-                sheet_value_cells_observed += 1;
-                if sheet_value_cells_observed.saturating_add(parsed_n)
-                    > engine.workbook_load_limits().max_sheet_logical_cells as usize
-                {
-                    return Err(calamine::Error::Io(std::io::Error::other(format!(
-                        "Workbook load budget exceeded in calamine for sheet {n}: observed populated cell count exceeds configured logical-cell budget of {}",
-                        engine.workbook_load_limits().max_sheet_logical_cells
-                    ))));
-                }
-
-                if let Some(asheet) = sparse.as_mut() {
-                    if let Some(value) = data_to_overlay(val) {
-                        asheet.set_sparse_overlay_value(row0, col0, value);
-                        total_values += 1;
-                    }
-                    continue;
-                }
-
-                let state = dense.as_mut().expect("dense or sparse ingest mode");
-                let non_monotonic = state.row_started && row0 < state.current_row0;
-                let col_overflow = col0 >= state.row_vals.len();
-                let gap_rows = if state.row_started {
-                    row0.saturating_sub(state.current_row0)
-                } else {
-                    row0
-                };
-                let large_gap = gap_rows > 128;
-                let would_exceed_dense_budget =
-                    state.rows_appended.saturating_mul(state.row_vals.len())
-                        > engine.workbook_load_limits().max_sheet_logical_cells as usize;
-
-                if non_monotonic || col_overflow || large_gap || would_exceed_dense_budget {
-                    let mut state = dense.take().expect("dense state present");
-                    if state.row_started && state.current_row0 == state.rows_appended {
-                        state.aib.append_row(&state.row_vals).map_err(|e| {
-                            calamine::Error::Io(std::io::Error::other(e.to_string()))
-                        })?;
-                        state.rows_appended += 1;
-                    }
-                    let mut asheet = state.aib.finish();
-                    asheet.ensure_row_capacity(dims_rows.max(row0 + 1));
-                    if col0 >= asheet.columns.len() {
-                        asheet.insert_columns(
-                            asheet.columns.len(),
-                            (col0 + 1) - asheet.columns.len(),
-                        );
-                    }
-                    if let Some(value) = data_to_overlay(val) {
-                        asheet.set_sparse_overlay_value(row0, col0, value);
-                        total_values += 1;
-                    }
-                    sparse = Some(asheet);
-                    used_sparse_fallback = true;
-                    continue;
-                }
-
-                if !state.row_started {
-                    while state.rows_appended < row0 {
-                        state
-                            .aib
-                            .append_row(&vec![LiteralValue::Empty; state.row_vals.len()])
-                            .map_err(|e| {
-                                calamine::Error::Io(std::io::Error::other(e.to_string()))
-                            })?;
-                        state.rows_appended += 1;
-                    }
-                    state.current_row0 = row0;
-                    state.row_started = true;
-                } else if row0 > state.current_row0 {
-                    state
-                        .aib
-                        .append_row(&state.row_vals)
-                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-                    state.rows_appended += 1;
-                    state.row_vals.fill(LiteralValue::Empty);
-                    while state.rows_appended < row0 {
-                        state
-                            .aib
-                            .append_row(&vec![LiteralValue::Empty; state.row_vals.len()])
-                            .map_err(|e| {
-                                calamine::Error::Io(std::io::Error::other(e.to_string()))
-                            })?;
-                        state.rows_appended += 1;
-                    }
-                    state.current_row0 = row0;
-                }
-
-                state.row_vals[col0] = literal;
-                total_values += 1;
-            }
-
-            let asheet = if let Some(mut asheet) = sparse {
-                asheet.ensure_row_capacity(dims_rows.max(max_row_seen + 1));
-                asheet
-            } else {
-                let mut state = dense.take().expect("dense state present");
-                if state.row_started {
-                    state
-                        .aib
-                        .append_row(&state.row_vals)
-                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-                }
-                let mut asheet = state.aib.finish();
-                asheet.ensure_row_capacity(dims_rows.max(max_row_seen + 1));
-                asheet
-            };
-
-            let store = engine.sheet_store_mut();
-            if let Some(pos) = store.sheets.iter().position(|s| s.name.as_ref() == n) {
-                store.sheets[pos] = asheet;
-            } else {
-                store.sheets.push(asheet);
-            }
-
-            if !engine.config.defer_graph_building && !formulas.is_empty() {
-                eager_formula_batches.push(FormulaIngestBatch::new(n.clone(), formulas));
-            }
-
-            total_formulas += parsed_n;
-            total_formula_handed_to_engine += formula_handed_to_engine;
-            if debug {
-                eprintln!(
-                    "[fz][load]    rows={} cols={} sparse_fallback={} values={} → arrow in {} ms",
-                    dims_rows,
-                    max_col_seen + 1,
-                    used_sparse_fallback,
-                    sheet_value_cells_observed,
-                    tv0.elapsed_millis()
-                );
-                eprintln!(
-                    "[fz][load]    formulas={} in {} ms",
-                    parsed_n,
-                    tf0.elapsed_millis()
-                );
-                eprintln!(
-                    "[fz][load] << sheet '{}' staged in {} ms",
-                    n,
-                    t_sheet.elapsed_millis()
-                );
-            }
-            self.loaded_sheets.insert(n.to_string());
-
-            let row_hidden_manual: &[u32] = &[];
-            let row_hidden_filter: &[u32] = &[];
-            for row in row_hidden_manual {
-                engine
-                    .set_row_hidden(
-                        n,
-                        *row,
-                        true,
-                        formualizer_eval::engine::RowVisibilitySource::Manual,
-                    )
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-            }
-            for row in row_hidden_filter {
-                engine
-                    .set_row_hidden(
-                        n,
-                        *row,
-                        true,
-                        formualizer_eval::engine::RowVisibilitySource::Filter,
-                    )
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-            }
-        }
-
-        if !engine.config.defer_graph_building && !eager_formula_batches.is_empty() {
-            engine
-                .ingest_formula_batches(eager_formula_batches)
-                .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-        }
-
-        {
-            use rustc_hash::FxHashSet;
-
-            let defined = self.defined_names()?;
-            let mut seen: FxHashSet<(DefinedNameScope, Option<String>, String)> =
-                FxHashSet::default();
-
-            for dn in defined {
-                let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
-                if !seen.insert(key) {
-                    continue;
-                }
-
-                let scope = match dn.scope {
-                    DefinedNameScope::Workbook => NameScope::Workbook,
-                    DefinedNameScope::Sheet => {
-                        let sheet_name = dn.scope_sheet.as_deref().ok_or_else(|| {
-                            calamine::Error::Io(std::io::Error::other(format!(
-                                "sheet-scoped defined name `{}` missing scope_sheet",
-                                dn.name
-                            )))
-                        })?;
-                        let sid = engine.sheet_id(sheet_name).ok_or_else(|| {
-                            calamine::Error::Io(std::io::Error::other(format!(
-                                "scope sheet not found: {sheet_name}"
-                            )))
-                        })?;
-                        NameScope::Sheet(sid)
-                    }
-                };
-
-                let definition = match dn.definition {
-                    DefinedNameDefinition::Range { address } => {
-                        let sheet_id = engine
-                            .sheet_id(&address.sheet)
-                            .or_else(|| engine.add_sheet(&address.sheet).ok())
-                            .ok_or_else(|| {
+                    let scope = match dn.scope {
+                        DefinedNameScope::Workbook => NameScope::Workbook,
+                        DefinedNameScope::Sheet => {
+                            let sheet_name = dn.scope_sheet.as_deref().ok_or_else(|| {
                                 calamine::Error::Io(std::io::Error::other(format!(
-                                    "sheet not found: {}",
-                                    address.sheet
+                                    "sheet-scoped defined name `{}` missing scope_sheet",
+                                    dn.name
                                 )))
                             })?;
-
-                        let sr0 = address.start_row.saturating_sub(1);
-                        let sc0 = address.start_col.saturating_sub(1);
-                        let er0 = address.end_row.saturating_sub(1);
-                        let ec0 = address.end_col.saturating_sub(1);
-
-                        let start_ref = CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
-                        if sr0 == er0 && sc0 == ec0 {
-                            NamedDefinition::Cell(start_ref)
-                        } else {
-                            let end_ref = CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
-                            let range_ref =
-                                formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
-                            NamedDefinition::Range(range_ref)
+                            let sid = engine.sheet_id(sheet_name).ok_or_else(|| {
+                                calamine::Error::Io(std::io::Error::other(format!(
+                                    "scope sheet not found: {sheet_name}"
+                                )))
+                            })?;
+                            NameScope::Sheet(sid)
                         }
-                    }
-                    DefinedNameDefinition::Literal { value } => NamedDefinition::Literal(value),
-                };
+                    };
 
-                engine
-                    .define_name(&dn.name, definition, scope)
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                    let definition = match dn.definition {
+                        DefinedNameDefinition::Range { address } => {
+                            let sheet_id = engine
+                                .sheet_id(&address.sheet)
+                                .or_else(|| engine.add_sheet(&address.sheet).ok())
+                                .ok_or_else(|| {
+                                    calamine::Error::Io(std::io::Error::other(format!(
+                                        "sheet not found: {}",
+                                        address.sheet
+                                    )))
+                                })?;
+
+                            let sr0 = address.start_row.saturating_sub(1);
+                            let sc0 = address.start_col.saturating_sub(1);
+                            let er0 = address.end_row.saturating_sub(1);
+                            let ec0 = address.end_col.saturating_sub(1);
+
+                            let start_ref =
+                                CellRef::new(sheet_id, Coord::new(sr0, sc0, true, true));
+                            if sr0 == er0 && sc0 == ec0 {
+                                NamedDefinition::Cell(start_ref)
+                            } else {
+                                let end_ref =
+                                    CellRef::new(sheet_id, Coord::new(er0, ec0, true, true));
+                                let range_ref =
+                                    formualizer_eval::reference::RangeRef::new(start_ref, end_ref);
+                                NamedDefinition::Range(range_ref)
+                            }
+                        }
+                        DefinedNameDefinition::Literal { value } => NamedDefinition::Literal(value),
+                    };
+
+                    engine
+                        .define_name(&dn.name, definition, scope)
+                        .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+                }
             }
-        }
 
-        if debug {
-            eprintln!(
-                "[fz][load] done: values={}, formulas={}, total={} ms",
-                total_values,
-                total_formulas,
-                t0.elapsed_millis(),
-            );
-        }
-        for n in &names {
-            engine.finalize_sheet_index(n);
-        }
+            if debug {
+                eprintln!(
+                    "[fz][load] done: values={}, formulas={}, total={} ms",
+                    total_values,
+                    total_formulas,
+                    t0.elapsed_millis(),
+                );
+            }
+            for n in &names {
+                engine.finalize_sheet_index(n);
+            }
 
-        engine.set_first_load_assume_new(false);
+            self.load_stats = AdapterLoadStats {
+                formula_cells_observed: Some(total_formulas as u64),
+                value_cells_observed: Some(total_value_cells_observed as u64),
+                value_slots_handed_to_engine: Some(total_values as u64),
+                formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
+                shared_formula_tags_observed: Some(total_shared_formula_tags as u64),
+            };
+            Ok(())
+        })();
+
+        // Restore every temporary engine setting even when parsing, limits, or
+        // graph ingest exits early.
+        engine.set_first_load_assume_new(prev_first_load);
         engine.reset_ensure_touched();
         engine.set_sheet_index_mode(prev_index_mode);
         engine.config.range_expansion_limit = prev_range_limit;
-        self.load_stats = AdapterLoadStats {
-            formula_cells_observed: Some(total_formulas as u64),
-            value_cells_observed: Some(total_value_cells_observed as u64),
-            value_slots_handed_to_engine: Some(total_values as u64),
-            formula_cells_handed_to_engine: Some(total_formula_handed_to_engine as u64),
-            shared_formula_tags_observed: None,
+        load_result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(sequence: u64, coord: (u32, u32), formula: FormulaSourceKind) -> FormulaSourceEvent {
+        FormulaSourceEvent {
+            sheet_name: Arc::from("Sheet1"),
+            coord0: SourceCoord {
+                row: coord.0,
+                col: coord.1,
+            },
+            source_sequence: sequence,
+            formula,
+            cached: SourceCachedValue::AbsentOrEmpty,
+        }
+    }
+
+    fn ordinary(sequence: u64, coord: (u32, u32), formula: &str) -> FormulaSourceEvent {
+        event(
+            sequence,
+            coord,
+            FormulaSourceKind::Ordinary {
+                formula: Arc::from(formula),
+                metadata: FormulaMetadataEnvelope::XlsxOrdinary,
+            },
+        )
+    }
+
+    fn anchor(
+        sequence: u64,
+        coord: (u32, u32),
+        shared_index: usize,
+        formula: &str,
+        declared_range: Option<SourceRect>,
+    ) -> FormulaSourceEvent {
+        event(
+            sequence,
+            coord,
+            FormulaSourceKind::SharedAnchor {
+                family: SourceFamilyId {
+                    sheet_instance: 3,
+                    shared_index,
+                },
+                declared_range,
+                formula: Arc::from(formula),
+                metadata: FormulaMetadataEnvelope::XlsxShared {
+                    shared_index,
+                    parsed_range: declared_range,
+                },
+            },
+        )
+    }
+
+    fn descendant(sequence: u64, coord: (u32, u32), shared_index: usize) -> FormulaSourceEvent {
+        event(
+            sequence,
+            coord,
+            FormulaSourceKind::SharedDescendant {
+                family: SourceFamilyId {
+                    sheet_instance: 3,
+                    shared_index,
+                },
+                metadata: FormulaMetadataEnvelope::XlsxShared {
+                    shared_index,
+                    parsed_range: None,
+                },
+            },
+        )
+    }
+
+    fn expanded(events: &[FormulaSourceEvent]) -> Vec<((u32, u32), String)> {
+        expand_source_events_per_cell(events)
+            .unwrap()
+            .into_iter()
+            .map(|cell| ((cell.coord0.row, cell.coord0.col), cell.formula.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn spool_replay_preserves_bounded_parse_cache_reuse() {
+        let mut spool = MemoryFormulaReplaySpool::for_logical_cell_limit(2);
+        for (sequence, coord) in [
+            (0, SourceCoord { row: 0, col: 0 }),
+            (1, SourceCoord { row: 1, col: 0 }),
+        ] {
+            let event = ordinary(sequence, (coord.row, coord.col), "1+1");
+            spool.append_source_event(&event).unwrap();
+        }
+        let events = spool.replay_events("Sheet1", 0).unwrap();
+        let cells = expand_source_events_per_cell(&events).unwrap();
+        let mut engine = EvalEngine::new(
+            formualizer_eval::test_workbook::TestWorkbook::new(),
+            formualizer_eval::engine::EvalConfig::default(),
+        );
+        let mut staging = FormulaStaging::new();
+        for cell in cells {
+            CalamineAdapter::stage_formula(
+                &mut engine,
+                "Sheet1",
+                (cell.coord0.row, cell.coord0.col),
+                &cell.formula,
+                false,
+                &mut staging,
+            )
+            .unwrap();
+        }
+        assert_eq!(staging.parse_cache.len(), 1);
+        assert_eq!(staging.formulas.len(), 2);
+    }
+
+    #[test]
+    fn source_event_contract_and_exact_expansion_cover_ordinary_shared_and_mixed() {
+        let range = SourceRect {
+            start: SourceCoord { row: 0, col: 1 },
+            end: SourceCoord { row: 2, col: 1 },
         };
-        Ok(())
+        let mut ordinary_event = ordinary(0, (0, 3), "SUM(A1:B1)");
+        ordinary_event.cached = SourceCachedValue::Present(LiteralValue::Number(30.0));
+        let events = vec![
+            ordinary_event,
+            anchor(1, (0, 1), 9, "A1+$C$1", Some(range)),
+            descendant(2, (1, 1), 9),
+            ordinary(3, (1, 4), "B2*2"),
+            descendant(4, (2, 1), 9),
+        ];
+
+        assert_eq!(events[0].source_sequence, 0);
+        assert_eq!(events[0].coord0, SourceCoord { row: 0, col: 3 });
+        assert_eq!(
+            events[0].cached,
+            SourceCachedValue::Present(LiteralValue::Number(30.0))
+        );
+        assert!(matches!(
+            &events[1].formula,
+            FormulaSourceKind::SharedAnchor {
+                family: SourceFamilyId { sheet_instance: 3, shared_index: 9 },
+                declared_range: Some(found),
+                formula,
+                ..
+            } if *found == range && formula.as_ref() == "A1+$C$1"
+        ));
+        assert_eq!(
+            expanded(&events),
+            vec![
+                ((0, 3), "SUM(A1:B1)".to_string()),
+                ((0, 1), "A1+$C$1".to_string()),
+                ((1, 1), "A2+$C$1".to_string()),
+                ((1, 4), "B2*2".to_string()),
+                ((2, 1), "A3+$C$1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn forward_anchor_and_non_monotonic_coordinates_preserve_stage1_order() {
+        let events = vec![
+            descendant(0, (8, 4), 2),
+            ordinary(1, (2, 7), "1+1"),
+            anchor(2, (7, 4), 2, "D8+$A$1", None),
+            descendant(3, (6, 4), 2),
+        ];
+        assert_eq!(
+            expanded(&events),
+            vec![
+                ((2, 7), "1+1".to_string()),
+                ((7, 4), "D8+$A$1".to_string()),
+                ((8, 4), "D9+$A$1".to_string()),
+                ((6, 4), "D7+$A$1".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_duplicate_anchor_and_duplicate_member_pin_stage1_behavior() {
+        assert!(expanded(&[descendant(0, (1, 1), 44)]).is_empty());
+
+        let events = vec![
+            descendant(0, (1, 1), 4),
+            anchor(1, (0, 1), 4, "A1", None),
+            anchor(2, (4, 1), 4, "A5*10", None),
+            descendant(3, (5, 1), 4),
+            descendant(4, (5, 1), 4),
+        ];
+        assert_eq!(
+            expanded(&events),
+            vec![
+                ((0, 1), "A1".to_string()),
+                ((1, 1), "A2".to_string()),
+                ((4, 1), "A5*10".to_string()),
+                ((5, 1), "A6*10".to_string()),
+                ((5, 1), "A6*10".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn range_holes_exceptions_and_out_of_range_are_provenance_not_expansion_authority() {
+        let range = SourceRect {
+            start: SourceCoord { row: 0, col: 1 },
+            end: SourceCoord { row: 3, col: 1 },
+        };
+        let events = vec![
+            anchor(0, (0, 1), 1, "A1", Some(range)),
+            ordinary(1, (1, 1), "99"),
+            descendant(2, (3, 1), 1),
+            descendant(3, (5, 1), 1),
+        ];
+        assert_eq!(
+            expanded(&events),
+            vec![
+                ((0, 1), "A1".to_string()),
+                ((1, 1), "99".to_string()),
+                ((3, 1), "A4".to_string()),
+                ((5, 1), "A6".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_anchor_and_range_start_mismatch_are_sequence_only_oracle_inputs() {
+        let range = SourceRect {
+            start: SourceCoord { row: 10, col: 10 },
+            end: SourceCoord { row: 11, col: 10 },
+        };
+        let events = vec![
+            anchor(0, (0, 0), 1, "", Some(range)),
+            descendant(1, (1, 0), 1),
+        ];
+        assert_eq!(
+            expanded(&events),
+            vec![((0, 0), String::new()), ((1, 0), String::new())]
+        );
+    }
+
+    #[test]
+    fn ordinary_formula_duplicates_preserve_source_order() {
+        assert_eq!(
+            expanded(&[ordinary(0, (2, 3), "1+1"), ordinary(1, (2, 3), "2+2"),]),
+            vec![((2, 3), "1+1".to_string()), ((2, 3), "2+2".to_string()),]
+        );
+    }
+
+    #[test]
+    fn boundary_references_at_maximum_coordinates_remain_exact() {
+        let max = (1_048_575, 16_383);
+        let formula = "$XFD$1048576+XFD1048576";
+        let actual = expanded(&[anchor(0, max, 8, formula, None), descendant(1, max, 8)]);
+        assert_eq!(actual[0], (max, formula.to_string()));
+        assert_eq!(actual[1], (max, formula.to_string()));
+    }
+
+    #[test]
+    fn exact_expander_matches_calamine_for_relative_and_absolute_references() {
+        let anchor_coord = (3, 4);
+        let target = (7, 8);
+        let template = "$A1+B$2+$C$3+D4";
+        let mut expected = String::new();
+        calamine::expand_shared_formula_into(template, anchor_coord, target, &mut expected)
+            .unwrap();
+        let actual = expanded(&[
+            anchor(0, anchor_coord, 7, template, None),
+            descendant(1, target, 7),
+        ]);
+        assert_eq!(actual[1], (target, expected));
+        assert_eq!(actual[1].1, "$A5+F$2+$C$3+H8");
+    }
+
+    #[test]
+    fn synthetic_unknown_metadata_fails_before_materialization() {
+        let unsupported = event(
+            0,
+            (4, 6),
+            FormulaSourceKind::Unsupported {
+                formula_if_available: None,
+                metadata: FormulaMetadataEnvelope::XlsxUnknown,
+            },
+        );
+        let error = expand_source_events_per_cell(&[unsupported]).unwrap_err();
+        assert!(matches!(
+            error,
+            SourceFormulaError::UnsupportedMetadata {
+                sheet_name,
+                coord0: SourceCoord { row: 4, col: 6 }
+            } if sheet_name.as_ref() == "Sheet1"
+        ));
+    }
+
+    #[test]
+    fn new_calamine_error_variants_preserve_generic_error_semantics() {
+        let error = calamine::CellErrorType::GettingData;
+        assert!(matches!(
+            data_ref_to_literal(&DataRef::Error(error.clone())),
+            Some(LiteralValue::Error(ref value)) if value.kind == ExcelErrorKind::Error
+        ));
+        assert!(matches!(
+            data_ref_to_overlay(&DataRef::Error(error)),
+            Some(OverlayValue::Error(8))
+        ));
     }
 }

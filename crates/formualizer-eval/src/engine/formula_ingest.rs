@@ -65,6 +65,36 @@ pub struct FormulaIngestReport {
     pub graph_vertices_created: u64,
     pub graph_edges_created: u64,
 
+    pub source_formula_events: u64,
+    pub source_formula_records_spooled: u64,
+    pub source_spool_encoded_bytes: u64,
+    pub source_spool_peak_memory_bytes: u64,
+    pub source_spool_spilled_bytes: u64,
+    pub source_spool_replays: u64,
+    pub source_ordinary_events: u64,
+    pub source_shared_anchor_events: u64,
+    pub source_shared_descendant_events: u64,
+    pub source_unknown_events: u64,
+    pub source_families_seen: u64,
+    pub source_family_cells_seen: u64,
+    pub source_family_shadow_eligible: u64,
+    pub source_family_shadow_eligible_cells: u64,
+    pub source_family_promoted: u64,
+    pub source_family_promoted_cells: u64,
+    pub source_family_fallback: u64,
+    pub source_family_fallback_cells: u64,
+    pub source_forward_descendants: u64,
+    pub source_evidence_limit_fallbacks: u64,
+    pub source_evidence_peak_bytes: u64,
+    pub source_anchor_parses: u64,
+    pub source_anchor_asts: u64,
+    pub source_anchor_analyses: u64,
+    pub source_descendant_strings_avoided: u64,
+    pub source_descendant_events_avoided: u64,
+    pub source_descendant_analyses_avoided: u64,
+    pub source_compressed_families_prepared: u64,
+    pub source_compressed_cells_prepared: u64,
+
     pub fallback_reasons: BTreeMap<String, u64>,
 }
 
@@ -84,6 +114,35 @@ impl Default for FormulaIngestReport {
             edge_rows_avoided_shadow: 0,
             graph_vertices_created: 0,
             graph_edges_created: 0,
+            source_formula_events: 0,
+            source_formula_records_spooled: 0,
+            source_spool_encoded_bytes: 0,
+            source_spool_peak_memory_bytes: 0,
+            source_spool_spilled_bytes: 0,
+            source_spool_replays: 0,
+            source_ordinary_events: 0,
+            source_shared_anchor_events: 0,
+            source_shared_descendant_events: 0,
+            source_unknown_events: 0,
+            source_families_seen: 0,
+            source_family_cells_seen: 0,
+            source_family_shadow_eligible: 0,
+            source_family_shadow_eligible_cells: 0,
+            source_family_promoted: 0,
+            source_family_promoted_cells: 0,
+            source_family_fallback: 0,
+            source_family_fallback_cells: 0,
+            source_forward_descendants: 0,
+            source_evidence_limit_fallbacks: 0,
+            source_evidence_peak_bytes: 0,
+            source_anchor_parses: 0,
+            source_anchor_asts: 0,
+            source_anchor_analyses: 0,
+            source_descendant_strings_avoided: 0,
+            source_descendant_events_avoided: 0,
+            source_descendant_analyses_avoided: 0,
+            source_compressed_families_prepared: 0,
+            source_compressed_cells_prepared: 0,
             fallback_reasons: BTreeMap::new(),
         }
     }
@@ -134,8 +193,96 @@ impl FormulaIngestReport {
         self.graph_edges_created = self
             .graph_edges_created
             .saturating_add(other.graph_edges_created);
+        self.source_formula_events = self
+            .source_formula_events
+            .saturating_add(other.source_formula_events);
+        self.source_formula_records_spooled = self
+            .source_formula_records_spooled
+            .saturating_add(other.source_formula_records_spooled);
+        self.source_spool_encoded_bytes = self
+            .source_spool_encoded_bytes
+            .saturating_add(other.source_spool_encoded_bytes);
+        self.source_spool_peak_memory_bytes = self
+            .source_spool_peak_memory_bytes
+            .max(other.source_spool_peak_memory_bytes);
+        self.source_spool_spilled_bytes = self
+            .source_spool_spilled_bytes
+            .saturating_add(other.source_spool_spilled_bytes);
+        self.source_spool_replays = self
+            .source_spool_replays
+            .saturating_add(other.source_spool_replays);
+        self.source_ordinary_events = self
+            .source_ordinary_events
+            .saturating_add(other.source_ordinary_events);
+        self.source_shared_anchor_events = self
+            .source_shared_anchor_events
+            .saturating_add(other.source_shared_anchor_events);
+        self.source_shared_descendant_events = self
+            .source_shared_descendant_events
+            .saturating_add(other.source_shared_descendant_events);
+        self.source_unknown_events = self
+            .source_unknown_events
+            .saturating_add(other.source_unknown_events);
+        self.source_families_seen = self
+            .source_families_seen
+            .saturating_add(other.source_families_seen);
+        self.source_family_cells_seen = self
+            .source_family_cells_seen
+            .saturating_add(other.source_family_cells_seen);
+        self.source_family_shadow_eligible = self
+            .source_family_shadow_eligible
+            .saturating_add(other.source_family_shadow_eligible);
+        self.source_family_shadow_eligible_cells = self
+            .source_family_shadow_eligible_cells
+            .saturating_add(other.source_family_shadow_eligible_cells);
+        self.source_family_promoted = self
+            .source_family_promoted
+            .saturating_add(other.source_family_promoted);
+        self.source_family_promoted_cells = self
+            .source_family_promoted_cells
+            .saturating_add(other.source_family_promoted_cells);
+        self.source_family_fallback = self
+            .source_family_fallback
+            .saturating_add(other.source_family_fallback);
+        self.source_family_fallback_cells = self
+            .source_family_fallback_cells
+            .saturating_add(other.source_family_fallback_cells);
+        self.source_forward_descendants = self
+            .source_forward_descendants
+            .saturating_add(other.source_forward_descendants);
+        self.source_evidence_limit_fallbacks = self
+            .source_evidence_limit_fallbacks
+            .saturating_add(other.source_evidence_limit_fallbacks);
+        self.source_evidence_peak_bytes = self
+            .source_evidence_peak_bytes
+            .max(other.source_evidence_peak_bytes);
+        self.source_anchor_parses = self
+            .source_anchor_parses
+            .saturating_add(other.source_anchor_parses);
+        self.source_anchor_asts = self
+            .source_anchor_asts
+            .saturating_add(other.source_anchor_asts);
+        self.source_anchor_analyses = self
+            .source_anchor_analyses
+            .saturating_add(other.source_anchor_analyses);
+        self.source_descendant_strings_avoided = self
+            .source_descendant_strings_avoided
+            .saturating_add(other.source_descendant_strings_avoided);
+        self.source_descendant_events_avoided = self
+            .source_descendant_events_avoided
+            .saturating_add(other.source_descendant_events_avoided);
+        self.source_descendant_analyses_avoided = self
+            .source_descendant_analyses_avoided
+            .saturating_add(other.source_descendant_analyses_avoided);
+        self.source_compressed_families_prepared = self
+            .source_compressed_families_prepared
+            .saturating_add(other.source_compressed_families_prepared);
+        self.source_compressed_cells_prepared = self
+            .source_compressed_cells_prepared
+            .saturating_add(other.source_compressed_cells_prepared);
         for (reason, count) in &other.fallback_reasons {
-            *self.fallback_reasons.entry(reason.clone()).or_default() += count;
+            let total = self.fallback_reasons.entry(reason.clone()).or_default();
+            *total = total.saturating_add(*count);
         }
     }
 }

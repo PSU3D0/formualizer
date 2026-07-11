@@ -109,6 +109,8 @@ tracing = ["dep:tracing", "dep:tracing-subscriber"]
 tracing_chrome = ["tracing", "dep:tracing-chrome"]
 perf_instrumentation = []
 formula_plane_diagnostics = []
+# Private benchmark-only forced-replay seam; not a product configuration surface.
+benchmark_internal = []
 
 [[example]]
 name = "recalc_quadratic"

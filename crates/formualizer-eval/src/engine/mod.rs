@@ -7,7 +7,9 @@ pub(crate) mod convergence;
 pub mod effects;
 pub mod eval;
 pub mod eval_delta;
+mod formula_family;
 pub mod formula_ingest;
+mod formula_source;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
@@ -51,6 +53,14 @@ pub use eval::{
 };
 pub use eval_delta::{DeltaMode, EvalDelta};
 pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
+#[doc(hidden)]
+pub use formula_source::{
+    CompressedPlacementDomain, CompressedSharedFamily, DeferredFormulaPackage,
+    DeferredFormulaReplay, DeferredReplayFormula, FormulaCompressedPreparation,
+    FormulaCompressedSourceBatch, FormulaCompressedSourceReport, FormulaMetadataEnvelope,
+    FormulaSourceEvent, FormulaSourceIngestBatch, FormulaSourceKind, SourceCachedValue,
+    SourceCoord, SourceFamilyId, SourceRect,
+};
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
 pub use graph::snapshot::VertexSnapshot;
@@ -542,6 +552,15 @@ pub enum FormulaPlaneMode {
     AuthoritativeExperimental,
 }
 
+/// Storage policy for the private formula replay spool used while loading workbooks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormulaSpoolDiskPolicy {
+    /// Spill to secure temporary storage after the configured memory prefix.
+    NativeSpill,
+    /// Never write formula replay data to a filesystem.
+    MemoryOnly,
+}
+
 /// Workbook ingest limits applied by loader backends before they materialize large sheets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkbookLoadLimits {
@@ -555,6 +574,18 @@ pub struct WorkbookLoadLimits {
     pub sparse_sheet_cell_threshold: u64,
     /// Maximum allowed logical-to-populated-cell ratio once the sparse threshold is crossed.
     pub max_sparse_cell_ratio: u64,
+    /// Maximum encoded formula replay bytes retained for one sheet.
+    pub max_formula_spool_bytes_per_sheet: u64,
+    /// Maximum encoded formula replay bytes produced across one workbook load.
+    pub max_formula_spool_bytes_per_workbook: u64,
+    /// Maximum number of native spill files created across one workbook load.
+    pub max_formula_spool_files_per_workbook: u32,
+    /// Encoded bytes retained in memory before native spill.
+    pub formula_spool_memory_prefix_bytes: u64,
+    /// Independent cap for a memory-only formula replay spool.
+    pub max_formula_spool_memory_bytes: u64,
+    /// Whether formula replay data may use secure native temporary storage.
+    pub formula_spool_disk_policy: FormulaSpoolDiskPolicy,
 }
 
 impl Default for WorkbookLoadLimits {
@@ -565,6 +596,16 @@ impl Default for WorkbookLoadLimits {
             max_sheet_logical_cells: 128_000_000,
             sparse_sheet_cell_threshold: 250_000,
             max_sparse_cell_ratio: 1_024,
+            max_formula_spool_bytes_per_sheet: 256 * 1024 * 1024,
+            max_formula_spool_bytes_per_workbook: 1024 * 1024 * 1024,
+            max_formula_spool_files_per_workbook: 1_024,
+            formula_spool_memory_prefix_bytes: 1024 * 1024,
+            max_formula_spool_memory_bytes: 16 * 1024 * 1024,
+            formula_spool_disk_policy: if cfg!(target_arch = "wasm32") {
+                FormulaSpoolDiskPolicy::MemoryOnly
+            } else {
+                FormulaSpoolDiskPolicy::NativeSpill
+            },
         }
     }
 }

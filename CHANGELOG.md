@@ -2,6 +2,20 @@
 
 All notable changes to Formualizer will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added anchor-once FormulaPlane ingest for clean OOXML shared-formula families, including eager and deferred loading, bounded replay spooling, exact conservative fallback, structural-edit and cycle-demotion support, and source-family telemetry.
+
+### Improved
+
+- Upgraded Calamine-backed XLSX loading to Calamine 0.36 and a single-pass value/formula metadata stream, preserving formula-only worksheet dimensions, cached-value semantics, load limits, shared-formula relocation, and malformed-family fallback.
+
+### Performance
+
+- Compressed shared-formula families now parse and analyze one anchor and avoid per-descendant strings, ASTs, staging entries, and graph vertices. In same-machine release probes, a clean 100k-family load improved from 997 ms and 313 MiB RSS under forced replay to 129 ms and 26 MiB RSS; a 1M-family load completed in 2.2 s at 167 MiB RSS instead of 13.1 s at 3.0 GiB.
+
 ## [0.7.1] - 2026-07-02
 
 ### Fixed
@@ -267,7 +281,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/PSU3D0/formualizer/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/PSU3D0/formualizer/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PSU3D0/formualizer/compare/v0.5.9...v0.6.0
 [0.5.9]: https://github.com/PSU3D0/formualizer/compare/v0.5.8...v0.5.9
