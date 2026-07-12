@@ -75,7 +75,7 @@ impl Function for ChooseFn {
 
     // SHORT_CIRCUIT: only the selected choice is evaluated; untaken choices
     // must not be materialized (see `Function::dispatch`).
-    func_caps!(PURE, LOOKUP, SHORT_CIRCUIT);
+    func_caps!(PURE, LOOKUP, SHORT_CIRCUIT, RETURNS_REFERENCE, MAY_SPILL);
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;
@@ -232,7 +232,7 @@ fn materialize_rows_2d<'b>(
 /// Caps: PURE, LOOKUP
 /// [formualizer-docgen:schema:end]
 impl Function for ChooseColsFn {
-    func_caps!(PURE, LOOKUP);
+    func_caps!(PURE, LOOKUP, MAY_SPILL);
     fn name(&self) -> &'static str {
         "CHOOSECOLS"
     }
@@ -388,7 +388,7 @@ impl Function for ChooseColsFn {
 /// Caps: PURE, LOOKUP
 /// [formualizer-docgen:schema:end]
 impl Function for ChooseRowsFn {
-    func_caps!(PURE, LOOKUP);
+    func_caps!(PURE, LOOKUP, MAY_SPILL);
     fn name(&self) -> &'static str {
         "CHOOSEROWS"
     }

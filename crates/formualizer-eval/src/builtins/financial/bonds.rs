@@ -1219,13 +1219,13 @@ impl Function for TbillyieldFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(AccrintFn));
-    crate::function_registry::register_function(Arc::new(AccrintmFn));
-    crate::function_registry::register_function(Arc::new(PriceFn));
-    crate::function_registry::register_function(Arc::new(YieldFn));
-    crate::function_registry::register_function(Arc::new(TbilleqFn));
-    crate::function_registry::register_function(Arc::new(TbillpriceFn));
-    crate::function_registry::register_function(Arc::new(TbillyieldFn));
+    crate::function_registry::register_builtin(Arc::new(AccrintFn));
+    crate::function_registry::register_builtin(Arc::new(AccrintmFn));
+    crate::function_registry::register_builtin(Arc::new(PriceFn));
+    crate::function_registry::register_builtin(Arc::new(YieldFn));
+    crate::function_registry::register_builtin(Arc::new(TbilleqFn));
+    crate::function_registry::register_builtin(Arc::new(TbillpriceFn));
+    crate::function_registry::register_builtin(Arc::new(TbillyieldFn));
 }
 
 #[cfg(test)]

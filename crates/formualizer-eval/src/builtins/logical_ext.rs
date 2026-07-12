@@ -293,7 +293,7 @@ impl Function for IfErrorFn {
     // SHORT_CIRCUIT: dispatch must not eagerly evaluate the fallback arm —
     // the eval body below evaluates arg0 first and touches arg1 only when
     // arg0 produced an error (same defect class as the IF fix in #118).
-    func_caps!(PURE, SHORT_CIRCUIT);
+    func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
     fn name(&self) -> &'static str {
         "IFERROR"
     }
@@ -378,7 +378,7 @@ pub struct IfNaFn; // IFNA(value, fallback)
 impl Function for IfNaFn {
     // SHORT_CIRCUIT: the fallback arm is evaluated only when arg0 is #N/A;
     // all other values/errors pass through without touching arg1.
-    func_caps!(PURE, SHORT_CIRCUIT);
+    func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
     fn name(&self) -> &'static str {
         "IFNA"
     }
@@ -460,7 +460,7 @@ pub struct IfsFn; // IFS(cond1, val1, cond2, val2, ...)
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfsFn {
-    func_caps!(PURE, SHORT_CIRCUIT);
+    func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
     fn name(&self) -> &'static str {
         "IFS"
     }
@@ -573,7 +573,7 @@ pub struct SwitchFn;
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for SwitchFn {
-    func_caps!(PURE, SHORT_CIRCUIT);
+    func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
     fn name(&self) -> &'static str {
         "SWITCH"
     }
@@ -640,12 +640,12 @@ fn switch_values_equal(a: &LiteralValue, b: &LiteralValue) -> bool {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(NotFn));
-    crate::function_registry::register_function(Arc::new(XorFn));
-    crate::function_registry::register_function(Arc::new(IfErrorFn));
-    crate::function_registry::register_function(Arc::new(IfNaFn));
-    crate::function_registry::register_function(Arc::new(IfsFn));
-    crate::function_registry::register_function(Arc::new(SwitchFn));
+    crate::function_registry::register_builtin(Arc::new(NotFn));
+    crate::function_registry::register_builtin(Arc::new(XorFn));
+    crate::function_registry::register_builtin(Arc::new(IfErrorFn));
+    crate::function_registry::register_builtin(Arc::new(IfNaFn));
+    crate::function_registry::register_builtin(Arc::new(IfsFn));
+    crate::function_registry::register_builtin(Arc::new(SwitchFn));
 }
 
 #[cfg(test)]

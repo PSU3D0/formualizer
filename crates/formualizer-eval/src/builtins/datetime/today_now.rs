@@ -140,8 +140,8 @@ impl Function for NowFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(TodayFn));
-    crate::function_registry::register_function(Arc::new(NowFn));
+    crate::function_registry::register_builtin(Arc::new(TodayFn));
+    crate::function_registry::register_builtin(Arc::new(NowFn));
 }
 
 #[cfg(test)]

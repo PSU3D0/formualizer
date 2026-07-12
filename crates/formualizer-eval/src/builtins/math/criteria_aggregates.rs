@@ -1519,14 +1519,14 @@ impl Function for CountBlankFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(SumIfFn));
-    crate::function_registry::register_function(Arc::new(CountIfFn));
-    crate::function_registry::register_function(Arc::new(AverageIfFn));
-    crate::function_registry::register_function(Arc::new(SumIfsFn));
-    crate::function_registry::register_function(Arc::new(CountIfsFn));
-    crate::function_registry::register_function(Arc::new(AverageIfsFn));
-    crate::function_registry::register_function(Arc::new(CountAFn));
-    crate::function_registry::register_function(Arc::new(CountBlankFn));
+    crate::function_registry::register_builtin(Arc::new(SumIfFn));
+    crate::function_registry::register_builtin(Arc::new(CountIfFn));
+    crate::function_registry::register_builtin(Arc::new(AverageIfFn));
+    crate::function_registry::register_builtin(Arc::new(SumIfsFn));
+    crate::function_registry::register_builtin(Arc::new(CountIfsFn));
+    crate::function_registry::register_builtin(Arc::new(AverageIfsFn));
+    crate::function_registry::register_builtin(Arc::new(CountAFn));
+    crate::function_registry::register_builtin(Arc::new(CountBlankFn));
 }
 
 #[cfg(test)]

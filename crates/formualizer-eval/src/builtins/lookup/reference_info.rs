@@ -10,6 +10,7 @@
 
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::Function;
+use crate::function_contract::{FunctionContextDependence, FunctionSemanticContract};
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
@@ -72,6 +73,14 @@ impl Function for RowFn {
     }
 
     func_caps!(PURE);
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        let mut contract = FunctionSemanticContract::trusted_builtin_default(None);
+        if arity == 0 {
+            contract.context = FunctionContextDependence::PlacementDependent;
+        }
+        Some(contract)
+    }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;
@@ -354,6 +363,14 @@ impl Function for ColumnFn {
     }
 
     func_caps!(PURE);
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        let mut contract = FunctionSemanticContract::trusted_builtin_default(None);
+        if arity == 0 {
+            contract.context = FunctionContextDependence::PlacementDependent;
+        }
+        Some(contract)
+    }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;

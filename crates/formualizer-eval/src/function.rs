@@ -4,7 +4,9 @@
 use core::panic;
 
 use crate::{
-    args::ArgSchema, function_contract::FunctionDependencyContract, traits::ArgumentHandle,
+    args::ArgSchema,
+    function_contract::{FunctionDependencyContract, FunctionSemanticContract},
+    traits::ArgumentHandle,
 };
 use formualizer_common::{ExcelError, LiteralValue};
 
@@ -14,7 +16,7 @@ bitflags::bitflags! {
     /// This allows the engine to select optimal evaluation paths (e.g., vectorized,
     /// parallel, GPU) and to enforce semantic contracts at compile time.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct FnCaps: u16 {
+    pub struct FnCaps: u32 {
         // --- Semantics ---
         /// The function always produces the same output for the same input and has no
         /// side effects. This is the default for most functions.
@@ -66,8 +68,12 @@ bitflags::bitflags! {
     /// It is safe to chunk and process input windows in parallel (e.g., SUMIFS).
     /// It is safe to chunk and process input windows in parallel (e.g., SUMIFS).
     const PARALLEL_CHUNKS= 0b0100_0000_0000_0000;
-    /// Function has dynamic dependencies determined at runtime (e.g. INDIRECT, OFFSET)
+    /// Function has dynamic dependencies determined at runtime (e.g. INDIRECT, OFFSET).
     const DYNAMIC_DEPENDENCY = 0b1000_0000_0000_0000;
+    /// Function establishes lexical bindings or evaluates a local call environment.
+    const LOCAL_ENVIRONMENT = 0b0001_0000_0000_0000_0000;
+    /// Function can produce a multi-cell dynamic-array result.
+    const MAY_SPILL = 0b0010_0000_0000_0000_0000;
     }
 }
 
@@ -117,6 +123,14 @@ pub trait Function: Send + Sync + 'static {
     /// return `Some` only for arities and argument roles they can describe
     /// without under-approximating dependencies.
     fn dependency_contract(&self, _arity: usize) -> Option<FunctionDependencyContract> {
+        None
+    }
+
+    /// Explicit semantic classification for this call arity.
+    ///
+    /// The public default is intentionally untrusted. The registry supplies a
+    /// sealed default only for crate-owned builtin registration.
+    fn semantic_contract(&self, _arity: usize) -> Option<FunctionSemanticContract> {
         None
     }
 

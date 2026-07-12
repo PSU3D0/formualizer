@@ -97,7 +97,7 @@ fn materialize_arg<'b>(
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for HStackFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "HSTACK"
     }
@@ -258,7 +258,7 @@ enum HStackEntry<'a> {
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for VStackFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "VSTACK"
     }
@@ -363,10 +363,10 @@ enum VStackEntry<'a> {
 }
 
 pub fn register_builtins() {
-    use crate::function_registry::register_function;
+    use crate::function_registry::register_builtin;
     use std::sync::Arc;
-    register_function(Arc::new(HStackFn));
-    register_function(Arc::new(VStackFn));
+    register_builtin(Arc::new(HStackFn));
+    register_builtin(Arc::new(VStackFn));
 }
 
 /* ───────────────────────── tests ───────────────────────── */

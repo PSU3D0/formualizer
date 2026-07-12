@@ -582,7 +582,8 @@ impl CalamineAdapter {
             Some(
                 engine
                     .source_formula_ingress()
-                    .prepare_families(sheet, &compressed_families),
+                    .prepare_families(sheet, &compressed_families)
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?,
             )
         } else {
             None
@@ -615,6 +616,20 @@ impl CalamineAdapter {
                 },
             )?;
         }
+
+        let mut formula_spool = Some(formula_spool);
+        let direct_preparation = direct_preparation.map(|preparation| {
+            let replay: Box<dyn formualizer_eval::engine::DeferredFormulaReplay> =
+                Box::new(CalamineDeferredFormulaReplay::new(
+                    formula_spool.take().expect("eager formula spool available"),
+                    sheet.to_string(),
+                    sheet_instance,
+                ));
+            preparation.with_exact_replay(
+                std::sync::Arc::new(std::sync::Mutex::new(replay)),
+                Default::default(),
+            )
+        });
 
         if u64::try_from(value_cells_observed)
             .unwrap_or(u64::MAX)
@@ -661,7 +676,9 @@ impl CalamineAdapter {
                 formula_source_report.clone(),
                 compressed_families.clone(),
                 Box::new(CalamineDeferredFormulaReplay::new(
-                    formula_spool,
+                    formula_spool
+                        .take()
+                        .expect("deferred formula spool available"),
                     sheet.to_string(),
                     sheet_instance,
                 )),

@@ -2568,25 +2568,25 @@ impl Function for PdurationFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(PmtFn));
-    crate::function_registry::register_function(Arc::new(PvFn));
-    crate::function_registry::register_function(Arc::new(FvFn));
-    crate::function_registry::register_function(Arc::new(NpvFn));
-    crate::function_registry::register_function(Arc::new(NperFn));
-    crate::function_registry::register_function(Arc::new(RateFn));
-    crate::function_registry::register_function(Arc::new(IpmtFn));
-    crate::function_registry::register_function(Arc::new(PpmtFn));
-    crate::function_registry::register_function(Arc::new(EffectFn));
-    crate::function_registry::register_function(Arc::new(NominalFn));
-    crate::function_registry::register_function(Arc::new(IrrFn));
-    crate::function_registry::register_function(Arc::new(MirrFn));
-    crate::function_registry::register_function(Arc::new(CumipmtFn));
-    crate::function_registry::register_function(Arc::new(CumprincFn));
-    crate::function_registry::register_function(Arc::new(XnpvFn));
-    crate::function_registry::register_function(Arc::new(XirrFn));
-    crate::function_registry::register_function(Arc::new(DollardeFn));
-    crate::function_registry::register_function(Arc::new(DollarfrFn));
-    crate::function_registry::register_function(Arc::new(RriFn));
-    crate::function_registry::register_function(Arc::new(IspmtFn));
-    crate::function_registry::register_function(Arc::new(PdurationFn));
+    crate::function_registry::register_builtin(Arc::new(PmtFn));
+    crate::function_registry::register_builtin(Arc::new(PvFn));
+    crate::function_registry::register_builtin(Arc::new(FvFn));
+    crate::function_registry::register_builtin(Arc::new(NpvFn));
+    crate::function_registry::register_builtin(Arc::new(NperFn));
+    crate::function_registry::register_builtin(Arc::new(RateFn));
+    crate::function_registry::register_builtin(Arc::new(IpmtFn));
+    crate::function_registry::register_builtin(Arc::new(PpmtFn));
+    crate::function_registry::register_builtin(Arc::new(EffectFn));
+    crate::function_registry::register_builtin(Arc::new(NominalFn));
+    crate::function_registry::register_builtin(Arc::new(IrrFn));
+    crate::function_registry::register_builtin(Arc::new(MirrFn));
+    crate::function_registry::register_builtin(Arc::new(CumipmtFn));
+    crate::function_registry::register_builtin(Arc::new(CumprincFn));
+    crate::function_registry::register_builtin(Arc::new(XnpvFn));
+    crate::function_registry::register_builtin(Arc::new(XirrFn));
+    crate::function_registry::register_builtin(Arc::new(DollardeFn));
+    crate::function_registry::register_builtin(Arc::new(DollarfrFn));
+    crate::function_registry::register_builtin(Arc::new(RriFn));
+    crate::function_registry::register_builtin(Arc::new(IspmtFn));
+    crate::function_registry::register_builtin(Arc::new(PdurationFn));
 }

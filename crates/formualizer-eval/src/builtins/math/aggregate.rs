@@ -1687,10 +1687,10 @@ mod tests_subtotal_aggregate {
 }
 
 pub fn register_builtins() {
-    crate::function_registry::register_function(std::sync::Arc::new(SumProductFn));
-    crate::function_registry::register_function(std::sync::Arc::new(SumFn));
-    crate::function_registry::register_function(std::sync::Arc::new(CountFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AverageFn));
-    crate::function_registry::register_function(std::sync::Arc::new(SubtotalFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AggregateFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SumProductFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SumFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CountFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AverageFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SubtotalFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AggregateFn));
 }

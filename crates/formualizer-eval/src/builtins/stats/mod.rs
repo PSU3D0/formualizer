@@ -1226,7 +1226,7 @@ pub struct ModeMultiFn;
 /// Caps: PURE, REDUCTION, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for ModeMultiFn {
-    func_caps!(PURE, NUMERIC_ONLY, REDUCTION);
+    func_caps!(PURE, NUMERIC_ONLY, REDUCTION, MAY_SPILL);
     fn name(&self) -> &'static str {
         "MODE.MULT"
     }
@@ -6125,7 +6125,7 @@ pub struct LinestFn;
 /// Caps: PURE, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for LinestFn {
-    func_caps!(PURE, NUMERIC_ONLY);
+    func_caps!(PURE, NUMERIC_ONLY, MAY_SPILL);
     fn name(&self) -> &'static str {
         "LINEST"
     }
@@ -6702,7 +6702,7 @@ pub struct TrendFn;
 /// Caps: PURE, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for TrendFn {
-    func_caps!(PURE, NUMERIC_ONLY);
+    func_caps!(PURE, NUMERIC_ONLY, MAY_SPILL);
     fn name(&self) -> &'static str {
         "TREND"
     }
@@ -6883,7 +6883,7 @@ pub struct GrowthFn;
 /// Caps: PURE, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for GrowthFn {
-    func_caps!(PURE, NUMERIC_ONLY);
+    func_caps!(PURE, NUMERIC_ONLY, MAY_SPILL);
     fn name(&self) -> &'static str {
         "GROWTH"
     }
@@ -7081,7 +7081,7 @@ pub struct LogestFn;
 /// Caps: PURE, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for LogestFn {
-    func_caps!(PURE, NUMERIC_ONLY);
+    func_caps!(PURE, NUMERIC_ONLY, MAY_SPILL);
     fn name(&self) -> &'static str {
         "LOGEST"
     }
@@ -7645,7 +7645,7 @@ pub struct FrequencyFn;
 /// Caps: PURE, NUMERIC_ONLY
 /// [formualizer-docgen:schema:end]
 impl Function for FrequencyFn {
-    func_caps!(PURE, NUMERIC_ONLY);
+    func_caps!(PURE, NUMERIC_ONLY, MAY_SPILL);
     fn name(&self) -> &'static str {
         "FREQUENCY"
     }
@@ -9992,109 +9992,109 @@ impl Function for GammaLnPreciseFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(ForecastLinearFn));
-    crate::function_registry::register_function(Arc::new(LinestFn));
-    crate::function_registry::register_function(Arc::new(LARGE));
-    crate::function_registry::register_function(Arc::new(SMALL));
-    crate::function_registry::register_function(Arc::new(MEDIAN));
-    crate::function_registry::register_function(Arc::new(StdevSample));
-    crate::function_registry::register_function(Arc::new(StdevPop));
-    crate::function_registry::register_function(Arc::new(VarSample));
-    crate::function_registry::register_function(Arc::new(VarPop));
-    crate::function_registry::register_function(Arc::new(PercentileInc));
-    crate::function_registry::register_function(Arc::new(PercentileExc));
-    crate::function_registry::register_function(Arc::new(QuartileInc));
-    crate::function_registry::register_function(Arc::new(QuartileExc));
-    crate::function_registry::register_function(Arc::new(RankEqFn));
-    crate::function_registry::register_function(Arc::new(RankAvgFn));
-    crate::function_registry::register_function(Arc::new(ModeSingleFn));
-    crate::function_registry::register_function(Arc::new(ModeMultiFn));
-    crate::function_registry::register_function(Arc::new(ProductFn));
-    crate::function_registry::register_function(Arc::new(GeomeanFn));
-    crate::function_registry::register_function(Arc::new(HarmeanFn));
-    crate::function_registry::register_function(Arc::new(AvedevFn));
-    crate::function_registry::register_function(Arc::new(DevsqFn));
-    crate::function_registry::register_function(Arc::new(MaxIfsFn));
-    crate::function_registry::register_function(Arc::new(MinIfsFn));
-    crate::function_registry::register_function(Arc::new(TrimmeanFn));
-    crate::function_registry::register_function(Arc::new(CorrelFn));
-    crate::function_registry::register_function(Arc::new(SlopeFn));
-    crate::function_registry::register_function(Arc::new(InterceptFn));
+    crate::function_registry::register_builtin(Arc::new(ForecastLinearFn));
+    crate::function_registry::register_builtin(Arc::new(LinestFn));
+    crate::function_registry::register_builtin(Arc::new(LARGE));
+    crate::function_registry::register_builtin(Arc::new(SMALL));
+    crate::function_registry::register_builtin(Arc::new(MEDIAN));
+    crate::function_registry::register_builtin(Arc::new(StdevSample));
+    crate::function_registry::register_builtin(Arc::new(StdevPop));
+    crate::function_registry::register_builtin(Arc::new(VarSample));
+    crate::function_registry::register_builtin(Arc::new(VarPop));
+    crate::function_registry::register_builtin(Arc::new(PercentileInc));
+    crate::function_registry::register_builtin(Arc::new(PercentileExc));
+    crate::function_registry::register_builtin(Arc::new(QuartileInc));
+    crate::function_registry::register_builtin(Arc::new(QuartileExc));
+    crate::function_registry::register_builtin(Arc::new(RankEqFn));
+    crate::function_registry::register_builtin(Arc::new(RankAvgFn));
+    crate::function_registry::register_builtin(Arc::new(ModeSingleFn));
+    crate::function_registry::register_builtin(Arc::new(ModeMultiFn));
+    crate::function_registry::register_builtin(Arc::new(ProductFn));
+    crate::function_registry::register_builtin(Arc::new(GeomeanFn));
+    crate::function_registry::register_builtin(Arc::new(HarmeanFn));
+    crate::function_registry::register_builtin(Arc::new(AvedevFn));
+    crate::function_registry::register_builtin(Arc::new(DevsqFn));
+    crate::function_registry::register_builtin(Arc::new(MaxIfsFn));
+    crate::function_registry::register_builtin(Arc::new(MinIfsFn));
+    crate::function_registry::register_builtin(Arc::new(TrimmeanFn));
+    crate::function_registry::register_builtin(Arc::new(CorrelFn));
+    crate::function_registry::register_builtin(Arc::new(SlopeFn));
+    crate::function_registry::register_builtin(Arc::new(InterceptFn));
     // Covariance and correlation functions
-    crate::function_registry::register_function(Arc::new(CovariancePFn));
-    crate::function_registry::register_function(Arc::new(CovarianceSFn));
-    crate::function_registry::register_function(Arc::new(PearsonFn));
-    crate::function_registry::register_function(Arc::new(RsqFn));
-    crate::function_registry::register_function(Arc::new(SteyxFn));
-    crate::function_registry::register_function(Arc::new(SkewFn));
-    crate::function_registry::register_function(Arc::new(KurtFn));
-    crate::function_registry::register_function(Arc::new(FisherFn));
-    crate::function_registry::register_function(Arc::new(FisherInvFn));
+    crate::function_registry::register_builtin(Arc::new(CovariancePFn));
+    crate::function_registry::register_builtin(Arc::new(CovarianceSFn));
+    crate::function_registry::register_builtin(Arc::new(PearsonFn));
+    crate::function_registry::register_builtin(Arc::new(RsqFn));
+    crate::function_registry::register_builtin(Arc::new(SteyxFn));
+    crate::function_registry::register_builtin(Arc::new(SkewFn));
+    crate::function_registry::register_builtin(Arc::new(KurtFn));
+    crate::function_registry::register_builtin(Arc::new(FisherFn));
+    crate::function_registry::register_builtin(Arc::new(FisherInvFn));
     // Statistical distributions
-    crate::function_registry::register_function(Arc::new(NormSDistFn));
-    crate::function_registry::register_function(Arc::new(NormSInvFn));
-    crate::function_registry::register_function(Arc::new(NormDistFn));
-    crate::function_registry::register_function(Arc::new(NormInvFn));
-    crate::function_registry::register_function(Arc::new(LognormDistFn));
-    crate::function_registry::register_function(Arc::new(LognormInvFn));
-    crate::function_registry::register_function(Arc::new(PhiFn));
-    crate::function_registry::register_function(Arc::new(GaussFn));
-    crate::function_registry::register_function(Arc::new(StandardizeFn));
-    crate::function_registry::register_function(Arc::new(TDistFn));
-    crate::function_registry::register_function(Arc::new(TInvFn));
-    crate::function_registry::register_function(Arc::new(ChisqDistFn));
-    crate::function_registry::register_function(Arc::new(ChisqInvFn));
-    crate::function_registry::register_function(Arc::new(FDistFn));
-    crate::function_registry::register_function(Arc::new(FInvFn));
+    crate::function_registry::register_builtin(Arc::new(NormSDistFn));
+    crate::function_registry::register_builtin(Arc::new(NormSInvFn));
+    crate::function_registry::register_builtin(Arc::new(NormDistFn));
+    crate::function_registry::register_builtin(Arc::new(NormInvFn));
+    crate::function_registry::register_builtin(Arc::new(LognormDistFn));
+    crate::function_registry::register_builtin(Arc::new(LognormInvFn));
+    crate::function_registry::register_builtin(Arc::new(PhiFn));
+    crate::function_registry::register_builtin(Arc::new(GaussFn));
+    crate::function_registry::register_builtin(Arc::new(StandardizeFn));
+    crate::function_registry::register_builtin(Arc::new(TDistFn));
+    crate::function_registry::register_builtin(Arc::new(TInvFn));
+    crate::function_registry::register_builtin(Arc::new(ChisqDistFn));
+    crate::function_registry::register_builtin(Arc::new(ChisqInvFn));
+    crate::function_registry::register_builtin(Arc::new(FDistFn));
+    crate::function_registry::register_builtin(Arc::new(FInvFn));
     // Discrete distributions
-    crate::function_registry::register_function(Arc::new(BinomDistFn));
-    crate::function_registry::register_function(Arc::new(PoissonDistFn));
-    crate::function_registry::register_function(Arc::new(ExponDistFn));
-    crate::function_registry::register_function(Arc::new(GammaDistFn));
+    crate::function_registry::register_builtin(Arc::new(BinomDistFn));
+    crate::function_registry::register_builtin(Arc::new(PoissonDistFn));
+    crate::function_registry::register_builtin(Arc::new(ExponDistFn));
+    crate::function_registry::register_builtin(Arc::new(GammaDistFn));
     // Additional distributions
-    crate::function_registry::register_function(Arc::new(WeibullDistFn));
-    crate::function_registry::register_function(Arc::new(BetaDistFn));
-    crate::function_registry::register_function(Arc::new(NegbinomDistFn));
-    crate::function_registry::register_function(Arc::new(HypgeomDistFn));
+    crate::function_registry::register_builtin(Arc::new(WeibullDistFn));
+    crate::function_registry::register_builtin(Arc::new(BetaDistFn));
+    crate::function_registry::register_builtin(Arc::new(NegbinomDistFn));
+    crate::function_registry::register_builtin(Arc::new(HypgeomDistFn));
     // Confidence intervals and hypothesis testing
-    crate::function_registry::register_function(Arc::new(ConfidenceNormFn));
-    crate::function_registry::register_function(Arc::new(ConfidenceTFn));
-    crate::function_registry::register_function(Arc::new(ZTestFn));
+    crate::function_registry::register_builtin(Arc::new(ConfidenceNormFn));
+    crate::function_registry::register_builtin(Arc::new(ConfidenceTFn));
+    crate::function_registry::register_builtin(Arc::new(ZTestFn));
     // Regression and trend functions
-    crate::function_registry::register_function(Arc::new(TrendFn));
-    crate::function_registry::register_function(Arc::new(GrowthFn));
-    crate::function_registry::register_function(Arc::new(LogestFn));
+    crate::function_registry::register_builtin(Arc::new(TrendFn));
+    crate::function_registry::register_builtin(Arc::new(GrowthFn));
+    crate::function_registry::register_builtin(Arc::new(LogestFn));
     // Percent rank and frequency functions
-    crate::function_registry::register_function(Arc::new(PercentRankIncFn));
-    crate::function_registry::register_function(Arc::new(PercentRankExcFn));
-    crate::function_registry::register_function(Arc::new(FrequencyFn));
+    crate::function_registry::register_builtin(Arc::new(PercentRankIncFn));
+    crate::function_registry::register_builtin(Arc::new(PercentRankExcFn));
+    crate::function_registry::register_builtin(Arc::new(FrequencyFn));
     // Hypothesis testing functions
-    crate::function_registry::register_function(Arc::new(TDist2TFn));
-    crate::function_registry::register_function(Arc::new(TInv2TFn));
-    crate::function_registry::register_function(Arc::new(TTestFn));
-    crate::function_registry::register_function(Arc::new(FTestFn));
-    crate::function_registry::register_function(Arc::new(ChisqTestFn));
+    crate::function_registry::register_builtin(Arc::new(TDist2TFn));
+    crate::function_registry::register_builtin(Arc::new(TInv2TFn));
+    crate::function_registry::register_builtin(Arc::new(TTestFn));
+    crate::function_registry::register_builtin(Arc::new(FTestFn));
+    crate::function_registry::register_builtin(Arc::new(ChisqTestFn));
     // FZ-PAR-01 batch
-    crate::function_registry::register_function(Arc::new(AverageAFn));
-    crate::function_registry::register_function(Arc::new(MaxAFn));
-    crate::function_registry::register_function(Arc::new(MinAFn));
-    crate::function_registry::register_function(Arc::new(StdevAFn));
-    crate::function_registry::register_function(Arc::new(StdevPAFn));
-    crate::function_registry::register_function(Arc::new(VarAFn));
-    crate::function_registry::register_function(Arc::new(VarPAFn));
-    crate::function_registry::register_function(Arc::new(SkewPFn));
-    crate::function_registry::register_function(Arc::new(TDistRtFn));
-    crate::function_registry::register_function(Arc::new(ChisqDistRtFn));
-    crate::function_registry::register_function(Arc::new(ChisqInvRtFn));
-    crate::function_registry::register_function(Arc::new(FDistRtFn));
-    crate::function_registry::register_function(Arc::new(FInvRtFn));
-    crate::function_registry::register_function(Arc::new(BetaInvFn));
-    crate::function_registry::register_function(Arc::new(BinomDistRangeFn));
-    crate::function_registry::register_function(Arc::new(BinomInvFn));
-    crate::function_registry::register_function(Arc::new(GammaFn));
-    crate::function_registry::register_function(Arc::new(GammaInvFn));
-    crate::function_registry::register_function(Arc::new(GammaLnFn));
-    crate::function_registry::register_function(Arc::new(GammaLnPreciseFn));
+    crate::function_registry::register_builtin(Arc::new(AverageAFn));
+    crate::function_registry::register_builtin(Arc::new(MaxAFn));
+    crate::function_registry::register_builtin(Arc::new(MinAFn));
+    crate::function_registry::register_builtin(Arc::new(StdevAFn));
+    crate::function_registry::register_builtin(Arc::new(StdevPAFn));
+    crate::function_registry::register_builtin(Arc::new(VarAFn));
+    crate::function_registry::register_builtin(Arc::new(VarPAFn));
+    crate::function_registry::register_builtin(Arc::new(SkewPFn));
+    crate::function_registry::register_builtin(Arc::new(TDistRtFn));
+    crate::function_registry::register_builtin(Arc::new(ChisqDistRtFn));
+    crate::function_registry::register_builtin(Arc::new(ChisqInvRtFn));
+    crate::function_registry::register_builtin(Arc::new(FDistRtFn));
+    crate::function_registry::register_builtin(Arc::new(FInvRtFn));
+    crate::function_registry::register_builtin(Arc::new(BetaInvFn));
+    crate::function_registry::register_builtin(Arc::new(BinomDistRangeFn));
+    crate::function_registry::register_builtin(Arc::new(BinomInvFn));
+    crate::function_registry::register_builtin(Arc::new(GammaFn));
+    crate::function_registry::register_builtin(Arc::new(GammaInvFn));
+    crate::function_registry::register_builtin(Arc::new(GammaLnFn));
+    crate::function_registry::register_builtin(Arc::new(GammaLnPreciseFn));
 }
 
 #[cfg(test)]

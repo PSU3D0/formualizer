@@ -440,10 +440,10 @@ impl Function for ReptFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(CharFn));
-    crate::function_registry::register_function(Arc::new(CodeFn));
-    crate::function_registry::register_function(Arc::new(AscFn));
-    crate::function_registry::register_function(Arc::new(ReptFn));
+    crate::function_registry::register_builtin(Arc::new(CharFn));
+    crate::function_registry::register_builtin(Arc::new(CodeFn));
+    crate::function_registry::register_builtin(Arc::new(AscFn));
+    crate::function_registry::register_builtin(Arc::new(ReptFn));
 }
 
 #[cfg(test)]

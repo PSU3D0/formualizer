@@ -2660,32 +2660,32 @@ mod tests_acoth {
 
 pub fn register_builtins() {
     // --- Trigonometry: circular ---
-    crate::function_registry::register_function(std::sync::Arc::new(SinFn));
-    crate::function_registry::register_function(std::sync::Arc::new(CosFn));
-    crate::function_registry::register_function(std::sync::Arc::new(TanFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AsinFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AcosFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AtanFn));
-    crate::function_registry::register_function(std::sync::Arc::new(Atan2Fn));
-    crate::function_registry::register_function(std::sync::Arc::new(SecFn));
-    crate::function_registry::register_function(std::sync::Arc::new(CscFn));
-    crate::function_registry::register_function(std::sync::Arc::new(CotFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AcotFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SinFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CosFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(TanFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AsinFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcosFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AtanFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(Atan2Fn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SecFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CscFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CotFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcotFn));
 
     // --- Trigonometry: hyperbolic ---
-    crate::function_registry::register_function(std::sync::Arc::new(SinhFn));
-    crate::function_registry::register_function(std::sync::Arc::new(CoshFn));
-    crate::function_registry::register_function(std::sync::Arc::new(TanhFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AsinhFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AcoshFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AtanhFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AcothFn));
-    crate::function_registry::register_function(std::sync::Arc::new(SechFn));
-    crate::function_registry::register_function(std::sync::Arc::new(CschFn));
-    crate::function_registry::register_function(std::sync::Arc::new(CothFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SinhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CoshFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(TanhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AsinhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcoshFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AtanhFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AcothFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SechFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CschFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(CothFn));
 
     // --- Angle conversion and constants ---
-    crate::function_registry::register_function(std::sync::Arc::new(RadiansFn));
-    crate::function_registry::register_function(std::sync::Arc::new(DegreesFn));
-    crate::function_registry::register_function(std::sync::Arc::new(PiFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(RadiansFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(DegreesFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(PiFn));
 }

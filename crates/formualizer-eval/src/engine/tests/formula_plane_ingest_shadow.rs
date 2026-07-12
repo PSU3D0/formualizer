@@ -14,6 +14,48 @@ use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
+struct ExactTestReplay {
+    formulas: Vec<(u32, u32, String, Option<SourceFamilyId>)>,
+}
+
+impl DeferredFormulaReplay for ExactTestReplay {
+    fn replay(
+        &mut self,
+        skip_families: &BTreeSet<SourceFamilyId>,
+        suppressed: &BTreeSet<(u32, u32)>,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        Ok(self
+            .formulas
+            .iter()
+            .filter(|(row, col, _, family)| {
+                !suppressed.contains(&(*row, *col))
+                    && family.is_none_or(|family| !skip_families.contains(&family))
+            })
+            .map(|(row, col, text, family)| DeferredReplayFormula {
+                row: *row,
+                col: *col,
+                text: text.clone(),
+                family: *family,
+            })
+            .collect())
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        Ok(self
+            .formulas
+            .iter()
+            .find(|(candidate_row, candidate_col, _, _)| {
+                *candidate_row == row && *candidate_col == col
+            })
+            .map(|(row, col, text, family)| DeferredReplayFormula {
+                row: *row,
+                col: *col,
+                text: text.clone(),
+                family: *family,
+            }))
+    }
+}
+
 struct TestDeferredReplay {
     text: &'static str,
     fail_once: bool,
@@ -1244,4 +1286,300 @@ fn compressed_shadow_counts_only_preparation_work_that_occurs() {
         report.fallback_reasons.get("CompleteDomainMemberMismatch"),
         Some(&1)
     );
+}
+#[test]
+fn prepared_source_family_replays_if_semantic_epoch_changes_before_finish() {
+    crate::builtins::load_builtins();
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let family = SourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 7,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("A1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+    let replay = ExactTestReplay {
+        formulas: (1..=100)
+            .map(|row| {
+                (
+                    row,
+                    2,
+                    format!("=A{row}+1"),
+                    Some(SourceFamilyId {
+                        sheet_instance: 1,
+                        source_index: 7,
+                    }),
+                )
+            })
+            .collect(),
+    };
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(replay))),
+            BTreeSet::new(),
+        );
+    assert_eq!(preparation.direct_family_count(), 1);
+
+    crate::function_registry::register_alias("", "__PREPARED_STALE_EPOCH_FIXTURE__", "", "ABS");
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
+    assert_eq!(
+        report.fallback_reasons.get("FunctionSemanticEpochChanged"),
+        Some(&1)
+    );
+}
+
+#[test]
+fn prepared_commit_boundary_rechecks_epoch_under_registry_read_guard() {
+    crate::builtins::load_builtins();
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let family_id = SourceFamilyId {
+        sheet_instance: 1,
+        source_index: 8,
+    };
+    let family = SourceFormulaFamily {
+        source_id: family_id,
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("A1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+    let replay = ExactTestReplay {
+        formulas: (1..=100)
+            .map(|row| (row, 2, format!("=A{row}+1"), Some(family_id)))
+            .collect(),
+    };
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(replay))),
+            BTreeSet::new(),
+        );
+    engine.set_before_prepared_span_commit_hook(|| {
+        crate::function_registry::register_alias("", "__PREPARED_COMMIT_RACE_FIXTURE__", "", "ABS");
+    });
+
+    engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 100, 2),
+        Some(LiteralValue::Number(1.0))
+    );
+}
+
+#[test]
+fn registry_replacement_epoch_demotes_existing_authoritative_spans() {
+    struct EpochFn;
+    impl crate::function::Function for EpochFn {
+        fn name(&self) -> &'static str {
+            "ABS"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)))
+        }
+    }
+
+    crate::builtins::load_builtins();
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let formulas = (1..=100)
+        .map(|row| record(&mut engine, row, 2, &format!("=ABS(A{row})")))
+        .collect();
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    crate::function_registry::register_function(Arc::new(EpochFn));
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
+    crate::function_registry::register_builtin(Arc::new(crate::builtins::math::numeric::AbsFn));
+}
+
+#[test]
+fn alias_redirect_epoch_demotes_active_prefixed_authority() {
+    crate::builtins::load_builtins();
+    crate::function_registry::register_alias("", "_XLFN.SUM", "", "SUM");
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let formulas = (1..=100)
+        .map(|row| record(&mut engine, row, 2, &format!("=_xlfn.SUM(A{row})")))
+        .collect();
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    crate::function_registry::register_alias("", "_XLFN.SUM", "", "ABS");
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
+    crate::function_registry::register_alias("", "_XLFN.SUM", "", "SUM");
+}
+
+#[test]
+fn changed_function_ast_discovery_covers_stale_prefix_unresolved_and_calls() {
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+
+    let changed = BTreeSet::from([(String::new(), "STALE_ALIAS".to_string())]);
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &parse("=STALE_ALIAS(A1)").unwrap(),
+        &changed
+    ));
+
+    let changed = BTreeSet::from([(String::new(), "SUM".to_string())]);
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &parse("=_xlfn.SUM(A1)").unwrap(),
+        &changed
+    ));
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &parse("=UNRESOLVED_CLOSURE_FN(A1)").unwrap(),
+        &changed
+    ));
+
+    let callee_changed = ASTNode::new(
+        ASTNodeType::Call {
+            callee: Box::new(parse("=SUM(A1)").unwrap()),
+            args: vec![parse("=ABS(A1)").unwrap()],
+        },
+        None,
+    );
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &callee_changed,
+        &changed
+    ));
+    let changed = BTreeSet::from([(String::new(), "ABS".to_string())]);
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &callee_changed,
+        &changed
+    ));
+}
+
+#[test]
+fn semantic_epoch_guard_covers_public_formula_plane_flows() {
+    let source = include_str!("../eval.rs");
+    for signature in [
+        "pub fn prepare_families(",
+        "pub fn evaluate_vertex(",
+        "pub fn evaluate_until(",
+        "pub fn evaluate_recalc_plan(",
+        "pub fn evaluate_all(",
+        "pub fn evaluate_all_with_delta(",
+        "pub fn evaluate_cells(",
+        "pub fn evaluate_cells_cancellable(",
+        "pub fn evaluate_cells_with_delta(",
+        "pub fn evaluate_all_cancellable(",
+        "pub fn evaluate_until_cancellable(",
+        "pub fn evaluate_all_logged(",
+        "fn ingest_formula_batches_inner(",
+        "fn finish_eager_compressed_formula_sources(",
+    ] {
+        let start = source
+            .find(signature)
+            .unwrap_or_else(|| panic!("missing {signature}"));
+        let body = &source[start..source.len().min(start + 1_200)];
+        assert!(
+            body.contains("observe_function_semantic_epoch"),
+            "{signature} bypasses the common semantic epoch guard"
+        );
+    }
+}
+
+#[test]
+fn registry_replacement_read_and_evaluation_race_converges_through_epoch_guard() {
+    struct RaceFn;
+    impl crate::function::Function for RaceFn {
+        fn name(&self) -> &'static str {
+            "ABS"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)))
+        }
+    }
+
+    crate::builtins::load_builtins();
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let formulas = (1..=100)
+        .map(|row| record(&mut engine, row, 2, &format!("=ABS(A{row})")))
+        .collect();
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let writer_barrier = Arc::clone(&barrier);
+    let writer = std::thread::spawn(move || {
+        writer_barrier.wait();
+        crate::function_registry::register_function(Arc::new(RaceFn));
+        crate::function_registry::resolve_with_epoch("", "ABS").unwrap()
+    });
+    barrier.wait();
+    let _ = engine.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
+    let (published_epoch, _) = writer.join().unwrap();
+    engine.evaluate_until(&[("Sheet1", 100, 2)]).unwrap();
+
+    assert!(crate::function_registry::semantic_epoch() >= published_epoch);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
+    crate::function_registry::register_builtin(Arc::new(crate::builtins::math::numeric::AbsFn));
 }

@@ -297,9 +297,9 @@ fn number_like<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<i64, ExcelError> 
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(LenFn));
-    crate::function_registry::register_function(Arc::new(LeftFn));
-    crate::function_registry::register_function(Arc::new(RightFn));
+    crate::function_registry::register_builtin(Arc::new(LenFn));
+    crate::function_registry::register_builtin(Arc::new(LeftFn));
+    crate::function_registry::register_builtin(Arc::new(RightFn));
 }
 
 #[cfg(test)]

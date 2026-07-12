@@ -139,7 +139,7 @@ pub struct XLookupFn;
 /// Caps: PURE, LOOKUP
 /// [formualizer-docgen:schema:end]
 impl Function for XLookupFn {
-    func_caps!(PURE, LOOKUP);
+    func_caps!(PURE, LOOKUP, MAY_SPILL);
     fn name(&self) -> &'static str {
         "XLOOKUP"
     }
@@ -517,7 +517,7 @@ pub struct XMatchFn;
 /// Caps: PURE, LOOKUP
 /// [formualizer-docgen:schema:end]
 impl Function for XMatchFn {
-    func_caps!(PURE, LOOKUP);
+    func_caps!(PURE, LOOKUP, MAY_SPILL);
     fn name(&self) -> &'static str {
         "XMATCH"
     }
@@ -848,7 +848,7 @@ pub struct SortFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for SortFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "SORT"
     }
@@ -1086,7 +1086,7 @@ pub struct SortByFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for SortByFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "SORTBY"
     }
@@ -1309,9 +1309,8 @@ pub struct RandArrayFn;
 /// Caps: none
 /// [formualizer-docgen:schema:end]
 impl Function for RandArrayFn {
-    // Note: RANDARRAY is NOT pure - it returns different values on each evaluation
     fn caps(&self) -> crate::function::FnCaps {
-        crate::function::FnCaps::empty()
+        crate::function::FnCaps::VOLATILE | crate::function::FnCaps::MAY_SPILL
     }
     fn name(&self) -> &'static str {
         "RANDARRAY"
@@ -1689,7 +1688,7 @@ pub struct GroupByFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for GroupByFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "GROUPBY"
     }
@@ -2063,7 +2062,7 @@ pub struct PivotByFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for PivotByFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "PIVOTBY"
     }
@@ -2534,7 +2533,7 @@ pub struct FilterFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for FilterFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "FILTER"
     }
@@ -2707,7 +2706,7 @@ pub struct UniqueFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for UniqueFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "UNIQUE"
     }
@@ -2886,7 +2885,7 @@ pub struct SequenceFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for SequenceFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "SEQUENCE"
     }
@@ -3057,7 +3056,7 @@ pub struct TransposeFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for TransposeFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "TRANSPOSE"
     }
@@ -3169,7 +3168,7 @@ pub struct TakeFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for TakeFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "TAKE"
     }
@@ -3353,7 +3352,7 @@ pub struct DropFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for DropFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "DROP"
     }
@@ -3470,21 +3469,21 @@ impl Function for DropFn {
 }
 
 pub fn register_builtins() {
-    use crate::function_registry::register_function;
+    use crate::function_registry::register_builtin;
     use std::sync::Arc;
-    register_function(Arc::new(XLookupFn));
-    register_function(Arc::new(FilterFn));
-    register_function(Arc::new(UniqueFn));
-    register_function(Arc::new(SequenceFn));
-    register_function(Arc::new(TransposeFn));
-    register_function(Arc::new(TakeFn));
-    register_function(Arc::new(DropFn));
-    register_function(Arc::new(XMatchFn));
-    register_function(Arc::new(SortFn));
-    register_function(Arc::new(SortByFn));
-    register_function(Arc::new(RandArrayFn));
-    register_function(Arc::new(GroupByFn));
-    register_function(Arc::new(PivotByFn));
+    register_builtin(Arc::new(XLookupFn));
+    register_builtin(Arc::new(FilterFn));
+    register_builtin(Arc::new(UniqueFn));
+    register_builtin(Arc::new(SequenceFn));
+    register_builtin(Arc::new(TransposeFn));
+    register_builtin(Arc::new(TakeFn));
+    register_builtin(Arc::new(DropFn));
+    register_builtin(Arc::new(XMatchFn));
+    register_builtin(Arc::new(SortFn));
+    register_builtin(Arc::new(SortByFn));
+    register_builtin(Arc::new(RandArrayFn));
+    register_builtin(Arc::new(GroupByFn));
+    register_builtin(Arc::new(PivotByFn));
 }
 
 /* ───────────────────────── tests ───────────────────────── */

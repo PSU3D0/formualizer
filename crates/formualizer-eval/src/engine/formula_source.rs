@@ -272,7 +272,7 @@ pub struct DeferredFormulaPackage {
     pub(crate) sheet_name: String,
     pub(crate) report: FormulaCompressedSourceReport,
     pub(crate) families: Vec<SourceFormulaFamily>,
-    pub(crate) replay: std::sync::Mutex<Box<dyn DeferredFormulaReplay>>,
+    pub(crate) replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
     pub(crate) invalidated: std::collections::BTreeSet<SourceFamilyId>,
     pub(crate) suppressed: std::collections::BTreeSet<(u32, u32)>,
 }
@@ -289,7 +289,7 @@ impl DeferredFormulaPackage {
             sheet_name,
             report,
             families,
-            replay: std::sync::Mutex::new(replay),
+            replay: Arc::new(std::sync::Mutex::new(replay)),
             invalidated: Default::default(),
             suppressed: Default::default(),
         }
@@ -310,12 +310,26 @@ pub struct FormulaCompressedSourceBatch {
 #[doc(hidden)]
 pub struct FormulaCompressedPreparation {
     pub(crate) engine_token: Arc<()>,
+    pub(crate) function_semantic_epoch: u64,
     pub(crate) sheet_name: Arc<str>,
     pub(crate) prepared: Vec<(SourceFamilyId, PreparedAnchorOncePlacement)>,
     pub(crate) rejected: BTreeMap<SourceFamilyId, String>,
+    pub(crate) exact_replay: Option<Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>>,
+    pub(crate) replay_suppressed: std::collections::BTreeSet<(u32, u32)>,
 }
 
 impl FormulaCompressedPreparation {
+    #[doc(hidden)]
+    pub fn with_exact_replay(
+        mut self,
+        replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
+        suppressed: std::collections::BTreeSet<(u32, u32)>,
+    ) -> Self {
+        self.exact_replay = Some(replay);
+        self.replay_suppressed = suppressed;
+        self
+    }
+
     pub fn is_direct(&self, family: SourceFamilyId) -> bool {
         self.prepared.iter().any(|(id, _)| *id == family)
     }

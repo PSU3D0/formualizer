@@ -1080,13 +1080,13 @@ impl Function for WorkdayIntlFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(WeekdayFn));
-    crate::function_registry::register_function(Arc::new(WeeknumFn));
-    crate::function_registry::register_function(Arc::new(DatedifFn));
-    crate::function_registry::register_function(Arc::new(NetworkdaysFn));
-    crate::function_registry::register_function(Arc::new(WorkdayFn));
-    crate::function_registry::register_function(Arc::new(NetworkdaysIntlFn));
-    crate::function_registry::register_function(Arc::new(WorkdayIntlFn));
+    crate::function_registry::register_builtin(Arc::new(WeekdayFn));
+    crate::function_registry::register_builtin(Arc::new(WeeknumFn));
+    crate::function_registry::register_builtin(Arc::new(DatedifFn));
+    crate::function_registry::register_builtin(Arc::new(NetworkdaysFn));
+    crate::function_registry::register_builtin(Arc::new(WorkdayFn));
+    crate::function_registry::register_builtin(Arc::new(NetworkdaysIntlFn));
+    crate::function_registry::register_builtin(Arc::new(WorkdayIntlFn));
 }
 
 #[cfg(test)]

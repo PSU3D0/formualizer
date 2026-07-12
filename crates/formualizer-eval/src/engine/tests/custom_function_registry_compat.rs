@@ -29,6 +29,10 @@ impl Function for DynamicCompatFn {
 #[test]
 fn global_dynamic_registration_remains_usable() {
     function_registry::register_function(Arc::new(DynamicCompatFn));
+    let registered = function_registry::resolve("", "GLOBAL_DYN_COMPAT").unwrap();
+    assert!(!registered.semantics.trusted_builtin);
+    assert!(registered.semantics.contract.is_none());
+    assert!(registered.semantics.issues.is_empty());
 
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine

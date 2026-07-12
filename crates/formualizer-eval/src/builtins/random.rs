@@ -79,8 +79,8 @@ impl Function for RandFn {
 }
 
 pub fn register_builtins() {
-    crate::function_registry::register_function(std::sync::Arc::new(RandFn));
-    crate::function_registry::register_function(std::sync::Arc::new(RandBetweenFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(RandFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(RandBetweenFn));
 }
 
 #[cfg(test)]

@@ -877,9 +877,9 @@ impl Function for IndirectFn {
 }
 
 pub fn register_builtins() {
-    crate::function_registry::register_function(std::sync::Arc::new(IndexFn));
-    crate::function_registry::register_function(std::sync::Arc::new(OffsetFn));
-    crate::function_registry::register_function(std::sync::Arc::new(IndirectFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(IndexFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(OffsetFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(IndirectFn));
 }
 
 #[cfg(test)]

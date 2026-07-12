@@ -1,9 +1,90 @@
-//! Optional function-owned dependency contracts.
+//! Function-owned dependency and semantic contracts.
 //!
-//! These contracts describe how a function contributes dependencies for passive
-//! planning/FormulaPlane analysis. They are deliberately additive: functions
-//! that do not opt in keep the default conservative behavior and receive no
-//! dependency-summary optimization.
+//! Dependency precision remains optional. Semantic contracts classify call-site
+//! behavior without making function names an eligibility authority.
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FunctionDependencySemantics {
+    RecursiveSyntacticArgs,
+    Dynamic,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FunctionEvaluationSemantics {
+    Eager,
+    ShortCircuit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FunctionResultSemantics {
+    ScalarValue,
+    MayReturnReference,
+    MaySpill,
+    MayReturnReferenceAndSpill,
+    Unknown,
+}
+
+impl FunctionResultSemantics {
+    pub fn from_capabilities(may_return_reference: bool, may_spill: bool) -> Self {
+        match (may_return_reference, may_spill) {
+            (false, false) => Self::ScalarValue,
+            (true, false) => Self::MayReturnReference,
+            (false, true) => Self::MaySpill,
+            (true, true) => Self::MayReturnReferenceAndSpill,
+        }
+    }
+
+    pub fn may_return_reference(self) -> bool {
+        matches!(
+            self,
+            Self::MayReturnReference | Self::MayReturnReferenceAndSpill
+        )
+    }
+
+    pub fn may_spill(self) -> bool {
+        matches!(self, Self::MaySpill | Self::MayReturnReferenceAndSpill)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FunctionEnvironmentSemantics {
+    None,
+    LocalBindings,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FunctionContextDependence {
+    None,
+    PlacementDependent,
+    WorkbookMetadata,
+    LocaleOrConfiguration,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FunctionSemanticContract {
+    pub dependency: FunctionDependencySemantics,
+    pub evaluation: FunctionEvaluationSemantics,
+    pub result: FunctionResultSemantics,
+    pub environment: FunctionEnvironmentSemantics,
+    pub context: FunctionContextDependence,
+    pub precision: Option<FunctionDependencyContract>,
+}
+
+impl FunctionSemanticContract {
+    pub fn trusted_builtin_default(precision: Option<FunctionDependencyContract>) -> Self {
+        Self {
+            dependency: FunctionDependencySemantics::RecursiveSyntacticArgs,
+            evaluation: FunctionEvaluationSemantics::Eager,
+            result: FunctionResultSemantics::ScalarValue,
+            environment: FunctionEnvironmentSemantics::None,
+            context: FunctionContextDependence::None,
+            precision,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FunctionDependencyClass {

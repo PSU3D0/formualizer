@@ -103,7 +103,7 @@ pub struct LetFn;
 /// [formualizer-docgen:schema:end]
 impl Function for LetFn {
     fn caps(&self) -> FnCaps {
-        FnCaps::PURE | FnCaps::SHORT_CIRCUIT
+        FnCaps::PURE | FnCaps::SHORT_CIRCUIT | FnCaps::LOCAL_ENVIRONMENT | FnCaps::MAY_SPILL
     }
 
     fn name(&self) -> &'static str {
@@ -116,6 +116,12 @@ impl Function for LetFn {
 
     fn variadic(&self) -> bool {
         true
+    }
+
+    fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+        static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
+            std::sync::LazyLock::new(|| vec![crate::args::ArgSchema::any()]);
+        &SCHEMA
     }
 
     fn dispatch<'a, 'b, 'c>(
@@ -249,7 +255,7 @@ pub struct LambdaFn;
 /// [formualizer-docgen:schema:end]
 impl Function for LambdaFn {
     fn caps(&self) -> FnCaps {
-        FnCaps::PURE | FnCaps::SHORT_CIRCUIT
+        FnCaps::PURE | FnCaps::SHORT_CIRCUIT | FnCaps::LOCAL_ENVIRONMENT | FnCaps::MAY_SPILL
     }
 
     fn name(&self) -> &'static str {
@@ -262,6 +268,12 @@ impl Function for LambdaFn {
 
     fn variadic(&self) -> bool {
         true
+    }
+
+    fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+        static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
+            std::sync::LazyLock::new(|| vec![crate::args::ArgSchema::any()]);
+        &SCHEMA
     }
 
     fn dispatch<'a, 'b, 'c>(
@@ -310,8 +322,8 @@ impl Function for LambdaFn {
 }
 
 pub fn register_builtins() {
-    crate::function_registry::register_function(Arc::new(LetFn));
-    crate::function_registry::register_function(Arc::new(LambdaFn));
+    crate::function_registry::register_builtin(Arc::new(LetFn));
+    crate::function_registry::register_builtin(Arc::new(LambdaFn));
 }
 
 #[cfg(test)]

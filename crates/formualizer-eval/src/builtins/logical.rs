@@ -435,7 +435,7 @@ pub struct IfFn;
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfFn {
-    func_caps!(PURE, SHORT_CIRCUIT);
+    func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
 
     fn name(&self) -> &'static str {
         "IF"
@@ -492,11 +492,11 @@ impl Function for IfFn {
 }
 
 pub fn register_builtins() {
-    crate::function_registry::register_function(std::sync::Arc::new(TrueFn));
-    crate::function_registry::register_function(std::sync::Arc::new(FalseFn));
-    crate::function_registry::register_function(std::sync::Arc::new(AndFn));
-    crate::function_registry::register_function(std::sync::Arc::new(OrFn));
-    crate::function_registry::register_function(std::sync::Arc::new(IfFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(TrueFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(FalseFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(AndFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(OrFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(IfFn));
 }
 
 /* ─────────────────────────── tests ─────────────────────────────── */

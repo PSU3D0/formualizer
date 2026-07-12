@@ -267,9 +267,11 @@ where
         &mut self,
         sheet_name: &str,
         families: &[crate::engine::SourceFormulaFamily],
-    ) -> crate::engine::FormulaCompressedPreparation {
-        self.engine
-            .prepare_source_formula_families(sheet_name, families)
+    ) -> Result<crate::engine::FormulaCompressedPreparation, ExcelError> {
+        self.engine.observe_function_semantic_epoch()?;
+        Ok(self
+            .engine
+            .prepare_source_formula_families(sheet_name, families))
     }
 
     pub fn stage_deferred(&mut self, package: crate::engine::DeferredFormulaPackage) {
@@ -674,9 +676,13 @@ pub struct Engine<R> {
     /// any active span the engine has not yet evaluated under the current
     /// indexes generation; subsequent passes use bounded dirty closures.
     formula_plane_indexes_epoch_seen: u64,
+    /// Global function-registry semantic epoch observed after the latest
+    /// conservative FormulaPlane invalidation.
+    function_semantic_epoch_seen: u64,
 
     #[cfg(test)]
     last_formula_plane_span_eval_report: Option<SpanEvalReport>,
+    before_prepared_span_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     #[cfg(test)]
     force_source_family_fallback: bool,
 }
@@ -1674,8 +1680,10 @@ where
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
+            function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            before_prepared_span_commit_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
         };
@@ -1756,8 +1764,10 @@ where
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
+            function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            before_prepared_span_commit_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
         };
@@ -3198,6 +3208,14 @@ where
         SourceFormulaIngress { engine: self }
     }
 
+    #[doc(hidden)]
+    pub fn set_before_prepared_span_commit_hook(
+        &mut self,
+        hook: impl FnOnce() + Send + Sync + 'static,
+    ) {
+        self.before_prepared_span_commit_hook = Some(Box::new(hook));
+    }
+
     fn stage_deferred_formula_package(&mut self, package: crate::engine::DeferredFormulaPackage) {
         let sheet = package.sheet_name.clone();
         let staged = self.staged_formulas.entry(sheet).or_default();
@@ -3989,9 +4007,12 @@ where
     ) -> crate::engine::FormulaCompressedPreparation {
         let mut preparation = crate::engine::FormulaCompressedPreparation {
             engine_token: Arc::clone(&self.source_formula_token),
+            function_semantic_epoch: crate::function_registry::semantic_epoch(),
             sheet_name: Arc::from(sheet_name),
             prepared: Vec::new(),
             rejected: BTreeMap::new(),
+            exact_replay: None,
+            replay_suppressed: BTreeSet::new(),
         };
         if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
             return preparation;
@@ -4022,6 +4043,72 @@ where
         preparation
     }
 
+    fn replay_prepared_families_exact(
+        &mut self,
+        preparation: &crate::engine::FormulaCompressedPreparation,
+    ) -> Result<FormulaIngestBatch, ExcelError> {
+        let replay = preparation.exact_replay.as_ref().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("stale compressed preparation has no exact replay owner")
+        })?;
+        let direct: BTreeSet<_> = preparation
+            .prepared
+            .iter()
+            .map(|(family, _)| *family)
+            .collect();
+        let replayed = replay
+            .lock()
+            .map_err(|_| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("compressed formula exact replay lock poisoned")
+            })?
+            .replay(&BTreeSet::new(), &preparation.replay_suppressed)
+            .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?;
+        let mut cache = rustc_hash::FxHashMap::default();
+        let mut formulas = Vec::new();
+        for record in replayed
+            .into_iter()
+            .filter(|record| record.family.is_some_and(|family| direct.contains(&family)))
+        {
+            let key = if record.text.starts_with('=') {
+                record.text
+            } else {
+                format!("={}", record.text)
+            };
+            let ast_id = if let Some(cached) = cache.get(&key) {
+                *cached
+            } else {
+                let parsed = formualizer_parse::parser::parse(&key).map_err(|error| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message(error.to_string())
+                })?;
+                let ast_id = self.intern_formula_ast(&parsed);
+                cache.insert(key.clone(), ast_id);
+                ast_id
+            };
+            formulas.push(FormulaIngestRecord::new(
+                record.row,
+                record.col,
+                ast_id,
+                Some(Arc::from(key)),
+            ));
+        }
+        let expected: u64 = preparation
+            .prepared
+            .iter()
+            .map(|(_, prepared)| prepared.member_count)
+            .sum();
+        if formulas.len() as u64 != expected {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "compressed formula exact replay incomplete: expected {expected}, got {}",
+                formulas.len()
+            )));
+        }
+        Ok(FormulaIngestBatch::new(
+            preparation.sheet_name.to_string(),
+            formulas,
+        ))
+    }
+
     fn finish_eager_compressed_formula_sources(
         &mut self,
         batches: Vec<(
@@ -4030,6 +4117,7 @@ where
             crate::engine::FormulaCompressedPreparation,
         )>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         if batches.iter().any(|(_, _, preparation)| {
             !Arc::ptr_eq(&preparation.engine_token, &self.source_formula_token)
         }) {
@@ -4042,9 +4130,21 @@ where
             return Err(ExcelError::new(ExcelErrorKind::Value)
                 .with_message("compressed formula preparation sheet mismatch"));
         }
+        let initial_guard = crate::function_registry::semantic_epoch_read_guard();
+        let initial_epoch = initial_guard.epoch();
+        drop(initial_guard);
         let mut fallback_batches = Vec::with_capacity(batches.len());
-        let mut prepared_families = Vec::new();
-        for (fallback, mut source, preparation) in batches {
+        let mut stale_fallback_batches = Vec::new();
+        let mut pending_preparations = Vec::new();
+        for (fallback, mut source, mut preparation) in batches {
+            let stale_semantics = preparation.function_semantic_epoch != initial_epoch;
+            if stale_semantics {
+                for (family, _) in &preparation.prepared {
+                    preparation
+                        .rejected
+                        .insert(*family, "FunctionSemanticEpochChanged".to_string());
+                }
+            }
             for reason in preparation.rejected.values() {
                 *source.fallback_reasons.entry(reason.clone()).or_default() += 1;
             }
@@ -4061,49 +4161,120 @@ where
                 fallback.sheet_name.clone(),
                 source,
             );
-            fallback_batches.push((fallback, compressed));
-            prepared_families.extend(preparation.prepared);
+            if stale_semantics {
+                stale_fallback_batches.push((fallback, compressed));
+            } else {
+                fallback_batches.push((fallback, compressed));
+            }
+            pending_preparations.push((preparation, stale_semantics));
         }
 
-        // All exact fallback graphs are fully built before any direct span is installed.
-        let mut report = self.ingest_compressed_formula_source_batches(fallback_batches)?;
+        // Build known fallback graphs first. Stale batches are forced through legacy ingest.
+        let configured_mode = self.config.formula_plane_mode;
+        self.config.formula_plane_mode = FormulaPlaneMode::Off;
+        let stale_result = self.ingest_compressed_formula_source_batches(stale_fallback_batches);
+        self.config.formula_plane_mode = configured_mode;
+        let mut report = stale_result?;
+        report.mode = configured_mode;
+        report.accumulate(&self.ingest_compressed_formula_source_batches(fallback_batches)?);
+
         let mut direct_report =
             FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
-        for (_, prepared) in prepared_families {
-            let cells = prepared.member_count;
-            direct_report.formula_cells_seen =
-                direct_report.formula_cells_seen.saturating_add(cells);
-            let placement_report = {
-                let authority = self.graph.formula_authority_mut();
-                commit_prepared_anchor_once_family(&mut authority.plane, prepared)
-            };
-            Self::accumulate_formula_plane_placement_report(&mut direct_report, &placement_report);
-            direct_report.source_family_promoted =
-                direct_report.source_family_promoted.saturating_add(1);
-            direct_report.source_family_promoted_cells = direct_report
-                .source_family_promoted_cells
-                .saturating_add(cells);
-            direct_report.source_anchor_parses =
-                direct_report.source_anchor_parses.saturating_add(1);
-            direct_report.source_anchor_asts = direct_report.source_anchor_asts.saturating_add(1);
-            direct_report.source_anchor_analyses =
-                direct_report.source_anchor_analyses.saturating_add(1);
-            let descendants = cells.saturating_sub(1);
-            direct_report.source_descendant_strings_avoided = direct_report
-                .source_descendant_strings_avoided
-                .saturating_add(descendants);
-            direct_report.source_descendant_events_avoided = direct_report
-                .source_descendant_events_avoided
-                .saturating_add(descendants);
-            direct_report.source_descendant_analyses_avoided = direct_report
-                .source_descendant_analyses_avoided
-                .saturating_add(descendants);
-            direct_report.source_compressed_families_prepared = direct_report
-                .source_compressed_families_prepared
-                .saturating_add(1);
-            direct_report.source_compressed_cells_prepared = direct_report
-                .source_compressed_cells_prepared
-                .saturating_add(cells);
+        loop {
+            if let Some(hook) = self.before_prepared_span_commit_hook.take() {
+                hook();
+            }
+            let commit_guard = crate::function_registry::semantic_epoch_read_guard();
+            let commit_epoch = commit_guard.epoch();
+            let mut newly_stale = Vec::new();
+            let mut current = Vec::new();
+            for pending in pending_preparations.drain(..) {
+                if pending.0.function_semantic_epoch == commit_epoch {
+                    current.push(pending);
+                } else {
+                    newly_stale.push(pending);
+                }
+            }
+            if !newly_stale.is_empty() {
+                drop(commit_guard);
+                for (mut preparation, was_initially_stale) in newly_stale {
+                    for (family, _) in &preparation.prepared {
+                        preparation
+                            .rejected
+                            .insert(*family, "FunctionSemanticEpochChanged".to_string());
+                    }
+                    let exact = self.replay_prepared_families_exact(&preparation)?;
+                    self.config.formula_plane_mode = FormulaPlaneMode::Off;
+                    let exact_result = self.ingest_formula_batches(vec![exact]);
+                    self.config.formula_plane_mode = configured_mode;
+                    report.accumulate(&exact_result?);
+                    if !was_initially_stale {
+                        *direct_report
+                            .fallback_reasons
+                            .entry("FunctionSemanticEpochChanged".to_string())
+                            .or_default() += preparation.prepared.len() as u64;
+                        direct_report.source_family_fallback = direct_report
+                            .source_family_fallback
+                            .saturating_add(preparation.prepared.len() as u64);
+                        direct_report.source_family_fallback_cells =
+                            direct_report.source_family_fallback_cells.saturating_add(
+                                preparation
+                                    .prepared
+                                    .iter()
+                                    .map(|(_, prepared)| prepared.member_count)
+                                    .sum(),
+                            );
+                    }
+                }
+                pending_preparations = current;
+                continue;
+            }
+
+            // The registry read guard remains held through the actual span commits.
+            for (preparation, _) in current {
+                for (_, prepared) in preparation.prepared {
+                    let cells = prepared.member_count;
+                    direct_report.formula_cells_seen =
+                        direct_report.formula_cells_seen.saturating_add(cells);
+                    let placement_report = {
+                        let authority = self.graph.formula_authority_mut();
+                        commit_prepared_anchor_once_family(&mut authority.plane, prepared)
+                    };
+                    Self::accumulate_formula_plane_placement_report(
+                        &mut direct_report,
+                        &placement_report,
+                    );
+                    direct_report.source_family_promoted =
+                        direct_report.source_family_promoted.saturating_add(1);
+                    direct_report.source_family_promoted_cells = direct_report
+                        .source_family_promoted_cells
+                        .saturating_add(cells);
+                    direct_report.source_anchor_parses =
+                        direct_report.source_anchor_parses.saturating_add(1);
+                    direct_report.source_anchor_asts =
+                        direct_report.source_anchor_asts.saturating_add(1);
+                    direct_report.source_anchor_analyses =
+                        direct_report.source_anchor_analyses.saturating_add(1);
+                    let descendants = cells.saturating_sub(1);
+                    direct_report.source_descendant_strings_avoided = direct_report
+                        .source_descendant_strings_avoided
+                        .saturating_add(descendants);
+                    direct_report.source_descendant_events_avoided = direct_report
+                        .source_descendant_events_avoided
+                        .saturating_add(descendants);
+                    direct_report.source_descendant_analyses_avoided = direct_report
+                        .source_descendant_analyses_avoided
+                        .saturating_add(descendants);
+                    direct_report.source_compressed_families_prepared = direct_report
+                        .source_compressed_families_prepared
+                        .saturating_add(1);
+                    direct_report.source_compressed_cells_prepared = direct_report
+                        .source_compressed_cells_prepared
+                        .saturating_add(cells);
+                }
+            }
+            drop(commit_guard);
+            break;
         }
         if direct_report.source_family_promoted != 0 {
             let _ = self.graph.formula_authority_mut().rebuild_indexes();
@@ -4203,6 +4374,7 @@ where
         source_report: Option<crate::engine::FormulaCompressedSourceReport>,
         compressed_families: Vec<(String, Vec<crate::engine::SourceFormulaFamily>)>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
         #[cfg(feature = "benchmark_internal")]
         let benchmark_forced_replay =
@@ -4442,7 +4614,7 @@ where
                     .filter(|family| !package.invalidated.contains(&family.source_id))
                     .cloned()
                     .collect();
-                let preparation = (self.config.formula_plane_mode
+                let mut preparation = (self.config.formula_plane_mode
                     == FormulaPlaneMode::AuthoritativeExperimental)
                     .then(|| self.prepare_source_formula_families(sheet, &eligible));
                 let direct_families: BTreeSet<_> = preparation
@@ -4462,6 +4634,12 @@ where
                     .map_err(|message| {
                         ExcelError::new(ExcelErrorKind::Value).with_message(message)
                     })?;
+                if let Some(prepared) = preparation.take() {
+                    preparation = Some(prepared.with_exact_replay(
+                        Arc::clone(&package.replay),
+                        package.suppressed.clone(),
+                    ));
+                }
                 entries.extend(
                     replayed
                         .into_iter()
@@ -4893,6 +5071,101 @@ where
         match error {
             crate::engine::EditorError::Excel(error) => error,
             other => ExcelError::new(ExcelErrorKind::Value).with_message(other.to_string()),
+        }
+    }
+
+    fn observe_function_semantic_epoch(&mut self) -> Result<bool, ExcelError> {
+        let changes =
+            crate::function_registry::semantic_changes_since(self.function_semantic_epoch_seen);
+        if changes.epoch == self.function_semantic_epoch_seen {
+            return Ok(false);
+        }
+
+        let changed = changes.keys.into_iter().collect::<BTreeSet<_>>();
+        let sheets: BTreeSet<_> = self
+            .graph
+            .formula_authority()
+            .plane
+            .spans
+            .active_spans()
+            .filter_map(|span| {
+                if !changes.complete {
+                    return Some(span.domain.sheet_id());
+                }
+                let template = self
+                    .graph
+                    .formula_authority()
+                    .plane
+                    .templates
+                    .get(span.template_id)?;
+                let ast = self
+                    .graph
+                    .data_store()
+                    .reconstruct_ast_node(template.ast_id, self.graph.sheet_reg())?;
+                Self::ast_uses_changed_function(&ast, &changed).then_some(span.domain.sheet_id())
+            })
+            .collect();
+        let invalidated = !sheets.is_empty();
+        for sheet_id in sheets {
+            self.demote_spans_preserving_computed_overlays(sheet_id, Region::whole_sheet(sheet_id))
+                .map_err(Self::editor_error_to_excel)?;
+        }
+        if !changed.is_empty() {
+            self.cached_static_schedule = None;
+        }
+        self.function_semantic_epoch_seen = changes.epoch;
+        Ok(invalidated)
+    }
+
+    pub(crate) fn ast_uses_changed_function(
+        ast: &ASTNode,
+        changed: &BTreeSet<(String, String)>,
+    ) -> bool {
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                let normalized = name.to_uppercase();
+                let mut spellings = vec![(String::new(), normalized.clone())];
+                let mut stripped = normalized.as_str();
+                loop {
+                    let Some(rest) = ["_XLFN.", "_XLL.", "_XLWS."]
+                        .iter()
+                        .find_map(|prefix| stripped.strip_prefix(prefix))
+                    else {
+                        break;
+                    };
+                    stripped = rest;
+                    spellings.push((String::new(), stripped.to_string()));
+                }
+                let resolved = crate::function_registry::resolve("", name);
+                let directly_changed = spellings.iter().any(|spelling| changed.contains(spelling))
+                    || resolved.as_ref().is_some_and(|resolved| {
+                        changed.contains(&(
+                            resolved.namespace.clone(),
+                            resolved.canonical_name.clone(),
+                        ))
+                    });
+                directly_changed
+                    || resolved.is_none()
+                    || args
+                        .iter()
+                        .any(|arg| Self::ast_uses_changed_function(arg, changed))
+            }
+            ASTNodeType::Call { callee, args } => {
+                Self::ast_uses_changed_function(callee, changed)
+                    || args
+                        .iter()
+                        .any(|arg| Self::ast_uses_changed_function(arg, changed))
+            }
+            ASTNodeType::UnaryOp { expr, .. } => Self::ast_uses_changed_function(expr, changed),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                Self::ast_uses_changed_function(left, changed)
+                    || Self::ast_uses_changed_function(right, changed)
+            }
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .flatten()
+                .any(|node| Self::ast_uses_changed_function(node, changed)),
+            _ => false,
         }
     }
 
@@ -8914,6 +9187,7 @@ where
     }
 
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         if self.graph.formula_authority().active_span_count() > 0 {
             let _ = self.evaluate_authoritative_formula_plane_all()?;
         }
@@ -9561,6 +9835,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
@@ -9767,6 +10042,9 @@ where
 
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        if self.observe_function_semantic_epoch()? {
+            return self.evaluate_all();
+        }
         self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
@@ -10344,6 +10622,7 @@ where
             "deferred-dirty scope leaked into evaluate_all: a begin_deferred_dirty \
              was not balanced by end_deferred_dirty"
         );
+        self.observe_function_semantic_epoch()?;
         self.lookup_index_cache.reset_counters();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
@@ -10488,6 +10767,7 @@ where
     }
 
     pub fn evaluate_all_with_delta(&mut self) -> Result<(EvalResult, EvalDelta), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let mut collector = DeltaCollector::new(DeltaMode::Cells);
         let result = self.evaluate_all_with_delta_collector(&mut collector)?;
         Ok((result, collector.finish()))
@@ -10654,6 +10934,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         debug_assert!(
             !self.graph.deferred_dirty_active(),
             "deferred-dirty scope leaked into evaluate_cells: a begin_deferred_dirty \
@@ -10685,6 +10966,7 @@ where
         targets: &[(&str, u32, u32)],
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.active_cancel_flag = Some(cancel_flag.clone());
         let res = self.evaluate_cells_cancellable_impl(targets, &cancel_flag);
         self.active_cancel_flag = None;
@@ -10741,6 +11023,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.validate_deterministic_mode()?;
         if targets.is_empty() {
             return Ok((Vec::new(), EvalDelta::default()));
@@ -11167,6 +11450,7 @@ where
         &mut self,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.active_cancel_flag = Some(cancel_flag.clone());
         let res = self.evaluate_all_cancellable_impl(&cancel_flag);
         self.active_cancel_flag = None;
@@ -11327,6 +11611,7 @@ where
         targets: &[&str],
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.active_cancel_flag = Some(cancel_flag.clone());
         let res = self.evaluate_until_cancellable_impl(targets, &cancel_flag);
         self.active_cancel_flag = None;
@@ -15679,6 +15964,7 @@ where
     /// This is the same flow as `evaluate_all` but threads a ChangeLog through
     /// every effect application so that spill commits/clears are captured.
     pub fn evaluate_all_logged(&mut self, log: &mut ChangeLog) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;

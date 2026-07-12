@@ -1,6 +1,8 @@
 use crate::args::ArgSchema;
 use crate::function::Function;
-use crate::function_contract::FunctionDependencyContract;
+use crate::function_contract::{
+    FunctionContextDependence, FunctionDependencyContract, FunctionSemanticContract,
+};
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
@@ -11,6 +13,14 @@ use super::utils::ARG_ANY_ONE;
 
 fn scalar<'ctx>(value: LiteralValue) -> CalcValue<'ctx> {
     CalcValue::Scalar(value)
+}
+
+fn workbook_metadata_contract(
+    precision: Option<FunctionDependencyContract>,
+) -> FunctionSemanticContract {
+    let mut contract = FunctionSemanticContract::trusted_builtin_default(precision);
+    contract.context = FunctionContextDependence::WorkbookMetadata;
+    contract
 }
 
 fn error_value<'ctx>(kind: ExcelErrorKind) -> CalcValue<'ctx> {
@@ -601,6 +611,10 @@ impl Function for IsFormulaFn {
     fn name(&self) -> &'static str {
         "ISFORMULA"
     }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
     fn min_args(&self) -> usize {
         1
     }
@@ -746,6 +760,10 @@ impl Function for FormulaTextFn {
     fn name(&self) -> &'static str {
         "FORMULATEXT"
     }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
+    }
     fn min_args(&self) -> usize {
         1
     }
@@ -828,6 +846,10 @@ impl Function for SheetFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "SHEET"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
     }
     fn min_args(&self) -> usize {
         0
@@ -928,6 +950,10 @@ impl Function for SheetsFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "SHEETS"
+    }
+
+    fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
+        Some(workbook_metadata_contract(self.dependency_contract(arity)))
     }
     fn min_args(&self) -> usize {
         0
@@ -1679,26 +1705,26 @@ impl Function for IsNonTextFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(IsNumberFn));
-    crate::function_registry::register_function(Arc::new(IsTextFn));
-    crate::function_registry::register_function(Arc::new(IsNonTextFn));
-    crate::function_registry::register_function(Arc::new(IsLogicalFn));
-    crate::function_registry::register_function(Arc::new(IsBlankFn));
-    crate::function_registry::register_function(Arc::new(IsErrorFn));
-    crate::function_registry::register_function(Arc::new(IsErrFn));
-    crate::function_registry::register_function(Arc::new(IsNaFn));
-    crate::function_registry::register_function(Arc::new(IsFormulaFn));
-    crate::function_registry::register_function(Arc::new(IsRefFn));
-    crate::function_registry::register_function(Arc::new(FormulaTextFn));
-    crate::function_registry::register_function(Arc::new(SheetFn));
-    crate::function_registry::register_function(Arc::new(SheetsFn));
-    crate::function_registry::register_function(Arc::new(IsEvenFn));
-    crate::function_registry::register_function(Arc::new(IsOddFn));
-    crate::function_registry::register_function(Arc::new(ErrorTypeFn));
-    crate::function_registry::register_function(Arc::new(TypeFn));
-    crate::function_registry::register_function(Arc::new(NaFn));
-    crate::function_registry::register_function(Arc::new(NFn));
-    crate::function_registry::register_function(Arc::new(TFn));
+    crate::function_registry::register_builtin(Arc::new(IsNumberFn));
+    crate::function_registry::register_builtin(Arc::new(IsTextFn));
+    crate::function_registry::register_builtin(Arc::new(IsNonTextFn));
+    crate::function_registry::register_builtin(Arc::new(IsLogicalFn));
+    crate::function_registry::register_builtin(Arc::new(IsBlankFn));
+    crate::function_registry::register_builtin(Arc::new(IsErrorFn));
+    crate::function_registry::register_builtin(Arc::new(IsErrFn));
+    crate::function_registry::register_builtin(Arc::new(IsNaFn));
+    crate::function_registry::register_builtin(Arc::new(IsFormulaFn));
+    crate::function_registry::register_builtin(Arc::new(IsRefFn));
+    crate::function_registry::register_builtin(Arc::new(FormulaTextFn));
+    crate::function_registry::register_builtin(Arc::new(SheetFn));
+    crate::function_registry::register_builtin(Arc::new(SheetsFn));
+    crate::function_registry::register_builtin(Arc::new(IsEvenFn));
+    crate::function_registry::register_builtin(Arc::new(IsOddFn));
+    crate::function_registry::register_builtin(Arc::new(ErrorTypeFn));
+    crate::function_registry::register_builtin(Arc::new(TypeFn));
+    crate::function_registry::register_builtin(Arc::new(NaFn));
+    crate::function_registry::register_builtin(Arc::new(NFn));
+    crate::function_registry::register_builtin(Arc::new(TFn));
 }
 
 #[cfg(test)]

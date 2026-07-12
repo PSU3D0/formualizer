@@ -31,4 +31,6 @@ mod offsets;
 #[cfg(feature = "calamine")]
 mod row_visibility;
 #[cfg(feature = "calamine")]
+mod semantic_epoch_replay;
+#[cfg(feature = "calamine")]
 mod shared_formulas;
