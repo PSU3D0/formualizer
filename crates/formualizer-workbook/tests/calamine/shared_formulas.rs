@@ -739,9 +739,41 @@ fn calamine_expansion_matches_anchor_relocation_ast_at_domain_corners() {
 }
 
 #[test]
+fn compressed_shadow_accepts_nested_registry_functions_without_authoritative_source_promotion() {
+    let fixture = || large_shared_vertical_xlsx(100, "SUM('Sheet1'!A1,'Sheet1'!$A1)+_xlfn.ABS(A1)");
+    let mut shadow = Engine::new(
+        formualizer_eval::test_workbook::TestWorkbook::new(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    CalamineAdapter::open_bytes(fixture())
+        .unwrap()
+        .stream_into_engine(&mut shadow)
+        .unwrap();
+    let report = shadow.last_formula_ingest_report().unwrap();
+    assert_eq!(report.source_compressed_families_prepared, 1, "{report:?}");
+    assert_eq!(shadow.baseline_stats().formula_plane_active_span_count, 0);
+
+    let mut authoritative = Engine::new(
+        formualizer_eval::test_workbook::TestWorkbook::new(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    CalamineAdapter::open_bytes(fixture())
+        .unwrap()
+        .stream_into_engine(&mut authoritative)
+        .unwrap();
+    let report = authoritative.last_formula_ingest_report().unwrap();
+    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(
+        report.fallback_reasons.get("UnsupportedAnchorSyntax"),
+        Some(&1),
+        "{report:?}"
+    );
+}
+
+#[test]
 fn compressed_shadow_rejects_unsupported_syntax_and_boundary_overflow() {
     for (formula, reason) in [
-        ("SUM(A1:A2)", "UnsupportedAnchorSyntax"),
+        ("RAND()+A1", "AnchorFunctionSemanticsUnsupported"),
         ("A1048576+1", "UnsupportedAnchorReference"),
     ] {
         let config = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
