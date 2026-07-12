@@ -5,7 +5,7 @@ use crate::traits::{
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Read, Seek};
 use std::path::Path;
@@ -24,7 +24,7 @@ use formualizer_eval::engine::{
     SourceRect,
 };
 use formualizer_eval::traits::EvaluationContext;
-use formualizer_parse::parser::ReferenceType;
+use formualizer_parse::parser::{ASTNode, ReferenceType};
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::QName;
@@ -36,7 +36,7 @@ mod formula_replay;
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formula_replay::{
     CalamineDeferredFormulaReplay, FormulaReplaySpool, FormulaSpoolLimits,
-    HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered,
+    HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered_with_family,
 };
 
 enum CalamineWorkbook {
@@ -186,6 +186,8 @@ impl DebugTimer {
     }
 }
 
+type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
+
 pub struct CalamineAdapter {
     workbook: RwLock<CalamineWorkbook>,
     loaded_sheets: HashSet<String>,
@@ -194,10 +196,45 @@ pub struct CalamineAdapter {
     external_link_targets: BTreeMap<u32, String>,
     calc_settings: Option<CalcSettings>,
     load_stats: AdapterLoadStats,
+    shadow_relocation_comparator: Option<ShadowRelocationComparator>,
 }
 
 impl CalamineAdapter {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
+
+    #[doc(hidden)]
+    pub fn set_shadow_relocation_comparator_for_test(
+        &mut self,
+        comparator: impl Fn(&ASTNode, &ASTNode) -> bool + Send + Sync + 'static,
+    ) {
+        self.shadow_relocation_comparator = Some(Arc::new(comparator));
+    }
+
+    fn shadow_relocation_matches(
+        comparator: &ShadowRelocationComparator,
+        family: &SourceFormulaFamily,
+        coord0: SourceCoord,
+        expanded_formula: &str,
+    ) -> bool {
+        let expanded_formula = format!("={}", expanded_formula.trim_start_matches('='));
+        let anchor_formula = format!("={}", family.anchor_text.trim_start_matches('='));
+        let Ok(expanded) = formualizer_parse::parser::parse(&expanded_formula) else {
+            return false;
+        };
+        let Ok(anchor) = formualizer_parse::parser::parse(&anchor_formula) else {
+            return false;
+        };
+        let Ok(relocated) =
+            formualizer_eval::formula_plane::structural::relocate_ast_for_template_placement(
+                &anchor,
+                i64::from(coord0.row) - i64::from(family.anchor_coord0.row),
+                i64::from(coord0.col) - i64::from(family.anchor_coord0.col),
+            )
+        else {
+            return false;
+        };
+        comparator(&expanded, &relocated)
+    }
     const EXCEL_MAX_COLS: u32 = 16_384;
 
     fn stage_formula<C: EvaluationContext>(
@@ -265,6 +302,7 @@ impl CalamineAdapter {
         chunk_rows: usize,
         debug: bool,
         workbook_spool_usage: WorkbookSpoolUsage,
+        shadow_relocation_comparator: Option<&ShadowRelocationComparator>,
     ) -> Result<StreamedSheet, calamine::Error>
     where
         RS: Read + Seek,
@@ -558,7 +596,7 @@ impl CalamineAdapter {
         // still local and is installed by the caller only after this succeeds.
         let compressed_evidence = formula_evidence.finish();
         let mut formula_source_report = compressed_evidence.report;
-        let compressed_families = compressed_evidence.families;
+        let mut compressed_families = compressed_evidence.families;
         let formula_spool_bytes = if formula_count == 0 {
             0
         } else {
@@ -593,7 +631,10 @@ impl CalamineAdapter {
             .is_some_and(|preparation| preparation.direct_cell_count() == formula_count as u64);
         if !all_formulas_direct && !engine.config.defer_graph_building {
             formula_source_report.source_spool_replays = 1;
-            replay_spool_per_cell_filtered(
+            let compare_shadow = engine.config.formula_plane_mode
+                == formualizer_eval::engine::FormulaPlaneMode::Shadow;
+            let mut relocation_mismatches = BTreeSet::new();
+            replay_spool_per_cell_filtered_with_family(
                 &mut formula_spool,
                 sheet,
                 |shared_index| {
@@ -604,7 +645,17 @@ impl CalamineAdapter {
                         })
                     })
                 },
-                |coord0, formula| {
+                |coord0, formula, shared_index| {
+                    if compare_shadow
+                        && let (Some(comparator), Some(shared_index)) =
+                            (shadow_relocation_comparator, shared_index)
+                        && let Some(family) = compressed_families
+                            .iter()
+                            .find(|family| family.source_id.source_index == shared_index)
+                        && !Self::shadow_relocation_matches(comparator, family, coord0, formula)
+                    {
+                        relocation_mismatches.insert(shared_index);
+                    }
                     Self::stage_formula(
                         engine,
                         sheet,
@@ -615,6 +666,11 @@ impl CalamineAdapter {
                     )
                 },
             )?;
+            if !relocation_mismatches.is_empty() {
+                compressed_families.retain(|family| {
+                    !relocation_mismatches.contains(&family.source_id.source_index)
+                });
+            }
         }
 
         let mut formula_spool = Some(formula_spool);
@@ -1208,6 +1264,7 @@ impl SpreadsheetReader for CalamineAdapter {
             external_link_targets,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
+            shadow_relocation_comparator: None,
         })
     }
 
@@ -1249,6 +1306,7 @@ impl SpreadsheetReader for CalamineAdapter {
             external_link_targets,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
+            shadow_relocation_comparator: None,
         })
     }
 
@@ -1377,6 +1435,8 @@ where
                 let _span_sheet =
                     tracing::info_span!("io_populate_sheet", sheet = n.as_str()).entered();
 
+                let shadow_relocation_comparator =
+                    self.shadow_relocation_comparator.as_ref().map(Arc::clone);
                 let streamed = {
                     let mut workbook = self.workbook.write();
                     match &mut *workbook {
@@ -1391,6 +1451,7 @@ where
                                 bytes: workbook_spool_bytes_used,
                                 files: workbook_spill_files_used,
                             },
+                            shadow_relocation_comparator.as_ref(),
                         ),
                         CalamineWorkbook::Bytes(workbook) => Self::stream_worksheet(
                             workbook,
@@ -1403,6 +1464,7 @@ where
                                 bytes: workbook_spool_bytes_used,
                                 files: workbook_spill_files_used,
                             },
+                            shadow_relocation_comparator.as_ref(),
                         ),
                     }?
                 };

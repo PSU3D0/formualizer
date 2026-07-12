@@ -1172,6 +1172,7 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
@@ -1181,6 +1182,20 @@ pub(super) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
     replay_spool_with_family(spool, sheet_name, &mut skip_family, |coord, text, _| {
         emit(coord, text)
     })
+}
+
+pub(super) fn replay_spool_per_cell_filtered_with_family<S: FormulaReplaySpool>(
+    spool: &mut S,
+    sheet_name: &str,
+    mut skip_family: impl FnMut(usize) -> bool,
+    mut emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
+) -> Result<(), calamine::Error> {
+    replay_spool_with_family(
+        spool,
+        sheet_name,
+        &mut skip_family,
+        |coord, text, family| emit(coord, text, family),
+    )
 }
 
 #[cfg(test)]

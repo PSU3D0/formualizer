@@ -8,6 +8,7 @@ use formualizer_workbook::{
     CalamineAdapter, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
 };
 use std::io::{Cursor, Read, Write};
+use std::sync::Arc;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -734,6 +735,54 @@ fn calamine_expansion_matches_anchor_relocation_ast_at_domain_corners() {
                 .unwrap()
                 .fingerprint(),
             "row={row}, canonical={expanded}"
+        );
+    }
+}
+
+#[test]
+fn injected_calamine_arena_relocation_mismatch_replays_complete_shadow_family() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let comparisons = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&comparisons);
+    let mut adapter =
+        CalamineAdapter::open_bytes(large_shared_vertical_xlsx(100, "ABS(A1)+1")).unwrap();
+    adapter.set_shadow_relocation_comparator_for_test(move |expanded, relocated| {
+        assert_eq!(expanded.fingerprint(), relocated.fingerprint());
+        observed.fetch_add(1, Ordering::Relaxed) != 49
+    });
+
+    let mut engine = Engine::new(
+        formualizer_eval::test_workbook::TestWorkbook::new(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    adapter.stream_into_engine(&mut engine).unwrap();
+
+    assert_eq!(comparisons.load(Ordering::Relaxed), 100);
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
+    assert_eq!(report.source_compressed_families_prepared, 0, "{report:?}");
+    assert_eq!(report.source_compressed_cells_prepared, 0, "{report:?}");
+    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 100, "{report:?}");
+    assert_eq!(report.source_spool_replays, 1, "{report:?}");
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
+
+    engine.evaluate_all().unwrap();
+    for row in 1..=100 {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 2),
+            Some(LiteralValue::Number(row as f64 + 1.0)),
+            "fallback row {row}"
+        );
+        let fallback_ast = engine.get_cell("Sheet1", row, 2).unwrap().0.unwrap();
+        assert_eq!(
+            fallback_ast.fingerprint(),
+            formualizer_parse::parser::parse(&format!("=ABS(A{row})+1"))
+                .unwrap()
+                .fingerprint(),
+            "fallback formula order at row {row}"
         );
     }
 }
