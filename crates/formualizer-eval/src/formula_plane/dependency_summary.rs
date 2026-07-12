@@ -19,8 +19,8 @@ use super::span_store::{
     FormulaRejectReason, FormulaRunDescriptor, FormulaRunShape, FormulaRunStore, SpanGapKind,
 };
 use super::template_canonical::{
-    AxisRef, CanonicalExpr, CanonicalReference, CanonicalReferenceContext, CanonicalRejectReason,
-    CanonicalFunctionId, CanonicalTemplate, SheetBinding, UnsupportedReferenceKind,
+    AxisRef, CanonicalExpr, CanonicalFunctionId, CanonicalReference, CanonicalReferenceContext,
+    CanonicalRejectReason, CanonicalTemplate, SheetBinding, UnsupportedReferenceKind,
     canonicalize_template,
 };
 
@@ -665,11 +665,7 @@ impl SummaryAnalyzer {
             CanonicalExpr::Function { id, args } => {
                 let mut all_args_supported = true;
                 for (arg_index, arg) in args.iter().enumerate() {
-                    if !self.analyze_expr(
-                        arg,
-                        function_argument_context(id, arg_index),
-                        true,
-                    ) {
+                    if !self.analyze_expr(arg, function_argument_context(id, arg_index), true) {
                         all_args_supported = false;
                     }
                 }

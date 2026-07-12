@@ -725,8 +725,11 @@ fn validate_anchor_once_relocation(
                 )
             }
             ASTNodeType::Function { name, args } if allow_safe_functions => {
-                let function = super::template_canonical::resolve_canonical_function(name, args.len());
-                let contract = function.contract.ok_or("AnchorFunctionUnresolvedOrInvalid")?;
+                let function =
+                    super::template_canonical::resolve_canonical_function(name, args.len());
+                let contract = function
+                    .contract
+                    .ok_or("AnchorFunctionUnresolvedOrInvalid")?;
                 if contract.dependency
                     != crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
                     || contract.environment

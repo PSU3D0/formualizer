@@ -120,12 +120,7 @@ pub(crate) fn compute_node_metadata(
             labels.flags |= CanonicalLabels::FLAG_CONTAINS_FUNCTION;
             let raw_name = data_store_strings.get(*name_id).unwrap_or("");
             hasher.mix_u16(*args_count);
-            classify_and_mix_function(
-                raw_name,
-                usize::from(*args_count),
-                &mut hasher,
-                &mut labels,
-            );
+            classify_and_mix_function(raw_name, usize::from(*args_count), &mut hasher, &mut labels);
             mix_children(&mut hasher, children);
         }
         AstNodeData::Array { rows, cols, .. } => {
@@ -370,8 +365,7 @@ fn classify_and_mix_function(
 ) {
     use crate::function::FnCaps;
     use crate::function_contract::{
-        FunctionContextDependence, FunctionDependencySemantics,
-        FunctionEnvironmentSemantics,
+        FunctionContextDependence, FunctionDependencySemantics, FunctionEnvironmentSemantics,
     };
     crate::builtins::load_builtins();
     let Some(resolved) = crate::function_registry::resolve_for_arity("", raw_name, arity) else {

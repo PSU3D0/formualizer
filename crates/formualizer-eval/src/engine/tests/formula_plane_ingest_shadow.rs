@@ -1285,8 +1285,7 @@ fn compressed_shadow_accepts_registry_resolved_nested_function_relocation_only_i
 
     let mut authoritative = Engine::new(
         TestWorkbook::default(),
-        EvalConfig::default()
-            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
     );
     let preparation = authoritative
         .source_formula_ingress()
@@ -1329,7 +1328,10 @@ fn compressed_shadow_replays_exceptional_and_unresolved_function_semantics() {
                 ),
             )])
             .unwrap();
-        assert_eq!(report.source_compressed_families_prepared, 0, "{text}: {report:?}");
+        assert_eq!(
+            report.source_compressed_families_prepared, 0,
+            "{text}: {report:?}"
+        );
         assert_eq!(report.shadow_fallback_cells, 100, "{text}: {report:?}");
         assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     }

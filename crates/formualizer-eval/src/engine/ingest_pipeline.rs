@@ -1121,8 +1121,7 @@ fn compute_read_projections(
                         != crate::function_contract::FunctionEnvironmentSemantics::None
                     || contract.context != crate::function_contract::FunctionContextDependence::None
                     || (contract.result.may_return_reference()
-                        && function.semantic_flags
-                            & crate::function::FnCaps::SHORT_CIRCUIT.bits()
+                        && function.semantic_flags & crate::function::FnCaps::SHORT_CIRCUIT.bits()
                             != 0)
                     || (contract.result.may_spill()
                         && ((function.semantic_flags

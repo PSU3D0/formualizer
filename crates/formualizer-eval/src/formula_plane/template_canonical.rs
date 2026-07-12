@@ -193,7 +193,9 @@ pub(crate) enum CanonicalReferenceContext {
         function: CanonicalFunctionId,
         arg_index: usize,
     },
-    CallArgument { arg_index: usize },
+    CallArgument {
+        arg_index: usize,
+    },
 }
 
 /// Canonical reference model with affine axes relative to the formula placement.
@@ -792,54 +794,66 @@ impl Canonicalizer {
     fn classify_function(&mut self, id: &CanonicalFunctionId) {
         let name = id.canonical_name.clone();
         if id.semantic_flags & FnCaps::VOLATILE.bits() != 0 {
-            self.labels.reject(CanonicalRejectReason::VolatileFunction { name: name.clone() });
+            self.labels
+                .reject(CanonicalRejectReason::VolatileFunction { name: name.clone() });
         }
         if id.semantic_flags & FnCaps::DYNAMIC_DEPENDENCY.bits() != 0 {
-            self.labels.reject(CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() });
+            self.labels
+                .reject(CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() });
         }
         if id.semantic_flags & FnCaps::LOCAL_ENVIRONMENT.bits() != 0 {
-            self.labels.reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
+            self.labels
+                .reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
         }
         let returns_reference = id.semantic_flags & FnCaps::RETURNS_REFERENCE.bits() != 0;
         let short_circuit = id.semantic_flags & FnCaps::SHORT_CIRCUIT.bits() != 0;
         let may_spill = id.semantic_flags & FnCaps::MAY_SPILL.bits() != 0;
         let scalar_lookup = id.semantic_flags & FnCaps::LOOKUP.bits() != 0;
         if returns_reference && short_circuit {
-            self.labels.reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
+            self.labels
+                .reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
         }
         if may_spill && ((!short_circuit && !scalar_lookup) || returns_reference) {
-            self.labels.reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
+            self.labels
+                .reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
         }
         let Some(contract) = id.contract else {
-            self.labels.reject(CanonicalRejectReason::UnknownOrCustomFunction { name });
+            self.labels
+                .reject(CanonicalRejectReason::UnknownOrCustomFunction { name });
             return;
         };
         match contract.dependency {
             FunctionDependencySemantics::RecursiveSyntacticArgs => {}
-            FunctionDependencySemantics::Dynamic => self.labels.reject(
-                CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() },
-            ),
-            FunctionDependencySemantics::Unsupported => self.labels.reject(
-                CanonicalRejectReason::FunctionContractUnsupported { name: name.clone() },
-            ),
+            FunctionDependencySemantics::Dynamic => self
+                .labels
+                .reject(CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() }),
+            FunctionDependencySemantics::Unsupported => self
+                .labels
+                .reject(CanonicalRejectReason::FunctionContractUnsupported { name: name.clone() }),
         }
         if contract.environment != FunctionEnvironmentSemantics::None {
-            self.labels.reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
+            self.labels
+                .reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
         }
         if contract.result.may_return_reference() && short_circuit {
-            self.labels.reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
+            self.labels
+                .reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
         }
-        if contract.result.may_spill() && ((!short_circuit && !scalar_lookup) || returns_reference) {
-            self.labels.reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
+        if contract.result.may_spill() && ((!short_circuit && !scalar_lookup) || returns_reference)
+        {
+            self.labels
+                .reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
         }
         if contract.context != FunctionContextDependence::None {
-            self.labels.reject(CanonicalRejectReason::ContextDependentFunction { name });
+            self.labels
+                .reject(CanonicalRejectReason::ContextDependentFunction { name });
         }
     }
 
     fn classify_sheet_binding(&mut self, sheet: &Option<String>) {
         if sheet.is_some() {
-            self.labels.flag(CanonicalTemplateFlag::ExplicitSheetBinding);
+            self.labels
+                .flag(CanonicalTemplateFlag::ExplicitSheetBinding);
         } else {
             self.labels.flag(CanonicalTemplateFlag::CurrentSheetBinding);
         }
@@ -848,9 +862,12 @@ impl Canonicalizer {
     fn classify_range_bounds(&mut self, original: &str, start: Option<u32>, end: Option<u32>) {
         match (start, end) {
             (None, None) => {}
-            (None, Some(_)) | (Some(_), None) => self.labels.reject(
-                CanonicalRejectReason::OpenRangeReference { original: original.to_string() },
-            ),
+            (None, Some(_)) | (Some(_), None) => {
+                self.labels
+                    .reject(CanonicalRejectReason::OpenRangeReference {
+                        original: original.to_string(),
+                    })
+            }
             (Some(_), Some(_)) => {}
         }
     }
@@ -869,24 +886,38 @@ impl Canonicalizer {
                 self.axis_from_value(end, anchor, end_abs),
             ),
             (None, None) => (AxisRef::WholeAxis, AxisRef::WholeAxis),
-            (None, Some(end)) => (AxisRef::OpenStart, self.axis_from_value(end, anchor, end_abs)),
-            (Some(start), None) => (self.axis_from_value(start, anchor, start_abs), AxisRef::OpenEnd),
+            (None, Some(end)) => (
+                AxisRef::OpenStart,
+                self.axis_from_value(end, anchor, end_abs),
+            ),
+            (Some(start), None) => (
+                self.axis_from_value(start, anchor, start_abs),
+                AxisRef::OpenEnd,
+            ),
         }
     }
 
     fn axis_from_value(&mut self, value: u32, anchor: u32, absolute: bool) -> AxisRef {
         if absolute {
-            self.labels.flag(CanonicalTemplateFlag::AbsoluteReferenceAxis);
+            self.labels
+                .flag(CanonicalTemplateFlag::AbsoluteReferenceAxis);
             AxisRef::AbsoluteVc { index: value }
         } else {
-            self.labels.flag(CanonicalTemplateFlag::RelativeReferenceAxis);
-            AxisRef::RelativeToPlacement { offset: i64::from(value) - i64::from(anchor) }
+            self.labels
+                .flag(CanonicalTemplateFlag::RelativeReferenceAxis);
+            AxisRef::RelativeToPlacement {
+                offset: i64::from(value) - i64::from(anchor),
+            }
         }
     }
 
     fn flag_mixed_anchors(&mut self, axes: &[&AxisRef]) {
-        let has_absolute = axes.iter().any(|axis| matches!(axis, AxisRef::AbsoluteVc { .. }));
-        let has_relative = axes.iter().any(|axis| matches!(axis, AxisRef::RelativeToPlacement { .. }));
+        let has_absolute = axes
+            .iter()
+            .any(|axis| matches!(axis, AxisRef::AbsoluteVc { .. }));
+        let has_relative = axes
+            .iter()
+            .any(|axis| matches!(axis, AxisRef::RelativeToPlacement { .. }));
         if has_absolute && has_relative {
             self.labels.flag(CanonicalTemplateFlag::MixedAnchors);
         }
@@ -949,11 +980,15 @@ pub(crate) fn function_argument_slot_context(
     function: &CanonicalFunctionId,
     arg_index: usize,
 ) -> SlotContext {
-    if function.argument_by_ref.get(arg_index).copied().unwrap_or(false)
+    if function
+        .argument_by_ref
+        .get(arg_index)
+        .copied()
+        .unwrap_or(false)
         || function.semantic_flags & FnCaps::DYNAMIC_DEPENDENCY.bits() != 0
-        || function
-            .contract
-            .is_some_and(|contract| contract.context == FunctionContextDependence::PlacementDependent)
+        || function.contract.is_some_and(|contract| {
+            contract.context == FunctionContextDependence::PlacementDependent
+        })
     {
         return SlotContext::ByRefArg;
     }
@@ -966,9 +1001,9 @@ pub(crate) fn function_argument_slot_context(
         FunctionArgumentDependencyContract::CriteriaPairs(criteria) => {
             let value_index = match criteria.value_range {
                 crate::function_contract::CriteriaValueRange::Fixed(index) => Some(index),
-                crate::function_contract::CriteriaValueRange::Optional { provided_index, .. } => {
-                    Some(provided_index)
-                }
+                crate::function_contract::CriteriaValueRange::Optional {
+                    provided_index, ..
+                } => Some(provided_index),
                 crate::function_contract::CriteriaValueRange::None => None,
             };
             if value_index == Some(arg_index) {
@@ -986,13 +1021,17 @@ pub(crate) fn function_argument_slot_context(
     }
 }
 
-fn slot_context_for_role(role: crate::function_contract::FunctionArgumentDependencyRole) -> SlotContext {
+fn slot_context_for_role(
+    role: crate::function_contract::FunctionArgumentDependencyRole,
+) -> SlotContext {
     use crate::function_contract::FunctionArgumentDependencyRole as Role;
     match role {
         Role::CriteriaRange => SlotContext::CriteriaRangeArg,
         Role::CriteriaExpression => SlotContext::CriteriaExpressionArg,
         Role::ByReference => SlotContext::ByRefArg,
-        Role::LocalBindingName | Role::LocalBindingValue | Role::LambdaBody => SlotContext::LocalBinding,
+        Role::LocalBindingName | Role::LocalBindingValue | Role::LambdaBody => {
+            SlotContext::LocalBinding
+        }
         Role::Unsupported => SlotContext::Unknown,
         _ => SlotContext::Value,
     }
@@ -1527,7 +1566,11 @@ mod tests {
     #[test]
     fn registry_semantic_identity_accepts_scalar_lookup_and_tracks_generation() {
         let template = canonical("=XLOOKUP(A1,$D$1:$D$3,$E$1:$E$3)", 1, 2);
-        assert!(template.labels.is_authority_supported(), "{:?}", template.labels);
+        assert!(
+            template.labels.is_authority_supported(),
+            "{:?}",
+            template.labels
+        );
         let CanonicalExpr::Function { id, .. } = &template.expr else {
             panic!("expected function")
         };
@@ -1547,7 +1590,11 @@ mod tests {
                 &self,
                 _arity: usize,
             ) -> Option<crate::function_contract::FunctionSemanticContract> {
-                Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
+                Some(
+                    crate::function_contract::FunctionSemanticContract::trusted_builtin_default(
+                        None,
+                    ),
+                )
             }
             fn eval<'a, 'b, 'c>(
                 &self,
