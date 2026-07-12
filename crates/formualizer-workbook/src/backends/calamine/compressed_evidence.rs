@@ -532,11 +532,19 @@ fn advance_family_evidence(
         return 0;
     }
     let before = evidence.exclusions.len();
-    if let Some(expected) = evidence.next {
-        let stop = if coord > range.end { None } else { Some(coord) };
-        append_holes(evidence, range, expected, stop, max_exclusions);
+    if coord > range.end {
+        if let Some(expected) = evidence.next {
+            append_holes(evidence, range, expected, None, max_exclusions);
+        }
+        return evidence.exclusions.len().saturating_sub(before);
     }
-    if evidence.anomaly.is_some() || !contains(range, coord) {
+    if !contains(range, coord) {
+        return 0;
+    }
+    if let Some(expected) = evidence.next {
+        append_holes(evidence, range, expected, Some(coord), max_exclusions);
+    }
+    if evidence.anomaly.is_some() {
         return evidence.exclusions.len().saturating_sub(before);
     }
     match disposition {
@@ -870,6 +878,92 @@ mod tests {
             assert!(report.evidence_peak_bytes < 1024);
             assert!(report.fallback_reasons.is_empty());
             assert_eq!(report.replay_families, 1);
+        }
+    }
+
+    #[test]
+    fn adjacent_interleaved_families_remain_clean_in_source_order() {
+        for (left, right) in [
+            (rect(0, 0, 99, 0), rect(0, 2, 99, 2)),
+            (rect(0, 0, 0, 99), rect(0, 101, 0, 200)),
+            (rect(0, 0, 49, 1), rect(0, 3, 49, 4)),
+        ] {
+            let mut events = Vec::new();
+            for (id, range) in [(family(1), left), (family(2), right)] {
+                for row in range.start.row..=range.end.row {
+                    for col in range.start.col..=range.end.col {
+                        let point = coord(row, col);
+                        events.push((point, id, range, point == range.start));
+                    }
+                }
+            }
+            events.sort_by_key(|event| event.0);
+
+            let mut evidence = MonotonicFormulaEvidence::new();
+            for (point, id, range, is_anchor) in events {
+                if is_anchor {
+                    evidence.observe(
+                        point,
+                        EvidenceRecord::Anchor {
+                            family: id,
+                            range: Some(range),
+                            text: "A1",
+                        },
+                    );
+                } else {
+                    evidence.observe(point, EvidenceRecord::Descendant { family: id });
+                }
+            }
+
+            let output = evidence.finish();
+            assert_eq!(output.report.source_clean_families, 2, "{left:?}/{right:?}");
+            assert_eq!(
+                output.report.source_clean_cells,
+                checked_area(left).unwrap() + checked_area(right).unwrap()
+            );
+            assert_eq!(output.report.source_fragmentable_families, 0);
+            assert_eq!(output.report.source_hole_exclusions, 0);
+            assert_eq!(output.report.source_ordinary_exclusions, 0);
+            assert_eq!(output.report.source_partition_failures, 0);
+            assert!(output.report.fallback_reasons.is_empty());
+            assert!(output.fragmented.is_empty());
+            assert_eq!(
+                output
+                    .families
+                    .iter()
+                    .map(|candidate| candidate.source_id)
+                    .collect::<Vec<_>>(),
+                vec![family(1), family(2)]
+            );
+        }
+    }
+
+    #[test]
+    fn outside_coordinates_before_range_end_do_not_advance_family_evidence() {
+        let range = rect(10, 10, 20, 12);
+        let expected = coord(11, 10);
+        for row in range.start.row..=range.end.row {
+            for col in 0..=20 {
+                let point = coord(row, col);
+                if contains(range, point) || point > range.end {
+                    continue;
+                }
+                let mut evidence = FamilyEvidence {
+                    next: Some(expected),
+                    ..FamilyEvidence::default()
+                };
+                let added = advance_family_evidence(
+                    &mut evidence,
+                    range,
+                    point,
+                    ActivePointDisposition::OtherFamily,
+                    DEFAULT_MAX_FAMILY_EXCLUSIONS,
+                );
+                assert_eq!(added, 0, "outside point {point:?}");
+                assert_eq!(evidence.next, Some(expected), "outside point {point:?}");
+                assert!(evidence.exclusions.is_empty(), "outside point {point:?}");
+                assert!(evidence.anomaly.is_none(), "outside point {point:?}");
+            }
         }
     }
 
