@@ -829,7 +829,7 @@ impl Canonicalizer {
         if contract.result.may_return_reference() && short_circuit {
             self.labels.reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
         }
-        if contract.result.may_spill() && (!short_circuit || returns_reference) {
+        if contract.result.may_spill() && ((!short_circuit && !scalar_lookup) || returns_reference) {
             self.labels.reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
         }
         if contract.context != FunctionContextDependence::None {
@@ -1522,6 +1522,48 @@ mod tests {
             CanonicalExpr::Reference { reference, .. } => reference,
             other => panic!("expected reference, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn registry_semantic_identity_accepts_scalar_lookup_and_tracks_generation() {
+        let template = canonical("=XLOOKUP(A1,$D$1:$D$3,$E$1:$E$3)", 1, 2);
+        assert!(template.labels.is_authority_supported(), "{:?}", template.labels);
+        let CanonicalExpr::Function { id, .. } = &template.expr else {
+            panic!("expected function")
+        };
+        assert_eq!(id.canonical_name, "XLOOKUP");
+        assert!(id.semantic_generation > 0);
+        assert!(id.contract.is_some());
+    }
+
+    #[test]
+    fn registry_replacement_changes_full_canonical_semantic_identity() {
+        struct SafeReplacement;
+        impl crate::function::Function for SafeReplacement {
+            fn name(&self) -> &'static str {
+                "__CANONICAL_GENERATION_FIXTURE__"
+            }
+            fn semantic_contract(
+                &self,
+                _arity: usize,
+            ) -> Option<crate::function_contract::FunctionSemanticContract> {
+                Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
+            }
+            fn eval<'a, 'b, 'c>(
+                &self,
+                _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+                _ctx: &dyn crate::traits::FunctionContext<'b>,
+            ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+                unreachable!()
+            }
+        }
+        crate::function_registry::register_function(Arc::new(SafeReplacement));
+        let first = canonical("=__CANONICAL_GENERATION_FIXTURE__()", 1, 1);
+        crate::function_registry::register_function(Arc::new(SafeReplacement));
+        let second = canonical("=__CANONICAL_GENERATION_FIXTURE__()", 1, 1);
+        assert!(first.labels.is_authority_supported());
+        assert!(second.labels.is_authority_supported());
+        assert_ne!(first.key, second.key);
     }
 
     #[test]
