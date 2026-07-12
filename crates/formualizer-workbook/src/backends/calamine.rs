@@ -18,10 +18,10 @@ use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
-    DeferredFormulaPackage, Engine as EvalEngine, FormulaCompressedPreparation,
-    FormulaCompressedSourceBatch, FormulaCompressedSourceReport, FormulaIngestBatch,
-    FormulaIngestRecord, FormulaSpoolDiskPolicy, SourceCoord, SourceFamilyId, SourceFormulaFamily,
-    SourceRect,
+    DeferredFormulaPackage, Engine as EvalEngine, ExplicitSourceFamilyMembers,
+    FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy,
+    PartitionedSourceFormulaFamily, SourceCoord, SourceFamilyId, SourceFormulaFamily, SourceRect,
 };
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::{ASTNode, ReferenceType};
@@ -118,6 +118,7 @@ struct StreamedSheet {
     formulas: Vec<FormulaIngestRecord>,
     formula_source_report: FormulaCompressedSourceReport,
     compressed_families: Vec<SourceFormulaFamily>,
+    partitioned_families: Vec<PartitionedSourceFormulaFamily>,
     direct_preparation: Option<FormulaCompressedPreparation>,
     deferred_package: Option<DeferredFormulaPackage>,
     shared_formula_tags: usize,
@@ -607,10 +608,23 @@ impl CalamineAdapter {
         let compressed_evidence = formula_evidence.finish();
         let mut formula_source_report = compressed_evidence.report;
         let mut compressed_families = compressed_evidence.families;
-        // Fragment proposals remain replay-only until the backend-neutral Shadow
-        // transport accepts them. Retaining the bounded proposal here proves the
-        // evidence path without changing production authority.
-        let _fragmented_families = compressed_evidence.fragmented;
+        let partitioned_families = compressed_evidence
+            .fragmented
+            .into_iter()
+            .map(|proposal| {
+                let fallback_members =
+                    ExplicitSourceFamilyMembers::try_new(proposal.fallback_members)
+                        .map_err(|reason| calamine::Error::Io(std::io::Error::other(reason)))?;
+                Ok(PartitionedSourceFormulaFamily {
+                    source_id: proposal.source_id,
+                    template_origin0: proposal.anchor_coord0,
+                    template_text: proposal.anchor_text,
+                    surviving_member_count: proposal.member_count,
+                    fragments: proposal.fragments,
+                    fallback_members,
+                })
+            })
+            .collect::<Result<Vec<_>, calamine::Error>>()?;
         let formula_spool_bytes = if formula_count == 0 {
             0
         } else {
@@ -745,6 +759,7 @@ impl CalamineAdapter {
                 sheet.to_string(),
                 formula_source_report.clone(),
                 compressed_families.clone(),
+                partitioned_families.clone(),
                 Box::new(CalamineDeferredFormulaReplay::new(
                     formula_spool
                         .take()
@@ -766,6 +781,7 @@ impl CalamineAdapter {
             formulas: formula_staging.formulas,
             formula_source_report,
             compressed_families,
+            partitioned_families,
             direct_preparation,
             deferred_package,
             shared_formula_tags,
@@ -1498,6 +1514,7 @@ where
                     formulas,
                     formula_source_report,
                     compressed_families,
+                    partitioned_families,
                     direct_preparation,
                     deferred_package,
                     shared_formula_tags,
@@ -1535,10 +1552,11 @@ where
                     } else {
                         eager_formula_batches.push((
                             batch,
-                            FormulaCompressedSourceBatch::with_families(
+                            FormulaCompressedSourceBatch::with_proposals(
                                 n.clone(),
                                 formula_source_report,
                                 compressed_families,
+                                partitioned_families,
                             ),
                         ));
                     }

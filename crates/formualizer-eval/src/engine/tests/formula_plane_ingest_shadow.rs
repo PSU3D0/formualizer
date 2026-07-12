@@ -6,8 +6,8 @@ use crate::engine::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
     ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
     FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
-    PlacementDomainTransport, RowVisibilitySource, SourceCoord, SourceFamilyId,
-    SourceFamilyMembers, SourceFormulaFamily, SourceRect,
+    PartitionedSourceFormulaFamily, PlacementDomainTransport, RowVisibilitySource, SourceCoord,
+    SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
@@ -99,6 +99,7 @@ fn deferred_package(text: &'static str, fail_once: bool, panic_at: bool) -> Defe
     DeferredFormulaPackage::new(
         "Sheet1".to_string(),
         report,
+        Vec::new(),
         Vec::new(),
         Box::new(TestDeferredReplay {
             text,
@@ -1245,6 +1246,122 @@ fn source_family_preparation_rejects_cross_engine_finalization_before_authority(
     assert!(other.last_formula_ingest_report().is_none());
     assert_eq!(other.baseline_stats().formula_plane_active_span_count, 0);
     assert_eq!(other.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
+fn partitioned_shadow_prepares_all_fragments_from_one_analysis_without_authority() {
+    let family = PartitionedSourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 90,
+            source_index: 1,
+        },
+        template_origin0: SourceCoord { row: 0, col: 1 },
+        template_text: Arc::from("SUM($A$1)+1"),
+        surviving_member_count: 7,
+        fragments: vec![
+            PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 2,
+                col: 1,
+            },
+            PlacementDomainTransport::RowRun {
+                row_start: 4,
+                row_end: 6,
+                col: 1,
+            },
+        ],
+        fallback_members: ExplicitSourceFamilyMembers::try_new(vec![SourceCoord {
+            row: 3,
+            col: 1,
+        }])
+        .unwrap(),
+    };
+    let source_report = FormulaCompressedSourceReport {
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: 7,
+        source_hole_exclusions: 1,
+        ..FormulaCompressedSourceReport::default()
+    };
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    let report = engine
+        .ingest_compressed_formula_source_batches(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceBatch::with_proposals(
+                "Sheet1",
+                source_report,
+                Vec::new(),
+                vec![family],
+            ),
+        )])
+        .unwrap();
+
+    assert_eq!(report.source_anchor_parses, 1, "{report:?}");
+    assert_eq!(report.source_anchor_asts, 1, "{report:?}");
+    assert_eq!(report.source_anchor_analyses, 1, "{report:?}");
+    assert_eq!(report.source_partition_analyses_reused, 1, "{report:?}");
+    assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+    assert_eq!(report.source_partition_fragments_prepared, 2, "{report:?}");
+    assert_eq!(report.source_partition_span_cells_prepared, 6, "{report:?}");
+    assert_eq!(report.source_partition_fallback_cells, 1, "{report:?}");
+    assert_eq!(report.source_partition_function_semantics, 1, "{report:?}");
+    assert_eq!(report.source_partition_holes, 1, "{report:?}");
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
+fn partitioned_shadow_rejects_the_whole_family_when_one_fragment_fails() {
+    let family = PartitionedSourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 90,
+            source_index: 2,
+        },
+        template_origin0: SourceCoord { row: 0, col: 1 },
+        template_text: Arc::from("A1048575+1"),
+        surviving_member_count: 4,
+        fragments: vec![
+            PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 1,
+                col: 1,
+            },
+            PlacementDomainTransport::RowRun {
+                row_start: 2,
+                row_end: 3,
+                col: 1,
+            },
+        ],
+        fallback_members: ExplicitSourceFamilyMembers::try_new(Vec::new()).unwrap(),
+    };
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    let report = engine
+        .ingest_compressed_formula_source_batches(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceBatch::with_proposals(
+                "Sheet1",
+                FormulaCompressedSourceReport {
+                    source_fragmentable_families: 1,
+                    source_fragmentable_cells: 4,
+                    ..FormulaCompressedSourceReport::default()
+                },
+                Vec::new(),
+                vec![family],
+            ),
+        )])
+        .unwrap();
+
+    assert_eq!(report.source_partitioned_families_prepared, 0, "{report:?}");
+    assert_eq!(report.source_partitioned_families_rejected, 1, "{report:?}");
+    assert_eq!(report.source_partition_fragments_prepared, 0, "{report:?}");
+    assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
+    assert_eq!(report.shadow_fallback_cells, 4, "{report:?}");
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
 }
 
 #[test]

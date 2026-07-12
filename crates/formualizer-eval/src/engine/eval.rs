@@ -24,7 +24,8 @@ use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
     commit_prepared_anchor_once_family, place_candidate_family_with_analyses,
     prepare_anchor_once_family, split_candidate_affine_literal_runs,
-    validate_anchor_once_shadow_relocation, validate_anchor_once_syntax,
+    validate_anchor_once_fragment_shadow, validate_anchor_once_shadow_relocation,
+    validate_anchor_once_syntax,
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
@@ -228,6 +229,13 @@ impl SourceFamilyPreparationError {
             analysis_created: true,
         }
     }
+}
+
+struct PreparedPartitionShadow {
+    fragment_count: u64,
+    direct_cells: u64,
+    fallback_cells: u64,
+    function_semantics_used: bool,
 }
 
 type FormulaPlaneMixedScheduleBuild = (
@@ -3406,6 +3414,205 @@ where
             .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))
     }
 
+    fn placement_domain_from_transport(
+        sheet_id: SheetId,
+        transport: crate::engine::PlacementDomainTransport,
+    ) -> PlacementDomain {
+        match transport {
+            crate::engine::PlacementDomainTransport::RowRun {
+                row_start,
+                row_end,
+                col,
+            } => PlacementDomain::row_run(sheet_id, row_start, row_end, col),
+            crate::engine::PlacementDomainTransport::ColRun {
+                row,
+                col_start,
+                col_end,
+            } => PlacementDomain::col_run(sheet_id, row, col_start, col_end),
+            crate::engine::PlacementDomainTransport::Rect(rect) => PlacementDomain::rect(
+                sheet_id,
+                rect.start.row,
+                rect.end.row,
+                rect.start.col,
+                rect.end.col,
+            ),
+        }
+    }
+
+    fn prepare_partitioned_source_formula_family_shadow(
+        &mut self,
+        sheet_id: SheetId,
+        family: &crate::engine::PartitionedSourceFormulaFamily,
+    ) -> Result<PreparedPartitionShadow, SourceFamilyPreparationError> {
+        family
+            .validate(&self.workbook_load_limits)
+            .map_err(SourceFamilyPreparationError::contract)?;
+        let formula = if family.template_text.starts_with('=') {
+            family.template_text.to_string()
+        } else {
+            format!("={}", family.template_text)
+        };
+        let ast = formualizer_parse::parser::parse(&formula)
+            .map_err(|_| SourceFamilyPreparationError::parse("AnchorParseRejected"))?;
+        let domains: Vec<_> = family
+            .fragments
+            .iter()
+            .copied()
+            .map(|transport| Self::placement_domain_from_transport(sheet_id, transport))
+            .collect();
+        for domain in &domains {
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                family.template_origin0.row,
+                family.template_origin0.col,
+                domain,
+            )
+            .map_err(SourceFamilyPreparationError::ast)?;
+        }
+        let ast_id = self.intern_formula_ast(&ast);
+        let placement = CellRef::new(
+            sheet_id,
+            Coord::from_excel(
+                family.template_origin0.row + 1,
+                family.template_origin0.col + 1,
+                true,
+                true,
+            ),
+        );
+        let ingested = self
+            .ingest_pipeline()
+            .enable_function_semantics()
+            .ingest_formula(
+                FormulaAstInput::RawArena(ast_id),
+                placement,
+                Some(family.template_text.clone()),
+            )
+            .map_err(|_| SourceFamilyPreparationError::ast("UnsupportedCanonicalTemplate"))?;
+        let function_semantics_used = ingested
+            .labels
+            .has_flag(crate::engine::arena::ast::CanonicalLabels::FLAG_CONTAINS_FUNCTION);
+        let candidate = FormulaPlacementCandidate::new(
+            sheet_id,
+            family.template_origin0.row,
+            family.template_origin0.col,
+            ingested.ast_id,
+            Some(family.template_text.clone()),
+        );
+        let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested)
+            .map_err(|reason| SourceFamilyPreparationError::ast(format!("{reason:?}")))?;
+        let fragment_count = domains.len() as u64;
+        let mut direct_cells = 0u64;
+        for domain in domains {
+            let member_count = domain.cell_count();
+            validate_anchor_once_fragment_shadow(&analysis, &domain, member_count)
+                .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))?;
+            direct_cells = direct_cells
+                .checked_add(member_count)
+                .ok_or_else(|| SourceFamilyPreparationError::analysis("PartitionAreaOverflow"))?;
+        }
+        let fallback_cells = family.fallback_members.len() as u64;
+        if direct_cells.checked_add(fallback_cells) != Some(family.surviving_member_count) {
+            return Err(SourceFamilyPreparationError::analysis(
+                "PartitionMemberCountMismatch",
+            ));
+        }
+        Ok(PreparedPartitionShadow {
+            fragment_count,
+            direct_cells,
+            fallback_cells,
+            function_semantics_used,
+        })
+    }
+
+    fn analyze_partitioned_formula_plane_shadow(
+        &mut self,
+        batches: &[(String, Vec<crate::engine::PartitionedSourceFormulaFamily>)],
+    ) -> FormulaIngestReport {
+        let mut report = FormulaIngestReport::with_mode(FormulaPlaneMode::Shadow);
+        for (sheet_name, families) in batches {
+            let sheet_id = self.graph.sheet_id_mut(sheet_name);
+            for family in families {
+                report.shadow_candidate_cells = report
+                    .shadow_candidate_cells
+                    .saturating_add(family.surviving_member_count);
+                match self.prepare_partitioned_source_formula_family_shadow(sheet_id, family) {
+                    Ok(prepared) => {
+                        let fragment_count = prepared.fragment_count;
+                        let descendants = family.surviving_member_count.saturating_sub(1);
+                        report.source_anchor_parses = report.source_anchor_parses.saturating_add(1);
+                        report.source_anchor_asts = report.source_anchor_asts.saturating_add(1);
+                        report.source_anchor_analyses =
+                            report.source_anchor_analyses.saturating_add(1);
+                        report.source_partition_analyses_reused = report
+                            .source_partition_analyses_reused
+                            .saturating_add(fragment_count.saturating_sub(1));
+                        report.source_partitioned_families_prepared = report
+                            .source_partitioned_families_prepared
+                            .saturating_add(1);
+                        report.source_partition_fragments_prepared = report
+                            .source_partition_fragments_prepared
+                            .saturating_add(fragment_count);
+                        report.source_partition_span_cells_prepared = report
+                            .source_partition_span_cells_prepared
+                            .saturating_add(prepared.direct_cells);
+                        report.source_partition_fallback_cells = report
+                            .source_partition_fallback_cells
+                            .saturating_add(prepared.fallback_cells);
+                        report.shadow_accepted_span_cells = report
+                            .shadow_accepted_span_cells
+                            .saturating_add(prepared.direct_cells);
+                        report.shadow_fallback_cells = report
+                            .shadow_fallback_cells
+                            .saturating_add(prepared.fallback_cells);
+                        report.source_descendant_strings_avoided = report
+                            .source_descendant_strings_avoided
+                            .saturating_add(descendants);
+                        report.source_descendant_events_avoided = report
+                            .source_descendant_events_avoided
+                            .saturating_add(descendants);
+                        report.source_descendant_analyses_avoided = report
+                            .source_descendant_analyses_avoided
+                            .saturating_add(descendants);
+                        report.graph_formula_vertices_avoided_shadow = report
+                            .graph_formula_vertices_avoided_shadow
+                            .saturating_add(prepared.direct_cells);
+                        report.ast_roots_avoided_shadow = report
+                            .ast_roots_avoided_shadow
+                            .saturating_add(prepared.direct_cells.saturating_sub(fragment_count));
+                        report.edge_rows_avoided_shadow = report
+                            .edge_rows_avoided_shadow
+                            .saturating_add(prepared.direct_cells);
+                        if prepared.function_semantics_used {
+                            report.source_partition_function_semantics =
+                                report.source_partition_function_semantics.saturating_add(1);
+                        }
+                    }
+                    Err(error) => {
+                        if error.parse_attempted {
+                            report.source_anchor_parses =
+                                report.source_anchor_parses.saturating_add(1);
+                        }
+                        if error.ast_created {
+                            report.source_anchor_asts = report.source_anchor_asts.saturating_add(1);
+                        }
+                        if error.analysis_created {
+                            report.source_anchor_analyses =
+                                report.source_anchor_analyses.saturating_add(1);
+                        }
+                        report.shadow_fallback_cells = report
+                            .shadow_fallback_cells
+                            .saturating_add(family.surviving_member_count);
+                        report.source_partitioned_families_rejected = report
+                            .source_partitioned_families_rejected
+                            .saturating_add(1);
+                        *report.fallback_reasons.entry(error.reason).or_default() += 1;
+                    }
+                }
+            }
+        }
+        report
+    }
+
     fn analyze_compressed_formula_plane_shadow(
         &mut self,
         batches: &[(String, Vec<crate::engine::SourceFormulaFamily>)],
@@ -4325,14 +4532,16 @@ where
         let mut source_report = crate::engine::FormulaCompressedSourceReport::default();
         let mut formula_batches = Vec::with_capacity(batches.len());
         let mut compressed_families = Vec::new();
+        let mut partitioned_families = Vec::new();
         for (batch, compressed_batch) in batches {
-            let (sheet_name, compressed, families) = compressed_batch.into_parts();
+            let (sheet_name, compressed, families, partitions) = compressed_batch.into_parts();
             if sheet_name.as_ref() != batch.sheet_name {
                 return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
                     "compressed formula source sheet does not match its replay batch",
                 ));
             }
             compressed_families.push((batch.sheet_name.clone(), families));
+            partitioned_families.push((batch.sheet_name.clone(), partitions));
             source_counts[0] = source_counts[0].saturating_add(compressed.source_formula_events);
             source_counts[1] = source_counts[1].saturating_add(compressed.source_ordinary_events);
             source_counts[2] =
@@ -4406,6 +4615,7 @@ where
             source_counts,
             Some(source_report),
             compressed_families,
+            partitioned_families,
         )
     }
 
@@ -4413,7 +4623,7 @@ where
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new())
+        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new(), Vec::new())
     }
 
     fn ingest_formula_batches_inner(
@@ -4422,6 +4632,7 @@ where
         source_counts: [u64; 10],
         source_report: Option<crate::engine::FormulaCompressedSourceReport>,
         compressed_families: Vec<(String, Vec<crate::engine::SourceFormulaFamily>)>,
+        partitioned_families: Vec<(String, Vec<crate::engine::PartitionedSourceFormulaFamily>)>,
     ) -> Result<FormulaIngestReport, ExcelError> {
         self.observe_function_semantic_epoch()?;
         let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
@@ -4447,10 +4658,27 @@ where
                     BTreeMap::new(),
                 ),
                 FormulaPlaneMode::Shadow => (
-                    if compressed_families.is_empty() {
-                        self.analyze_formula_plane_shadow_candidates(&batches)
+                    if partitioned_families
+                        .iter()
+                        .all(|(_, families)| families.is_empty())
+                    {
+                        if compressed_families.is_empty() {
+                            self.analyze_formula_plane_shadow_candidates(&batches)
+                        } else {
+                            self.analyze_compressed_formula_plane_shadow(&compressed_families)
+                        }
                     } else {
-                        self.analyze_compressed_formula_plane_shadow(&compressed_families)
+                        let mut partition_report =
+                            self.analyze_partitioned_formula_plane_shadow(&partitioned_families);
+                        if compressed_families
+                            .iter()
+                            .any(|(_, families)| !families.is_empty())
+                        {
+                            partition_report.accumulate(
+                                &self.analyze_compressed_formula_plane_shadow(&compressed_families),
+                            );
+                        }
+                        partition_report
                     },
                     batches,
                     BTreeMap::new(),
@@ -4476,6 +4704,11 @@ where
             report.source_family_cells_seen = source.family_cells_seen;
             report.source_family_shadow_eligible = source.source_clean_families;
             report.source_family_shadow_eligible_cells = source.source_clean_cells;
+            report.source_partitioned_families_seen = source.source_fragmentable_families;
+            report.source_partition_holes = source.source_hole_exclusions;
+            report.source_partition_ordinary_exceptions = source.source_ordinary_exclusions;
+            report.source_partition_failures = source.source_partition_failures;
+            report.source_partition_surviving_cells = source.source_fragmentable_cells;
             report.source_family_fallback = report
                 .source_family_fallback
                 .saturating_add(source.replay_families);
@@ -4699,7 +4932,13 @@ where
                 if let Some(preparation) = preparation {
                     deferred_source = Some((report, preparation));
                 } else {
-                    deferred_fallback = Some((report, package.families.clone()));
+                    let partitions = package
+                        .partitioned_families
+                        .iter()
+                        .filter(|family| !package.invalidated.contains(&family.source_id))
+                        .cloned()
+                        .collect();
+                    deferred_fallback = Some((report, package.families.clone(), partitions));
                 }
             }
 
@@ -4741,11 +4980,12 @@ where
             let batch = FormulaIngestBatch::new(sheet.clone(), formulas);
             if let Some((report, preparation)) = deferred_source {
                 direct.push((batch, report, preparation));
-            } else if let Some((report, families)) = deferred_fallback {
-                let source_batch = crate::engine::FormulaCompressedSourceBatch::with_families(
+            } else if let Some((report, families, partitions)) = deferred_fallback {
+                let source_batch = crate::engine::FormulaCompressedSourceBatch::with_proposals(
                     batch.sheet_name.clone(),
                     report,
                     families,
+                    partitions,
                 );
                 compressed.push((batch, source_batch));
             } else if !batch.is_empty() {

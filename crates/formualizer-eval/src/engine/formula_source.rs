@@ -31,6 +31,8 @@ pub struct SourceFamilyId {
 /// Larger or sparse families must stay behind backend-owned exact replay.
 #[doc(hidden)]
 pub const MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS: usize = 4_096;
+#[doc(hidden)]
+pub const MAX_PARTITIONED_SOURCE_FAMILY_FRAGMENTS: usize = 128;
 
 /// Backend-neutral transport for a proven complete family domain.
 #[doc(hidden)]
@@ -137,6 +139,77 @@ pub struct SourceFormulaFamily {
     pub member_count: u64,
 }
 
+/// Backend-neutral capability proposal for one source template partitioned
+/// across existing placement domains. Backend-specific exclusion evidence is
+/// intentionally absent.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedSourceFormulaFamily {
+    pub source_id: SourceFamilyId,
+    pub template_origin0: SourceCoord,
+    pub template_text: Arc<str>,
+    pub surviving_member_count: u64,
+    pub fragments: Vec<PlacementDomainTransport>,
+    pub fallback_members: ExplicitSourceFamilyMembers,
+}
+
+impl PartitionedSourceFormulaFamily {
+    pub(crate) fn validate(&self, limits: &super::WorkbookLoadLimits) -> Result<(), &'static str> {
+        if !source_coord_in_bounds(self.template_origin0, limits) {
+            return Err("PartitionTemplateOriginOutOfBounds");
+        }
+        if self.fragments.is_empty() {
+            return Err("PartitionHasNoFragments");
+        }
+        if self.fragments.len() > MAX_PARTITIONED_SOURCE_FAMILY_FRAGMENTS {
+            return Err("PartitionFragmentLimitExceeded");
+        }
+        let mut cells = 0u64;
+        let mut rects = Vec::with_capacity(self.fragments.len());
+        for domain in &self.fragments {
+            let rect = domain.rect();
+            if !source_rect_valid(rect, limits) {
+                return Err("PartitionFragmentOutOfBounds");
+            }
+            if rects.iter().any(|prior| source_rects_overlap(*prior, rect)) {
+                return Err("PartitionFragmentsOverlap");
+            }
+            let area = source_rect_area(rect).ok_or("PartitionAreaOverflow")?;
+            cells = cells.checked_add(area).ok_or("PartitionAreaOverflow")?;
+            rects.push(rect);
+        }
+        validate_exact_partition_members(self.fallback_members.as_slice(), limits)?;
+        for member in self.fallback_members.as_slice() {
+            if rects
+                .iter()
+                .any(|rect| source_rect_contains(*rect, *member))
+            {
+                return Err("PartitionFallbackOverlapsFragment");
+            }
+        }
+        cells = cells
+            .checked_add(self.fallback_members.len() as u64)
+            .ok_or("PartitionAreaOverflow")?;
+        if cells != self.surviving_member_count {
+            return Err("PartitionMemberCountMismatch");
+        }
+        if !rects
+            .iter()
+            .any(|rect| source_rect_contains(*rect, self.template_origin0))
+            && !self
+                .fallback_members
+                .as_slice()
+                .contains(&self.template_origin0)
+        {
+            return Err("PartitionMissingTemplateOrigin");
+        }
+        if cells > limits.max_sheet_logical_cells {
+            return Err("PartitionLogicalCellLimitExceeded");
+        }
+        Ok(())
+    }
+}
+
 impl SourceFormulaFamily {
     pub(crate) fn validated_complete_domain(
         &self,
@@ -184,6 +257,42 @@ fn source_rect_valid(rect: SourceRect, limits: &super::WorkbookLoadLimits) -> bo
         && source_coord_in_bounds(rect.end, limits)
         && rect.start.row <= rect.end.row
         && rect.start.col <= rect.end.col
+}
+
+fn source_rect_contains(rect: SourceRect, coord: SourceCoord) -> bool {
+    coord.row >= rect.start.row
+        && coord.row <= rect.end.row
+        && coord.col >= rect.start.col
+        && coord.col <= rect.end.col
+}
+
+fn source_rects_overlap(left: SourceRect, right: SourceRect) -> bool {
+    left.start.row <= right.end.row
+        && right.start.row <= left.end.row
+        && left.start.col <= right.end.col
+        && right.start.col <= left.end.col
+}
+
+fn source_rect_area(rect: SourceRect) -> Option<u64> {
+    let rows = u64::from(rect.end.row.checked_sub(rect.start.row)?.checked_add(1)?);
+    let cols = u64::from(rect.end.col.checked_sub(rect.start.col)?.checked_add(1)?);
+    rows.checked_mul(cols)
+}
+
+fn validate_exact_partition_members(
+    members: &[SourceCoord],
+    limits: &super::WorkbookLoadLimits,
+) -> Result<(), &'static str> {
+    if members
+        .iter()
+        .any(|coord| !source_coord_in_bounds(*coord, limits))
+    {
+        return Err("PartitionFallbackOutOfBounds");
+    }
+    if members.windows(2).any(|window| window[0] >= window[1]) {
+        return Err("PartitionFallbackNotStrictlySorted");
+    }
+    Ok(())
 }
 
 fn validate_explicit_members(
@@ -279,6 +388,7 @@ pub struct DeferredFormulaPackage {
     pub(crate) sheet_name: String,
     pub(crate) report: FormulaCompressedSourceReport,
     pub(crate) families: Vec<SourceFormulaFamily>,
+    pub(crate) partitioned_families: Vec<PartitionedSourceFormulaFamily>,
     pub(crate) replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
     pub(crate) invalidated: std::collections::BTreeSet<SourceFamilyId>,
     pub(crate) suppressed: std::collections::BTreeSet<(u32, u32)>,
@@ -290,12 +400,14 @@ impl DeferredFormulaPackage {
         sheet_name: String,
         report: FormulaCompressedSourceReport,
         families: Vec<SourceFormulaFamily>,
+        partitioned_families: Vec<PartitionedSourceFormulaFamily>,
         replay: Box<dyn DeferredFormulaReplay>,
     ) -> Self {
         Self {
             sheet_name,
             report,
             families,
+            partitioned_families,
             replay: Arc::new(std::sync::Mutex::new(replay)),
             invalidated: Default::default(),
             suppressed: Default::default(),
@@ -310,6 +422,7 @@ pub struct FormulaCompressedSourceBatch {
     sheet_name: Arc<str>,
     report: FormulaCompressedSourceReport,
     families: Vec<SourceFormulaFamily>,
+    partitioned_families: Vec<PartitionedSourceFormulaFamily>,
 }
 
 /// Opaque eager preparation owned by Engine between adapter classification and replay.
@@ -360,6 +473,7 @@ impl FormulaCompressedSourceBatch {
             sheet_name: sheet_name.into(),
             report,
             families: Vec::new(),
+            partitioned_families: Vec::new(),
         }
     }
 
@@ -368,10 +482,20 @@ impl FormulaCompressedSourceBatch {
         report: FormulaCompressedSourceReport,
         families: Vec<SourceFormulaFamily>,
     ) -> Self {
+        Self::with_proposals(sheet_name, report, families, Vec::new())
+    }
+
+    pub fn with_proposals(
+        sheet_name: impl Into<Arc<str>>,
+        report: FormulaCompressedSourceReport,
+        families: Vec<SourceFormulaFamily>,
+        partitioned_families: Vec<PartitionedSourceFormulaFamily>,
+    ) -> Self {
         Self {
             sheet_name: sheet_name.into(),
             report,
             families,
+            partitioned_families,
         }
     }
 
@@ -381,8 +505,14 @@ impl FormulaCompressedSourceBatch {
         Arc<str>,
         FormulaCompressedSourceReport,
         Vec<SourceFormulaFamily>,
+        Vec<PartitionedSourceFormulaFamily>,
     ) {
-        (self.sheet_name, self.report, self.families)
+        (
+            self.sheet_name,
+            self.report,
+            self.families,
+            self.partitioned_families,
+        )
     }
 }
 
@@ -493,6 +623,91 @@ mod tests {
                 MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS + 1
             ]),
             Err("ExplicitMemberLimitExceeded")
+        );
+    }
+
+    #[test]
+    fn partition_transport_separates_template_origin_from_fragment_origins() {
+        let partition = PartitionedSourceFormulaFamily {
+            source_id: SourceFamilyId {
+                sheet_instance: 7,
+                source_index: 12,
+            },
+            template_origin0: SourceCoord { row: 2, col: 3 },
+            template_text: Arc::from("A1+1"),
+            surviving_member_count: 7,
+            fragments: vec![
+                PlacementDomainTransport::RowRun {
+                    row_start: 2,
+                    row_end: 4,
+                    col: 3,
+                },
+                PlacementDomainTransport::RowRun {
+                    row_start: 7,
+                    row_end: 9,
+                    col: 3,
+                },
+            ],
+            fallback_members: ExplicitSourceFamilyMembers::try_new(vec![SourceCoord {
+                row: 6,
+                col: 3,
+            }])
+            .unwrap(),
+        };
+        assert!(partition.validate(&limits()).is_ok());
+        assert!(!source_rect_contains(
+            partition.fragments[1].rect(),
+            partition.template_origin0
+        ));
+    }
+
+    #[test]
+    fn partition_transport_rejects_overlap_count_and_missing_origin() {
+        let base = PartitionedSourceFormulaFamily {
+            source_id: SourceFamilyId {
+                sheet_instance: 7,
+                source_index: 12,
+            },
+            template_origin0: SourceCoord { row: 2, col: 3 },
+            template_text: Arc::from("A1+1"),
+            surviving_member_count: 6,
+            fragments: vec![
+                PlacementDomainTransport::RowRun {
+                    row_start: 2,
+                    row_end: 4,
+                    col: 3,
+                },
+                PlacementDomainTransport::RowRun {
+                    row_start: 7,
+                    row_end: 9,
+                    col: 3,
+                },
+            ],
+            fallback_members: ExplicitSourceFamilyMembers::try_new(Vec::new()).unwrap(),
+        };
+        let mut overlap = base.clone();
+        overlap.fragments[1] = PlacementDomainTransport::RowRun {
+            row_start: 4,
+            row_end: 6,
+            col: 3,
+        };
+        assert_eq!(
+            overlap.validate(&limits()),
+            Err("PartitionFragmentsOverlap")
+        );
+
+        let mut wrong_count = base.clone();
+        wrong_count.surviving_member_count = 5;
+        assert_eq!(
+            wrong_count.validate(&limits()),
+            Err("PartitionMemberCountMismatch")
+        );
+
+        let mut missing_origin = base;
+        missing_origin.template_origin0 = SourceCoord { row: 1, col: 1 };
+        assert_eq!(
+            missing_origin.validate(&limits()),
+            Err("PartitionMissingTemplateOrigin")
         );
     }
 

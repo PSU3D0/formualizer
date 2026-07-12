@@ -56,8 +56,10 @@ pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestR
 pub use formula_source::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
     ExplicitSourceFamilyMembers, FormulaCompressedPreparation, FormulaCompressedSourceBatch,
-    FormulaCompressedSourceReport, MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS, PlacementDomainTransport,
-    SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
+    FormulaCompressedSourceReport, MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS,
+    MAX_PARTITIONED_SOURCE_FAMILY_FRAGMENTS, PartitionedSourceFormulaFamily,
+    PlacementDomainTransport, SourceCoord, SourceFamilyId, SourceFamilyMembers,
+    SourceFormulaFamily, SourceRect,
 };
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation

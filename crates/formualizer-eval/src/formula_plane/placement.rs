@@ -456,6 +456,33 @@ pub(crate) fn prepare_anchor_once_family(
     member_count: u64,
 ) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
     let gates = run_anchor_once_placement_gates(&candidate, &analysis, &domain, member_count)?;
+    build_prepared_anchor_once(candidate, analysis, domain, member_count, gates)
+}
+
+pub(crate) fn validate_anchor_once_fragment_shadow(
+    analysis: &CandidateAnalysis,
+    domain: &PlacementDomain,
+    member_count: u64,
+) -> Result<(), PlacementFallbackReason> {
+    if member_count != domain.cell_count() || analysis.sheet_id != domain.sheet_id() {
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+    let is_constant_result =
+        analysis.read_projections_constant && analysis.value_ref_slot_descriptors.is_empty();
+    let _ = prepare_domain_semantics(domain, &analysis.read_projections, is_constant_result)?;
+    if literal_binding_bytes(&analysis.literal_bindings) > MAX_BINDING_SET_BYTES {
+        return Err(PlacementFallbackReason::BindingMemoryCapExceeded);
+    }
+    Ok(())
+}
+
+fn build_prepared_anchor_once(
+    candidate: FormulaPlacementCandidate,
+    analysis: CandidateAnalysis,
+    domain: PlacementDomain,
+    member_count: u64,
+    gates: AnchorOnceGateOutput,
+) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
     let AnchorOnceGateOutput {
         result_region,
         read_summary,

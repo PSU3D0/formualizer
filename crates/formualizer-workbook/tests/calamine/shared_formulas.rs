@@ -90,6 +90,28 @@ fn fragmented_shared_xlsx() -> Vec<u8> {
     })
 }
 
+fn fragmented_constant_shared_xlsx() -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+    sheet.get_cell_mut("A1").set_value_number(1);
+    for row in [1, 2, 4, 6] {
+        sheet.get_cell_mut((2, row)).set_formula("$A$1+1");
+    }
+    sheet.get_cell_mut("B5").set_formula("$A$1+100");
+    let mut original = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut original).unwrap();
+    rewrite_sheet_xml(original, |xml| {
+        xml.replacen(
+            "<f>$A$1+1</f>",
+            "<f t=\"shared\" si=\"45\" ref=\"B1:B6\">$A$1+1</f>",
+            1,
+        )
+        .replacen("<f>$A$1+1</f>", "<f t=\"shared\" si=\"45\"></f>", 1)
+        .replacen("<f>$A$1+1</f>", "<f t=\"shared\" si=\"45\"></f>", 1)
+        .replacen("<f>$A$1+1</f>", "<f t=\"shared\" si=\"45\"></f>", 1)
+    })
+}
+
 fn large_shared_vertical_xlsx(rows: u32, anchor_formula: &str) -> Vec<u8> {
     let mut book = umya_spreadsheet::new_file();
     let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
@@ -590,7 +612,62 @@ fn fragmented_family_replays_whole_and_exact_eager_deferred_in_every_mode() {
                 "{mode:?}/{deferred}: {report:?}"
             );
             assert_eq!(report.graph_formula_cells_materialized, 5);
+            assert_eq!(report.source_partitioned_families_seen, 1);
+            assert_eq!(report.source_partition_holes, 1);
+            assert_eq!(report.source_partition_ordinary_exceptions, 1);
+            assert_eq!(report.source_partition_surviving_cells, 4);
+            if mode == FormulaPlaneMode::Shadow {
+                assert_eq!(report.source_partitioned_families_rejected, 1);
+                assert_eq!(report.source_partitioned_families_prepared, 0);
+                assert_eq!(report.source_partition_fragments_prepared, 0);
+                assert_eq!(report.source_partition_fallback_cells, 0);
+                assert_eq!(report.shadow_fallback_cells, 4);
+            } else {
+                assert_eq!(report.source_partitioned_families_rejected, 0);
+                assert_eq!(report.source_partitioned_families_prepared, 0);
+            }
         }
+    }
+}
+
+#[test]
+fn fragmented_constant_family_prepares_once_across_eager_and_deferred_shadow() {
+    for deferred in [false, true] {
+        let config = EvalConfig {
+            formula_plane_mode: FormulaPlaneMode::Shadow,
+            defer_graph_building: deferred,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+        let mut adapter = CalamineAdapter::open_bytes(fragmented_constant_shared_xlsx()).unwrap();
+        adapter.stream_into_engine(&mut engine).unwrap();
+        if deferred {
+            engine.build_graph_all().unwrap();
+        }
+        engine.evaluate_all().unwrap();
+
+        for row in [1, 2, 4, 6] {
+            assert_eq!(
+                engine.get_cell_value("Sheet1", row, 2),
+                Some(LiteralValue::Number(2.0))
+            );
+        }
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 5, 2),
+            Some(LiteralValue::Number(101.0))
+        );
+        let report = engine.last_formula_ingest_report().unwrap();
+        assert_eq!(report.source_partitioned_families_seen, 1, "{report:?}");
+        assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+        assert_eq!(report.source_partitioned_families_rejected, 0, "{report:?}");
+        assert_eq!(report.source_anchor_parses, 1, "{report:?}");
+        assert_eq!(report.source_anchor_asts, 1, "{report:?}");
+        assert_eq!(report.source_anchor_analyses, 1, "{report:?}");
+        assert_eq!(report.source_partition_fragments_prepared, 1, "{report:?}");
+        assert_eq!(report.source_partition_span_cells_prepared, 2, "{report:?}");
+        assert_eq!(report.source_partition_fallback_cells, 2, "{report:?}");
+        assert_eq!(report.graph_formula_cells_materialized, 5, "{report:?}");
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     }
 }
 
