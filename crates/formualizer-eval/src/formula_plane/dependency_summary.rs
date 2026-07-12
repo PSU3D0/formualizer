@@ -20,8 +20,8 @@ use super::span_store::{
 };
 use super::template_canonical::{
     AxisRef, CanonicalExpr, CanonicalReference, CanonicalReferenceContext, CanonicalRejectReason,
-    CanonicalTemplate, SheetBinding, UnsupportedReferenceKind, canonicalize_template,
-    is_known_static_function,
+    CanonicalFunctionId, CanonicalTemplate, SheetBinding, UnsupportedReferenceKind,
+    canonicalize_template,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -630,6 +630,10 @@ impl SummaryAnalyzer {
             | CanonicalRejectReason::OpenRangeReference { .. }
             | CanonicalRejectReason::WholeAxisReference { .. }
             | CanonicalRejectReason::UnsupportedReference { .. } => return,
+            CanonicalRejectReason::FunctionContractUnsupported { name }
+            | CanonicalRejectReason::ContextDependentFunction { name } => {
+                DependencyRejectReason::FunctionUnsupported { name: name.clone() }
+            }
         };
         self.reasons.insert(dependency_reason);
     }
@@ -661,31 +665,26 @@ impl SummaryAnalyzer {
             CanonicalExpr::Function { id, args } => {
                 let mut all_args_supported = true;
                 for (arg_index, arg) in args.iter().enumerate() {
-                    let arg_supported = self.analyze_expr(
+                    if !self.analyze_expr(
                         arg,
-                        function_arg_context(&id.canonical_name, arg_index),
+                        function_argument_context(id, arg_index),
                         true,
-                    );
-                    if !arg_supported {
+                    ) {
                         all_args_supported = false;
                     }
                 }
-
-                if self.has_function_specific_rejection(&id.canonical_name) {
+                if id.contract.is_none() || self.has_function_specific_rejection(&id.canonical_name)
+                {
                     return false;
                 }
-
-                if is_known_static_function(&id.canonical_name) {
-                    if all_args_supported && matches!(context, AnalyzerContext::Value) {
-                        return true;
+                if all_args_supported && matches!(context, AnalyzerContext::Value) {
+                    true
+                } else {
+                    if self.reasons.is_empty() {
+                        self.reject_function(&id.canonical_name);
                     }
-                    if !all_args_supported && !self.reasons.is_empty() {
-                        return false;
-                    }
+                    false
                 }
-
-                self.reject_function(&id.canonical_name);
-                false
             }
             CanonicalExpr::CallUnsupported { callee, args } => {
                 self.analyze_expr(callee, AnalyzerContext::Value, false);
@@ -928,7 +927,7 @@ impl SummaryAnalyzer {
                 function.as_deref() == Some(name)
             }
             DependencyRejectReason::UnknownFunction { name: unknown_name } => unknown_name == name,
-            DependencyRejectReason::SpillUnsupported => is_array_or_spill_function(name),
+            DependencyRejectReason::SpillUnsupported => true,
             _ => false,
         })
     }
@@ -954,37 +953,47 @@ fn effective_context(
         CanonicalReferenceContext::FunctionArgument {
             function,
             arg_index,
-        } => function_arg_context(function, *arg_index),
+        } => function_argument_context(function, *arg_index),
         CanonicalReferenceContext::CallArgument { .. } => AnalyzerContext::Value,
     }
 }
 
-pub(crate) fn function_arg_context(function: &str, arg_index: usize) -> AnalyzerContext {
-    match function {
-        "LET" | "LAMBDA" => AnalyzerContext::LocalBinding,
-        "SUMIFS" | "AVERAGEIFS" if arg_index == 0 => AnalyzerContext::Value,
-        "SUMIFS" | "AVERAGEIFS" if !arg_index.is_multiple_of(2) => {
-            AnalyzerContext::CriteriaRangeArg
+pub(crate) fn function_argument_context(
+    function: &CanonicalFunctionId,
+    arg_index: usize,
+) -> AnalyzerContext {
+    use crate::function_contract::{
+        CriteriaValueRange, FunctionArgumentDependencyContract as Arguments,
+        FunctionArgumentDependencyRole as Role,
+    };
+    let Some(precision) = function.contract.and_then(|contract| contract.precision) else {
+        return AnalyzerContext::Value;
+    };
+    match precision.arguments {
+        Arguments::AllArgs(role) | Arguments::Variadic(role) => match role {
+            Role::CriteriaRange => AnalyzerContext::CriteriaRangeArg,
+            Role::CriteriaExpression => AnalyzerContext::CriteriaExpressionArg,
+            Role::ByReference => AnalyzerContext::ByRefArg,
+            Role::LocalBindingName | Role::LocalBindingValue | Role::LambdaBody => {
+                AnalyzerContext::LocalBinding
+            }
+            _ => AnalyzerContext::Value,
+        },
+        Arguments::CriteriaPairs(criteria) => {
+            let value_index = match criteria.value_range {
+                CriteriaValueRange::Fixed(index) => Some(index),
+                CriteriaValueRange::Optional { provided_index, .. } => Some(provided_index),
+                CriteriaValueRange::None => None,
+            };
+            if value_index == Some(arg_index) || arg_index < criteria.first_criteria_pair {
+                AnalyzerContext::Value
+            } else if (arg_index - criteria.first_criteria_pair).is_multiple_of(2) {
+                AnalyzerContext::CriteriaRangeArg
+            } else {
+                AnalyzerContext::CriteriaExpressionArg
+            }
         }
-        "SUMIFS" | "AVERAGEIFS" => AnalyzerContext::CriteriaExpressionArg,
-        "COUNTIFS" if arg_index.is_multiple_of(2) => AnalyzerContext::CriteriaRangeArg,
-        "COUNTIFS" => AnalyzerContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 1 => AnalyzerContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" => AnalyzerContext::Value,
-        "COUNTIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
-        "COUNTIF" => AnalyzerContext::CriteriaExpressionArg,
-        "INDEX" => AnalyzerContext::Value,
-        "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => AnalyzerContext::ByRefArg,
-        _ => AnalyzerContext::Value,
     }
-}
-
-pub(crate) fn function_accepts_range_at(function: &str, arg_index: usize) -> bool {
-    matches!(
-        function_arg_context(function, arg_index),
-        AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
-    )
 }
 
 fn axis_is_finite_cell(axis: &AxisRef) -> bool {
@@ -1049,13 +1058,6 @@ fn is_supported_pointwise_binary_operator(op: &str) -> bool {
 
 fn is_reference_returning_binary_operator(op: &str) -> bool {
     matches!(op, ":" | "," | " ")
-}
-
-fn is_array_or_spill_function(name: &str) -> bool {
-    matches!(
-        name,
-        "FILTER" | "RANDARRAY" | "SEQUENCE" | "SORT" | "SORTBY" | "TEXTSPLIT" | "UNIQUE"
-    )
 }
 
 const DEFAULT_MAX_EXPLICIT_EXCLUDED_CELLS: usize = 4096;

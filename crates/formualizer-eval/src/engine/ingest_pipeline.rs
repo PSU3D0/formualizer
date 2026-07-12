@@ -14,9 +14,7 @@ use crate::engine::graph::DependencyGraph;
 use crate::engine::plan::{DependencyPlan, F_HAS_NAMES, F_HAS_RANGES, F_HAS_TABLES, F_VOLATILE};
 use crate::engine::sheet_registry::SheetRegistry;
 use crate::engine::vertex::VertexId;
-use crate::formula_plane::dependency_summary::{
-    AnalyzerContext, function_accepts_range_at, function_arg_context,
-};
+use crate::formula_plane::dependency_summary::{AnalyzerContext, function_argument_context};
 use crate::formula_plane::placement::{build_template_slot_map, value_ref_slot_descriptors};
 use crate::formula_plane::producer::{
     AxisProjection, DirtyProjectionRule, ProjectionFallbackReason, ReadProjection,
@@ -25,7 +23,7 @@ use crate::formula_plane::producer::{
 use crate::formula_plane::region_index::Region;
 use crate::formula_plane::runtime::{TemplateSlotMap, ValueRefSlotDescriptor};
 use crate::formula_plane::template_canonical::{
-    LiteralSlotDescriptor, canonicalize_template, is_known_static_function, normalize_function_name,
+    LiteralSlotDescriptor, canonicalize_template, resolve_canonical_function,
 };
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
@@ -1113,12 +1111,27 @@ fn compute_read_projections(
                 )
             }
             ASTNodeType::Function { name, args } => {
-                let canonical_name = normalize_function_name(name);
-                if !is_known_static_function(&canonical_name) {
+                let function = resolve_canonical_function(name, args.len());
+                let contract = function
+                    .contract
+                    .ok_or(ProjectionFallbackReason::UnsupportedDependencySummary)?;
+                if contract.dependency
+                    != crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
+                    || contract.environment
+                        != crate::function_contract::FunctionEnvironmentSemantics::None
+                    || contract.context != crate::function_contract::FunctionContextDependence::None
+                    || contract.result.may_return_reference()
+                    || contract.result.may_spill()
+                    || function.semantic_flags & crate::function::FnCaps::VOLATILE.bits() != 0
+                {
                     return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
                 }
                 for (arg_index, arg) in args.iter().enumerate() {
-                    let arg_context = function_arg_context(&canonical_name, arg_index);
+                    let arg_context = function_argument_context(&function, arg_index);
+                    let accepts_range = matches!(
+                        arg_context,
+                        AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
+                    );
                     visit(
                         arg,
                         placement,
@@ -1126,7 +1139,7 @@ fn compute_read_projections(
                         names,
                         projections,
                         arg_context,
-                        function_accepts_range_at(&canonical_name, arg_index),
+                        accepts_range,
                     )?;
                 }
                 if matches!(context, AnalyzerContext::Value) {
