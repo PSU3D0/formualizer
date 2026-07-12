@@ -4055,7 +4055,7 @@ where
                     .insert(family.source_id, "ForcedReplay".to_string());
                 continue;
             }
-            match self.prepare_source_formula_family(sheet_id, family, false) {
+            match self.prepare_source_formula_family(sheet_id, family, true) {
                 Ok((prepared, function_semantics_used)) => {
                     preparation.function_semantics_used |= function_semantics_used;
                     preparation.prepared.push((family.source_id, prepared));

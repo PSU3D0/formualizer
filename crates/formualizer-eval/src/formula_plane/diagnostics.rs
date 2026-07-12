@@ -346,6 +346,8 @@ fn reject_kind_label(kind: CanonicalRejectKind) -> &'static str {
         CanonicalRejectKind::InvalidPlacementAnchor => "invalid_placement_anchor",
         CanonicalRejectKind::DynamicReference => "dynamic_reference",
         CanonicalRejectKind::UnknownOrCustomFunction => "unknown_or_custom_function",
+        CanonicalRejectKind::FunctionContractUnsupported => "function_contract_unsupported",
+        CanonicalRejectKind::ContextDependentFunction => "context_dependent_function",
         CanonicalRejectKind::LocalEnvironment => "local_environment",
         CanonicalRejectKind::VolatileFunction => "volatile_function",
         CanonicalRejectKind::ReferenceReturningFunction => "reference_returning_function",
@@ -374,6 +376,12 @@ fn reject_reason_label(reason: &CanonicalRejectReason) -> String {
         }
         CanonicalRejectReason::UnknownOrCustomFunction { name } => {
             format!("unknown_or_custom_function:{name}")
+        }
+        CanonicalRejectReason::FunctionContractUnsupported { name } => {
+            format!("function_contract_unsupported:{name}")
+        }
+        CanonicalRejectReason::ContextDependentFunction { name } => {
+            format!("context_dependent_function:{name}")
         }
         CanonicalRejectReason::LocalEnvironmentFunction { name } => {
             format!("local_environment_function:{name}")

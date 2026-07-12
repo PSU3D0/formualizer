@@ -497,6 +497,100 @@ fn authoritative_eager_commits_clean_family_without_descendant_graph_materializa
 }
 
 #[test]
+fn authoritative_nested_function_family_matches_replay_edits_formula_lookup_and_structure() {
+    const FORMULA: &str =
+        "ROUND(ABS(A1)+SUM(A1:A1)+COUNTIF(A1:A1,\">0\")+VLOOKUP(A1,A1:A1,1,FALSE),0)";
+
+    fn loaded(
+        mode: FormulaPlaneMode,
+        deferred: bool,
+    ) -> Engine<formualizer_eval::test_workbook::TestWorkbook> {
+        let config = EvalConfig {
+            formula_plane_mode: mode,
+            defer_graph_building: deferred,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+        let mut adapter = CalamineAdapter::open_bytes(large_shared_vertical_xlsx(100, FORMULA))
+            .expect("nested fixture");
+        adapter.stream_into_engine(&mut engine).unwrap();
+        if deferred {
+            engine.build_graph_all().unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        engine
+    }
+
+    for deferred in [false, true] {
+        let mut replay = loaded(FormulaPlaneMode::Off, deferred);
+        let mut direct = loaded(FormulaPlaneMode::AuthoritativeExperimental, deferred);
+        let report = direct.last_formula_ingest_report().unwrap();
+        assert_eq!(report.source_family_promoted, 1, "{report:?}");
+        assert_eq!(report.source_family_promoted_cells, 100);
+        assert_eq!(report.graph_formula_cells_materialized, 0);
+        assert_eq!(report.source_anchor_analyses, 1);
+        assert_eq!(direct.baseline_stats().formula_plane_active_span_count, 1);
+
+        for row in [1, 50, 100] {
+            assert_eq!(
+                direct.get_cell_value("Sheet1", row, 2),
+                replay.get_cell_value("Sheet1", row, 2)
+            );
+            assert_eq!(
+                direct.get_cell_value("Sheet1", row, 2),
+                Some(LiteralValue::Number(3.0 * f64::from(row) + 1.0))
+            );
+        }
+        for engine in [&mut replay, &mut direct] {
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    1,
+                    4,
+                    formualizer_parse::parser::parse("=FORMULATEXT(B50)").unwrap(),
+                )
+                .unwrap();
+            engine.evaluate_all().unwrap();
+        }
+        assert_eq!(
+            direct.get_cell_value("Sheet1", 1, 4),
+            replay.get_cell_value("Sheet1", 1, 4)
+        );
+
+        for engine in [&mut replay, &mut direct] {
+            engine
+                .set_cell_value("Sheet1", 50, 1, LiteralValue::Number(500.0))
+                .unwrap();
+            engine.evaluate_all().unwrap();
+        }
+        assert_eq!(
+            direct.get_cell_value("Sheet1", 50, 2),
+            replay.get_cell_value("Sheet1", 50, 2)
+        );
+        assert_eq!(
+            direct.get_cell_value("Sheet1", 50, 2),
+            Some(LiteralValue::Number(1501.0))
+        );
+
+        replay.insert_rows("Sheet1", 25, 2).unwrap();
+        direct.insert_rows("Sheet1", 25, 2).unwrap();
+        replay.evaluate_all().unwrap();
+        direct.evaluate_all().unwrap();
+        for row in [1, 24, 27, 52, 102] {
+            assert_eq!(
+                direct.get_cell_value("Sheet1", row, 2),
+                replay.get_cell_value("Sheet1", row, 2),
+                "deferred={deferred}, row={row}"
+            );
+        }
+        assert_eq!(
+            direct.get_cell_value("Sheet1", 1, 4),
+            replay.get_cell_value("Sheet1", 1, 4)
+        );
+    }
+}
+
+#[test]
 fn authoritative_deferred_package_builds_direct_without_descendant_staging() {
     let config = EvalConfig {
         formula_plane_mode: FormulaPlaneMode::AuthoritativeExperimental,

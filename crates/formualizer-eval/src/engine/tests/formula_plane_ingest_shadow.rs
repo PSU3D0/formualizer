@@ -1248,7 +1248,7 @@ fn source_family_preparation_rejects_cross_engine_finalization_before_authority(
 }
 
 #[test]
-fn compressed_shadow_accepts_registry_resolved_nested_function_relocation_only_in_shadow() {
+fn compressed_modes_accept_registry_resolved_nested_function_relocation() {
     fn family(text: &str) -> SourceFormulaFamily {
         SourceFormulaFamily {
             source_id: SourceFamilyId {
@@ -1287,11 +1287,24 @@ fn compressed_shadow_accepts_registry_resolved_nested_function_relocation_only_i
         TestWorkbook::default(),
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
     );
-    let preparation = authoritative
-        .source_formula_ingress()
-        .prepare_families("Sheet1", &[family("SUM(A1:A1)+_xlfn.ABS(A1)")])
-        .unwrap();
-    assert_eq!(preparation.direct_family_count(), 0);
+    for text in [
+        "SUM(A1:A1)+_xlfn.ABS(A1)",
+        "ROUND(A1,0)",
+        "COUNTIF(A1:A1,\">0\")",
+        "VLOOKUP(A1,A1:A1,1,FALSE)",
+        "ROUND(ABS(A1)+SUM(A1:A1)+COUNTIF(A1:A1,\">0\")+VLOOKUP(A1,A1:A1,1,FALSE),0)",
+    ] {
+        let preparation = authoritative
+            .source_formula_ingress()
+            .prepare_families("Sheet1", &[family(text)])
+            .unwrap();
+        assert_eq!(
+            preparation.direct_family_count(),
+            1,
+            "{text}: {:?}",
+            preparation.rejected
+        );
+    }
 }
 
 #[test]
@@ -1339,6 +1352,111 @@ fn compressed_shadow_replays_when_runtime_provider_identity_mismatches_registry(
         .unwrap();
     assert_eq!(report.source_compressed_families_prepared, 0, "{report:?}");
     assert_eq!(report.shadow_fallback_cells, 100, "{report:?}");
+}
+
+#[test]
+fn authoritative_function_closure_admits_explicit_safe_custom_and_replays_untrusted_custom() {
+    struct ExplicitSafe;
+    impl crate::function::Function for ExplicitSafe {
+        fn name(&self) -> &'static str {
+            "SWATCH5_EXPLICIT_SAFE"
+        }
+        fn semantic_contract(
+            &self,
+            _arity: usize,
+        ) -> Option<crate::function_contract::FunctionSemanticContract> {
+            Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(7)))
+        }
+    }
+    struct Untrusted;
+    impl crate::function::Function for Untrusted {
+        fn name(&self) -> &'static str {
+            "SWATCH5_UNTRUSTED"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(9)))
+        }
+    }
+    fn family(index: usize, text: &str) -> SourceFormulaFamily {
+        SourceFormulaFamily {
+            source_id: SourceFamilyId {
+                sheet_instance: 95,
+                source_index: index,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        }
+    }
+
+    crate::function_registry::register_function(Arc::new(ExplicitSafe));
+    crate::function_registry::register_function(Arc::new(Untrusted));
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let safe = engine
+        .prepare_source_formula_families("Sheet1", &[family(1, "SWATCH5_EXPLICIT_SAFE()+A1")]);
+    assert_eq!(safe.direct_family_count(), 1);
+    let untrusted =
+        engine.prepare_source_formula_families("Sheet1", &[family(2, "SWATCH5_UNTRUSTED()+A1")]);
+    assert_eq!(untrusted.direct_family_count(), 0);
+    assert_eq!(untrusted.rejected.len(), 1);
+}
+
+#[test]
+fn authoritative_replays_every_exceptional_function_semantic_category() {
+    for (source_index, text) in [
+        (1, "RAND()+A1"),
+        (2, "OFFSET(A1,0,0)"),
+        (3, "LET(x,A1,x)"),
+        (4, "UNREGISTERED_CLOSURE_FN(A1)"),
+        (5, "SEQUENCE(1,1)"),
+        (6, "CELL(\"filename\",A1)"),
+        (7, "INDEX(A1:A2,1)"),
+        (8, "ROW()"),
+        (9, "IF(TRUE,A1,0)"),
+        (10, "IFERROR(A1,0)"),
+    ] {
+        let mut engine = Engine::new(
+            TestWorkbook::default(),
+            EvalConfig::default()
+                .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+        );
+        let family = SourceFormulaFamily {
+            source_id: SourceFamilyId {
+                sheet_instance: 96,
+                source_index,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        };
+        let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
+        assert_eq!(preparation.direct_family_count(), 0, "{text}");
+        assert_eq!(preparation.rejected.len(), 1, "{text}");
+    }
 }
 
 #[test]
