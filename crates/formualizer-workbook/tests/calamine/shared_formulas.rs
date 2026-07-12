@@ -882,7 +882,7 @@ fn injected_calamine_arena_relocation_mismatch_replays_complete_shadow_family() 
 }
 
 #[test]
-fn compressed_shadow_accepts_nested_registry_functions_without_authoritative_source_promotion() {
+fn compressed_modes_accept_nested_registry_functions_with_authoritative_promotion() {
     let fixture = || large_shared_vertical_xlsx(100, "SUM('Sheet1'!A1,'Sheet1'!$A1)+_xlfn.ABS(A1)");
     let mut shadow = Engine::new(
         formualizer_eval::test_workbook::TestWorkbook::new(),
@@ -905,11 +905,14 @@ fn compressed_shadow_accepts_nested_registry_functions_without_authoritative_sou
         .stream_into_engine(&mut authoritative)
         .unwrap();
     let report = authoritative.last_formula_ingest_report().unwrap();
-    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(report.source_family_promoted, 1, "{report:?}");
+    assert_eq!(report.source_family_promoted_cells, 100, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 0, "{report:?}");
     assert_eq!(
-        report.fallback_reasons.get("UnsupportedAnchorSyntax"),
-        Some(&1),
-        "{report:?}"
+        authoritative
+            .baseline_stats()
+            .formula_plane_active_span_count,
+        1
     );
 }
 

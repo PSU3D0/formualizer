@@ -90,7 +90,8 @@ pub mod fp8_parity_test_support {
     use crate::reference::{CellRef, Coord};
     use crate::traits::EvaluationContext;
     use formualizer_common::{ExcelError, LiteralValue};
-    use formualizer_parse::parser::{ASTNode, parse};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     #[derive(Clone, Debug)]
@@ -113,6 +114,53 @@ pub mod fp8_parity_test_support {
         CellRef::new(sheet_id, Coord::from_excel(row, col, true, true))
     }
 
+    fn local_binding_declarations(ast: &ASTNode, out: &mut BTreeSet<String>) {
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                let canonical = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
+                let declaration_indices: Box<dyn Iterator<Item = usize>> = match canonical.as_str()
+                {
+                    "LET" => Box::new((0..args.len().saturating_sub(1)).step_by(2)),
+                    "LAMBDA" => Box::new(0..args.len().saturating_sub(1)),
+                    _ => Box::new(std::iter::empty()),
+                };
+                for index in declaration_indices {
+                    if let Some(ASTNode {
+                        node_type:
+                            ASTNodeType::Reference {
+                                reference: ReferenceType::NamedRange(name),
+                                ..
+                            },
+                        ..
+                    }) = args.get(index)
+                    {
+                        out.insert(name.to_ascii_uppercase());
+                    }
+                }
+                for arg in args {
+                    local_binding_declarations(arg, out);
+                }
+            }
+            ASTNodeType::UnaryOp { expr, .. } => local_binding_declarations(expr, out),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                local_binding_declarations(left, out);
+                local_binding_declarations(right, out);
+            }
+            ASTNodeType::Call { callee, args } => {
+                local_binding_declarations(callee, out);
+                for arg in args {
+                    local_binding_declarations(arg, out);
+                }
+            }
+            ASTNodeType::Array(rows) => {
+                for item in rows.iter().flatten() {
+                    local_binding_declarations(item, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn assert_case<R: EvaluationContext>(
         engine: &mut Engine<R>,
         formula: &str,
@@ -128,6 +176,8 @@ pub mod fp8_parity_test_support {
         parsed: ASTNode,
         placement: CellRef,
     ) -> Fp8ParityObservation {
+        let mut local_declarations = BTreeSet::new();
+        local_binding_declarations(&parsed, &mut local_declarations);
         let mut old_ast = parsed.clone();
         let old_rewrite = engine
             .graph
@@ -155,8 +205,14 @@ pub mod fp8_parity_test_support {
                     old.range_deps, new.dep_plan.range_deps,
                     "range deps differ for {formula} at {placement:?}"
                 );
+                let old_unresolved_names: Vec<_> = old
+                    .unresolved_names
+                    .iter()
+                    .filter(|name| !local_declarations.contains(&name.to_ascii_uppercase()))
+                    .cloned()
+                    .collect();
                 assert_eq!(
-                    old.unresolved_names, new.dep_plan.named_refs,
+                    old_unresolved_names, new.dep_plan.named_refs,
                     "unresolved names differ for {formula} at {placement:?}"
                 );
                 assert_eq!(
