@@ -64,7 +64,7 @@ pub(crate) fn compute_node_metadata(
     data: &AstNodeData,
     children: &[&AstNodeMetadata],
     data_store_strings: &StringInterner,
-    function_provider: &dyn FunctionProvider,
+    _function_provider: &dyn FunctionProvider,
 ) -> AstNodeMetadata {
     let mut labels = CanonicalLabels::default();
     for child in children {
@@ -119,10 +119,13 @@ pub(crate) fn compute_node_metadata(
             hasher.mix_u8(KIND_FUNCTION);
             labels.flags |= CanonicalLabels::FLAG_CONTAINS_FUNCTION;
             let raw_name = data_store_strings.get(*name_id).unwrap_or("");
-            let canonical_name = normalize_function_name(raw_name);
-            mix_string(&mut hasher, &canonical_name);
             hasher.mix_u16(*args_count);
-            classify_function(&canonical_name, &mut labels, function_provider);
+            classify_and_mix_function(
+                raw_name,
+                usize::from(*args_count),
+                &mut hasher,
+                &mut labels,
+            );
             mix_children(&mut hasher, children);
         }
         AstNodeData::Array { rows, cols, .. } => {
@@ -359,180 +362,63 @@ fn finalize_anchor_flags(labels: &mut CanonicalLabels) {
     }
 }
 
-fn classify_function(
-    canonical_name: &str,
+fn classify_and_mix_function(
+    raw_name: &str,
+    arity: usize,
+    hasher: &mut StableHasher,
     labels: &mut CanonicalLabels,
-    _function_provider: &dyn FunctionProvider,
 ) {
-    let mut known_special = false;
-
-    if is_dynamic_reference_function(canonical_name) {
-        known_special = true;
-        labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
-        labels.rejects |= CanonicalLabels::REJECT_DYNAMIC_REFERENCE;
-    }
-
-    if is_local_environment_function(canonical_name) {
-        known_special = true;
-        labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
-        labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
-    }
-
-    if is_volatile_function(canonical_name) {
-        known_special = true;
+    use crate::function::FnCaps;
+    use crate::function_contract::{
+        FunctionContextDependence, FunctionDependencySemantics,
+        FunctionEnvironmentSemantics,
+    };
+    crate::builtins::load_builtins();
+    let Some(resolved) = crate::function_registry::resolve_for_arity("", raw_name, arity) else {
+        mix_string(hasher, "");
+        mix_string(hasher, &raw_name.trim().to_ascii_uppercase());
+        hasher.mix_u64(0);
+        labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
+        return;
+    };
+    mix_string(hasher, &resolved.namespace);
+    mix_string(hasher, &resolved.canonical_name);
+    hasher.mix_u64(resolved.semantics.generation);
+    let caps = resolved.function.caps();
+    hasher.mix_u32(caps.bits());
+    let Some(contract) = resolved.semantics.contract else {
+        labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
+        return;
+    };
+    mix_string(hasher, &format!("{contract:?}"));
+    if caps.contains(FnCaps::VOLATILE) {
         labels.flags |= CanonicalLabels::FLAG_VOLATILE;
         labels.rejects |= CanonicalLabels::REJECT_VOLATILE_FUNCTION;
     }
-
-    if is_reference_returning_function(canonical_name) {
-        known_special = true;
+    match contract.dependency {
+        FunctionDependencySemantics::RecursiveSyntacticArgs => {}
+        FunctionDependencySemantics::Dynamic => {
+            labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
+            labels.rejects |= CanonicalLabels::REJECT_DYNAMIC_REFERENCE;
+        }
+        FunctionDependencySemantics::Unsupported => {
+            labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
+        }
+    }
+    if contract.environment != FunctionEnvironmentSemantics::None {
+        labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
+        labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
+    }
+    if contract.result.may_return_reference() {
         labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
     }
-
-    if is_array_or_spill_function(canonical_name) {
-        known_special = true;
+    if contract.result.may_spill() {
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
         labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
     }
-
-    if !known_special && !is_known_static_function(canonical_name) {
+    if contract.context != FunctionContextDependence::None {
         labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
     }
-}
-
-fn normalize_function_name(name: &str) -> String {
-    let mut normalized = name.trim().to_ascii_uppercase();
-    loop {
-        if let Some(stripped) = ["_XLFN.", "_XLL.", "_XLWS."]
-            .iter()
-            .find_map(|prefix| normalized.strip_prefix(prefix).map(str::to_string))
-        {
-            normalized = stripped;
-        } else {
-            return normalized;
-        }
-    }
-}
-
-fn is_dynamic_reference_function(name: &str) -> bool {
-    matches!(name, "INDIRECT" | "OFFSET")
-}
-
-fn is_local_environment_function(name: &str) -> bool {
-    matches!(name, "LET" | "LAMBDA")
-}
-
-fn is_volatile_function(name: &str) -> bool {
-    matches!(name, "NOW" | "TODAY" | "RAND" | "RANDBETWEEN")
-}
-
-fn is_reference_returning_function(name: &str) -> bool {
-    matches!(name, "CHOOSE")
-}
-
-fn is_array_or_spill_function(name: &str) -> bool {
-    matches!(
-        name,
-        "FILTER" | "RANDARRAY" | "SEQUENCE" | "SORT" | "SORTBY" | "TEXTSPLIT" | "UNIQUE"
-    )
-}
-
-fn is_known_static_function(name: &str) -> bool {
-    matches!(
-        name,
-        "ABS"
-            | "ACOS"
-            | "ACOSH"
-            | "AND"
-            | "ASIN"
-            | "ASINH"
-            | "ATAN"
-            | "ATAN2"
-            | "ATANH"
-            | "AVERAGE"
-            | "CEILING"
-            | "CONCAT"
-            | "CONCATENATE"
-            | "COS"
-            | "COSH"
-            | "COUNT"
-            | "COUNTA"
-            | "COUNTBLANK"
-            | "COUNTIF"
-            | "COUNTIFS"
-            | "DATE"
-            | "DAY"
-            | "ERROR.TYPE"
-            | "EVEN"
-            | "EXACT"
-            | "EXP"
-            | "FALSE"
-            | "FIND"
-            | "FLOOR"
-            | "HLOOKUP"
-            | "IF"
-            | "IFERROR"
-            | "IFNA"
-            | "IFS"
-            | "INDEX"
-            | "INT"
-            | "ISBLANK"
-            | "ISERR"
-            | "ISERROR"
-            | "ISEVEN"
-            | "ISLOGICAL"
-            | "ISNA"
-            | "ISNONTEXT"
-            | "ISNUMBER"
-            | "ISODD"
-            | "ISTEXT"
-            | "LEFT"
-            | "LEN"
-            | "LN"
-            | "LOG"
-            | "LOG10"
-            | "LOWER"
-            | "MATCH"
-            | "MAX"
-            | "MID"
-            | "MIN"
-            | "MOD"
-            | "MONTH"
-            | "NOT"
-            | "ODD"
-            | "OR"
-            | "POWER"
-            | "PRODUCT"
-            | "PROPER"
-            | "REPLACE"
-            | "REPT"
-            | "RIGHT"
-            | "ROUND"
-            | "ROUNDDOWN"
-            | "ROUNDUP"
-            | "SEARCH"
-            | "SIN"
-            | "SINH"
-            | "SQRT"
-            | "SUBSTITUTE"
-            | "SUM"
-            | "SUMIF"
-            | "SUMIFS"
-            | "SWITCH"
-            | "TAN"
-            | "TANH"
-            | "TEXT"
-            | "TEXTJOIN"
-            | "TIME"
-            | "TRIM"
-            | "TRUE"
-            | "TRUNC"
-            | "UPPER"
-            | "VALUE"
-            | "VLOOKUP"
-            | "YEAR"
-            | "XLOOKUP"
-    )
 }
 
 fn mix_children(hasher: &mut StableHasher, children: &[&AstNodeMetadata]) {

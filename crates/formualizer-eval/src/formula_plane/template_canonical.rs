@@ -19,6 +19,12 @@ use formualizer_parse::parser::{
     ASTNode, ASTNodeType, ReferenceType, SpecialItem, TableRowSpecifier, TableSpecifier,
 };
 
+use crate::function::FnCaps;
+use crate::function_contract::{
+    FunctionArgumentDependencyContract, FunctionContextDependence, FunctionDependencySemantics,
+    FunctionEnvironmentSemantics, FunctionSemanticContract,
+};
+
 /// Canonical template output for a single formula placement.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanonicalTemplate {
@@ -168,7 +174,11 @@ pub(crate) enum LiteralKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanonicalFunctionId {
+    pub(crate) namespace: String,
     pub(crate) canonical_name: String,
+    pub(crate) semantic_generation: u64,
+    pub(crate) semantic_flags: u32,
+    pub(crate) contract: Option<FunctionSemanticContract>,
 }
 
 /// Reference context is kept in the tree because by-ref/value semantics are
@@ -178,7 +188,10 @@ pub(crate) struct CanonicalFunctionId {
 pub(crate) enum CanonicalReferenceContext {
     Value,
     Reference,
-    FunctionArgument { function: String, arg_index: usize },
+    FunctionArgument {
+        function: CanonicalFunctionId,
+        arg_index: usize,
+    },
     CallArgument { arg_index: usize },
 }
 
@@ -289,6 +302,8 @@ pub(crate) enum CanonicalRejectKind {
     OpenRangeReference,
     WholeAxisReference,
     UnsupportedReference,
+    FunctionContractUnsupported,
+    ContextDependentFunction,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -313,6 +328,8 @@ pub(crate) enum CanonicalRejectReason {
     OpenRangeReference { original: String },
     WholeAxisReference { original: String },
     UnsupportedReference { diagnostic: String },
+    FunctionContractUnsupported { name: String },
+    ContextDependentFunction { name: String },
 }
 
 impl CanonicalRejectReason {
@@ -365,6 +382,12 @@ impl CanonicalRejectReason {
             }
             CanonicalRejectReason::UnsupportedReference { .. } => {
                 CanonicalRejectKind::UnsupportedReference
+            }
+            CanonicalRejectReason::FunctionContractUnsupported { .. } => {
+                CanonicalRejectKind::FunctionContractUnsupported
+            }
+            CanonicalRejectReason::ContextDependentFunction { .. } => {
+                CanonicalRejectKind::ContextDependentFunction
             }
         }
     }
@@ -509,8 +532,8 @@ impl Canonicalizer {
                 }
             }
             ASTNodeType::Function { name, args } => {
-                let canonical_name = normalize_function_name(name);
-                self.classify_function(&canonical_name);
+                let id = resolve_canonical_function(name, args.len());
+                self.classify_function(&id);
                 self.labels.flag(CanonicalTemplateFlag::FunctionCall);
                 let canonical_args = args
                     .iter()
@@ -519,7 +542,7 @@ impl Canonicalizer {
                         self.canonicalize_expr(
                             arg,
                             CanonicalReferenceContext::FunctionArgument {
-                                function: canonical_name.clone(),
+                                function: id.clone(),
                                 arg_index,
                             },
                         )
@@ -527,7 +550,7 @@ impl Canonicalizer {
                     .collect();
 
                 CanonicalExpr::Function {
-                    id: CanonicalFunctionId { canonical_name },
+                    id,
                     args: canonical_args,
                 }
             }
@@ -765,59 +788,41 @@ impl Canonicalizer {
         }
     }
 
-    fn classify_function(&mut self, canonical_name: &str) {
-        let mut known_special = false;
-
-        if is_dynamic_reference_function(canonical_name) {
-            known_special = true;
-            self.labels
-                .reject(CanonicalRejectReason::DynamicReferenceFunction {
-                    name: canonical_name.to_string(),
-                });
+    fn classify_function(&mut self, id: &CanonicalFunctionId) {
+        let name = id.canonical_name.clone();
+        let Some(contract) = id.contract else {
+            self.labels.reject(CanonicalRejectReason::UnknownOrCustomFunction { name });
+            return;
+        };
+        if id.semantic_flags & FnCaps::VOLATILE.bits() != 0 {
+            self.labels.reject(CanonicalRejectReason::VolatileFunction { name: name.clone() });
         }
-        if is_local_environment_function(canonical_name) {
-            known_special = true;
-            self.labels
-                .reject(CanonicalRejectReason::LocalEnvironmentFunction {
-                    name: canonical_name.to_string(),
-                });
+        match contract.dependency {
+            FunctionDependencySemantics::RecursiveSyntacticArgs => {}
+            FunctionDependencySemantics::Dynamic => self.labels.reject(
+                CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() },
+            ),
+            FunctionDependencySemantics::Unsupported => self.labels.reject(
+                CanonicalRejectReason::FunctionContractUnsupported { name: name.clone() },
+            ),
         }
-        if is_volatile_function(canonical_name) {
-            known_special = true;
-            self.labels.reject(CanonicalRejectReason::VolatileFunction {
-                name: canonical_name.to_string(),
-            });
+        if contract.environment != FunctionEnvironmentSemantics::None {
+            self.labels.reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
         }
-        if is_reference_returning_function(canonical_name) {
-            known_special = true;
-            self.labels
-                .reject(CanonicalRejectReason::ReferenceReturningFunction {
-                    name: canonical_name.to_string(),
-                });
+        if contract.result.may_return_reference() {
+            self.labels.reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
         }
-        if is_array_or_spill_function(canonical_name) {
-            known_special = true;
-            self.labels
-                .reject(CanonicalRejectReason::ArrayOrSpillFunction {
-                    name: canonical_name.to_string(),
-                });
+        if contract.result.may_spill() {
+            self.labels.reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
         }
-
-        // The parser AST does not carry registry identity. Until FP4.B wires in
-        // function contracts, FP4.A.1 treats only a small hard-coded built-in
-        // set as known and labels every other function unknown/custom.
-        if !known_special && !is_known_static_function(canonical_name) {
-            self.labels
-                .reject(CanonicalRejectReason::UnknownOrCustomFunction {
-                    name: canonical_name.to_string(),
-                });
+        if contract.context != FunctionContextDependence::None {
+            self.labels.reject(CanonicalRejectReason::ContextDependentFunction { name });
         }
     }
 
     fn classify_sheet_binding(&mut self, sheet: &Option<String>) {
         if sheet.is_some() {
-            self.labels
-                .flag(CanonicalTemplateFlag::ExplicitSheetBinding);
+            self.labels.flag(CanonicalTemplateFlag::ExplicitSheetBinding);
         } else {
             self.labels.flag(CanonicalTemplateFlag::CurrentSheetBinding);
         }
@@ -826,12 +831,9 @@ impl Canonicalizer {
     fn classify_range_bounds(&mut self, original: &str, start: Option<u32>, end: Option<u32>) {
         match (start, end) {
             (None, None) => {}
-            (None, Some(_)) | (Some(_), None) => {
-                self.labels
-                    .reject(CanonicalRejectReason::OpenRangeReference {
-                        original: original.to_string(),
-                    })
-            }
+            (None, Some(_)) | (Some(_), None) => self.labels.reject(
+                CanonicalRejectReason::OpenRangeReference { original: original.to_string() },
+            ),
             (Some(_), Some(_)) => {}
         }
     }
@@ -850,38 +852,24 @@ impl Canonicalizer {
                 self.axis_from_value(end, anchor, end_abs),
             ),
             (None, None) => (AxisRef::WholeAxis, AxisRef::WholeAxis),
-            (None, Some(end)) => (
-                AxisRef::OpenStart,
-                self.axis_from_value(end, anchor, end_abs),
-            ),
-            (Some(start), None) => (
-                self.axis_from_value(start, anchor, start_abs),
-                AxisRef::OpenEnd,
-            ),
+            (None, Some(end)) => (AxisRef::OpenStart, self.axis_from_value(end, anchor, end_abs)),
+            (Some(start), None) => (self.axis_from_value(start, anchor, start_abs), AxisRef::OpenEnd),
         }
     }
 
     fn axis_from_value(&mut self, value: u32, anchor: u32, absolute: bool) -> AxisRef {
         if absolute {
-            self.labels
-                .flag(CanonicalTemplateFlag::AbsoluteReferenceAxis);
+            self.labels.flag(CanonicalTemplateFlag::AbsoluteReferenceAxis);
             AxisRef::AbsoluteVc { index: value }
         } else {
-            self.labels
-                .flag(CanonicalTemplateFlag::RelativeReferenceAxis);
-            AxisRef::RelativeToPlacement {
-                offset: i64::from(value) - i64::from(anchor),
-            }
+            self.labels.flag(CanonicalTemplateFlag::RelativeReferenceAxis);
+            AxisRef::RelativeToPlacement { offset: i64::from(value) - i64::from(anchor) }
         }
     }
 
     fn flag_mixed_anchors(&mut self, axes: &[&AxisRef]) {
-        let has_absolute = axes
-            .iter()
-            .any(|axis| matches!(axis, AxisRef::AbsoluteVc { .. }));
-        let has_relative = axes
-            .iter()
-            .any(|axis| matches!(axis, AxisRef::RelativeToPlacement { .. }));
+        let has_absolute = axes.iter().any(|axis| matches!(axis, AxisRef::AbsoluteVc { .. }));
+        let has_relative = axes.iter().any(|axis| matches!(axis, AxisRef::RelativeToPlacement { .. }));
         if has_absolute && has_relative {
             self.labels.flag(CanonicalTemplateFlag::MixedAnchors);
         }
@@ -909,127 +897,70 @@ pub(crate) fn normalize_function_name(name: &str) -> String {
     }
 }
 
-fn is_dynamic_reference_function(name: &str) -> bool {
-    matches!(name, "INDIRECT" | "OFFSET")
+pub(crate) fn resolve_canonical_function(name: &str, arity: usize) -> CanonicalFunctionId {
+    crate::builtins::load_builtins();
+    let resolved = crate::function_registry::resolve_for_arity("", name, arity);
+    match resolved {
+        Some(resolved) => CanonicalFunctionId {
+            namespace: resolved.namespace,
+            canonical_name: resolved.canonical_name,
+            semantic_generation: resolved.semantics.generation,
+            semantic_flags: resolved.function.caps().bits(),
+            contract: resolved.semantics.contract,
+        },
+        None => CanonicalFunctionId {
+            namespace: String::new(),
+            canonical_name: normalize_function_name(name),
+            semantic_generation: 0,
+            semantic_flags: 0,
+            contract: None,
+        },
+    }
 }
 
-fn is_local_environment_function(name: &str) -> bool {
-    matches!(name, "LET" | "LAMBDA")
+pub(crate) fn function_argument_slot_context(
+    function: &CanonicalFunctionId,
+    arg_index: usize,
+) -> SlotContext {
+    let Some(precision) = function.contract.and_then(|contract| contract.precision) else {
+        return SlotContext::Value;
+    };
+    match precision.arguments {
+        FunctionArgumentDependencyContract::AllArgs(role)
+        | FunctionArgumentDependencyContract::Variadic(role) => slot_context_for_role(role),
+        FunctionArgumentDependencyContract::CriteriaPairs(criteria) => {
+            let value_index = match criteria.value_range {
+                crate::function_contract::CriteriaValueRange::Fixed(index) => Some(index),
+                crate::function_contract::CriteriaValueRange::Optional { provided_index, .. } => {
+                    Some(provided_index)
+                }
+                crate::function_contract::CriteriaValueRange::None => None,
+            };
+            if value_index == Some(arg_index) {
+                SlotContext::Value
+            } else if arg_index >= criteria.first_criteria_pair {
+                if (arg_index - criteria.first_criteria_pair).is_multiple_of(2) {
+                    SlotContext::CriteriaRangeArg
+                } else {
+                    SlotContext::CriteriaExpressionArg
+                }
+            } else {
+                SlotContext::Value
+            }
+        }
+    }
 }
 
-fn is_volatile_function(name: &str) -> bool {
-    matches!(name, "NOW" | "TODAY" | "RAND" | "RANDBETWEEN")
-}
-
-fn is_reference_returning_function(name: &str) -> bool {
-    matches!(name, "CHOOSE")
-}
-
-fn is_array_or_spill_function(name: &str) -> bool {
-    matches!(
-        name,
-        "FILTER" | "RANDARRAY" | "SEQUENCE" | "SORT" | "SORTBY" | "TEXTSPLIT" | "UNIQUE"
-    )
-}
-
-pub(crate) fn is_known_static_function(name: &str) -> bool {
-    matches!(
-        name,
-        "ABS"
-            | "ACOS"
-            | "ACOSH"
-            | "AND"
-            | "ASIN"
-            | "ASINH"
-            | "ATAN"
-            | "ATAN2"
-            | "ATANH"
-            | "AVERAGE"
-            | "AVERAGEIF"
-            | "AVERAGEIFS"
-            | "CEILING"
-            | "CONCAT"
-            | "CONCATENATE"
-            | "COS"
-            | "COSH"
-            | "COUNT"
-            | "COUNTA"
-            | "COUNTBLANK"
-            | "COUNTIF"
-            | "COUNTIFS"
-            | "DATE"
-            | "DAY"
-            | "ERROR.TYPE"
-            | "EVEN"
-            | "EXACT"
-            | "EXP"
-            | "FALSE"
-            | "FIND"
-            | "FLOOR"
-            | "HLOOKUP"
-            | "IF"
-            | "IFERROR"
-            | "IFNA"
-            | "IFS"
-            | "INDEX"
-            | "INT"
-            | "ISBLANK"
-            | "ISERR"
-            | "ISERROR"
-            | "ISEVEN"
-            | "ISLOGICAL"
-            | "ISNA"
-            | "ISNONTEXT"
-            | "ISNUMBER"
-            | "ISODD"
-            | "ISTEXT"
-            | "LEFT"
-            | "LEN"
-            | "LN"
-            | "LOG"
-            | "LOG10"
-            | "LOWER"
-            | "MATCH"
-            | "MAX"
-            | "MID"
-            | "MIN"
-            | "MOD"
-            | "MONTH"
-            | "NOT"
-            | "ODD"
-            | "OR"
-            | "POWER"
-            | "PRODUCT"
-            | "PROPER"
-            | "REPLACE"
-            | "REPT"
-            | "RIGHT"
-            | "ROUND"
-            | "ROUNDDOWN"
-            | "ROUNDUP"
-            | "SEARCH"
-            | "SIN"
-            | "SINH"
-            | "SQRT"
-            | "SUBSTITUTE"
-            | "SUM"
-            | "SUMIF"
-            | "SUMIFS"
-            | "SWITCH"
-            | "TAN"
-            | "TANH"
-            | "TEXT"
-            | "TEXTJOIN"
-            | "TIME"
-            | "TRIM"
-            | "TRUE"
-            | "TRUNC"
-            | "UPPER"
-            | "VALUE"
-            | "VLOOKUP"
-            | "YEAR"
-            | "XLOOKUP"
-    )
+fn slot_context_for_role(role: crate::function_contract::FunctionArgumentDependencyRole) -> SlotContext {
+    use crate::function_contract::FunctionArgumentDependencyRole as Role;
+    match role {
+        Role::CriteriaRange => SlotContext::CriteriaRangeArg,
+        Role::CriteriaExpression => SlotContext::CriteriaExpressionArg,
+        Role::ByReference => SlotContext::ByRefArg,
+        Role::LocalBindingName | Role::LocalBindingValue | Role::LambdaBody => SlotContext::LocalBinding,
+        Role::Unsupported => SlotContext::Unknown,
+        _ => SlotContext::Value,
+    }
 }
 
 fn literal_kind(value: &LiteralValue) -> Option<LiteralKind> {
@@ -1057,29 +988,7 @@ fn slot_context_from_canonical(context: &CanonicalReferenceContext) -> SlotConte
         CanonicalReferenceContext::FunctionArgument {
             function,
             arg_index,
-        } => function_arg_slot_context(function, *arg_index),
-    }
-}
-
-pub(crate) fn function_arg_slot_context(function: &str, arg_index: usize) -> SlotContext {
-    match function {
-        "LET" | "LAMBDA" => SlotContext::LocalBinding,
-        "SUMIFS" | "AVERAGEIFS" if arg_index == 0 => SlotContext::Value,
-        "SUMIFS" | "AVERAGEIFS" if !arg_index.is_multiple_of(2) => SlotContext::CriteriaRangeArg,
-        "SUMIFS" | "AVERAGEIFS" => SlotContext::CriteriaExpressionArg,
-        "COUNTIFS" if arg_index.is_multiple_of(2) => SlotContext::CriteriaRangeArg,
-        "COUNTIFS" => SlotContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 0 => SlotContext::CriteriaRangeArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 1 => SlotContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" => SlotContext::Value,
-        "COUNTIF" if arg_index == 0 => SlotContext::CriteriaRangeArg,
-        "COUNTIF" => SlotContext::CriteriaExpressionArg,
-        // INDEX: arg 0 is the table (Value context so range gets recorded as
-        // precedent); args 1+2 are scalar position/col_index (Value context
-        // so relative refs become value-ref slots).
-        "INDEX" => SlotContext::Value,
-        "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => SlotContext::ByRefArg,
-        _ => SlotContext::Value,
+        } => function_argument_slot_context(function, *arg_index),
     }
 }
 
@@ -1155,7 +1064,7 @@ fn write_parameterized_expr_key_inner(
         }
         CanonicalExpr::Function { id, args } => {
             out.push_str("fn(");
-            write_string_key(&id.canonical_name, out);
+            write_function_id_key(id, out);
             out.push(';');
             out.push_str(&args.len().to_string());
             out.push(':');
@@ -1227,7 +1136,7 @@ fn write_expr_key(expr: &CanonicalExpr, out: &mut String) {
         }
         CanonicalExpr::Function { id, args } => {
             out.push_str("fn(");
-            write_string_key(&id.canonical_name, out);
+            write_function_id_key(id, out);
             out.push(';');
             write_vec_key(args, out, write_expr_key);
             out.push(')');
@@ -1313,7 +1222,7 @@ fn write_reference_context_key(context: &CanonicalReferenceContext, out: &mut St
             arg_index,
         } => {
             out.push_str("fn_arg:");
-            write_string_key(function, out);
+            write_function_id_key(function, out);
             out.push(':');
             out.push_str(&arg_index.to_string());
         }
@@ -1497,6 +1406,14 @@ fn write_reject_reason_key(reason: &CanonicalRejectReason, out: &mut String) {
             out.push_str("unsupported_ref:");
             write_string_key(diagnostic, out);
         }
+        CanonicalRejectReason::FunctionContractUnsupported { name } => {
+            out.push_str("function_contract_unsupported:");
+            write_string_key(name, out);
+        }
+        CanonicalRejectReason::ContextDependentFunction { name } => {
+            out.push_str("context_dependent_function:");
+            write_string_key(name, out);
+        }
     }
 }
 
@@ -1521,6 +1438,18 @@ fn write_vec_key<T>(values: &[T], out: &mut String, write_value: fn(&T, &mut Str
         write_value(value, out);
         out.push(',');
     }
+}
+
+fn write_function_id_key(id: &CanonicalFunctionId, out: &mut String) {
+    write_string_key(&id.namespace, out);
+    out.push(':');
+    write_string_key(&id.canonical_name, out);
+    out.push('@');
+    out.push_str(&id.semantic_generation.to_string());
+    out.push('/');
+    out.push_str(&id.semantic_flags.to_string());
+    out.push('/');
+    out.push_str(&format!("{:?}", id.contract));
 }
 
 fn write_string_key(value: &str, out: &mut String) {

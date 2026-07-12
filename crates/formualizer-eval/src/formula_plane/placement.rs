@@ -32,7 +32,7 @@ use super::runtime::{
 };
 use super::template_canonical::{
     AxisRef, CanonicalExpr, CanonicalReference, LiteralSlotDescriptor, SlotContext,
-    canonicalize_template, function_arg_slot_context,
+    canonicalize_template, function_argument_slot_context,
 };
 
 /// Minimum cell count for a non-constant span to be promoted. Below this
@@ -583,6 +583,25 @@ pub(crate) fn validate_anchor_once_syntax(
     anchor_col0: u32,
     domain: &PlacementDomain,
 ) -> Result<(), &'static str> {
+    validate_anchor_once_relocation(ast, anchor_row0, anchor_col0, domain, false)
+}
+
+pub(crate) fn validate_anchor_once_shadow_relocation(
+    ast: &ASTNode,
+    anchor_row0: u32,
+    anchor_col0: u32,
+    domain: &PlacementDomain,
+) -> Result<(), &'static str> {
+    validate_anchor_once_relocation(ast, anchor_row0, anchor_col0, domain, true)
+}
+
+fn validate_anchor_once_relocation(
+    ast: &ASTNode,
+    anchor_row0: u32,
+    anchor_col0: u32,
+    domain: &PlacementDomain,
+    allow_safe_functions: bool,
+) -> Result<(), &'static str> {
     const MAX_ROW: i64 = 1_048_576;
     const MAX_COL: i64 = 16_384;
 
@@ -611,6 +630,7 @@ pub(crate) fn validate_anchor_once_syntax(
         row_end: u32,
         col_start: u32,
         col_end: u32,
+        allow_safe_functions: bool,
     ) -> Result<(), &'static str> {
         match &node.node_type {
             ASTNodeType::Literal(_) => Ok(()),
@@ -678,6 +698,7 @@ pub(crate) fn validate_anchor_once_syntax(
                 row_end,
                 col_start,
                 col_end,
+                allow_safe_functions,
             ),
             ASTNodeType::BinaryOp { op, left, right }
                 if matches!(op.as_str(), "+" | "-" | "*" | "/") =>
@@ -690,6 +711,7 @@ pub(crate) fn validate_anchor_once_syntax(
                     row_end,
                     col_start,
                     col_end,
+                    allow_safe_functions,
                 )?;
                 walk(
                     right,
@@ -699,7 +721,36 @@ pub(crate) fn validate_anchor_once_syntax(
                     row_end,
                     col_start,
                     col_end,
+                    allow_safe_functions,
                 )
+            }
+            ASTNodeType::Function { name, args } if allow_safe_functions => {
+                let function = super::template_canonical::resolve_canonical_function(name, args.len());
+                let contract = function.contract.ok_or("AnchorFunctionUnresolvedOrInvalid")?;
+                if contract.dependency
+                    != crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
+                    || contract.environment
+                        != crate::function_contract::FunctionEnvironmentSemantics::None
+                    || contract.context != crate::function_contract::FunctionContextDependence::None
+                    || contract.result.may_return_reference()
+                    || contract.result.may_spill()
+                    || function.semantic_flags & crate::function::FnCaps::VOLATILE.bits() != 0
+                {
+                    return Err("AnchorFunctionSemanticsUnsupported");
+                }
+                for arg in args {
+                    walk(
+                        arg,
+                        anchor_row0,
+                        anchor_col0,
+                        row_start,
+                        row_end,
+                        col_start,
+                        col_end,
+                        allow_safe_functions,
+                    )?;
+                }
+                Ok(())
             }
             _ => Err("UnsupportedAnchorSyntax"),
         }
@@ -734,6 +785,7 @@ pub(crate) fn validate_anchor_once_syntax(
         row_end,
         col_start,
         col_end,
+        allow_safe_functions,
     )
 }
 
@@ -968,7 +1020,7 @@ pub(crate) fn value_ref_slot_descriptors(expr: &CanonicalExpr) -> Vec<ValueRefSl
                     super::template_canonical::CanonicalReferenceContext::FunctionArgument {
                         function,
                         arg_index,
-                    } => function_arg_slot_context(function, *arg_index),
+                    } => function_argument_slot_context(function, *arg_index),
                 };
                 if matches!(
                     slot_context,
@@ -1546,7 +1598,7 @@ fn residual_relative_axes(expr: &CanonicalExpr) -> (bool, bool) {
                     super::template_canonical::CanonicalReferenceContext::FunctionArgument {
                         function,
                         arg_index,
-                    } => function_arg_slot_context(function, *arg_index),
+                    } => function_argument_slot_context(function, *arg_index),
                 };
                 let captured_as_value_slot = matches!(
                     slot_context,

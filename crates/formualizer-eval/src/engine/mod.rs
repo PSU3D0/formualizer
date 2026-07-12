@@ -390,6 +390,10 @@ pub mod fp8_parity_test_support {
                 CanonicalRejectReason::UnsupportedReference { .. } => {
                     CanonicalLabels::REJECT_UNSUPPORTED_REFERENCE
                 }
+                CanonicalRejectReason::FunctionContractUnsupported { .. }
+                | CanonicalRejectReason::ContextDependentFunction { .. } => {
+                    CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION
+                }
             };
         }
         labels
