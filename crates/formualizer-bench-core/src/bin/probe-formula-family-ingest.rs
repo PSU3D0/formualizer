@@ -433,7 +433,7 @@ fn median_mad(mut values: Vec<f64>) -> Option<MedianMad> {
 #[cfg(feature = "formualizer_runner")]
 fn median_sorted(values: &[f64]) -> f64 {
     let middle = values.len() / 2;
-    if values.len() % 2 == 0 {
+    if values.len().is_multiple_of(2) {
         (values[middle - 1] + values[middle]) / 2.0
     } else {
         values[middle]
