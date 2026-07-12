@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use super::common::abs_cell_ref;
 use crate::engine::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
     ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
@@ -9,6 +10,7 @@ use crate::engine::{
     SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
+use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
@@ -185,6 +187,71 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
             .expect("evaluate_cell routes through FormulaPlane coordinator"),
         Some(LiteralValue::Number(2.0))
     );
+}
+
+#[test]
+fn formula_text_resolves_authoritative_source_family_placements() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.add_sheet("Inspect").unwrap();
+
+    let family = SourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("A1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+    let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
+    assert_eq!(preparation.direct_family_count(), 1);
+    engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport::default(),
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    let source_sheet = engine.graph.sheet_id("Sheet1").unwrap();
+    for (inspect_row, source_row, expected) in [
+        (1, 1, "=A1 + 1"),
+        (2, 50, "=A50 + 1"),
+        (3, 100, "=A100 + 1"),
+    ] {
+        let source = abs_cell_ref(source_sheet, source_row, 2);
+        assert_eq!(
+            engine.formula_text_at_cell(source).unwrap().as_deref(),
+            Some(expected)
+        );
+        engine
+            .set_cell_formula(
+                "Inspect",
+                inspect_row,
+                1,
+                parse(format!("=FORMULATEXT(Sheet1!B{source_row})")).unwrap(),
+            )
+            .unwrap();
+    }
+
+    engine.evaluate_all().unwrap();
+    for (row, expected) in [(1, "=A1 + 1"), (2, "=A50 + 1"), (3, "=A100 + 1")] {
+        assert_eq!(
+            engine.get_cell_value("Inspect", row, 1),
+            Some(LiteralValue::Text(expected.into()))
+        );
+    }
 }
 
 #[test]

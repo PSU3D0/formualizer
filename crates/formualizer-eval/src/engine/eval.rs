@@ -12954,10 +12954,7 @@ where
             }));
         }
 
-        let Some(vertex) = self.graph.get_vertex_for_cell(&cell) else {
-            return Ok(None);
-        };
-        let Some(ast) = self.graph.get_formula(vertex) else {
+        let Some((Some(ast), _)) = self.get_cell(sheet_name, row, col) else {
             return Ok(None);
         };
         Ok(Some(formualizer_parse::pretty::canonical_formula(&ast)))
