@@ -11,7 +11,7 @@ use std::sync::Arc;
 use rustc_hash::FxHashMap;
 
 use formualizer_common::LiteralValue;
-use formualizer_parse::parser::ASTNode;
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
 use crate::SheetId;
 use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
@@ -166,7 +166,7 @@ pub(crate) fn place_candidate_family(
             return report;
         }
     };
-    place_analyzed_family(plane, &candidates, &analyses)
+    place_candidate_family_with_analyses(plane, candidates, analyses)
 }
 
 pub(crate) fn place_candidate_family_with_analyses(
@@ -174,7 +174,31 @@ pub(crate) fn place_candidate_family_with_analyses(
     candidates: Vec<FormulaPlacementCandidate>,
     analyses: Vec<CandidateAnalysis>,
 ) -> FormulaPlacementReport {
-    place_analyzed_family(plane, &candidates, &analyses)
+    match prepare_family_placement(candidates, analyses) {
+        Ok(prepared) => commit_prepared_family(plane, prepared),
+        Err(report) => *report,
+    }
+}
+
+pub(crate) struct PreparedFamilyPlacement {
+    candidates: Vec<FormulaPlacementCandidate>,
+    analyses: Vec<CandidateAnalysis>,
+    domain: PlacementDomain,
+    result_region: ResultRegion,
+    read_summary: SpanReadSummary,
+    binding_set: SpanBindingSet,
+    is_constant_result: bool,
+}
+
+pub(crate) struct PreparedAnchorOncePlacement {
+    candidate: FormulaPlacementCandidate,
+    analysis: CandidateAnalysis,
+    domain: PlacementDomain,
+    result_region: ResultRegion,
+    read_summary: SpanReadSummary,
+    binding_set: SpanBindingSet,
+    is_constant_result: bool,
+    pub(crate) member_count: u64,
 }
 
 #[derive(Clone)]
@@ -199,7 +223,19 @@ pub(crate) struct CandidateAnalysis {
     resolved_named_refs: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CompressedPreparationReport {
+    pub(crate) member_count: u64,
+    pub(crate) accepted: bool,
+    pub(crate) broadcast_binding_bytes: usize,
+    pub(crate) fallback_reason: Option<PlacementFallbackReason>,
+}
+
 impl CandidateAnalysis {
+    pub(crate) fn parameterized_canonical_hash(&self) -> u64 {
+        self.parameterized_canonical_hash
+    }
+
     fn placement(&self) -> PlacementCoord {
         PlacementCoord::new(self.sheet_id, self.row, self.col)
     }
@@ -354,6 +390,353 @@ pub(crate) fn analyze_candidate(
     })
 }
 
+fn prepare_domain_semantics(
+    domain: &PlacementDomain,
+    read_projections: &[ReadProjection],
+    is_constant_result: bool,
+) -> Result<(ResultRegion, SpanReadSummary), PlacementFallbackReason> {
+    if !is_constant_result && domain.cell_count() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
+        return Err(PlacementFallbackReason::SmallDomain);
+    }
+    let result_region = ResultRegion::scalar_cells(domain.clone());
+    let read_summary = span_read_summary_for_domain(Region::from_domain(domain), read_projections)
+        .map_err(|_| PlacementFallbackReason::UnsupportedDirtyProjection)?;
+    if read_summary.dependencies.iter().any(|dependency| {
+        dependency
+            .read_region
+            .intersects(&read_summary.result_region)
+    }) {
+        return Err(PlacementFallbackReason::InternalDependency);
+    }
+    Ok((result_region, read_summary))
+}
+
+struct AnchorOnceGateOutput {
+    result_region: ResultRegion,
+    read_summary: SpanReadSummary,
+    is_constant_result: bool,
+    binding_bytes: usize,
+}
+
+fn run_anchor_once_placement_gates(
+    candidate: &FormulaPlacementCandidate,
+    analysis: &CandidateAnalysis,
+    domain: &PlacementDomain,
+    member_count: u64,
+) -> Result<AnchorOnceGateOutput, PlacementFallbackReason> {
+    if member_count != domain.cell_count() || !domain.contains(candidate.placement()) {
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+    if analysis.sheet_id != domain.sheet_id()
+        || analysis.placement() != domain_origin(domain)
+        || candidate.placement() != analysis.placement()
+    {
+        return Err(PlacementFallbackReason::CrossSheetOrSheetMismatch);
+    }
+    let is_constant_result =
+        analysis.read_projections_constant && analysis.value_ref_slot_descriptors.is_empty();
+    let (result_region, read_summary) =
+        prepare_domain_semantics(domain, &analysis.read_projections, is_constant_result)?;
+    let binding_bytes = literal_binding_bytes(&analysis.literal_bindings);
+    if binding_bytes > MAX_BINDING_SET_BYTES {
+        return Err(PlacementFallbackReason::BindingMemoryCapExceeded);
+    }
+    Ok(AnchorOnceGateOutput {
+        result_region,
+        read_summary,
+        is_constant_result,
+        binding_bytes,
+    })
+}
+
+pub(crate) fn prepare_anchor_once_family(
+    candidate: FormulaPlacementCandidate,
+    analysis: CandidateAnalysis,
+    domain: PlacementDomain,
+    member_count: u64,
+) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
+    let gates = run_anchor_once_placement_gates(&candidate, &analysis, &domain, member_count)?;
+    let AnchorOnceGateOutput {
+        result_region,
+        read_summary,
+        is_constant_result,
+        ..
+    } = gates;
+    let binding_set = SpanBindingSet {
+        span_ref: FormulaSpanRef {
+            id: super::runtime::FormulaSpanId(0),
+            generation: 0,
+            version: 0,
+        },
+        template_ast_id: candidate.ast_id,
+        template_origin_row: candidate.row + 1,
+        template_origin_col: candidate.col + 1,
+        literal_slots: analysis.literal_slot_descriptors.clone(),
+        unique_literal_bindings: vec![analysis.literal_bindings.clone()],
+        placement_literal_binding_ids: Box::default(),
+        literal_binding_encoding: LiteralBindingEncoding::Broadcast,
+        value_ref_slots: analysis.value_ref_slot_descriptors.clone(),
+        template_slot_map: analysis.template_slot_map.clone(),
+    };
+    Ok(PreparedAnchorOncePlacement {
+        candidate,
+        analysis,
+        domain,
+        result_region,
+        read_summary,
+        binding_set,
+        is_constant_result,
+        member_count,
+    })
+}
+
+pub(crate) fn commit_prepared_anchor_once_family(
+    plane: &mut FormulaPlane,
+    prepared: PreparedAnchorOncePlacement,
+) -> FormulaPlacementReport {
+    let PreparedAnchorOncePlacement {
+        candidate,
+        analysis,
+        domain,
+        result_region,
+        read_summary,
+        binding_set,
+        is_constant_result,
+        member_count,
+    } = prepared;
+    let mut report = FormulaPlacementReport::default();
+    report.counters.formula_cells_seen = member_count;
+    let template_count_before = plane.templates.len();
+    let template_id = plane.intern_template_parameterized(
+        analysis.exact_canonical_key.clone(),
+        analysis.parameterized_canonical_key.clone(),
+        candidate.ast_id,
+        candidate.row + 1,
+        candidate.col + 1,
+        candidate.formula_text.clone(),
+    );
+    if plane.templates.len() > template_count_before {
+        report.counters.templates_interned = 1;
+    }
+    let binding_set_id = plane.insert_binding_set(binding_set);
+    let read_summary_id = plane.insert_span_read_summary(read_summary);
+    let span = plane.insert_span_with_ast_relocation(
+        NewFormulaSpan {
+            sheet_id: candidate.sheet_id,
+            template_id,
+            result_region,
+            domain,
+            intrinsic_mask_id: None,
+            read_summary_id: Some(read_summary_id),
+            binding_set_id: Some(binding_set_id),
+            is_constant_result,
+        },
+        super::runtime::SpanAstRelocation {
+            ast_id: candidate.ast_id,
+            anchor_row: candidate.row + 1,
+            anchor_col: candidate.col + 1,
+        },
+    );
+    plane.set_binding_span_ref(binding_set_id, span);
+    if !analysis.resolved_named_refs.is_empty() {
+        plane.register_span_name_dependents(span, &analysis.resolved_named_refs);
+    }
+    report.counters.spans_created = 1;
+    report.counters.accepted_span_cells = member_count;
+    report.counters.formula_vertices_avoided = member_count;
+    report.counters.ast_roots_avoided = member_count.saturating_sub(1);
+    report.counters.edge_rows_avoided = member_count;
+    report
+}
+
+pub(crate) fn prepare_compressed_family_shadow(
+    candidate: &FormulaPlacementCandidate,
+    analysis: &CandidateAnalysis,
+    domain: PlacementDomain,
+    member_count: u64,
+) -> CompressedPreparationReport {
+    let fallback = |reason| CompressedPreparationReport {
+        member_count,
+        accepted: false,
+        broadcast_binding_bytes: 0,
+        fallback_reason: Some(reason),
+    };
+    match run_anchor_once_placement_gates(candidate, analysis, &domain, member_count) {
+        Ok(gates) => CompressedPreparationReport {
+            member_count,
+            accepted: true,
+            broadcast_binding_bytes: gates.binding_bytes,
+            fallback_reason: None,
+        },
+        Err(reason) => fallback(reason),
+    }
+}
+
+/// Phase-4 allowlist: literals; finite A1 cells/ranges (including explicit
+/// worksheet bindings); unary `+`/`-`;
+/// and binary arithmetic `+`, `-`, `*`, `/`. Functions, names, arrays, calls,
+/// 3-D/external/table references, whole-axis ranges, and all other operators
+/// conservatively replay.
+pub(crate) fn validate_anchor_once_syntax(
+    ast: &ASTNode,
+    anchor_row0: u32,
+    anchor_col0: u32,
+    domain: &PlacementDomain,
+) -> Result<(), &'static str> {
+    const MAX_ROW: i64 = 1_048_576;
+    const MAX_COL: i64 = 16_384;
+
+    fn axis_safe(
+        value: u32,
+        absolute: bool,
+        anchor0: u32,
+        domain_start: u32,
+        domain_end: u32,
+        maximum: i64,
+    ) -> bool {
+        let value = i64::from(value);
+        if absolute {
+            return (1..=maximum).contains(&value);
+        }
+        let min = value + i64::from(domain_start) - i64::from(anchor0);
+        let max = value + i64::from(domain_end) - i64::from(anchor0);
+        min >= 1 && max <= maximum
+    }
+
+    fn walk(
+        node: &ASTNode,
+        anchor_row0: u32,
+        anchor_col0: u32,
+        row_start: u32,
+        row_end: u32,
+        col_start: u32,
+        col_end: u32,
+    ) -> Result<(), &'static str> {
+        match &node.node_type {
+            ASTNodeType::Literal(_) => Ok(()),
+            ASTNodeType::Reference { reference, .. } => match reference {
+                ReferenceType::Cell {
+                    sheet: _,
+                    row,
+                    col,
+                    row_abs,
+                    col_abs,
+                } if axis_safe(*row, *row_abs, anchor_row0, row_start, row_end, MAX_ROW)
+                    && axis_safe(*col, *col_abs, anchor_col0, col_start, col_end, MAX_COL) =>
+                {
+                    Ok(())
+                }
+                ReferenceType::Range {
+                    sheet: _,
+                    start_row: Some(start_row),
+                    start_col: Some(start_col),
+                    end_row: Some(end_row),
+                    end_col: Some(end_col),
+                    start_row_abs,
+                    start_col_abs,
+                    end_row_abs,
+                    end_col_abs,
+                } if axis_safe(
+                    *start_row,
+                    *start_row_abs,
+                    anchor_row0,
+                    row_start,
+                    row_end,
+                    MAX_ROW,
+                ) && axis_safe(
+                    *end_row,
+                    *end_row_abs,
+                    anchor_row0,
+                    row_start,
+                    row_end,
+                    MAX_ROW,
+                ) && axis_safe(
+                    *start_col,
+                    *start_col_abs,
+                    anchor_col0,
+                    col_start,
+                    col_end,
+                    MAX_COL,
+                ) && axis_safe(
+                    *end_col,
+                    *end_col_abs,
+                    anchor_col0,
+                    col_start,
+                    col_end,
+                    MAX_COL,
+                ) =>
+                {
+                    Ok(())
+                }
+                _ => Err("UnsupportedAnchorReference"),
+            },
+            ASTNodeType::UnaryOp { op, expr } if matches!(op.as_str(), "+" | "-") => walk(
+                expr,
+                anchor_row0,
+                anchor_col0,
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+            ),
+            ASTNodeType::BinaryOp { op, left, right }
+                if matches!(op.as_str(), "+" | "-" | "*" | "/") =>
+            {
+                walk(
+                    left,
+                    anchor_row0,
+                    anchor_col0,
+                    row_start,
+                    row_end,
+                    col_start,
+                    col_end,
+                )?;
+                walk(
+                    right,
+                    anchor_row0,
+                    anchor_col0,
+                    row_start,
+                    row_end,
+                    col_start,
+                    col_end,
+                )
+            }
+            _ => Err("UnsupportedAnchorSyntax"),
+        }
+    }
+
+    let (row_start, row_end, col_start, col_end) = match domain {
+        PlacementDomain::RowRun {
+            row_start,
+            row_end,
+            col,
+            ..
+        } => (*row_start, *row_end, *col, *col),
+        PlacementDomain::ColRun {
+            row,
+            col_start,
+            col_end,
+            ..
+        } => (*row, *row, *col_start, *col_end),
+        PlacementDomain::Rect {
+            row_start,
+            row_end,
+            col_start,
+            col_end,
+            ..
+        } => (*row_start, *row_end, *col_start, *col_end),
+    };
+    walk(
+        ast,
+        anchor_row0,
+        anchor_col0,
+        row_start,
+        row_end,
+        col_start,
+        col_end,
+    )
+}
+
 fn analyze_candidates(
     candidates: &[FormulaPlacementCandidate],
     data_store: &DataStore,
@@ -370,16 +753,15 @@ fn analyze_candidates(
         .collect()
 }
 
-fn place_analyzed_family(
-    plane: &mut FormulaPlane,
-    candidates: &[FormulaPlacementCandidate],
-    analyses: &[CandidateAnalysis],
-) -> FormulaPlacementReport {
+pub(crate) fn prepare_family_placement(
+    candidates: Vec<FormulaPlacementCandidate>,
+    analyses: Vec<CandidateAnalysis>,
+) -> Result<PreparedFamilyPlacement, Box<FormulaPlacementReport>> {
     let mut report = FormulaPlacementReport::default();
     report.counters.formula_cells_seen = candidates.len() as u64;
 
     if candidates.is_empty() {
-        return report;
+        return Err(Box::new(report));
     }
 
     debug_assert_eq!(candidates.len(), analyses.len());
@@ -392,10 +774,10 @@ fn place_analyzed_family(
     {
         mark_all_legacy(
             &mut report,
-            candidates,
+            &candidates,
             PlacementFallbackReason::CrossSheetOrSheetMismatch,
         );
-        return report;
+        return Err(Box::new(report));
     }
 
     if analyses.iter().any(|analysis| {
@@ -404,17 +786,17 @@ fn place_analyzed_family(
     }) {
         mark_all_legacy(
             &mut report,
-            candidates,
+            &candidates,
             PlacementFallbackReason::NonEquivalentTemplate,
         );
-        return report;
+        return Err(Box::new(report));
     }
 
-    let domain = match detect_domain(analyses) {
+    let domain = match detect_domain(&analyses) {
         Ok(domain) => domain,
         Err(reason) => {
-            mark_all_legacy(&mut report, candidates, reason);
-            return report;
+            mark_all_legacy(&mut report, &candidates, reason);
+            return Err(Box::new(report));
         }
     };
 
@@ -424,15 +806,6 @@ fn place_analyzed_family(
             .iter()
             .all(|analysis| analysis.literal_bindings.as_ref() == first.literal_bindings.as_ref());
 
-    if !is_constant_result && domain.cell_count() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
-        mark_all_legacy(
-            &mut report,
-            candidates,
-            PlacementFallbackReason::SmallDomain,
-        );
-        return report;
-    }
-
     let origin = domain_origin(&domain);
     let origin_analysis = analyses
         .iter()
@@ -441,46 +814,22 @@ fn place_analyzed_family(
     let origin_analysis = match origin_analysis {
         Ok(origin_analysis) => origin_analysis,
         Err(reason) => {
-            mark_all_legacy(&mut report, candidates, reason);
-            return report;
+            mark_all_legacy(&mut report, &candidates, reason);
+            return Err(Box::new(report));
         }
     };
 
-    let result_region = ResultRegion::scalar_cells(domain.clone());
-    let result_region_pattern = Region::from_domain(&domain);
-    let read_summary = match span_read_summary_for_domain(
-        result_region_pattern,
+    let (result_region, read_summary) = match prepare_domain_semantics(
+        &domain,
         &origin_analysis.read_projections,
+        is_constant_result,
     ) {
-        Ok(summary) => summary,
-        Err(_reason) => {
-            mark_all_legacy(
-                &mut report,
-                candidates,
-                PlacementFallbackReason::UnsupportedDirtyProjection,
-            );
-            return report;
+        Ok(semantics) => semantics,
+        Err(reason) => {
+            mark_all_legacy(&mut report, &candidates, reason);
+            return Err(Box::new(report));
         }
     };
-
-    // Reject internal-dependency families. If any precedent read region
-    // intersects the family's own result region, the span has self/internal
-    // dependencies (e.g. chains where B[r] reads B[r-1]). Bounded dirty
-    // projection cannot represent the cell-by-cell sequencing these need, so
-    // the runtime would always demote to whole-span recompute and produce
-    // O(N²) edit recalc behavior. Defer to legacy graph scheduling instead.
-    if read_summary
-        .dependencies
-        .iter()
-        .any(|dep| dep.read_region.intersects(&read_summary.result_region))
-    {
-        mark_all_legacy(
-            &mut report,
-            candidates,
-            PlacementFallbackReason::InternalDependency,
-        );
-        return report;
-    }
 
     let Some(origin_candidate) = candidates
         .iter()
@@ -488,11 +837,65 @@ fn place_analyzed_family(
     else {
         mark_all_legacy(
             &mut report,
-            candidates,
+            &candidates,
             PlacementFallbackReason::UnsupportedShapeOrGaps,
         );
-        return report;
+        return Err(Box::new(report));
     };
+
+    let binding_set = match build_span_binding_set(
+        FormulaSpanRef {
+            id: super::runtime::FormulaSpanId(0),
+            generation: 0,
+            version: 0,
+        },
+        &domain,
+        &candidates,
+        &analyses,
+    ) {
+        Ok(binding_set) => binding_set,
+        Err(reason) => {
+            mark_all_legacy(&mut report, &candidates, reason);
+            return Err(Box::new(report));
+        }
+    };
+    Ok(PreparedFamilyPlacement {
+        candidates,
+        analyses,
+        domain,
+        result_region,
+        read_summary,
+        binding_set,
+        is_constant_result,
+    })
+}
+
+pub(crate) fn commit_prepared_family(
+    plane: &mut FormulaPlane,
+    prepared: PreparedFamilyPlacement,
+) -> FormulaPlacementReport {
+    let PreparedFamilyPlacement {
+        candidates,
+        analyses,
+        domain,
+        result_region,
+        read_summary,
+        binding_set,
+        is_constant_result,
+    } = prepared;
+    let first = &analyses[0];
+    let sheet_id = first.sheet_id;
+    let origin = domain_origin(&domain);
+    let origin_analysis = analyses
+        .iter()
+        .find(|analysis| analysis.placement() == origin)
+        .expect("prepared placement has an origin analysis");
+    let origin_candidate = candidates
+        .iter()
+        .find(|candidate| candidate.placement() == origin)
+        .expect("prepared placement has an origin candidate");
+    let mut report = FormulaPlacementReport::default();
+    report.counters.formula_cells_seen = candidates.len() as u64;
 
     let template_count_before = plane.templates.len();
     let template_id = plane.intern_template_parameterized(
@@ -506,41 +909,28 @@ fn place_analyzed_family(
     if plane.templates.len() > template_count_before {
         report.counters.templates_interned = 1;
     }
-
-    let binding_set = match build_span_binding_set(
-        FormulaSpanRef {
-            id: super::runtime::FormulaSpanId(0),
-            generation: 0,
-            version: 0,
-        },
-        &domain,
-        candidates,
-        analyses,
-    ) {
-        Ok(binding_set) => binding_set,
-        Err(reason) => {
-            mark_all_legacy(&mut report, candidates, reason);
-            return report;
-        }
-    };
     let binding_set_id = plane.insert_binding_set(binding_set);
 
     let read_summary_id = plane.insert_span_read_summary(read_summary);
-    let span = plane.insert_span(NewFormulaSpan {
-        sheet_id,
-        template_id,
-        result_region,
-        domain,
-        intrinsic_mask_id: None,
-        read_summary_id: Some(read_summary_id),
-        binding_set_id: Some(binding_set_id),
-        is_constant_result,
-    });
+    let span = plane.insert_span_with_ast_relocation(
+        NewFormulaSpan {
+            sheet_id,
+            template_id,
+            result_region,
+            domain,
+            intrinsic_mask_id: None,
+            read_summary_id: Some(read_summary_id),
+            binding_set_id: Some(binding_set_id),
+            is_constant_result,
+        },
+        super::runtime::SpanAstRelocation {
+            ast_id: origin_candidate.ast_id,
+            anchor_row: origin_candidate.row + 1,
+            anchor_col: origin_candidate.col + 1,
+        },
+    );
     plane.set_binding_span_ref(binding_set_id, span);
     if !origin_analysis.resolved_named_refs.is_empty() {
-        // All family members share the parameterized template (asserted
-        // above) and live on one sheet, so the origin's resolved name set is
-        // the family's name set.
         plane.register_span_name_dependents(span, &origin_analysis.resolved_named_refs);
     }
 
@@ -692,6 +1082,7 @@ fn build_span_binding_set(
     let literal_binding_encoding = detect_affine_literal_encoding(domain, &by_placement)
         .unwrap_or(LiteralBindingEncoding::Dictionary);
     let encoded_bytes = match &literal_binding_encoding {
+        LiteralBindingEncoding::Broadcast => dictionary_bytes,
         LiteralBindingEncoding::Dictionary => dictionary_bytes,
         LiteralBindingEncoding::AffineByRow { base, steps, .. }
         | LiteralBindingEncoding::AffineByCol { base, steps, .. } => {
@@ -713,6 +1104,7 @@ fn build_span_binding_set(
     }
 
     let (unique_literal_bindings, placement_literal_binding_ids) = match &literal_binding_encoding {
+        LiteralBindingEncoding::Broadcast => (unique_literal_bindings, Box::<[u32]>::default()),
         LiteralBindingEncoding::Dictionary => {
             (unique_literal_bindings, placement_ids.into_boxed_slice())
         }
@@ -1481,6 +1873,161 @@ mod tests {
                 ..
             } if *result_reason == reason
         )));
+    }
+
+    #[test]
+    fn compressed_anchor_syntax_allowlist_checks_domains_and_xlsx_boundaries() {
+        let vertical = PlacementDomain::row_run(0, 0, 99, 1);
+        assert!(validate_anchor_once_syntax(&parse("=A1+2*3").unwrap(), 0, 1, &vertical).is_ok());
+        assert!(
+            validate_anchor_once_syntax(&parse("=A1048576").unwrap(), 0, 1, &vertical).is_err()
+        );
+
+        let horizontal = PlacementDomain::col_run(0, 0, 0, 99);
+        assert!(validate_anchor_once_syntax(&parse("=XFD1").unwrap(), 0, 0, &horizontal).is_err());
+        assert!(
+            validate_anchor_once_syntax(&parse("=Sheet2!A1").unwrap(), 0, 0, &vertical).is_ok()
+        );
+        for unsupported in ["=SUM(A1:A2)", "=NamedValue", "=A1^2", "=A:A"] {
+            assert!(
+                validate_anchor_once_syntax(&parse(unsupported).unwrap(), 0, 0, &vertical).is_err(),
+                "{unsupported}"
+            );
+        }
+
+        let rect = PlacementDomain::rect(0, 3, 12, 4, 15);
+        assert!(
+            validate_anchor_once_syntax(&parse("=$A$1+B4+C4:D5").unwrap(), 3, 4, &rect).is_ok()
+        );
+    }
+
+    #[test]
+    fn compressed_preparation_uses_one_analysis_and_constant_size_report() {
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let candidate = candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=$A$1+7");
+        let ast = data_store
+            .retrieve_ast(candidate.ast_id, &sheet_registry)
+            .unwrap();
+        let analysis = analyze_candidate(&candidate, &ast, &data_store, &sheet_registry).unwrap();
+        for (domain, count) in [
+            (PlacementDomain::row_run(0, 0, 999_999, 1), 1_000_000),
+            (PlacementDomain::col_run(0, 0, 1, 100), 100),
+            (PlacementDomain::rect(0, 0, 9, 1, 10), 100),
+        ] {
+            let report = prepare_compressed_family_shadow(&candidate, &analysis, domain, count);
+            assert!(report.accepted, "{report:?}");
+            assert_eq!(report.member_count, count);
+            assert!(report.broadcast_binding_bytes < 128);
+        }
+        assert!(std::mem::size_of::<CompressedPreparationReport>() < 64);
+    }
+
+    #[test]
+    fn compressed_shadow_and_direct_anchor_once_have_exhaustive_gate_parity() {
+        fn assert_parity(
+            candidate: &FormulaPlacementCandidate,
+            analysis: &CandidateAnalysis,
+            domain: PlacementDomain,
+            count: u64,
+        ) {
+            let shadow =
+                prepare_compressed_family_shadow(candidate, analysis, domain.clone(), count);
+            let direct =
+                prepare_anchor_once_family(candidate.clone(), analysis.clone(), domain, count);
+            assert_eq!(shadow.accepted, direct.is_ok());
+            assert_eq!(shadow.fallback_reason, direct.err());
+        }
+
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let anchor = candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=$A$1+7");
+        let ast = data_store
+            .retrieve_ast(anchor.ast_id, &sheet_registry)
+            .unwrap();
+        let analysis = analyze_candidate(&anchor, &ast, &data_store, &sheet_registry).unwrap();
+        let accepted = PlacementDomain::row_run(0, 0, 99, 1);
+        assert_parity(&anchor, &analysis, accepted.clone(), 100);
+        assert_parity(&anchor, &analysis, accepted.clone(), 99);
+        assert_parity(
+            &anchor,
+            &analysis,
+            PlacementDomain::row_run(1, 0, 99, 1),
+            100,
+        );
+        assert_parity(
+            &anchor,
+            &analysis,
+            PlacementDomain::row_run(0, 1, 100, 1),
+            100,
+        );
+
+        let relative = candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1+1");
+        let ast = data_store
+            .retrieve_ast(relative.ast_id, &sheet_registry)
+            .unwrap();
+        let relative_analysis =
+            analyze_candidate(&relative, &ast, &data_store, &sheet_registry).unwrap();
+        assert_parity(
+            &relative,
+            &relative_analysis,
+            PlacementDomain::row_run(0, 0, 98, 1),
+            99,
+        );
+
+        let chain = candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=B1+1");
+        let ast = data_store
+            .retrieve_ast(chain.ast_id, &sheet_registry)
+            .unwrap();
+        let chain_analysis = analyze_candidate(&chain, &ast, &data_store, &sheet_registry).unwrap();
+        assert_parity(
+            &chain,
+            &chain_analysis,
+            PlacementDomain::row_run(0, 1, 100, 1),
+            100,
+        );
+
+        let mut oversized = analysis.clone();
+        oversized.literal_bindings =
+            vec![LiteralValue::Text("x".repeat(MAX_BINDING_SET_BYTES + 1))].into_boxed_slice();
+        assert_parity(&anchor, &oversized, accepted, 100);
+    }
+
+    #[test]
+    fn compressed_preparation_preserves_small_domain_and_internal_dependency_gates() {
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let small = candidate(&mut data_store, &sheet_registry, 0, 0, 1, "=A1+1");
+        let ast = data_store
+            .retrieve_ast(small.ast_id, &sheet_registry)
+            .unwrap();
+        let analysis = analyze_candidate(&small, &ast, &data_store, &sheet_registry).unwrap();
+        let report = prepare_compressed_family_shadow(
+            &small,
+            &analysis,
+            PlacementDomain::row_run(0, 0, 98, 1),
+            99,
+        );
+        assert_eq!(
+            report.fallback_reason,
+            Some(PlacementFallbackReason::SmallDomain)
+        );
+
+        let chain = candidate(&mut data_store, &sheet_registry, 0, 1, 1, "=B1+1");
+        let ast = data_store
+            .retrieve_ast(chain.ast_id, &sheet_registry)
+            .unwrap();
+        let analysis = analyze_candidate(&chain, &ast, &data_store, &sheet_registry).unwrap();
+        let report = prepare_compressed_family_shadow(
+            &chain,
+            &analysis,
+            PlacementDomain::row_run(0, 1, 100, 1),
+            100,
+        );
+        assert_eq!(
+            report.fallback_reason,
+            Some(PlacementFallbackReason::InternalDependency)
+        );
     }
 
     #[test]

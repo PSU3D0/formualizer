@@ -456,6 +456,7 @@ pub(crate) struct TemplateSlotMap {
 
 #[derive(Clone, Debug)]
 pub(crate) enum LiteralBindingEncoding {
+    Broadcast,
     Dictionary,
     AffineByRow {
         origin_row: u32,
@@ -493,6 +494,7 @@ pub(crate) struct SpanBindingSet {
 impl SpanBindingSet {
     pub(crate) fn is_single_literal_binding(&self) -> bool {
         match &self.literal_binding_encoding {
+            LiteralBindingEncoding::Broadcast => true,
             LiteralBindingEncoding::Dictionary => self.unique_literal_bindings.len() <= 1,
             LiteralBindingEncoding::AffineByRow { steps, .. }
             | LiteralBindingEncoding::AffineByCol { steps, .. } => {
@@ -512,6 +514,12 @@ impl SpanBindingSet {
         placement: PlacementCoord,
     ) -> Option<Cow<'_, [LiteralValue]>> {
         match &self.literal_binding_encoding {
+            LiteralBindingEncoding::Broadcast => {
+                domain.ordinal_of(placement)?;
+                self.unique_literal_bindings
+                    .first()
+                    .map(|binding| Cow::Borrowed(binding.as_ref()))
+            }
             LiteralBindingEncoding::Dictionary => {
                 let ordinal = domain.ordinal_of(placement)?;
                 let binding_id = *self.placement_literal_binding_ids.get(ordinal)?;
@@ -900,6 +908,10 @@ pub(crate) struct FormulaSpan {
     pub(crate) generation: u32,
     pub(crate) sheet_id: SheetId,
     pub(crate) template_id: FormulaTemplateId,
+    /// Placement-bearing AST state belongs to this span, never to the
+    /// canonically interned template. Equal templates may have different
+    /// source-family anchors.
+    pub(crate) ast_relocation: SpanAstRelocation,
     pub(crate) domain: PlacementDomain,
     pub(crate) result_region: ResultRegion,
     pub(crate) intrinsic_mask_id: Option<SpanMaskId>,
@@ -922,6 +934,14 @@ pub(crate) struct NewFormulaSpan {
     pub(crate) is_constant_result: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpanAstRelocation {
+    pub(crate) ast_id: AstNodeId,
+    /// One-based parser-AST anchor coordinate.
+    pub(crate) anchor_row: u32,
+    pub(crate) anchor_col: u32,
+}
+
 #[derive(Debug)]
 struct SpanSlot {
     generation: u32,
@@ -935,7 +955,11 @@ pub(crate) struct SpanStore {
 }
 
 impl SpanStore {
-    pub(crate) fn insert(&mut self, new_span: NewFormulaSpan) -> FormulaSpanRef {
+    pub(crate) fn insert(
+        &mut self,
+        new_span: NewFormulaSpan,
+        ast_relocation: SpanAstRelocation,
+    ) -> FormulaSpanRef {
         assert_eq!(
             new_span.sheet_id,
             new_span.domain.sheet_id(),
@@ -955,6 +979,7 @@ impl SpanStore {
             generation,
             sheet_id: new_span.sheet_id,
             template_id: new_span.template_id,
+            ast_relocation,
             domain: new_span.domain,
             result_region: new_span.result_region,
             intrinsic_mask_id: new_span.intrinsic_mask_id,
@@ -985,6 +1010,19 @@ impl SpanStore {
         (span.version == span_ref.version).then_some(span)
     }
 
+    #[cfg(test)]
+    pub(crate) fn get_mut_for_test(
+        &mut self,
+        span_ref: FormulaSpanRef,
+    ) -> Option<&mut FormulaSpan> {
+        let slot = self.slots.get_mut(span_ref.id.0 as usize)?;
+        if slot.generation != span_ref.generation {
+            return None;
+        }
+        let span = slot.span.as_mut()?;
+        (span.version == span_ref.version).then_some(span)
+    }
+
     pub(crate) fn remove(&mut self, span_ref: FormulaSpanRef) -> bool {
         let Some(slot) = self.slots.get_mut(span_ref.id.0 as usize) else {
             return false;
@@ -1005,6 +1043,7 @@ impl SpanStore {
         &mut self,
         span_ref: FormulaSpanRef,
         template_id: FormulaTemplateId,
+        ast_relocation: SpanAstRelocation,
         domain: PlacementDomain,
         result_region: ResultRegion,
         read_summary_id: Option<SpanReadSummaryId>,
@@ -1019,6 +1058,9 @@ impl SpanStore {
             return false;
         }
         span.template_id = template_id;
+        // Geometry-only splits pass the same template and therefore copy the
+        // same state. Structural rewrites pass the rewritten template state.
+        span.ast_relocation = ast_relocation;
         span.domain = domain;
         span.result_region = result_region;
         span.read_summary_id = read_summary_id;
@@ -1365,6 +1407,33 @@ impl FormulaPlane {
         result_region: ResultRegion,
         read_summary_id: Option<SpanReadSummaryId>,
     ) -> bool {
+        let Some(template) = self.templates.get(template_id) else {
+            return false;
+        };
+        let ast_relocation = SpanAstRelocation {
+            ast_id: template.ast_id,
+            anchor_row: template.origin_row,
+            anchor_col: template.origin_col,
+        };
+        self.replace_span_geometry_with_ast_relocation(
+            span_ref,
+            template_id,
+            ast_relocation,
+            domain,
+            result_region,
+            read_summary_id,
+        )
+    }
+
+    pub(crate) fn replace_span_geometry_with_ast_relocation(
+        &mut self,
+        span_ref: FormulaSpanRef,
+        template_id: FormulaTemplateId,
+        ast_relocation: SpanAstRelocation,
+        domain: PlacementDomain,
+        result_region: ResultRegion,
+        read_summary_id: Option<SpanReadSummaryId>,
+    ) -> bool {
         let old_read_summary_id = self
             .spans
             .get(span_ref)
@@ -1372,6 +1441,7 @@ impl FormulaPlane {
         let replaced = self.spans.replace_geometry(
             span_ref,
             template_id,
+            ast_relocation,
             domain,
             result_region,
             read_summary_id,
@@ -1430,7 +1500,24 @@ impl FormulaPlane {
     }
 
     pub(crate) fn insert_span(&mut self, new_span: NewFormulaSpan) -> FormulaSpanRef {
-        let span = self.spans.insert(new_span);
+        let template = self
+            .templates
+            .get(new_span.template_id)
+            .expect("new FormulaPlane span must reference a live template");
+        let relocation = SpanAstRelocation {
+            ast_id: template.ast_id,
+            anchor_row: template.origin_row,
+            anchor_col: template.origin_col,
+        };
+        self.insert_span_with_ast_relocation(new_span, relocation)
+    }
+
+    pub(crate) fn insert_span_with_ast_relocation(
+        &mut self,
+        new_span: NewFormulaSpan,
+        relocation: SpanAstRelocation,
+    ) -> FormulaSpanRef {
+        let span = self.spans.insert(new_span, relocation);
         self.bump_epoch();
         span
     }
@@ -1613,6 +1700,14 @@ mod tests {
         )
     }
 
+    fn test_relocation() -> SpanAstRelocation {
+        SpanAstRelocation {
+            ast_id: literal_ast_id(1),
+            anchor_row: 1,
+            anchor_col: 1,
+        }
+    }
+
     fn template_id(store: &mut TemplateStore, key: &str) -> FormulaTemplateId {
         store
             .intern_template(
@@ -1716,12 +1811,15 @@ mod tests {
         let template_id = template_id(&mut templates, "template");
         let mut spans = SpanStore::default();
 
-        let first = spans.insert(new_row_span(0, template_id));
-        let second = spans.insert(NewFormulaSpan {
-            domain: PlacementDomain::col_run(0, 1, 0, 3),
-            result_region: ResultRegion::scalar_cells(PlacementDomain::col_run(0, 1, 0, 3)),
-            ..new_row_span(0, template_id)
-        });
+        let first = spans.insert(new_row_span(0, template_id), test_relocation());
+        let second = spans.insert(
+            NewFormulaSpan {
+                domain: PlacementDomain::col_run(0, 1, 0, 3),
+                result_region: ResultRegion::scalar_cells(PlacementDomain::col_run(0, 1, 0, 3)),
+                ..new_row_span(0, template_id)
+            },
+            test_relocation(),
+        );
 
         assert_eq!(first.id, FormulaSpanId(0));
         assert_eq!(second.id, FormulaSpanId(1));
@@ -1738,16 +1836,19 @@ mod tests {
         let template_id = template_id(&mut templates, "template");
         let mut spans = SpanStore::default();
         let domain = PlacementDomain::row_run(1, 0, 9, 2);
-        spans.insert(NewFormulaSpan {
-            sheet_id: 0,
-            template_id,
-            result_region: ResultRegion::scalar_cells(domain.clone()),
-            domain,
-            intrinsic_mask_id: None,
-            read_summary_id: None,
-            binding_set_id: None,
-            is_constant_result: false,
-        });
+        spans.insert(
+            NewFormulaSpan {
+                sheet_id: 0,
+                template_id,
+                result_region: ResultRegion::scalar_cells(domain.clone()),
+                domain,
+                intrinsic_mask_id: None,
+                read_summary_id: None,
+                binding_set_id: None,
+                is_constant_result: false,
+            },
+            test_relocation(),
+        );
     }
 
     #[test]
@@ -1755,7 +1856,7 @@ mod tests {
         let mut templates = TemplateStore::default();
         let template_id = template_id(&mut templates, "template");
         let mut spans = SpanStore::default();
-        let span_ref = spans.insert(new_row_span(0, template_id));
+        let span_ref = spans.insert(new_row_span(0, template_id), test_relocation());
 
         assert!(spans.remove(span_ref));
         assert!(spans.get(span_ref).is_none());

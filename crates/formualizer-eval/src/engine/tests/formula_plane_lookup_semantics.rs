@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
 
-use crate::engine::{Engine, EvalConfig, FormulaPlaneMode};
+use crate::engine::{
+    Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+};
 use crate::test_workbook::TestWorkbook;
 
 const TABLE_ROWS: u32 = 100;
@@ -120,6 +124,126 @@ fn vlookup_engine_with_formula_rows(config: EvalConfig, formula_rows: u32) -> En
 
 fn repeated_vlookup_engine(config: EvalConfig) -> Engine<TestWorkbook> {
     vlookup_engine_with_formula_rows(config, FORMULA_ROWS)
+}
+
+fn ingest_record(
+    engine: &mut Engine<TestWorkbook>,
+    row: u32,
+    col: u32,
+    text: &str,
+) -> FormulaIngestRecord {
+    let ast_id = engine.intern_formula_ast(&parse(text).unwrap());
+    FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(text)))
+}
+
+fn canonical_at(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> String {
+    let ast = engine
+        .get_cell("Sheet1", row, col)
+        .and_then(|(ast, _)| ast)
+        .expect("formula AST");
+    formualizer_parse::pretty::canonical_formula(&ast)
+}
+
+#[test]
+fn span_formula_api_relocates_first_middle_and_last_placement() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut records = Vec::new();
+    for row in 1..=100 {
+        number(&mut engine, "Sheet1", row, 1, row as f64);
+        records.push(ingest_record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(canonical_at(&engine, 1, 2), "=A1 + 1");
+    assert_eq!(canonical_at(&engine, 50, 2), "=A50 + 1");
+    assert_eq!(canonical_at(&engine, 100, 2), "=A100 + 1");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(51.0))
+    );
+}
+
+#[test]
+fn cross_sheet_span_relocation_uses_placement_coordinate() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    engine.add_sheet("Sheet2").unwrap();
+    let mut records = Vec::new();
+    for row in 1..=100 {
+        number(&mut engine, "Sheet2", row, 1, row as f64);
+        records.push(ingest_record(
+            &mut engine,
+            row,
+            2,
+            &format!("=Sheet2!A{row}+1"),
+        ));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(canonical_at(&engine, 50, 2), "=Sheet2!A50 + 1");
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 50, 2),
+        Some(LiteralValue::Number(51.0))
+    );
+}
+
+#[test]
+fn invalid_span_relocation_fails_closed_before_graph_lookup() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut records = Vec::new();
+    for row in 1..=100 {
+        number(&mut engine, "Sheet1", row, 1, row as f64);
+        records.push(ingest_record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let span_ref = engine.graph.formula_authority().active_span_refs()[0];
+    engine
+        .graph
+        .formula_authority_mut()
+        .plane
+        .spans
+        .get_mut_for_test(span_ref)
+        .expect("span")
+        .ast_relocation
+        .ast_id = crate::engine::arena::AstNodeId::from_u32(u32::MAX);
+
+    let (ast, _) = engine.get_cell("Sheet1", 50, 2).expect("owned cell");
+    assert!(ast.is_none());
+}
+
+#[test]
+fn equal_canonical_templates_from_distinct_anchors_keep_span_state_isolated() {
+    let mut engine = engine_with_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut first = Vec::new();
+    for row in 1..=100 {
+        number(&mut engine, "Sheet1", row, 1, row as f64);
+        first.push(ingest_record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    let mut second = Vec::new();
+    for row in 201..=300 {
+        number(&mut engine, "Sheet1", row, 1, row as f64);
+        second.push(ingest_record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    engine
+        .ingest_formula_batches(vec![
+            FormulaIngestBatch::new("Sheet1", first),
+            FormulaIngestBatch::new("Sheet1", second),
+        ])
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+
+    assert_eq!(canonical_at(&engine, 50, 2), "=A50 + 1");
+    assert_eq!(canonical_at(&engine, 250, 2), "=A250 + 1");
 }
 
 #[test]

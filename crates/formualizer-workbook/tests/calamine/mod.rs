@@ -30,3 +30,5 @@ mod named_ranges;
 mod offsets;
 #[cfg(feature = "calamine")]
 mod row_visibility;
+#[cfg(feature = "calamine")]
+mod shared_formulas;

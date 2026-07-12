@@ -191,6 +191,7 @@ fn run(cli: Cli) -> Result<ProbeReport> {
         max_sheet_logical_cells: cli.logical_cell_budget,
         sparse_sheet_cell_threshold: cli.sparse_sheet_threshold,
         max_sparse_cell_ratio: cli.max_sparse_ratio,
+        ..WorkbookLoadLimits::default()
     };
 
     let load_start = Instant::now();

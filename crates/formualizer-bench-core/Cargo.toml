@@ -12,7 +12,7 @@ publish = false
 [features]
 default = []
 xlsx = ["dep:formualizer-testkit", "dep:umya-spreadsheet"]
-formualizer_runner = ["xlsx", "dep:formualizer-workbook"]
+formualizer_runner = ["xlsx", "dep:formualizer-workbook", "formualizer-workbook/benchmark_internal"]
 dhat-heap = ["dep:dhat"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]

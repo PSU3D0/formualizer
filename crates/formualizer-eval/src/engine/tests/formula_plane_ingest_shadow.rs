@@ -1,12 +1,70 @@
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use super::common::abs_cell_ref;
 use crate::engine::{
-    Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
-    RowVisibilitySource,
+    DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
+    ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
+    PlacementDomainTransport, RowVisibilitySource, SourceCoord, SourceFamilyId,
+    SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
+use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
+
+struct TestDeferredReplay {
+    text: &'static str,
+    fail_once: bool,
+    panic_at: bool,
+}
+
+impl DeferredFormulaReplay for TestDeferredReplay {
+    fn replay(
+        &mut self,
+        _skip_families: &BTreeSet<SourceFamilyId>,
+        _suppressed: &BTreeSet<(u32, u32)>,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        if self.fail_once {
+            self.fail_once = false;
+            return Err("injected replay failure".to_string());
+        }
+        Ok(vec![DeferredReplayFormula {
+            row: 1,
+            col: 1,
+            text: self.text.to_string(),
+            family: None,
+        }])
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        assert!(!self.panic_at, "injected formula_at panic");
+        Ok(Some(DeferredReplayFormula {
+            row,
+            col,
+            text: self.text.to_string(),
+            family: None,
+        }))
+    }
+}
+
+fn deferred_package(text: &'static str, fail_once: bool, panic_at: bool) -> DeferredFormulaPackage {
+    let report = FormulaCompressedSourceReport {
+        source_formula_records_spooled: 1,
+        ..FormulaCompressedSourceReport::default()
+    };
+    DeferredFormulaPackage::new(
+        "Sheet1".to_string(),
+        report,
+        Vec::new(),
+        Box::new(TestDeferredReplay {
+            text,
+            fail_once,
+            panic_at,
+        }),
+    )
+}
 
 fn record(
     engine: &mut Engine<TestWorkbook>,
@@ -129,6 +187,71 @@ fn formula_plane_authoritative_ingest_skips_accepted_span_graph_materialization(
             .expect("evaluate_cell routes through FormulaPlane coordinator"),
         Some(LiteralValue::Number(2.0))
     );
+}
+
+#[test]
+fn formula_text_resolves_authoritative_source_family_placements() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine.add_sheet("Inspect").unwrap();
+
+    let family = SourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("A1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+    let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
+    assert_eq!(preparation.direct_family_count(), 1);
+    engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport::default(),
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    let source_sheet = engine.graph.sheet_id("Sheet1").unwrap();
+    for (inspect_row, source_row, expected) in [
+        (1, 1, "=A1 + 1"),
+        (2, 50, "=A50 + 1"),
+        (3, 100, "=A100 + 1"),
+    ] {
+        let source = abs_cell_ref(source_sheet, source_row, 2);
+        assert_eq!(
+            engine.formula_text_at_cell(source).unwrap().as_deref(),
+            Some(expected)
+        );
+        engine
+            .set_cell_formula(
+                "Inspect",
+                inspect_row,
+                1,
+                parse(format!("=FORMULATEXT(Sheet1!B{source_row})")).unwrap(),
+            )
+            .unwrap();
+    }
+
+    engine.evaluate_all().unwrap();
+    for (row, expected) in [(1, "=A1 + 1"), (2, "=A50 + 1"), (3, "=A100 + 1")] {
+        assert_eq!(
+            engine.get_cell_value("Inspect", row, 1),
+            Some(LiteralValue::Text(expected.into()))
+        );
+    }
 }
 
 #[test]
@@ -823,4 +946,302 @@ fn formula_plane_remove_sheet_hosting_span_removes_active_span() {
     engine.remove_sheet(other_id).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     assert!(engine.graph.sheet_id("Other").is_none());
+}
+
+#[test]
+fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explicit_authority() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let id = |source_index| SourceFamilyId {
+        sheet_instance: 1,
+        source_index,
+    };
+    let complete = vec![
+        SourceFormulaFamily {
+            source_id: id(1),
+            anchor_coord0: SourceCoord { row: 0, col: 0 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 2,
+                col: 0,
+            }),
+            member_count: 3,
+        },
+        SourceFormulaFamily {
+            source_id: id(2),
+            anchor_coord0: SourceCoord { row: 0, col: 2 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::ColRun {
+                row: 0,
+                col_start: 2,
+                col_end: 4,
+            }),
+            member_count: 3,
+        },
+        SourceFormulaFamily {
+            source_id: id(3),
+            anchor_coord0: SourceCoord { row: 4, col: 4 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::Rect(
+                SourceRect {
+                    start: SourceCoord { row: 4, col: 4 },
+                    end: SourceCoord { row: 5, col: 5 },
+                },
+            )),
+            member_count: 4,
+        },
+        SourceFormulaFamily {
+            source_id: id(4),
+            anchor_coord0: SourceCoord { row: 8, col: 8 },
+            anchor_text: Arc::from("1+1"),
+            members: SourceFamilyMembers::ExplicitMembers(
+                ExplicitSourceFamilyMembers::try_new(vec![
+                    SourceCoord { row: 8, col: 8 },
+                    SourceCoord { row: 9, col: 8 },
+                ])
+                .unwrap(),
+            ),
+            member_count: 2,
+        },
+    ];
+
+    let preparation = engine.prepare_source_formula_families("Sheet1", &complete);
+    assert_eq!(preparation.direct_family_count(), 3);
+    assert_eq!(preparation.direct_cell_count(), 10);
+    assert_eq!(
+        preparation.rejected.get(&id(4)).map(String::as_str),
+        Some("ExplicitMembersRequireExactRecords")
+    );
+
+    let mut limits = engine.workbook_load_limits().clone();
+    limits.max_sheet_rows = 2;
+    limits.max_sheet_logical_cells = 2;
+    engine.set_workbook_load_limits(limits);
+    let limited = engine.prepare_source_formula_families("Sheet1", &complete[..1]);
+    assert_eq!(
+        limited.rejected.get(&id(1)).map(String::as_str),
+        Some("CompleteDomainOutOfBounds")
+    );
+
+    engine.force_source_family_fallback_for_test(true);
+    let forced = engine.prepare_source_formula_families("Sheet1", &complete[..1]);
+    assert_eq!(forced.direct_family_count(), 0);
+    assert_eq!(
+        forced.rejected.get(&id(1)).map(String::as_str),
+        Some("ForcedReplay")
+    );
+}
+
+#[test]
+fn selected_multi_sheet_build_preserves_caller_order_and_shared_parse_cache() {
+    fn engine() -> Engine<TestWorkbook> {
+        let cfg = EvalConfig {
+            defer_graph_building: true,
+            formula_parse_policy: FormulaParsePolicy::KeepCachedValue,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(TestWorkbook::default(), cfg);
+        for sheet in ["Sheet1", "Other"] {
+            engine.stage_formula_text(sheet, 1, 1, "=1+".to_string());
+            engine.stage_formula_text(sheet, 2, 1, "=1+1".to_string());
+        }
+        engine
+    }
+
+    let mut all = engine();
+    all.build_graph_all().unwrap();
+    assert_eq!(all.formula_parse_diagnostics().len(), 2);
+    assert_eq!(
+        all.formula_parse_diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.sheet.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["Other", "Sheet1"])
+    );
+
+    for (order, diagnostic_sheet) in [
+        (["Sheet1", "Other"], "Sheet1"),
+        (["Other", "Sheet1"], "Other"),
+    ] {
+        let mut selected = engine();
+        selected.build_graph_for_sheets(order).unwrap();
+        assert_eq!(selected.formula_parse_diagnostics().len(), 1);
+        assert_eq!(
+            selected.formula_parse_diagnostics()[0].sheet,
+            diagnostic_sheet
+        );
+        assert_eq!(
+            selected.formula_ingest_report_total(),
+            all.formula_ingest_report_total()
+        );
+        assert_eq!(selected.staged_formula_count(), 0);
+    }
+}
+
+#[test]
+fn deferred_replay_failure_restores_package_and_retry_publishes_once() {
+    let cfg = EvalConfig {
+        defer_graph_building: true,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_package("1+1", true, false));
+    let before = engine.formula_ingest_report_total().clone();
+
+    let error = engine.build_graph_all().unwrap_err();
+    assert!(error.to_string().contains("injected replay failure"));
+    assert_eq!(engine.staged_formula_count(), 1);
+    assert_eq!(engine.formula_ingest_report_total(), &before);
+    assert!(engine.last_formula_ingest_report().is_none());
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+
+    engine.build_graph_all().unwrap();
+    assert_eq!(engine.staged_formula_count(), 0);
+    assert_eq!(
+        engine
+            .last_formula_ingest_report()
+            .unwrap()
+            .source_spool_replays,
+        1
+    );
+    assert_eq!(engine.formula_ingest_report_total().source_spool_replays, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+}
+
+#[test]
+fn deferred_strict_parse_failure_restores_package_without_diagnostics_or_telemetry() {
+    let cfg = EvalConfig {
+        defer_graph_building: true,
+        formula_parse_policy: FormulaParsePolicy::Strict,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_package("1+", false, false));
+    let before = engine.formula_ingest_report_total().clone();
+
+    assert!(engine.build_graph_all().is_err());
+    assert_eq!(engine.staged_formula_count(), 1);
+    assert!(engine.formula_parse_diagnostics().is_empty());
+    assert_eq!(engine.formula_ingest_report_total(), &before);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+
+    engine.config.formula_parse_policy = FormulaParsePolicy::AsText;
+    engine.build_graph_all().unwrap();
+    assert_eq!(engine.staged_formula_count(), 0);
+    assert_eq!(engine.formula_parse_diagnostics().len(), 1);
+    assert_eq!(engine.formula_ingest_report_total().source_spool_replays, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+}
+
+#[test]
+fn deferred_poisoned_lock_failure_restores_package_without_publication() {
+    let cfg = EvalConfig {
+        defer_graph_building: true,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_package("1+1", false, true));
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        engine.stage_formula_text("Sheet1", 1, 1, "=2+2".to_string());
+    }));
+    assert!(panic.is_err());
+    let before = engine.formula_ingest_report_total().clone();
+
+    for _ in 0..2 {
+        let error = engine.build_graph_all().unwrap_err();
+        assert!(error.to_string().contains("lock poisoned"));
+        assert_eq!(engine.staged_formula_count(), 1);
+        assert_eq!(engine.formula_ingest_report_total(), &before);
+        assert!(engine.last_formula_ingest_report().is_none());
+        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    }
+}
+
+#[test]
+fn source_family_preparation_rejects_cross_engine_finalization_before_authority() {
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut origin = Engine::new(TestWorkbook::default(), cfg.clone());
+    let mut other = Engine::new(TestWorkbook::default(), cfg);
+    let family = SourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 0 },
+        anchor_text: Arc::from("1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 2,
+            col: 0,
+        }),
+        member_count: 3,
+    };
+    let preparation = origin.prepare_source_formula_families("Sheet1", &[family]);
+    assert_eq!(preparation.direct_family_count(), 1);
+    let before = other.formula_ingest_report_total().clone();
+
+    let error = other
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport::default(),
+            preparation,
+        )])
+        .unwrap_err();
+
+    assert!(error.to_string().contains("belongs to another engine"));
+    assert_eq!(other.formula_ingest_report_total(), &before);
+    assert!(other.last_formula_ingest_report().is_none());
+    assert_eq!(other.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(other.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
+fn compressed_shadow_counts_only_preparation_work_that_occurs() {
+    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let family = SourceFormulaFamily {
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 1, col: 0 },
+        anchor_text: Arc::from("1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 2,
+            col: 0,
+        }),
+        member_count: 3,
+    };
+    let batch = FormulaIngestBatch::new("Sheet1", Vec::new());
+    let compressed = FormulaCompressedSourceBatch::with_families(
+        "Sheet1",
+        FormulaCompressedSourceReport::default(),
+        vec![family],
+    );
+
+    let report = engine
+        .ingest_compressed_formula_source_batches(vec![(batch, compressed)])
+        .unwrap();
+
+    assert_eq!(report.source_anchor_parses, 0);
+    assert_eq!(report.source_anchor_asts, 0);
+    assert_eq!(report.source_anchor_analyses, 0);
+    assert_eq!(report.source_descendant_strings_avoided, 0);
+    assert_eq!(report.source_descendant_events_avoided, 0);
+    assert_eq!(report.source_descendant_analyses_avoided, 0);
+    assert_eq!(
+        report.fallback_reasons.get("CompleteDomainMemberMismatch"),
+        Some(&1)
+    );
 }

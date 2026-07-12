@@ -774,6 +774,7 @@ impl DependencyGraph {
         self.first_load_assume_new = enabled;
     }
 
+    #[doc(hidden)]
     pub fn first_load_assume_new(&self) -> bool {
         self.first_load_assume_new
     }

@@ -566,7 +566,7 @@ mod tests {
     use crate::formula_plane::ids::FormulaTemplateId;
     use crate::formula_plane::producer::{DirtyProjectionRule, SpanReadDependency};
     use crate::formula_plane::runtime::{
-        FormulaSpan, FormulaSpanId, PlacementDomain, ResultRegion, SpanState,
+        FormulaSpan, FormulaSpanId, PlacementDomain, ResultRegion, SpanAstRelocation, SpanState,
     };
 
     fn span(domain: PlacementDomain) -> FormulaSpan {
@@ -575,6 +575,11 @@ mod tests {
             generation: 0,
             sheet_id: domain.sheet_id(),
             template_id: FormulaTemplateId(0),
+            ast_relocation: SpanAstRelocation {
+                ast_id: crate::engine::arena::AstNodeId::from_u32(0),
+                anchor_row: 1,
+                anchor_col: 1,
+            },
             result_region: ResultRegion::scalar_cells(domain.clone()),
             domain,
             intrinsic_mask_id: None,
