@@ -1120,8 +1120,17 @@ fn compute_read_projections(
                     || contract.environment
                         != crate::function_contract::FunctionEnvironmentSemantics::None
                     || contract.context != crate::function_contract::FunctionContextDependence::None
-                    || contract.result.may_return_reference()
-                    || contract.result.may_spill()
+                    || (contract.result.may_return_reference()
+                        && function.semantic_flags
+                            & crate::function::FnCaps::SHORT_CIRCUIT.bits()
+                            != 0)
+                    || (contract.result.may_spill()
+                        && ((function.semantic_flags
+                            & (crate::function::FnCaps::SHORT_CIRCUIT
+                                | crate::function::FnCaps::LOOKUP)
+                                .bits()
+                            == 0)
+                            || contract.result.may_return_reference()))
                     || function.semantic_flags & crate::function::FnCaps::VOLATILE.bits() != 0
                 {
                     return Err(ProjectionFallbackReason::UnsupportedDependencySummary);

@@ -2635,16 +2635,12 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_dependency_summary_rejects_reference_capable_index() {
+    fn formula_plane_dependency_summary_accepts_index_with_static_range() {
         let summary = summary("=INDEX(A1:A3,1)", 1, 1);
 
-        assert_eq!(summary.formula_class, FormulaClass::Rejected);
-        assert!(has_reason(
-            &summary,
-            &DependencyRejectReason::ReferenceReturningUnsupported {
-                function: Some("INDEX".to_string())
-            }
-        ));
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.precedent_patterns.len(), 1);
     }
 
     #[test]
@@ -2657,11 +2653,11 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_dependency_summary_rejects_may_spill_short_circuit_function() {
+    fn formula_plane_dependency_summary_accepts_nested_pure_scalar_functions() {
         let summary = summary("=IF(ISNUMBER(A1), A1*2, 0)", 1, 2);
 
-        assert_eq!(summary.formula_class, FormulaClass::Rejected);
-        assert!(has_reason(&summary, &DependencyRejectReason::SpillUnsupported));
+        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
+        assert!(summary.reject_reasons.is_empty());
         assert_eq!(summary.precedent_patterns.len(), 1);
     }
 

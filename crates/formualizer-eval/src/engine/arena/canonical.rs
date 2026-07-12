@@ -398,10 +398,14 @@ fn classify_and_mix_function(
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
         labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
     }
-    if caps.contains(FnCaps::RETURNS_REFERENCE) {
+    let returns_reference = caps.contains(FnCaps::RETURNS_REFERENCE);
+    let short_circuit = caps.contains(FnCaps::SHORT_CIRCUIT);
+    let may_spill = caps.contains(FnCaps::MAY_SPILL);
+    let scalar_lookup = caps.contains(FnCaps::LOOKUP);
+    if returns_reference && short_circuit {
         labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
     }
-    if caps.contains(FnCaps::MAY_SPILL) {
+    if may_spill && ((!short_circuit && !scalar_lookup) || returns_reference) {
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
         labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
     }
@@ -424,10 +428,10 @@ fn classify_and_mix_function(
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
         labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
     }
-    if contract.result.may_return_reference() {
+    if contract.result.may_return_reference() && short_circuit {
         labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
     }
-    if contract.result.may_spill() {
+    if contract.result.may_spill() && (!short_circuit || returns_reference) {
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
         labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
     }

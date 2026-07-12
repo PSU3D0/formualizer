@@ -179,6 +179,7 @@ pub(crate) struct CanonicalFunctionId {
     pub(crate) semantic_generation: u64,
     pub(crate) semantic_flags: u32,
     pub(crate) contract: Option<FunctionSemanticContract>,
+    pub(crate) argument_by_ref: Vec<bool>,
 }
 
 /// Reference context is kept in the tree because by-ref/value semantics are
@@ -799,10 +800,14 @@ impl Canonicalizer {
         if id.semantic_flags & FnCaps::LOCAL_ENVIRONMENT.bits() != 0 {
             self.labels.reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
         }
-        if id.semantic_flags & FnCaps::RETURNS_REFERENCE.bits() != 0 {
+        let returns_reference = id.semantic_flags & FnCaps::RETURNS_REFERENCE.bits() != 0;
+        let short_circuit = id.semantic_flags & FnCaps::SHORT_CIRCUIT.bits() != 0;
+        let may_spill = id.semantic_flags & FnCaps::MAY_SPILL.bits() != 0;
+        let scalar_lookup = id.semantic_flags & FnCaps::LOOKUP.bits() != 0;
+        if returns_reference && short_circuit {
             self.labels.reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
         }
-        if id.semantic_flags & FnCaps::MAY_SPILL.bits() != 0 {
+        if may_spill && ((!short_circuit && !scalar_lookup) || returns_reference) {
             self.labels.reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
         }
         let Some(contract) = id.contract else {
@@ -821,10 +826,10 @@ impl Canonicalizer {
         if contract.environment != FunctionEnvironmentSemantics::None {
             self.labels.reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
         }
-        if contract.result.may_return_reference() {
+        if contract.result.may_return_reference() && short_circuit {
             self.labels.reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
         }
-        if contract.result.may_spill() {
+        if contract.result.may_spill() && (!short_circuit || returns_reference) {
             self.labels.reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
         }
         if contract.context != FunctionContextDependence::None {
@@ -919,6 +924,15 @@ pub(crate) fn resolve_canonical_function(name: &str, arity: usize) -> CanonicalF
             semantic_generation: resolved.semantics.generation,
             semantic_flags: resolved.function.caps().bits(),
             contract: resolved.semantics.contract,
+            argument_by_ref: std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                resolved
+                    .function
+                    .arg_schema()
+                    .iter()
+                    .map(|argument| argument.by_ref)
+                    .collect()
+            }))
+            .unwrap_or_default(),
         },
         None => CanonicalFunctionId {
             namespace: String::new(),
@@ -926,6 +940,7 @@ pub(crate) fn resolve_canonical_function(name: &str, arity: usize) -> CanonicalF
             semantic_generation: 0,
             semantic_flags: 0,
             contract: None,
+            argument_by_ref: Vec::new(),
         },
     }
 }
@@ -934,6 +949,14 @@ pub(crate) fn function_argument_slot_context(
     function: &CanonicalFunctionId,
     arg_index: usize,
 ) -> SlotContext {
+    if function.argument_by_ref.get(arg_index).copied().unwrap_or(false)
+        || function.semantic_flags & FnCaps::DYNAMIC_DEPENDENCY.bits() != 0
+        || function
+            .contract
+            .is_some_and(|contract| contract.context == FunctionContextDependence::PlacementDependent)
+    {
+        return SlotContext::ByRefArg;
+    }
     let Some(precision) = function.contract.and_then(|contract| contract.precision) else {
         return SlotContext::Value;
     };
@@ -1462,6 +1485,8 @@ fn write_function_id_key(id: &CanonicalFunctionId, out: &mut String) {
     out.push_str(&id.semantic_flags.to_string());
     out.push('/');
     out.push_str(&format!("{:?}", id.contract));
+    out.push('/');
+    out.push_str(&format!("{:?}", id.argument_by_ref));
 }
 
 fn write_string_key(value: &str, out: &mut String) {
