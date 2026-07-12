@@ -4360,6 +4360,27 @@ where
             source_report.source_clean_cells = source_report
                 .source_clean_cells
                 .saturating_add(compressed.source_clean_cells);
+            source_report.source_fragmentable_families = source_report
+                .source_fragmentable_families
+                .saturating_add(compressed.source_fragmentable_families);
+            source_report.source_fragmentable_cells = source_report
+                .source_fragmentable_cells
+                .saturating_add(compressed.source_fragmentable_cells);
+            source_report.source_fragment_count = source_report
+                .source_fragment_count
+                .saturating_add(compressed.source_fragment_count);
+            source_report.source_isolated_fallback_cells = source_report
+                .source_isolated_fallback_cells
+                .saturating_add(compressed.source_isolated_fallback_cells);
+            source_report.source_hole_exclusions = source_report
+                .source_hole_exclusions
+                .saturating_add(compressed.source_hole_exclusions);
+            source_report.source_ordinary_exclusions = source_report
+                .source_ordinary_exclusions
+                .saturating_add(compressed.source_ordinary_exclusions);
+            source_report.source_partition_failures = source_report
+                .source_partition_failures
+                .saturating_add(compressed.source_partition_failures);
             source_report.replay_families = source_report
                 .replay_families
                 .saturating_add(compressed.replay_families);

@@ -10,6 +10,36 @@ use formualizer_eval::engine::{
 const DEFAULT_EVIDENCE_LIMIT: u64 = 8 * 1024 * 1024;
 const FAMILY_BYTES: u64 = 256;
 const RUN_BYTES: u64 = size_of::<SourceRect>() as u64;
+const EXCLUSION_BYTES: u64 = size_of::<SourceExclusion>() as u64;
+const FRAGMENT_BYTES: u64 = size_of::<PlacementDomainTransport>() as u64;
+pub(super) const DEFAULT_MAX_FAMILY_EXCLUSIONS: usize = 64;
+pub(super) const DEFAULT_MAX_FAMILY_FRAGMENTS: usize = 128;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SourceExclusion {
+    Hole(SourceCoord),
+    OrdinaryFormula(SourceCoord),
+}
+
+impl SourceExclusion {
+    fn coord(self) -> SourceCoord {
+        match self {
+            Self::Hole(coord) | Self::OrdinaryFormula(coord) => coord,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct FragmentedFamilyProposal {
+    pub(super) source_id: SourceFamilyId,
+    pub(super) anchor_coord0: SourceCoord,
+    pub(super) anchor_text: Arc<str>,
+    pub(super) declared: SourceRect,
+    pub(super) fragments: Vec<PlacementDomainTransport>,
+    pub(super) fallback_members: Vec<SourceCoord>,
+    pub(super) exclusions: Vec<SourceExclusion>,
+    pub(super) member_count: u64,
+}
 
 #[derive(Clone, Copy)]
 pub(super) enum EvidenceRecord<'a> {
@@ -33,6 +63,7 @@ struct FamilyEvidence {
     anchor_text: Option<Arc<str>>,
     range: Option<SourceRect>,
     next: Option<SourceCoord>,
+    exclusions: Vec<SourceExclusion>,
     anomaly: Option<&'static str>,
 }
 
@@ -44,6 +75,8 @@ pub(super) struct MonotonicFormulaEvidence {
     evidence_bytes: u64,
     evidence_peak_bytes: u64,
     limit: u64,
+    max_exclusions: usize,
+    max_fragments: usize,
     counters: [u64; 5],
 }
 
@@ -61,8 +94,18 @@ impl MonotonicFormulaEvidence {
             evidence_bytes: 0,
             evidence_peak_bytes: 0,
             limit,
+            max_exclusions: DEFAULT_MAX_FAMILY_EXCLUSIONS,
+            max_fragments: DEFAULT_MAX_FAMILY_FRAGMENTS,
             counters: [0; 5],
         }
+    }
+
+    #[cfg(test)]
+    fn with_partition_limits(limit: u64, max_exclusions: usize, max_fragments: usize) -> Self {
+        let mut evidence = Self::with_limit(limit);
+        evidence.max_exclusions = max_exclusions;
+        evidence.max_fragments = max_fragments;
+        evidence
     }
 
     pub(super) fn observe(&mut self, coord: SourceCoord, record: EvidenceRecord<'_>) {
@@ -86,22 +129,14 @@ impl MonotonicFormulaEvidence {
             });
         }
         self.last_coord = Some(coord);
-        if self.halted.is_none() {
-            self.active_families.retain(|family| {
-                self.families
-                    .get(family)
-                    .and_then(|evidence| evidence.range)
-                    .is_some_and(|range| range.end >= coord)
-            });
-        }
 
-        let family_id = match record {
+        let owner = match record {
             EvidenceRecord::Anchor { family, .. } | EvidenceRecord::Descendant { family } => {
                 Some(family)
             }
             _ => None,
         };
-        if let Some(family) = family_id {
+        if let Some(family) = owner {
             if !self.ensure_family(family) {
                 return;
             }
@@ -115,15 +150,19 @@ impl MonotonicFormulaEvidence {
             return;
         }
 
+        self.advance_active_families(coord, record, owner);
+        if self.halted.is_some() {
+            return;
+        }
+
         match record {
-            EvidenceRecord::Ordinary => self.mark_conflicts(coord, None, "OrdinaryConflict"),
-            EvidenceRecord::Unsupported => self.mark_conflicts(coord, None, "UnsupportedConflict"),
+            EvidenceRecord::Ordinary | EvidenceRecord::Unsupported => {}
             EvidenceRecord::Anchor {
                 family,
                 range,
                 text,
             } => {
-                self.mark_conflicts(coord, Some(family), "OtherFamilyConflict");
+                self.mark_range_conflicts(family, range);
                 {
                     let evidence = self.families.get_mut(&family).unwrap();
                     evidence.anchors = evidence.anchors.saturating_add(1);
@@ -168,18 +207,89 @@ impl MonotonicFormulaEvidence {
                     self.halt("ForwardAnchor");
                     return;
                 }
-                let Some(range) = evidence.range else {
-                    return;
-                };
-                if !contains(range, coord) {
+                if !evidence.range.is_some_and(|range| contains(range, coord)) {
                     evidence.anomaly.get_or_insert("OutOfRange");
-                } else if evidence.next != Some(coord) {
-                    evidence.anomaly.get_or_insert("HoleOrOrderingAmbiguity");
-                } else {
-                    evidence.next = next_coord(coord, range);
                 }
-                self.mark_conflicts(coord, Some(family), "OtherFamilyConflict");
             }
+        }
+    }
+
+    fn advance_active_families(
+        &mut self,
+        coord: SourceCoord,
+        record: EvidenceRecord<'_>,
+        owner: Option<SourceFamilyId>,
+    ) {
+        let active = self.active_families.clone();
+        let remaining_bytes = self.limit.saturating_sub(self.evidence_bytes);
+        let byte_capacity =
+            usize::try_from(remaining_bytes / EXCLUSION_BYTES).unwrap_or(usize::MAX);
+        let max_exclusions = self.max_exclusions.min(byte_capacity);
+        let mut retained = Vec::with_capacity(active.len());
+        let mut added = 0usize;
+        for family in active {
+            let evidence = self
+                .families
+                .get_mut(&family)
+                .expect("active family exists");
+            let Some(range) = evidence.range else {
+                continue;
+            };
+            let disposition = if owner == Some(family) {
+                ActivePointDisposition::FamilyMember
+            } else {
+                match record {
+                    EvidenceRecord::Ordinary => ActivePointDisposition::Ordinary,
+                    EvidenceRecord::Unsupported => ActivePointDisposition::Unsupported,
+                    EvidenceRecord::Anchor { .. } | EvidenceRecord::Descendant { .. } => {
+                        ActivePointDisposition::OtherFamily
+                    }
+                }
+            };
+            added = added.saturating_add(advance_family_evidence(
+                evidence,
+                range,
+                coord,
+                disposition,
+                max_exclusions,
+            ));
+            if range.end >= coord {
+                retained.push(family);
+            }
+        }
+        self.active_families = retained;
+        let growth = (added as u64).saturating_mul(EXCLUSION_BYTES);
+        self.evidence_bytes = self.evidence_bytes.saturating_add(growth);
+        self.evidence_peak_bytes = self.evidence_peak_bytes.max(self.evidence_bytes);
+        if self.evidence_bytes > self.limit {
+            self.halt("EvidenceLimit");
+        }
+    }
+
+    fn mark_range_conflicts(&mut self, owner: SourceFamilyId, owner_range: Option<SourceRect>) {
+        let Some(owner_range) = owner_range else {
+            return;
+        };
+        let mut conflict = false;
+        for family in &self.active_families {
+            if *family == owner {
+                continue;
+            }
+            let evidence = self.families.get_mut(family).expect("active family exists");
+            if evidence
+                .range
+                .is_some_and(|range| rectangles_overlap(owner_range, range))
+            {
+                evidence.anomaly.get_or_insert("OtherFamilyConflict");
+                conflict = true;
+            }
+        }
+        if conflict {
+            self.families
+                .get_mut(&owner)
+                .expect("owner family exists")
+                .anomaly
+                .get_or_insert("OtherFamilyConflict");
         }
     }
 
@@ -214,42 +324,29 @@ impl MonotonicFormulaEvidence {
         }
     }
 
-    fn mark_conflicts(
-        &mut self,
-        coord: SourceCoord,
-        owner: Option<SourceFamilyId>,
-        reason: &'static str,
-    ) {
-        let mut owner_conflict = false;
-        let owner_range = owner.and_then(|owner| self.families.get(&owner)?.range);
-        for family in &self.active_families {
-            if Some(*family) == owner {
-                continue;
+    pub(super) fn finish(mut self) -> CompressedEvidenceOutput {
+        if self.halted.is_none() {
+            let family_ids: Vec<_> = self.families.keys().copied().collect();
+            for family_id in family_ids {
+                let remaining_bytes = self.limit.saturating_sub(self.evidence_bytes);
+                let byte_capacity =
+                    usize::try_from(remaining_bytes / EXCLUSION_BYTES).unwrap_or(usize::MAX);
+                let max_exclusions = self.max_exclusions.min(byte_capacity);
+                let evidence = self.families.get_mut(&family_id).expect("family exists");
+                let Some(range) = evidence.range else {
+                    continue;
+                };
+                let added = finish_family_evidence(evidence, range, max_exclusions);
+                self.evidence_bytes = self
+                    .evidence_bytes
+                    .saturating_add((added as u64).saturating_mul(EXCLUSION_BYTES));
+                self.evidence_peak_bytes = self.evidence_peak_bytes.max(self.evidence_bytes);
             }
-            let evidence = self.families.get_mut(family).expect("active family exists");
-            let point_conflict = evidence.range.is_some_and(|range| contains(range, coord));
-            let range_conflict = owner_range.is_some_and(|owner_range| {
-                evidence
-                    .range
-                    .is_some_and(|range| rectangles_overlap(owner_range, range))
-            });
-            if point_conflict || range_conflict {
-                evidence.anomaly.get_or_insert(reason);
-                owner_conflict = true;
+            if self.evidence_bytes > self.limit {
+                self.halt("EvidenceLimit");
             }
         }
-        if let Some(owner) = owner
-            && owner_conflict
-        {
-            self.families
-                .get_mut(&owner)
-                .expect("owner family exists")
-                .anomaly
-                .get_or_insert(reason);
-        }
-    }
 
-    pub(super) fn finish(self) -> CompressedEvidenceOutput {
         let mut report = FormulaCompressedSourceReport {
             source_formula_events: self.counters[0],
             source_ordinary_events: self.counters[1],
@@ -260,58 +357,120 @@ impl MonotonicFormulaEvidence {
             ..FormulaCompressedSourceReport::default()
         };
         let mut families = Vec::new();
+        let mut fragmented = Vec::new();
         let halted = self.halted;
+        let mut retained_bytes = self.evidence_bytes;
         for (source_id, family) in self.families {
             report.families_seen = report.families_seen.saturating_add(1);
             report.family_cells_seen = report.family_cells_seen.saturating_add(family.members);
-            let area = family.range.and_then(checked_area);
-            let complete = self.halted.is_none()
-                && family.anomaly.is_none()
-                && family.anchors == 1
-                && area == Some(family.members)
-                && family.next.is_none();
-            let reason = if let Some(reason) = self.halted {
-                Some(reason)
-            } else if let Some(reason) = family.anomaly {
-                Some(reason)
-            } else if family.anchors != 1 {
-                Some("MissingOrDuplicateAnchor")
-            } else if area != Some(family.members) || family.next.is_some() {
-                Some("Hole")
-            } else {
-                None
-            };
             report.replay_families = report.replay_families.saturating_add(1);
             report.replay_cells = report.replay_cells.saturating_add(family.members);
+
+            let area = family.range.and_then(checked_area);
+            let accounted = u64::try_from(family.exclusions.len())
+                .ok()
+                .and_then(|excluded| family.members.checked_add(excluded));
+            let structurally_valid = halted.is_none()
+                && family.anomaly.is_none()
+                && family.anchors == 1
+                && family.next.is_none()
+                && area == accounted;
+            let complete = structurally_valid && family.exclusions.is_empty();
+            let mut reason = halted.or(family.anomaly);
+            if reason.is_none() && family.anchors != 1 {
+                reason = Some("MissingOrDuplicateAnchor");
+            }
+            if reason.is_none() && (!structurally_valid || area != accounted) {
+                reason = Some("PartitionProofFailed");
+            }
+
             if complete {
                 report.source_clean_families = report.source_clean_families.saturating_add(1);
                 report.source_clean_cells =
                     report.source_clean_cells.saturating_add(family.members);
                 let rect = family.range.expect("clean family has range");
-                let domain = if rect.start.col == rect.end.col {
-                    PlacementDomainTransport::RowRun {
-                        row_start: rect.start.row,
-                        row_end: rect.end.row,
-                        col: rect.start.col,
-                    }
-                } else if rect.start.row == rect.end.row {
-                    PlacementDomainTransport::ColRun {
-                        row: rect.start.row,
-                        col_start: rect.start.col,
-                        col_end: rect.end.col,
-                    }
-                } else {
-                    PlacementDomainTransport::Rect(rect)
-                };
                 families.push(SourceFormulaFamily {
                     source_id,
                     anchor_coord0: family.anchor.expect("clean family has anchor"),
                     anchor_text: family.anchor_text.expect("clean family has anchor text"),
-                    members: SourceFamilyMembers::CompleteDomain(domain),
+                    members: SourceFamilyMembers::CompleteDomain(domain_for_rect(rect)),
                     member_count: family.members,
                 });
+            } else if structurally_valid {
+                let range = family.range.expect("fragmentable family has range");
+                match partition_declared_rect(
+                    range,
+                    &family.exclusions,
+                    family.members,
+                    self.max_fragments,
+                ) {
+                    Ok((fragments, fallback_members)) => {
+                        let partition_bytes = (fragments.len() as u64)
+                            .saturating_mul(FRAGMENT_BYTES)
+                            .saturating_add(
+                                (fallback_members.len() as u64)
+                                    .saturating_mul(size_of::<SourceCoord>() as u64),
+                            );
+                        if retained_bytes.saturating_add(partition_bytes) > self.limit {
+                            reason = Some("EvidenceLimit");
+                        } else {
+                            retained_bytes = retained_bytes.saturating_add(partition_bytes);
+                            report.evidence_peak_bytes =
+                                report.evidence_peak_bytes.max(retained_bytes);
+                            report.source_fragmentable_families =
+                                report.source_fragmentable_families.saturating_add(1);
+                            report.source_fragmentable_cells = report
+                                .source_fragmentable_cells
+                                .saturating_add(family.members);
+                            report.source_fragment_count = report
+                                .source_fragment_count
+                                .saturating_add(fragments.len() as u64);
+                            report.source_isolated_fallback_cells = report
+                                .source_isolated_fallback_cells
+                                .saturating_add(fallback_members.len() as u64);
+                            for exclusion in &family.exclusions {
+                                match exclusion {
+                                    SourceExclusion::Hole(_) => {
+                                        report.source_hole_exclusions =
+                                            report.source_hole_exclusions.saturating_add(1)
+                                    }
+                                    SourceExclusion::OrdinaryFormula(_) => {
+                                        report.source_ordinary_exclusions =
+                                            report.source_ordinary_exclusions.saturating_add(1)
+                                    }
+                                }
+                            }
+                            fragmented.push(FragmentedFamilyProposal {
+                                source_id,
+                                anchor_coord0: family
+                                    .anchor
+                                    .expect("fragmentable family has anchor"),
+                                anchor_text: family
+                                    .anchor_text
+                                    .expect("fragmentable family has anchor text"),
+                                declared: range,
+                                fragments,
+                                fallback_members,
+                                exclusions: family.exclusions,
+                                member_count: family.members,
+                            });
+                        }
+                    }
+                    Err(partition_reason) => reason = Some(partition_reason),
+                }
             }
+
             if let Some(reason) = reason {
+                if matches!(
+                    reason,
+                    "ExclusionCapExceeded"
+                        | "FragmentCapExceeded"
+                        | "PartitionAreaOverflow"
+                        | "PartitionProofFailed"
+                ) {
+                    report.source_partition_failures =
+                        report.source_partition_failures.saturating_add(1);
+                }
                 *report
                     .fallback_reasons
                     .entry(reason.to_string())
@@ -330,10 +489,6 @@ impl MonotonicFormulaEvidence {
                 .source_shared_anchor_events
                 .saturating_add(report.source_shared_descendant_events);
             if report.replay_families == 0 && report.replay_cells != 0 {
-                // Once evidence halts, unseen family ids are deliberately not
-                // retained. One bounded reconciliation bucket records that the
-                // complete sheet spool, rather than any inferred family set,
-                // must be replayed.
                 report.replay_families = 1;
                 *report
                     .fallback_reasons
@@ -344,13 +499,280 @@ impl MonotonicFormulaEvidence {
                 }
             }
         }
-        CompressedEvidenceOutput { report, families }
+        CompressedEvidenceOutput {
+            report,
+            families,
+            fragmented,
+        }
     }
 }
 
 pub(super) struct CompressedEvidenceOutput {
     pub(super) report: FormulaCompressedSourceReport,
     pub(super) families: Vec<SourceFormulaFamily>,
+    pub(super) fragmented: Vec<FragmentedFamilyProposal>,
+}
+
+#[derive(Clone, Copy)]
+enum ActivePointDisposition {
+    FamilyMember,
+    Ordinary,
+    OtherFamily,
+    Unsupported,
+}
+
+fn advance_family_evidence(
+    evidence: &mut FamilyEvidence,
+    range: SourceRect,
+    coord: SourceCoord,
+    disposition: ActivePointDisposition,
+    max_exclusions: usize,
+) -> usize {
+    if evidence.anomaly.is_some() {
+        return 0;
+    }
+    let before = evidence.exclusions.len();
+    if let Some(expected) = evidence.next {
+        let stop = if coord > range.end { None } else { Some(coord) };
+        append_holes(evidence, range, expected, stop, max_exclusions);
+    }
+    if evidence.anomaly.is_some() || !contains(range, coord) {
+        return evidence.exclusions.len().saturating_sub(before);
+    }
+    match disposition {
+        ActivePointDisposition::FamilyMember => {
+            evidence.next = next_coord(coord, range);
+        }
+        ActivePointDisposition::Ordinary => {
+            push_exclusion(
+                evidence,
+                SourceExclusion::OrdinaryFormula(coord),
+                max_exclusions,
+            );
+            evidence.next = next_coord(coord, range);
+        }
+        ActivePointDisposition::OtherFamily => {
+            evidence.anomaly = Some("OtherFamilyConflict");
+        }
+        ActivePointDisposition::Unsupported => {
+            evidence.anomaly = Some("UnsupportedConflict");
+        }
+    }
+    evidence.exclusions.len().saturating_sub(before)
+}
+
+fn finish_family_evidence(
+    evidence: &mut FamilyEvidence,
+    range: SourceRect,
+    max_exclusions: usize,
+) -> usize {
+    if evidence.anomaly.is_some() {
+        return 0;
+    }
+    let before = evidence.exclusions.len();
+    if let Some(expected) = evidence.next {
+        append_holes(evidence, range, expected, None, max_exclusions);
+    }
+    evidence.exclusions.len().saturating_sub(before)
+}
+
+fn append_holes(
+    evidence: &mut FamilyEvidence,
+    range: SourceRect,
+    mut cursor: SourceCoord,
+    stop_exclusive: Option<SourceCoord>,
+    max_exclusions: usize,
+) {
+    let Some(area) = checked_area(range) else {
+        evidence.anomaly = Some("PartitionAreaOverflow");
+        return;
+    };
+    let Some(start_offset) = coord_offset(range, cursor) else {
+        evidence.anomaly = Some("PartitionProofFailed");
+        return;
+    };
+    let stop_offset = match stop_exclusive {
+        Some(stop) if contains(range, stop) => coord_offset(range, stop).unwrap_or(area),
+        Some(stop) if stop <= range.start => start_offset,
+        Some(_) | None => area,
+    };
+    let missing = stop_offset.saturating_sub(start_offset);
+    let remaining = max_exclusions.saturating_sub(evidence.exclusions.len()) as u64;
+    if missing > remaining {
+        evidence.anomaly = Some("ExclusionCapExceeded");
+        return;
+    }
+    for _ in 0..missing {
+        evidence.exclusions.push(SourceExclusion::Hole(cursor));
+        let Some(next) = next_coord(cursor, range) else {
+            evidence.next = None;
+            return;
+        };
+        cursor = next;
+    }
+    evidence.next = if stop_offset == area {
+        None
+    } else {
+        stop_exclusive
+    };
+}
+
+fn push_exclusion(
+    evidence: &mut FamilyEvidence,
+    exclusion: SourceExclusion,
+    max_exclusions: usize,
+) {
+    if evidence.exclusions.len() >= max_exclusions {
+        evidence.anomaly = Some("ExclusionCapExceeded");
+    } else {
+        evidence.exclusions.push(exclusion);
+    }
+}
+
+fn coord_offset(rect: SourceRect, coord: SourceCoord) -> Option<u64> {
+    if !contains(rect, coord) {
+        return None;
+    }
+    let width = u64::from(rect.end.col.checked_sub(rect.start.col)?.checked_add(1)?);
+    let row = u64::from(coord.row.checked_sub(rect.start.row)?);
+    let col = u64::from(coord.col.checked_sub(rect.start.col)?);
+    row.checked_mul(width)?.checked_add(col)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RowBand {
+    row_start: u32,
+    row_end: u32,
+    intervals: Vec<(u32, u32)>,
+}
+
+fn partition_declared_rect(
+    declared: SourceRect,
+    exclusions: &[SourceExclusion],
+    member_count: u64,
+    max_fragments: usize,
+) -> Result<(Vec<PlacementDomainTransport>, Vec<SourceCoord>), &'static str> {
+    let area = checked_area(declared).ok_or("PartitionAreaOverflow")?;
+    let excluded_count = u64::try_from(exclusions.len()).map_err(|_| "PartitionAreaOverflow")?;
+    if member_count.checked_add(excluded_count) != Some(area) {
+        return Err("PartitionProofFailed");
+    }
+    if exclusions
+        .windows(2)
+        .any(|window| window[0].coord() >= window[1].coord())
+        || exclusions
+            .iter()
+            .any(|point| !contains(declared, point.coord()))
+    {
+        return Err("PartitionProofFailed");
+    }
+
+    let mut excluded_by_row: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for exclusion in exclusions {
+        excluded_by_row
+            .entry(exclusion.coord().row)
+            .or_default()
+            .push(exclusion.coord().col);
+    }
+
+    let full = vec![(declared.start.col, declared.end.col)];
+    let mut bands = Vec::<RowBand>::new();
+    let mut next_row = Some(declared.start.row);
+    for (row, columns) in excluded_by_row {
+        if let Some(start) = next_row
+            && start < row
+        {
+            push_band(&mut bands, start, row - 1, full.clone());
+        }
+        let mut intervals = Vec::new();
+        let mut next_col = declared.start.col;
+        for col in columns {
+            if next_col < col {
+                intervals.push((next_col, col - 1));
+            }
+            next_col = col.checked_add(1).ok_or("PartitionAreaOverflow")?;
+        }
+        if next_col <= declared.end.col {
+            intervals.push((next_col, declared.end.col));
+        }
+        push_band(&mut bands, row, row, intervals);
+        next_row = row.checked_add(1);
+    }
+    if let Some(start) = next_row
+        && start <= declared.end.row
+    {
+        push_band(&mut bands, start, declared.end.row, full);
+    }
+
+    let mut fragments = Vec::new();
+    let mut fallback = Vec::new();
+    let mut surviving = 0u64;
+    for band in bands {
+        for (col_start, col_end) in band.intervals {
+            let rect = SourceRect {
+                start: SourceCoord {
+                    row: band.row_start,
+                    col: col_start,
+                },
+                end: SourceCoord {
+                    row: band.row_end,
+                    col: col_end,
+                },
+            };
+            let cells = checked_area(rect).ok_or("PartitionAreaOverflow")?;
+            surviving = surviving
+                .checked_add(cells)
+                .ok_or("PartitionAreaOverflow")?;
+            if cells == 1 {
+                fallback.push(rect.start);
+            } else {
+                if fragments.len() >= max_fragments {
+                    return Err("FragmentCapExceeded");
+                }
+                fragments.push(domain_for_rect(rect));
+            }
+        }
+    }
+    if surviving != member_count {
+        return Err("PartitionProofFailed");
+    }
+    Ok((fragments, fallback))
+}
+
+fn push_band(bands: &mut Vec<RowBand>, row_start: u32, row_end: u32, intervals: Vec<(u32, u32)>) {
+    if intervals.is_empty() {
+        return;
+    }
+    if let Some(last) = bands.last_mut()
+        && last.row_end.checked_add(1) == Some(row_start)
+        && last.intervals == intervals
+    {
+        last.row_end = row_end;
+        return;
+    }
+    bands.push(RowBand {
+        row_start,
+        row_end,
+        intervals,
+    });
+}
+
+fn domain_for_rect(rect: SourceRect) -> PlacementDomainTransport {
+    if rect.start.col == rect.end.col {
+        PlacementDomainTransport::RowRun {
+            row_start: rect.start.row,
+            row_end: rect.end.row,
+            col: rect.start.col,
+        }
+    } else if rect.start.row == rect.end.row {
+        PlacementDomainTransport::ColRun {
+            row: rect.start.row,
+            col_start: rect.start.col,
+            col_end: rect.end.col,
+        }
+    } else {
+        PlacementDomainTransport::Rect(rect)
+    }
 }
 
 fn valid_rect(rect: SourceRect) -> bool {
@@ -468,7 +890,7 @@ mod tests {
             EvidenceRecord::Descendant { family: family(1) },
         );
         let report = evidence.finish().report;
-        assert_eq!(report.fallback_reasons["HoleOrOrderingAmbiguity"], 1);
+        assert_eq!(report.fallback_reasons["PartitionAreaOverflow"], 1);
     }
 
     #[test]
@@ -597,6 +1019,190 @@ mod tests {
         assert_eq!(report.replay_cells, 100_000);
         assert_eq!(report.source_clean_families, 0);
         assert_eq!(report.evidence_limit_fallbacks, 1);
+    }
+
+    #[test]
+    fn fragmented_evidence_retains_only_points_and_partitions_deterministically() {
+        let range = rect(0, 0, 4, 4);
+        let hole = coord(3, 1);
+        let ordinary = coord(1, 2);
+        let mut evidence = MonotonicFormulaEvidence::new();
+        for row in range.start.row..=range.end.row {
+            for col in range.start.col..=range.end.col {
+                let point = coord(row, col);
+                if point == hole {
+                    continue;
+                }
+                if point == range.start {
+                    evidence.observe(
+                        point,
+                        EvidenceRecord::Anchor {
+                            family: family(1),
+                            range: Some(range),
+                            text: "A1",
+                        },
+                    );
+                } else if point == ordinary {
+                    evidence.observe(point, EvidenceRecord::Ordinary);
+                } else {
+                    evidence.observe(point, EvidenceRecord::Descendant { family: family(1) });
+                }
+            }
+        }
+
+        let output = evidence.finish();
+        assert!(
+            output.families.is_empty(),
+            "fragmented families stay replay-only"
+        );
+        assert_eq!(output.fragmented.len(), 1);
+        let proposal = &output.fragmented[0];
+        assert_eq!(
+            proposal.exclusions,
+            vec![
+                SourceExclusion::OrdinaryFormula(ordinary),
+                SourceExclusion::Hole(hole),
+            ]
+        );
+        assert_eq!(proposal.member_count, 23);
+        assert!(proposal.fragments.len() <= DEFAULT_MAX_FAMILY_FRAGMENTS);
+        assert_partition_proof(proposal);
+    }
+
+    #[test]
+    fn exclusion_and_fragment_caps_fail_the_whole_family() {
+        let mut at_cap = MonotonicFormulaEvidence::with_partition_limits(
+            u64::MAX,
+            DEFAULT_MAX_FAMILY_EXCLUSIONS,
+            DEFAULT_MAX_FAMILY_FRAGMENTS,
+        );
+        let range = rect(0, 0, 65, 0);
+        at_cap.observe(
+            range.start,
+            EvidenceRecord::Anchor {
+                family: family(1),
+                range: Some(range),
+                text: "A1",
+            },
+        );
+        at_cap.observe(range.end, EvidenceRecord::Descendant { family: family(1) });
+        let output = at_cap.finish();
+        assert_eq!(output.fragmented.len(), 1);
+        assert_eq!(output.fragmented[0].exclusions.len(), 64);
+
+        let mut over_cap = MonotonicFormulaEvidence::with_partition_limits(
+            u64::MAX,
+            DEFAULT_MAX_FAMILY_EXCLUSIONS,
+            DEFAULT_MAX_FAMILY_FRAGMENTS,
+        );
+        let range = rect(0, 0, 66, 0);
+        over_cap.observe(
+            range.start,
+            EvidenceRecord::Anchor {
+                family: family(1),
+                range: Some(range),
+                text: "A1",
+            },
+        );
+        over_cap.observe(range.end, EvidenceRecord::Descendant { family: family(1) });
+        let output = over_cap.finish();
+        assert!(output.fragmented.is_empty());
+        assert_eq!(output.report.fallback_reasons["ExclusionCapExceeded"], 1);
+
+        let exclusions = [SourceExclusion::Hole(coord(0, 2))];
+        assert_eq!(
+            partition_declared_rect(rect(0, 0, 0, 4), &exclusions, 4, 1),
+            Err("FragmentCapExceeded")
+        );
+    }
+
+    #[test]
+    fn partition_union_and_disjointness_hold_without_declared_area_scans() {
+        for rows in 1..=12u32 {
+            for cols in 1..=9u32 {
+                let declared = rect(0, 0, rows - 1, cols - 1);
+                let area = u64::from(rows) * u64::from(cols);
+                let mut points = Vec::new();
+                for seed in 0..=8u32 {
+                    let point = coord(seed.wrapping_mul(7) % rows, seed.wrapping_mul(11) % cols);
+                    if point != declared.start && !points.contains(&point) {
+                        points.push(point);
+                    }
+                }
+                points.sort_unstable();
+                let exclusions: Vec<_> = points
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .map(|(index, point)| {
+                        if index % 2 == 0 {
+                            SourceExclusion::Hole(point)
+                        } else {
+                            SourceExclusion::OrdinaryFormula(point)
+                        }
+                    })
+                    .collect();
+                let member_count = area - exclusions.len() as u64;
+                let (domains, fallback) = partition_declared_rect(
+                    declared,
+                    &exclusions,
+                    member_count,
+                    DEFAULT_MAX_FAMILY_FRAGMENTS,
+                )
+                .expect("bounded partition");
+                let proposal = FragmentedFamilyProposal {
+                    source_id: family(1),
+                    anchor_coord0: declared.start,
+                    anchor_text: Arc::from("A1"),
+                    declared,
+                    fragments: domains,
+                    fallback_members: fallback,
+                    exclusions,
+                    member_count,
+                };
+                assert_partition_proof(&proposal);
+            }
+        }
+    }
+
+    fn assert_partition_proof(proposal: &FragmentedFamilyProposal) {
+        let domain_rects: Vec<_> = proposal
+            .fragments
+            .iter()
+            .map(|domain| domain.rect())
+            .collect();
+        for (index, left) in domain_rects.iter().enumerate() {
+            for right in domain_rects.iter().skip(index + 1) {
+                assert!(!rectangles_overlap(*left, *right));
+            }
+            for exclusion in &proposal.exclusions {
+                assert!(!contains(*left, exclusion.coord()));
+            }
+            for fallback in &proposal.fallback_members {
+                assert!(!contains(*left, *fallback));
+            }
+        }
+        for (index, left) in proposal.fallback_members.iter().enumerate() {
+            assert!(!proposal.fallback_members[index + 1..].contains(left));
+            assert!(
+                !proposal
+                    .exclusions
+                    .iter()
+                    .any(|point| point.coord() == *left)
+            );
+        }
+        let domain_cells = domain_rects
+            .iter()
+            .map(|rect| checked_area(*rect).expect("domain area"))
+            .sum::<u64>();
+        assert_eq!(
+            domain_cells + proposal.fallback_members.len() as u64,
+            proposal.member_count
+        );
+        assert_eq!(
+            proposal.member_count + proposal.exclusions.len() as u64,
+            checked_area(proposal.declared).expect("declared area")
+        );
     }
 
     #[test]

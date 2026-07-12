@@ -607,6 +607,10 @@ impl CalamineAdapter {
         let compressed_evidence = formula_evidence.finish();
         let mut formula_source_report = compressed_evidence.report;
         let mut compressed_families = compressed_evidence.families;
+        // Fragment proposals remain replay-only until the backend-neutral Shadow
+        // transport accepts them. Retaining the bounded proposal here proves the
+        // evidence path without changing production authority.
+        let _fragmented_families = compressed_evidence.fragmented;
         let formula_spool_bytes = if formula_count == 0 {
             0
         } else {
