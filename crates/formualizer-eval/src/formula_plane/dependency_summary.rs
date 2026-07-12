@@ -3441,4 +3441,71 @@ mod tests {
         assert_eq!(expected, reversed);
         assert_eq!(expected, shuffled);
     }
+
+    #[test]
+    fn swatch0_symbolic_planner_oracle_reports_cells_ranges_and_names_separately() {
+        use formualizer_parse::parser::{ASTNodeType, ReferenceType};
+        #[derive(Default, Debug, PartialEq, Eq)]
+        struct Counts {
+            cells: u64,
+            ranges: u64,
+            names: u64,
+        }
+        fn walk(node: &ASTNode, counts: &mut Counts) {
+            match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => match reference {
+                    ReferenceType::Cell { .. } => counts.cells += 1,
+                    ReferenceType::Range { .. } => counts.ranges += 1,
+                    ReferenceType::NamedRange(_) => counts.names += 1,
+                    _ => {}
+                },
+                ASTNodeType::Function { args, .. } => {
+                    for arg in args {
+                        walk(arg, counts);
+                    }
+                }
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    walk(left, counts);
+                    walk(right, counts);
+                }
+                ASTNodeType::UnaryOp { expr, .. } => walk(expr, counts),
+                _ => {}
+            }
+        }
+        let ast = formualizer_parse::parser::parse("=A1+SUM(B1:B3)+MyName").unwrap();
+        let mut compared = Counts::default();
+        walk(&ast, &mut compared);
+        assert_eq!(
+            compared,
+            Counts {
+                cells: 1,
+                ranges: 1,
+                names: 1
+            }
+        );
+
+        let summary = summary("=A1+SUM(B1:B3)+MyName", 1, 4);
+        let report = compare_one("Sheet1", 1, 4, &ast, &summary);
+        assert_eq!(report.under_approximation_count, 0);
+        assert_eq!(
+            report.exact_match_count + report.over_approximation_count + report.rejection_count,
+            1
+        );
+        let rejected_cells = if report.rejection_count == 0 {
+            0
+        } else {
+            compared.cells
+        };
+        let rejected_ranges = if report.rejection_count == 0 {
+            0
+        } else {
+            compared.ranges
+        };
+        let rejected_names = if report.rejection_count == 0 {
+            0
+        } else {
+            compared.names
+        };
+        assert_eq!((rejected_cells, rejected_ranges, rejected_names), (1, 1, 1));
+    }
 }

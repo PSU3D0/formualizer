@@ -127,6 +127,7 @@ mod formula_plane_structural_affected_region;
 mod formula_plane_structural_split_acceptance;
 mod formula_plane_structural_tail_precision;
 mod formula_plane_structural_w0_oracle;
+mod function_closure_tranche_a_oracles;
 mod indirect;
 mod info_reference_context;
 mod let_lambda;

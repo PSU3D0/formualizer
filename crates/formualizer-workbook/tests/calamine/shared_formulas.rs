@@ -919,3 +919,42 @@ fn malformed_shared_si_and_ref_are_rejected_by_calamine_before_source_seam() {
         );
     }
 }
+
+#[test]
+fn swatch0_calamine_expansion_matches_ast_relocation_corpus() {
+    for (formula, expected_for_row) in [
+        ("SUM(A1,$A1,A$1,$A$1)", "SUM(A{row},$A{row},A$1,$A$1)"),
+        ("IF(A1=\"A1\",A1,$A1)", "IF(A{row}=\"A1\",A{row},$A{row})"),
+        (
+            "COUNTIF(A1:A2,\">0\")+A1",
+            "COUNTIF(A{row}:A{next},\">0\")+A{row}",
+        ),
+    ] {
+        let (workbook, _) = Workbook::from_reader_with_adapter_stats(
+            CalamineAdapter::open_bytes(large_shared_vertical_xlsx(100, formula)).unwrap(),
+            LoadStrategy::EagerAll,
+            WorkbookConfig::ephemeral(),
+        )
+        .unwrap();
+        for row in [1, 2, 50, 100] {
+            let expanded = workbook.get_formula("Sheet1", row, 2).unwrap();
+            let expanded = if expanded.starts_with('=') {
+                expanded
+            } else {
+                format!("={expanded}")
+            };
+            let expected = expected_for_row
+                .replace("{row}", &row.to_string())
+                .replace("{next}", &(row + 1).to_string());
+            assert_eq!(
+                formualizer_parse::parser::parse(&expanded)
+                    .unwrap()
+                    .fingerprint(),
+                formualizer_parse::parser::parse(format!("={expected}"))
+                    .unwrap()
+                    .fingerprint(),
+                "formula={formula}, row={row}, expanded={expanded}"
+            );
+        }
+    }
+}
