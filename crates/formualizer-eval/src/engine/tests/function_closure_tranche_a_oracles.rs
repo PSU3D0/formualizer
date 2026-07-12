@@ -148,18 +148,21 @@ fn production_semantic_name_authorities_are_frozen_to_known_files() {
         &mut hits,
     );
     hits.sort();
-    assert_eq!(
-        hits,
-        vec![
-            "src/engine/arena/canonical.rs",
-            "src/formula_plane/dependency_summary.rs",
-            "src/formula_plane/template_canonical.rs"
-        ]
+    assert!(
+        hits.is_empty(),
+        "obsolete semantic authorities remain: {hits:?}"
     );
     let ingest = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/engine/ingest_pipeline.rs"),
     )
     .unwrap();
-    assert!(ingest.contains("is_known_static_function"));
-    assert!(ingest.contains("function_arg_context"));
+    assert!(!ingest.contains("is_known_static_function"));
+    assert!(!ingest.contains("function_arg_context"));
+    let graph_analysis = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/engine/graph/formula_analysis.rs"),
+    )
+    .unwrap();
+    assert!(!graph_analysis.contains("eq_ignore_ascii_case(\"LET\""));
+    assert!(!graph_analysis.contains("eq_ignore_ascii_case(\"LAMBDA\""));
 }

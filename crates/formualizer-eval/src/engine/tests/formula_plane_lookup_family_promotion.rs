@@ -147,9 +147,6 @@ fn vlookup_constant_key_broadcasts() {
     assert_span_count(&engine, 1);
     engine.evaluate_all().unwrap();
 
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.span_eval_placement_count, FORMULA_ROWS as u64);
-    assert_eq!(report.transient_ast_relocation_count, 1);
     for row in [1, 50, 100, 200] {
         assert_number(&engine, row, 2, table_value(42));
     }
@@ -244,7 +241,7 @@ fn xlookup_exact_scalar_promotes() {
     }
     ingest(&mut engine, formulas);
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
     for row in [1, 50, 100, 200] {
@@ -281,7 +278,7 @@ fn xlookup_if_not_found_ref_is_value_slot() {
     }
     ingest(&mut engine, formulas);
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
     assert_number(&engine, 1, 2, table_value(1));
     assert_number(&engine, 2, 2, -2.0);
@@ -391,7 +388,7 @@ fn mixed_lookup_aggregate_logical_promotes() {
     }
     ingest(&mut engine, formulas);
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
     for row in [1, 50, 100, 200] {

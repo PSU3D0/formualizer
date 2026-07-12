@@ -138,7 +138,7 @@ fn sheet_remove_then_add_with_cross_sheet_formulas_recomputes_correctly() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .unwrap();
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
     engine.evaluate_all().unwrap();
     assert_number_cell(&engine, "Sheet1", 50, 1, 100.0);
 

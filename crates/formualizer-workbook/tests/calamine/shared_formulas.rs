@@ -961,6 +961,10 @@ fn swatch0_calamine_expansion_matches_ast_relocation_corpus() {
             "COUNTIF(A1:A2,\">0\")+A1",
             "COUNTIF(A{row}:A{next},\">0\")+A{row}",
         ),
+        (
+            "_xlfn.ABS(SUM('Sheet1'!A1,'Sheet1'!$A1))",
+            "_xlfn.ABS(SUM('Sheet1'!A{row},'Sheet1'!$A{row}))",
+        ),
     ] {
         let (workbook, _) = Workbook::from_reader_with_adapter_stats(
             CalamineAdapter::open_bytes(large_shared_vertical_xlsx(100, formula)).unwrap(),
@@ -978,14 +982,26 @@ fn swatch0_calamine_expansion_matches_ast_relocation_corpus() {
             let expected = expected_for_row
                 .replace("{row}", &row.to_string())
                 .replace("{next}", &(row + 1).to_string());
+            let expanded_ast = formualizer_parse::parser::parse(&expanded).unwrap();
             assert_eq!(
-                formualizer_parse::parser::parse(&expanded)
-                    .unwrap()
-                    .fingerprint(),
+                expanded_ast.fingerprint(),
                 formualizer_parse::parser::parse(format!("={expected}"))
                     .unwrap()
                     .fingerprint(),
                 "formula={formula}, row={row}, expanded={expanded}"
+            );
+            let anchor_ast = formualizer_parse::parser::parse(format!("={formula}")).unwrap();
+            let relocated =
+                formualizer_eval::formula_plane::structural::relocate_ast_for_template_placement(
+                    &anchor_ast,
+                    i64::from(row - 1),
+                    0,
+                )
+                .unwrap();
+            assert_eq!(
+                expanded_ast.fingerprint(),
+                relocated.fingerprint(),
+                "Calamine/arena relocation mismatch: formula={formula}, row={row}"
             );
         }
     }
