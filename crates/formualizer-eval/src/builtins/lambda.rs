@@ -1,4 +1,8 @@
 use crate::function::{FnCaps, Function};
+use crate::function_contract::{
+    FunctionArgumentDependencyContract, FunctionArityRule, FunctionDependencyClass,
+    FunctionDependencyContract,
+};
 use crate::interpreter::{LocalBinding, LocalEnv};
 use crate::traits::{ArgumentHandle, CalcValue, CustomCallable, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -116,6 +120,15 @@ impl Function for LetFn {
 
     fn variadic(&self) -> bool {
         true
+    }
+
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract {
+            class: FunctionDependencyClass::StaticScalarAllArgs,
+            arity: FunctionArityRule::OddAtLeast(3),
+            arguments: FunctionArgumentDependencyContract::LocalBindingPairs,
+        }
+        .for_arity(arity)
     }
 
     fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
@@ -268,6 +281,15 @@ impl Function for LambdaFn {
 
     fn variadic(&self) -> bool {
         true
+    }
+
+    fn dependency_contract(&self, arity: usize) -> Option<FunctionDependencyContract> {
+        FunctionDependencyContract {
+            class: FunctionDependencyClass::StaticScalarAllArgs,
+            arity: FunctionArityRule::AtLeast(1),
+            arguments: FunctionArgumentDependencyContract::LambdaParameters,
+        }
+        .for_arity(arity)
     }
 
     fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {

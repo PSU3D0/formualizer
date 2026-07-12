@@ -164,6 +164,8 @@ pub enum FunctionArgumentDependencyContract {
     AllArgs(FunctionArgumentDependencyRole),
     Variadic(FunctionArgumentDependencyRole),
     CriteriaPairs(CriteriaAggregationDependencyContract),
+    LocalBindingPairs,
+    LambdaParameters,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

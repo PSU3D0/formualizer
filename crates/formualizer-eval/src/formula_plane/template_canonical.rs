@@ -998,6 +998,8 @@ pub(crate) fn function_argument_slot_context(
     match precision.arguments {
         FunctionArgumentDependencyContract::AllArgs(role)
         | FunctionArgumentDependencyContract::Variadic(role) => slot_context_for_role(role),
+        FunctionArgumentDependencyContract::LocalBindingPairs
+        | FunctionArgumentDependencyContract::LambdaParameters => SlotContext::LocalBinding,
         FunctionArgumentDependencyContract::CriteriaPairs(criteria) => {
             let value_index = match criteria.value_range {
                 crate::function_contract::CriteriaValueRange::Fixed(index) => Some(index),

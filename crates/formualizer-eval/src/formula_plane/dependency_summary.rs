@@ -975,6 +975,7 @@ pub(crate) fn function_argument_context(
             }
             _ => AnalyzerContext::Value,
         },
+        Arguments::LocalBindingPairs | Arguments::LambdaParameters => AnalyzerContext::LocalBinding,
         Arguments::CriteriaPairs(criteria) => {
             let value_index = match criteria.value_range {
                 CriteriaValueRange::Fixed(index) => Some(index),

@@ -340,8 +340,16 @@ impl<'a> IngestPipeline<'a> {
                 self.collect_dependencies_tree(expr, current_sheet_id, plan, local_scopes)
             }
             ASTNodeType::Function { name, args } => {
-                if name.eq_ignore_ascii_case("LET") {
-                    if args.len() >= 3 && args.len() % 2 == 1 {
+                use crate::function_contract::FunctionArgumentDependencyContract as Arguments;
+                let argument_contract =
+                    crate::function_registry::resolve_for_arity("", name, args.len())
+                        .and_then(|resolved| resolved.semantics.contract)
+                        .and_then(|contract| contract.precision)
+                        .map(|precision| precision.arguments);
+                match argument_contract {
+                    Some(Arguments::LocalBindingPairs)
+                        if args.len() >= 3 && args.len() % 2 == 1 =>
+                    {
                         local_scopes.push(FxHashSet::default());
                         for pair_idx in (0..args.len() - 1).step_by(2) {
                             self.collect_dependencies_tree(
@@ -367,7 +375,31 @@ impl<'a> IngestPipeline<'a> {
                         )?;
                         local_scopes.pop();
                         Ok(())
-                    } else {
+                    }
+                    Some(Arguments::LambdaParameters) => {
+                        if let Some(body) = args.last() {
+                            let mut lambda_scope = FxHashSet::default();
+                            for param in &args[..args.len().saturating_sub(1)] {
+                                if let ASTNodeType::Reference {
+                                    reference: ReferenceType::NamedRange(param_name),
+                                    ..
+                                } = &param.node_type
+                                {
+                                    lambda_scope.insert(param_name.to_ascii_uppercase());
+                                }
+                            }
+                            local_scopes.push(lambda_scope);
+                            self.collect_dependencies_tree(
+                                body,
+                                current_sheet_id,
+                                plan,
+                                local_scopes,
+                            )?;
+                            local_scopes.pop();
+                        }
+                        Ok(())
+                    }
+                    _ => {
                         for arg in args {
                             self.collect_dependencies_tree(
                                 arg,
@@ -378,28 +410,6 @@ impl<'a> IngestPipeline<'a> {
                         }
                         Ok(())
                     }
-                } else if name.eq_ignore_ascii_case("LAMBDA") {
-                    if let Some(body) = args.last() {
-                        let mut lambda_scope = FxHashSet::default();
-                        for param in &args[..args.len().saturating_sub(1)] {
-                            if let ASTNodeType::Reference {
-                                reference: ReferenceType::NamedRange(param_name),
-                                ..
-                            } = &param.node_type
-                            {
-                                lambda_scope.insert(param_name.to_ascii_uppercase());
-                            }
-                        }
-                        local_scopes.push(lambda_scope);
-                        self.collect_dependencies_tree(body, current_sheet_id, plan, local_scopes)?;
-                        local_scopes.pop();
-                    }
-                    Ok(())
-                } else {
-                    for arg in args {
-                        self.collect_dependencies_tree(arg, current_sheet_id, plan, local_scopes)?;
-                    }
-                    Ok(())
                 }
             }
             ASTNodeType::Call { callee, args } => {
