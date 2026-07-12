@@ -397,8 +397,8 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
         replay_spool_with_family(
             &mut self.spool,
             &self.sheet_name,
-            |shared_index| {
-                skip_families.contains(&SourceFamilyId {
+            |shared_index, _| {
+                !skip_families.contains(&SourceFamilyId {
                     sheet_instance,
                     source_index: shared_index,
                 })
@@ -430,7 +430,7 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
         replay_spool_with_family(
             &mut self.spool,
             &self.sheet_name,
-            |_| false,
+            |_, _| true,
             |coord0, text, family| {
                 if coord0.row + 1 == row && coord0.col + 1 == col {
                     found = Some(DeferredReplayFormula {
@@ -1097,7 +1097,7 @@ impl std::error::Error for SourceFormulaError {}
 fn replay_spool_with_family<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
-    mut skip_family: impl FnMut(usize) -> bool,
+    mut emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
     mut emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
 ) -> Result<(), calamine::Error> {
     let mut shared: rustc_hash::FxHashMap<usize, (SourceCoord, String)> =
@@ -1120,22 +1120,23 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
                 text,
                 ..
             } => {
-                if skip_family(shared_index) {
-                    continue;
+                if emit_shared_coord(shared_index, coord0) {
+                    emit(coord0, &text, Some(shared_index))?;
                 }
-                emit(coord0, &text, Some(shared_index))?;
                 shared.insert(shared_index, (coord0, text));
                 if let Some(waiting) = pending.remove(&shared_index) {
                     let (anchor, template) = shared.get(&shared_index).expect("anchor inserted");
                     for target in waiting {
-                        expand_shared_formula_into(
-                            template,
-                            (anchor.row, anchor.col),
-                            (target.row, target.col),
-                            &mut expansion,
-                        )
-                        .map_err(calamine::Error::Xlsx)?;
-                        emit(target, &expansion, Some(shared_index))?;
+                        if emit_shared_coord(shared_index, target) {
+                            expand_shared_formula_into(
+                                template,
+                                (anchor.row, anchor.col),
+                                (target.row, target.col),
+                                &mut expansion,
+                            )
+                            .map_err(calamine::Error::Xlsx)?;
+                            emit(target, &expansion, Some(shared_index))?;
+                        }
                     }
                 }
             }
@@ -1144,18 +1145,17 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
                 shared_index,
                 ..
             } => {
-                if skip_family(shared_index) {
-                    continue;
-                }
                 if let Some((anchor, template)) = shared.get(&shared_index) {
-                    expand_shared_formula_into(
-                        template,
-                        (anchor.row, anchor.col),
-                        (coord0.row, coord0.col),
-                        &mut expansion,
-                    )
-                    .map_err(calamine::Error::Xlsx)?;
-                    emit(coord0, &expansion, Some(shared_index))?;
+                    if emit_shared_coord(shared_index, coord0) {
+                        expand_shared_formula_into(
+                            template,
+                            (anchor.row, anchor.col),
+                            (coord0.row, coord0.col),
+                            &mut expansion,
+                        )
+                        .map_err(calamine::Error::Xlsx)?;
+                        emit(coord0, &expansion, Some(shared_index))?;
+                    }
                 } else {
                     pending.entry(shared_index).or_default().push(coord0);
                 }
@@ -1179,23 +1179,35 @@ pub(super) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
     mut skip_family: impl FnMut(usize) -> bool,
     mut emit: impl FnMut(SourceCoord, &str) -> Result<(), calamine::Error>,
 ) -> Result<(), calamine::Error> {
-    replay_spool_with_family(spool, sheet_name, &mut skip_family, |coord, text, _| {
-        emit(coord, text)
-    })
+    replay_spool_with_family(
+        spool,
+        sheet_name,
+        |family, _| !skip_family(family),
+        |coord, text, _| emit(coord, text),
+    )
 }
 
 pub(super) fn replay_spool_per_cell_filtered_with_family<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     mut skip_family: impl FnMut(usize) -> bool,
-    mut emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
+    emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
 ) -> Result<(), calamine::Error> {
-    replay_spool_with_family(
+    replay_spool_per_cell_with_coordinate_disposition(
         spool,
         sheet_name,
-        &mut skip_family,
-        |coord, text, family| emit(coord, text, family),
+        |family, _| !skip_family(family),
+        emit,
     )
+}
+
+pub(super) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplaySpool>(
+    spool: &mut S,
+    sheet_name: &str,
+    emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
+    emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
+) -> Result<(), calamine::Error> {
+    replay_spool_with_family(spool, sheet_name, emit_shared_coord, emit)
 }
 
 #[cfg(test)]
@@ -1373,6 +1385,116 @@ mod tests {
             spool.replay().unwrap().next().unwrap(),
             Err(SpoolError::Malformed("varint overflow"))
         ));
+    }
+
+    #[test]
+    fn coordinate_disposition_processes_filtered_anchor_before_emitting_descendants() {
+        let mut spool = MemoryFormulaReplaySpool::with_max_bytes(4096);
+        spool
+            .append(SpoolFormulaRecord::Ordinary {
+                sequence: 0,
+                coord0: coord(0, 0),
+                text: "7",
+            })
+            .unwrap();
+        spool
+            .append(SpoolFormulaRecord::SharedAnchor {
+                sequence: 1,
+                coord0: coord(0, 1),
+                shared_index: 9,
+                declared_range: Some(SourceRect {
+                    start: coord(0, 1),
+                    end: coord(0, 3),
+                }),
+                text: "A1",
+            })
+            .unwrap();
+        spool
+            .append(SpoolFormulaRecord::SharedDescendant {
+                sequence: 2,
+                coord0: coord(0, 2),
+                shared_index: 9,
+            })
+            .unwrap();
+        spool
+            .append(SpoolFormulaRecord::SharedDescendant {
+                sequence: 3,
+                coord0: coord(0, 3),
+                shared_index: 9,
+            })
+            .unwrap();
+
+        let mut emitted = Vec::new();
+        replay_spool_per_cell_with_coordinate_disposition(
+            &mut spool,
+            "Sheet1",
+            |family, point| family != 9 || point == coord(0, 3),
+            |point, text, family| {
+                emitted.push((point, text.to_string(), family));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            emitted,
+            vec![
+                (coord(0, 0), "7".to_string(), None),
+                (coord(0, 3), "C1".to_string(), Some(9)),
+            ]
+        );
+    }
+
+    #[test]
+    fn coordinate_disposition_preserves_pending_order_duplicates_and_exact_members() {
+        let mut spool = MemoryFormulaReplaySpool::with_max_bytes(4096);
+        for record in [
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 0,
+                coord0: coord(1, 1),
+                shared_index: 4,
+            },
+            SpoolFormulaRecord::Ordinary {
+                sequence: 1,
+                coord0: coord(1, 2),
+                text: "99",
+            },
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 2,
+                coord0: coord(0, 1),
+                shared_index: 4,
+                declared_range: Some(SourceRect {
+                    start: coord(0, 1),
+                    end: coord(2, 1),
+                }),
+                text: "A1+1",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 3,
+                coord0: coord(2, 1),
+                shared_index: 4,
+            },
+        ] {
+            spool.append(record).unwrap();
+        }
+
+        let exact_replay = [coord(1, 1), coord(2, 1)];
+        let mut emitted = Vec::new();
+        replay_spool_per_cell_with_coordinate_disposition(
+            &mut spool,
+            "Sheet1",
+            |family, point| family != 4 || exact_replay.contains(&point),
+            |point, text, family| {
+                emitted.push((point, text.to_string(), family));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(emitted.len(), 3);
+        assert_eq!(emitted[0], (coord(1, 2), "99".to_string(), None));
+        assert_eq!(emitted[1], (coord(1, 1), "A2+1".to_string(), Some(4)));
+        assert_eq!(emitted[2], (coord(2, 1), "A3+1".to_string(), Some(4)));
     }
 
     #[test]

@@ -65,6 +65,31 @@ fn genuinely_shared_xlsx() -> Vec<u8> {
     output.finish().unwrap().into_inner()
 }
 
+fn fragmented_shared_xlsx() -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+    for row in 1..=6 {
+        sheet.get_cell_mut((1, row)).set_value_number(row as f64);
+    }
+    for row in [1, 2, 4, 6] {
+        sheet
+            .get_cell_mut((2, row))
+            .set_formula(format!("A{row}+1"));
+    }
+    sheet.get_cell_mut("B5").set_formula("A5+100");
+    let mut original = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut original).unwrap();
+    rewrite_sheet_xml(original, |xml| {
+        xml.replace(
+            "<f>A1+1</f>",
+            "<f t=\"shared\" si=\"44\" ref=\"B1:B6\">A1+1</f>",
+        )
+        .replace("<f>A2+1</f>", "<f t=\"shared\" si=\"44\"></f>")
+        .replace("<f>A4+1</f>", "<f t=\"shared\" si=\"44\"></f>")
+        .replace("<f>A6+1</f>", "<f t=\"shared\" si=\"44\"></f>")
+    })
+}
+
 fn large_shared_vertical_xlsx(rows: u32, anchor_formula: &str) -> Vec<u8> {
     let mut book = umya_spreadsheet::new_file();
     let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
@@ -494,6 +519,79 @@ fn authoritative_eager_commits_clean_family_without_descendant_graph_materializa
     let stats = adapter.load_stats().unwrap();
     assert_eq!(stats.formula_cells_observed, Some(100));
     assert_eq!(stats.formula_cells_handed_to_engine, Some(100));
+}
+
+#[test]
+fn fragmented_family_replays_whole_and_exact_eager_deferred_in_every_mode() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        for deferred in [false, true] {
+            let config = EvalConfig {
+                formula_plane_mode: mode,
+                defer_graph_building: deferred,
+                ..EvalConfig::default()
+            };
+            let mut engine =
+                Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+            let mut adapter = CalamineAdapter::open_bytes(fragmented_shared_xlsx()).unwrap();
+            adapter.stream_into_engine(&mut engine).unwrap();
+            if deferred {
+                engine.build_graph_all().unwrap();
+            }
+            engine.evaluate_all().unwrap();
+
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 1, 2),
+                Some(LiteralValue::Number(2.0))
+            );
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 2, 2),
+                Some(LiteralValue::Number(3.0))
+            );
+            assert_eq!(engine.get_cell_value("Sheet1", 3, 2), None);
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 4, 2),
+                Some(LiteralValue::Number(5.0))
+            );
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 5, 2),
+                Some(LiteralValue::Number(105.0))
+            );
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 6, 2),
+                Some(LiteralValue::Number(7.0))
+            );
+            let shared_ast = engine.get_cell("Sheet1", 4, 2).unwrap().0.unwrap();
+            let ordinary_ast = engine.get_cell("Sheet1", 5, 2).unwrap().0.unwrap();
+            assert_eq!(
+                shared_ast.fingerprint(),
+                formualizer_parse::parser::parse("=A4+1")
+                    .unwrap()
+                    .fingerprint()
+            );
+            assert_eq!(
+                ordinary_ast.fingerprint(),
+                formualizer_parse::parser::parse("=A5+100")
+                    .unwrap()
+                    .fingerprint()
+            );
+            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+
+            let report = engine.last_formula_ingest_report().unwrap();
+            assert_eq!(
+                report.source_family_promoted, 0,
+                "{mode:?}/{deferred}: {report:?}"
+            );
+            assert_eq!(
+                report.source_family_fallback, 1,
+                "{mode:?}/{deferred}: {report:?}"
+            );
+            assert_eq!(report.graph_formula_cells_materialized, 5);
+        }
+    }
 }
 
 #[test]
