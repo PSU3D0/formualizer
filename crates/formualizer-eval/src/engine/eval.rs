@@ -3316,7 +3316,10 @@ where
         family: &crate::engine::SourceFormulaFamily,
         allow_function_closure: bool,
     ) -> Result<
-        crate::formula_plane::placement::PreparedAnchorOncePlacement,
+        (
+            crate::formula_plane::placement::PreparedAnchorOncePlacement,
+            bool,
+        ),
         SourceFamilyPreparationError,
     > {
         let transport = family
@@ -3376,6 +3379,9 @@ where
         );
         let ingested = {
             let mut pipeline = self.ingest_pipeline();
+            if allow_function_closure {
+                pipeline = pipeline.enable_function_semantics();
+            }
             pipeline.ingest_formula(
                 FormulaAstInput::RawArena(ast_id),
                 placement,
@@ -3383,6 +3389,9 @@ where
             )
         }
         .map_err(|_| SourceFamilyPreparationError::ast("UnsupportedCanonicalTemplate"))?;
+        let function_semantics_used = ingested
+            .labels
+            .has_flag(crate::engine::arena::ast::CanonicalLabels::FLAG_CONTAINS_FUNCTION);
         let candidate = FormulaPlacementCandidate::new(
             sheet_id,
             family.anchor_coord0.row,
@@ -3393,6 +3402,7 @@ where
         let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested)
             .map_err(|reason| SourceFamilyPreparationError::ast(format!("{reason:?}")))?;
         prepare_anchor_once_family(candidate, analysis, domain, family.member_count)
+            .map(|prepared| (prepared, function_semantics_used))
             .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))
     }
 
@@ -4019,6 +4029,7 @@ where
         let mut preparation = crate::engine::FormulaCompressedPreparation {
             engine_token: Arc::clone(&self.source_formula_token),
             function_semantic_epoch: crate::function_registry::semantic_epoch(),
+            function_semantics_used: false,
             sheet_name: Arc::from(sheet_name),
             prepared: Vec::new(),
             rejected: BTreeMap::new(),
@@ -4045,7 +4056,10 @@ where
                 continue;
             }
             match self.prepare_source_formula_family(sheet_id, family, false) {
-                Ok(prepared) => preparation.prepared.push((family.source_id, prepared)),
+                Ok((prepared, function_semantics_used)) => {
+                    preparation.function_semantics_used |= function_semantics_used;
+                    preparation.prepared.push((family.source_id, prepared));
+                }
                 Err(error) => {
                     preparation.rejected.insert(family.source_id, error.reason);
                 }
@@ -4148,7 +4162,8 @@ where
         let mut stale_fallback_batches = Vec::new();
         let mut pending_preparations = Vec::new();
         for (fallback, mut source, mut preparation) in batches {
-            let stale_semantics = preparation.function_semantic_epoch != initial_epoch;
+            let stale_semantics = preparation.function_semantics_used
+                && preparation.function_semantic_epoch != initial_epoch;
             if stale_semantics {
                 for (family, _) in &preparation.prepared {
                     preparation
@@ -4200,7 +4215,9 @@ where
             let mut newly_stale = Vec::new();
             let mut current = Vec::new();
             for pending in pending_preparations.drain(..) {
-                if pending.0.function_semantic_epoch == commit_epoch {
+                if !pending.0.function_semantics_used
+                    || pending.0.function_semantic_epoch == commit_epoch
+                {
                     current.push(pending);
                 } else {
                     newly_stale.push(pending);

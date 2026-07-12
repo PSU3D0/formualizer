@@ -22,9 +22,7 @@ use crate::formula_plane::producer::{
 };
 use crate::formula_plane::region_index::Region;
 use crate::formula_plane::runtime::{TemplateSlotMap, ValueRefSlotDescriptor};
-use crate::formula_plane::template_canonical::{
-    LiteralSlotDescriptor, canonicalize_template, resolve_canonical_function,
-};
+use crate::formula_plane::template_canonical::LiteralSlotDescriptor;
 use crate::function::FnCaps;
 use crate::reference::{CellRef, Coord, RangeRef, SharedRangeRef, SharedRef, SharedSheetLocator};
 use crate::traits::FunctionProvider;
@@ -161,6 +159,7 @@ pub(crate) struct IngestPipeline<'a> {
     sources: SourceRegistryView<'a>,
     function_provider: &'a dyn FunctionProvider,
     policy: CollectPolicy,
+    function_semantics_enabled: bool,
 }
 
 impl<'a> IngestPipeline<'a> {
@@ -181,7 +180,13 @@ impl<'a> IngestPipeline<'a> {
             sources,
             function_provider,
             policy,
+            function_semantics_enabled: true,
         }
+    }
+
+    pub(crate) fn enable_function_semantics(mut self) -> Self {
+        self.function_semantics_enabled = true;
+        self
     }
 
     pub(crate) fn ingest_formula(
@@ -222,10 +227,18 @@ impl<'a> IngestPipeline<'a> {
             self.data_store,
             self.function_provider,
             placement,
+            self.function_semantics_enabled,
         );
         let anchor_row = placement.coord.row().saturating_add(1);
         let anchor_col = placement.coord.col().saturating_add(1);
-        let canonical_template = canonicalize_template(&ast_for_oracles, anchor_row, anchor_col);
+        let canonical_template =
+            crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+                &ast_for_oracles,
+                anchor_row,
+                anchor_col,
+                self.function_semantics_enabled
+                    .then_some(self.function_provider),
+            );
         let mut dep_plan = DependencyPlanRow::default();
         let mut local_scopes = Vec::new();
         self.collect_dependencies_tree(
@@ -243,6 +256,8 @@ impl<'a> IngestPipeline<'a> {
             placement,
             self.sheet_registry,
             &self.names,
+            self.function_semantics_enabled
+                .then_some(self.function_provider),
         ) {
             Ok(projections) => (Some(projections), None),
             Err(reason) => (None, Some(reason)),
@@ -341,11 +356,18 @@ impl<'a> IngestPipeline<'a> {
             }
             ASTNodeType::Function { name, args } => {
                 use crate::function_contract::FunctionArgumentDependencyContract as Arguments;
-                let argument_contract =
-                    crate::function_registry::resolve_for_arity("", name, args.len())
-                        .and_then(|resolved| resolved.semantics.contract)
-                        .and_then(|contract| contract.precision)
-                        .map(|precision| precision.arguments);
+                let argument_contract = crate::function_registry::resolve_semantic_identity(
+                    self.function_provider,
+                    "",
+                    name,
+                    args.len(),
+                )
+                .filter(|identity| {
+                    identity.contract.environment
+                        == crate::function_contract::FunctionEnvironmentSemantics::LocalBindings
+                })
+                .and_then(|identity| identity.contract.precision)
+                .map(|precision| precision.arguments);
                 match argument_contract {
                     Some(Arguments::LocalBindingPairs)
                         if args.len() >= 3 && args.len() % 2 == 1 =>
@@ -842,6 +864,7 @@ fn compute_read_projections(
     placement: CellRef,
     sheet_registry: &SheetRegistry,
     names: &NameRegistryView<'_>,
+    function_provider: Option<&dyn FunctionProvider>,
 ) -> Result<Vec<ReadProjection>, ProjectionFallbackReason> {
     fn axis_projection(index: u32, is_abs: bool, anchor: i64) -> AxisProjection {
         if is_abs {
@@ -866,6 +889,7 @@ fn compute_read_projections(
         placement: CellRef,
         sheet_registry: &SheetRegistry,
         names: &NameRegistryView<'_>,
+        function_provider: Option<&dyn FunctionProvider>,
         projections: &mut Vec<ReadProjection>,
         context: AnalyzerContext,
         in_function_arg: bool,
@@ -1088,6 +1112,7 @@ fn compute_read_projections(
                     placement,
                     sheet_registry,
                     names,
+                    function_provider,
                     projections,
                     context,
                     in_function_arg,
@@ -1106,6 +1131,7 @@ fn compute_read_projections(
                     placement,
                     sheet_registry,
                     names,
+                    function_provider,
                     projections,
                     context,
                     in_function_arg,
@@ -1115,13 +1141,18 @@ fn compute_read_projections(
                     placement,
                     sheet_registry,
                     names,
+                    function_provider,
                     projections,
                     context,
                     in_function_arg,
                 )
             }
             ASTNodeType::Function { name, args } => {
-                let function = resolve_canonical_function(name, args.len());
+                let function = crate::formula_plane::template_canonical::resolve_canonical_function_with_provider(
+                    function_provider,
+                    name,
+                    args.len(),
+                );
                 let contract = function
                     .contract
                     .ok_or(ProjectionFallbackReason::UnsupportedDependencySummary)?;
@@ -1130,16 +1161,8 @@ fn compute_read_projections(
                     || contract.environment
                         != crate::function_contract::FunctionEnvironmentSemantics::None
                     || contract.context != crate::function_contract::FunctionContextDependence::None
-                    || (contract.result.may_return_reference()
-                        && function.semantic_flags & crate::function::FnCaps::SHORT_CIRCUIT.bits()
-                            != 0)
-                    || (contract.result.may_spill()
-                        && ((function.semantic_flags
-                            & (crate::function::FnCaps::SHORT_CIRCUIT
-                                | crate::function::FnCaps::LOOKUP)
-                                .bits()
-                            == 0)
-                            || contract.result.may_return_reference()))
+                    || contract.result.may_return_reference()
+                    || contract.result.may_spill()
                     || function.semantic_flags & crate::function::FnCaps::VOLATILE.bits() != 0
                 {
                     return Err(ProjectionFallbackReason::UnsupportedDependencySummary);
@@ -1155,6 +1178,7 @@ fn compute_read_projections(
                         placement,
                         sheet_registry,
                         names,
+                        function_provider,
                         projections,
                         arg_context,
                         accepts_range,
@@ -1178,6 +1202,7 @@ fn compute_read_projections(
         placement,
         sheet_registry,
         names,
+        function_provider,
         &mut projections,
         AnalyzerContext::Value,
         false,
@@ -1225,12 +1250,14 @@ fn compute_tree_metadata(
     data_store: &DataStore,
     function_provider: &dyn FunctionProvider,
     placement: CellRef,
+    allow_function_semantics: bool,
 ) -> AstNodeMetadata {
     fn visit(
         ast: &ASTNode,
         data_store: &DataStore,
         function_provider: &dyn FunctionProvider,
         placement: CellRef,
+        allow_function_semantics: bool,
     ) -> AstNodeMetadata {
         let (mut data, child_metadata) = match &ast.node_type {
             ASTNodeType::Literal(value) => (
@@ -1252,7 +1279,13 @@ fn compute_tree_metadata(
                     op_id: ast_string_id(data_store, op),
                     expr_id: AstNodeId::from_u32(0),
                 },
-                vec![visit(expr, data_store, function_provider, placement)],
+                vec![visit(
+                    expr,
+                    data_store,
+                    function_provider,
+                    placement,
+                    allow_function_semantics,
+                )],
             ),
             ASTNodeType::BinaryOp { op, left, right } => (
                 AstNodeData::BinaryOp {
@@ -1261,8 +1294,20 @@ fn compute_tree_metadata(
                     right_id: AstNodeId::from_u32(0),
                 },
                 vec![
-                    visit(left, data_store, function_provider, placement),
-                    visit(right, data_store, function_provider, placement),
+                    visit(
+                        left,
+                        data_store,
+                        function_provider,
+                        placement,
+                        allow_function_semantics,
+                    ),
+                    visit(
+                        right,
+                        data_store,
+                        function_provider,
+                        placement,
+                        allow_function_semantics,
+                    ),
                 ],
             ),
             ASTNodeType::Function { name, args } => (
@@ -1272,14 +1317,30 @@ fn compute_tree_metadata(
                     args_count: args.len() as u16,
                 },
                 args.iter()
-                    .map(|arg| visit(arg, data_store, function_provider, placement))
+                    .map(|arg| {
+                        visit(
+                            arg,
+                            data_store,
+                            function_provider,
+                            placement,
+                            allow_function_semantics,
+                        )
+                    })
                     .collect(),
             ),
             ASTNodeType::Array(rows) => {
                 let child_metadata = rows
                     .iter()
                     .flat_map(|row| row.iter())
-                    .map(|cell| visit(cell, data_store, function_provider, placement))
+                    .map(|cell| {
+                        visit(
+                            cell,
+                            data_store,
+                            function_provider,
+                            placement,
+                            allow_function_semantics,
+                        )
+                    })
                     .collect();
                 (
                     AstNodeData::Array {
@@ -1292,11 +1353,22 @@ fn compute_tree_metadata(
             }
             ASTNodeType::Call { callee, args } => {
                 let mut child_metadata = Vec::with_capacity(args.len() + 1);
-                child_metadata.push(visit(callee, data_store, function_provider, placement));
-                child_metadata.extend(
-                    args.iter()
-                        .map(|arg| visit(arg, data_store, function_provider, placement)),
-                );
+                child_metadata.push(visit(
+                    callee,
+                    data_store,
+                    function_provider,
+                    placement,
+                    allow_function_semantics,
+                ));
+                child_metadata.extend(args.iter().map(|arg| {
+                    visit(
+                        arg,
+                        data_store,
+                        function_provider,
+                        placement,
+                        allow_function_semantics,
+                    )
+                }));
                 (
                     AstNodeData::Function {
                         name_id: StringId::INVALID,
@@ -1315,6 +1387,7 @@ fn compute_tree_metadata(
             &child_refs,
             data_store.ast_strings(),
             function_provider,
+            allow_function_semantics,
         );
         if matches!(ast.node_type, ASTNodeType::Call { .. }) {
             metadata.labels = CanonicalLabels::default();
@@ -1327,7 +1400,13 @@ fn compute_tree_metadata(
         metadata
     }
 
-    visit(ast, data_store, function_provider, placement)
+    visit(
+        ast,
+        data_store,
+        function_provider,
+        placement,
+        allow_function_semantics,
+    )
 }
 
 fn ast_string_id(data_store: &DataStore, value: &str) -> StringId {
@@ -1656,6 +1735,7 @@ mod tests {
             CellRef::new(sheet, Coord::from_excel(row, col, true, true)),
             &sheet_registry,
             &empty_names(),
+            Some(&crate::function_registry::GlobalRegistryFunctionProvider),
         )
         .unwrap()
     }
@@ -1706,7 +1786,13 @@ mod tests {
         let mixed_whole_column = parse("=SUM(A:$A)").unwrap();
 
         assert_eq!(
-            compute_read_projections(&top_level, placement, &sheet_registry, &empty_names()),
+            compute_read_projections(
+                &top_level,
+                placement,
+                &sheet_registry,
+                &empty_names(),
+                Some(&crate::function_registry::GlobalRegistryFunctionProvider)
+            ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         assert_eq!(
@@ -1714,7 +1800,8 @@ mod tests {
                 &top_level_whole_column,
                 placement,
                 &sheet_registry,
-                &empty_names()
+                &empty_names(),
+                Some(&crate::function_registry::GlobalRegistryFunctionProvider),
             ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
@@ -1723,12 +1810,19 @@ mod tests {
                 &open_whole_column,
                 placement,
                 &sheet_registry,
-                &empty_names()
+                &empty_names(),
+                Some(&crate::function_registry::GlobalRegistryFunctionProvider),
             ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         assert_eq!(
-            compute_read_projections(&whole_row, placement, &sheet_registry, &empty_names()),
+            compute_read_projections(
+                &whole_row,
+                placement,
+                &sheet_registry,
+                &empty_names(),
+                Some(&crate::function_registry::GlobalRegistryFunctionProvider)
+            ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
         // Whole-column ranges with mixed column anchors stay rejected to match
@@ -1738,7 +1832,8 @@ mod tests {
                 &mixed_whole_column,
                 placement,
                 &sheet_registry,
-                &empty_names()
+                &empty_names(),
+                Some(&crate::function_registry::GlobalRegistryFunctionProvider),
             ),
             Err(ProjectionFallbackReason::UnsupportedDependencySummary)
         );
@@ -1752,9 +1847,14 @@ mod tests {
 
         // Running total `=SUM($A$1:$A1)`: absolute start row, relative end row.
         let running_total = parse("=SUM($A$1:$A1)").unwrap();
-        let projections =
-            compute_read_projections(&running_total, placement, &sheet_registry, &empty_names())
-                .unwrap();
+        let projections = compute_read_projections(
+            &running_total,
+            placement,
+            &sheet_registry,
+            &empty_names(),
+            Some(&crate::function_registry::GlobalRegistryFunctionProvider),
+        )
+        .unwrap();
         assert_eq!(projections.len(), 1);
         assert_eq!(
             projections[0].rule,
@@ -1768,9 +1868,14 @@ mod tests {
 
         // Tail read `=SUM($A1:$A$100)`: relative start row, absolute end row.
         let tail_read = parse("=SUM($A1:$A$100)").unwrap();
-        let projections =
-            compute_read_projections(&tail_read, placement, &sheet_registry, &empty_names())
-                .unwrap();
+        let projections = compute_read_projections(
+            &tail_read,
+            placement,
+            &sheet_registry,
+            &empty_names(),
+            Some(&crate::function_registry::GlobalRegistryFunctionProvider),
+        )
+        .unwrap();
         assert_eq!(projections.len(), 1);
         assert_eq!(
             projections[0].rule,

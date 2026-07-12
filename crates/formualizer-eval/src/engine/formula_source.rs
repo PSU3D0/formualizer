@@ -311,6 +311,7 @@ pub struct FormulaCompressedSourceBatch {
 pub struct FormulaCompressedPreparation {
     pub(crate) engine_token: Arc<()>,
     pub(crate) function_semantic_epoch: u64,
+    pub(crate) function_semantics_used: bool,
     pub(crate) sheet_name: Arc<str>,
     pub(crate) prepared: Vec<(SourceFamilyId, PreparedAnchorOncePlacement)>,
     pub(crate) rejected: BTreeMap<SourceFamilyId, String>,

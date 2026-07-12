@@ -3,6 +3,8 @@
 //! Dependency precision remains optional. Semantic contracts classify call-site
 //! behavior without making function names an eligibility authority.
 
+use crate::function::FnCaps;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FunctionDependencySemantics {
     RecursiveSyntacticArgs,
@@ -84,6 +86,94 @@ impl FunctionSemanticContract {
             precision,
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct FunctionSemanticIdentity {
+    pub(crate) namespace: String,
+    pub(crate) canonical_name: String,
+    pub(crate) generation: u64,
+    pub(crate) caps: FnCaps,
+    pub(crate) contract: FunctionSemanticContract,
+    pub(crate) argument_by_ref: Vec<bool>,
+}
+
+impl FunctionSemanticIdentity {
+    pub(crate) fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        push_bytes(&mut out, self.namespace.as_bytes());
+        push_bytes(&mut out, self.canonical_name.as_bytes());
+        out.extend_from_slice(&self.generation.to_le_bytes());
+        out.extend_from_slice(&self.caps.bits().to_le_bytes());
+        out.push(self.contract.dependency as u8);
+        out.push(self.contract.evaluation as u8);
+        out.push(self.contract.result as u8);
+        out.push(self.contract.environment as u8);
+        out.push(self.contract.context as u8);
+        match self.contract.precision {
+            Some(precision) => {
+                out.push(1);
+                encode_precision(&mut out, precision);
+            }
+            None => out.push(0),
+        }
+        out.extend_from_slice(&(self.argument_by_ref.len() as u64).to_le_bytes());
+        out.extend(self.argument_by_ref.iter().map(|value| u8::from(*value)));
+        out
+    }
+}
+
+fn push_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
+}
+
+fn encode_precision(out: &mut Vec<u8>, precision: FunctionDependencyContract) {
+    out.push(precision.class as u8);
+    match precision.arity {
+        FunctionArityRule::Exactly(value) => encode_arity(out, 0, value),
+        FunctionArityRule::AtLeast(value) => encode_arity(out, 1, value),
+        FunctionArityRule::OneOf(values) => {
+            out.push(2);
+            out.extend_from_slice(&(values.len() as u64).to_le_bytes());
+            for value in values {
+                out.extend_from_slice(&(*value as u64).to_le_bytes());
+            }
+        }
+        FunctionArityRule::EvenAtLeast(value) => encode_arity(out, 3, value),
+        FunctionArityRule::OddAtLeast(value) => encode_arity(out, 4, value),
+    }
+    match precision.arguments {
+        FunctionArgumentDependencyContract::AllArgs(role) => encode_role(out, 0, role),
+        FunctionArgumentDependencyContract::Variadic(role) => encode_role(out, 1, role),
+        FunctionArgumentDependencyContract::CriteriaPairs(criteria) => {
+            out.push(2);
+            match criteria.value_range {
+                CriteriaValueRange::None => out.push(0),
+                CriteriaValueRange::Fixed(index) => encode_arity(out, 1, index),
+                CriteriaValueRange::Optional {
+                    provided_index,
+                    fallback_criteria_range_index,
+                } => {
+                    encode_arity(out, 2, provided_index);
+                    out.extend_from_slice(&(fallback_criteria_range_index as u64).to_le_bytes());
+                }
+            }
+            out.extend_from_slice(&(criteria.first_criteria_pair as u64).to_le_bytes());
+        }
+        FunctionArgumentDependencyContract::LocalBindingPairs => out.push(3),
+        FunctionArgumentDependencyContract::LambdaParameters => out.push(4),
+    }
+}
+
+fn encode_arity(out: &mut Vec<u8>, tag: u8, value: usize) {
+    out.push(tag);
+    out.extend_from_slice(&(value as u64).to_le_bytes());
+}
+
+fn encode_role(out: &mut Vec<u8>, tag: u8, role: FunctionArgumentDependencyRole) {
+    out.push(tag);
+    out.push(role as u8);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

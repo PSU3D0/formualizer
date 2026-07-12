@@ -64,7 +64,8 @@ pub(crate) fn compute_node_metadata(
     data: &AstNodeData,
     children: &[&AstNodeMetadata],
     data_store_strings: &StringInterner,
-    _function_provider: &dyn FunctionProvider,
+    function_provider: &dyn FunctionProvider,
+    allow_function_semantics: bool,
 ) -> AstNodeMetadata {
     let mut labels = CanonicalLabels::default();
     for child in children {
@@ -120,7 +121,14 @@ pub(crate) fn compute_node_metadata(
             labels.flags |= CanonicalLabels::FLAG_CONTAINS_FUNCTION;
             let raw_name = data_store_strings.get(*name_id).unwrap_or("");
             hasher.mix_u16(*args_count);
-            classify_and_mix_function(raw_name, usize::from(*args_count), &mut hasher, &mut labels);
+            classify_and_mix_function(
+                raw_name,
+                usize::from(*args_count),
+                function_provider,
+                allow_function_semantics,
+                &mut hasher,
+                &mut labels,
+            );
             mix_children(&mut hasher, children);
         }
         AstNodeData::Array { rows, cols, .. } => {
@@ -360,6 +368,8 @@ fn finalize_anchor_flags(labels: &mut CanonicalLabels) {
 fn classify_and_mix_function(
     raw_name: &str,
     arity: usize,
+    function_provider: &dyn FunctionProvider,
+    allow_function_semantics: bool,
     hasher: &mut StableHasher,
     labels: &mut CanonicalLabels,
 ) {
@@ -367,19 +377,28 @@ fn classify_and_mix_function(
     use crate::function_contract::{
         FunctionContextDependence, FunctionDependencySemantics, FunctionEnvironmentSemantics,
     };
-    crate::builtins::load_builtins();
-    let Some(resolved) = crate::function_registry::resolve_for_arity("", raw_name, arity) else {
+    let identity = allow_function_semantics
+        .then(|| {
+            crate::function_registry::resolve_semantic_identity(
+                function_provider,
+                "",
+                raw_name,
+                arity,
+            )
+        })
+        .flatten();
+    let Some(identity) = identity else {
         mix_string(hasher, "");
         mix_string(hasher, &raw_name.trim().to_ascii_uppercase());
         hasher.mix_u64(0);
         labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
         return;
     };
-    mix_string(hasher, &resolved.namespace);
-    mix_string(hasher, &resolved.canonical_name);
-    hasher.mix_u64(resolved.semantics.generation);
-    let caps = resolved.function.caps();
-    hasher.mix_u32(caps.bits());
+    let encoded = identity.encode();
+    hasher.mix_usize(encoded.len());
+    hasher.mix_bytes(&encoded);
+    let caps = identity.caps;
+    let contract = identity.contract;
     if caps.contains(FnCaps::VOLATILE) {
         labels.flags |= CanonicalLabels::FLAG_VOLATILE;
         labels.rejects |= CanonicalLabels::REJECT_VOLATILE_FUNCTION;
@@ -392,22 +411,13 @@ fn classify_and_mix_function(
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
         labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
     }
-    let returns_reference = caps.contains(FnCaps::RETURNS_REFERENCE);
-    let short_circuit = caps.contains(FnCaps::SHORT_CIRCUIT);
-    let may_spill = caps.contains(FnCaps::MAY_SPILL);
-    let scalar_lookup = caps.contains(FnCaps::LOOKUP);
-    if returns_reference && short_circuit {
+    if caps.contains(FnCaps::RETURNS_REFERENCE) {
         labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
     }
-    if may_spill && ((!short_circuit && !scalar_lookup) || returns_reference) {
+    if caps.contains(FnCaps::MAY_SPILL) {
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
         labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
     }
-    let Some(contract) = resolved.semantics.contract else {
-        labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
-        return;
-    };
-    mix_string(hasher, &format!("{contract:?}"));
     match contract.dependency {
         FunctionDependencySemantics::RecursiveSyntacticArgs => {}
         FunctionDependencySemantics::Dynamic => {
@@ -422,10 +432,10 @@ fn classify_and_mix_function(
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
         labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
     }
-    if contract.result.may_return_reference() && short_circuit {
+    if contract.result.may_return_reference() {
         labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
     }
-    if contract.result.may_spill() && ((!short_circuit && !scalar_lookup) || returns_reference) {
+    if contract.result.may_spill() {
         labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
         labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
     }
@@ -595,7 +605,7 @@ mod tests {
         children: &[&AstNodeMetadata],
         strings: &StringInterner,
     ) -> AstNodeMetadata {
-        compute_node_metadata(data, children, strings, &NoopProvider)
+        compute_node_metadata(data, children, strings, &NoopProvider, false)
     }
 
     #[test]
@@ -772,7 +782,7 @@ mod tests {
             caps: FnCaps::VOLATILE,
         };
 
-        let metadata = compute_node_metadata(&data, &[], &strings, &provider);
+        let metadata = compute_node_metadata(&data, &[], &strings, &provider, true);
 
         assert!(
             metadata
@@ -876,9 +886,16 @@ mod tests {
         let let_fn = AstNodeData::Function {
             name_id: let_id,
             args_offset: 0,
-            args_count: 0,
+            args_count: 3,
         };
-        let let_meta = meta(&let_fn, &[], &strings);
+        crate::builtins::load_builtins();
+        let let_meta = compute_node_metadata(
+            &let_fn,
+            &[],
+            &strings,
+            &crate::function_registry::GlobalRegistryFunctionProvider,
+            true,
+        );
         assert!(
             let_meta
                 .labels

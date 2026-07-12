@@ -18,7 +18,8 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 /// This is deliberately a simple offset relocation for relative cell/range axes;
 /// it is not a structural insert/delete transform and therefore does not use
 /// `ReferenceAdjuster`.
-pub(crate) fn relocate_ast_for_template_placement(
+#[doc(hidden)]
+pub fn relocate_ast_for_template_placement(
     ast: &ASTNode,
     row_delta: i64,
     col_delta: i64,

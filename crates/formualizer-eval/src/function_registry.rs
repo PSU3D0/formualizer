@@ -1,7 +1,7 @@
 use crate::function::{FnCaps, Function};
 use crate::function_contract::{
     FunctionDependencySemantics, FunctionEnvironmentSemantics, FunctionEvaluationSemantics,
-    FunctionResultSemantics, FunctionSemanticContract,
+    FunctionResultSemantics, FunctionSemanticContract, FunctionSemanticIdentity,
 };
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, VecDeque};
@@ -59,6 +59,8 @@ pub enum SemanticConformanceIssue {
     ReferenceResultMismatch,
     LocalEnvironmentMismatch,
     SpillResultMismatch,
+    PrecisionContractMismatch,
+    PrecisionContractInvalid,
 }
 
 #[derive(Clone, Debug)]
@@ -251,9 +253,7 @@ fn register(function: Arc<dyn Function>, trusted_builtin: bool) -> Result<(), Re
             );
         }
     }
-    if previous.is_some_and(|(_, was_trusted)| was_trusted)
-        || (previous.is_some() && trusted_builtin)
-    {
+    if previous.is_some() {
         changed_spellings.push(key);
         publish_semantic_change(&mut state, changed_spellings);
     }
@@ -321,6 +321,12 @@ fn inspect_semantics(
     let contract =
         explicit.or_else(|| trusted_builtin.then(|| trusted_contract_from_caps(caps, precision)));
     if let Some(contract) = contract {
+        if contract.precision != precision {
+            issues.push(SemanticConformanceIssue::PrecisionContractMismatch);
+        }
+        if !precision_is_valid(contract, arity) {
+            issues.push(SemanticConformanceIssue::PrecisionContractInvalid);
+        }
         check_capability(
             &mut issues,
             caps.contains(FnCaps::DYNAMIC_DEPENDENCY),
@@ -357,6 +363,56 @@ fn inspect_semantics(
         generation,
         trusted_builtin,
         issues,
+    }
+}
+
+fn precision_is_valid(contract: FunctionSemanticContract, arity: usize) -> bool {
+    use crate::function_contract::{
+        CriteriaValueRange, FunctionArgumentDependencyContract as Arguments,
+        FunctionArgumentDependencyRole as Role,
+    };
+    let Some(precision) = contract.precision else {
+        return true;
+    };
+    if !precision.arity.allows(arity)
+        || contract.dependency != FunctionDependencySemantics::RecursiveSyntacticArgs
+    {
+        return false;
+    }
+    match precision.arguments {
+        Arguments::AllArgs(role) | Arguments::Variadic(role) => {
+            !matches!(role, Role::IgnoredLiteral | Role::Unsupported)
+        }
+        Arguments::CriteriaPairs(criteria) => {
+            let value_valid = match criteria.value_range {
+                CriteriaValueRange::None => true,
+                CriteriaValueRange::Fixed(index) => index < arity,
+                CriteriaValueRange::Optional {
+                    provided_index,
+                    fallback_criteria_range_index,
+                } => provided_index <= arity && fallback_criteria_range_index < arity,
+            };
+            let pair_end = match criteria.value_range {
+                CriteriaValueRange::Fixed(index) if index >= criteria.first_criteria_pair => index,
+                CriteriaValueRange::Optional { provided_index, .. }
+                    if provided_index >= criteria.first_criteria_pair =>
+                {
+                    provided_index
+                }
+                _ => arity,
+            };
+            value_valid
+                && criteria.first_criteria_pair < pair_end
+                && (pair_end - criteria.first_criteria_pair).is_multiple_of(2)
+        }
+        Arguments::LocalBindingPairs => {
+            contract.environment == FunctionEnvironmentSemantics::LocalBindings
+                && arity >= 3
+                && !arity.is_multiple_of(2)
+        }
+        Arguments::LambdaParameters => {
+            contract.environment == FunctionEnvironmentSemantics::LocalBindings && arity >= 1
+        }
     }
 }
 
@@ -518,6 +574,14 @@ fn resolve_entry(ns: &str, name: &str) -> Option<(RegistryKey, RegistryEntry)> {
 pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
     resolve_entry(ns, name).map(|(_, entry)| entry.function)
 }
+
+pub(crate) struct GlobalRegistryFunctionProvider;
+
+impl crate::traits::FunctionProvider for GlobalRegistryFunctionProvider {
+    fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+        get(ns, name)
+    }
+}
 pub fn resolve(ns: &str, name: &str) -> Option<ResolvedFunction> {
     resolve_entry(ns, name).map(to_resolved)
 }
@@ -562,6 +626,42 @@ pub fn resolve_for_arity(ns: &str, name: &str, arity: usize) -> Option<ResolvedF
         }
     })
 }
+
+pub(crate) fn resolve_semantic_identity(
+    provider: &dyn crate::traits::FunctionProvider,
+    ns: &str,
+    name: &str,
+    arity: usize,
+) -> Option<FunctionSemanticIdentity> {
+    let runtime = provider.get_function(ns, name)?;
+    let resolved = resolve_for_arity(ns, name, arity)?;
+    if !Arc::ptr_eq(&runtime, &resolved.function) {
+        return None;
+    }
+    let contract = resolved.semantics.contract?;
+    let argument_by_ref = catch_unwind(AssertUnwindSafe(|| {
+        let schema = runtime.arg_schema();
+        let repeating = schema.iter().find(|argument| argument.repeating.is_some());
+        (0..arity)
+            .map(|index| {
+                schema
+                    .get(index)
+                    .or(repeating)
+                    .is_some_and(|argument| argument.by_ref)
+            })
+            .collect()
+    }))
+    .ok()?;
+    Some(FunctionSemanticIdentity {
+        namespace: resolved.namespace,
+        canonical_name: resolved.canonical_name,
+        generation: resolved.semantics.generation,
+        caps: runtime.caps(),
+        contract,
+        argument_by_ref,
+    })
+}
+
 fn to_resolved(
     ((namespace, canonical_name), entry): (RegistryKey, RegistryEntry),
 ) -> ResolvedFunction {
@@ -728,6 +828,7 @@ mod tests {
             aliases: &[],
         }));
         let first = resolve(ns, "F").unwrap().semantics.generation;
+        let epoch = semantic_epoch();
         register_function(Arc::new(TestFn {
             ns,
             name: "F",
@@ -735,6 +836,9 @@ mod tests {
         }));
         let second = resolve(ns, "F").unwrap().semantics.generation;
         assert!(second > first);
+        let changes = semantic_changes_since(epoch);
+        assert!(changes.epoch > epoch);
+        assert!(changes.keys.contains(&(ns.to_string(), "F".to_string())));
     }
 
     struct PanickingSchemaFn;
@@ -812,6 +916,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn semantic_identity_encodes_effective_by_reference_roles_for_call_arity() {
+        crate::builtins::load_builtins();
+        let provider = GlobalRegistryFunctionProvider;
+        let sum = resolve_semantic_identity(&provider, "", "SUM", 3).unwrap();
+        assert_eq!(sum.argument_by_ref, vec![false, false, false]);
+
+        let row = resolve_semantic_identity(&provider, "", "ROW", 1).unwrap();
+        assert_eq!(row.argument_by_ref, vec![true]);
+    }
+
     struct ExplicitSafeCustomFn;
 
     impl Function for ExplicitSafeCustomFn {
@@ -828,6 +943,52 @@ mod tests {
         ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
             unreachable!()
         }
+    }
+
+    struct MismatchedPrecisionCustomFn;
+
+    impl Function for MismatchedPrecisionCustomFn {
+        fn name(&self) -> &'static str {
+            "MISMATCHED_PRECISION_CUSTOM"
+        }
+        fn dependency_contract(
+            &self,
+            arity: usize,
+        ) -> Option<crate::function_contract::FunctionDependencyContract> {
+            crate::function_contract::FunctionDependencyContract::static_scalar_all_args(arity)
+        }
+        fn semantic_contract(&self, _arity: usize) -> Option<FunctionSemanticContract> {
+            Some(FunctionSemanticContract::trusted_builtin_default(None))
+        }
+        fn min_args(&self) -> usize {
+            1
+        }
+        fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+            static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
+                std::sync::LazyLock::new(|| vec![crate::args::ArgSchema::any()]);
+            &SCHEMA
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            unreachable!()
+        }
+    }
+
+    #[test]
+    fn explicit_precision_must_equal_dependency_contract() {
+        register_function(Arc::new(MismatchedPrecisionCustomFn));
+        let semantics = resolve_for_arity("", "MISMATCHED_PRECISION_CUSTOM", 1)
+            .unwrap()
+            .semantics;
+        assert!(semantics.contract.is_none());
+        assert!(
+            semantics
+                .issues
+                .contains(&SemanticConformanceIssue::PrecisionContractMismatch)
+        );
     }
 
     #[test]

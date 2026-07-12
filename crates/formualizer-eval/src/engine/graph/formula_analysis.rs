@@ -339,100 +339,23 @@ impl DependencyGraph {
                     unresolved_name_policy,
                 )?;
             }
-            super::super::arena::ast::AstNodeData::Function { name_id, .. } => {
-                let name = self.data_store.resolve_ast_string(name_id).to_string();
+            super::super::arena::ast::AstNodeData::Function { .. } => {
                 let args: Vec<AstNodeId> = self
                     .data_store
                     .get_args(ast_id)
                     .map_or_else(Vec::new, |args| args.to_vec());
-                if name.eq_ignore_ascii_case("LET") {
-                    if args.len() >= 3 && args.len() % 2 == 1 {
-                        local_scopes.push(FxHashSet::default());
-
-                        for pair_idx in (0..args.len() - 1).step_by(2) {
-                            self.extract_dependencies_recursive_arena(
-                                args[pair_idx + 1],
-                                current_sheet_id,
-                                dependencies,
-                                range_dependencies,
-                                created_placeholders,
-                                named_dependencies,
-                                unresolved_names,
-                                local_scopes,
-                                unresolved_name_policy,
-                            )?;
-
-                            if let Some(local_name) = self.arena_named_range_name(args[pair_idx])
-                                && let Some(scope) = local_scopes.last_mut()
-                            {
-                                scope.insert(local_name.to_ascii_uppercase());
-                            }
-                        }
-
-                        self.extract_dependencies_recursive_arena(
-                            args[args.len() - 1],
-                            current_sheet_id,
-                            dependencies,
-                            range_dependencies,
-                            created_placeholders,
-                            named_dependencies,
-                            unresolved_names,
-                            local_scopes,
-                            unresolved_name_policy,
-                        )?;
-
-                        local_scopes.pop();
-                    } else {
-                        for arg in args {
-                            self.extract_dependencies_recursive_arena(
-                                arg,
-                                current_sheet_id,
-                                dependencies,
-                                range_dependencies,
-                                created_placeholders,
-                                named_dependencies,
-                                unresolved_names,
-                                local_scopes,
-                                unresolved_name_policy,
-                            )?;
-                        }
-                    }
-                } else if name.eq_ignore_ascii_case("LAMBDA") {
-                    if let Some((&body, params)) = args.split_last() {
-                        let mut lambda_scope = FxHashSet::default();
-                        for param in params {
-                            if let Some(param_name) = self.arena_named_range_name(*param) {
-                                lambda_scope.insert(param_name.to_ascii_uppercase());
-                            }
-                        }
-                        local_scopes.push(lambda_scope);
-                        self.extract_dependencies_recursive_arena(
-                            body,
-                            current_sheet_id,
-                            dependencies,
-                            range_dependencies,
-                            created_placeholders,
-                            named_dependencies,
-                            unresolved_names,
-                            local_scopes,
-                            unresolved_name_policy,
-                        )?;
-                        local_scopes.pop();
-                    }
-                } else {
-                    for arg in args {
-                        self.extract_dependencies_recursive_arena(
-                            arg,
-                            current_sheet_id,
-                            dependencies,
-                            range_dependencies,
-                            created_placeholders,
-                            named_dependencies,
-                            unresolved_names,
-                            local_scopes,
-                            unresolved_name_policy,
-                        )?;
-                    }
+                for arg in args {
+                    self.extract_dependencies_recursive_arena(
+                        arg,
+                        current_sheet_id,
+                        dependencies,
+                        range_dependencies,
+                        created_placeholders,
+                        named_dependencies,
+                        unresolved_names,
+                        local_scopes,
+                        unresolved_name_policy,
+                    )?;
                 }
             }
             super::super::arena::ast::AstNodeData::Array { .. } => {
@@ -717,119 +640,19 @@ impl DependencyGraph {
                     unresolved_name_policy,
                 )?;
             }
-            ASTNodeType::Function { name, args } => {
-                if name.eq_ignore_ascii_case("LET") {
-                    if args.len() >= 3 && args.len() % 2 == 1 {
-                        local_scopes.push(FxHashSet::default());
-
-                        for pair_idx in (0..args.len() - 1).step_by(2) {
-                            self.extract_dependencies_recursive(
-                                &args[pair_idx + 1],
-                                current_sheet_id,
-                                dependencies,
-                                range_dependencies,
-                                created_placeholders,
-                                named_dependencies,
-                                unresolved_names,
-                                local_scopes,
-                                unresolved_name_policy,
-                            )?;
-
-                            if let ASTNodeType::Reference {
-                                reference: ReferenceType::NamedRange(local_name),
-                                ..
-                            } = &args[pair_idx].node_type
-                                && let Some(scope) = local_scopes.last_mut()
-                            {
-                                scope.insert(local_name.to_ascii_uppercase());
-                            }
-                        }
-
-                        self.extract_dependencies_recursive(
-                            &args[args.len() - 1],
-                            current_sheet_id,
-                            dependencies,
-                            range_dependencies,
-                            created_placeholders,
-                            named_dependencies,
-                            unresolved_names,
-                            local_scopes,
-                            unresolved_name_policy,
-                        )?;
-
-                        local_scopes.pop();
-                    } else {
-                        for arg in args {
-                            self.extract_dependencies_recursive(
-                                arg,
-                                current_sheet_id,
-                                dependencies,
-                                range_dependencies,
-                                created_placeholders,
-                                named_dependencies,
-                                unresolved_names,
-                                local_scopes,
-                                unresolved_name_policy,
-                            )?;
-                        }
-                    }
-                } else if name.eq_ignore_ascii_case("LAMBDA") {
-                    if let Some(body) = args.last() {
-                        let mut lambda_scope = FxHashSet::default();
-                        for param in &args[..args.len().saturating_sub(1)] {
-                            if let ASTNodeType::Reference {
-                                reference: ReferenceType::NamedRange(param_name),
-                                ..
-                            } = &param.node_type
-                            {
-                                lambda_scope.insert(param_name.to_ascii_uppercase());
-                            }
-                        }
-                        local_scopes.push(lambda_scope);
-                        self.extract_dependencies_recursive(
-                            body,
-                            current_sheet_id,
-                            dependencies,
-                            range_dependencies,
-                            created_placeholders,
-                            named_dependencies,
-                            unresolved_names,
-                            local_scopes,
-                            unresolved_name_policy,
-                        )?;
-                        local_scopes.pop();
-                    }
-                } else {
-                    for arg in args {
-                        self.extract_dependencies_recursive(
-                            arg,
-                            current_sheet_id,
-                            dependencies,
-                            range_dependencies,
-                            created_placeholders,
-                            named_dependencies,
-                            unresolved_names,
-                            local_scopes,
-                            unresolved_name_policy,
-                        )?;
-                    }
-                }
-            }
-            ASTNodeType::Array(rows) => {
-                for row in rows {
-                    for cell in row {
-                        self.extract_dependencies_recursive(
-                            cell,
-                            current_sheet_id,
-                            dependencies,
-                            range_dependencies,
-                            created_placeholders,
-                            named_dependencies,
-                            unresolved_names,
-                            local_scopes,
-                            unresolved_name_policy,
-                        )?;
-                    }
+            ASTNodeType::Function { args, .. } => {
+                for arg in args {
+                    self.extract_dependencies_recursive(
+                        arg,
+                        current_sheet_id,
+                        dependencies,
+                        range_dependencies,
+                        created_placeholders,
+                        named_dependencies,
+                        unresolved_names,
+                        local_scopes,
+                        unresolved_name_policy,
+                    )?;
                 }
             }
             ASTNodeType::Call { callee, args } => {
@@ -851,6 +674,21 @@ impl DependencyGraph {
                 for arg in args {
                     self.extract_dependencies_recursive(
                         arg,
+                        current_sheet_id,
+                        dependencies,
+                        range_dependencies,
+                        created_placeholders,
+                        named_dependencies,
+                        unresolved_names,
+                        local_scopes,
+                        unresolved_name_policy,
+                    )?;
+                }
+            }
+            ASTNodeType::Array(rows) => {
+                for item in rows.iter().flatten() {
+                    self.extract_dependencies_recursive(
+                        item,
                         current_sheet_id,
                         dependencies,
                         range_dependencies,
