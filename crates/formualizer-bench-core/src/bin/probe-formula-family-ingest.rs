@@ -77,6 +77,7 @@ enum ProbeMode {
 #[serde(rename_all = "snake_case")]
 enum Scenario {
     LargeFamily,
+    NestedFunctionFamily,
     ManyTinyFamilies,
     ForwardAnchor,
     HoleException,
@@ -88,6 +89,7 @@ impl Scenario {
     fn label(self) -> &'static str {
         match self {
             Self::LargeFamily => "large_family",
+            Self::NestedFunctionFamily => "nested_function_family",
             Self::ManyTinyFamilies => "many_tiny_families",
             Self::ForwardAnchor => "forward_anchor",
             Self::HoleException => "hole_exception",
@@ -498,6 +500,15 @@ fn sheet_xml(scenario: Scenario, members: u32) -> Result<String> {
             Scenario::HoleException if row == (rows / 2).max(1) => {
                 xml.push_str(&format!("<f>{formula}</f>"));
             }
+            Scenario::NestedFunctionFamily => {
+                if row == 1 {
+                    xml.push_str(&format!(
+                        r#"<f t="shared" si="1" ref="B1:B{rows}">ROUND(ABS(A1)+SUM(A1:A1)+COUNTIF(A1:A1,"&gt;0")+VLOOKUP(A1,A1:A1,1,FALSE),0)</f>"#
+                    ));
+                } else {
+                    xml.push_str(r#"<f t="shared" si="1"/>"#);
+                }
+            }
             Scenario::FullSheetTwoPoint | Scenario::LargeFamily | Scenario::HoleException => {
                 if row == 1 {
                     let end = if matches!(scenario, Scenario::FullSheetTwoPoint) {
@@ -548,6 +559,15 @@ mod tests {
             .unwrap();
         assert!(xml.contains("t=\"shared\""));
         assert!(xml.contains("ref=\"B1:B100\""));
+    }
+
+    #[test]
+    fn nested_function_fixture_is_one_genuine_shared_family() {
+        let xml = sheet_xml(Scenario::NestedFunctionFamily, 100).unwrap();
+        assert!(xml.contains("ROUND(ABS(A1)+SUM(A1:A1)+COUNTIF"));
+        assert!(xml.contains("VLOOKUP(A1,A1:A1,1,FALSE)"));
+        assert_eq!(xml.matches("t=\"shared\"").count(), 100);
+        assert_eq!(xml.matches("ref=\"B1:B100\"").count(), 1);
     }
 
     #[test]
