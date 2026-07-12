@@ -79,6 +79,13 @@ struct WorkbookSpoolUsage {
     files: u32,
 }
 
+struct StreamWorksheetOptions {
+    chunk_rows: usize,
+    debug: bool,
+    workbook_spool_usage: WorkbookSpoolUsage,
+    shadow_relocation_comparator: Option<ShadowRelocationComparator>,
+}
+
 struct FormulaStaging {
     parse_cache: rustc_hash::FxHashMap<String, Option<formualizer_eval::engine::AstNodeId>>,
     formulas: Vec<FormulaIngestRecord>,
@@ -299,16 +306,19 @@ impl CalamineAdapter {
         sheet: &str,
         engine: &mut EvalEngine<C>,
         sheet_instance: u32,
-        chunk_rows: usize,
-        debug: bool,
-        workbook_spool_usage: WorkbookSpoolUsage,
-        shadow_relocation_comparator: Option<&ShadowRelocationComparator>,
+        options: StreamWorksheetOptions,
     ) -> Result<StreamedSheet, calamine::Error>
     where
         RS: Read + Seek,
         C: EvaluationContext,
     {
         let timer = DebugTimer::start();
+        let StreamWorksheetOptions {
+            chunk_rows,
+            debug,
+            workbook_spool_usage,
+            shadow_relocation_comparator,
+        } = options;
         let mut reader = workbook
             .worksheet_cells_reader(sheet)
             .map_err(calamine::Error::Xlsx)?;
@@ -648,7 +658,7 @@ impl CalamineAdapter {
                 |coord0, formula, shared_index| {
                     if compare_shadow
                         && let (Some(comparator), Some(shared_index)) =
-                            (shadow_relocation_comparator, shared_index)
+                            (shadow_relocation_comparator.as_ref(), shared_index)
                         && let Some(family) = compressed_families
                             .iter()
                             .find(|family| family.source_id.source_index == shared_index)
@@ -1445,26 +1455,30 @@ where
                             n,
                             engine,
                             sheet_instance as u32,
-                            chunk_rows,
-                            debug,
-                            WorkbookSpoolUsage {
-                                bytes: workbook_spool_bytes_used,
-                                files: workbook_spill_files_used,
+                            StreamWorksheetOptions {
+                                chunk_rows,
+                                debug,
+                                workbook_spool_usage: WorkbookSpoolUsage {
+                                    bytes: workbook_spool_bytes_used,
+                                    files: workbook_spill_files_used,
+                                },
+                                shadow_relocation_comparator: shadow_relocation_comparator.clone(),
                             },
-                            shadow_relocation_comparator.as_ref(),
                         ),
                         CalamineWorkbook::Bytes(workbook) => Self::stream_worksheet(
                             workbook,
                             n,
                             engine,
                             sheet_instance as u32,
-                            chunk_rows,
-                            debug,
-                            WorkbookSpoolUsage {
-                                bytes: workbook_spool_bytes_used,
-                                files: workbook_spill_files_used,
+                            StreamWorksheetOptions {
+                                chunk_rows,
+                                debug,
+                                workbook_spool_usage: WorkbookSpoolUsage {
+                                    bytes: workbook_spool_bytes_used,
+                                    files: workbook_spill_files_used,
+                                },
+                                shadow_relocation_comparator,
                             },
-                            shadow_relocation_comparator.as_ref(),
                         ),
                     }?
                 };

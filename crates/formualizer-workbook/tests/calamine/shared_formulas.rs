@@ -779,7 +779,7 @@ fn injected_calamine_arena_relocation_mismatch_replays_complete_shadow_family() 
         let fallback_ast = engine.get_cell("Sheet1", row, 2).unwrap().0.unwrap();
         assert_eq!(
             fallback_ast.fingerprint(),
-            formualizer_parse::parser::parse(&format!("=ABS(A{row})+1"))
+            formualizer_parse::parser::parse(format!("=ABS(A{row})+1"))
                 .unwrap()
                 .fingerprint(),
             "fallback formula order at row {row}"
