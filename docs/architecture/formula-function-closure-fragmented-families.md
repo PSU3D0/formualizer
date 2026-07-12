@@ -265,10 +265,10 @@ Extend `FormulaIngestReport`, source-family report, and `probe-formula-family-in
 
 Coverage measurement must use `function_registry::snapshot_registered()` after builtin registration. Report canonical registrations by semantic category, safe-default conformance, specialized precision, unsafe/rejected, and observed corpus calls. Aliases do not inflate function counts. The release artifact records the registry snapshot count/fingerprint and fallback histogram, never a maintained expected-name list.
 
-Benchmark gates use cold child processes and five-run medians on one recorded machine. Every artifact records build profile, allocator, CPU state, fixture hash, baseline SHA, median, and MAD:
+Benchmark gates use cold child processes and five-run medians on one recorded machine. Every artifact records build profile, allocator, CPU state, fixture hash, baseline SHA, median, and MAD. Comparisons between fixtures with different intrinsic formula-evaluation work gate load/ingest phases only; total-time gates require equivalent evaluation work:
 
 - existing 100k/1M clean-family direct gates and fallback <=15% overhead remain green;
-- a nested ordinary-function family (at least 100k) has one anchor analysis, zero descendant graph vertices, no function-name fallback, and <=10% overhead versus the current arithmetic direct fixture;
+- a nested ordinary-function family (at least 100k) has one anchor analysis, zero descendant graph vertices, no function-name fallback, and <=10% authoritative load/ingest median overhead versus the current arithmetic direct fixture;
 - registry closure corpus has zero planner under-approximations and no correctness mismatch; coverage percentage is reported, not gamed by weakening contracts;
 - fragmented 100k fixtures with 1, 8, and 64 bounded exclusions directly promote expected fragments, retain O(exclusions + fragments) evidence, and are at least 25% faster and 40% lower RSS than forced whole-family replay;
 - cap+1, conflict, disorder, preparation-failure, and deferred fixtures replay exactly with <=15% overhead;

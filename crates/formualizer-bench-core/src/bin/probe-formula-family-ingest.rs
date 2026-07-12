@@ -34,7 +34,15 @@ fn main() -> Result<()> {
     if cli.child {
         println!("{}", serde_json::to_string(&probe_child(&cli)?)?);
     } else {
-        println!("{}", serde_json::to_string_pretty(&run_matrix(&cli)?)?);
+        let report = run_matrix(&cli)?;
+        let gate_failed = report
+            .nested_authoritative_load_gate
+            .as_ref()
+            .is_some_and(|gate| !gate.passed);
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        if gate_failed {
+            bail!("nested authoritative load median exceeded the arithmetic direct gate");
+        }
     }
     Ok(())
 }
@@ -56,7 +64,7 @@ struct Cli {
     #[arg(long)]
     generate_only: bool,
     /// Number of independently launched cold children per disposition.
-    #[arg(long, default_value_t = 1)]
+    #[arg(long, default_value_t = 5)]
     samples: usize,
     #[arg(long, hide = true)]
     child: bool,
@@ -109,6 +117,49 @@ struct MatrixReport {
     fixture_bytes: u64,
     samples_per_disposition: usize,
     children: Vec<ChildMeasurement>,
+    summaries: Vec<DispositionSummary>,
+    arithmetic_direct_baseline: Option<ArithmeticBaseline>,
+    nested_authoritative_load_gate: Option<RelativeGate>,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Serialize)]
+struct ArithmeticBaseline {
+    fixture: String,
+    children: Vec<ChildMeasurement>,
+    summaries: Vec<DispositionSummary>,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Serialize)]
+struct DispositionSummary {
+    disposition: String,
+    samples: usize,
+    maximum_resident_set_kib: MedianMad,
+    total_elapsed_ms: MedianMad,
+    load_ms: MedianMad,
+    evaluate_ms: MedianMad,
+    collection_ms: Option<MedianMad>,
+    preparation_ms: Option<MedianMad>,
+    replay_ms: Option<MedianMad>,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq)]
+struct MedianMad {
+    median: f64,
+    mad: f64,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Serialize)]
+struct RelativeGate {
+    metric: &'static str,
+    limit_percent: f64,
+    baseline_median: f64,
+    candidate_median: f64,
+    overhead_percent: f64,
+    passed: bool,
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -256,12 +307,26 @@ fn fixture_path(cli: &Cli) -> PathBuf {
 }
 
 #[cfg(feature = "formualizer_runner")]
+const NESTED_LOAD_GATE_MIN_MEMBERS: u32 = 100_000;
+
+#[cfg(feature = "formualizer_runner")]
+fn is_nested_load_gate_run(cli: &Cli) -> bool {
+    matches!(cli.scenario, Scenario::NestedFunctionFamily)
+        && cli.members >= NESTED_LOAD_GATE_MIN_MEMBERS
+        && matches!(cli.mode, ProbeMode::All | ProbeMode::Authoritative)
+        && !cli.generate_only
+}
+
+#[cfg(feature = "formualizer_runner")]
 fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
     if cli.members == 0 {
         bail!("--members must be at least 1")
     }
     if cli.samples == 0 {
         bail!("--samples must be at least 1")
+    }
+    if is_nested_load_gate_run(cli) && cli.samples < 5 {
+        bail!("nested-function-family 100k gate runs require at least five cold samples")
     }
     let fixture = fixture_path(cli);
     let generated = cli.input.is_none();
@@ -291,6 +356,47 @@ fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
             }
         }
     }
+    let summaries = summarize_dispositions(&children);
+    let mut arithmetic_direct_baseline = None;
+    let mut nested_authoritative_load_gate = None;
+    if is_nested_load_gate_run(cli) {
+        let baseline_fixture = fixture.with_file_name(format!(
+            "large_family-{}-nested-load-baseline.xlsx",
+            cli.members
+        ));
+        if let Some(parent) = baseline_fixture.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(
+            &baseline_fixture,
+            generate_xlsx(Scenario::LargeFamily, cli.members)?,
+        )?;
+        let mut baseline_children = Vec::with_capacity(cli.samples);
+        for sample in 1..=cli.samples {
+            baseline_children.push(run_child(
+                cli,
+                &baseline_fixture,
+                ProbeMode::Authoritative,
+                sample,
+            )?);
+        }
+        let baseline_summaries = summarize_dispositions(&baseline_children);
+        let candidate = summary_for(&summaries, "authoritative")
+            .context("nested run did not produce an authoritative summary")?;
+        let baseline = summary_for(&baseline_summaries, "authoritative")
+            .context("arithmetic baseline did not produce an authoritative summary")?;
+        nested_authoritative_load_gate = Some(relative_gate(
+            "authoritative_load_ms",
+            baseline.load_ms.median,
+            candidate.load_ms.median,
+            10.0,
+        ));
+        arithmetic_direct_baseline = Some(ArithmeticBaseline {
+            fixture: baseline_fixture.display().to_string(),
+            children: baseline_children,
+            summaries: baseline_summaries,
+        });
+    }
     Ok(MatrixReport {
         scenario: cli.scenario,
         members: cli.members,
@@ -300,7 +406,126 @@ fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
         fixture_bytes,
         samples_per_disposition: cli.samples,
         children,
+        summaries,
+        arithmetic_direct_baseline,
+        nested_authoritative_load_gate,
     })
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn median_mad(mut values: Vec<f64>) -> Option<MedianMad> {
+    if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    let median = median_sorted(&values);
+    let mut deviations: Vec<_> = values
+        .into_iter()
+        .map(|value| (value - median).abs())
+        .collect();
+    deviations.sort_by(f64::total_cmp);
+    Some(MedianMad {
+        median,
+        mad: median_sorted(&deviations),
+    })
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn median_sorted(values: &[f64]) -> f64 {
+    let middle = values.len() / 2;
+    if values.len() % 2 == 0 {
+        (values[middle - 1] + values[middle]) / 2.0
+    } else {
+        values[middle]
+    }
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn summarize_dispositions(children: &[ChildMeasurement]) -> Vec<DispositionSummary> {
+    let mut dispositions = Vec::new();
+    for child in children {
+        if !dispositions.contains(&child.disposition) {
+            dispositions.push(child.disposition.clone());
+        }
+    }
+    dispositions
+        .into_iter()
+        .map(|disposition| {
+            let samples: Vec<_> = children
+                .iter()
+                .filter(|child| child.disposition == disposition)
+                .collect();
+            let optional_metric = |read: fn(&ModeReport) -> Option<f64>| {
+                samples
+                    .iter()
+                    .map(|sample| read(&sample.report))
+                    .collect::<Option<Vec<_>>>()
+                    .and_then(median_mad)
+            };
+            DispositionSummary {
+                disposition,
+                samples: samples.len(),
+                maximum_resident_set_kib: median_mad(
+                    samples
+                        .iter()
+                        .map(|sample| sample.maximum_resident_set_kib as f64)
+                        .collect(),
+                )
+                .expect("non-empty finite RSS samples"),
+                total_elapsed_ms: median_mad(
+                    samples
+                        .iter()
+                        .map(|sample| sample.report.total_elapsed_ms)
+                        .collect(),
+                )
+                .expect("non-empty finite total samples"),
+                load_ms: median_mad(samples.iter().map(|sample| sample.report.load_ms).collect())
+                    .expect("non-empty finite load samples"),
+                evaluate_ms: median_mad(
+                    samples
+                        .iter()
+                        .map(|sample| sample.report.evaluate_ms)
+                        .collect(),
+                )
+                .expect("non-empty finite evaluation samples"),
+                collection_ms: optional_metric(|report| report.collection_ms),
+                preparation_ms: optional_metric(|report| report.preparation_ms),
+                replay_ms: optional_metric(|report| report.replay_ms),
+            }
+        })
+        .collect()
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn summary_for<'a>(
+    summaries: &'a [DispositionSummary],
+    disposition: &str,
+) -> Option<&'a DispositionSummary> {
+    summaries
+        .iter()
+        .find(|summary| summary.disposition == disposition)
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn relative_gate(
+    metric: &'static str,
+    baseline_median: f64,
+    candidate_median: f64,
+    limit_percent: f64,
+) -> RelativeGate {
+    let overhead_percent = if baseline_median > 0.0 {
+        (candidate_median / baseline_median - 1.0) * 100.0
+    } else {
+        f64::INFINITY
+    };
+    RelativeGate {
+        metric,
+        limit_percent,
+        baseline_median,
+        candidate_median,
+        overhead_percent,
+        passed: overhead_percent <= limit_percent,
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -575,6 +800,53 @@ mod tests {
         let xml = sheet_xml(Scenario::FullSheetTwoPoint, 2).unwrap();
         assert!(xml.contains("ref=\"B1:B1048576\""));
         assert_eq!(xml.matches("<row ").count(), 2);
+    }
+
+    #[test]
+    fn nested_load_gate_applies_only_to_required_100k_measurements() {
+        let cli = |members| Cli {
+            scenario: Scenario::NestedFunctionFamily,
+            mode: ProbeMode::Authoritative,
+            members,
+            input: None,
+            fixture_out: None,
+            generate_only: false,
+            samples: 5,
+            child: false,
+        };
+        assert!(!is_nested_load_gate_run(&cli(100)));
+        assert!(is_nested_load_gate_run(&cli(100_000)));
+    }
+
+    #[test]
+    fn median_and_mad_are_stable_for_odd_and_even_samples() {
+        assert_eq!(
+            median_mad(vec![101.0, 2.0, 3.0, 100.0, 1.0]),
+            Some(MedianMad {
+                median: 3.0,
+                mad: 2.0,
+            })
+        );
+        assert_eq!(
+            median_mad(vec![4.0, 1.0, 3.0, 2.0]),
+            Some(MedianMad {
+                median: 2.5,
+                mad: 1.0,
+            })
+        );
+        assert_eq!(median_mad(Vec::new()), None);
+        assert_eq!(median_mad(vec![f64::NAN]), None);
+    }
+
+    #[test]
+    fn relative_load_gate_reports_pass_and_failure_without_using_total_time() {
+        let pass = relative_gate("authoritative_load_ms", 100.0, 109.9, 10.0);
+        assert!(pass.passed);
+        assert_eq!(pass.metric, "authoritative_load_ms");
+        let fail = relative_gate("authoritative_load_ms", 100.0, 110.1, 10.0);
+        assert!(!fail.passed);
+        assert!(fail.overhead_percent > fail.limit_percent);
+        assert!(!relative_gate("authoritative_load_ms", 0.0, 1.0, 10.0).passed);
     }
 
     #[test]
