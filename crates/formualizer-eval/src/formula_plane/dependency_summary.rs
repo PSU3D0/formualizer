@@ -259,8 +259,8 @@ fn compare_dependency_summaries_to_plan(
             continue;
         }
 
-        let summary_cells = match instantiate_summary_cells(input) {
-            Ok(cells) => cells,
+        let summary_universe = match instantiate_summary_universe(input) {
+            Ok(universe) => universe,
             Err(reason) => {
                 report.rejection_count += 1;
                 report.record_fallback(reason);
@@ -268,9 +268,11 @@ fn compare_dependency_summaries_to_plan(
             }
         };
 
-        if summary_cells == planner_universe.cells {
+        if summary_universe.cells == planner_universe.cells
+            && summary_universe.ranges == planner_universe.ranges
+        {
             report.exact_match_count += 1;
-        } else if planner_universe.cells.is_subset(&summary_cells) {
+        } else if symbolic_universe_covers(&summary_universe, &planner_universe) {
             report.over_approximation_count += 1;
         } else {
             report.under_approximation_count += 1;
@@ -306,12 +308,16 @@ impl NormalizedDependencyUniverse {
     fn fallback_reasons(&self) -> Vec<&'static str> {
         let mut reasons = BTreeSet::new();
         for range in &self.ranges {
-            reasons.insert(match range {
-                NormalizedRangeDependency::Finite(_) => "planner_finite_range_dependency",
+            match range {
+                NormalizedRangeDependency::Finite(_) => continue,
                 NormalizedRangeDependency::WholeRow { .. }
-                | NormalizedRangeDependency::WholeCol { .. } => "planner_whole_axis_dependency",
-                NormalizedRangeDependency::OpenRect { .. } => "planner_open_range_dependency",
-            });
+                | NormalizedRangeDependency::WholeCol { .. } => {
+                    reasons.insert("planner_whole_axis_dependency");
+                }
+                NormalizedRangeDependency::OpenRect { .. } => {
+                    reasons.insert("planner_open_range_dependency");
+                }
+            }
         }
         if !self.names.is_empty() {
             reasons.insert("planner_name_dependency");
@@ -436,10 +442,10 @@ fn planner_coord_to_vc(coord: AbsCoord) -> (u32, u32) {
     (coord.row().saturating_add(1), coord.col().saturating_add(1))
 }
 
-fn instantiate_summary_cells(
+fn instantiate_summary_universe(
     input: &DependencySummaryComparisonInput<'_>,
-) -> Result<BTreeSet<FiniteCell>, &'static str> {
-    let mut cells = BTreeSet::new();
+) -> Result<NormalizedDependencyUniverse, &'static str> {
+    let mut universe = NormalizedDependencyUniverse::default();
     for (pattern_index, pattern) in input.summary.precedent_patterns.iter().enumerate() {
         match pattern {
             PrecedentPattern::Cell(cell_pattern) => {
@@ -458,12 +464,81 @@ fn instantiate_summary_cells(
                     PatternAxis::Col,
                 )
                 .map_err(|reason| summary_instantiation_fallback(&reason))?;
-                cells.insert(FiniteCell::new(sheet, row, col));
+                universe.cells.insert(FiniteCell::new(sheet, row, col));
             }
-            PrecedentPattern::Range(_) => return Err("summary_pattern_instantiation_unsupported"),
+            PrecedentPattern::Range(range) => {
+                let sheet = instantiate_sheet(&range.sheet, input.sheet);
+                let row_start = instantiate_axis_cell(
+                    &range.start_row,
+                    input.row,
+                    pattern_index,
+                    PatternAxis::Row,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                let col_start = instantiate_axis_cell(
+                    &range.start_col,
+                    input.col,
+                    pattern_index,
+                    PatternAxis::Col,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                let row_end = instantiate_axis_cell(
+                    &range.end_row,
+                    input.row,
+                    pattern_index,
+                    PatternAxis::Row,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                let col_end = instantiate_axis_cell(
+                    &range.end_col,
+                    input.col,
+                    pattern_index,
+                    PatternAxis::Col,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                universe
+                    .ranges
+                    .insert(NormalizedRangeDependency::Finite(FiniteRegion::new(
+                        sheet, row_start, col_start, row_end, col_end,
+                    )));
+            }
         }
     }
-    Ok(cells)
+    Ok(universe)
+}
+
+fn symbolic_universe_covers(
+    summary: &NormalizedDependencyUniverse,
+    planner: &NormalizedDependencyUniverse,
+) -> bool {
+    planner.cells.iter().all(|cell| {
+        summary.cells.contains(cell)
+            || summary.ranges.iter().any(|range| match range {
+                NormalizedRangeDependency::Finite(region) => {
+                    region.sheet == cell.sheet
+                        && region.row_start <= cell.row
+                        && cell.row <= region.row_end
+                        && region.col_start <= cell.col
+                        && cell.col <= region.col_end
+                }
+                _ => false,
+            })
+    }) && planner
+        .ranges
+        .iter()
+        .all(|planner_range| match planner_range {
+            NormalizedRangeDependency::Finite(planner_region) => {
+                summary.ranges.iter().any(|range| {
+                    matches!(range, NormalizedRangeDependency::Finite(summary_region)
+                if summary_region.sheet == planner_region.sheet
+                    && summary_region.row_start <= planner_region.row_start
+                    && summary_region.row_end >= planner_region.row_end
+                    && summary_region.col_start <= planner_region.col_start
+                    && summary_region.col_end >= planner_region.col_end)
+                })
+            }
+            _ => false,
+        })
 }
 
 fn summary_instantiation_fallback(reason: &RunSummaryRejectionReason) -> &'static str {
@@ -3049,23 +3124,11 @@ mod tests {
         )
         .expect("fixed planner comparison should build");
 
-        assert_eq!(report.exact_match_count, 0);
+        assert_eq!(report.exact_match_count, 1);
         assert_eq!(report.over_approximation_count, 0);
         assert_eq!(report.under_approximation_count, 0);
-        assert_eq!(report.rejection_count, 2);
+        assert_eq!(report.rejection_count, 1);
         assert_eq!(report.policy_drift_count, 0);
-        assert!(
-            report
-                .fallback_reason_histogram
-                .get("finite_range_unsupported")
-                .or_else(|| report
-                    .fallback_reason_histogram
-                    .get("summary_pattern_instantiation_unsupported"))
-                .or_else(|| report
-                    .fallback_reason_histogram
-                    .get("planner_finite_range_dependency"))
-                .is_some()
-        );
         assert_eq!(
             report
                 .fallback_reason_histogram
