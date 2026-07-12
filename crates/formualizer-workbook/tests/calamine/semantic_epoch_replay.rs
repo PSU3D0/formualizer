@@ -48,7 +48,7 @@ fn epoch_replay_xlsx(rows: u32, mixed: bool) -> Vec<u8> {
     output.finish().unwrap().into_inner()
 }
 
-fn assert_stale_adapter_replays_all(mixed: bool, alias: &'static str) {
+fn assert_unrelated_epoch_preserves_arithmetic_preparation(mixed: bool, alias: &'static str) {
     let config =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
@@ -58,10 +58,10 @@ fn assert_stale_adapter_replays_all(mixed: bool, alias: &'static str) {
     let mut adapter = CalamineAdapter::open_bytes(epoch_replay_xlsx(100, mixed)).unwrap();
     adapter.stream_into_engine(&mut engine).unwrap();
 
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(
         engine.baseline_stats().graph_formula_vertex_count,
-        if mixed { 101 } else { 100 }
+        if mixed { 1 } else { 0 }
     );
     engine.evaluate_all().unwrap();
     for row in 1..=100 {
@@ -80,11 +80,11 @@ fn assert_stale_adapter_replays_all(mixed: bool, alias: &'static str) {
 }
 
 #[test]
-fn calamine_all_direct_epoch_change_replays_complete_legacy_graph() {
-    assert_stale_adapter_replays_all(false, "__CALAMINE_ALL_DIRECT_EPOCH__");
+fn calamine_all_direct_unrelated_epoch_change_preserves_arithmetic_span() {
+    assert_unrelated_epoch_preserves_arithmetic_preparation(false, "__CALAMINE_ALL_DIRECT_EPOCH__");
 }
 
 #[test]
-fn calamine_mixed_epoch_change_replays_complete_legacy_graph() {
-    assert_stale_adapter_replays_all(true, "__CALAMINE_MIXED_EPOCH__");
+fn calamine_mixed_unrelated_epoch_change_preserves_arithmetic_span() {
+    assert_unrelated_epoch_preserves_arithmetic_preparation(true, "__CALAMINE_MIXED_EPOCH__");
 }
