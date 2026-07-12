@@ -23,7 +23,8 @@ use crate::engine::{
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
     commit_prepared_anchor_once_family, place_candidate_family_with_analyses,
-    prepare_anchor_once_family, split_candidate_affine_literal_runs, validate_anchor_once_syntax,
+    prepare_anchor_once_family, split_candidate_affine_literal_runs,
+    validate_anchor_once_shadow_relocation, validate_anchor_once_syntax,
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
@@ -3313,6 +3314,7 @@ where
         &mut self,
         sheet_id: SheetId,
         family: &crate::engine::SourceFormulaFamily,
+        allow_function_closure: bool,
     ) -> Result<
         crate::formula_plane::placement::PreparedAnchorOncePlacement,
         SourceFamilyPreparationError,
@@ -3346,13 +3348,22 @@ where
         };
         let ast = formualizer_parse::parser::parse(&formula)
             .map_err(|_| SourceFamilyPreparationError::parse("AnchorParseRejected"))?;
-        validate_anchor_once_syntax(
-            &ast,
-            family.anchor_coord0.row,
-            family.anchor_coord0.col,
-            &domain,
-        )
-        .map_err(SourceFamilyPreparationError::ast)?;
+        let relocation = if allow_function_closure {
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                family.anchor_coord0.row,
+                family.anchor_coord0.col,
+                &domain,
+            )
+        } else {
+            validate_anchor_once_syntax(
+                &ast,
+                family.anchor_coord0.row,
+                family.anchor_coord0.col,
+                &domain,
+            )
+        };
+        relocation.map_err(SourceFamilyPreparationError::ast)?;
         let ast_id = self.intern_formula_ast(&ast);
         let placement = CellRef::new(
             sheet_id,
@@ -3400,7 +3411,7 @@ where
                     .shadow_candidate_cells
                     .saturating_add(family.member_count);
 
-                match self.prepare_source_formula_family(sheet_id, family) {
+                match self.prepare_source_formula_family(sheet_id, family, true) {
                     Ok(_) => {
                         report.source_descendant_strings_avoided = report
                             .source_descendant_strings_avoided
@@ -4033,7 +4044,7 @@ where
                     .insert(family.source_id, "ForcedReplay".to_string());
                 continue;
             }
-            match self.prepare_source_formula_family(sheet_id, family) {
+            match self.prepare_source_formula_family(sheet_id, family, false) {
                 Ok(prepared) => preparation.prepared.push((family.source_id, prepared)),
                 Err(error) => {
                     preparation.rejected.insert(family.source_id, error.reason);

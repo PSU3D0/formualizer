@@ -386,15 +386,30 @@ fn classify_and_mix_function(
     hasher.mix_u64(resolved.semantics.generation);
     let caps = resolved.function.caps();
     hasher.mix_u32(caps.bits());
+    if caps.contains(FnCaps::VOLATILE) {
+        labels.flags |= CanonicalLabels::FLAG_VOLATILE;
+        labels.rejects |= CanonicalLabels::REJECT_VOLATILE_FUNCTION;
+    }
+    if caps.contains(FnCaps::DYNAMIC_DEPENDENCY) {
+        labels.flags |= CanonicalLabels::FLAG_DYNAMIC;
+        labels.rejects |= CanonicalLabels::REJECT_DYNAMIC_REFERENCE;
+    }
+    if caps.contains(FnCaps::LOCAL_ENVIRONMENT) {
+        labels.flags |= CanonicalLabels::FLAG_CONTAINS_LET_LAMBDA;
+        labels.rejects |= CanonicalLabels::REJECT_LOCAL_ENVIRONMENT;
+    }
+    if caps.contains(FnCaps::RETURNS_REFERENCE) {
+        labels.rejects |= CanonicalLabels::REJECT_REFERENCE_RETURNING_FUNCTION;
+    }
+    if caps.contains(FnCaps::MAY_SPILL) {
+        labels.flags |= CanonicalLabels::FLAG_CONTAINS_ARRAY;
+        labels.rejects |= CanonicalLabels::REJECT_ARRAY_OR_SPILL_FUNCTION;
+    }
     let Some(contract) = resolved.semantics.contract else {
         labels.rejects |= CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION;
         return;
     };
     mix_string(hasher, &format!("{contract:?}"));
-    if caps.contains(FnCaps::VOLATILE) {
-        labels.flags |= CanonicalLabels::FLAG_VOLATILE;
-        labels.rejects |= CanonicalLabels::REJECT_VOLATILE_FUNCTION;
-    }
     match contract.dependency {
         FunctionDependencySemantics::RecursiveSyntacticArgs => {}
         FunctionDependencySemantics::Dynamic => {

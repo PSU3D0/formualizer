@@ -790,13 +790,25 @@ impl Canonicalizer {
 
     fn classify_function(&mut self, id: &CanonicalFunctionId) {
         let name = id.canonical_name.clone();
+        if id.semantic_flags & FnCaps::VOLATILE.bits() != 0 {
+            self.labels.reject(CanonicalRejectReason::VolatileFunction { name: name.clone() });
+        }
+        if id.semantic_flags & FnCaps::DYNAMIC_DEPENDENCY.bits() != 0 {
+            self.labels.reject(CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() });
+        }
+        if id.semantic_flags & FnCaps::LOCAL_ENVIRONMENT.bits() != 0 {
+            self.labels.reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
+        }
+        if id.semantic_flags & FnCaps::RETURNS_REFERENCE.bits() != 0 {
+            self.labels.reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
+        }
+        if id.semantic_flags & FnCaps::MAY_SPILL.bits() != 0 {
+            self.labels.reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
+        }
         let Some(contract) = id.contract else {
             self.labels.reject(CanonicalRejectReason::UnknownOrCustomFunction { name });
             return;
         };
-        if id.semantic_flags & FnCaps::VOLATILE.bits() != 0 {
-            self.labels.reject(CanonicalRejectReason::VolatileFunction { name: name.clone() });
-        }
         match contract.dependency {
             FunctionDependencySemantics::RecursiveSyntacticArgs => {}
             FunctionDependencySemantics::Dynamic => self.labels.reject(

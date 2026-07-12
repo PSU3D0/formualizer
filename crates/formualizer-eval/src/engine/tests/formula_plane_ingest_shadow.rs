@@ -1248,6 +1248,94 @@ fn source_family_preparation_rejects_cross_engine_finalization_before_authority(
 }
 
 #[test]
+fn compressed_shadow_accepts_registry_resolved_nested_function_relocation_only_in_shadow() {
+    fn family(text: &str) -> SourceFormulaFamily {
+        SourceFormulaFamily {
+            source_id: SourceFamilyId {
+                sheet_instance: 91,
+                source_index: 1,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        }
+    }
+
+    let mut shadow = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    let report = shadow
+        .ingest_compressed_formula_source_batches(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceBatch::with_families(
+                "Sheet1",
+                FormulaCompressedSourceReport::default(),
+                vec![family("SUM(A1:A1)+_xlfn.ABS(A1)")],
+            ),
+        )])
+        .unwrap();
+    assert_eq!(report.source_compressed_families_prepared, 1, "{report:?}");
+    assert_eq!(shadow.baseline_stats().formula_plane_active_span_count, 0);
+
+    let mut authoritative = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default()
+            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let preparation = authoritative
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family("SUM(A1:A1)+_xlfn.ABS(A1)")])
+        .unwrap();
+    assert_eq!(preparation.direct_family_count(), 0);
+}
+
+#[test]
+fn compressed_shadow_replays_exceptional_and_unresolved_function_semantics() {
+    for (source_index, text) in [
+        (1, "RAND()+A1"),
+        (2, "OFFSET(A1,0,0)"),
+        (3, "LET(x,A1,x)"),
+        (4, "UNREGISTERED_CLOSURE_FN(A1)"),
+    ] {
+        let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
+        let mut engine = Engine::new(TestWorkbook::default(), cfg);
+        let family = SourceFormulaFamily {
+            source_id: SourceFamilyId {
+                sheet_instance: 92,
+                source_index,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        };
+        let report = engine
+            .ingest_compressed_formula_source_batches(vec![(
+                FormulaIngestBatch::new("Sheet1", Vec::new()),
+                FormulaCompressedSourceBatch::with_families(
+                    "Sheet1",
+                    FormulaCompressedSourceReport::default(),
+                    vec![family],
+                ),
+            )])
+            .unwrap();
+        assert_eq!(report.source_compressed_families_prepared, 0, "{text}: {report:?}");
+        assert_eq!(report.shadow_fallback_cells, 100, "{text}: {report:?}");
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    }
+}
+
+#[test]
 fn compressed_shadow_counts_only_preparation_work_that_occurs() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
