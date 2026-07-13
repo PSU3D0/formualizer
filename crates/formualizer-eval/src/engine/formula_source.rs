@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::formula_plane::placement::PreparedAnchorOncePlacement;
@@ -119,6 +119,93 @@ impl TryFrom<Vec<SourceCoord>> for ExplicitSourceFamilyMembers {
     }
 }
 
+/// Legacy graph ownership for one coordinate excluded from direct fragmented
+/// authority. Shared members replay through the source-family template;
+/// ordinary exceptions retain their independent source formula while joining
+/// the family's atomic ingest disposition.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartitionLegacyMemberKind {
+    SharedFamilyMember,
+    OrdinaryException,
+}
+
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartitionLegacyMember {
+    pub coord: SourceCoord,
+    pub kind: PartitionLegacyMemberKind,
+}
+
+/// A bounded, sorted exact list of legacy-owned fragmented-family formulas.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExplicitPartitionLegacyMembers {
+    members: Box<[PartitionLegacyMember]>,
+}
+
+impl ExplicitPartitionLegacyMembers {
+    pub fn try_new(mut members: Vec<PartitionLegacyMember>) -> Result<Self, &'static str> {
+        if members.len() > MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS {
+            return Err("ExplicitMemberLimitExceeded");
+        }
+        members.sort_unstable_by_key(|member| member.coord);
+        if members
+            .windows(2)
+            .any(|window| window[0].coord == window[1].coord)
+        {
+            return Err("PartitionLegacyMembersDuplicate");
+        }
+        Ok(Self {
+            members: members.into_boxed_slice(),
+        })
+    }
+
+    pub fn as_slice(&self) -> &[PartitionLegacyMember] {
+        &self.members
+    }
+
+    pub fn len(&self) -> usize {
+        self.members.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.members.is_empty()
+    }
+
+    pub fn shared_member_count(&self) -> usize {
+        self.members
+            .iter()
+            .filter(|member| member.kind == PartitionLegacyMemberKind::SharedFamilyMember)
+            .count()
+    }
+
+    pub fn ordinary_exception_count(&self) -> usize {
+        self.members
+            .iter()
+            .filter(|member| member.kind == PartitionLegacyMemberKind::OrdinaryException)
+            .count()
+    }
+}
+
+impl TryFrom<Vec<PartitionLegacyMember>> for ExplicitPartitionLegacyMembers {
+    type Error = &'static str;
+
+    fn try_from(members: Vec<PartitionLegacyMember>) -> Result<Self, Self::Error> {
+        Self::try_new(members)
+    }
+}
+
+/// Formula counts needed to prove that the compact fragmented disposition
+/// covers its declared source rectangle exactly.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PartitionReconciliation {
+    pub shared_members: u64,
+    pub ordinary_exceptions: u64,
+    pub holes: u64,
+}
+
 /// Source evidence for either a proven complete domain or a bounded exact list.
 #[doc(hidden)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,23 +227,29 @@ pub struct SourceFormulaFamily {
 }
 
 /// Backend-neutral capability proposal for one source template partitioned
-/// across existing placement domains. Backend-specific exclusion evidence is
-/// intentionally absent.
+/// across existing placement domains. Backend-specific evidence remains
+/// private, while every formula excluded from direct authority has an explicit
+/// legacy owner and the declared rectangle has an exact count reconciliation.
 #[doc(hidden)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedSourceFormulaFamily {
     pub source_id: SourceFamilyId,
     pub template_origin0: SourceCoord,
     pub template_text: Arc<str>,
+    pub declared: SourceRect,
     pub surviving_member_count: u64,
     pub fragments: Vec<PlacementDomainTransport>,
-    pub fallback_members: ExplicitSourceFamilyMembers,
+    pub legacy_members: ExplicitPartitionLegacyMembers,
+    pub reconciliation: PartitionReconciliation,
 }
 
 impl PartitionedSourceFormulaFamily {
     pub(crate) fn validate(&self, limits: &super::WorkbookLoadLimits) -> Result<(), &'static str> {
         if !source_coord_in_bounds(self.template_origin0, limits) {
             return Err("PartitionTemplateOriginOutOfBounds");
+        }
+        if !source_rect_valid(self.declared, limits) {
+            return Err("PartitionDeclaredRangeOutOfBounds");
         }
         if self.fragments.is_empty() {
             return Err("PartitionHasNoFragments");
@@ -171,6 +264,11 @@ impl PartitionedSourceFormulaFamily {
             if !source_rect_valid(rect, limits) {
                 return Err("PartitionFragmentOutOfBounds");
             }
+            if !source_rect_contains(self.declared, rect.start)
+                || !source_rect_contains(self.declared, rect.end)
+            {
+                return Err("PartitionFragmentOutsideDeclaredRange");
+            }
             if rects.iter().any(|prior| source_rects_overlap(*prior, rect)) {
                 return Err("PartitionFragmentsOverlap");
             }
@@ -178,35 +276,170 @@ impl PartitionedSourceFormulaFamily {
             cells = cells.checked_add(area).ok_or("PartitionAreaOverflow")?;
             rects.push(rect);
         }
-        validate_exact_partition_members(self.fallback_members.as_slice(), limits)?;
-        for member in self.fallback_members.as_slice() {
+        validate_partition_legacy_members(self.legacy_members.as_slice(), limits)?;
+        for member in self.legacy_members.as_slice() {
+            if !source_rect_contains(self.declared, member.coord) {
+                return Err("PartitionLegacyMemberOutsideDeclaredRange");
+            }
             if rects
                 .iter()
-                .any(|rect| source_rect_contains(*rect, *member))
+                .any(|rect| source_rect_contains(*rect, member.coord))
             {
-                return Err("PartitionFallbackOverlapsFragment");
+                return Err("PartitionLegacyMemberOverlapsFragment");
             }
         }
+        let shared_legacy = u64::try_from(self.legacy_members.shared_member_count())
+            .map_err(|_| "PartitionAreaOverflow")?;
+        let ordinary_exceptions = u64::try_from(self.legacy_members.ordinary_exception_count())
+            .map_err(|_| "PartitionAreaOverflow")?;
         cells = cells
-            .checked_add(self.fallback_members.len() as u64)
+            .checked_add(shared_legacy)
             .ok_or("PartitionAreaOverflow")?;
-        if cells != self.surviving_member_count {
+        if cells != self.surviving_member_count
+            || self.reconciliation.shared_members != self.surviving_member_count
+            || self.reconciliation.ordinary_exceptions != ordinary_exceptions
+        {
             return Err("PartitionMemberCountMismatch");
+        }
+        let declared_area = source_rect_area(self.declared).ok_or("PartitionAreaOverflow")?;
+        let accounted = self
+            .reconciliation
+            .shared_members
+            .checked_add(self.reconciliation.ordinary_exceptions)
+            .and_then(|count| count.checked_add(self.reconciliation.holes))
+            .ok_or("PartitionAreaOverflow")?;
+        if accounted != declared_area {
+            return Err("PartitionReconciliationMismatch");
         }
         if !rects
             .iter()
             .any(|rect| source_rect_contains(*rect, self.template_origin0))
-            && !self
-                .fallback_members
-                .as_slice()
-                .contains(&self.template_origin0)
+            && !self.legacy_members.as_slice().iter().any(|member| {
+                member.coord == self.template_origin0
+                    && member.kind == PartitionLegacyMemberKind::SharedFamilyMember
+            })
         {
             return Err("PartitionMissingTemplateOrigin");
         }
-        if cells > limits.max_sheet_logical_cells {
+        if declared_area > limits.max_sheet_logical_cells {
             return Err("PartitionLogicalCellLimitExceeded");
         }
         Ok(())
+    }
+}
+
+/// Replay ownership for a source coordinate. `Direct` means FormulaPlane owns
+/// the shared record, while both legacy variants are emitted to the graph.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormulaReplayCoordinateDisposition {
+    Direct,
+    LegacyShared,
+    LegacyOrdinary,
+    Suppressed,
+}
+
+/// Bounded replay routing for eager/deferred source packages. Family defaults
+/// avoid expanding direct domains into per-cell state; only bounded legacy
+/// points and ordinary-exception ownership are retained explicitly.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default)]
+pub struct FormulaReplayDisposition {
+    family_defaults: BTreeMap<SourceFamilyId, FormulaReplayCoordinateDisposition>,
+    shared_overrides: BTreeMap<(SourceFamilyId, SourceCoord), FormulaReplayCoordinateDisposition>,
+    ordinary_owners: BTreeMap<SourceCoord, SourceFamilyId>,
+    suppressed: BTreeSet<(u32, u32)>,
+}
+
+impl FormulaReplayDisposition {
+    pub fn set_family_direct(&mut self, family: SourceFamilyId) {
+        self.family_defaults
+            .insert(family, FormulaReplayCoordinateDisposition::Direct);
+    }
+
+    pub fn set_family_legacy(&mut self, family: SourceFamilyId) {
+        self.family_defaults
+            .insert(family, FormulaReplayCoordinateDisposition::LegacyShared);
+    }
+
+    pub fn register_partition(
+        &mut self,
+        family: &PartitionedSourceFormulaFamily,
+        direct: bool,
+    ) -> Result<(), &'static str> {
+        if family.legacy_members.as_slice().iter().any(|member| {
+            member.kind == PartitionLegacyMemberKind::OrdinaryException
+                && self
+                    .ordinary_owners
+                    .get(&member.coord)
+                    .is_some_and(|owner| *owner != family.source_id)
+        }) {
+            return Err("PartitionOrdinaryOwnerConflict");
+        }
+        if direct {
+            self.set_family_direct(family.source_id);
+        } else {
+            self.set_family_legacy(family.source_id);
+        }
+        for member in family.legacy_members.as_slice() {
+            match member.kind {
+                PartitionLegacyMemberKind::SharedFamilyMember => {
+                    self.shared_overrides.insert(
+                        (family.source_id, member.coord),
+                        FormulaReplayCoordinateDisposition::LegacyShared,
+                    );
+                }
+                PartitionLegacyMemberKind::OrdinaryException => {
+                    self.ordinary_owners.insert(member.coord, family.source_id);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn extend_suppressed_excel_coords(
+        &mut self,
+        coordinates: impl IntoIterator<Item = (u32, u32)>,
+    ) {
+        self.suppressed.extend(coordinates);
+    }
+
+    pub fn shared_disposition(
+        &self,
+        family: SourceFamilyId,
+        coord: SourceCoord,
+    ) -> FormulaReplayCoordinateDisposition {
+        if self
+            .suppressed
+            .contains(&(coord.row.saturating_add(1), coord.col.saturating_add(1)))
+        {
+            return FormulaReplayCoordinateDisposition::Suppressed;
+        }
+        self.shared_overrides
+            .get(&(family, coord))
+            .copied()
+            .or_else(|| self.family_defaults.get(&family).copied())
+            .unwrap_or(FormulaReplayCoordinateDisposition::LegacyShared)
+    }
+
+    pub fn ordinary_disposition(
+        &self,
+        coord: SourceCoord,
+    ) -> (FormulaReplayCoordinateDisposition, Option<SourceFamilyId>) {
+        if self
+            .suppressed
+            .contains(&(coord.row.saturating_add(1), coord.col.saturating_add(1)))
+        {
+            return (FormulaReplayCoordinateDisposition::Suppressed, None);
+        }
+        (
+            FormulaReplayCoordinateDisposition::LegacyOrdinary,
+            self.ordinary_owners.get(&coord).copied(),
+        )
+    }
+
+    pub fn force_family_legacy(&mut self, family: SourceFamilyId) {
+        self.set_family_legacy(family);
     }
 }
 
@@ -279,18 +512,21 @@ fn source_rect_area(rect: SourceRect) -> Option<u64> {
     rows.checked_mul(cols)
 }
 
-fn validate_exact_partition_members(
-    members: &[SourceCoord],
+fn validate_partition_legacy_members(
+    members: &[PartitionLegacyMember],
     limits: &super::WorkbookLoadLimits,
 ) -> Result<(), &'static str> {
     if members
         .iter()
-        .any(|coord| !source_coord_in_bounds(*coord, limits))
+        .any(|member| !source_coord_in_bounds(member.coord, limits))
     {
-        return Err("PartitionFallbackOutOfBounds");
+        return Err("PartitionLegacyMemberOutOfBounds");
     }
-    if members.windows(2).any(|window| window[0] >= window[1]) {
-        return Err("PartitionFallbackNotStrictlySorted");
+    if members
+        .windows(2)
+        .any(|window| window[0].coord >= window[1].coord)
+    {
+        return Err("PartitionLegacyMembersNotStrictlySorted");
     }
     Ok(())
 }
@@ -365,7 +601,11 @@ pub struct DeferredReplayFormula {
     pub row: u32,
     pub col: u32,
     pub text: String,
+    /// Shared-formula metadata identity, if this record came from a shared family.
     pub family: Option<SourceFamilyId>,
+    /// Atomic fragmented-family owner. Ordinary exceptions have an owner even
+    /// though they are not shared-formula records.
+    pub partition_owner: Option<SourceFamilyId>,
 }
 
 /// Backend-owned, single-owner replay authority used by deferred workbook
@@ -374,8 +614,7 @@ pub struct DeferredReplayFormula {
 pub trait DeferredFormulaReplay: Send {
     fn replay(
         &mut self,
-        skip_families: &std::collections::BTreeSet<SourceFamilyId>,
-        suppressed: &std::collections::BTreeSet<(u32, u32)>,
+        disposition: &FormulaReplayDisposition,
     ) -> Result<Vec<DeferredReplayFormula>, String>;
 
     fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String>;
@@ -436,7 +675,7 @@ pub struct FormulaCompressedPreparation {
     pub(crate) prepared: Vec<(SourceFamilyId, PreparedAnchorOncePlacement)>,
     pub(crate) rejected: BTreeMap<SourceFamilyId, String>,
     pub(crate) exact_replay: Option<Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>>,
-    pub(crate) replay_suppressed: std::collections::BTreeSet<(u32, u32)>,
+    pub(crate) replay_disposition: FormulaReplayDisposition,
 }
 
 impl FormulaCompressedPreparation {
@@ -447,7 +686,8 @@ impl FormulaCompressedPreparation {
         suppressed: std::collections::BTreeSet<(u32, u32)>,
     ) -> Self {
         self.exact_replay = Some(replay);
-        self.replay_suppressed = suppressed;
+        self.replay_disposition
+            .extend_suppressed_excel_coords(suppressed);
         self
     }
 
@@ -635,6 +875,10 @@ mod tests {
             },
             template_origin0: SourceCoord { row: 2, col: 3 },
             template_text: Arc::from("A1+1"),
+            declared: SourceRect {
+                start: SourceCoord { row: 2, col: 3 },
+                end: SourceCoord { row: 10, col: 3 },
+            },
             surviving_member_count: 7,
             fragments: vec![
                 PlacementDomainTransport::RowRun {
@@ -648,17 +892,46 @@ mod tests {
                     col: 3,
                 },
             ],
-            fallback_members: ExplicitSourceFamilyMembers::try_new(vec![SourceCoord {
-                row: 6,
-                col: 3,
-            }])
+            legacy_members: ExplicitPartitionLegacyMembers::try_new(vec![
+                PartitionLegacyMember {
+                    coord: SourceCoord { row: 6, col: 3 },
+                    kind: PartitionLegacyMemberKind::SharedFamilyMember,
+                },
+                PartitionLegacyMember {
+                    coord: SourceCoord { row: 5, col: 3 },
+                    kind: PartitionLegacyMemberKind::OrdinaryException,
+                },
+            ])
             .unwrap(),
+            reconciliation: PartitionReconciliation {
+                shared_members: 7,
+                ordinary_exceptions: 1,
+                holes: 1,
+            },
         };
         assert!(partition.validate(&limits()).is_ok());
         assert!(!source_rect_contains(
             partition.fragments[1].rect(),
             partition.template_origin0
         ));
+
+        let mut replay = FormulaReplayDisposition::default();
+        replay.register_partition(&partition, true).unwrap();
+        assert_eq!(
+            replay.shared_disposition(partition.source_id, SourceCoord { row: 2, col: 3 }),
+            FormulaReplayCoordinateDisposition::Direct
+        );
+        assert_eq!(
+            replay.shared_disposition(partition.source_id, SourceCoord { row: 6, col: 3 }),
+            FormulaReplayCoordinateDisposition::LegacyShared
+        );
+        assert_eq!(
+            replay.ordinary_disposition(SourceCoord { row: 5, col: 3 }),
+            (
+                FormulaReplayCoordinateDisposition::LegacyOrdinary,
+                Some(partition.source_id)
+            )
+        );
     }
 
     #[test]
@@ -670,6 +943,10 @@ mod tests {
             },
             template_origin0: SourceCoord { row: 2, col: 3 },
             template_text: Arc::from("A1+1"),
+            declared: SourceRect {
+                start: SourceCoord { row: 2, col: 3 },
+                end: SourceCoord { row: 9, col: 3 },
+            },
             surviving_member_count: 6,
             fragments: vec![
                 PlacementDomainTransport::RowRun {
@@ -683,7 +960,12 @@ mod tests {
                     col: 3,
                 },
             ],
-            fallback_members: ExplicitSourceFamilyMembers::try_new(Vec::new()).unwrap(),
+            legacy_members: ExplicitPartitionLegacyMembers::try_new(Vec::new()).unwrap(),
+            reconciliation: PartitionReconciliation {
+                shared_members: 6,
+                ordinary_exceptions: 0,
+                holes: 2,
+            },
         };
         let mut overlap = base.clone();
         overlap.fragments[1] = PlacementDomainTransport::RowRun {

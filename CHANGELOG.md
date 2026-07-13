@@ -7,6 +7,8 @@ All notable changes to Formualizer will be documented in this file.
 ### Added
 
 - Added backend-neutral source-family ingest with anchor-once FormulaPlane authority for proven complete domains. Calamine supplies bounded XLSX evidence and exact replay for eager and deferred loading, with structural-edit, cycle-demotion, and source-family telemetry support.
+- Added registry-owned function semantic contracts so safe current and future ordinary functions can use FormulaPlane authority without a secondary supported-name list, while exceptional and untrusted functions continue to replay conservatively.
+- Added bounded fragmented shared-formula evidence, exact coordinate-disposition replay, one-analysis Shadow preparation, and typed ordinary-exception ownership as the replay-only foundation for transactional fragmented authority.
 
 ### Improved
 

@@ -3510,7 +3510,7 @@ where
                 .checked_add(member_count)
                 .ok_or_else(|| SourceFamilyPreparationError::analysis("PartitionAreaOverflow"))?;
         }
-        let fallback_cells = family.fallback_members.len() as u64;
+        let fallback_cells = family.legacy_members.shared_member_count() as u64;
         if direct_cells.checked_add(fallback_cells) != Some(family.surviving_member_count) {
             return Err(SourceFamilyPreparationError::analysis(
                 "PartitionMemberCountMismatch",
@@ -4241,7 +4241,7 @@ where
             prepared: Vec::new(),
             rejected: BTreeMap::new(),
             exact_replay: None,
-            replay_suppressed: BTreeSet::new(),
+            replay_disposition: crate::engine::FormulaReplayDisposition::default(),
         };
         if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
             return preparation;
@@ -4265,6 +4265,9 @@ where
             match self.prepare_source_formula_family(sheet_id, family, true) {
                 Ok((prepared, function_semantics_used)) => {
                     preparation.function_semantics_used |= function_semantics_used;
+                    preparation
+                        .replay_disposition
+                        .set_family_direct(family.source_id);
                     preparation.prepared.push((family.source_id, prepared));
                 }
                 Err(error) => {
@@ -4288,13 +4291,17 @@ where
             .iter()
             .map(|(family, _)| *family)
             .collect();
+        let mut replay_disposition = preparation.replay_disposition.clone();
+        for family in &direct {
+            replay_disposition.force_family_legacy(*family);
+        }
         let replayed = replay
             .lock()
             .map_err(|_| {
                 ExcelError::new(ExcelErrorKind::Value)
                     .with_message("compressed formula exact replay lock poisoned")
             })?
-            .replay(&BTreeSet::new(), &preparation.replay_suppressed)
+            .replay(&replay_disposition)
             .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?;
         let mut cache = rustc_hash::FxHashMap::default();
         let mut formulas = Vec::new();
@@ -4899,12 +4906,23 @@ where
                 let mut preparation = (self.config.formula_plane_mode
                     == FormulaPlaneMode::AuthoritativeExperimental)
                     .then(|| self.prepare_source_formula_families(sheet, &eligible));
-                let direct_families: BTreeSet<_> = preparation
+                let mut replay_disposition = preparation
                     .as_ref()
-                    .into_iter()
-                    .flat_map(|preparation| preparation.prepared.iter())
-                    .map(|(family, _)| *family)
-                    .collect();
+                    .map(|preparation| preparation.replay_disposition.clone())
+                    .unwrap_or_default();
+                for partition in package
+                    .partitioned_families
+                    .iter()
+                    .filter(|family| !package.invalidated.contains(&family.source_id))
+                {
+                    replay_disposition
+                        .register_partition(partition, false)
+                        .map_err(|reason| {
+                            ExcelError::new(ExcelErrorKind::Value).with_message(reason)
+                        })?;
+                }
+                replay_disposition
+                    .extend_suppressed_excel_coords(package.suppressed.iter().copied());
                 let replayed = package
                     .replay
                     .lock()
@@ -4912,11 +4930,12 @@ where
                         ExcelError::new(ExcelErrorKind::Value)
                             .with_message("deferred formula spool lock poisoned")
                     })?
-                    .replay(&direct_families, &package.suppressed)
+                    .replay(&replay_disposition)
                     .map_err(|message| {
                         ExcelError::new(ExcelErrorKind::Value).with_message(message)
                     })?;
-                if let Some(prepared) = preparation.take() {
+                if let Some(mut prepared) = preparation.take() {
+                    prepared.replay_disposition = replay_disposition;
                     preparation = Some(prepared.with_exact_replay(
                         Arc::clone(&package.replay),
                         package.suppressed.clone(),

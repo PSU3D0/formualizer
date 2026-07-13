@@ -7,7 +7,13 @@ use std::{
 
 use calamine::expand_shared_formula_into;
 use formualizer_eval::engine::{
-    DeferredFormulaReplay, DeferredReplayFormula, SourceCoord, SourceFamilyId, SourceRect,
+    DeferredFormulaReplay, DeferredReplayFormula, FormulaReplayCoordinateDisposition,
+    FormulaReplayDisposition, SourceCoord, SourceFamilyId, SourceRect,
+};
+#[cfg(test)]
+use formualizer_eval::engine::{
+    ExplicitPartitionLegacyMembers, PartitionLegacyMember, PartitionLegacyMemberKind,
+    PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport,
 };
 
 #[cfg(test)]
@@ -389,26 +395,36 @@ impl CalamineDeferredFormulaReplay {
 impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
     fn replay(
         &mut self,
-        skip_families: &std::collections::BTreeSet<SourceFamilyId>,
-        suppressed: &std::collections::BTreeSet<(u32, u32)>,
+        disposition: &FormulaReplayDisposition,
     ) -> Result<Vec<DeferredReplayFormula>, String> {
         let mut formulas = Vec::new();
         let sheet_instance = self.sheet_instance;
         replay_spool_with_family(
             &mut self.spool,
             &self.sheet_name,
-            |shared_index, _| {
-                !skip_families.contains(&SourceFamilyId {
-                    sheet_instance,
-                    source_index: shared_index,
-                })
+            |shared_index, coord0| {
+                disposition.shared_disposition(
+                    SourceFamilyId {
+                        sheet_instance,
+                        source_index: shared_index,
+                    },
+                    coord0,
+                ) == FormulaReplayCoordinateDisposition::LegacyShared
             },
             |coord0, text, family| {
                 let family = family.map(|shared_index| SourceFamilyId {
                     sheet_instance,
                     source_index: shared_index,
                 });
-                if suppressed.contains(&(coord0.row + 1, coord0.col + 1)) {
+                let (coordinate_disposition, partition_owner) = match family {
+                    Some(family) => (disposition.shared_disposition(family, coord0), Some(family)),
+                    None => disposition.ordinary_disposition(coord0),
+                };
+                if matches!(
+                    coordinate_disposition,
+                    FormulaReplayCoordinateDisposition::Direct
+                        | FormulaReplayCoordinateDisposition::Suppressed
+                ) {
                     return Ok(());
                 }
                 formulas.push(DeferredReplayFormula {
@@ -416,6 +432,7 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
                     col: coord0.col + 1,
                     text: text.to_string(),
                     family,
+                    partition_owner,
                 });
                 Ok(())
             },
@@ -433,14 +450,16 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
             |_, _| true,
             |coord0, text, family| {
                 if coord0.row + 1 == row && coord0.col + 1 == col {
+                    let family = family.map(|shared_index| SourceFamilyId {
+                        sheet_instance,
+                        source_index: shared_index,
+                    });
                     found = Some(DeferredReplayFormula {
                         row,
                         col,
                         text: text.to_string(),
-                        family: family.map(|shared_index| SourceFamilyId {
-                            sheet_instance,
-                            source_index: shared_index,
-                        }),
+                        family,
+                        partition_owner: family,
                     });
                 }
                 Ok(())
@@ -1495,6 +1514,91 @@ mod tests {
         assert_eq!(emitted[0], (coord(1, 2), "99".to_string(), None));
         assert_eq!(emitted[1], (coord(1, 1), "A2+1".to_string(), Some(4)));
         assert_eq!(emitted[2], (coord(2, 1), "A3+1".to_string(), Some(4)));
+    }
+
+    #[test]
+    fn deferred_disposition_binds_ordinary_exception_and_replays_shared_legacy_only() {
+        let mut spool =
+            HybridFormulaReplaySpool::new(hybrid_limits(4096, 4096, u64::MAX, 4096, false));
+        for record in [
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 0,
+                coord0: coord(0, 1),
+                shared_index: 44,
+                declared_range: Some(SourceRect {
+                    start: coord(0, 1),
+                    end: coord(3, 1),
+                }),
+                text: "A1+1",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 1,
+                coord0: coord(1, 1),
+                shared_index: 44,
+            },
+            SpoolFormulaRecord::Ordinary {
+                sequence: 2,
+                coord0: coord(2, 1),
+                text: "A3+100",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 3,
+                coord0: coord(3, 1),
+                shared_index: 44,
+            },
+        ] {
+            spool.append(record).unwrap();
+        }
+
+        let family_id = SourceFamilyId {
+            sheet_instance: 7,
+            source_index: 44,
+        };
+        let family = PartitionedSourceFormulaFamily {
+            source_id: family_id,
+            template_origin0: coord(0, 1),
+            template_text: Arc::from("A1+1"),
+            declared: SourceRect {
+                start: coord(0, 1),
+                end: coord(3, 1),
+            },
+            surviving_member_count: 3,
+            fragments: vec![PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 1,
+                col: 1,
+            }],
+            legacy_members: ExplicitPartitionLegacyMembers::try_new(vec![
+                PartitionLegacyMember {
+                    coord: coord(2, 1),
+                    kind: PartitionLegacyMemberKind::OrdinaryException,
+                },
+                PartitionLegacyMember {
+                    coord: coord(3, 1),
+                    kind: PartitionLegacyMemberKind::SharedFamilyMember,
+                },
+            ])
+            .unwrap(),
+            reconciliation: PartitionReconciliation {
+                shared_members: 3,
+                ordinary_exceptions: 1,
+                holes: 0,
+            },
+        };
+        let mut disposition = FormulaReplayDisposition::default();
+        disposition.register_partition(&family, true).unwrap();
+        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".to_string(), 7);
+
+        let formulas = DeferredFormulaReplay::replay(&mut replay, &disposition).unwrap();
+        assert_eq!(formulas.len(), 2);
+        assert_eq!((formulas[0].row, formulas[0].col), (3, 2));
+        assert_eq!(formulas[0].text, "A3+100");
+        assert_eq!(formulas[0].family, None);
+        assert_eq!(formulas[0].partition_owner, Some(family_id));
+        assert_eq!((formulas[1].row, formulas[1].col), (4, 2));
+        assert_eq!(formulas[1].text, "A4+1");
+        assert_eq!(formulas[1].family, Some(family_id));
+        assert_eq!(formulas[1].partition_owner, Some(family_id));
     }
 
     #[test]

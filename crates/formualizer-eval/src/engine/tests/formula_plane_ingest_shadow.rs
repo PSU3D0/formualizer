@@ -4,10 +4,12 @@ use std::sync::Arc;
 use super::common::abs_cell_ref;
 use crate::engine::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
-    ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
-    FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
-    PartitionedSourceFormulaFamily, PlacementDomainTransport, RowVisibilitySource, SourceCoord,
-    SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
+    ExplicitPartitionLegacyMembers, ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch,
+    FormulaCompressedSourceReport, FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy,
+    FormulaPlaneMode, FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
+    PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport,
+    RowVisibilitySource, SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily,
+    SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
@@ -21,21 +23,35 @@ struct ExactTestReplay {
 impl DeferredFormulaReplay for ExactTestReplay {
     fn replay(
         &mut self,
-        skip_families: &BTreeSet<SourceFamilyId>,
-        suppressed: &BTreeSet<(u32, u32)>,
+        disposition: &FormulaReplayDisposition,
     ) -> Result<Vec<DeferredReplayFormula>, String> {
         Ok(self
             .formulas
             .iter()
-            .filter(|(row, col, _, family)| {
-                !suppressed.contains(&(*row, *col))
-                    && family.is_none_or(|family| !skip_families.contains(&family))
-            })
-            .map(|(row, col, text, family)| DeferredReplayFormula {
-                row: *row,
-                col: *col,
-                text: text.clone(),
-                family: *family,
+            .filter_map(|(row, col, text, family)| {
+                let coord = SourceCoord {
+                    row: row.saturating_sub(1),
+                    col: col.saturating_sub(1),
+                };
+                let (coordinate_disposition, partition_owner) = match family {
+                    Some(family) => (
+                        disposition.shared_disposition(*family, coord),
+                        Some(*family),
+                    ),
+                    None => disposition.ordinary_disposition(coord),
+                };
+                matches!(
+                    coordinate_disposition,
+                    crate::engine::FormulaReplayCoordinateDisposition::LegacyShared
+                        | crate::engine::FormulaReplayCoordinateDisposition::LegacyOrdinary
+                )
+                .then(|| DeferredReplayFormula {
+                    row: *row,
+                    col: *col,
+                    text: text.clone(),
+                    family: *family,
+                    partition_owner,
+                })
             })
             .collect())
     }
@@ -52,6 +68,7 @@ impl DeferredFormulaReplay for ExactTestReplay {
                 col: *col,
                 text: text.clone(),
                 family: *family,
+                partition_owner: *family,
             }))
     }
 }
@@ -65,8 +82,7 @@ struct TestDeferredReplay {
 impl DeferredFormulaReplay for TestDeferredReplay {
     fn replay(
         &mut self,
-        _skip_families: &BTreeSet<SourceFamilyId>,
-        _suppressed: &BTreeSet<(u32, u32)>,
+        _disposition: &FormulaReplayDisposition,
     ) -> Result<Vec<DeferredReplayFormula>, String> {
         if self.fail_once {
             self.fail_once = false;
@@ -77,6 +93,7 @@ impl DeferredFormulaReplay for TestDeferredReplay {
             col: 1,
             text: self.text.to_string(),
             family: None,
+            partition_owner: None,
         }])
     }
 
@@ -87,6 +104,7 @@ impl DeferredFormulaReplay for TestDeferredReplay {
             col,
             text: self.text.to_string(),
             family: None,
+            partition_owner: None,
         }))
     }
 }
@@ -1257,6 +1275,10 @@ fn partitioned_shadow_prepares_all_fragments_from_one_analysis_without_authority
         },
         template_origin0: SourceCoord { row: 0, col: 1 },
         template_text: Arc::from("SUM($A$1)+1"),
+        declared: SourceRect {
+            start: SourceCoord { row: 0, col: 1 },
+            end: SourceCoord { row: 7, col: 1 },
+        },
         surviving_member_count: 7,
         fragments: vec![
             PlacementDomainTransport::RowRun {
@@ -1270,11 +1292,16 @@ fn partitioned_shadow_prepares_all_fragments_from_one_analysis_without_authority
                 col: 1,
             },
         ],
-        fallback_members: ExplicitSourceFamilyMembers::try_new(vec![SourceCoord {
-            row: 3,
-            col: 1,
+        legacy_members: ExplicitPartitionLegacyMembers::try_new(vec![PartitionLegacyMember {
+            coord: SourceCoord { row: 3, col: 1 },
+            kind: PartitionLegacyMemberKind::SharedFamilyMember,
         }])
         .unwrap(),
+        reconciliation: PartitionReconciliation {
+            shared_members: 7,
+            ordinary_exceptions: 0,
+            holes: 1,
+        },
     };
     let source_report = FormulaCompressedSourceReport {
         source_fragmentable_families: 1,
@@ -1321,6 +1348,10 @@ fn partitioned_shadow_rejects_the_whole_family_when_one_fragment_fails() {
         },
         template_origin0: SourceCoord { row: 0, col: 1 },
         template_text: Arc::from("A1048575+1"),
+        declared: SourceRect {
+            start: SourceCoord { row: 0, col: 1 },
+            end: SourceCoord { row: 3, col: 1 },
+        },
         surviving_member_count: 4,
         fragments: vec![
             PlacementDomainTransport::RowRun {
@@ -1334,7 +1365,12 @@ fn partitioned_shadow_rejects_the_whole_family_when_one_fragment_fails() {
                 col: 1,
             },
         ],
-        fallback_members: ExplicitSourceFamilyMembers::try_new(Vec::new()).unwrap(),
+        legacy_members: ExplicitPartitionLegacyMembers::try_new(Vec::new()).unwrap(),
+        reconciliation: PartitionReconciliation {
+            shared_members: 4,
+            ordinary_exceptions: 0,
+            holes: 0,
+        },
     };
     let mut engine = Engine::new(
         TestWorkbook::default(),
