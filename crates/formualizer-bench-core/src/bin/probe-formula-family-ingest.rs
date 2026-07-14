@@ -1,5 +1,6 @@
 #[cfg(feature = "formualizer_runner")]
 use std::{
+    collections::BTreeSet,
     fs,
     io::{Cursor, Write},
     path::{Path, PathBuf},
@@ -20,6 +21,8 @@ use formualizer_workbook::{
 #[cfg(feature = "formualizer_runner")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "formualizer_runner")]
+use sha2::{Digest, Sha256};
+#[cfg(feature = "formualizer_runner")]
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 #[cfg(not(feature = "formualizer_runner"))]
@@ -38,10 +41,16 @@ fn main() -> Result<()> {
         let gate_failed = report
             .nested_authoritative_load_gate
             .as_ref()
-            .is_some_and(|gate| !gate.passed);
+            .is_some_and(|gate| !gate.passed)
+            || report
+                .deferred_fragmented_gates
+                .as_ref()
+                .is_some_and(|gates| {
+                    !gates.load_and_build_speedup.passed || !gates.rss_reduction.passed
+                });
         println!("{}", serde_json::to_string_pretty(&report)?);
         if gate_failed {
-            bail!("nested authoritative load median exceeded the arithmetic direct gate");
+            bail!("one or more formula-family benchmark gates failed");
         }
     }
     Ok(())
@@ -55,8 +64,14 @@ struct Cli {
     scenario: Scenario,
     #[arg(long, value_enum, default_value_t = ProbeMode::All)]
     mode: ProbeMode,
+    /// Build formulas during load or stage them for an explicit deferred graph build.
+    #[arg(long, value_enum, default_value_t = GraphBuild::Eager)]
+    graph_build: GraphBuild,
     #[arg(long, default_value_t = 100)]
     members: u32,
+    /// Number of evenly spaced ordinary exceptions in `hole-exception`.
+    #[arg(long, default_value_t = 1)]
+    exclusions: u32,
     #[arg(long)]
     input: Option<PathBuf>,
     #[arg(long)]
@@ -78,6 +93,24 @@ enum ProbeMode {
     Shadow,
     Authoritative,
     ForcedReplay,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GraphBuild {
+    Eager,
+    Deferred,
+}
+
+#[cfg(feature = "formualizer_runner")]
+impl GraphBuild {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Eager => "eager",
+            Self::Deferred => "deferred",
+        }
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -104,14 +137,28 @@ impl Scenario {
             Self::FullSheetTwoPoint => "full_sheet_two_point",
         }
     }
+
+    fn arg(self) -> &'static str {
+        match self {
+            Self::LargeFamily => "large-family",
+            Self::NestedFunctionFamily => "nested-function-family",
+            Self::ManyTinyFamilies => "many-tiny-families",
+            Self::ForwardAnchor => "forward-anchor",
+            Self::HoleException => "hole-exception",
+            Self::FullSheetTwoPoint => "full-sheet-two-point",
+        }
+    }
 }
 
 #[cfg(feature = "formualizer_runner")]
 #[derive(Debug, Serialize)]
 struct MatrixReport {
     scenario: Scenario,
+    graph_build: GraphBuild,
     members: u32,
+    exclusions: u32,
     fixture: String,
+    fixture_sha256: String,
     generated: bool,
     generation_ms: f64,
     fixture_bytes: u64,
@@ -120,6 +167,7 @@ struct MatrixReport {
     summaries: Vec<DispositionSummary>,
     arithmetic_direct_baseline: Option<ArithmeticBaseline>,
     nested_authoritative_load_gate: Option<RelativeGate>,
+    deferred_fragmented_gates: Option<DeferredFragmentedGates>,
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -138,6 +186,8 @@ struct DispositionSummary {
     maximum_resident_set_kib: MedianMad,
     total_elapsed_ms: MedianMad,
     load_ms: MedianMad,
+    graph_build_ms: MedianMad,
+    load_and_build_ms: MedianMad,
     evaluate_ms: MedianMad,
     collection_ms: Option<MedianMad>,
     preparation_ms: Option<MedianMad>,
@@ -164,6 +214,24 @@ struct RelativeGate {
 
 #[cfg(feature = "formualizer_runner")]
 #[derive(Debug, Serialize)]
+struct DeferredFragmentedGates {
+    load_and_build_speedup: ReductionGate,
+    rss_reduction: ReductionGate,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Serialize)]
+struct ReductionGate {
+    metric: &'static str,
+    minimum_reduction_percent: f64,
+    baseline_median: f64,
+    candidate_median: f64,
+    reduction_percent: f64,
+    passed: bool,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Serialize)]
 struct ChildMeasurement {
     disposition: String,
     sample: usize,
@@ -175,8 +243,11 @@ struct ChildMeasurement {
 #[derive(Debug, Serialize, Deserialize)]
 struct ModeReport {
     disposition: String,
+    graph_build: GraphBuild,
     total_elapsed_ms: f64,
     load_ms: f64,
+    graph_build_ms: f64,
+    load_and_build_ms: f64,
     evaluate_ms: f64,
     collection_ms: Option<f64>,
     preparation_ms: Option<f64>,
@@ -298,10 +369,16 @@ fn fixture_path(cli: &Cli) -> PathBuf {
         .clone()
         .or_else(|| cli.fixture_out.clone())
         .unwrap_or_else(|| {
+            let exclusions = if matches!(cli.scenario, Scenario::HoleException) {
+                format!("-exclusions-{}", cli.exclusions)
+            } else {
+                String::new()
+            };
             PathBuf::from("scratch/formula-family-anchor-once-bench").join(format!(
-                "{}-{}.xlsx",
+                "{}-{}{}.xlsx",
                 cli.scenario.label(),
-                cli.members
+                cli.members,
+                exclusions,
             ))
         })
 }
@@ -318,6 +395,16 @@ fn is_nested_load_gate_run(cli: &Cli) -> bool {
 }
 
 #[cfg(feature = "formualizer_runner")]
+fn is_deferred_fragmented_gate_run(cli: &Cli) -> bool {
+    matches!(cli.scenario, Scenario::HoleException)
+        && cli.graph_build == GraphBuild::Deferred
+        && cli.members >= 100_000
+        && matches!(cli.exclusions, 1 | 8 | 64)
+        && cli.mode == ProbeMode::All
+        && !cli.generate_only
+}
+
+#[cfg(feature = "formualizer_runner")]
 fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
     if cli.members == 0 {
         bail!("--members must be at least 1")
@@ -325,14 +412,22 @@ fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
     if cli.samples == 0 {
         bail!("--samples must be at least 1")
     }
+    if matches!(cli.scenario, Scenario::HoleException)
+        && (cli.exclusions == 0 || cli.exclusions >= cli.members.saturating_sub(1))
+    {
+        bail!("hole-exception requires 1 <= --exclusions < --members - 1")
+    }
     if is_nested_load_gate_run(cli) && cli.samples < 5 {
         bail!("nested-function-family 100k gate runs require at least five cold samples")
+    }
+    if is_deferred_fragmented_gate_run(cli) && cli.samples < 5 {
+        bail!("deferred fragmented 100k gate runs require at least five cold samples")
     }
     let fixture = fixture_path(cli);
     let generated = cli.input.is_none();
     let started = Instant::now();
     if generated {
-        let bytes = generate_xlsx(cli.scenario, cli.members)?;
+        let bytes = generate_xlsx(cli.scenario, cli.members, cli.exclusions)?;
         if let Some(p) = fixture.parent() {
             fs::create_dir_all(p)?
         }
@@ -340,6 +435,7 @@ fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
     }
     let generation_ms = started.elapsed().as_secs_f64() * 1000.0;
     let fixture_bytes = fs::metadata(&fixture)?.len();
+    let fixture_sha256 = format!("{:x}", Sha256::digest(fs::read(&fixture)?));
     let mut children = Vec::new();
     if !cli.generate_only {
         for mode in [
@@ -369,7 +465,7 @@ fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
         }
         fs::write(
             &baseline_fixture,
-            generate_xlsx(Scenario::LargeFamily, cli.members)?,
+            generate_xlsx(Scenario::LargeFamily, cli.members, 0)?,
         )?;
         let mut baseline_children = Vec::with_capacity(cli.samples);
         for sample in 1..=cli.samples {
@@ -397,10 +493,39 @@ fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
             summaries: baseline_summaries,
         });
     }
+    let deferred_fragmented_gates = if is_deferred_fragmented_gate_run(cli) {
+        let candidate = summary_for(&summaries, "authoritative")
+            .context("deferred fragmented run did not produce an authoritative summary")?;
+        let baseline = summary_for(&summaries, "forced-replay")
+            .context("deferred fragmented run did not produce a forced-replay summary")?;
+        Some(DeferredFragmentedGates {
+            load_and_build_speedup: reduction_gate(
+                "authoritative_load_and_build_ms",
+                baseline.load_and_build_ms.median,
+                candidate.load_and_build_ms.median,
+                25.0,
+            ),
+            rss_reduction: reduction_gate(
+                "authoritative_maximum_resident_set_kib",
+                baseline.maximum_resident_set_kib.median,
+                candidate.maximum_resident_set_kib.median,
+                40.0,
+            ),
+        })
+    } else {
+        None
+    };
     Ok(MatrixReport {
         scenario: cli.scenario,
+        graph_build: cli.graph_build,
         members: cli.members,
+        exclusions: if matches!(cli.scenario, Scenario::HoleException) {
+            cli.exclusions
+        } else {
+            0
+        },
         fixture: fixture.display().to_string(),
+        fixture_sha256,
         generated,
         generation_ms,
         fixture_bytes,
@@ -409,6 +534,7 @@ fn run_matrix(cli: &Cli) -> Result<MatrixReport> {
         summaries,
         arithmetic_direct_baseline,
         nested_authoritative_load_gate,
+        deferred_fragmented_gates,
     })
 }
 
@@ -481,6 +607,20 @@ fn summarize_dispositions(children: &[ChildMeasurement]) -> Vec<DispositionSumma
                 .expect("non-empty finite total samples"),
                 load_ms: median_mad(samples.iter().map(|sample| sample.report.load_ms).collect())
                     .expect("non-empty finite load samples"),
+                graph_build_ms: median_mad(
+                    samples
+                        .iter()
+                        .map(|sample| sample.report.graph_build_ms)
+                        .collect(),
+                )
+                .expect("non-empty finite graph-build samples"),
+                load_and_build_ms: median_mad(
+                    samples
+                        .iter()
+                        .map(|sample| sample.report.load_and_build_ms)
+                        .collect(),
+                )
+                .expect("non-empty finite load-and-build samples"),
                 evaluate_ms: median_mad(
                     samples
                         .iter()
@@ -529,6 +669,28 @@ fn relative_gate(
 }
 
 #[cfg(feature = "formualizer_runner")]
+fn reduction_gate(
+    metric: &'static str,
+    baseline_median: f64,
+    candidate_median: f64,
+    minimum_reduction_percent: f64,
+) -> ReductionGate {
+    let reduction_percent = if baseline_median > 0.0 {
+        (1.0 - candidate_median / baseline_median) * 100.0
+    } else {
+        f64::NEG_INFINITY
+    };
+    ReductionGate {
+        metric,
+        minimum_reduction_percent,
+        baseline_median,
+        candidate_median,
+        reduction_percent,
+        passed: reduction_percent >= minimum_reduction_percent,
+    }
+}
+
+#[cfg(feature = "formualizer_runner")]
 fn run_child(
     cli: &Cli,
     fixture: &Path,
@@ -548,7 +710,18 @@ fn run_child(
         .arg(exe)
         .args(["--child", "--input"])
         .arg(fixture)
-        .args(["--members", &cli.members.to_string(), "--mode", mode_arg])
+        .args([
+            "--scenario",
+            cli.scenario.arg(),
+            "--graph-build",
+            cli.graph_build.label(),
+            "--members",
+            &cli.members.to_string(),
+            "--exclusions",
+            &cli.exclusions.to_string(),
+            "--mode",
+            mode_arg,
+        ])
         .output()
         .context("launch timed cold child through /usr/bin/time -v")?;
     if !output.status.success() {
@@ -599,13 +772,20 @@ fn probe_child(cli: &Cli) -> Result<ModeReport> {
     }
     let total = Instant::now();
     let adapter = CalamineAdapter::open_path(&path)?;
+    let mut config = WorkbookConfig::ephemeral().with_formula_plane_mode(mode);
+    config.eval.defer_graph_building = cli.graph_build == GraphBuild::Deferred;
     let load = Instant::now();
-    let (mut workbook, adapter_stats) = Workbook::from_reader_with_adapter_stats(
-        adapter,
-        LoadStrategy::EagerAll,
-        WorkbookConfig::ephemeral().with_formula_plane_mode(mode),
-    )?;
+    let (mut workbook, adapter_stats) =
+        Workbook::from_reader_with_adapter_stats(adapter, LoadStrategy::EagerAll, config)?;
     let load_ms = load.elapsed().as_secs_f64() * 1000.0;
+    let graph_build_ms = if cli.graph_build == GraphBuild::Deferred {
+        let graph_build = Instant::now();
+        workbook.prepare_graph_all()?;
+        graph_build.elapsed().as_secs_f64() * 1000.0
+    } else {
+        0.0
+    };
+    let load_and_build_ms = load_ms + graph_build_ms;
     let eval = Instant::now();
     workbook.evaluate_all()?;
     let evaluate_ms = eval.elapsed().as_secs_f64() * 1000.0;
@@ -625,6 +805,48 @@ fn probe_child(cli: &Cli) -> Result<ModeReport> {
             ingest.formula_cells_seen
         );
     }
+    if !forced
+        && mode == FormulaPlaneMode::AuthoritativeExperimental
+        && ingest.source_family_promoted > 0
+        && (stats.formula_plane_active_span_count == 0
+            || ingest.graph_formula_cells_materialized + ingest.source_family_promoted_cells
+                != ingest.formula_cells_seen)
+    {
+        bail!(
+            "authoritative promotion must reconcile every formula (spans={}, graph={}, promoted={}, formulas={})",
+            stats.formula_plane_active_span_count,
+            ingest.graph_formula_cells_materialized,
+            ingest.source_family_promoted_cells,
+            ingest.formula_cells_seen
+        );
+    }
+    if !forced
+        && mode == FormulaPlaneMode::AuthoritativeExperimental
+        && cli.graph_build == GraphBuild::Deferred
+        && matches!(cli.scenario, Scenario::HoleException)
+        && cli.members >= 100_000
+        && cli.exclusions <= 64
+    {
+        let expected_exclusions = u64::from(cli.exclusions);
+        let expected_spans = cli.exclusions as usize + 1;
+        if ingest.source_family_promoted != 1
+            || ingest.source_family_fallback != 0
+            || ingest.graph_formula_cells_materialized != expected_exclusions
+            || stats.graph_formula_vertex_count as u64 != expected_exclusions
+            || stats.formula_plane_active_span_count != expected_spans
+        {
+            bail!(
+                "deferred fragmented benchmark missed authority path (families={}, fallback={}, graph={}, vertices={}, spans={}, expected exclusions={}, expected spans={})",
+                ingest.source_family_promoted,
+                ingest.source_family_fallback,
+                ingest.graph_formula_cells_materialized,
+                stats.graph_formula_vertex_count,
+                stats.formula_plane_active_span_count,
+                expected_exclusions,
+                expected_spans,
+            );
+        }
+    }
     let storage_kind = if ingest.source_spool_spilled_bytes > 0 {
         "native_file"
     } else if ingest.source_formula_records_spooled > 0 {
@@ -640,8 +862,11 @@ fn probe_child(cli: &Cli) -> Result<ModeReport> {
     };
     Ok(ModeReport {
         disposition: label.into(),
+        graph_build: cli.graph_build,
         total_elapsed_ms: total.elapsed().as_secs_f64() * 1000.0,
         load_ms,
+        graph_build_ms,
+        load_and_build_ms,
         evaluate_ms,
         collection_ms: None,
         preparation_ms: None,
@@ -656,8 +881,8 @@ fn probe_child(cli: &Cli) -> Result<ModeReport> {
 }
 
 #[cfg(feature = "formualizer_runner")]
-fn generate_xlsx(scenario: Scenario, members: u32) -> Result<Vec<u8>> {
-    let sheet = sheet_xml(scenario, members)?;
+fn generate_xlsx(scenario: Scenario, members: u32, exclusions: u32) -> Result<Vec<u8>> {
+    let sheet = sheet_xml(scenario, members, exclusions)?;
     let cursor = Cursor::new(Vec::new());
     let mut zip = ZipWriter::new(cursor);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
@@ -675,10 +900,18 @@ fn generate_xlsx(scenario: Scenario, members: u32) -> Result<Vec<u8>> {
 }
 
 #[cfg(feature = "formualizer_runner")]
-fn sheet_xml(scenario: Scenario, members: u32) -> Result<String> {
+fn sheet_xml(scenario: Scenario, members: u32, exclusions: u32) -> Result<String> {
     let rows = match scenario {
         Scenario::FullSheetTwoPoint => 2,
         _ => members,
+    };
+    let exception_rows: BTreeSet<u32> = if matches!(scenario, Scenario::HoleException) {
+        let denominator = u64::from(exclusions) + 1;
+        (1..=exclusions)
+            .map(|index| 1 + ((u64::from(index) * u64::from(rows - 1)) / denominator) as u32)
+            .collect()
+    } else {
+        BTreeSet::new()
     };
     if rows > 1_048_576 {
         bail!("--members exceeds the XLSX row limit");
@@ -722,7 +955,7 @@ fn sheet_xml(scenario: Scenario, members: u32) -> Result<String> {
                     xml.push_str(r#"<f t="shared" si="1"/>"#);
                 }
             }
-            Scenario::HoleException if row == (rows / 2).max(1) => {
+            Scenario::HoleException if exception_rows.contains(&row) => {
                 xml.push_str(&format!("<f>{formula}</f>"));
             }
             Scenario::NestedFunctionFamily => {
@@ -772,8 +1005,8 @@ mod tests {
 
     #[test]
     fn fixture_generation_is_deterministic_and_contains_shared_ooxml() {
-        let first = generate_xlsx(Scenario::LargeFamily, 100).unwrap();
-        let second = generate_xlsx(Scenario::LargeFamily, 100).unwrap();
+        let first = generate_xlsx(Scenario::LargeFamily, 100, 0).unwrap();
+        let second = generate_xlsx(Scenario::LargeFamily, 100, 0).unwrap();
         assert_eq!(first, second);
         let mut archive = ZipArchive::new(Cursor::new(first)).unwrap();
         let mut xml = String::new();
@@ -788,7 +1021,7 @@ mod tests {
 
     #[test]
     fn nested_function_fixture_is_one_genuine_shared_family() {
-        let xml = sheet_xml(Scenario::NestedFunctionFamily, 100).unwrap();
+        let xml = sheet_xml(Scenario::NestedFunctionFamily, 100, 0).unwrap();
         assert!(xml.contains("ROUND(ABS(A1)+SUM(A1:A1)+COUNTIF"));
         assert!(xml.contains("VLOOKUP(A1,A1:A1,1,FALSE)"));
         assert_eq!(xml.matches("t=\"shared\"").count(), 100);
@@ -797,9 +1030,23 @@ mod tests {
 
     #[test]
     fn pathological_fixture_declares_full_sheet_without_materializing_it() {
-        let xml = sheet_xml(Scenario::FullSheetTwoPoint, 2).unwrap();
+        let xml = sheet_xml(Scenario::FullSheetTwoPoint, 2, 0).unwrap();
         assert!(xml.contains("ref=\"B1:B1048576\""));
         assert_eq!(xml.matches("<row ").count(), 2);
+    }
+
+    #[test]
+    fn fragmented_fixture_places_requested_ordinary_exceptions() {
+        let xml = sheet_xml(Scenario::HoleException, 100_000, 64).unwrap();
+        assert_eq!(xml.matches("<f>A").count(), 64);
+        assert_eq!(xml.matches("t=\"shared\"").count(), 100_000 - 64);
+        assert_eq!(xml.matches("ref=\"B1:B100000\"").count(), 1);
+
+        let dense = sheet_xml(Scenario::HoleException, 100, 64).unwrap();
+        assert_eq!(dense.matches("<f>A").count(), 64);
+        assert_eq!(dense.matches("t=\"shared\"").count(), 100 - 64);
+        assert_eq!(dense.matches("ref=\"B1:B100\"").count(), 1);
+        assert!(dense.contains("<f t=\"shared\" si=\"1\" ref=\"B1:B100\">A1+1</f>"));
     }
 
     #[test]
@@ -807,7 +1054,9 @@ mod tests {
         let cli = |members| Cli {
             scenario: Scenario::NestedFunctionFamily,
             mode: ProbeMode::Authoritative,
+            graph_build: GraphBuild::Eager,
             members,
+            exclusions: 1,
             input: None,
             fixture_out: None,
             generate_only: false,
@@ -816,6 +1065,52 @@ mod tests {
         };
         assert!(!is_nested_load_gate_run(&cli(100)));
         assert!(is_nested_load_gate_run(&cli(100_000)));
+    }
+
+    #[test]
+    fn deferred_fragmented_gate_requires_the_cold_100k_matrix() {
+        let cli = |exclusions, graph_build, mode| Cli {
+            scenario: Scenario::HoleException,
+            mode,
+            graph_build,
+            members: 100_000,
+            exclusions,
+            input: None,
+            fixture_out: None,
+            generate_only: false,
+            samples: 5,
+            child: false,
+        };
+        assert!(is_deferred_fragmented_gate_run(&cli(
+            1,
+            GraphBuild::Deferred,
+            ProbeMode::All,
+        )));
+        assert!(is_deferred_fragmented_gate_run(&cli(
+            8,
+            GraphBuild::Deferred,
+            ProbeMode::All,
+        )));
+        assert!(is_deferred_fragmented_gate_run(&cli(
+            64,
+            GraphBuild::Deferred,
+            ProbeMode::All,
+        )));
+        assert!(!is_deferred_fragmented_gate_run(&cli(
+            2,
+            GraphBuild::Deferred,
+            ProbeMode::All,
+        )));
+        assert!(!is_deferred_fragmented_gate_run(&cli(
+            1,
+            GraphBuild::Eager,
+            ProbeMode::All,
+        )));
+        assert!(!is_deferred_fragmented_gate_run(&cli(
+            1,
+            GraphBuild::Deferred,
+            ProbeMode::Authoritative,
+        )));
     }
 
     #[test]
@@ -847,6 +1142,13 @@ mod tests {
         assert!(!fail.passed);
         assert!(fail.overhead_percent > fail.limit_percent);
         assert!(!relative_gate("authoritative_load_ms", 0.0, 1.0, 10.0).passed);
+
+        let pass = reduction_gate("rss", 100.0, 59.9, 40.0);
+        assert!(pass.passed);
+        assert!(pass.reduction_percent > pass.minimum_reduction_percent);
+        let fail = reduction_gate("rss", 100.0, 60.1, 40.0);
+        assert!(!fail.passed);
+        assert!(!reduction_gate("rss", 0.0, 0.0, 40.0).passed);
     }
 
     #[test]

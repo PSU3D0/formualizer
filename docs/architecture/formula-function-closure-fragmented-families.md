@@ -412,6 +412,9 @@ cargo test -p formualizer-eval formula_plane_ingest_shadow
 cargo test -p formualizer-workbook --features calamine --test calamine shared_formulas
 cargo test -p formualizer-workbook --features calamine --test load_limits
 cargo test -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- --scenario hole-exception --members 100000 --exclusions 1 --graph-build deferred --samples 5
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- --scenario hole-exception --members 100000 --exclusions 8 --graph-build deferred --samples 5
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- --scenario hole-exception --members 100000 --exclusions 64 --graph-build deferred --samples 5
 cargo fmt --all -- --check
 cargo clippy -p formualizer-eval -p formualizer-workbook --all-targets --features formualizer-workbook/calamine -- -D warnings
 ```

@@ -4724,6 +4724,21 @@ where
         if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
             return Ok(preparation);
         }
+        #[cfg(feature = "benchmark_internal")]
+        let benchmark_forced_replay =
+            std::env::var_os("FORMUALIZER_BENCH_FORCE_FORMULA_FAMILY_REPLAY").is_some();
+        #[cfg(not(feature = "benchmark_internal"))]
+        let benchmark_forced_replay = false;
+        let authority_partitions = if benchmark_forced_replay {
+            for partition in authority_partitions {
+                preparation
+                    .rejected
+                    .insert(partition.source_id, "ForcedReplay".to_string());
+            }
+            &[][..]
+        } else {
+            authority_partitions
+        };
         let authority_ids: BTreeSet<_> = authority_partitions
             .iter()
             .map(|partition| partition.source_id)
