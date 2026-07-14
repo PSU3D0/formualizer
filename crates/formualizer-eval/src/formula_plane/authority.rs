@@ -8,7 +8,7 @@
 use rustc_hash::FxHashSet;
 
 use super::producer::{FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex};
-use super::region_index::Region;
+use super::region_index::{FormulaOverlayIndex, Region, SpanDomainIndex};
 use super::runtime::{FormulaPlane, FormulaSpanRef};
 
 #[derive(Debug, Default)]
@@ -16,7 +16,12 @@ pub(crate) struct FormulaAuthority {
     pub(crate) plane: FormulaPlane,
     pub(crate) producer_results: FormulaProducerResultIndex,
     pub(crate) consumer_reads: FormulaConsumerReadIndex,
-    indexes_epoch: u64,
+    pub(crate) span_domains: SpanDomainIndex,
+    pub(crate) overlays: FormulaOverlayIndex,
+    pub(crate) indexes_epoch: u64,
+    pub(crate) indexed_plane_epoch: u64,
+    #[cfg(test)]
+    pub(crate) prepared_append_failure_for_test: bool,
     /// Externally-observed changed regions accumulated since the last
     /// `take_pending_changed_regions` call. Edits that intersect span read
     /// regions drive bounded span dirty work via `compute_dirty_closure`.
@@ -39,6 +44,10 @@ pub(crate) struct FormulaAuthorityIndexReport {
 impl FormulaAuthority {
     pub(crate) fn indexes_epoch(&self) -> u64 {
         self.indexes_epoch
+    }
+
+    pub(crate) fn indexed_plane_epoch(&self) -> u64 {
+        self.indexed_plane_epoch
     }
 
     pub(crate) fn active_span_count(&self) -> usize {
@@ -104,6 +113,8 @@ impl FormulaAuthority {
     pub(crate) fn rebuild_indexes(&mut self) -> FormulaAuthorityIndexReport {
         let mut producer_results = FormulaProducerResultIndex::default();
         let mut consumer_reads = FormulaConsumerReadIndex::default();
+        let mut span_domains = SpanDomainIndex::default();
+        let mut overlays = FormulaOverlayIndex::default();
         let mut report = FormulaAuthorityIndexReport {
             plane_epoch: self.plane.epoch().0,
             ..FormulaAuthorityIndexReport::default()
@@ -113,6 +124,12 @@ impl FormulaAuthority {
             report.spans_seen = report.spans_seen.saturating_add(1);
             let result_region =
                 super::region_index::Region::from_domain(span.result_region.domain());
+            let span_ref = FormulaSpanRef {
+                id: span.id,
+                generation: span.generation,
+                version: span.version,
+            };
+            span_domains.insert_domain(span_ref, span.domain.clone());
             let producer = FormulaProducerId::Span(span.id);
             producer_results.insert_producer(producer, result_region);
             report.producer_result_entries = report.producer_result_entries.saturating_add(1);
@@ -145,10 +162,18 @@ impl FormulaAuthority {
             report.spans_indexed = report.spans_indexed.saturating_add(1);
         }
 
+        for (entry, overlay_ref) in self.plane.formula_overlay.active_entries() {
+            overlays.insert_overlay(overlay_ref, entry.domain.clone());
+        }
+        overlays.mark_built_from_overlay_epoch(self.plane.formula_overlay.epoch());
+
         self.indexes_epoch = self.indexes_epoch.saturating_add(1);
+        self.indexed_plane_epoch = self.plane.epoch().0;
         report.indexes_epoch = self.indexes_epoch;
         self.producer_results = producer_results;
         self.consumer_reads = consumer_reads;
+        self.span_domains = span_domains;
+        self.overlays = overlays;
         report
     }
 }

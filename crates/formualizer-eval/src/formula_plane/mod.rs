@@ -7,6 +7,7 @@
 #[cfg(test)]
 mod axis_range_proptest;
 
+pub(crate) mod append;
 pub(crate) mod authority;
 pub(crate) mod dependency_summary;
 #[cfg(feature = "formula_plane_diagnostics")]

@@ -642,6 +642,10 @@ impl BindingStore {
         self.records.get(id.0 as usize)?.as_ref()
     }
 
+    pub(crate) fn slot_len(&self) -> usize {
+        self.records.len()
+    }
+
     pub(crate) fn remove(&mut self, id: SpanBindingSetId) -> bool {
         let Some(slot) = self.records.get_mut(id.0 as usize) else {
             return false;
@@ -791,6 +795,20 @@ impl TemplateStore {
     pub(crate) fn get(&self, id: FormulaTemplateId) -> Option<&TemplateRecord> {
         self.records
             .get(id.0 as usize)
+            .filter(|record| record.id == id)
+    }
+
+    pub(crate) fn interned_id(&self, key: &str) -> Option<FormulaTemplateId> {
+        self.intern.get(key).copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_mut_for_test(
+        &mut self,
+        id: FormulaTemplateId,
+    ) -> Option<&mut TemplateRecord> {
+        self.records
+            .get_mut(id.0 as usize)
             .filter(|record| record.id == id)
     }
 
@@ -1083,6 +1101,10 @@ impl SpanStore {
             .filter(|span| span.state == SpanState::Active)
     }
 
+    pub(crate) fn slot_len(&self) -> usize {
+        self.slots.len()
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
@@ -1241,6 +1263,23 @@ impl FormulaOverlay {
             .collect()
     }
 
+    pub(crate) fn active_entries(
+        &self,
+    ) -> impl Iterator<Item = (&FormulaOverlayEntryRecord, FormulaOverlayRef)> {
+        let overlay_epoch = self.epoch;
+        self.slots.iter().filter_map(move |slot| {
+            let entry = slot.entry.as_ref()?;
+            Some((
+                entry,
+                FormulaOverlayRef {
+                    id: entry.id,
+                    generation: entry.generation,
+                    overlay_epoch,
+                },
+            ))
+        })
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
@@ -1299,6 +1338,8 @@ pub(crate) struct FormulaPlane {
     /// finds spans that previously resolved through workbook scope.
     name_dependent_spans: FxHashMap<String, Vec<FormulaSpanRef>>,
     span_name_keys: FxHashMap<FormulaSpanId, Vec<String>>,
+    #[cfg(test)]
+    fresh_name_registration_work: usize,
     epoch: FormulaPlaneEpoch,
 }
 
@@ -1559,6 +1600,38 @@ impl FormulaPlane {
         if !keys.is_empty() {
             self.span_name_keys.insert(span.id, keys);
         }
+    }
+
+    /// Register already-normalized, deduplicated name facts for a span that was
+    /// just uniquely appended. The fresh-span contract makes membership scans
+    /// unnecessary: neither the per-name buckets nor `span_name_keys` can yet
+    /// contain this span.
+    pub(crate) fn register_fresh_span_name_dependents(
+        &mut self,
+        span: FormulaSpanRef,
+        normalized_unique_names: &[String],
+    ) {
+        for key in normalized_unique_names {
+            self.name_dependent_spans
+                .entry(key.clone())
+                .or_default()
+                .push(span);
+        }
+        if !normalized_unique_names.is_empty() {
+            self.span_name_keys
+                .insert(span.id, normalized_unique_names.to_vec());
+        }
+        #[cfg(test)]
+        {
+            self.fresh_name_registration_work = self
+                .fresh_name_registration_work
+                .saturating_add(normalized_unique_names.len());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fresh_name_registration_work_for_test(&self) -> usize {
+        self.fresh_name_registration_work
     }
 
     fn unregister_span_name_dependents(&mut self, span_ref: FormulaSpanRef) {

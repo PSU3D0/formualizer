@@ -1207,6 +1207,14 @@ impl SpanDomainIndex {
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn rebuild_count(&self) -> u64 {
+        self.index.rebuild_count()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1378,6 +1386,18 @@ impl FormulaOverlayIndex {
 
     pub(crate) fn built_from_overlay_epoch(&self) -> u64 {
         self.built_from_overlay_epoch
+    }
+
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn rebuild_count(&self) -> u64 {
+        self.index.rebuild_count()
     }
 
     pub(crate) fn stale_epoch_count(&self) -> u64 {

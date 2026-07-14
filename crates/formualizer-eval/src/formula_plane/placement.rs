@@ -201,6 +201,43 @@ pub(crate) struct PreparedAnchorOncePlacement {
     pub(crate) member_count: u64,
 }
 
+impl PreparedAnchorOncePlacement {
+    #[cfg(test)]
+    pub(crate) fn set_resolved_named_refs_for_test(&mut self, names: Vec<String>) {
+        self.analysis.resolved_named_refs = names;
+    }
+
+    /// Decompose the sealed one-analysis placement proof for FormulaPlane append.
+    /// Canonical identity and resolved-name facts can only originate from the
+    /// `CandidateAnalysis` that passed `prepare_anchor_once_family`.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn into_append_proof_parts(
+        self,
+    ) -> (
+        FormulaPlacementCandidate,
+        Arc<str>,
+        Arc<str>,
+        Vec<String>,
+        PlacementDomain,
+        ResultRegion,
+        SpanReadSummary,
+        SpanBindingSet,
+        bool,
+    ) {
+        (
+            self.candidate,
+            self.analysis.exact_canonical_key,
+            self.analysis.parameterized_canonical_key,
+            self.analysis.resolved_named_refs,
+            self.domain,
+            self.result_region,
+            self.read_summary,
+            self.binding_set,
+            self.is_constant_result,
+        )
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct CandidateAnalysis {
     sheet_id: SheetId,
