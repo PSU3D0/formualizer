@@ -89,7 +89,7 @@ impl FunctionSemanticContract {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct FunctionSemanticIdentity {
+pub struct FunctionSemanticIdentity {
     pub(crate) namespace: String,
     pub(crate) canonical_name: String,
     pub(crate) generation: u64,

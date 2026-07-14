@@ -318,8 +318,8 @@ impl<'a> IngestPipeline<'a> {
         match &ast.node_type {
             ASTNodeType::Function { name, args } => {
                 self.function_provider
-                    .get_function("", name)
-                    .is_some_and(|function| function.caps().contains(FnCaps::VOLATILE))
+                    .function_capabilities("", name)
+                    .is_some_and(|caps| caps.contains(FnCaps::VOLATILE))
                     || args.iter().any(|arg| self.ast_is_volatile(arg))
             }
             ASTNodeType::BinaryOp { left, right, .. } => {
@@ -356,18 +356,15 @@ impl<'a> IngestPipeline<'a> {
             }
             ASTNodeType::Function { name, args } => {
                 use crate::function_contract::FunctionArgumentDependencyContract as Arguments;
-                let argument_contract = crate::function_registry::resolve_semantic_identity(
-                    self.function_provider,
-                    "",
-                    name,
-                    args.len(),
-                )
-                .filter(|identity| {
-                    identity.contract.environment
-                        == crate::function_contract::FunctionEnvironmentSemantics::LocalBindings
-                })
-                .and_then(|identity| identity.contract.precision)
-                .map(|precision| precision.arguments);
+                let argument_contract = self
+                    .function_provider
+                    .function_semantic_identity("", name, args.len())
+                    .filter(|identity| {
+                        identity.contract.environment
+                            == crate::function_contract::FunctionEnvironmentSemantics::LocalBindings
+                    })
+                    .and_then(|identity| identity.contract.precision)
+                    .map(|precision| precision.arguments);
                 match argument_contract {
                     Some(Arguments::LocalBindingPairs)
                         if args.len() >= 3 && args.len() % 2 == 1 =>

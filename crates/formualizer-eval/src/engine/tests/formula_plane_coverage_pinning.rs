@@ -358,7 +358,16 @@ fn fp_coverage_corpus_pins_canonical_reject_kinds() {
                 diag.reject_kinds
             );
         }
-        if section.expected_canonical_reject_kinds.is_empty()
+        if section.name == "nested_if_literals" {
+            assert!(!diag.authority_supported);
+            assert!(
+                diag.reject_reasons
+                    .iter()
+                    .any(|reason| reason == "array_or_spill_function:IF"),
+                "nested IF must retain its conservative result-shape rejection: {:?}",
+                diag.reject_reasons
+            );
+        } else if section.expected_canonical_reject_kinds.is_empty()
             && section.verdict == SectionVerdict::Span
         {
             assert!(

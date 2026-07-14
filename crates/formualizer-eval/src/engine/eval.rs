@@ -688,6 +688,9 @@ pub struct Engine<R> {
     /// Global function-registry semantic epoch observed after the latest
     /// conservative FormulaPlane invalidation.
     function_semantic_epoch_seen: u64,
+    /// Runtime-provider semantic revision observed after the latest conservative
+    /// FormulaPlane invalidation.
+    function_provider_revision_seen: Option<u64>,
 
     #[cfg(test)]
     last_formula_plane_span_eval_report: Option<SpanEvalReport>,
@@ -1650,6 +1653,7 @@ where
         };
 
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
+        let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1690,6 +1694,7 @@ where
             iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
+            function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
             before_prepared_span_commit_hook: None,
@@ -1734,6 +1739,7 @@ where
             }
         });
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
+        let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1774,6 +1780,7 @@ where
             iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
+            function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
             before_prepared_span_commit_hook: None,
@@ -3323,6 +3330,7 @@ where
         sheet_id: SheetId,
         family: &crate::engine::SourceFormulaFamily,
         allow_function_closure: bool,
+        planning_provider: Option<&dyn crate::traits::FunctionProvider>,
     ) -> Result<
         (
             crate::formula_plane::placement::PreparedAnchorOncePlacement,
@@ -3365,6 +3373,7 @@ where
                 family.anchor_coord0.row,
                 family.anchor_coord0.col,
                 &domain,
+                planning_provider.unwrap_or(&self.resolver),
             )
         } else {
             validate_anchor_once_syntax(
@@ -3386,7 +3395,10 @@ where
             ),
         );
         let ingested = {
-            let mut pipeline = self.ingest_pipeline();
+            let mut pipeline = match planning_provider {
+                Some(provider) => self.graph.ingest_pipeline(provider),
+                None => self.ingest_pipeline(),
+            };
             if allow_function_closure {
                 pipeline = pipeline.enable_function_semantics();
             }
@@ -3466,6 +3478,7 @@ where
                 family.template_origin0.row,
                 family.template_origin0.col,
                 domain,
+                &self.resolver,
             )
             .map_err(SourceFamilyPreparationError::ast)?;
         }
@@ -3628,7 +3641,7 @@ where
                     .shadow_candidate_cells
                     .saturating_add(family.member_count);
 
-                match self.prepare_source_formula_family(sheet_id, family, true) {
+                match self.prepare_source_formula_family(sheet_id, family, true, None) {
                     Ok(_) => {
                         report.source_descendant_strings_avoided = report
                             .source_descendant_strings_avoided
@@ -4228,6 +4241,39 @@ where
         components
     }
 
+    fn collect_planning_function_requests(
+        ast: &ASTNode,
+        requests: &mut Vec<(String, String, usize)>,
+    ) {
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                requests.push((String::new(), name.clone(), args.len()));
+                for arg in args {
+                    Self::collect_planning_function_requests(arg, requests);
+                }
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                Self::collect_planning_function_requests(left, requests);
+                Self::collect_planning_function_requests(right, requests);
+            }
+            ASTNodeType::UnaryOp { expr, .. } => {
+                Self::collect_planning_function_requests(expr, requests);
+            }
+            ASTNodeType::Call { callee, args } => {
+                Self::collect_planning_function_requests(callee, requests);
+                for arg in args {
+                    Self::collect_planning_function_requests(arg, requests);
+                }
+            }
+            ASTNodeType::Array(rows) => {
+                for cell in rows.iter().flatten() {
+                    Self::collect_planning_function_requests(cell, requests);
+                }
+            }
+            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => {}
+        }
+    }
+
     pub(crate) fn prepare_source_formula_families(
         &mut self,
         sheet_name: &str,
@@ -4236,6 +4282,7 @@ where
         let mut preparation = crate::engine::FormulaCompressedPreparation {
             engine_token: Arc::clone(&self.source_formula_token),
             function_semantic_epoch: crate::function_registry::semantic_epoch(),
+            function_provider_revision: None,
             function_semantics_used: false,
             sheet_name: Arc::from(sheet_name),
             prepared: Vec::new(),
@@ -4246,6 +4293,46 @@ where
         if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
             return preparation;
         }
+
+        let mut requests = Vec::new();
+        for family in families {
+            let formula = if family.anchor_text.starts_with('=') {
+                family.anchor_text.to_string()
+            } else {
+                format!("={}", family.anchor_text)
+            };
+            if let Ok(ast) = formualizer_parse::parser::parse(&formula) {
+                Self::collect_planning_function_requests(&ast, &mut requests);
+            }
+        }
+        requests.sort();
+        requests.dedup();
+        let snapshot =
+            match crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+                &self.resolver,
+                requests,
+            ) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    let reason = match error {
+                        crate::function_registry::PlanningSnapshotError::RegistryChangedDuringCapture => {
+                            "FunctionSemanticSnapshotUnavailable"
+                        }
+                        crate::function_registry::PlanningSnapshotError::ProviderRevisionUnavailable => {
+                            "FunctionProviderRevisionUnavailable"
+                        }
+                    };
+                    for family in families {
+                        preparation
+                            .rejected
+                            .insert(family.source_id, reason.to_string());
+                    }
+                    return preparation;
+                }
+            };
+        preparation.function_semantic_epoch = snapshot.epoch();
+        preparation.function_provider_revision = snapshot.provider_revision();
+
         let sheet_id = self.graph.sheet_id_mut(sheet_name);
         for family in families {
             #[cfg(test)]
@@ -4262,7 +4349,7 @@ where
                     .insert(family.source_id, "ForcedReplay".to_string());
                 continue;
             }
-            match self.prepare_source_formula_family(sheet_id, family, true) {
+            match self.prepare_source_formula_family(sheet_id, family, true, Some(&snapshot)) {
                 Ok((prepared, function_semantics_used)) => {
                     preparation.function_semantics_used |= function_semantics_used;
                     preparation
@@ -4372,17 +4459,27 @@ where
         let initial_guard = crate::function_registry::semantic_epoch_read_guard();
         let initial_epoch = initial_guard.epoch();
         drop(initial_guard);
+        let initial_provider_revision = self.resolver.planning_semantic_revision();
         let mut fallback_batches = Vec::with_capacity(batches.len());
         let mut stale_fallback_batches = Vec::new();
         let mut pending_preparations = Vec::new();
         for (fallback, mut source, mut preparation) in batches {
-            let stale_semantics = preparation.function_semantics_used
-                && preparation.function_semantic_epoch != initial_epoch;
-            if stale_semantics {
+            let stale_reason = preparation
+                .function_semantics_used
+                .then(|| {
+                    if preparation.function_provider_revision != initial_provider_revision {
+                        Some("FunctionProviderRevisionChanged")
+                    } else if preparation.function_semantic_epoch != initial_epoch {
+                        Some("FunctionSemanticEpochChanged")
+                    } else {
+                        None
+                    }
+                })
+                .flatten();
+            let stale_semantics = stale_reason.is_some();
+            if let Some(reason) = stale_reason {
                 for (family, _) in &preparation.prepared {
-                    preparation
-                        .rejected
-                        .insert(*family, "FunctionSemanticEpochChanged".to_string());
+                    preparation.rejected.insert(*family, reason.to_string());
                 }
             }
             for reason in preparation.rejected.values() {
@@ -4424,26 +4521,36 @@ where
             if let Some(hook) = self.before_prepared_span_commit_hook.take() {
                 hook();
             }
+            let commit_provider_revision = self.resolver.planning_semantic_revision();
             let commit_guard = crate::function_registry::semantic_epoch_read_guard();
             let commit_epoch = commit_guard.epoch();
             let mut newly_stale = Vec::new();
             let mut current = Vec::new();
             for pending in pending_preparations.drain(..) {
-                if !pending.0.function_semantics_used
-                    || pending.0.function_semantic_epoch == commit_epoch
-                {
-                    current.push(pending);
+                let stale_reason = pending
+                    .0
+                    .function_semantics_used
+                    .then(|| {
+                        if pending.0.function_provider_revision != commit_provider_revision {
+                            Some("FunctionProviderRevisionChanged")
+                        } else if pending.0.function_semantic_epoch != commit_epoch {
+                            Some("FunctionSemanticEpochChanged")
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten();
+                if let Some(reason) = stale_reason {
+                    newly_stale.push((pending, reason));
                 } else {
-                    newly_stale.push(pending);
+                    current.push(pending);
                 }
             }
             if !newly_stale.is_empty() {
                 drop(commit_guard);
-                for (mut preparation, was_initially_stale) in newly_stale {
+                for ((mut preparation, was_initially_stale), reason) in newly_stale {
                     for (family, _) in &preparation.prepared {
-                        preparation
-                            .rejected
-                            .insert(*family, "FunctionSemanticEpochChanged".to_string());
+                        preparation.rejected.insert(*family, reason.to_string());
                     }
                     let exact = self.replay_prepared_families_exact(&preparation)?;
                     self.config.formula_plane_mode = FormulaPlaneMode::Off;
@@ -4453,7 +4560,7 @@ where
                     if !was_initially_stale {
                         *direct_report
                             .fallback_reasons
-                            .entry("FunctionSemanticEpochChanged".to_string())
+                            .entry(reason.to_string())
                             .or_default() += preparation.prepared.len() as u64;
                         direct_report.source_family_fallback = direct_report
                             .source_family_fallback
@@ -5242,6 +5349,10 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let row0 = Self::normalize_row_1based(row_1based)?;
         if self.set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source) {
@@ -5385,7 +5496,10 @@ where
     fn observe_function_semantic_epoch(&mut self) -> Result<bool, ExcelError> {
         let changes =
             crate::function_registry::semantic_changes_since(self.function_semantic_epoch_seen);
-        if changes.epoch == self.function_semantic_epoch_seen {
+        let global_changed = changes.epoch != self.function_semantic_epoch_seen;
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let provider_changed = provider_revision != self.function_provider_revision_seen;
+        if !global_changed && !provider_changed {
             return Ok(false);
         }
 
@@ -5397,20 +5511,28 @@ where
             .spans
             .active_spans()
             .filter_map(|span| {
-                if !changes.complete {
-                    return Some(span.domain.sheet_id());
-                }
-                let template = self
+                let Some(template) = self
                     .graph
                     .formula_authority()
                     .plane
                     .templates
-                    .get(span.template_id)?;
-                let ast = self
+                    .get(span.template_id)
+                else {
+                    return (provider_changed || global_changed && !changes.complete)
+                        .then_some(span.domain.sheet_id());
+                };
+                let Some(ast) = self
                     .graph
                     .data_store()
-                    .reconstruct_ast_node(template.ast_id, self.graph.sheet_reg())?;
-                Self::ast_uses_changed_function(&ast, &changed).then_some(span.domain.sheet_id())
+                    .reconstruct_ast_node(template.ast_id, self.graph.sheet_reg())
+                else {
+                    return (provider_changed || global_changed && !changes.complete)
+                        .then_some(span.domain.sheet_id());
+                };
+                let global_affected = global_changed
+                    && (!changes.complete || Self::ast_uses_changed_function(&ast, &changed));
+                let provider_affected = provider_changed && Self::ast_contains_function(&ast);
+                (global_affected || provider_affected).then_some(span.domain.sheet_id())
             })
             .collect();
         let invalidated = !sheets.is_empty();
@@ -5418,10 +5540,11 @@ where
             self.demote_spans_preserving_computed_overlays(sheet_id, Region::whole_sheet(sheet_id))
                 .map_err(Self::editor_error_to_excel)?;
         }
-        if !changed.is_empty() {
+        if global_changed && !changed.is_empty() || provider_changed {
             self.cached_static_schedule = None;
         }
         self.function_semantic_epoch_seen = changes.epoch;
+        self.function_provider_revision_seen = provider_revision;
         Ok(invalidated)
     }
 
@@ -5474,6 +5597,21 @@ where
                 .flatten()
                 .any(|node| Self::ast_uses_changed_function(node, changed)),
             _ => false,
+        }
+    }
+
+    fn ast_contains_function(ast: &ASTNode) -> bool {
+        match &ast.node_type {
+            ASTNodeType::Function { .. } => true,
+            ASTNodeType::Call { callee, args } => {
+                Self::ast_contains_function(callee) || args.iter().any(Self::ast_contains_function)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => Self::ast_contains_function(expr),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                Self::ast_contains_function(left) || Self::ast_contains_function(right)
+            }
+            ASTNodeType::Array(rows) => rows.iter().flatten().any(Self::ast_contains_function),
+            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => false,
         }
     }
 
@@ -7131,6 +7269,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
@@ -7166,6 +7306,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
@@ -7201,6 +7343,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.graph.sheet_id(sheet).ok_or(
@@ -7240,6 +7384,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.graph.sheet_id(sheet).ok_or(
@@ -8985,6 +9131,7 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let sheet_id = self.graph.sheet_id_mut(sheet);
         self.demote_span_containing_cell_for_write(
             sheet_id,
@@ -9231,6 +9378,7 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let sheet_id = self.graph.sheet_id_mut(sheet);
         self.demote_span_containing_cell_for_write(
             sheet_id,
@@ -13313,12 +13461,24 @@ impl<R> crate::traits::FunctionProvider for Engine<R>
 where
     R: EvaluationContext,
 {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        self.resolver.planning_semantic_revision()
+    }
+
     fn get_function(
         &self,
         prefix: &str,
         name: &str,
     ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
         self.resolver.get_function(prefix, name)
+    }
+
+    fn get_function_for_planning(
+        &self,
+        prefix: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
+        self.resolver.get_function_for_planning(prefix, name)
     }
 }
 

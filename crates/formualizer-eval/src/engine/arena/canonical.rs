@@ -378,14 +378,7 @@ fn classify_and_mix_function(
         FunctionContextDependence, FunctionDependencySemantics, FunctionEnvironmentSemantics,
     };
     let identity = allow_function_semantics
-        .then(|| {
-            crate::function_registry::resolve_semantic_identity(
-                function_provider,
-                "",
-                raw_name,
-                arity,
-            )
-        })
+        .then(|| function_provider.function_semantic_identity("", raw_name, arity))
         .flatten();
     let Some(identity) = identity else {
         mix_string(hasher, "");

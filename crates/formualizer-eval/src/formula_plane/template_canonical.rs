@@ -975,9 +975,8 @@ pub(crate) fn resolve_canonical_function_with_provider(
     name: &str,
     arity: usize,
 ) -> CanonicalFunctionId {
-    let identity = provider.and_then(|provider| {
-        crate::function_registry::resolve_semantic_identity(provider, "", name, arity)
-    });
+    let identity =
+        provider.and_then(|provider| provider.function_semantic_identity("", name, arity));
     match identity {
         Some(identity) => CanonicalFunctionId {
             namespace: identity.namespace,

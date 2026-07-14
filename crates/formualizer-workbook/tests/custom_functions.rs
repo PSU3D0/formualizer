@@ -1,4 +1,5 @@
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_eval::traits::FunctionProvider;
 use formualizer_workbook::{CustomFnOptions, Workbook, WorkbookMode};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,6 +19,7 @@ fn as_number(value: &LiteralValue) -> f64 {
 #[test]
 fn custom_function_lifecycle_register_list_unregister() {
     let mut wb = workbook();
+    assert_eq!(wb.engine().planning_semantic_revision(), Some(0));
 
     wb.register_custom_function(
         "add_one",
@@ -29,18 +31,21 @@ fn custom_function_lifecycle_register_list_unregister() {
         ),
     )
     .unwrap();
+    assert_eq!(wb.engine().planning_semantic_revision(), Some(1));
 
     let listed = wb.list_custom_functions();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].name, "ADD_ONE");
 
     wb.unregister_custom_function("Add_One").unwrap();
+    assert_eq!(wb.engine().planning_semantic_revision(), Some(2));
     assert!(wb.list_custom_functions().is_empty());
 
     let err = wb
         .unregister_custom_function("add_one")
         .expect_err("unregistering missing function should fail");
     assert_eq!(err.kind, ExcelErrorKind::Name);
+    assert_eq!(wb.engine().planning_semantic_revision(), Some(2));
 }
 
 #[test]

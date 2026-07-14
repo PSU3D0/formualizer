@@ -610,7 +610,7 @@ pub(crate) fn validate_anchor_once_syntax(
     anchor_col0: u32,
     domain: &PlacementDomain,
 ) -> Result<(), &'static str> {
-    validate_anchor_once_relocation(ast, anchor_row0, anchor_col0, domain, false)
+    validate_anchor_once_relocation(ast, anchor_row0, anchor_col0, domain, false, None)
 }
 
 pub(crate) fn validate_anchor_once_shadow_relocation(
@@ -618,8 +618,16 @@ pub(crate) fn validate_anchor_once_shadow_relocation(
     anchor_row0: u32,
     anchor_col0: u32,
     domain: &PlacementDomain,
+    function_provider: &dyn crate::traits::FunctionProvider,
 ) -> Result<(), &'static str> {
-    validate_anchor_once_relocation(ast, anchor_row0, anchor_col0, domain, true)
+    validate_anchor_once_relocation(
+        ast,
+        anchor_row0,
+        anchor_col0,
+        domain,
+        true,
+        Some(function_provider),
+    )
 }
 
 fn validate_anchor_once_relocation(
@@ -628,6 +636,7 @@ fn validate_anchor_once_relocation(
     anchor_col0: u32,
     domain: &PlacementDomain,
     allow_safe_functions: bool,
+    function_provider: Option<&dyn crate::traits::FunctionProvider>,
 ) -> Result<(), &'static str> {
     const MAX_ROW: i64 = 1_048_576;
     const MAX_COL: i64 = 16_384;
@@ -658,6 +667,7 @@ fn validate_anchor_once_relocation(
         col_start: u32,
         col_end: u32,
         allow_safe_functions: bool,
+        function_provider: Option<&dyn crate::traits::FunctionProvider>,
     ) -> Result<(), &'static str> {
         match &node.node_type {
             ASTNodeType::Literal(_) => Ok(()),
@@ -726,6 +736,7 @@ fn validate_anchor_once_relocation(
                 col_start,
                 col_end,
                 allow_safe_functions,
+                function_provider,
             ),
             ASTNodeType::BinaryOp { op, left, right }
                 if matches!(op.as_str(), "+" | "-" | "*" | "/") =>
@@ -739,6 +750,7 @@ fn validate_anchor_once_relocation(
                     col_start,
                     col_end,
                     allow_safe_functions,
+                    function_provider,
                 )?;
                 walk(
                     right,
@@ -749,11 +761,15 @@ fn validate_anchor_once_relocation(
                     col_start,
                     col_end,
                     allow_safe_functions,
+                    function_provider,
                 )
             }
             ASTNodeType::Function { name, args } if allow_safe_functions => {
-                let function =
-                    super::template_canonical::resolve_canonical_function(name, args.len());
+                let function = super::template_canonical::resolve_canonical_function_with_provider(
+                    function_provider,
+                    name,
+                    args.len(),
+                );
                 let contract = function
                     .contract
                     .ok_or("AnchorFunctionUnresolvedOrInvalid")?;
@@ -778,6 +794,7 @@ fn validate_anchor_once_relocation(
                         col_start,
                         col_end,
                         allow_safe_functions,
+                        function_provider,
                     )?;
                 }
                 Ok(())
@@ -816,6 +833,7 @@ fn validate_anchor_once_relocation(
         col_start,
         col_end,
         allow_safe_functions,
+        function_provider,
     )
 }
 
@@ -1980,6 +1998,81 @@ mod tests {
         let rect = PlacementDomain::rect(0, 3, 12, 4, 15);
         assert!(
             validate_anchor_once_syntax(&parse("=$A$1+B4+C4:D5").unwrap(), 3, 4, &rect).is_ok()
+        );
+    }
+
+    #[test]
+    fn prefixed_anchor_relocation_uses_captured_provider_generation() {
+        struct RelocationFunction {
+            caps: crate::function::FnCaps,
+        }
+
+        impl crate::function::Function for RelocationFunction {
+            fn name(&self) -> &'static str {
+                "E1_RELOCATION_TARGET"
+            }
+            fn aliases(&self) -> &'static [&'static str] {
+                &["E1_RELOCATION_ALIAS"]
+            }
+            fn caps(&self) -> crate::function::FnCaps {
+                self.caps
+            }
+            fn min_args(&self) -> usize {
+                1
+            }
+            fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+                static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
+                    std::sync::LazyLock::new(|| vec![crate::args::ArgSchema::any()]);
+                &SCHEMA
+            }
+            fn semantic_contract(
+                &self,
+                _arity: usize,
+            ) -> Option<crate::function_contract::FunctionSemanticContract> {
+                let mut contract =
+                    crate::function_contract::FunctionSemanticContract::trusted_builtin_default(
+                        None,
+                    );
+                contract.result =
+                    crate::function_contract::FunctionResultSemantics::from_capabilities(
+                        false,
+                        self.caps.contains(crate::function::FnCaps::MAY_SPILL),
+                    );
+                Some(contract)
+            }
+            fn eval<'a, 'b, 'c>(
+                &self,
+                _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+                _ctx: &dyn crate::traits::FunctionContext<'b>,
+            ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+                unreachable!()
+            }
+        }
+
+        crate::function_registry::register_function(Arc::new(RelocationFunction {
+            caps: crate::function::FnCaps::empty(),
+        }));
+        let snapshot = crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+            &crate::function_registry::GlobalRegistryFunctionProvider,
+            [(String::new(), "_xlfn.E1_RELOCATION_ALIAS".to_string(), 1)],
+        )
+        .unwrap();
+        crate::function_registry::register_function(Arc::new(RelocationFunction {
+            caps: crate::function::FnCaps::MAY_SPILL,
+        }));
+
+        let ast = parse("=_xlfn.E1_RELOCATION_ALIAS(A1)").unwrap();
+        let domain = PlacementDomain::row_run(0, 0, 99, 1);
+        assert!(validate_anchor_once_shadow_relocation(&ast, 0, 1, &domain, &snapshot).is_ok());
+        assert_eq!(
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                0,
+                1,
+                &domain,
+                &crate::function_registry::GlobalRegistryFunctionProvider,
+            ),
+            Err("AnchorFunctionSemanticsUnsupported")
         );
     }
 

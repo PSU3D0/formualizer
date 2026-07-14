@@ -253,10 +253,8 @@ fn register(function: Arc<dyn Function>, trusted_builtin: bool) -> Result<(), Re
             );
         }
     }
-    if previous.is_some() {
-        changed_spellings.push(key);
-        publish_semantic_change(&mut state, changed_spellings);
-    }
+    changed_spellings.push(key);
+    publish_semantic_change(&mut state, changed_spellings);
     Ok(())
 }
 
@@ -279,13 +277,22 @@ fn inspect_semantics(
     generation: u64,
     arity: usize,
 ) -> SemanticContractResolution {
+    inspect_semantics_with_identity_metadata(function, trusted_builtin, generation, arity).0
+}
+
+fn inspect_semantics_with_identity_metadata(
+    function: &Arc<dyn Function>,
+    trusted_builtin: bool,
+    generation: u64,
+    arity: usize,
+) -> (SemanticContractResolution, Option<(FnCaps, Vec<bool>)>) {
     let mut issues = Vec::new();
-    let caps = inspected(
+    let inspected_caps = inspected(
         &mut issues,
         SemanticConformanceIssue::CapabilityPanicked,
         || function.caps(),
-    )
-    .unwrap_or_else(FnCaps::empty);
+    );
+    let caps = inspected_caps.unwrap_or_else(FnCaps::empty);
     let precision = inspected(
         &mut issues,
         SemanticConformanceIssue::DependencyContractPanicked,
@@ -358,12 +365,27 @@ fn inspect_semantics(
             SemanticConformanceIssue::SpillResultMismatch,
         );
     }
-    SemanticContractResolution {
-        contract: issues.is_empty().then_some(contract).flatten(),
-        generation,
-        trusted_builtin,
-        issues,
-    }
+    let identity_metadata = inspected_caps.zip(schema).map(|(caps, schema)| {
+        let repeating = schema.iter().find(|argument| argument.repeating.is_some());
+        let argument_by_ref = (0..arity)
+            .map(|index| {
+                schema
+                    .get(index)
+                    .or(repeating)
+                    .is_some_and(|argument| argument.by_ref)
+            })
+            .collect();
+        (caps, argument_by_ref)
+    });
+    (
+        SemanticContractResolution {
+            contract: issues.is_empty().then_some(contract).flatten(),
+            generation,
+            trusted_builtin,
+            issues,
+        },
+        identity_metadata,
+    )
 }
 
 fn precision_is_valid(contract: FunctionSemanticContract, arity: usize) -> bool {
@@ -571,17 +593,263 @@ fn resolve_entry(ns: &str, name: &str) -> Option<(RegistryKey, RegistryEntry)> {
     None
 }
 
+fn resolve_key_read_only(
+    state: &RegistryState,
+    key: &RegistryKey,
+) -> Option<(RegistryKey, RegistryEntry)> {
+    if let Some(entry) = resolve_registered(state, key) {
+        return Some(entry);
+    }
+    let mut candidate = key.1.as_str();
+    loop {
+        let rest = EXCEL_PREFIXES
+            .iter()
+            .find_map(|prefix| candidate.strip_prefix(prefix))?;
+        candidate = rest;
+        let stripped = (key.0.clone(), candidate.to_string());
+        if let Some(entry) = resolve_registered(state, &stripped) {
+            return Some(entry);
+        }
+    }
+}
+
+fn resolve_entry_read_only(ns: &str, name: &str) -> Option<(RegistryKey, RegistryEntry)> {
+    let state = REGISTRY
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    resolve_key_read_only(&state, &(norm(ns), norm(name)))
+}
+
 pub fn get(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
     resolve_entry(ns, name).map(|(_, entry)| entry.function)
+}
+
+/// Read-only registry lookup for planning providers. Unlike [`get`], this does
+/// not populate the global Excel-prefix alias cache.
+#[doc(hidden)]
+pub fn get_for_planning(ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+    resolve_entry_read_only(ns, name).map(|(_, entry)| entry.function)
 }
 
 pub(crate) struct GlobalRegistryFunctionProvider;
 
 impl crate::traits::FunctionProvider for GlobalRegistryFunctionProvider {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        Some(0)
+    }
+
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
         get(ns, name)
     }
+
+    fn get_function_for_planning(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+        get_for_planning(ns, name)
+    }
 }
+
+#[derive(Clone)]
+struct PlanningRegistration {
+    canonical: RegistryKey,
+    function: Arc<dyn Function>,
+    generation: u64,
+    trusted_builtin: bool,
+}
+
+/// Immutable registry view used by one formula-planning operation.
+///
+/// Function metadata is inspected before publication of the snapshot. Resolution
+/// afterward is lock-free and never populates the global prefix-alias cache.
+#[derive(Clone)]
+pub(crate) struct RegistryPlanningSnapshot {
+    epoch: u64,
+    provider_revision: Option<u64>,
+    functions: Arc<HashMap<RegistryKey, Arc<dyn Function>>>,
+    capabilities: Arc<HashMap<RegistryKey, FnCaps>>,
+    identities: Arc<HashMap<(String, String, usize), FunctionSemanticIdentity>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlanningSnapshotError {
+    RegistryChangedDuringCapture,
+    ProviderRevisionUnavailable,
+}
+
+impl RegistryPlanningSnapshot {
+    const CAPTURE_ATTEMPTS: usize = 16;
+
+    pub(crate) fn capture_for_requests(
+        runtime_provider: &dyn crate::traits::FunctionProvider,
+        requests: impl IntoIterator<Item = (String, String, usize)>,
+    ) -> Result<Self, PlanningSnapshotError> {
+        crate::builtins::load_builtins();
+        let mut requests: Vec<_> = requests.into_iter().collect();
+        requests.sort();
+        requests.dedup();
+        Self::capture_with_hook(runtime_provider, &requests, Self::CAPTURE_ATTEMPTS, |_| {})
+    }
+
+    fn capture_with_hook(
+        runtime_provider: &dyn crate::traits::FunctionProvider,
+        requests: &[(String, String, usize)],
+        attempts: usize,
+        mut after_registry_copy: impl FnMut(usize),
+    ) -> Result<Self, PlanningSnapshotError> {
+        for attempt in 0..attempts {
+            let provider_revision = if requests.is_empty() {
+                None
+            } else {
+                Some(
+                    runtime_provider
+                        .planning_semantic_revision()
+                        .ok_or(PlanningSnapshotError::ProviderRevisionUnavailable)?,
+                )
+            };
+            let start_epoch = REGISTRY
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .semantic_epoch;
+            let runtime_functions: HashMap<_, _> = requests
+                .iter()
+                .filter_map(|(namespace, name, _)| {
+                    runtime_provider
+                        .get_function_for_planning(namespace, name)
+                        .map(|function| ((norm(namespace), norm(name)), function))
+                })
+                .collect();
+            let (epoch, registrations) = {
+                let state = REGISTRY
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let registrations = requests
+                    .iter()
+                    .filter_map(|(namespace, name, arity)| {
+                        let request_key = (norm(namespace), norm(name));
+                        resolve_key_read_only(&state, &request_key).map(|(canonical, entry)| {
+                            (
+                                (request_key.0, request_key.1, *arity),
+                                PlanningRegistration {
+                                    canonical,
+                                    function: entry.function,
+                                    generation: entry.generation,
+                                    trusted_builtin: entry.trusted_builtin,
+                                },
+                            )
+                        })
+                    })
+                    .collect::<HashMap<_, _>>();
+                (state.semantic_epoch, registrations)
+            };
+
+            after_registry_copy(attempt);
+
+            let mut capabilities = HashMap::new();
+            let mut identities = HashMap::new();
+            for (namespace, name, arity) in requests {
+                let request_key = (norm(namespace), norm(name));
+                let Some(runtime) = runtime_functions.get(&request_key) else {
+                    continue;
+                };
+                let Some(registration) =
+                    registrations.get(&(request_key.0.clone(), request_key.1.clone(), *arity))
+                else {
+                    continue;
+                };
+                if !Arc::ptr_eq(runtime, &registration.function) {
+                    continue;
+                }
+                let (semantics, identity_metadata) = inspect_semantics_with_identity_metadata(
+                    &registration.function,
+                    registration.trusted_builtin,
+                    registration.generation,
+                    *arity,
+                );
+                let Some(contract) = semantics.contract else {
+                    continue;
+                };
+                let Some((caps, argument_by_ref)) = identity_metadata else {
+                    continue;
+                };
+                capabilities.insert(request_key.clone(), caps);
+                identities.insert(
+                    (request_key.0, request_key.1, *arity),
+                    FunctionSemanticIdentity {
+                        namespace: registration.canonical.0.clone(),
+                        canonical_name: registration.canonical.1.clone(),
+                        generation: registration.generation,
+                        caps,
+                        contract,
+                        argument_by_ref,
+                    },
+                );
+            }
+
+            for (key, function) in &runtime_functions {
+                if !capabilities.contains_key(key)
+                    && let Ok(caps) = catch_unwind(AssertUnwindSafe(|| function.caps()))
+                {
+                    capabilities.insert(key.clone(), caps);
+                }
+            }
+
+            let provider_unchanged = provider_revision.is_none_or(|revision| {
+                runtime_provider.planning_semantic_revision() == Some(revision)
+            });
+            let unchanged = start_epoch == epoch
+                && REGISTRY
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .semantic_epoch
+                    == epoch
+                && provider_unchanged;
+            if unchanged {
+                return Ok(Self {
+                    epoch,
+                    provider_revision,
+                    functions: Arc::new(runtime_functions),
+                    capabilities: Arc::new(capabilities),
+                    identities: Arc::new(identities),
+                });
+            }
+        }
+        Err(PlanningSnapshotError::RegistryChangedDuringCapture)
+    }
+
+    pub(crate) fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub(crate) fn provider_revision(&self) -> Option<u64> {
+        self.provider_revision
+    }
+}
+
+impl crate::traits::FunctionProvider for RegistryPlanningSnapshot {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        Some(self.provider_revision.unwrap_or(0))
+    }
+
+    fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+        self.functions.get(&(norm(ns), norm(name))).cloned()
+    }
+
+    fn get_function_for_planning(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+        self.get_function(ns, name)
+    }
+
+    fn function_capabilities(&self, ns: &str, name: &str) -> Option<FnCaps> {
+        self.capabilities.get(&(norm(ns), norm(name))).copied()
+    }
+
+    fn function_semantic_identity(
+        &self,
+        ns: &str,
+        name: &str,
+        arity: usize,
+    ) -> Option<FunctionSemanticIdentity> {
+        self.identities.get(&(norm(ns), norm(name), arity)).cloned()
+    }
+}
+
 pub fn resolve(ns: &str, name: &str) -> Option<ResolvedFunction> {
     resolve_entry(ns, name).map(to_resolved)
 }
@@ -627,8 +895,8 @@ pub fn resolve_for_arity(ns: &str, name: &str, arity: usize) -> Option<ResolvedF
     })
 }
 
-pub(crate) fn resolve_semantic_identity(
-    provider: &dyn crate::traits::FunctionProvider,
+pub(crate) fn resolve_semantic_identity<P: crate::traits::FunctionProvider + ?Sized>(
+    provider: &P,
     ns: &str,
     name: &str,
     arity: usize,
@@ -729,6 +997,7 @@ pub fn snapshot_semantics() -> Vec<ResolvedFunction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::traits::FunctionProvider;
 
     struct TestFn {
         ns: &'static str,
@@ -755,6 +1024,385 @@ mod tests {
                 formualizer_common::LiteralValue::Number(1.0),
             ))
         }
+    }
+
+    struct PlanningFn {
+        ns: &'static str,
+        name: &'static str,
+        aliases: &'static [&'static str],
+        caps: FnCaps,
+    }
+
+    impl Function for PlanningFn {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn namespace(&self) -> &'static str {
+            self.ns
+        }
+        fn aliases(&self) -> &'static [&'static str] {
+            self.aliases
+        }
+        fn caps(&self) -> FnCaps {
+            self.caps
+        }
+        fn min_args(&self) -> usize {
+            1
+        }
+        fn variadic(&self) -> bool {
+            true
+        }
+        fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+            static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
+                std::sync::LazyLock::new(|| {
+                    let mut argument = crate::args::ArgSchema::any();
+                    argument.repeating = Some(1);
+                    vec![argument]
+                });
+            &SCHEMA
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            unreachable!()
+        }
+    }
+
+    fn planning_fn(
+        ns: &'static str,
+        name: &'static str,
+        aliases: &'static [&'static str],
+        caps: FnCaps,
+    ) -> Arc<dyn Function> {
+        Arc::new(PlanningFn {
+            ns,
+            name,
+            aliases,
+            caps,
+        })
+    }
+
+    #[test]
+    fn planning_snapshot_resolves_direct_alias_namespace_and_prefix_without_cache_mutation() {
+        let ns = "__PLANNING_PARITY__";
+        register_builtin(planning_fn(ns, "TARGET", &["ALIAS"], FnCaps::empty()));
+        let requests = [
+            (ns.to_string(), "TARGET".to_string(), 1),
+            (ns.to_string(), "alias".to_string(), 1),
+            (ns.to_string(), "_xlfn._xlws.alias".to_string(), 1),
+        ];
+        let prefixed_key = (ns.to_string(), "_XLFN._XLWS.ALIAS".to_string());
+        assert!(!REGISTRY.read().unwrap().aliases.contains_key(&prefixed_key));
+        let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+            &GlobalRegistryFunctionProvider,
+            requests,
+        )
+        .unwrap();
+        assert!(!REGISTRY.read().unwrap().aliases.contains_key(&prefixed_key));
+
+        let direct = snapshot
+            .function_semantic_identity(ns, "TARGET", 1)
+            .unwrap();
+        for spelling in ["alias", "_xlfn._xlws.alias"] {
+            let resolved = snapshot
+                .function_semantic_identity(ns, spelling, 1)
+                .unwrap();
+            assert_eq!(resolved.namespace, ns);
+            assert_eq!(resolved.canonical_name, "TARGET");
+            assert_eq!(resolved.generation, direct.generation);
+            assert!(Arc::ptr_eq(
+                &snapshot.get_function(ns, spelling).unwrap(),
+                &snapshot.get_function(ns, "TARGET").unwrap(),
+            ));
+        }
+    }
+
+    #[test]
+    fn workbook_planning_fallback_does_not_populate_prefix_alias_cache() {
+        let ns = "__PLANNING_WORKBOOK_PREFIX__";
+        register_builtin(planning_fn(ns, "TARGET", &["ALIAS"], FnCaps::empty()));
+        let prefixed_key = (ns.to_string(), "_XLFN.ALIAS".to_string());
+        assert!(!REGISTRY.read().unwrap().aliases.contains_key(&prefixed_key));
+
+        let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+            &crate::test_workbook::TestWorkbook::default(),
+            [(ns.to_string(), "_xlfn.alias".to_string(), 1)],
+        )
+        .unwrap();
+
+        assert!(
+            snapshot
+                .function_semantic_identity(ns, "_xlfn.alias", 1)
+                .is_some()
+        );
+        assert!(!REGISTRY.read().unwrap().aliases.contains_key(&prefixed_key));
+    }
+
+    #[test]
+    fn planning_snapshot_is_immutable_across_replacement() {
+        let ns = "__PLANNING_IMMUTABLE__";
+        register_builtin(planning_fn(ns, "TARGET", &["OLD_ALIAS"], FnCaps::empty()));
+        let requests = [
+            (ns.to_string(), "TARGET".to_string(), 1),
+            (ns.to_string(), "OLD_ALIAS".to_string(), 1),
+        ];
+        let snapshot = RegistryPlanningSnapshot::capture_with_hook(
+            &GlobalRegistryFunctionProvider,
+            &requests,
+            10_000,
+            |_| {},
+        )
+        .unwrap();
+        let old_function = snapshot.get_function(ns, "TARGET").unwrap();
+        let old_identity = snapshot
+            .function_semantic_identity(ns, "TARGET", 1)
+            .unwrap();
+
+        register_function(planning_fn(ns, "TARGET", &[], FnCaps::MAY_SPILL));
+        let current = resolve_for_arity(ns, "TARGET", 1).unwrap();
+        assert!(current.semantics.generation > old_identity.generation);
+        assert!(!Arc::ptr_eq(&old_function, &current.function));
+        assert_eq!(
+            snapshot
+                .function_semantic_identity(ns, "TARGET", 1)
+                .unwrap(),
+            old_identity
+        );
+        assert!(Arc::ptr_eq(
+            &old_function,
+            &snapshot.get_function(ns, "TARGET").unwrap(),
+        ));
+        assert!(get(ns, "OLD_ALIAS").is_none());
+        assert_eq!(
+            snapshot
+                .function_semantic_identity(ns, "OLD_ALIAS", 1)
+                .unwrap(),
+            old_identity
+        );
+        assert!(Arc::ptr_eq(
+            &old_function,
+            &snapshot.get_function(ns, "OLD_ALIAS").unwrap(),
+        ));
+    }
+
+    #[test]
+    fn planning_snapshot_requires_explicit_side_effect_free_provider_opt_in() {
+        struct RuntimeOnlyProvider(Arc<dyn Function>);
+        impl FunctionProvider for RuntimeOnlyProvider {
+            fn get_function(&self, _ns: &str, _name: &str) -> Option<Arc<dyn Function>> {
+                Some(Arc::clone(&self.0))
+            }
+        }
+
+        let ns = "__PLANNING_FAIL_CLOSED__";
+        register_builtin(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        let result = RegistryPlanningSnapshot::capture_for_requests(
+            &RuntimeOnlyProvider(planning_fn(ns, "TARGET", &[], FnCaps::empty())),
+            [(ns.to_string(), "TARGET".to_string(), 1)],
+        );
+        assert_eq!(
+            result.err(),
+            Some(PlanningSnapshotError::ProviderRevisionUnavailable)
+        );
+    }
+
+    #[test]
+    fn planning_snapshot_preserves_runtime_override_without_global_semantics() {
+        struct OverrideProvider(Arc<dyn Function>);
+        impl FunctionProvider for OverrideProvider {
+            fn planning_semantic_revision(&self) -> Option<u64> {
+                Some(0)
+            }
+            fn get_function(&self, _ns: &str, _name: &str) -> Option<Arc<dyn Function>> {
+                Some(Arc::clone(&self.0))
+            }
+            fn get_function_for_planning(
+                &self,
+                _ns: &str,
+                _name: &str,
+            ) -> Option<Arc<dyn Function>> {
+                Some(Arc::clone(&self.0))
+            }
+        }
+
+        let ns = "__PLANNING_OVERRIDE__";
+        register_builtin(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        let global = get(ns, "TARGET").unwrap();
+        let runtime = planning_fn(ns, "TARGET", &[], FnCaps::MAY_SPILL);
+        let provider = OverrideProvider(Arc::clone(&runtime));
+        let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+            &provider,
+            [(ns.to_string(), "TARGET".to_string(), 1)],
+        )
+        .unwrap();
+
+        let captured = snapshot.get_function(ns, "TARGET").unwrap();
+        assert!(Arc::ptr_eq(&captured, &runtime));
+        assert!(!Arc::ptr_eq(&captured, &global));
+        assert!(
+            snapshot
+                .function_semantic_identity(ns, "TARGET", 1)
+                .is_none()
+        );
+        assert_eq!(snapshot.functions.len(), 1);
+        assert_eq!(
+            snapshot.function_capabilities(ns, "TARGET"),
+            Some(FnCaps::MAY_SPILL)
+        );
+        assert_eq!(snapshot.capabilities.len(), 1);
+        assert!(snapshot.identities.is_empty());
+        assert!(snapshot.get_function(ns, "UNREQUESTED").is_none());
+    }
+
+    #[test]
+    fn planning_snapshot_retries_provider_revision_flip_to_runtime_override() {
+        struct FlippingProvider {
+            function: Arc<RwLock<Arc<dyn Function>>>,
+            revision: Arc<AtomicU64>,
+        }
+        impl FunctionProvider for FlippingProvider {
+            fn planning_semantic_revision(&self) -> Option<u64> {
+                Some(self.revision.load(Ordering::Acquire))
+            }
+            fn get_function(&self, _ns: &str, _name: &str) -> Option<Arc<dyn Function>> {
+                Some(Arc::clone(&self.function.read().unwrap()))
+            }
+            fn get_function_for_planning(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+                self.get_function(ns, name)
+            }
+        }
+
+        let ns = "__PLANNING_PROVIDER_FLIP__";
+        register_builtin(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        let global = get(ns, "TARGET").unwrap();
+        let override_function = planning_fn(ns, "TARGET", &[], FnCaps::MAY_SPILL);
+        let function = Arc::new(RwLock::new(global));
+        let revision = Arc::new(AtomicU64::new(0));
+        let provider = FlippingProvider {
+            function: Arc::clone(&function),
+            revision: Arc::clone(&revision),
+        };
+        let requests = [(ns.to_string(), "TARGET".to_string(), 1)];
+        let snapshot =
+            RegistryPlanningSnapshot::capture_with_hook(&provider, &requests, 2, |attempt| {
+                if attempt == 0 {
+                    *function.write().unwrap() = Arc::clone(&override_function);
+                    revision.fetch_add(1, Ordering::AcqRel);
+                }
+            })
+            .unwrap();
+
+        assert_eq!(snapshot.provider_revision(), Some(1));
+        assert!(Arc::ptr_eq(
+            &snapshot.get_function(ns, "TARGET").unwrap(),
+            &override_function
+        ));
+        assert!(
+            snapshot
+                .function_semantic_identity(ns, "TARGET", 1)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn planning_snapshot_capture_retries_and_fails_deterministically() {
+        let ns = "__PLANNING_RACE__";
+        register_builtin(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        let requests = [(ns.to_string(), "TARGET".to_string(), 1)];
+        let before = semantic_epoch();
+        let retried = RegistryPlanningSnapshot::capture_with_hook(
+            &GlobalRegistryFunctionProvider,
+            &requests,
+            100,
+            |attempt| {
+                if attempt == 0 {
+                    register_function(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+                }
+            },
+        )
+        .unwrap();
+        assert!(retried.epoch() > before);
+
+        let failed = RegistryPlanningSnapshot::capture_with_hook(
+            &GlobalRegistryFunctionProvider,
+            &requests,
+            2,
+            |_| register_function(planning_fn(ns, "TARGET", &[], FnCaps::empty())),
+        );
+        assert_eq!(
+            failed.err(),
+            Some(PlanningSnapshotError::RegistryChangedDuringCapture)
+        );
+    }
+
+    #[test]
+    fn planning_snapshot_nested_function_authority_matches_global_registry() {
+        let ns = "";
+        register_builtin(planning_fn(ns, "__PLAN_OUTER__", &[], FnCaps::empty()));
+        register_builtin(planning_fn(ns, "__PLAN_INNER__", &[], FnCaps::empty()));
+        let requests = [
+            (String::new(), "__PLAN_OUTER__".to_string(), 1),
+            (String::new(), "_xlfn.__PLAN_INNER__".to_string(), 1),
+        ];
+        let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+            &GlobalRegistryFunctionProvider,
+            requests,
+        )
+        .unwrap();
+        let ast =
+            formualizer_parse::parser::parse("=__PLAN_OUTER__(_xlfn.__PLAN_INNER__(A1))").unwrap();
+        let frozen = crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+            &ast,
+            2,
+            2,
+            Some(&snapshot),
+        );
+        let global = crate::formula_plane::template_canonical::canonicalize_template_with_provider(
+            &ast,
+            2,
+            2,
+            Some(&GlobalRegistryFunctionProvider),
+        );
+        assert_eq!(frozen, global);
+        assert!(frozen.labels.is_authority_supported());
+    }
+
+    #[test]
+    fn parallel_snapshot_capture_and_prefix_resolution_does_not_deadlock() {
+        let ns = "__PLANNING_PARALLEL__";
+        register_builtin(planning_fn(ns, "TARGET", &["ALIAS"], FnCaps::empty()));
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut workers = Vec::new();
+            for worker in 0..4 {
+                workers.push(std::thread::spawn(move || {
+                    for iteration in 0..100 {
+                        if worker == 0 && iteration % 10 == 0 {
+                            register_function(planning_fn(
+                                ns,
+                                "TARGET",
+                                &["ALIAS"],
+                                FnCaps::empty(),
+                            ));
+                        }
+                        let _ = RegistryPlanningSnapshot::capture_for_requests(
+                            &GlobalRegistryFunctionProvider,
+                            [(ns.to_string(), "_xlfn.alias".to_string(), 1)],
+                        );
+                        let _ = get(ns, "_xlfn.alias");
+                    }
+                }));
+            }
+            for worker in workers {
+                worker.join().unwrap();
+            }
+            send.send(()).unwrap();
+        });
+        receive
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("parallel registry planning timed out (possible lock inversion)");
     }
 
     #[test]

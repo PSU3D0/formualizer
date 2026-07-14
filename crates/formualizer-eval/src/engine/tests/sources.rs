@@ -175,12 +175,24 @@ impl SourceResolver for SourceCtx {
 }
 
 impl FunctionProvider for SourceCtx {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        Some(0)
+    }
+
     fn get_function(
         &self,
         ns: &str,
         name: &str,
     ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
         crate::function_registry::get(ns, name)
+    }
+
+    fn get_function_for_planning(
+        &self,
+        ns: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
+        crate::function_registry::get_for_planning(ns, name)
     }
 }
 

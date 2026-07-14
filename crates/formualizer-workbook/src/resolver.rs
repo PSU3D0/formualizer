@@ -315,9 +315,17 @@ impl Table for BackendTable {
 }
 
 impl<B: SpreadsheetReader> FunctionProvider for IoResolver<B> {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        Some(0)
+    }
+
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
         // Delegate to global registry
         formualizer_eval::function_registry::get(ns, name)
+    }
+
+    fn get_function_for_planning(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>> {
+        formualizer_eval::function_registry::get_for_planning(ns, name)
     }
 }
 
