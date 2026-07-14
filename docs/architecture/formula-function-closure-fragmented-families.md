@@ -57,7 +57,7 @@ Conclusion: keep `FnCaps` and `arg_schema`, but add **one central semantic contr
 10. Holes and exception cells are never synthesized, masked inside a rectangle, or hidden by a span. They are exact replay records/legacy graph cells.
 11. Fragment preparation is family-atomic. Either all proposed spans and all fallback cells are preflighted and committed as one disposition, or the complete source family replays.
 12. Fragment and exclusion limits disable only the optimization. Evidence/spool limits retain their current fail-closed behavior.
-13. Eager authority lands before deferred fragmented authority. Deferred packages remain whole-family replay on fragmented evidence until lifecycle tests pass.
+13. Eager authority lands before deferred fragmented authority. Deferred authority is enabled only for `AuthoritativeExperimental` after selected-build, invalidation, structure, exact replay, and bounded-transaction lifecycle tests pass; Off and Shadow remain replay-only.
 
 ## 4. Central function semantic contract
 
@@ -249,7 +249,7 @@ Each fragment is an existing independent span, so scheduling, dirty projection, 
 - mixed-schedule cycle detection may demote one or several fragments. Materialization uses each fragment's `SpanAstRelocation`; no family-wide live transaction is needed after initial commit;
 - dependency edges/read regions are per fragment. A read intersecting any fragment's own result region triggers the existing internal-dependency gate for that fragment during preparation; because initial disposition is family-atomic, it replays the family.
 
-Deferred `DeferredFormulaPackage` continues whole-family replay for fragmented families until selected-build, rename/remove, replacement invalidation, random formula read, and spool cleanup tests support coordinate dispositions. Do not broaden deferred authority in the eager swatch.
+Deferred `DeferredFormulaPackage` uses the same prepared source transaction and coordinate disposition as eager authority in `AuthoritativeExperimental`. Package replay is completed during selected/all-sheet build; accepted fragment legacy records remain transaction-owned, ordered fallback records are parsed before finalization, and package invalidation or suppression forces exact legacy materialization. Invalidated partitions remain replay-routing evidence registered as legacy-only, so ordinary exceptions retain family ownership even though the partition is ineligible for authority. Off and Shadow continue whole-family replay. Selected-build, rename/remove, replacement invalidation, random formula read, structure, and spool cleanup remain lifecycle gates rather than alternate authority paths.
 
 ### 6.5 Transaction-foundation sequence
 
@@ -260,9 +260,10 @@ Adversarial Tranche E attempts proved that eager activation cannot safely be add
 3. **E2 — prepared legacy graph plan.** Plan checked sheet/vertex IDs, formula assignments, dependencies, dirty state, and exact capacity reservations without mutation. Commit only bounded delta work and never clone or rebuild the existing graph.
 4. **E3 — checked FormulaPlane append batch.** Preassign checked IDs, deduplicate immutable stores, prove overlap, reserve touched indexes, and install incremental producer/consumer deltas without `rebuild_indexes`.
 5. **E4 — composed Shadow transaction.** Combine replay, legacy graph, authority, and unpublished report deltas; fix stale-disposition exclusivity; exercise the complete fault matrix with no authority publication.
-6. **E5 — eager activation.** Publish fragmented authority only after E4 passes independent review. Deferred fragmented authority remains disabled.
+6. **E5 — eager activation.** Publish eager fragmented authority only after E4 passes independent review.
+7. **E6 — deferred activation.** Reuse E0-E5 preparation and finalization during selected/all deferred package builds; never introduce a deferred-only transaction, geometry model, or index rebuild.
 
-E2 and E3 have no semantic dependency on each other, but repository work remains single-writer and is reviewed one phase at a time. E4 depends on E0–E3; E5 is activation, not another transaction design.
+E2 and E3 have no semantic dependency on each other, but repository work remains single-writer and is reviewed one phase at a time. E4 depends on E0-E3; E5 and E6 are lifecycle activations, not new transaction designs.
 
 ## 7. FormulaPlane gate reuse
 
@@ -389,15 +390,15 @@ Compose exact replay, legacy graph, FormulaPlane append, reconciliation, stale-d
 
 ### Swatch 14 / E5: eager fragmented authority
 
-Enable eager partition dispositions through `SourceFormulaIngress` using only the reviewed composed commit. Deferred fragmented evidence continues whole-family replay.
+Enable eager partition dispositions through `SourceFormulaIngress` using only the reviewed composed commit. Deferred fragmented evidence remains replay-only until Swatch 15.
 
 **Gate:** direct shared + legacy shared equals surviving shared; adding ordinary exceptions and holes equals the declared area; Off/Shadow remain unchanged; edit, structural, formula lookup, cycle, scaling, and full validation suites pass.
 
 ### Swatch 15: deferred lifecycle and rollout
 
-Add deferred authority only in a later milestone after selected-build isolation, package move/drop, random formula lookup, rename/remove, replacement invalidation, undo/redo, cleanup, bounded telemetry, coverage artifacts, and the full benchmark matrix all pass.
+Enable deferred authority by routing `DeferredFormulaPackage` through the same source preparation and finalization used by eager authority. Selected-build isolation, package move/drop, random formula lookup, rename/remove, replacement invalidation, structural materialization, cleanup, bounded telemetry, coverage artifacts, and the benchmark matrix remain rollout gates.
 
-**Gate:** eager/deferred parity, no spool leak or cross-sheet consume, no descendant strings, and every functional/performance gate in section 8. Deferred fragmentation remains disabled if any gate fails.
+**Gate:** eager/deferred parity, no spool leak or cross-sheet consume, no descendant strings, and every functional/performance gate in section 8. Off and Shadow remain replay-only, and deferred activation fails closed if any gate fails.
 
 ## 10. Validation matrix
 
@@ -411,6 +412,9 @@ cargo test -p formualizer-eval formula_plane_ingest_shadow
 cargo test -p formualizer-workbook --features calamine --test calamine shared_formulas
 cargo test -p formualizer-workbook --features calamine --test load_limits
 cargo test -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- --scenario hole-exception --members 100000 --exclusions 1 --graph-build deferred --samples 5
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- --scenario hole-exception --members 100000 --exclusions 8 --graph-build deferred --samples 5
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- --scenario hole-exception --members 100000 --exclusions 64 --graph-build deferred --samples 5
 cargo fmt --all -- --check
 cargo clippy -p formualizer-eval -p formualizer-workbook --all-targets --features formualizer-workbook/calamine -- -D warnings
 ```

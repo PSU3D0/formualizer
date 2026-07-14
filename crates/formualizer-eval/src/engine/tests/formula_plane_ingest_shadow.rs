@@ -2326,6 +2326,35 @@ fn changed_function_ast_discovery_covers_stale_prefix_unresolved_and_calls() {
 }
 
 #[test]
+fn deferred_fragmented_build_reuses_bounded_source_transaction_without_rebuild() {
+    let source = include_str!("../eval.rs");
+    let start = source
+        .find("fn prepare_staged_formula_batches(")
+        .expect("deferred preparation function");
+    let end = source[start..]
+        .find("pub fn begin_bulk_ingest_arrow(")
+        .map(|offset| start + offset)
+        .expect("end of deferred preparation function");
+    let body = &source[start..end];
+    assert!(body.contains("prepare_source_formula_proposals("));
+    assert!(body.contains("exact_replay_record_is_prepared_partition_legacy("));
+    assert!(!body.contains("rebuild_indexes"));
+    assert!(!body.contains("baseline_stats"));
+
+    let finish = source
+        .find("fn finish_compressed_formula_sources(")
+        .expect("shared source finalization function");
+    let finish_end = source[finish..]
+        .find("pub(crate) fn ingest_compressed_formula_source_batches(")
+        .map(|offset| finish + offset)
+        .expect("end of shared source finalization function");
+    let finish_body = &source[finish..finish_end];
+    assert!(finish_body.contains("commit_fragmented_source_transaction("));
+    assert!(finish_body.contains("apply_prevalidated_legacy_graph_plan("));
+    assert!(!finish_body.contains("rebuild_indexes"));
+}
+
+#[test]
 fn semantic_epoch_guard_covers_public_formula_plane_flows() {
     let source = include_str!("../eval.rs");
     for signature in [
@@ -2342,7 +2371,7 @@ fn semantic_epoch_guard_covers_public_formula_plane_flows() {
         "pub fn evaluate_until_cancellable(",
         "pub fn evaluate_all_logged(",
         "fn ingest_formula_batches_inner(",
-        "fn finish_eager_compressed_formula_sources(",
+        "fn finish_compressed_formula_sources(",
     ] {
         let start = source
             .find(signature)

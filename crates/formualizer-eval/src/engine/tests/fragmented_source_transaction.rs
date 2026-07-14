@@ -7,7 +7,7 @@ use crate::engine::fragmented_transaction::{
 };
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{
-    DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
+    DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
     ExplicitPartitionLegacyMembers, FormulaCompressedSourceReport, FormulaIngestBatch,
     FormulaParsePolicy, FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
     PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport, SourceCoord,
@@ -354,11 +354,31 @@ fn transaction(
     transaction_for_source(family(shape, source_index))
 }
 
+struct EmptyDeferredReplay;
+
+impl DeferredFormulaReplay for EmptyDeferredReplay {
+    fn replay(
+        &mut self,
+        _disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        Ok(Vec::new())
+    }
+
+    fn formula_at(
+        &mut self,
+        _row: u32,
+        _col: u32,
+    ) -> Result<Option<DeferredReplayFormula>, String> {
+        Ok(None)
+    }
+}
+
 struct PartitionSetReplay {
     source: PartitionedSourceFormulaFamily,
     initial: Vec<DeferredReplayFormula>,
     full: Vec<DeferredReplayFormula>,
     fail_full: bool,
+    require_legacy_partition_routing: bool,
 }
 
 impl DeferredFormulaReplay for PartitionSetReplay {
@@ -376,8 +396,26 @@ impl DeferredFormulaReplay for PartitionSetReplay {
     fn replay_partitioned(
         &mut self,
         disposition: &FormulaReplayDisposition,
-        _partitions: &[PartitionedSourceFormulaFamily],
+        partitions: &[PartitionedSourceFormulaFamily],
     ) -> Result<Vec<DeferredReplayFormula>, String> {
+        if self.require_legacy_partition_routing {
+            if !partitions
+                .iter()
+                .any(|partition| partition.source_id == self.source.source_id)
+            {
+                return Err("invalidated partition missing from exact replay routing".to_string());
+            }
+            let ordinary = self
+                .source
+                .legacy_members
+                .as_slice()
+                .iter()
+                .find(|member| member.kind == PartitionLegacyMemberKind::OrdinaryException)
+                .ok_or_else(|| "test partition has no ordinary exception".to_string())?;
+            if disposition.ordinary_disposition(ordinary.coord).1 != Some(self.source.source_id) {
+                return Err("invalidated ordinary exception lost partition ownership".to_string());
+            }
+        }
         if disposition.partition_disposition(&self.source, self.source.template_origin0)
             == Some(crate::engine::FormulaReplayCoordinateDisposition::Direct)
         {
@@ -385,7 +423,27 @@ impl DeferredFormulaReplay for PartitionSetReplay {
         } else if self.fail_full {
             Err("injected whole-family replay failure".to_string())
         } else {
-            Ok(self.full.clone())
+            Ok(self
+                .full
+                .iter()
+                .filter(|record| {
+                    let coord = SourceCoord {
+                        row: record.row - 1,
+                        col: record.col - 1,
+                    };
+                    match record.family {
+                        Some(family) => {
+                            disposition.shared_disposition(family, coord)
+                                == crate::engine::FormulaReplayCoordinateDisposition::LegacyShared
+                        }
+                        None => {
+                            disposition.ordinary_disposition(coord).0
+                                == crate::engine::FormulaReplayCoordinateDisposition::LegacyOrdinary
+                        }
+                    }
+                })
+                .cloned()
+                .collect())
         }
     }
 
@@ -413,6 +471,109 @@ fn replay_record(
     }
 }
 
+fn deferred_partition_package(
+    source: PartitionedSourceFormulaFamily,
+    fail_full: bool,
+    require_legacy_partition_routing: bool,
+) -> DeferredFormulaPackage {
+    let make_record = |coord: SourceCoord, kind: PartitionLegacyMemberKind| DeferredReplayFormula {
+        source_order: crate::engine::SourceFormulaOrder::new(u64::from(coord.row)),
+        row: coord.row + 1,
+        col: coord.col + 1,
+        text: match kind {
+            PartitionLegacyMemberKind::SharedFamilyMember => source.template_text.to_string(),
+            PartitionLegacyMemberKind::OrdinaryException => "$A$1+5".to_string(),
+        },
+        family: (kind == PartitionLegacyMemberKind::SharedFamilyMember).then_some(source.source_id),
+        partition_owner: Some(source.source_id),
+    };
+    let initial = source
+        .legacy_members
+        .as_slice()
+        .iter()
+        .map(|member| make_record(member.coord, member.kind))
+        .collect();
+    let full = (0..=5)
+        .map(|row| {
+            make_record(
+                SourceCoord { row, col: 2 },
+                if row == 3 {
+                    PartitionLegacyMemberKind::OrdinaryException
+                } else {
+                    PartitionLegacyMemberKind::SharedFamilyMember
+                },
+            )
+        })
+        .collect();
+    let report = FormulaCompressedSourceReport {
+        source_formula_records_spooled: 6,
+        families_seen: 1,
+        family_cells_seen: source.surviving_member_count,
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: source.surviving_member_count,
+        source_fragment_count: source.fragments.len() as u64,
+        source_hole_exclusions: source.reconciliation.holes,
+        source_ordinary_exclusions: source.reconciliation.ordinary_exceptions,
+        ..FormulaCompressedSourceReport::default()
+    };
+    DeferredFormulaPackage::new(
+        "Sheet1".to_string(),
+        report,
+        Vec::new(),
+        vec![source.clone()],
+        Box::new(PartitionSetReplay {
+            source,
+            initial,
+            full,
+            fail_full,
+            require_legacy_partition_routing,
+        }),
+    )
+}
+
+fn deferred_engine() -> Engine<TestWorkbook> {
+    let mut engine = make_engine();
+    engine.config.defer_graph_building = true;
+    engine
+}
+
+fn deferred_cross_fragment_package(
+    source: PartitionedSourceFormulaFamily,
+) -> DeferredFormulaPackage {
+    let full = (100..=299)
+        .map(|row| DeferredReplayFormula {
+            source_order: crate::engine::SourceFormulaOrder::new(u64::from(row - 100)),
+            row: row + 1,
+            col: 3,
+            text: format!("C{}+1", row + 101),
+            family: Some(source.source_id),
+            partition_owner: Some(source.source_id),
+        })
+        .collect();
+    let report = FormulaCompressedSourceReport {
+        source_formula_records_spooled: 200,
+        families_seen: 1,
+        family_cells_seen: 200,
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: 200,
+        source_fragment_count: 2,
+        ..FormulaCompressedSourceReport::default()
+    };
+    DeferredFormulaPackage::new(
+        "Sheet1".to_string(),
+        report,
+        Vec::new(),
+        vec![source.clone()],
+        Box::new(PartitionSetReplay {
+            source,
+            initial: Vec::new(),
+            full,
+            fail_full: false,
+            require_legacy_partition_routing: false,
+        }),
+    )
+}
+
 fn state(engine: &Engine<TestWorkbook>) -> String {
     format!(
         "{:?}|{:?}|{:?}|{:?}|{:?}",
@@ -422,6 +583,155 @@ fn state(engine: &Engine<TestWorkbook>) -> String {
         engine.last_virtual_dep_telemetry(),
         engine.last_cycle_telemetry(),
     )
+}
+
+#[test]
+fn deferred_partition_commits_through_composed_transaction() {
+    let mut engine = deferred_engine();
+    let source = family(Shape::Row, 110);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_partition_package(source, false, false));
+
+    engine.build_graph_all().unwrap();
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert!(!engine.has_staged_formulas());
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
+    assert_eq!(report.source_family_promoted, 1, "{report:?}");
+    assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 2, "{report:?}");
+    assert_eq!(report.source_spool_replays, 1, "{report:?}");
+}
+
+#[test]
+fn deferred_invalidated_partition_keeps_ordinary_exception_ownership() {
+    let mut engine = deferred_engine();
+    let source = family(Shape::Row, 115);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_partition_package(source, false, true));
+
+    // Replacing one shared member invalidates the whole partition. Exact replay
+    // must still receive the partition as routing evidence so its ordinary
+    // exception remains owned by the same family during atomic fallback.
+    engine.stage_formula_text("Sheet1", 1, 3, "=$A$1+99".to_string());
+    engine.build_graph_all().unwrap();
+
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 6);
+    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(report.source_family_fallback, 1, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 6, "{report:?}");
+    assert_eq!(report.source_spool_replays, 1, "{report:?}");
+}
+
+#[test]
+fn deferred_partition_precommit_fault_replays_whole_family_once() {
+    let mut engine = deferred_engine();
+    let source = family(Shape::Row, 111);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_partition_package(source, false, false));
+    engine.set_fragmented_commit_fault_for_test(FragmentedCommitFault::FormulaPlaneFinalCheck);
+
+    engine.build_graph_all().unwrap();
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 6);
+    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(report.source_family_fallback, 1, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 6, "{report:?}");
+    assert_eq!(report.source_spool_replays, 2, "{report:?}");
+    assert_eq!(
+        report
+            .fallback_reasons
+            .get("Injected(FormulaPlaneFinalCheck)"),
+        Some(&1),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn deferred_partition_provider_change_falls_back_before_mutation() {
+    let (mut engine, revision) = make_engine_and_revision();
+    engine.config.defer_graph_building = true;
+    let source = function_family(113);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_partition_package(source, false, false));
+    engine.set_before_prepared_span_commit_hook(move || {
+        revision.fetch_add(1, Ordering::AcqRel);
+    });
+
+    engine.build_graph_all().unwrap();
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 6);
+    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(report.source_family_fallback, 1, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 6, "{report:?}");
+    assert_eq!(report.source_spool_replays, 2, "{report:?}");
+    assert!(
+        report
+            .fallback_reasons
+            .contains_key("FunctionProviderRevisionChanged"),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn deferred_cross_fragment_dependency_replays_without_partial_authority() {
+    let mut engine = deferred_engine();
+    let source = cross_fragment_family(114, false);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_cross_fragment_package(source));
+
+    engine.build_graph_all().unwrap();
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 200);
+    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(report.source_family_fallback, 1, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 200, "{report:?}");
+    assert_eq!(report.source_spool_replays, 2, "{report:?}");
+    assert!(
+        report
+            .fallback_reasons
+            .keys()
+            .any(|reason| reason.contains("CrossFragmentDependency")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn deferred_partition_late_replay_failure_leaves_current_family_unmodified() {
+    let mut engine = deferred_engine();
+    let source = family(Shape::Row, 112);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(deferred_partition_package(source, true, false));
+    engine.set_fragmented_commit_fault_for_test(FragmentedCommitFault::FormulaPlaneFinalCheck);
+
+    let error = engine.build_graph_all().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("injected whole-family replay failure"),
+        "{error}"
+    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert!(engine.last_formula_ingest_report().is_none());
+    assert_eq!(
+        engine
+            .formula_ingest_report_total()
+            .graph_formula_cells_materialized,
+        0
+    );
+    assert!(!engine.has_staged_formulas());
 }
 
 #[test]
@@ -472,6 +782,7 @@ fn eager_partition_initial_replay_rejects_missing_and_extra_legacy_ownership() {
                     initial,
                     full,
                     fail_full: false,
+                    require_legacy_partition_routing: false,
                 }),
             )
             .unwrap();
@@ -586,6 +897,82 @@ fn clean_families_follow_source_order_not_shared_index_order() {
 }
 
 #[test]
+fn deferred_clean_families_follow_source_order_not_shared_index_order() {
+    let later_low_si = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(10),
+        source_id: SourceFamilyId {
+            sheet_instance: 405,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 6 },
+        anchor_text: Arc::from("$A$1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 1,
+            col: 6,
+        }),
+        member_count: 2,
+    };
+    let earlier_high_si = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 405,
+            source_index: 99,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 5 },
+        anchor_text: Arc::from("$A$1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 1,
+            col: 5,
+        }),
+        member_count: 2,
+    };
+    let package = DeferredFormulaPackage::new(
+        "Sheet1".to_string(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: 4,
+            families_seen: 2,
+            family_cells_seen: 4,
+            source_clean_families: 2,
+            source_clean_cells: 4,
+            ..FormulaCompressedSourceReport::default()
+        },
+        vec![later_low_si, earlier_high_si],
+        Vec::new(),
+        Box::new(EmptyDeferredReplay),
+    );
+    let mut engine = deferred_engine();
+    engine.source_formula_ingress().stage_deferred(package);
+    engine.build_graph_all().unwrap();
+
+    let spans = engine.graph.formula_authority().active_span_refs();
+    assert_eq!(spans.len(), 2);
+    let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
+    let first = engine
+        .graph
+        .formula_authority()
+        .plane
+        .spans
+        .get(spans[0])
+        .unwrap();
+    assert!(
+        first
+            .domain
+            .contains(crate::formula_plane::runtime::PlacementCoord::new(
+                sheet_id, 0, 5
+            ))
+    );
+    assert_eq!(
+        engine
+            .last_formula_ingest_report()
+            .unwrap()
+            .source_spool_replays,
+        0
+    );
+}
+
+#[test]
 fn late_fallback_replay_failure_keeps_current_family_untouched_and_publishes_prior_clean_commit() {
     let mut engine = make_engine();
     let source = family(Shape::Row, 99);
@@ -635,6 +1022,7 @@ fn late_fallback_replay_failure_keeps_current_family_untouched_and_publishes_pri
                 initial,
                 full,
                 fail_full: true,
+                require_legacy_partition_routing: false,
             }),
         )
         .unwrap();
@@ -729,6 +1117,7 @@ fn late_fallback_parse_failure_keeps_current_family_untouched_and_reports_prior_
                 initial,
                 full,
                 fail_full: false,
+                require_legacy_partition_routing: false,
             }),
         )
         .unwrap();
@@ -799,6 +1188,7 @@ fn late_fallback_success_reports_exact_whole_family_e2_deltas_once() {
                 initial,
                 full,
                 fail_full: false,
+                require_legacy_partition_routing: false,
             }),
         )
         .unwrap();
@@ -884,6 +1274,7 @@ fn provider_change_after_fallback_validation_fails_before_mutation() {
                 initial,
                 full,
                 fail_full: false,
+                require_legacy_partition_routing: false,
             }),
         )
         .unwrap();

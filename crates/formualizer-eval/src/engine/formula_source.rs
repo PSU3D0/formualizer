@@ -1020,7 +1020,7 @@ pub struct FormulaCompressedSourceBatch {
     partitioned_families: Vec<PartitionedSourceFormulaFamily>,
 }
 
-pub(crate) struct PreparedEagerFragmentedProposal {
+pub(crate) struct PreparedFragmentedSourceProposal {
     pub(crate) source: PartitionedSourceFormulaFamily,
     pub(crate) prepared: super::fragmented_transaction::PreparedPartitionedSourceFamily,
     pub(crate) legacy: Vec<super::fragmented_transaction::PreparedFragmentedLegacyFormula>,
@@ -1042,7 +1042,7 @@ pub struct FormulaCompressedPreparation {
         PreparedAnchorOncePlacement,
     )>,
     pub(crate) rejected: BTreeMap<SourceFamilyId, String>,
-    pub(crate) fragmented: Vec<PreparedEagerFragmentedProposal>,
+    pub(crate) fragmented: Vec<PreparedFragmentedSourceProposal>,
     pub(crate) fragmented_sources: BTreeMap<SourceFamilyId, PartitionedSourceFormulaFamily>,
     pub(crate) eager_replay: Vec<DeferredReplayFormula>,
     pub(crate) preparation_spool_replays: u64,

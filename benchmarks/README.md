@@ -74,6 +74,30 @@ The probe generates realistic-ish large XLSX workbooks for three scenario famili
 
 This tooling is intended to help choose sane default ingest limits and identify when load or full-workbook evaluation crosses the 60-second threshold.
 
+## Calamine formula-family ingest probing
+
+`probe-formula-family-ingest` generates genuine OOXML shared-formula families and measures each disposition in independent cold child processes. The default eager path remains available for anchor-once and fallback measurements:
+
+```bash
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- \
+  --scenario large-family \
+  --members 100000 \
+  --samples 5
+```
+
+Deferred fragmented authority uses an explicit deferred graph build. The 100k fixtures with 1, 8, or 64 ordinary exceptions automatically enforce the documented minimum 25% load-and-build reduction and 40% RSS reduction versus forced replay:
+
+```bash
+cargo run --release -p formualizer-bench-core --features formualizer_runner --bin probe-formula-family-ingest -- \
+  --scenario hole-exception \
+  --members 100000 \
+  --exclusions 8 \
+  --graph-build deferred \
+  --samples 5
+```
+
+The JSON report includes the fixture SHA-256, graph-build path, per-phase median/MAD, authority and replay counters, and gate results. Off and Shadow remain replay-only measurements. The forced-replay disposition is a benchmark-only path used to establish an equivalent source-family replay baseline.
+
 ## Notable scenarios
 
 - `inc_sparse_dirty_region_1m` is the nightly-scale sparse-locality watchlist scenario.
