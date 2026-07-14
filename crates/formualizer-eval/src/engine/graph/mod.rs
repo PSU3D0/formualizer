@@ -26,7 +26,9 @@ mod ast_utils;
 pub mod editor;
 mod formula_analysis;
 mod names;
+pub(crate) mod prepared_legacy_graph;
 mod range_deps;
+
 mod sheets;
 pub mod snapshot;
 mod sources;
@@ -37,7 +39,7 @@ use super::delta_edges::CsrMutableEdges;
 use super::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
-use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
+use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexBatchAllocationError, VertexStore};
 use crate::engine::topo::{
     GraphAdapter,
     pk::{DynamicTopo, PkConfig},
@@ -304,6 +306,8 @@ pub struct DependencyGraph {
 
     #[cfg(test)]
     instr: std::sync::Mutex<GraphInstrumentation>,
+    #[cfg(test)]
+    prepared_legacy_graph_failure_for_test: bool,
 }
 
 impl Default for DependencyGraph {
@@ -1121,6 +1125,8 @@ impl DependencyGraph {
             tombstone_registry: TombstoneRegistry::default(),
             #[cfg(test)]
             instr: std::sync::Mutex::new(GraphInstrumentation::default()),
+            #[cfg(test)]
+            prepared_legacy_graph_failure_for_test: false,
         };
 
         if config.use_dynamic_topo {
