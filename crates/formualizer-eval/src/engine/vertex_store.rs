@@ -301,6 +301,15 @@ impl VertexStore {
         Ok(ids)
     }
 
+    /// Allocate a batch whose identifiers were checked against the current
+    /// store length by an exclusively-held prepared transaction.
+    pub(crate) fn allocate_prevalidated_batch(&mut self, vertices: &[(AbsCoord, SheetId, u8)]) {
+        self.reserve(vertices.len());
+        for &(coord, sheet, flags) in vertices {
+            self.allocate(coord, sheet, flags);
+        }
+    }
+
     /// Allocate many vertices contiguously in the current store order.
     /// Returns the assigned VertexIds in the same order as input coords.
     pub fn allocate_contiguous(

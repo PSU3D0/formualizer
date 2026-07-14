@@ -9,6 +9,7 @@ pub mod eval;
 pub mod eval_delta;
 pub mod formula_ingest;
 mod formula_source;
+pub(crate) mod fragmented_transaction;
 pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;

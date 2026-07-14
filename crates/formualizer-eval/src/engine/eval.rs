@@ -20,6 +20,8 @@ use crate::engine::{
     FormulaPlaneMode, RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind,
     VisibilityMaskMode,
 };
+#[cfg(test)]
+use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
     commit_prepared_anchor_once_family, place_candidate_family_with_analyses,
@@ -3449,6 +3451,256 @@ where
                 rect.end.col,
             ),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn analyze_fragmented_exact_replay_record_for_test(
+        &mut self,
+        sheet_name: &str,
+        source_id: crate::engine::SourceFamilyId,
+        expected: crate::engine::PartitionLegacyMember,
+        replay: crate::engine::DeferredReplayFormula,
+    ) -> Result<crate::engine::fragmented_transaction::PreparedFragmentedLegacyFormula, String>
+    {
+        let sheet_id = self.graph.sheet_id_mut(sheet_name);
+        self.graph
+            .analyze_fragmented_exact_replay_record(
+                &self.resolver,
+                sheet_id,
+                source_id,
+                expected,
+                replay,
+            )
+            .map_err(|error| format!("{error:?}"))
+    }
+
+    pub(crate) fn prepare_fragmented_source_transaction(
+        &self,
+        source: &crate::engine::PartitionedSourceFormulaFamily,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        prepared: crate::engine::fragmented_transaction::PreparedPartitionedSourceFamily,
+        legacy_formulas: Vec<
+            crate::engine::fragmented_transaction::PreparedFragmentedLegacyFormula,
+        >,
+    ) -> Result<
+        crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        crate::engine::fragmented_transaction::FragmentedTransactionPrepareError,
+    > {
+        self.graph.prepare_fragmented_source_transaction(
+            &self.source_formula_token,
+            source,
+            disposition,
+            prepared,
+            legacy_formulas,
+        )
+    }
+
+    pub(crate) fn commit_fragmented_source_transaction(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        let registry_guard = crate::function_registry::semantic_epoch_read_guard();
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let epoch = registry_guard.epoch();
+        let resolver = &self.resolver;
+        let decision = self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            epoch,
+            provider_revision,
+            || resolver.planning_semantic_revision(),
+            crate::engine::fragmented_transaction::FragmentedCommitFault::None,
+        );
+        drop(registry_guard);
+        decision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_fragmented_source_transaction_with_fault_for_test(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        fault: crate::engine::fragmented_transaction::FragmentedCommitFault,
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        let registry_guard = crate::function_registry::semantic_epoch_read_guard();
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let epoch = registry_guard.epoch();
+        let resolver = &self.resolver;
+        let decision = self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            epoch,
+            provider_revision,
+            || resolver.planning_semantic_revision(),
+            fault,
+        );
+        drop(registry_guard);
+        decision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_fragmented_source_transaction_with_provider_flip_for_test(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        before_second_sample: impl FnOnce(),
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        let registry_guard = crate::function_registry::semantic_epoch_read_guard();
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let epoch = registry_guard.epoch();
+        let resolver = &self.resolver;
+        let decision = self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            epoch,
+            provider_revision,
+            || {
+                before_second_sample();
+                resolver.planning_semantic_revision()
+            },
+            crate::engine::fragmented_transaction::FragmentedCommitFault::None,
+        );
+        drop(registry_guard);
+        decision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_fragmented_source_transaction_with_revisions_for_test(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        function_semantic_epoch: u64,
+        function_provider_revision: Option<u64>,
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            function_semantic_epoch,
+            function_provider_revision,
+            || function_provider_revision,
+            crate::engine::fragmented_transaction::FragmentedCommitFault::None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn analyze_partitioned_source_family_for_transaction_for_test(
+        &mut self,
+        sheet_name: &str,
+        family: &crate::engine::PartitionedSourceFormulaFamily,
+    ) -> Result<crate::engine::fragmented_transaction::PreparedPartitionedSourceFamily, String>
+    {
+        family
+            .validate(&self.workbook_load_limits)
+            .map_err(str::to_string)?;
+        let formula = if family.template_text.starts_with('=') {
+            family.template_text.to_string()
+        } else {
+            format!("={}", family.template_text)
+        };
+        let ast = formualizer_parse::parser::parse(&formula)
+            .map_err(|_| "AnchorParseRejected".to_string())?;
+        let mut requests = Vec::new();
+        Self::collect_planning_function_requests(&ast, &mut requests);
+        let snapshot = crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+            &self.resolver,
+            requests,
+        )
+        .map_err(|error| format!("{error:?}"))?;
+        let sheet_id = self.graph.sheet_id_mut(sheet_name);
+        let domains: Vec<_> = family
+            .fragments
+            .iter()
+            .copied()
+            .map(|transport| Self::placement_domain_from_transport(sheet_id, transport))
+            .collect();
+        for domain in &domains {
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                family.template_origin0.row,
+                family.template_origin0.col,
+                domain,
+                &snapshot,
+            )
+            .map_err(str::to_string)?;
+        }
+        let ast_id = self.intern_formula_ast(&ast);
+        let placement = CellRef::new(
+            sheet_id,
+            Coord::from_excel(
+                family.template_origin0.row + 1,
+                family.template_origin0.col + 1,
+                true,
+                true,
+            ),
+        );
+        let ingested = self
+            .graph
+            .ingest_pipeline(&snapshot)
+            .enable_function_semantics()
+            .ingest_formula(
+                FormulaAstInput::RawArena(ast_id),
+                placement,
+                Some(family.template_text.clone()),
+            )
+            .map_err(|_| "UnsupportedCanonicalTemplate".to_string())?;
+        let function_semantics_used = ingested
+            .labels
+            .has_flag(crate::engine::arena::ast::CanonicalLabels::FLAG_CONTAINS_FUNCTION);
+        let name_assumptions = self
+            .graph
+            .capture_fragmented_name_assumptions(sheet_id, &ingested.dep_plan.resolved_named_refs)
+            .map_err(|error| format!("{error:?}"))?;
+        let candidate = FormulaPlacementCandidate::new(
+            sheet_id,
+            family.template_origin0.row,
+            family.template_origin0.col,
+            ingested.ast_id,
+            Some(family.template_text.clone()),
+        );
+        let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested)
+            .map_err(|reason| format!("{reason:?}"))?;
+        let direct_cells = domains.iter().try_fold(0u64, |total, domain| {
+            total
+                .checked_add(domain.cell_count())
+                .ok_or_else(|| "PartitionAreaOverflow".to_string())
+        })?;
+        let mut placements = Vec::with_capacity(domains.len());
+        for domain in domains {
+            let member_count = domain.cell_count();
+            placements.push(
+                prepare_anchor_once_fragment(
+                    candidate.clone(),
+                    analysis.clone(),
+                    domain,
+                    member_count,
+                    direct_cells,
+                )
+                .map_err(|reason| format!("{reason:?}"))?,
+            );
+        }
+        let fallback_cells = family.legacy_members.shared_member_count() as u64;
+        if direct_cells.checked_add(fallback_cells) != Some(family.surviving_member_count) {
+            return Err("PartitionMemberCountMismatch".to_string());
+        }
+        Ok(
+            crate::engine::fragmented_transaction::PreparedPartitionedSourceFamily {
+                engine_token: Arc::clone(&self.source_formula_token),
+                sheet_id,
+                sheet_name: Arc::from(sheet_name),
+                source: family.clone(),
+                placements,
+                function_semantic_epoch: snapshot.epoch(),
+                function_provider_revision: snapshot.provider_revision(),
+                function_semantics_used,
+                name_assumptions,
+                direct_cells,
+            },
+        )
     }
 
     fn prepare_partitioned_source_formula_family_shadow(

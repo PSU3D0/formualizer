@@ -202,6 +202,21 @@ pub(crate) struct PreparedAnchorOncePlacement {
 }
 
 impl PreparedAnchorOncePlacement {
+    pub(crate) fn ownership_proof(&self) -> (SheetId, u32, u32, AstNodeId, &PlacementDomain, u64) {
+        (
+            self.candidate.sheet_id,
+            self.candidate.row,
+            self.candidate.col,
+            self.candidate.ast_id,
+            &self.domain,
+            self.member_count,
+        )
+    }
+
+    pub(crate) fn fragment_dependency_proof(&self) -> (&PlacementDomain, &SpanReadSummary) {
+        (&self.domain, &self.read_summary)
+    }
+
     #[cfg(test)]
     pub(crate) fn set_resolved_named_refs_for_test(&mut self, names: Vec<String>) {
         self.analysis.resolved_named_refs = names;
@@ -427,12 +442,13 @@ pub(crate) fn analyze_candidate(
     })
 }
 
-fn prepare_domain_semantics(
+fn prepare_domain_semantics_for_family_size(
     domain: &PlacementDomain,
     read_projections: &[ReadProjection],
     is_constant_result: bool,
+    promoted_family_cells: u64,
 ) -> Result<(ResultRegion, SpanReadSummary), PlacementFallbackReason> {
-    if !is_constant_result && domain.cell_count() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
+    if !is_constant_result && promoted_family_cells < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
         return Err(PlacementFallbackReason::SmallDomain);
     }
     let result_region = ResultRegion::scalar_cells(domain.clone());
@@ -446,6 +462,19 @@ fn prepare_domain_semantics(
         return Err(PlacementFallbackReason::InternalDependency);
     }
     Ok((result_region, read_summary))
+}
+
+fn prepare_domain_semantics(
+    domain: &PlacementDomain,
+    read_projections: &[ReadProjection],
+    is_constant_result: bool,
+) -> Result<(ResultRegion, SpanReadSummary), PlacementFallbackReason> {
+    prepare_domain_semantics_for_family_size(
+        domain,
+        read_projections,
+        is_constant_result,
+        domain.cell_count(),
+    )
 }
 
 struct AnchorOnceGateOutput {
@@ -494,6 +523,42 @@ pub(crate) fn prepare_anchor_once_family(
 ) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
     let gates = run_anchor_once_placement_gates(&candidate, &analysis, &domain, member_count)?;
     build_prepared_anchor_once(candidate, analysis, domain, member_count, gates)
+}
+
+pub(crate) fn prepare_anchor_once_fragment(
+    candidate: FormulaPlacementCandidate,
+    analysis: CandidateAnalysis,
+    domain: PlacementDomain,
+    member_count: u64,
+    promoted_family_cells: u64,
+) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
+    if member_count != domain.cell_count() || analysis.sheet_id != domain.sheet_id() {
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+    let is_constant_result =
+        analysis.read_projections_constant && analysis.value_ref_slot_descriptors.is_empty();
+    let (result_region, read_summary) = prepare_domain_semantics_for_family_size(
+        &domain,
+        &analysis.read_projections,
+        is_constant_result,
+        promoted_family_cells,
+    )?;
+    let binding_bytes = literal_binding_bytes(&analysis.literal_bindings);
+    if binding_bytes > MAX_BINDING_SET_BYTES {
+        return Err(PlacementFallbackReason::BindingMemoryCapExceeded);
+    }
+    build_prepared_anchor_once(
+        candidate,
+        analysis,
+        domain,
+        member_count,
+        AnchorOnceGateOutput {
+            result_region,
+            read_summary,
+            is_constant_result,
+            binding_bytes,
+        },
+    )
 }
 
 pub(crate) fn validate_anchor_once_fragment_shadow(
@@ -762,6 +827,7 @@ fn validate_anchor_once_relocation(
                 {
                     Ok(())
                 }
+                ReferenceType::NamedRange(_) if allow_safe_functions => Ok(()),
                 _ => Err("UnsupportedAnchorReference"),
             },
             ASTNodeType::UnaryOp { op, expr } if matches!(op.as_str(), "+" | "-") => walk(

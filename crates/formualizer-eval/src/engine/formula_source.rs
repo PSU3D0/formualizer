@@ -244,6 +244,53 @@ pub struct PartitionedSourceFormulaFamily {
 }
 
 impl PartitionedSourceFormulaFamily {
+    pub(crate) fn reconciles_compact_geometry(&self) -> bool {
+        let mut direct_cells = 0u64;
+        let mut rects = Vec::with_capacity(self.fragments.len());
+        for fragment in &self.fragments {
+            let rect = fragment.rect();
+            if rect.start.row > rect.end.row
+                || rect.start.col > rect.end.col
+                || !source_rect_contains(self.declared, rect.start)
+                || !source_rect_contains(self.declared, rect.end)
+                || rects.iter().any(|prior| source_rects_overlap(*prior, rect))
+            {
+                return false;
+            }
+            let Some(area) = source_rect_area(rect) else {
+                return false;
+            };
+            let Some(next) = direct_cells.checked_add(area) else {
+                return false;
+            };
+            direct_cells = next;
+            rects.push(rect);
+        }
+        if self.legacy_members.as_slice().iter().any(|member| {
+            !source_rect_contains(self.declared, member.coord)
+                || rects
+                    .iter()
+                    .any(|rect| source_rect_contains(*rect, member.coord))
+        }) {
+            return false;
+        }
+        let shared_legacy = self.legacy_members.shared_member_count() as u64;
+        let ordinary = self.legacy_members.ordinary_exception_count() as u64;
+        let Some(shared) = direct_cells.checked_add(shared_legacy) else {
+            return false;
+        };
+        let Some(accounted) = shared
+            .checked_add(ordinary)
+            .and_then(|count| count.checked_add(self.reconciliation.holes))
+        else {
+            return false;
+        };
+        source_rect_area(self.declared) == Some(accounted)
+            && shared == self.surviving_member_count
+            && self.reconciliation.shared_members == shared
+            && self.reconciliation.ordinary_exceptions == ordinary
+    }
+
     pub(crate) fn validate(&self, limits: &super::WorkbookLoadLimits) -> Result<(), &'static str> {
         if !source_coord_in_bounds(self.template_origin0, limits) {
             return Err("PartitionTemplateOriginOutOfBounds");
@@ -331,7 +378,7 @@ impl PartitionedSourceFormulaFamily {
 /// Replay ownership for a source coordinate. `Direct` means FormulaPlane owns
 /// the shared record, while both legacy variants are emitted to the graph.
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FormulaReplayCoordinateDisposition {
     Direct,
     LegacyShared,
@@ -343,7 +390,7 @@ pub enum FormulaReplayCoordinateDisposition {
 /// avoid expanding direct domains into per-cell state; only bounded legacy
 /// points and ordinary-exception ownership are retained explicitly.
 #[doc(hidden)]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FormulaReplayDisposition {
     family_defaults: BTreeMap<SourceFamilyId, FormulaReplayCoordinateDisposition>,
     shared_overrides: BTreeMap<(SourceFamilyId, SourceCoord), FormulaReplayCoordinateDisposition>,
@@ -440,6 +487,99 @@ impl FormulaReplayDisposition {
 
     pub fn force_family_legacy(&mut self, family: SourceFamilyId) {
         self.set_family_legacy(family);
+    }
+
+    pub(crate) fn owns_partition_exactly(&self, family: &PartitionedSourceFormulaFamily) -> bool {
+        if self.family_defaults.get(&family.source_id)
+            != Some(&FormulaReplayCoordinateDisposition::Direct)
+        {
+            return false;
+        }
+        let expected_shared: BTreeSet<_> = family
+            .legacy_members
+            .as_slice()
+            .iter()
+            .filter(|member| member.kind == PartitionLegacyMemberKind::SharedFamilyMember)
+            .map(|member| member.coord)
+            .collect();
+        let actual_shared: BTreeSet<_> = self
+            .shared_overrides
+            .iter()
+            .filter(|((id, _), _)| *id == family.source_id)
+            .map(|((_, coord), disposition)| (*coord, *disposition))
+            .collect();
+        let expected_shared: BTreeSet<_> = expected_shared
+            .into_iter()
+            .map(|coord| (coord, FormulaReplayCoordinateDisposition::LegacyShared))
+            .collect();
+        if actual_shared != expected_shared {
+            return false;
+        }
+        let expected_ordinary: BTreeSet<_> = family
+            .legacy_members
+            .as_slice()
+            .iter()
+            .filter(|member| member.kind == PartitionLegacyMemberKind::OrdinaryException)
+            .map(|member| member.coord)
+            .collect();
+        let actual_ordinary: BTreeSet<_> = self
+            .ordinary_owners
+            .iter()
+            .filter(|(_, id)| **id == family.source_id)
+            .map(|(coord, _)| *coord)
+            .collect();
+        if actual_ordinary != expected_ordinary {
+            return false;
+        }
+        !self.suppressed.iter().any(|&(row, col)| {
+            let Some(coord) = row
+                .checked_sub(1)
+                .zip(col.checked_sub(1))
+                .map(|(row, col)| SourceCoord { row, col })
+            else {
+                return true;
+            };
+            family
+                .fragments
+                .iter()
+                .any(|fragment| source_rect_contains(fragment.rect(), coord))
+                || family
+                    .legacy_members
+                    .as_slice()
+                    .iter()
+                    .any(|member| member.coord == coord)
+        })
+    }
+
+    pub(crate) fn partition_disposition(
+        &self,
+        family: &PartitionedSourceFormulaFamily,
+        coord: SourceCoord,
+    ) -> Option<FormulaReplayCoordinateDisposition> {
+        if !source_rect_contains(family.declared, coord) {
+            return None;
+        }
+        if let Some(member) = family
+            .legacy_members
+            .as_slice()
+            .iter()
+            .find(|member| member.coord == coord)
+        {
+            return match member.kind {
+                PartitionLegacyMemberKind::SharedFamilyMember => {
+                    Some(self.shared_disposition(family.source_id, coord))
+                }
+                PartitionLegacyMemberKind::OrdinaryException => {
+                    let (disposition, owner) = self.ordinary_disposition(coord);
+                    (owner == Some(family.source_id)).then_some(disposition)
+                }
+            };
+        }
+        family
+            .fragments
+            .iter()
+            .any(|fragment| source_rect_contains(fragment.rect(), coord))
+            .then(|| self.shared_disposition(family.source_id, coord))
     }
 }
 

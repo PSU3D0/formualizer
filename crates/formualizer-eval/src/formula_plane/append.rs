@@ -170,6 +170,12 @@ pub(crate) struct PreparedFormulaPlaneAppend {
     work: FormulaPlaneAppendWork,
 }
 
+impl PreparedFormulaPlaneAppend {
+    pub(crate) fn work(&self) -> &FormulaPlaneAppendWork {
+        &self.work
+    }
+}
+
 fn checked_sheet_name(
     registry: &SheetRegistry,
     id: SheetId,
@@ -496,13 +502,7 @@ impl FormulaAuthority {
                     col: placement.origin_col,
                 },
             )?;
-            if PackedSheetCell::try_new(placement.sheet_id, origin_row0, origin_col0).is_none()
-                || !placement.domain.contains(PlacementCoord::new(
-                    placement.sheet_id,
-                    origin_row0,
-                    origin_col0,
-                ))
-            {
+            if PackedSheetCell::try_new(placement.sheet_id, origin_row0, origin_col0).is_none() {
                 return Err(FormulaPlaneAppendError::InvalidTemplateOrigin {
                     row: placement.origin_row,
                     col: placement.origin_col,

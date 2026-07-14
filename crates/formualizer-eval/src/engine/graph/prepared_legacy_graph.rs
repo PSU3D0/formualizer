@@ -1,4 +1,5 @@
 use super::*;
+use crate::reference::RangeRef;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,11 +69,51 @@ enum SymbolKind {
     Table,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+enum SymbolMetadata {
+    Missing,
+    Name {
+        scope: NameScope,
+        definition: NamedDefinition,
+        vertex: VertexId,
+    },
+    SourceScalar {
+        name: String,
+        vertex: VertexId,
+        version: Option<u64>,
+    },
+    SourceTable {
+        name: String,
+        vertex: VertexId,
+        version: Option<u64>,
+    },
+    Table {
+        name: String,
+        range: RangeRef,
+        header_row: bool,
+        headers: Vec<String>,
+        totals_row: bool,
+        vertex: VertexId,
+    },
+}
+
+impl SymbolMetadata {
+    fn vertex(&self) -> Option<VertexId> {
+        match self {
+            Self::Missing => None,
+            Self::Name { vertex, .. }
+            | Self::SourceScalar { vertex, .. }
+            | Self::SourceTable { vertex, .. }
+            | Self::Table { vertex, .. } => Some(*vertex),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct SymbolBinding {
     kind: SymbolKind,
     name: String,
-    vertex: Option<VertexId>,
+    metadata: SymbolMetadata,
 }
 
 #[derive(Debug)]
@@ -120,22 +161,47 @@ impl DependencyGraph {
         name: &str,
         sheet: SheetId,
     ) -> SymbolBinding {
-        let vertex = match kind {
+        let metadata = match kind {
             SymbolKind::Name => self
                 .resolve_name_entry(name, sheet)
-                .map(|entry| entry.vertex),
+                .map(|entry| SymbolMetadata::Name {
+                    scope: entry.scope,
+                    definition: entry.definition.clone(),
+                    vertex: entry.vertex,
+                })
+                .unwrap_or(SymbolMetadata::Missing),
             SymbolKind::SourceScalar => self
                 .resolve_source_scalar_entry(name)
-                .map(|entry| entry.vertex),
+                .map(|entry| SymbolMetadata::SourceScalar {
+                    name: entry.name.clone(),
+                    vertex: entry.vertex,
+                    version: entry.version,
+                })
+                .unwrap_or(SymbolMetadata::Missing),
             SymbolKind::SourceTable => self
                 .resolve_source_table_entry(name)
-                .map(|entry| entry.vertex),
-            SymbolKind::Table => self.resolve_table_entry(name).map(|entry| entry.vertex),
+                .map(|entry| SymbolMetadata::SourceTable {
+                    name: entry.name.clone(),
+                    vertex: entry.vertex,
+                    version: entry.version,
+                })
+                .unwrap_or(SymbolMetadata::Missing),
+            SymbolKind::Table => self
+                .resolve_table_entry(name)
+                .map(|entry| SymbolMetadata::Table {
+                    name: entry.name.clone(),
+                    range: entry.range,
+                    header_row: entry.header_row,
+                    headers: entry.headers.clone(),
+                    totals_row: entry.totals_row,
+                    vertex: entry.vertex,
+                })
+                .unwrap_or(SymbolMetadata::Missing),
         };
         SymbolBinding {
             kind,
             name: name.to_string(),
-            vertex,
+            metadata,
         }
     }
 
@@ -312,13 +378,13 @@ impl DependencyGraph {
                 .chain(plan.named_refs.iter())
             {
                 let binding = self.prepared_symbol_binding(SymbolKind::Name, name, sheet_id);
-                if let Some(id) = binding.vertex {
+                if let Some(id) = binding.metadata.vertex() {
                     push_unique(&mut named_dependencies, id);
                     push_unique(&mut other_dependencies, id);
                 } else {
                     let scalar =
                         self.prepared_symbol_binding(SymbolKind::SourceScalar, name, sheet_id);
-                    if let Some(id) = scalar.vertex {
+                    if let Some(id) = scalar.metadata.vertex() {
                         push_unique(&mut other_dependencies, id);
                     } else {
                         unresolved_names.push(name.clone());
@@ -330,7 +396,7 @@ impl DependencyGraph {
             for name in &plan.source_refs {
                 let scalar = self.prepared_symbol_binding(SymbolKind::SourceScalar, name, sheet_id);
                 let table = self.prepared_symbol_binding(SymbolKind::SourceTable, name, sheet_id);
-                if let Some(id) = scalar.vertex.or(table.vertex) {
+                if let Some(id) = scalar.metadata.vertex().or_else(|| table.metadata.vertex()) {
                     push_unique(&mut other_dependencies, id);
                 }
                 symbols.extend([scalar, table]);
@@ -338,7 +404,7 @@ impl DependencyGraph {
             for name in &plan.table_refs {
                 let table = self.prepared_symbol_binding(SymbolKind::Table, name, sheet_id);
                 let source = self.prepared_symbol_binding(SymbolKind::SourceTable, name, sheet_id);
-                if let Some(id) = table.vertex.or(source.vertex) {
+                if let Some(id) = table.metadata.vertex().or_else(|| source.metadata.vertex()) {
                     push_unique(&mut other_dependencies, id);
                 }
                 symbols.extend([table, source]);
@@ -384,7 +450,7 @@ impl DependencyGraph {
             && !self.vertex_to_pending_names.contains_key(&id)
     }
 
-    fn validate_prepared_legacy_graph_plan(
+    pub(crate) fn validate_prepared_legacy_graph_plan(
         &self,
         plan: &PreparedLegacyGraphPlan,
     ) -> Result<(), PreparedLegacyGraphError> {
@@ -432,7 +498,8 @@ impl DependencyGraph {
                 return Err(PreparedLegacyGraphError::Stale);
             }
             if binding
-                .vertex
+                .metadata
+                .vertex()
                 .is_some_and(|id| !self.store.vertex_exists_active(id))
             {
                 return Err(PreparedLegacyGraphError::Stale);
@@ -451,6 +518,15 @@ impl DependencyGraph {
         plan: PreparedLegacyGraphPlan,
     ) -> Result<usize, PreparedLegacyGraphError> {
         self.validate_prepared_legacy_graph_plan(&plan)?;
+        Ok(self.apply_prevalidated_legacy_graph_plan(plan))
+    }
+
+    /// Infallible application half for a plan that passed the final validator
+    /// while the caller retained exclusive access to the graph.
+    pub(crate) fn apply_prevalidated_legacy_graph_plan(
+        &mut self,
+        plan: PreparedLegacyGraphPlan,
+    ) -> usize {
         let allocations: Vec<_> = plan
             .new_vertices
             .iter()
@@ -462,18 +538,9 @@ impl DependencyGraph {
                 )
             })
             .collect();
-        let expected_ids: Vec<_> = plan.new_vertices.iter().map(|(_, id)| *id).collect();
-        let ids = self
-            .store
-            .try_allocate_batch(&allocations, &expected_ids)
-            .map_err(|error| match error {
-                VertexBatchAllocationError::IdExhausted => {
-                    PreparedLegacyGraphError::VertexIdExhausted
-                }
-                VertexBatchAllocationError::ReservedIdsMismatch => PreparedLegacyGraphError::Stale,
-            })?;
-        for (((packed, _), id), (coord, _, _)) in plan.new_vertices.iter().zip(ids).zip(allocations)
-        {
+        self.store.allocate_prevalidated_batch(&allocations);
+        for ((packed, id), (coord, _, _)) in plan.new_vertices.iter().zip(allocations) {
+            let id = *id;
             self.edges.add_vertex(coord, id.0);
             self.sheet_index_mut(packed.sheet_id())
                 .add_vertex(coord, id);
@@ -511,7 +578,7 @@ impl DependencyGraph {
         }
         self.edges.end_batch_deferred();
         let _ = self.mark_dirty_many(&targets);
-        Ok(plan.formulas.len())
+        plan.formulas.len()
     }
 }
 
@@ -744,6 +811,120 @@ mod tests {
             graph.baseline_stats().graph_vertex_count,
             before.graph_vertex_count + 2
         );
+    }
+
+    #[test]
+    fn same_vertex_name_definition_change_is_stale_before_mutation() {
+        let (mut graph, sheet) = graph();
+        graph
+            .define_name(
+                "N",
+                NamedDefinition::Literal(LiteralValue::Number(1.0)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        let mut item = planned(&mut graph, sheet, 1, 1, "=1", &[]);
+        item.3.resolved_named_refs.push("N".to_string());
+        let plan = graph.prepare_legacy_graph_plan(sheet, vec![item]).unwrap();
+        let vertex = graph.resolve_name_entry("N", sheet).unwrap().vertex;
+        graph
+            .update_name(
+                "N",
+                NamedDefinition::Literal(LiteralValue::Number(2.0)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        assert_eq!(graph.resolve_name_entry("N", sheet).unwrap().vertex, vertex);
+        let before = format!("{graph:?}");
+        assert_eq!(
+            graph.apply_prepared_legacy_graph_plan(plan),
+            Err(PreparedLegacyGraphError::Stale)
+        );
+        assert_eq!(format!("{graph:?}"), before);
+    }
+
+    #[test]
+    fn same_vertex_table_metadata_change_is_stale_before_mutation() {
+        let (mut graph, sheet) = graph();
+        let range = RangeRef::new(
+            CellRef::new(sheet, Coord::from_excel(10, 1, true, true)),
+            CellRef::new(sheet, Coord::from_excel(20, 2, true, true)),
+        );
+        graph
+            .define_table(
+                "T",
+                range,
+                true,
+                vec!["A".to_string(), "B".to_string()],
+                false,
+            )
+            .unwrap();
+        let mut item = planned(&mut graph, sheet, 1, 1, "=1", &[]);
+        item.3.table_refs.push("T".to_string());
+        let plan = graph.prepare_legacy_graph_plan(sheet, vec![item]).unwrap();
+        let vertex = graph.resolve_table_entry("T").unwrap().vertex;
+        let changed_range = RangeRef::new(
+            CellRef::new(sheet, Coord::from_excel(10, 1, true, true)),
+            CellRef::new(sheet, Coord::from_excel(20, 3, true, true)),
+        );
+        graph
+            .update_table(
+                "T",
+                changed_range,
+                true,
+                vec!["A".to_string(), "B".to_string(), "C".to_string()],
+                true,
+            )
+            .unwrap();
+        assert_eq!(graph.resolve_table_entry("T").unwrap().vertex, vertex);
+        let before = format!("{graph:?}");
+        assert_eq!(
+            graph.apply_prepared_legacy_graph_plan(plan),
+            Err(PreparedLegacyGraphError::Stale)
+        );
+        assert_eq!(format!("{graph:?}"), before);
+    }
+
+    #[test]
+    fn same_vertex_source_versions_are_stale_before_mutation() {
+        let (mut graph, sheet) = graph();
+        graph.define_source_scalar("S", Some(1)).unwrap();
+        let mut scalar_item = planned(&mut graph, sheet, 1, 1, "=1", &[]);
+        scalar_item.3.source_refs.push("S".to_string());
+        let scalar_plan = graph
+            .prepare_legacy_graph_plan(sheet, vec![scalar_item])
+            .unwrap();
+        let scalar_vertex = graph.resolve_source_scalar_entry("S").unwrap().vertex;
+        graph.set_source_scalar_version("S", Some(2)).unwrap();
+        assert_eq!(
+            graph.resolve_source_scalar_entry("S").unwrap().vertex,
+            scalar_vertex
+        );
+        let before = format!("{graph:?}");
+        assert_eq!(
+            graph.apply_prepared_legacy_graph_plan(scalar_plan),
+            Err(PreparedLegacyGraphError::Stale)
+        );
+        assert_eq!(format!("{graph:?}"), before);
+
+        graph.define_source_table("ST", Some(3)).unwrap();
+        let mut table_item = planned(&mut graph, sheet, 2, 1, "=1", &[]);
+        table_item.3.table_refs.push("ST".to_string());
+        let table_plan = graph
+            .prepare_legacy_graph_plan(sheet, vec![table_item])
+            .unwrap();
+        let table_vertex = graph.resolve_source_table_entry("ST").unwrap().vertex;
+        graph.set_source_table_version("ST", Some(4)).unwrap();
+        assert_eq!(
+            graph.resolve_source_table_entry("ST").unwrap().vertex,
+            table_vertex
+        );
+        let before = format!("{graph:?}");
+        assert_eq!(
+            graph.apply_prepared_legacy_graph_plan(table_plan),
+            Err(PreparedLegacyGraphError::Stale)
+        );
+        assert_eq!(format!("{graph:?}"), before);
     }
 
     #[test]

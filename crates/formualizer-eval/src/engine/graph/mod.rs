@@ -39,7 +39,7 @@ use super::delta_edges::CsrMutableEdges;
 use super::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use super::sheet_index::SheetIndex;
 use super::vertex::{VertexId, VertexKind};
-use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexBatchAllocationError, VertexStore};
+use super::vertex_store::{FIRST_NORMAL_VERTEX, VertexStore};
 use crate::engine::topo::{
     GraphAdapter,
     pk::{DynamicTopo, PkConfig},
