@@ -465,6 +465,12 @@ impl DependencyGraph {
         let legacy_graph = self
             .prepare_legacy_graph_plan(prepared.sheet_id, planned)
             .map_err(FragmentedTransactionPrepareError::LegacyGraph)?;
+        let graph_vertices = legacy_graph.new_vertex_count() as u64;
+        let graph_edges = legacy_graph.planned_edge_count().ok_or(
+            FragmentedTransactionPrepareError::LegacyGraph(
+                PreparedLegacyGraphError::PlanSizeOverflow,
+            ),
+        )? as u64;
         let formula_plane = self
             .formula_authority()
             .prepare_formula_plane_append(prepared.placements, self.data_store(), self.sheet_reg())
@@ -476,6 +482,8 @@ impl DependencyGraph {
         report_delta.formula_cells_seen =
             source.surviving_member_count.saturating_add(ordinary_cells);
         report_delta.graph_formula_cells_materialized = expected.len() as u64;
+        report_delta.graph_vertices_created = graph_vertices;
+        report_delta.graph_edges_created = graph_edges;
         report_delta.shadow_candidate_cells = source.surviving_member_count;
         report_delta.shadow_accepted_span_cells = prepared.direct_cells;
         report_delta.shadow_fallback_cells = shared_legacy_cells;
@@ -547,7 +555,9 @@ impl DependencyGraph {
         if !Arc::ptr_eq(engine_token, &prepared.engine_token) {
             return replay(FragmentedReplayReason::EngineIdentityChanged);
         }
-        if disposition != &prepared.expected_disposition
+        if !prepared
+            .expected_disposition
+            .owns_partition_exactly(&prepared.source)
             || !disposition.owns_partition_exactly(&prepared.source)
         {
             return replay(FragmentedReplayReason::DispositionChanged);
@@ -644,6 +654,7 @@ mod tests {
             kind: PartitionLegacyMemberKind::OrdinaryException,
         };
         let replay = DeferredReplayFormula {
+            source_order: super::super::formula_source::SourceFormulaOrder::new(0),
             row: 4,
             col: 3,
             text: "=$A$1+5".to_string(),

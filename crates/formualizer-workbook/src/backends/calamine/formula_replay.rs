@@ -8,12 +8,13 @@ use std::{
 use calamine::expand_shared_formula_into;
 use formualizer_eval::engine::{
     DeferredFormulaReplay, DeferredReplayFormula, FormulaReplayCoordinateDisposition,
-    FormulaReplayDisposition, SourceCoord, SourceFamilyId, SourceRect,
+    FormulaReplayDisposition, FormulaReplayPartitionRouter, PartitionedSourceFormulaFamily,
+    SourceCoord, SourceFamilyId, SourceFormulaOrder, SourceRect,
 };
 #[cfg(test)]
 use formualizer_eval::engine::{
     ExplicitPartitionLegacyMembers, PartitionLegacyMember, PartitionLegacyMemberKind,
-    PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport,
+    PartitionReconciliation, PlacementDomainTransport,
 };
 
 #[cfg(test)]
@@ -390,34 +391,38 @@ impl CalamineDeferredFormulaReplay {
             sheet_instance,
         }
     }
-}
 
-impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
-    fn replay(
+    fn replay_routed(
         &mut self,
         disposition: &FormulaReplayDisposition,
+        partitions: &[PartitionedSourceFormulaFamily],
     ) -> Result<Vec<DeferredReplayFormula>, String> {
         let mut formulas = Vec::new();
         let sheet_instance = self.sheet_instance;
+        let partition_router =
+            FormulaReplayPartitionRouter::new(partitions).map_err(str::to_string)?;
         replay_spool_with_family(
             &mut self.spool,
             &self.sheet_name,
             |shared_index, coord0| {
-                disposition.shared_disposition(
-                    SourceFamilyId {
-                        sheet_instance,
-                        source_index: shared_index,
-                    },
-                    coord0,
-                ) == FormulaReplayCoordinateDisposition::LegacyShared
+                let family = SourceFamilyId {
+                    sheet_instance,
+                    source_index: shared_index,
+                };
+                let coordinate_disposition =
+                    partition_router.shared_disposition(disposition, family, coord0);
+                coordinate_disposition == FormulaReplayCoordinateDisposition::LegacyShared
             },
-            |coord0, text, family| {
+            |sequence, coord0, text, family| {
                 let family = family.map(|shared_index| SourceFamilyId {
                     sheet_instance,
                     source_index: shared_index,
                 });
                 let (coordinate_disposition, partition_owner) = match family {
-                    Some(family) => (disposition.shared_disposition(family, coord0), Some(family)),
+                    Some(family) => (
+                        partition_router.shared_disposition(disposition, family, coord0),
+                        Some(family),
+                    ),
                     None => disposition.ordinary_disposition(coord0),
                 };
                 if matches!(
@@ -428,6 +433,7 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
                     return Ok(());
                 }
                 formulas.push(DeferredReplayFormula {
+                    source_order: SourceFormulaOrder::new(sequence),
                     row: coord0.row + 1,
                     col: coord0.col + 1,
                     text: text.to_string(),
@@ -438,23 +444,29 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
             },
         )
         .map_err(|error| error.to_string())?;
+        formulas.sort_by_key(|formula| formula.source_order);
         Ok(formulas)
     }
 
-    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+    fn formula_at_exact(
+        &mut self,
+        row: u32,
+        col: u32,
+    ) -> Result<Option<DeferredReplayFormula>, String> {
         let mut found = None;
         let sheet_instance = self.sheet_instance;
         replay_spool_with_family(
             &mut self.spool,
             &self.sheet_name,
             |_, _| true,
-            |coord0, text, family| {
+            |sequence, coord0, text, family| {
                 if coord0.row + 1 == row && coord0.col + 1 == col {
                     let family = family.map(|shared_index| SourceFamilyId {
                         sheet_instance,
                         source_index: shared_index,
                     });
                     found = Some(DeferredReplayFormula {
+                        source_order: SourceFormulaOrder::new(sequence),
                         row,
                         col,
                         text: text.to_string(),
@@ -467,6 +479,27 @@ impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
         )
         .map_err(|error| error.to_string())?;
         Ok(found)
+    }
+}
+
+impl DeferredFormulaReplay for CalamineDeferredFormulaReplay {
+    fn replay(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.replay_routed(disposition, &[])
+    }
+
+    fn replay_partitioned(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+        partitions: &[PartitionedSourceFormulaFamily],
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.replay_routed(disposition, partitions)
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        self.formula_at_exact(row, col)
     }
 }
 
@@ -1117,11 +1150,11 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
     spool: &mut S,
     sheet_name: &str,
     mut emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
-    mut emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
+    mut emit: impl FnMut(u64, SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
 ) -> Result<(), calamine::Error> {
     let mut shared: rustc_hash::FxHashMap<usize, (SourceCoord, String)> =
         rustc_hash::FxHashMap::default();
-    let mut pending: rustc_hash::FxHashMap<usize, Vec<SourceCoord>> =
+    let mut pending: rustc_hash::FxHashMap<usize, Vec<(u64, SourceCoord)>> =
         rustc_hash::FxHashMap::default();
     let mut expansion = String::with_capacity(128);
     let records = spool
@@ -1132,20 +1165,25 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
         let record = record
             .map_err(|error| calamine::Error::Io(std::io::Error::other(error.to_string())))?;
         match record {
-            OwnedSpoolFormulaRecord::Ordinary { coord0, text, .. } => emit(coord0, &text, None)?,
+            OwnedSpoolFormulaRecord::Ordinary {
+                sequence,
+                coord0,
+                text,
+            } => emit(sequence, coord0, &text, None)?,
             OwnedSpoolFormulaRecord::SharedAnchor {
+                sequence,
                 coord0,
                 shared_index,
                 text,
                 ..
             } => {
                 if emit_shared_coord(shared_index, coord0) {
-                    emit(coord0, &text, Some(shared_index))?;
+                    emit(sequence, coord0, &text, Some(shared_index))?;
                 }
                 shared.insert(shared_index, (coord0, text));
                 if let Some(waiting) = pending.remove(&shared_index) {
                     let (anchor, template) = shared.get(&shared_index).expect("anchor inserted");
-                    for target in waiting {
+                    for (sequence, target) in waiting {
                         if emit_shared_coord(shared_index, target) {
                             expand_shared_formula_into(
                                 template,
@@ -1154,15 +1192,15 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
                                 &mut expansion,
                             )
                             .map_err(calamine::Error::Xlsx)?;
-                            emit(target, &expansion, Some(shared_index))?;
+                            emit(sequence, target, &expansion, Some(shared_index))?;
                         }
                     }
                 }
             }
             OwnedSpoolFormulaRecord::SharedDescendant {
+                sequence,
                 coord0,
                 shared_index,
-                ..
             } => {
                 if let Some((anchor, template)) = shared.get(&shared_index) {
                     if emit_shared_coord(shared_index, coord0) {
@@ -1173,10 +1211,13 @@ fn replay_spool_with_family<S: FormulaReplaySpool>(
                             &mut expansion,
                         )
                         .map_err(calamine::Error::Xlsx)?;
-                        emit(coord0, &expansion, Some(shared_index))?;
+                        emit(sequence, coord0, &expansion, Some(shared_index))?;
                     }
                 } else {
-                    pending.entry(shared_index).or_default().push(coord0);
+                    pending
+                        .entry(shared_index)
+                        .or_default()
+                        .push((sequence, coord0));
                 }
             }
             OwnedSpoolFormulaRecord::Unsupported { coord0, .. } => {
@@ -1202,7 +1243,7 @@ pub(super) fn replay_spool_per_cell_filtered<S: FormulaReplaySpool>(
         spool,
         sheet_name,
         |family, _| !skip_family(family),
-        |coord, text, _| emit(coord, text),
+        |_, coord, text, _| emit(coord, text),
     )
 }
 
@@ -1224,9 +1265,14 @@ pub(super) fn replay_spool_per_cell_with_coordinate_disposition<S: FormulaReplay
     spool: &mut S,
     sheet_name: &str,
     emit_shared_coord: impl FnMut(usize, SourceCoord) -> bool,
-    emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
+    mut emit: impl FnMut(SourceCoord, &str, Option<usize>) -> Result<(), calamine::Error>,
 ) -> Result<(), calamine::Error> {
-    replay_spool_with_family(spool, sheet_name, emit_shared_coord, emit)
+    replay_spool_with_family(
+        spool,
+        sheet_name,
+        emit_shared_coord,
+        |_, coord, text, family| emit(coord, text, family),
+    )
 }
 
 #[cfg(test)]
@@ -1556,6 +1602,7 @@ mod tests {
         };
         let family = PartitionedSourceFormulaFamily {
             source_id: family_id,
+            source_order: SourceFormulaOrder::new(0),
             template_origin0: coord(0, 1),
             template_text: Arc::from("A1+1"),
             declared: SourceRect {
@@ -1589,7 +1636,12 @@ mod tests {
         disposition.register_partition(&family, true).unwrap();
         let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".to_string(), 7);
 
-        let formulas = DeferredFormulaReplay::replay(&mut replay, &disposition).unwrap();
+        let formulas = DeferredFormulaReplay::replay_partitioned(
+            &mut replay,
+            &disposition,
+            std::slice::from_ref(&family),
+        )
+        .unwrap();
         assert_eq!(formulas.len(), 2);
         assert_eq!((formulas[0].row, formulas[0].col), (3, 2));
         assert_eq!(formulas[0].text, "A3+100");
@@ -1985,6 +2037,56 @@ mod tests {
                 ((5, 1), "A6*10".to_string()),
                 ((5, 1), "A6*10".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn partition_replay_preserves_sequence_when_shared_indices_are_out_of_order() {
+        let mut spool =
+            HybridFormulaReplaySpool::new(hybrid_limits(16_384, 16_384, u64::MAX, 16_384, false));
+        for record in [
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 0,
+                coord0: coord(0, 1),
+                shared_index: 99,
+                declared_range: None,
+                text: "A1+1",
+            },
+            SpoolFormulaRecord::Ordinary {
+                sequence: 1,
+                coord0: coord(0, 2),
+                text: "40+2",
+            },
+            SpoolFormulaRecord::SharedAnchor {
+                sequence: 2,
+                coord0: coord(0, 3),
+                shared_index: 2,
+                declared_range: None,
+                text: "A1+3",
+            },
+            SpoolFormulaRecord::SharedDescendant {
+                sequence: 3,
+                coord0: coord(1, 1),
+                shared_index: 99,
+            },
+        ] {
+            spool.append(record).unwrap();
+        }
+        let mut replay = CalamineDeferredFormulaReplay::new(spool, "Sheet1".to_string(), 7);
+        let formulas = replay.replay(&FormulaReplayDisposition::default()).unwrap();
+        assert_eq!(
+            formulas
+                .iter()
+                .map(|formula| formula.source_order)
+                .collect::<Vec<_>>(),
+            (0..4).map(SourceFormulaOrder::new).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            formulas
+                .iter()
+                .map(|formula| formula.family.map(|family| family.source_index))
+                .collect::<Vec<_>>(),
+            vec![Some(99), None, Some(2), Some(99)]
         );
     }
 

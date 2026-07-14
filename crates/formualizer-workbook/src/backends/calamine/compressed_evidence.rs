@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use formualizer_eval::engine::{
     FormulaCompressedSourceReport, PlacementDomainTransport, SourceCoord, SourceFamilyId,
-    SourceFamilyMembers, SourceFormulaFamily, SourceRect,
+    SourceFamilyMembers, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
 };
 
 const DEFAULT_EVIDENCE_LIMIT: u64 = 8 * 1024 * 1024;
@@ -32,6 +32,7 @@ impl SourceExclusion {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FragmentedFamilyProposal {
     pub(super) source_id: SourceFamilyId,
+    pub(super) source_order: SourceFormulaOrder,
     pub(super) anchor_coord0: SourceCoord,
     pub(super) anchor_text: Arc<str>,
     pub(super) declared: SourceRect,
@@ -57,6 +58,7 @@ pub(super) enum EvidenceRecord<'a> {
 
 #[derive(Default)]
 struct FamilyEvidence {
+    source_order: Option<SourceFormulaOrder>,
     members: u64,
     anchors: u32,
     anchor: Option<SourceCoord>,
@@ -108,7 +110,18 @@ impl MonotonicFormulaEvidence {
         evidence
     }
 
+    #[cfg(test)]
     pub(super) fn observe(&mut self, coord: SourceCoord, record: EvidenceRecord<'_>) {
+        let source_order = SourceFormulaOrder::new(self.counters[0]);
+        self.observe_ordered(coord, source_order, record);
+    }
+
+    pub(super) fn observe_ordered(
+        &mut self,
+        coord: SourceCoord,
+        source_order: SourceFormulaOrder,
+        record: EvidenceRecord<'_>,
+    ) {
         self.counters[0] = self.counters[0].saturating_add(1);
         match record {
             EvidenceRecord::Ordinary => self.counters[1] = self.counters[1].saturating_add(1),
@@ -144,13 +157,18 @@ impl MonotonicFormulaEvidence {
                 .families
                 .get_mut(&family)
                 .expect("retained family exists");
+            evidence.source_order = Some(
+                evidence
+                    .source_order
+                    .map_or(source_order, |current| current.min(source_order)),
+            );
             evidence.members = evidence.members.saturating_add(1);
         }
         if self.halted.is_some() {
             return;
         }
 
-        self.advance_active_families(coord, record, owner);
+        self.advance_active_families(coord, source_order, record, owner);
         if self.halted.is_some() {
             return;
         }
@@ -217,6 +235,7 @@ impl MonotonicFormulaEvidence {
     fn advance_active_families(
         &mut self,
         coord: SourceCoord,
+        source_order: SourceFormulaOrder,
         record: EvidenceRecord<'_>,
         owner: Option<SourceFamilyId>,
     ) {
@@ -246,6 +265,16 @@ impl MonotonicFormulaEvidence {
                     }
                 }
             };
+            if matches!(disposition, ActivePointDisposition::Ordinary)
+                && range.start <= coord
+                && coord <= range.end
+            {
+                evidence.source_order = Some(
+                    evidence
+                        .source_order
+                        .map_or(source_order, |current| current.min(source_order)),
+                );
+            }
             added = added.saturating_add(advance_family_evidence(
                 evidence,
                 range,
@@ -391,6 +420,7 @@ impl MonotonicFormulaEvidence {
                 let rect = family.range.expect("clean family has range");
                 families.push(SourceFormulaFamily {
                     source_id,
+                    source_order: family.source_order.expect("family has source order"),
                     anchor_coord0: family.anchor.expect("clean family has anchor"),
                     anchor_text: family.anchor_text.expect("clean family has anchor text"),
                     members: SourceFamilyMembers::CompleteDomain(domain_for_rect(rect)),
@@ -442,6 +472,7 @@ impl MonotonicFormulaEvidence {
                             }
                             fragmented.push(FragmentedFamilyProposal {
                                 source_id,
+                                source_order: family.source_order.expect("family has source order"),
                                 anchor_coord0: family
                                     .anchor
                                     .expect("fragmentable family has anchor"),
@@ -882,6 +913,52 @@ mod tests {
     }
 
     #[test]
+    fn source_order_tokens_do_not_follow_shared_index_sorting() {
+        let mut evidence = MonotonicFormulaEvidence::new();
+        evidence.observe_ordered(
+            coord(0, 0),
+            SourceFormulaOrder::new(0),
+            EvidenceRecord::Anchor {
+                family: family(99),
+                range: Some(rect(0, 0, 0, 2)),
+                text: "A1",
+            },
+        );
+        evidence.observe_ordered(
+            coord(0, 1),
+            SourceFormulaOrder::new(1),
+            EvidenceRecord::Ordinary,
+        );
+        evidence.observe_ordered(
+            coord(0, 2),
+            SourceFormulaOrder::new(2),
+            EvidenceRecord::Descendant { family: family(99) },
+        );
+        evidence.observe_ordered(
+            coord(0, 4),
+            SourceFormulaOrder::new(3),
+            EvidenceRecord::Anchor {
+                family: family(2),
+                range: Some(rect(0, 4, 0, 5)),
+                text: "A1",
+            },
+        );
+        evidence.observe_ordered(
+            coord(0, 5),
+            SourceFormulaOrder::new(4),
+            EvidenceRecord::Descendant { family: family(2) },
+        );
+        let result = evidence.finish();
+        assert_eq!(result.fragmented[0].source_id.source_index, 99);
+        assert_eq!(
+            result.fragmented[0].source_order,
+            SourceFormulaOrder::new(0)
+        );
+        assert_eq!(result.families[0].source_id.source_index, 2);
+        assert_eq!(result.families[0].source_order, SourceFormulaOrder::new(3));
+    }
+
+    #[test]
     fn adjacent_interleaved_families_remain_clean_in_source_order() {
         for (left, right) in [
             (rect(0, 0, 99, 0), rect(0, 2, 99, 2)),
@@ -1246,6 +1323,7 @@ mod tests {
                 .expect("bounded partition");
                 let proposal = FragmentedFamilyProposal {
                     source_id: family(1),
+                    source_order: SourceFormulaOrder::new(0),
                     anchor_coord0: declared.start,
                     anchor_text: Arc::from("A1"),
                     declared,

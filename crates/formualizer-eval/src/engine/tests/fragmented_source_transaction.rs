@@ -7,10 +7,11 @@ use crate::engine::fragmented_transaction::{
 };
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{
-    Engine, EvalConfig, ExplicitPartitionLegacyMembers, FormulaReplayDisposition,
-    PartitionLegacyMember, PartitionLegacyMemberKind, PartitionReconciliation,
-    PartitionedSourceFormulaFamily, PlacementDomainTransport, SourceCoord, SourceFamilyId,
-    SourceRect,
+    DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
+    ExplicitPartitionLegacyMembers, FormulaCompressedSourceReport, FormulaIngestBatch,
+    FormulaParsePolicy, FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
+    PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport, SourceCoord,
+    SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
@@ -131,6 +132,7 @@ fn family(shape: Shape, source_index: usize) -> PartitionedSourceFormulaFamily {
             ),
         };
     PartitionedSourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(source_index as u64),
         source_id: SourceFamilyId {
             sheet_instance: 404,
             source_index,
@@ -147,6 +149,7 @@ fn family(shape: Shape, source_index: usize) -> PartitionedSourceFormulaFamily {
 
 fn relative_replay_family(source_index: usize) -> PartitionedSourceFormulaFamily {
     PartitionedSourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(source_index as u64),
         source_id: SourceFamilyId {
             sheet_instance: 404,
             source_index,
@@ -191,6 +194,7 @@ fn relative_replay_family(source_index: usize) -> PartitionedSourceFormulaFamily
 
 fn cross_fragment_family(source_index: usize, cycle: bool) -> PartitionedSourceFormulaFamily {
     PartitionedSourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(source_index as u64),
         source_id: SourceFamilyId {
             sheet_instance: 404,
             source_index,
@@ -251,6 +255,7 @@ fn formulas_for_with_ordinary(
                 PartitionLegacyMemberKind::OrdinaryException => ordinary_text.to_string(),
             };
             let replay = crate::engine::DeferredReplayFormula {
+                source_order: crate::engine::SourceFormulaOrder::new(0),
                 row: member.coord.row + 1,
                 col: member.coord.col + 1,
                 text,
@@ -325,7 +330,7 @@ fn transaction_for_source(
 ) {
     let (mut engine, revision) = make_engine_and_revision();
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let legacy = formulas_for(&mut engine, &source);
     let mut disposition = FormulaReplayDisposition::default();
@@ -349,6 +354,65 @@ fn transaction(
     transaction_for_source(family(shape, source_index))
 }
 
+struct PartitionSetReplay {
+    source: PartitionedSourceFormulaFamily,
+    initial: Vec<DeferredReplayFormula>,
+    full: Vec<DeferredReplayFormula>,
+    fail_full: bool,
+}
+
+impl DeferredFormulaReplay for PartitionSetReplay {
+    fn replay(
+        &mut self,
+        _disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        if self.fail_full {
+            Err("injected whole-family replay failure".to_string())
+        } else {
+            Ok(self.full.clone())
+        }
+    }
+
+    fn replay_partitioned(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+        _partitions: &[PartitionedSourceFormulaFamily],
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        if disposition.partition_disposition(&self.source, self.source.template_origin0)
+            == Some(crate::engine::FormulaReplayCoordinateDisposition::Direct)
+        {
+            Ok(self.initial.clone())
+        } else if self.fail_full {
+            Err("injected whole-family replay failure".to_string())
+        } else {
+            Ok(self.full.clone())
+        }
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        Ok(self
+            .full
+            .iter()
+            .find(|record| record.row == row && record.col == col)
+            .cloned())
+    }
+}
+
+fn replay_record(
+    source: SourceFamilyId,
+    coord: SourceCoord,
+    kind: PartitionLegacyMemberKind,
+) -> DeferredReplayFormula {
+    DeferredReplayFormula {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        row: coord.row + 1,
+        col: coord.col + 1,
+        text: "$A$1+1".to_string(),
+        family: (kind == PartitionLegacyMemberKind::SharedFamilyMember).then_some(source),
+        partition_owner: Some(source),
+    }
+}
+
 fn state(engine: &Engine<TestWorkbook>) -> String {
     format!(
         "{:?}|{:?}|{:?}|{:?}|{:?}",
@@ -361,11 +425,508 @@ fn state(engine: &Engine<TestWorkbook>) -> String {
 }
 
 #[test]
+fn eager_partition_initial_replay_rejects_missing_and_extra_legacy_ownership() {
+    for extra in [false, true] {
+        let mut engine = make_engine();
+        let source = family(Shape::Row, 90 + usize::from(extra));
+        let expected: Vec<_> = source
+            .legacy_members
+            .as_slice()
+            .iter()
+            .map(|member| replay_record(source.source_id, member.coord, member.kind))
+            .collect();
+        let mut initial = if extra {
+            expected.clone()
+        } else {
+            expected.iter().take(1).cloned().collect()
+        };
+        if extra {
+            initial.push(replay_record(
+                source.source_id,
+                SourceCoord { row: 6, col: 2 },
+                PartitionLegacyMemberKind::SharedFamilyMember,
+            ));
+        }
+        let full = (0..=5)
+            .map(|row| {
+                replay_record(
+                    source.source_id,
+                    SourceCoord { row, col: 2 },
+                    if row == 3 {
+                        PartitionLegacyMemberKind::OrdinaryException
+                    } else {
+                        PartitionLegacyMemberKind::SharedFamilyMember
+                    },
+                )
+            })
+            .collect();
+        let preparation = engine
+            .source_formula_ingress()
+            .prepare_eager_proposals(
+                "Sheet1",
+                &[],
+                std::slice::from_ref(&source),
+                6,
+                Box::new(PartitionSetReplay {
+                    source: source.clone(),
+                    initial,
+                    full,
+                    fail_full: false,
+                }),
+            )
+            .unwrap();
+        assert!(preparation.fragmented.is_empty());
+        assert_eq!(
+            preparation
+                .rejected
+                .get(&source.source_id)
+                .map(String::as_str),
+            Some("ExactReplayLegacySetMismatch")
+        );
+        assert_eq!(preparation.eager_replay.len(), 6);
+        assert_eq!(preparation.preparation_spool_replays, 2);
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+        assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    }
+}
+
+#[test]
+fn clean_families_follow_source_order_not_shared_index_order() {
+    struct EmptyReplay;
+    impl DeferredFormulaReplay for EmptyReplay {
+        fn replay(
+            &mut self,
+            _disposition: &FormulaReplayDisposition,
+        ) -> Result<Vec<DeferredReplayFormula>, String> {
+            Ok(Vec::new())
+        }
+
+        fn formula_at(
+            &mut self,
+            _row: u32,
+            _col: u32,
+        ) -> Result<Option<DeferredReplayFormula>, String> {
+            Ok(None)
+        }
+    }
+
+    let mut engine = make_engine();
+    let later_low_si = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(10),
+        source_id: SourceFamilyId {
+            sheet_instance: 404,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 6 },
+        anchor_text: Arc::from("$A$1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 1,
+            col: 6,
+        }),
+        member_count: 2,
+    };
+    let earlier_high_si = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 404,
+            source_index: 99,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 5 },
+        anchor_text: Arc::from("$A$1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 1,
+            col: 5,
+        }),
+        member_count: 2,
+    };
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_eager_proposals(
+            "Sheet1",
+            &[later_low_si, earlier_high_si],
+            &[],
+            4,
+            Box::new(EmptyReplay),
+        )
+        .unwrap();
+    engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 2,
+                family_cells_seen: 4,
+                source_clean_families: 2,
+                source_clean_cells: 4,
+                ..FormulaCompressedSourceReport::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+
+    let spans = engine.graph.formula_authority().active_span_refs();
+    assert_eq!(spans.len(), 2);
+    let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
+    let first = engine
+        .graph
+        .formula_authority()
+        .plane
+        .spans
+        .get(spans[0])
+        .unwrap();
+    assert!(
+        first
+            .domain
+            .contains(crate::formula_plane::runtime::PlacementCoord::new(
+                sheet_id, 0, 5
+            ))
+    );
+}
+
+#[test]
+fn late_fallback_replay_failure_keeps_current_family_untouched_and_publishes_prior_clean_commit() {
+    let mut engine = make_engine();
+    let source = family(Shape::Row, 99);
+    let initial = source
+        .legacy_members
+        .as_slice()
+        .iter()
+        .map(|member| replay_record(source.source_id, member.coord, member.kind))
+        .collect();
+    let full = (0..=5)
+        .map(|row| {
+            replay_record(
+                source.source_id,
+                SourceCoord { row, col: 2 },
+                if row == 3 {
+                    PartitionLegacyMemberKind::OrdinaryException
+                } else {
+                    PartitionLegacyMemberKind::SharedFamilyMember
+                },
+            )
+        })
+        .collect();
+    let clean = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 404,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 5 },
+        anchor_text: Arc::from("$A$1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 1,
+            col: 5,
+        }),
+        member_count: 2,
+    };
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_eager_proposals(
+            "Sheet1",
+            std::slice::from_ref(&clean),
+            std::slice::from_ref(&source),
+            8,
+            Box::new(PartitionSetReplay {
+                source: source.clone(),
+                initial,
+                full,
+                fail_full: true,
+            }),
+        )
+        .unwrap();
+    engine.set_fragmented_commit_fault_for_test(FragmentedCommitFault::FormulaPlaneFinalCheck);
+    let report = FormulaCompressedSourceReport {
+        families_seen: 2,
+        family_cells_seen: 7,
+        source_clean_families: 1,
+        source_clean_cells: 2,
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: 5,
+        source_fragment_count: 2,
+        source_hole_exclusions: 1,
+        source_ordinary_exclusions: 1,
+        replay_families: 2,
+        replay_cells: 7,
+        ..FormulaCompressedSourceReport::default()
+    };
+    let error = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            report,
+            preparation,
+        )])
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("injected whole-family replay failure"),
+        "{error}"
+    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    let published = engine
+        .last_formula_ingest_report()
+        .expect("prior clean commit report published");
+    assert_eq!(published.source_family_promoted, 1, "{published:?}");
+    assert_eq!(published.source_family_promoted_cells, 2, "{published:?}");
+    assert_eq!(published.source_partitioned_families_prepared, 0);
+}
+
+#[test]
+fn late_fallback_parse_failure_keeps_current_family_untouched_and_reports_prior_commit() {
+    let mut engine = make_engine();
+    engine.config.formula_parse_policy = FormulaParsePolicy::Strict;
+    let source = family(Shape::Row, 98);
+    let initial = source
+        .legacy_members
+        .as_slice()
+        .iter()
+        .map(|member| replay_record(source.source_id, member.coord, member.kind))
+        .collect();
+    let mut full: Vec<_> = (0..=5)
+        .map(|row| {
+            replay_record(
+                source.source_id,
+                SourceCoord { row, col: 2 },
+                if row == 3 {
+                    PartitionLegacyMemberKind::OrdinaryException
+                } else {
+                    PartitionLegacyMemberKind::SharedFamilyMember
+                },
+            )
+        })
+        .collect();
+    full[0].text = "(".to_string();
+    let clean = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 404,
+            source_index: 2,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 5 },
+        anchor_text: Arc::from("$A$1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 1,
+            col: 5,
+        }),
+        member_count: 2,
+    };
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_eager_proposals(
+            "Sheet1",
+            std::slice::from_ref(&clean),
+            std::slice::from_ref(&source),
+            8,
+            Box::new(PartitionSetReplay {
+                source: source.clone(),
+                initial,
+                full,
+                fail_full: false,
+            }),
+        )
+        .unwrap();
+    engine.set_fragmented_commit_fault_for_test(FragmentedCommitFault::FormulaPlaneFinalCheck);
+    let report = FormulaCompressedSourceReport {
+        families_seen: 2,
+        family_cells_seen: 7,
+        source_clean_families: 1,
+        source_clean_cells: 2,
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: 5,
+        source_fragment_count: 2,
+        source_hole_exclusions: 1,
+        source_ordinary_exclusions: 1,
+        replay_families: 2,
+        replay_cells: 7,
+        ..FormulaCompressedSourceReport::default()
+    };
+    let error = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            report,
+            preparation,
+        )])
+        .unwrap_err();
+    assert!(error.to_string().contains("ParserError"), "{error}");
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    let published = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(published.source_family_promoted, 1, "{published:?}");
+    assert_eq!(published.source_family_promoted_cells, 2, "{published:?}");
+    assert_eq!(published.source_partitioned_families_prepared, 0);
+}
+
+#[test]
+fn late_fallback_success_reports_exact_whole_family_e2_deltas_once() {
+    let mut engine = make_engine();
+    let source = family(Shape::Row, 100);
+    let initial = source
+        .legacy_members
+        .as_slice()
+        .iter()
+        .map(|member| replay_record(source.source_id, member.coord, member.kind))
+        .collect();
+    let full = (0..=5)
+        .map(|row| {
+            replay_record(
+                source.source_id,
+                SourceCoord { row, col: 2 },
+                if row == 3 {
+                    PartitionLegacyMemberKind::OrdinaryException
+                } else {
+                    PartitionLegacyMemberKind::SharedFamilyMember
+                },
+            )
+        })
+        .collect();
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_eager_proposals(
+            "Sheet1",
+            &[],
+            std::slice::from_ref(&source),
+            6,
+            Box::new(PartitionSetReplay {
+                source: source.clone(),
+                initial,
+                full,
+                fail_full: false,
+            }),
+        )
+        .unwrap();
+    engine.set_fragmented_commit_fault_for_test(FragmentedCommitFault::FormulaPlaneFinalCheck);
+    let report = FormulaCompressedSourceReport {
+        families_seen: 1,
+        family_cells_seen: 5,
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: 5,
+        source_fragment_count: 2,
+        source_hole_exclusions: 1,
+        source_ordinary_exclusions: 1,
+        replay_families: 1,
+        replay_cells: 5,
+        ..FormulaCompressedSourceReport::default()
+    };
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            report,
+            preparation,
+        )])
+        .unwrap();
+    assert_eq!(report.formula_cells_seen, 6, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 6, "{report:?}");
+    assert_eq!(report.graph_vertices_created, 6, "{report:?}");
+    assert_eq!(report.graph_edges_created, 6, "{report:?}");
+    assert_eq!(report.source_spool_replays, 2, "{report:?}");
+    assert_eq!(report.source_family_promoted, 0, "{report:?}");
+    assert_eq!(report.source_family_fallback, 1, "{report:?}");
+    assert_eq!(report.source_family_fallback_cells, 5, "{report:?}");
+    assert_eq!(report.source_partitioned_families_prepared, 0, "{report:?}");
+    assert_eq!(report.source_partitioned_families_rejected, 1, "{report:?}");
+    assert_eq!(report.source_partition_failures, 1, "{report:?}");
+    assert_eq!(report.source_partition_fallback_cells, 5, "{report:?}");
+    assert_eq!(report.source_anchor_parses, 1, "{report:?}");
+    assert_eq!(report.source_anchor_asts, 1, "{report:?}");
+    assert_eq!(report.source_anchor_analyses, 1, "{report:?}");
+    assert_eq!(
+        report
+            .fallback_reasons
+            .get("Injected(FormulaPlaneFinalCheck)"),
+        Some(&1),
+        "{report:?}"
+    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 6);
+}
+
+#[test]
+fn provider_change_after_fallback_validation_fails_before_mutation() {
+    let (mut engine, revision) = make_engine_and_revision();
+    let source = family(Shape::Row, 101);
+    let initial = source
+        .legacy_members
+        .as_slice()
+        .iter()
+        .map(|member| replay_record(source.source_id, member.coord, member.kind))
+        .collect();
+    let full = (0..=5)
+        .map(|row| {
+            replay_record(
+                source.source_id,
+                SourceCoord { row, col: 2 },
+                if row == 3 {
+                    PartitionLegacyMemberKind::OrdinaryException
+                } else {
+                    PartitionLegacyMemberKind::SharedFamilyMember
+                },
+            )
+        })
+        .collect();
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_eager_proposals(
+            "Sheet1",
+            &[],
+            std::slice::from_ref(&source),
+            6,
+            Box::new(PartitionSetReplay {
+                source: source.clone(),
+                initial,
+                full,
+                fail_full: false,
+            }),
+        )
+        .unwrap();
+    engine.set_fragmented_commit_fault_for_test(FragmentedCommitFault::FormulaPlaneFinalCheck);
+    engine.set_before_legacy_fallback_final_provider_sample_hook(move || {
+        revision.fetch_add(1, Ordering::AcqRel);
+    });
+    let report = FormulaCompressedSourceReport {
+        families_seen: 1,
+        family_cells_seen: 5,
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: 5,
+        source_fragment_count: 2,
+        source_hole_exclusions: 1,
+        source_ordinary_exclusions: 1,
+        replay_families: 1,
+        replay_cells: 5,
+        ..FormulaCompressedSourceReport::default()
+    };
+    let error = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            report,
+            preparation,
+        )])
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("changed after whole-family fallback validation"),
+        "{error}"
+    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
 fn composition_is_read_only_and_rejects_inexact_ownership() {
     let mut engine = make_engine();
     let source = family(Shape::Row, 1);
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let legacy = formulas_for(&mut engine, &source);
     let mut disposition = FormulaReplayDisposition::default();
@@ -395,7 +956,7 @@ fn composition_is_read_only_and_rejects_inexact_ownership() {
 
     let mut engine = make_engine();
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let mut legacy = formulas_for(&mut engine, &source);
     legacy.pop();
@@ -406,7 +967,7 @@ fn composition_is_read_only_and_rejects_inexact_ownership() {
 
     let mut engine = make_engine();
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let legacy = formulas_for(&mut engine, &source);
     let stale = FormulaReplayDisposition::default();
@@ -422,7 +983,7 @@ fn cross_fragment_chain_and_cycle_select_exact_replay_before_composed_mutation()
         let mut engine = make_engine();
         let source = cross_fragment_family(source_index, cycle);
         let prepared = engine
-            .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+            .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
             .unwrap();
         let mut disposition = FormulaReplayDisposition::default();
         disposition.register_partition(&source, true).unwrap();
@@ -546,7 +1107,7 @@ fn exact_relative_replay_owns_relocated_ast_text_plan_and_value() {
     let mut engine = make_engine();
     let source = relative_replay_family(39);
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let legacy = formulas_for(&mut engine, &source);
     let exact_texts: Vec<_> = legacy
@@ -612,7 +1173,7 @@ fn direct_name_definition_change_replays_whole_family_without_mutation() {
         holes: 2,
     };
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let legacy = formulas_for(&mut engine, &source);
     let mut disposition = FormulaReplayDisposition::default();
@@ -660,7 +1221,7 @@ fn e4_legacy_table_and_source_metadata_changes_replay_before_mutation() {
         .unwrap();
     let source = ordinary_only_family(41);
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let legacy = formulas_for_with_ordinary(&mut engine, &source, "=SUM(T[A])");
     let mut disposition = FormulaReplayDisposition::default();
@@ -698,7 +1259,7 @@ fn e4_legacy_table_and_source_metadata_changes_replay_before_mutation() {
     engine.define_source_scalar("S", Some(1)).unwrap();
     let source = ordinary_only_family(42);
     let prepared = engine
-        .analyze_partitioned_source_family_for_transaction_for_test("Sheet1", &source)
+        .analyze_partitioned_source_family_for_transaction("Sheet1", &source)
         .unwrap();
     let legacy = formulas_for_with_ordinary(&mut engine, &source, "=S+1");
     let mut disposition = FormulaReplayDisposition::default();
@@ -750,6 +1311,8 @@ fn row_column_and_rect_success_commit_graph_then_plane_and_return_local_deltas()
             source.reconciliation.holes
         );
         assert_eq!(success.report_delta.graph_formula_cells_materialized, 2);
+        assert_eq!(success.report_delta.graph_vertices_created, 2);
+        assert_eq!(success.report_delta.graph_edges_created, 2);
         assert_eq!(
             engine.baseline_stats().formula_plane_active_span_count,
             source.fragments.len()

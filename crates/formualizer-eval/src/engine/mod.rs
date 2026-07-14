@@ -58,11 +58,11 @@ pub use formula_source::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
     ExplicitPartitionLegacyMembers, ExplicitSourceFamilyMembers, FormulaCompressedPreparation,
     FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
-    FormulaReplayCoordinateDisposition, FormulaReplayDisposition,
+    FormulaReplayCoordinateDisposition, FormulaReplayDisposition, FormulaReplayPartitionRouter,
     MAX_EXPLICIT_SOURCE_FAMILY_MEMBERS, MAX_PARTITIONED_SOURCE_FAMILY_FRAGMENTS,
     PartitionLegacyMember, PartitionLegacyMemberKind, PartitionReconciliation,
     PartitionedSourceFormulaFamily, PlacementDomainTransport, SourceCoord, SourceFamilyId,
-    SourceFamilyMembers, SourceFormulaFamily, SourceRect,
+    SourceFamilyMembers, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
 };
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation

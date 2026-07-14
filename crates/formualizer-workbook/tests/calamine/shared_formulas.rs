@@ -90,6 +90,153 @@ fn fragmented_shared_xlsx() -> Vec<u8> {
     })
 }
 
+fn large_fragmented_vertical_xlsx(
+    rows: u32,
+    hole: u32,
+    ordinary: u32,
+    with_clean_family: bool,
+) -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+    for row in 1..=rows {
+        sheet.get_cell_mut((1, row)).set_value_number(row as f64);
+        if row != hole {
+            sheet
+                .get_cell_mut((2, row))
+                .set_formula(if row == ordinary {
+                    format!("A{row}+100")
+                } else {
+                    format!("A{row}+1")
+                });
+        }
+        if with_clean_family {
+            sheet
+                .get_cell_mut((3, row))
+                .set_value_number(f64::from(row) * 10.0);
+            sheet
+                .get_cell_mut((4, row))
+                .set_formula(format!("C{row}+1"));
+        }
+    }
+    let mut original = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut original).unwrap();
+    rewrite_sheet_xml(original, |mut xml| {
+        xml = xml.replace(
+            "<f>A1+1</f>",
+            &format!("<f t=\"shared\" si=\"46\" ref=\"B1:B{rows}\">A1+1</f>"),
+        );
+        for row in 2..=rows {
+            if row != hole && row != ordinary {
+                xml = xml.replace(
+                    &format!("<f>A{row}+1</f>"),
+                    "<f t=\"shared\" si=\"46\"></f>",
+                );
+            }
+        }
+        if with_clean_family {
+            xml = xml.replace(
+                "<f>C1+1</f>",
+                &format!("<f t=\"shared\" si=\"47\" ref=\"D1:D{rows}\">C1+1</f>"),
+            );
+            for row in 2..=rows {
+                xml = xml.replace(
+                    &format!("<f>C{row}+1</f>"),
+                    "<f t=\"shared\" si=\"47\"></f>",
+                );
+            }
+        }
+        xml
+    })
+}
+
+fn excel_col(mut col: u32) -> String {
+    let mut out = String::new();
+    while col != 0 {
+        col -= 1;
+        out.insert(0, (b'A' + (col % 26) as u8) as char);
+        col /= 26;
+    }
+    out
+}
+
+fn large_fragmented_horizontal_xlsx(cols: u32, hole: u32, ordinary: u32) -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+    for col in 1..=cols {
+        sheet
+            .get_cell_mut((col, 1))
+            .set_value_number(f64::from(col));
+        if col != hole {
+            let column = excel_col(col);
+            sheet
+                .get_cell_mut((col, 2))
+                .set_formula(if col == ordinary {
+                    format!("{column}1+100")
+                } else {
+                    format!("{column}1+1")
+                });
+        }
+    }
+    let mut original = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut original).unwrap();
+    rewrite_sheet_xml(original, |mut xml| {
+        xml = xml.replace(
+            "<f>A1+1</f>",
+            &format!(
+                "<f t=\"shared\" si=\"48\" ref=\"A2:{}2\">A1+1</f>",
+                excel_col(cols)
+            ),
+        );
+        for col in 2..=cols {
+            if col != hole && col != ordinary {
+                xml = xml.replace(
+                    &format!("<f>{}1+1</f>", excel_col(col)),
+                    "<f t=\"shared\" si=\"48\"></f>",
+                );
+            }
+        }
+        xml
+    })
+}
+
+fn fragmented_rect_xlsx() -> Vec<u8> {
+    let mut book = umya_spreadsheet::new_file();
+    let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
+    for row in 1..=12 {
+        sheet
+            .get_cell_mut((1, row))
+            .set_value_number(f64::from(row));
+        for col in 2..=13 {
+            if (row, col) == (6, 6) {
+                continue;
+            }
+            sheet
+                .get_cell_mut((col, row))
+                .set_formula(if (row, col) == (9, 9) {
+                    "$A$9+100".to_string()
+                } else {
+                    format!("$A{row}+1")
+                });
+        }
+    }
+    let mut original = Vec::new();
+    umya_spreadsheet::writer::xlsx::write_writer(&book, &mut original).unwrap();
+    rewrite_sheet_xml(original, |mut xml| {
+        xml = xml.replacen(
+            "<f>$A1+1</f>",
+            "<f t=\"shared\" si=\"49\" ref=\"B1:M12\">$A1+1</f>",
+            1,
+        );
+        for row in 1..=12 {
+            xml = xml.replace(
+                &format!("<f>$A{row}+1</f>"),
+                "<f t=\"shared\" si=\"49\"></f>",
+            );
+        }
+        xml
+    })
+}
+
 fn fragmented_constant_shared_xlsx() -> Vec<u8> {
     let mut book = umya_spreadsheet::new_file();
     let sheet = book.get_sheet_by_name_mut("Sheet1").unwrap();
@@ -623,7 +770,11 @@ fn fragmented_family_replays_whole_and_exact_eager_deferred_in_every_mode() {
                 assert_eq!(report.source_partition_fallback_cells, 0);
                 assert_eq!(report.shadow_fallback_cells, 4);
             } else {
-                assert_eq!(report.source_partitioned_families_rejected, 0);
+                assert_eq!(
+                    report.source_partitioned_families_rejected,
+                    u64::from(mode == FormulaPlaneMode::AuthoritativeExperimental && !deferred),
+                    "{mode:?}/{deferred}: {report:?}"
+                );
                 assert_eq!(report.source_partitioned_families_prepared, 0);
             }
         }
@@ -631,10 +782,15 @@ fn fragmented_family_replays_whole_and_exact_eager_deferred_in_every_mode() {
 }
 
 #[test]
-fn fragmented_constant_family_prepares_once_across_eager_and_deferred_shadow() {
-    for deferred in [false, true] {
+fn fragmented_constant_family_prepares_once_and_only_eager_authority_commits() {
+    for (mode, deferred) in [
+        (FormulaPlaneMode::Shadow, false),
+        (FormulaPlaneMode::Shadow, true),
+        (FormulaPlaneMode::AuthoritativeExperimental, false),
+        (FormulaPlaneMode::AuthoritativeExperimental, true),
+    ] {
         let config = EvalConfig {
-            formula_plane_mode: FormulaPlaneMode::Shadow,
+            formula_plane_mode: mode,
             defer_graph_building: deferred,
             ..EvalConfig::default()
         };
@@ -658,17 +814,175 @@ fn fragmented_constant_family_prepares_once_across_eager_and_deferred_shadow() {
         );
         let report = engine.last_formula_ingest_report().unwrap();
         assert_eq!(report.source_partitioned_families_seen, 1, "{report:?}");
-        assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
-        assert_eq!(report.source_partitioned_families_rejected, 0, "{report:?}");
-        assert_eq!(report.source_anchor_parses, 1, "{report:?}");
-        assert_eq!(report.source_anchor_asts, 1, "{report:?}");
-        assert_eq!(report.source_anchor_analyses, 1, "{report:?}");
-        assert_eq!(report.source_partition_fragments_prepared, 1, "{report:?}");
-        assert_eq!(report.source_partition_span_cells_prepared, 2, "{report:?}");
-        assert_eq!(report.source_partition_fallback_cells, 2, "{report:?}");
-        assert_eq!(report.graph_formula_cells_materialized, 5, "{report:?}");
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+        if mode == FormulaPlaneMode::AuthoritativeExperimental && !deferred {
+            assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+            assert_eq!(report.source_partitioned_families_rejected, 0, "{report:?}");
+            assert_eq!(report.source_family_promoted, 1, "{report:?}");
+            assert_eq!(report.source_family_fallback, 0, "{report:?}");
+            assert_eq!(report.graph_formula_cells_materialized, 3, "{report:?}");
+            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        } else {
+            assert_eq!(report.source_family_promoted, 0, "{report:?}");
+            assert_eq!(report.graph_formula_cells_materialized, 5, "{report:?}");
+            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+        }
+        if mode == FormulaPlaneMode::Shadow {
+            assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+            assert_eq!(report.source_anchor_parses, 1, "{report:?}");
+            assert_eq!(report.source_anchor_asts, 1, "{report:?}");
+            assert_eq!(report.source_anchor_analyses, 1, "{report:?}");
+            assert_eq!(report.source_partition_fragments_prepared, 1, "{report:?}");
+            assert_eq!(report.source_partition_span_cells_prepared, 2, "{report:?}");
+            assert_eq!(report.source_partition_fallback_cells, 2, "{report:?}");
+        }
     }
+}
+
+#[test]
+fn eager_fragmented_relative_family_preserves_replay_values_lookup_edits_and_structure() {
+    fn loaded(
+        mode: FormulaPlaneMode,
+        deferred: bool,
+    ) -> Engine<formualizer_eval::test_workbook::TestWorkbook> {
+        let config = EvalConfig {
+            formula_plane_mode: mode,
+            defer_graph_building: deferred,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+        let mut adapter =
+            CalamineAdapter::open_bytes(large_fragmented_vertical_xlsx(120, 40, 80, false))
+                .unwrap();
+        adapter.stream_into_engine(&mut engine).unwrap();
+        if deferred {
+            engine.build_graph_all().unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        engine
+    }
+
+    let mut replay = loaded(FormulaPlaneMode::Off, false);
+    let mut direct = loaded(FormulaPlaneMode::AuthoritativeExperimental, false);
+    let report = direct.last_formula_ingest_report().unwrap();
+    assert_eq!(report.source_family_promoted, 1, "{report:?}");
+    assert_eq!(report.source_family_fallback, 0, "{report:?}");
+    assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+    assert_eq!(report.source_partition_fragments_prepared, 3, "{report:?}");
+    assert_eq!(
+        report.source_partition_span_cells_prepared, 118,
+        "{report:?}"
+    );
+    assert_eq!(report.source_partition_holes, 1, "{report:?}");
+    assert_eq!(report.source_partition_ordinary_exceptions, 1, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 1, "{report:?}");
+    assert_eq!(report.source_spool_replays, 1, "{report:?}");
+    assert_eq!(direct.baseline_stats().formula_plane_active_span_count, 3);
+
+    for row in [1, 39, 41, 79, 80, 81, 120] {
+        assert_eq!(
+            direct.get_cell_value("Sheet1", row, 2),
+            replay.get_cell_value("Sheet1", row, 2),
+            "row {row}"
+        );
+    }
+    assert_eq!(direct.get_cell_value("Sheet1", 40, 2), None);
+    assert_eq!(
+        direct.get_cell_value("Sheet1", 80, 2),
+        Some(LiteralValue::Number(180.0))
+    );
+    let ast = direct.get_cell("Sheet1", 120, 2).unwrap().0.unwrap();
+    assert_eq!(
+        ast.fingerprint(),
+        formualizer_parse::parser::parse("=A120+1")
+            .unwrap()
+            .fingerprint()
+    );
+
+    for engine in [&mut replay, &mut direct] {
+        engine
+            .set_cell_value("Sheet1", 20, 2, LiteralValue::Number(999.0))
+            .unwrap();
+        engine.insert_rows("Sheet1", 60, 2).unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    for row in [1, 20, 39, 41, 61, 81, 82, 83, 122] {
+        assert_eq!(
+            direct.get_cell_value("Sheet1", row, 2),
+            replay.get_cell_value("Sheet1", row, 2),
+            "post-edit row {row}"
+        );
+    }
+
+    let deferred = loaded(FormulaPlaneMode::AuthoritativeExperimental, true);
+    let deferred_report = deferred.last_formula_ingest_report().unwrap();
+    assert_eq!(deferred_report.graph_formula_cells_materialized, 119);
+    assert_eq!(deferred.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(deferred_report.source_partitioned_families_prepared, 0);
+}
+
+#[test]
+fn eager_fragmented_row_and_rect_domains_relocate_without_synthesizing_holes() {
+    for (fixture, checks) in [
+        (
+            large_fragmented_horizontal_xlsx(120, 40, 80),
+            vec![(2, 1, 2.0), (2, 39, 40.0), (2, 80, 180.0), (2, 120, 121.0)],
+        ),
+        (
+            fragmented_rect_xlsx(),
+            vec![(1, 2, 2.0), (6, 5, 7.0), (9, 9, 109.0), (12, 13, 13.0)],
+        ),
+    ] {
+        let config = EvalConfig {
+            formula_plane_mode: FormulaPlaneMode::AuthoritativeExperimental,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+        let mut adapter = CalamineAdapter::open_bytes(fixture).unwrap();
+        adapter.stream_into_engine(&mut engine).unwrap();
+        engine.evaluate_all().unwrap();
+        let report = engine.last_formula_ingest_report().unwrap();
+        assert_eq!(report.source_family_promoted, 1, "{report:?}");
+        assert_eq!(report.source_family_fallback, 0, "{report:?}");
+        assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+        assert_eq!(report.source_partition_holes, 1, "{report:?}");
+        assert_eq!(report.source_partition_ordinary_exceptions, 1, "{report:?}");
+        assert!(engine.baseline_stats().formula_plane_active_span_count >= 2);
+        for (row, col, expected) in checks {
+            assert_eq!(
+                engine.get_cell_value("Sheet1", row, col),
+                Some(LiteralValue::Number(expected)),
+                "R{row}C{col}: {report:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn eager_mixed_clean_and_fragmented_families_commit_without_cross_family_staleness() {
+    let config = EvalConfig {
+        formula_plane_mode: FormulaPlaneMode::AuthoritativeExperimental,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+    let mut adapter =
+        CalamineAdapter::open_bytes(large_fragmented_vertical_xlsx(120, 40, 80, true)).unwrap();
+    adapter.stream_into_engine(&mut engine).unwrap();
+    engine.evaluate_all().unwrap();
+
+    let report = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(report.source_family_promoted, 2, "{report:?}");
+    assert_eq!(report.source_family_fallback, 0, "{report:?}");
+    assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+    assert_eq!(report.graph_formula_cells_materialized, 1, "{report:?}");
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 4);
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 120, 2),
+        Some(LiteralValue::Number(121.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 120, 4),
+        Some(LiteralValue::Number(1201.0))
+    );
 }
 
 #[test]

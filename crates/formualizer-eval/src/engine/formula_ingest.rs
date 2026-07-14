@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::FormulaPlaneMode;
 use super::arena::AstNodeId;
+use super::formula_source::{SourceFamilyId, SourceFormulaOrder};
 
 #[derive(Clone, Debug)]
 pub struct FormulaIngestRecord {
@@ -10,6 +11,9 @@ pub struct FormulaIngestRecord {
     pub col: u32,
     pub ast_id: AstNodeId,
     pub formula_text: Option<Arc<str>>,
+    pub(crate) source_order: Option<SourceFormulaOrder>,
+    pub(crate) source_family: Option<SourceFamilyId>,
+    pub(crate) partition_owner: Option<SourceFamilyId>,
 }
 
 impl FormulaIngestRecord {
@@ -19,7 +23,22 @@ impl FormulaIngestRecord {
             col,
             ast_id,
             formula_text,
+            source_order: None,
+            source_family: None,
+            partition_owner: None,
         }
+    }
+
+    pub(crate) fn with_source_proof(
+        mut self,
+        source_order: SourceFormulaOrder,
+        source_family: Option<SourceFamilyId>,
+        partition_owner: Option<SourceFamilyId>,
+    ) -> Self {
+        self.source_order = Some(source_order);
+        self.source_family = source_family;
+        self.partition_owner = partition_owner;
+        self
     }
 }
 

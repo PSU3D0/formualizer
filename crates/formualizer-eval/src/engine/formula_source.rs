@@ -27,6 +27,18 @@ pub struct SourceFamilyId {
     pub source_index: usize,
 }
 
+/// Opaque workbook-backend source ordering proof. The evaluator compares
+/// tokens but does not derive them from coordinates or source-family ids.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SourceFormulaOrder(u64);
+
+impl SourceFormulaOrder {
+    pub fn new(sequence: u64) -> Self {
+        Self(sequence)
+    }
+}
+
 /// Maximum amount of coordinate evidence accepted by the generic transport.
 /// Larger or sparse families must stay behind backend-owned exact replay.
 #[doc(hidden)]
@@ -220,6 +232,7 @@ pub enum SourceFamilyMembers {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SourceFormulaFamily {
     pub source_id: SourceFamilyId,
+    pub source_order: SourceFormulaOrder,
     pub anchor_coord0: SourceCoord,
     pub anchor_text: Arc<str>,
     pub members: SourceFamilyMembers,
@@ -234,6 +247,7 @@ pub struct SourceFormulaFamily {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedSourceFormulaFamily {
     pub source_id: SourceFamilyId,
+    pub source_order: SourceFormulaOrder,
     pub template_origin0: SourceCoord,
     pub template_text: Arc<str>,
     pub declared: SourceRect,
@@ -551,7 +565,8 @@ impl FormulaReplayDisposition {
         })
     }
 
-    pub(crate) fn partition_disposition(
+    #[doc(hidden)]
+    pub fn partition_disposition(
         &self,
         family: &PartitionedSourceFormulaFamily,
         coord: SourceCoord,
@@ -580,6 +595,194 @@ impl FormulaReplayDisposition {
             .iter()
             .any(|fragment| source_rect_contains(fragment.rect(), coord))
             .then(|| self.shared_disposition(family.source_id, coord))
+    }
+}
+
+/// Transaction-local point router over partition domains. It indexes the
+/// existing rectangular transports without introducing another authority or
+/// persistence format.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct FormulaReplayPartitionRouter {
+    families: BTreeMap<SourceFamilyId, FormulaReplayFamilyRouter>,
+}
+
+#[derive(Debug)]
+struct FormulaReplayFamilyRouter {
+    declared: SourceRect,
+    legacy: BTreeMap<SourceCoord, PartitionLegacyMemberKind>,
+    direct: Option<Box<FormulaReplayRectNode>>,
+}
+
+#[derive(Debug)]
+struct FormulaReplayRectNode {
+    row_center: u32,
+    by_col: Vec<SourceRect>,
+    left: Option<Box<FormulaReplayRectNode>>,
+    right: Option<Box<FormulaReplayRectNode>>,
+}
+
+impl FormulaReplayRectNode {
+    fn build(mut rects: Vec<SourceRect>) -> Option<Box<Self>> {
+        if rects.is_empty() {
+            return None;
+        }
+        let middle = rects.len() / 2;
+        rects.select_nth_unstable_by_key(middle, |rect| {
+            rect.start.row + (rect.end.row - rect.start.row) / 2
+        });
+        let pivot = rects[middle];
+        let row_center = pivot.start.row + (pivot.end.row - pivot.start.row) / 2;
+        let mut left = Vec::new();
+        let mut right = Vec::new();
+        let mut by_col = Vec::new();
+        for rect in rects {
+            if rect.end.row < row_center {
+                left.push(rect);
+            } else if rect.start.row > row_center {
+                right.push(rect);
+            } else {
+                by_col.push(rect);
+            }
+        }
+        by_col.sort_unstable_by_key(|rect| (rect.start.col, rect.end.col));
+        Some(Box::new(Self {
+            row_center,
+            by_col,
+            left: Self::build(left),
+            right: Self::build(right),
+        }))
+    }
+
+    fn contains(&self, coord: SourceCoord) -> bool {
+        let insertion = self
+            .by_col
+            .partition_point(|rect| rect.start.col <= coord.col);
+        if insertion > 0 && source_rect_contains(self.by_col[insertion - 1], coord) {
+            return true;
+        }
+        if coord.row < self.row_center {
+            self.left
+                .as_deref()
+                .is_some_and(|child| child.contains(coord))
+        } else if coord.row > self.row_center {
+            self.right
+                .as_deref()
+                .is_some_and(|child| child.contains(coord))
+        } else {
+            false
+        }
+    }
+}
+
+impl FormulaReplayPartitionRouter {
+    fn validate_disjoint(rects: &[SourceRect]) -> Result<(), &'static str> {
+        let mut events = Vec::with_capacity(rects.len().saturating_mul(2));
+        for (index, rect) in rects.iter().copied().enumerate() {
+            events.push((rect.start.row, false, index, rect));
+            events.push((rect.end.row, true, index, rect));
+        }
+        events.sort_unstable_by_key(|(row, is_end, index, _)| (*row, *is_end, *index));
+        let mut active = BTreeMap::<u32, (u32, usize)>::new();
+        for (_, is_end, index, rect) in events {
+            if is_end {
+                active.remove(&rect.start.col);
+                continue;
+            }
+            if active
+                .range(..=rect.start.col)
+                .next_back()
+                .is_some_and(|(_, (end, _))| *end >= rect.start.col)
+                || active
+                    .range(rect.start.col..)
+                    .next()
+                    .is_some_and(|(start, _)| *start <= rect.end.col)
+            {
+                return Err("partition replay router received overlapping domains");
+            }
+            if active
+                .insert(rect.start.col, (rect.end.col, index))
+                .is_some()
+            {
+                return Err("partition replay router received overlapping domains");
+            }
+        }
+        Ok(())
+    }
+
+    pub fn new(partitions: &[PartitionedSourceFormulaFamily]) -> Result<Self, &'static str> {
+        let mut families = BTreeMap::new();
+        for family in partitions {
+            if family.declared.start.row > family.declared.end.row
+                || family.declared.start.col > family.declared.end.col
+            {
+                return Err("partition replay router received an invalid declared domain");
+            }
+            let legacy = family
+                .legacy_members
+                .as_slice()
+                .iter()
+                .map(|member| (member.coord, member.kind))
+                .collect();
+            let rects: Vec<_> = family
+                .fragments
+                .iter()
+                .map(|fragment| fragment.rect())
+                .collect();
+            if rects.iter().any(|rect| {
+                rect.start.row > rect.end.row
+                    || rect.start.col > rect.end.col
+                    || !source_rect_contains(family.declared, rect.start)
+                    || !source_rect_contains(family.declared, rect.end)
+            }) {
+                return Err("partition replay router received an invalid fragment domain");
+            }
+            Self::validate_disjoint(&rects)?;
+            if families
+                .insert(
+                    family.source_id,
+                    FormulaReplayFamilyRouter {
+                        declared: family.declared,
+                        legacy,
+                        direct: FormulaReplayRectNode::build(rects),
+                    },
+                )
+                .is_some()
+            {
+                return Err("partition replay router received duplicate family ownership");
+            }
+        }
+        Ok(Self { families })
+    }
+
+    pub fn shared_disposition(
+        &self,
+        disposition: &FormulaReplayDisposition,
+        family: SourceFamilyId,
+        coord: SourceCoord,
+    ) -> FormulaReplayCoordinateDisposition {
+        let Some(router) = self.families.get(&family) else {
+            return disposition.shared_disposition(family, coord);
+        };
+        if !source_rect_contains(router.declared, coord) {
+            return FormulaReplayCoordinateDisposition::LegacyShared;
+        }
+        if let Some(kind) = router.legacy.get(&coord) {
+            return if *kind == PartitionLegacyMemberKind::SharedFamilyMember {
+                disposition.shared_disposition(family, coord)
+            } else {
+                FormulaReplayCoordinateDisposition::LegacyShared
+            };
+        }
+        if router
+            .direct
+            .as_deref()
+            .is_some_and(|node| node.contains(coord))
+        {
+            disposition.shared_disposition(family, coord)
+        } else {
+            FormulaReplayCoordinateDisposition::LegacyShared
+        }
     }
 }
 
@@ -736,8 +939,9 @@ pub struct FormulaCompressedSourceReport {
 /// One formula produced while consuming a deferred source package. The
 /// backend-specific replay authority stays behind `DeferredFormulaReplay`.
 #[doc(hidden)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DeferredReplayFormula {
+    pub source_order: SourceFormulaOrder,
     pub row: u32,
     pub col: u32,
     pub text: String,
@@ -756,6 +960,18 @@ pub trait DeferredFormulaReplay: Send {
         &mut self,
         disposition: &FormulaReplayDisposition,
     ) -> Result<Vec<DeferredReplayFormula>, String>;
+
+    fn replay_partitioned(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+        partitions: &[PartitionedSourceFormulaFamily],
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        if partitions.is_empty() {
+            self.replay(disposition)
+        } else {
+            Err("partition-aware exact replay is not implemented by this backend".to_string())
+        }
+    }
 
     fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String>;
 }
@@ -804,6 +1020,13 @@ pub struct FormulaCompressedSourceBatch {
     partitioned_families: Vec<PartitionedSourceFormulaFamily>,
 }
 
+pub(crate) struct PreparedEagerFragmentedProposal {
+    pub(crate) source: PartitionedSourceFormulaFamily,
+    pub(crate) prepared: super::fragmented_transaction::PreparedPartitionedSourceFamily,
+    pub(crate) legacy: Vec<super::fragmented_transaction::PreparedFragmentedLegacyFormula>,
+    pub(crate) replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
+}
+
 /// Opaque eager preparation owned by Engine between adapter classification and replay.
 /// The adapter can inspect dispositions but cannot commit FormulaPlane authority.
 #[doc(hidden)]
@@ -813,8 +1036,18 @@ pub struct FormulaCompressedPreparation {
     pub(crate) function_provider_revision: Option<u64>,
     pub(crate) function_semantics_used: bool,
     pub(crate) sheet_name: Arc<str>,
-    pub(crate) prepared: Vec<(SourceFamilyId, PreparedAnchorOncePlacement)>,
+    pub(crate) prepared: Vec<(
+        SourceFamilyId,
+        SourceFormulaOrder,
+        PreparedAnchorOncePlacement,
+    )>,
     pub(crate) rejected: BTreeMap<SourceFamilyId, String>,
+    pub(crate) fragmented: Vec<PreparedEagerFragmentedProposal>,
+    pub(crate) fragmented_sources: BTreeMap<SourceFamilyId, PartitionedSourceFormulaFamily>,
+    pub(crate) eager_replay: Vec<DeferredReplayFormula>,
+    pub(crate) preparation_spool_replays: u64,
+    pub(crate) clean_rejected_anchor_counts: [u64; 3],
+    pub(crate) fragmented_rejected_anchor_counts: [u64; 3],
     pub(crate) exact_replay: Option<Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>>,
     pub(crate) replay_disposition: FormulaReplayDisposition,
 }
@@ -833,7 +1066,7 @@ impl FormulaCompressedPreparation {
     }
 
     pub fn is_direct(&self, family: SourceFamilyId) -> bool {
-        self.prepared.iter().any(|(id, _)| *id == family)
+        self.prepared.iter().any(|(id, _, _)| *id == family)
     }
 
     pub fn direct_family_count(&self) -> usize {
@@ -843,7 +1076,7 @@ impl FormulaCompressedPreparation {
     pub fn direct_cell_count(&self) -> u64 {
         self.prepared
             .iter()
-            .map(|(_, prepared)| prepared.member_count)
+            .map(|(_, _, prepared)| prepared.member_count)
             .sum()
     }
 }
@@ -918,6 +1151,7 @@ mod tests {
 
     fn family(members: SourceFamilyMembers, member_count: u64) -> SourceFormulaFamily {
         SourceFormulaFamily {
+            source_order: SourceFormulaOrder::new(0),
             source_id: SourceFamilyId {
                 sheet_instance: 7,
                 source_index: 11,
@@ -1010,6 +1244,7 @@ mod tests {
     #[test]
     fn partition_transport_separates_template_origin_from_fragment_origins() {
         let partition = PartitionedSourceFormulaFamily {
+            source_order: SourceFormulaOrder::new(0),
             source_id: SourceFamilyId {
                 sheet_instance: 7,
                 source_index: 12,
@@ -1067,6 +1302,11 @@ mod tests {
             FormulaReplayCoordinateDisposition::LegacyShared
         );
         assert_eq!(
+            replay.partition_disposition(&partition, SourceCoord { row: 10, col: 3 }),
+            None,
+            "holes are absent rather than inherited from the compact family default"
+        );
+        assert_eq!(
             replay.ordinary_disposition(SourceCoord { row: 5, col: 3 }),
             (
                 FormulaReplayCoordinateDisposition::LegacyOrdinary,
@@ -1076,8 +1316,156 @@ mod tests {
     }
 
     #[test]
+    fn partition_replay_router_handles_many_adjacent_fragments_and_rejects_nesting() {
+        let source_id = SourceFamilyId {
+            sheet_instance: 3,
+            source_index: 8,
+        };
+        let fragments: Vec<_> = (0..2048)
+            .map(|col| {
+                PlacementDomainTransport::Rect(SourceRect {
+                    start: SourceCoord {
+                        row: 4,
+                        col: col * 2,
+                    },
+                    end: SourceCoord {
+                        row: 6,
+                        col: col * 2,
+                    },
+                })
+            })
+            .collect();
+        let family = PartitionedSourceFormulaFamily {
+            source_order: SourceFormulaOrder::new(0),
+            source_id,
+            template_origin0: SourceCoord { row: 4, col: 0 },
+            template_text: Arc::from("A1+1"),
+            declared: SourceRect {
+                start: SourceCoord { row: 4, col: 0 },
+                end: SourceCoord { row: 6, col: 4095 },
+            },
+            surviving_member_count: 2048 * 3,
+            fragments,
+            legacy_members: ExplicitPartitionLegacyMembers::try_new(Vec::new()).unwrap(),
+            reconciliation: PartitionReconciliation {
+                shared_members: 2048 * 3,
+                ordinary_exceptions: 0,
+                holes: 2048 * 3,
+            },
+        };
+        let mut disposition = FormulaReplayDisposition::default();
+        disposition.register_partition(&family, true).unwrap();
+        let router = FormulaReplayPartitionRouter::new(std::slice::from_ref(&family)).unwrap();
+        for col in 0..2048 {
+            assert_eq!(
+                router.shared_disposition(
+                    &disposition,
+                    source_id,
+                    SourceCoord {
+                        row: 5,
+                        col: col * 2,
+                    },
+                ),
+                FormulaReplayCoordinateDisposition::Direct
+            );
+            assert_eq!(
+                router.shared_disposition(
+                    &disposition,
+                    source_id,
+                    SourceCoord {
+                        row: 5,
+                        col: col * 2 + 1,
+                    },
+                ),
+                FormulaReplayCoordinateDisposition::LegacyShared
+            );
+        }
+
+        let mut nested = family;
+        nested.declared = SourceRect {
+            start: SourceCoord { row: 0, col: 0 },
+            end: SourceCoord { row: 10, col: 10 },
+        };
+        nested.fragments = vec![
+            PlacementDomainTransport::Rect(SourceRect {
+                start: SourceCoord { row: 0, col: 0 },
+                end: SourceCoord { row: 10, col: 10 },
+            }),
+            PlacementDomainTransport::Rect(SourceRect {
+                start: SourceCoord { row: 2, col: 2 },
+                end: SourceCoord { row: 4, col: 4 },
+            }),
+        ];
+        assert_eq!(
+            FormulaReplayPartitionRouter::new(&[nested]).unwrap_err(),
+            "partition replay router received overlapping domains"
+        );
+    }
+
+    #[test]
+    fn default_partition_replay_fails_closed() {
+        struct Replay;
+        impl DeferredFormulaReplay for Replay {
+            fn replay(
+                &mut self,
+                _disposition: &FormulaReplayDisposition,
+            ) -> Result<Vec<DeferredReplayFormula>, String> {
+                Ok(Vec::new())
+            }
+
+            fn formula_at(
+                &mut self,
+                _row: u32,
+                _col: u32,
+            ) -> Result<Option<DeferredReplayFormula>, String> {
+                Ok(None)
+            }
+        }
+
+        let partition = PartitionedSourceFormulaFamily {
+            source_order: SourceFormulaOrder::new(0),
+            source_id: SourceFamilyId {
+                sheet_instance: 1,
+                source_index: 2,
+            },
+            template_origin0: SourceCoord { row: 0, col: 0 },
+            template_text: Arc::from("A1"),
+            declared: SourceRect {
+                start: SourceCoord { row: 0, col: 0 },
+                end: SourceCoord { row: 0, col: 0 },
+            },
+            surviving_member_count: 1,
+            fragments: vec![PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 0,
+                col: 0,
+            }],
+            legacy_members: ExplicitPartitionLegacyMembers::try_new(Vec::new()).unwrap(),
+            reconciliation: PartitionReconciliation {
+                shared_members: 1,
+                ordinary_exceptions: 0,
+                holes: 0,
+            },
+        };
+        let mut replay = Replay;
+        assert!(
+            replay
+                .replay_partitioned(&FormulaReplayDisposition::default(), &[partition])
+                .unwrap_err()
+                .contains("not implemented")
+        );
+        assert!(
+            replay
+                .replay_partitioned(&FormulaReplayDisposition::default(), &[])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn partition_transport_rejects_overlap_count_and_missing_origin() {
         let base = PartitionedSourceFormulaFamily {
+            source_order: SourceFormulaOrder::new(0),
             source_id: SourceFamilyId {
                 sheet_instance: 7,
                 source_index: 12,

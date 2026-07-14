@@ -22,6 +22,7 @@ pub(crate) enum PreparedLegacyGraphError {
         col: u32,
     },
     VertexIdExhausted,
+    PlanSizeOverflow,
     Stale,
     DynamicTopologyUnsupported,
     #[cfg(test)]
@@ -46,6 +47,7 @@ impl std::fmt::Display for PreparedLegacyGraphError {
                 )
             }
             Self::VertexIdExhausted => write!(f, "legacy graph vertex ids exhausted"),
+            Self::PlanSizeOverflow => write!(f, "legacy graph plan size overflow"),
             Self::Stale => write!(f, "prepared legacy graph plan is stale"),
             Self::DynamicTopologyUnsupported => {
                 write!(
@@ -119,6 +121,7 @@ struct SymbolBinding {
 #[derive(Debug)]
 struct PreparedFormula {
     target: VertexId,
+    target_packed: PackedSheetCell,
     ast_id: AstNodeId,
     plan: DependencyPlanRow,
     direct_dependencies: Vec<VertexId>,
@@ -143,6 +146,42 @@ pub(crate) struct PreparedLegacyGraphPlan {
     existing_targets: Vec<VertexId>,
     symbols: Vec<SymbolBinding>,
     formulas: Vec<PreparedFormula>,
+}
+
+impl PreparedLegacyGraphPlan {
+    pub(crate) fn new_vertex_count(&self) -> usize {
+        self.new_vertices.len()
+    }
+
+    pub(crate) fn planned_edge_count(&self) -> Option<usize> {
+        self.formulas.iter().try_fold(0usize, |total, formula| {
+            let mut dependencies: std::collections::BTreeSet<_> =
+                formula.direct_dependencies.iter().copied().collect();
+            dependencies.extend(formula.other_dependencies.iter().copied());
+            let target = formula.target_packed;
+            let target_row = target.row0();
+            let target_col = target.col0();
+            let range_contains_target = formula.plan.range_deps.iter().any(|range| {
+                let sheet_id = match range.sheet {
+                    SharedSheetLocator::Id(id) => id,
+                    _ => self.sheet_id,
+                };
+                sheet_id == target.sheet_id()
+                    && range
+                        .start_row
+                        .is_none_or(|bound| target_row >= bound.index)
+                    && range.end_row.is_none_or(|bound| target_row <= bound.index)
+                    && range
+                        .start_col
+                        .is_none_or(|bound| target_col >= bound.index)
+                    && range.end_col.is_none_or(|bound| target_col <= bound.index)
+            });
+            if range_contains_target {
+                dependencies.insert(formula.target);
+            }
+            total.checked_add(dependencies.len())
+        })
+    }
 }
 
 impl DependencyGraph {
@@ -411,6 +450,7 @@ impl DependencyGraph {
             }
             formulas.push(PreparedFormula {
                 target,
+                target_packed,
                 ast_id,
                 plan,
                 direct_dependencies,

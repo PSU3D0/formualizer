@@ -22,7 +22,7 @@ use formualizer_eval::engine::{
     FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
     FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy, PartitionLegacyMember,
     PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
-    SourceCoord, SourceFamilyId, SourceFormulaFamily, SourceRect,
+    SourceCoord, SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
 };
 use formualizer_eval::traits::EvaluationContext;
 use formualizer_parse::parser::{ASTNode, ReferenceType};
@@ -421,7 +421,11 @@ impl CalamineAdapter {
                 let source_sequence = formula_count as u64;
                 match metadata {
                     XlsxFormulaMetadata::Normal { formula } => {
-                        formula_evidence.observe(coord0, EvidenceRecord::Ordinary);
+                        formula_evidence.observe_ordered(
+                            coord0,
+                            SourceFormulaOrder::new(source_sequence),
+                            EvidenceRecord::Ordinary,
+                        );
                         formula_spool.append(SpoolFormulaRecord::Ordinary {
                             sequence: source_sequence,
                             coord0,
@@ -448,8 +452,9 @@ impl CalamineAdapter {
                             sheet_instance,
                             source_index: shared_index,
                         };
-                        formula_evidence.observe(
+                        formula_evidence.observe_ordered(
                             coord0,
+                            SourceFormulaOrder::new(source_sequence),
                             EvidenceRecord::Anchor {
                                 family,
                                 range: declared_range,
@@ -466,8 +471,9 @@ impl CalamineAdapter {
                     }
                     XlsxFormulaMetadata::SharedDerived { shared_index } => {
                         shared_formula_tags += 1;
-                        formula_evidence.observe(
+                        formula_evidence.observe_ordered(
                             coord0,
+                            SourceFormulaOrder::new(source_sequence),
                             EvidenceRecord::Descendant {
                                 family: SourceFamilyId {
                                     sheet_instance,
@@ -482,7 +488,11 @@ impl CalamineAdapter {
                         })
                     }
                     _ => {
-                        formula_evidence.observe(coord0, EvidenceRecord::Unsupported);
+                        formula_evidence.observe_ordered(
+                            coord0,
+                            SourceFormulaOrder::new(source_sequence),
+                            EvidenceRecord::Unsupported,
+                        );
                         formula_spool.append(SpoolFormulaRecord::Unsupported {
                             sequence: source_sequence,
                             coord0,
@@ -641,6 +651,7 @@ impl CalamineAdapter {
                     .map_err(|reason| calamine::Error::Io(std::io::Error::other(reason)))?;
                 Ok(PartitionedSourceFormulaFamily {
                     source_id: proposal.source_id,
+                    source_order: proposal.source_order,
                     template_origin0: proposal.anchor_coord0,
                     template_text: proposal.anchor_text,
                     declared: proposal.declared,
@@ -671,38 +682,43 @@ impl CalamineAdapter {
         };
         let _formula_spool_storage = formula_spool.storage_kind();
         debug_assert!(formula_count == 0 || formula_spool_bytes >= 5);
+        let mut formula_spool = Some(formula_spool);
         let direct_preparation = if engine.config.formula_plane_mode
             == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
             && !engine.config.defer_graph_building
         {
+            let replay: Box<dyn formualizer_eval::engine::DeferredFormulaReplay> =
+                Box::new(CalamineDeferredFormulaReplay::new(
+                    formula_spool.take().expect("eager formula spool available"),
+                    sheet.to_string(),
+                    sheet_instance,
+                ));
             Some(
                 engine
                     .source_formula_ingress()
-                    .prepare_families(sheet, &compressed_families)
+                    .prepare_eager_proposals(
+                        sheet,
+                        &compressed_families,
+                        &partitioned_families,
+                        formula_count as u64,
+                        replay,
+                    )
                     .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?,
             )
         } else {
             None
         };
-        let all_formulas_direct = direct_preparation
-            .as_ref()
-            .is_some_and(|preparation| preparation.direct_cell_count() == formula_count as u64);
-        if !all_formulas_direct && !engine.config.defer_graph_building {
+        if direct_preparation.is_none() && !engine.config.defer_graph_building {
             formula_source_report.source_spool_replays = 1;
             let compare_shadow = engine.config.formula_plane_mode
                 == formualizer_eval::engine::FormulaPlaneMode::Shadow;
             let mut relocation_mismatches = BTreeSet::new();
             replay_spool_per_cell_filtered_with_family(
-                &mut formula_spool,
+                formula_spool
+                    .as_mut()
+                    .expect("replay formula spool available"),
                 sheet,
-                |shared_index| {
-                    direct_preparation.as_ref().is_some_and(|preparation| {
-                        preparation.is_direct(SourceFamilyId {
-                            sheet_instance,
-                            source_index: shared_index,
-                        })
-                    })
-                },
+                |_| false,
                 |coord0, formula, shared_index| {
                     if compare_shadow
                         && let (Some(comparator), Some(shared_index)) =
@@ -730,20 +746,6 @@ impl CalamineAdapter {
                 });
             }
         }
-
-        let mut formula_spool = Some(formula_spool);
-        let direct_preparation = direct_preparation.map(|preparation| {
-            let replay: Box<dyn formualizer_eval::engine::DeferredFormulaReplay> =
-                Box::new(CalamineDeferredFormulaReplay::new(
-                    formula_spool.take().expect("eager formula spool available"),
-                    sheet.to_string(),
-                    sheet_instance,
-                ));
-            preparation.with_exact_replay(
-                std::sync::Arc::new(std::sync::Mutex::new(replay)),
-                Default::default(),
-            )
-        });
 
         if u64::try_from(value_cells_observed)
             .unwrap_or(u64::MAX)
