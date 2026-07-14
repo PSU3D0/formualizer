@@ -269,8 +269,8 @@ impl Function for MaxFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(MinFn));
-    crate::function_registry::register_function(Arc::new(MaxFn));
+    crate::function_registry::register_builtin(Arc::new(MinFn));
+    crate::function_registry::register_builtin(Arc::new(MaxFn));
 }
 
 #[cfg(test)]

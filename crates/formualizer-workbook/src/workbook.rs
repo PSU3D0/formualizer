@@ -790,19 +790,27 @@ impl formualizer_eval::function::Function for WorkbookWasmFunction {
 #[derive(Clone)]
 pub struct WBResolver {
     custom_functions: Arc<RwLock<CustomFnRegistry>>,
+    custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Default for WBResolver {
     fn default() -> Self {
         Self {
             custom_functions: Arc::new(RwLock::new(BTreeMap::new())),
+            custom_function_revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 }
 
 impl WBResolver {
-    fn new(custom_functions: Arc<RwLock<CustomFnRegistry>>) -> Self {
-        Self { custom_functions }
+    fn new(
+        custom_functions: Arc<RwLock<CustomFnRegistry>>,
+        custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
+        Self {
+            custom_functions,
+            custom_function_revision,
+        }
     }
 }
 
@@ -855,6 +863,13 @@ impl formualizer_eval::traits::TableResolver for WBResolver {
 }
 impl formualizer_eval::traits::SourceResolver for WBResolver {}
 impl formualizer_eval::traits::FunctionProvider for WBResolver {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        Some(
+            self.custom_function_revision
+                .load(std::sync::atomic::Ordering::Acquire),
+        )
+    }
+
     fn get_function(
         &self,
         ns: &str,
@@ -868,6 +883,20 @@ impl formualizer_eval::traits::FunctionProvider for WBResolver {
         }
         formualizer_eval::function_registry::get(ns, name)
     }
+
+    fn get_function_for_planning(
+        &self,
+        ns: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn formualizer_eval::function::Function>> {
+        if ns.is_empty() {
+            let key = name.to_ascii_uppercase();
+            if let Some(local) = self.custom_functions.read().get(&key) {
+                return Some(local.function.clone());
+            }
+        }
+        formualizer_eval::function_registry::get_for_planning(ns, name)
+    }
 }
 impl formualizer_eval::traits::Resolver for WBResolver {}
 impl formualizer_eval::traits::EvaluationContext for WBResolver {}
@@ -876,6 +905,7 @@ impl formualizer_eval::traits::EvaluationContext for WBResolver {}
 pub struct Workbook {
     engine: formualizer_eval::engine::Engine<WBResolver>,
     custom_functions: Arc<RwLock<CustomFnRegistry>>,
+    custom_function_revision: Arc<std::sync::atomic::AtomicU64>,
     wasm_plugins: WasmPluginManager,
     enable_changelog: bool,
     log: formualizer_eval::engine::ChangeLog,
@@ -1086,7 +1116,11 @@ impl Workbook {
 
         let ingest_limits = config.ingest_limits.clone();
         let custom_functions = Arc::new(RwLock::new(BTreeMap::new()));
-        let resolver = WBResolver::new(custom_functions.clone());
+        let custom_function_revision = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let resolver = WBResolver::new(
+            custom_functions.clone(),
+            Arc::clone(&custom_function_revision),
+        );
         let mut engine = formualizer_eval::engine::Engine::new(resolver, config.eval);
         engine.set_workbook_load_limits(ingest_limits);
 
@@ -1095,6 +1129,7 @@ impl Workbook {
         Self {
             engine,
             custom_functions,
+            custom_function_revision,
             wasm_plugins: WasmPluginManager::default(),
             enable_changelog: config.enable_changelog,
             log,
@@ -1218,9 +1253,12 @@ impl Workbook {
             handler,
         ));
 
-        self.custom_functions
-            .write()
-            .insert(canonical_name, RegisteredCustomFn { info, function });
+        {
+            let mut registry = self.custom_functions.write();
+            registry.insert(canonical_name, RegisteredCustomFn { info, function });
+            self.custom_function_revision
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
         Ok(())
     }
 
@@ -1469,9 +1507,12 @@ impl Workbook {
                 runtime,
             });
 
-            self.custom_functions
-                .write()
-                .insert(canonical_name, RegisteredCustomFn { info, function });
+            {
+                let mut registry = self.custom_functions.write();
+                registry.insert(canonical_name, RegisteredCustomFn { info, function });
+                self.custom_function_revision
+                    .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            }
             Ok(())
         }
 
@@ -1496,15 +1537,15 @@ impl Workbook {
 
     pub fn unregister_custom_function(&mut self, name: &str) -> Result<(), ExcelError> {
         let canonical_name = normalize_custom_fn_name(name)?;
-        if self
-            .custom_functions
-            .write()
-            .remove(&canonical_name)
-            .is_none()
         {
-            return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
-                "Custom function {canonical_name} is not registered"
-            )));
+            let mut registry = self.custom_functions.write();
+            if registry.remove(&canonical_name).is_none() {
+                return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
+                    "Custom function {canonical_name} is not registered"
+                )));
+            }
+            self.custom_function_revision
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         }
         Ok(())
     }

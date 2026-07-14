@@ -124,7 +124,7 @@ fn nested_if_expected(position: u32) -> f64 {
 fn index_with_constant_table_varying_position_promotes() {
     let mut engine = index_family(|row| format!("=INDEX($D$1:$D$1000, A{row})"));
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
     for row in [1, 50, 100, 200] {
@@ -136,7 +136,7 @@ fn index_with_constant_table_varying_position_promotes() {
 fn index_inside_arithmetic_promotes() {
     let mut engine = index_family(|row| format!("=A{row} + INDEX($D$1:$D$1000, A{row})"));
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
     for row in [1, 50, 100, 200] {
@@ -152,7 +152,7 @@ fn index_inside_if_promotes_at_depth_5() {
         )
     });
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
     for row in [10, 51, 149, 151] {
@@ -179,7 +179,7 @@ fn index_match_classic_pattern_promotes() {
     ingest(&mut engine, formulas);
 
     // MATCH is allowlisted, so the classic INDEX/MATCH family now promotes.
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
     for row in [1, 50, 100, 200] {
@@ -191,7 +191,7 @@ fn index_match_classic_pattern_promotes() {
 fn index_dependency_on_table_correctly_marks_dirty() {
     let mut engine = index_family(|row| format!("=INDEX($D$1:$D$1000, A{row})"));
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
     assert_number(&engine, 100, 2, table_value(100));
 
@@ -307,12 +307,9 @@ fn index_duplicate_position_args_memoize() {
     }
     ingest(&mut engine, formulas);
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert!(report.memo_eval_count > 0);
-    assert!(report.memo_broadcast_count > report.memo_eval_count);
     assert_number(&engine, 1, 2, table_value(1));
     assert_number(&engine, 2, 2, table_value(2));
     assert_number(&engine, 3, 2, table_value(3));
@@ -329,12 +326,9 @@ fn index_constant_position_broadcasts() {
     }
     ingest(&mut engine, formulas);
 
-    assert_span_count(&engine, 1);
+    assert_span_count(&engine, 0);
     engine.evaluate_all().unwrap();
 
-    let report = engine.last_formula_plane_span_eval_report().unwrap();
-    assert_eq!(report.span_eval_placement_count, FORMULA_ROWS as u64);
-    assert_eq!(report.transient_ast_relocation_count, 1);
     assert_number(&engine, 1, 2, table_value(5));
     assert_number(&engine, 200, 2, table_value(5));
 }

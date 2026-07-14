@@ -30,28 +30,28 @@ pub use choose::{ChooseColsFn, ChooseRowsFn};
 
 /// Register all lookup and reference functions
 pub fn register_builtins() {
-    use crate::function_registry::register_function;
+    use crate::function_registry::register_builtin;
     use std::sync::Arc;
 
     // Classic lookup functions (from parent lookup.rs)
-    register_function(Arc::new(MatchFn));
-    register_function(Arc::new(VLookupFn));
-    register_function(Arc::new(HLookupFn));
+    register_builtin(Arc::new(MatchFn));
+    register_builtin(Arc::new(VLookupFn));
+    register_builtin(Arc::new(HLookupFn));
 
     // Legacy LOOKUP (vector & array forms)
-    register_function(Arc::new(LookupFn));
+    register_builtin(Arc::new(LookupFn));
 
     // Choose function
-    register_function(Arc::new(ChooseFn));
+    register_builtin(Arc::new(ChooseFn));
 
     // Reference info functions
-    register_function(Arc::new(RowFn));
-    register_function(Arc::new(RowsFn));
-    register_function(Arc::new(ColumnFn));
-    register_function(Arc::new(ColumnsFn));
+    register_builtin(Arc::new(RowFn));
+    register_builtin(Arc::new(RowsFn));
+    register_builtin(Arc::new(ColumnFn));
+    register_builtin(Arc::new(ColumnsFn));
 
     // Address function
-    register_function(Arc::new(AddressFn));
+    register_builtin(Arc::new(AddressFn));
 
     // Dynamic / modern lookup subset (Sprint 5 initial)
     dynamic::register_builtins();
@@ -61,6 +61,6 @@ pub fn register_builtins() {
     array_shape::register_builtins();
 
     // CHOOSECOLS / CHOOSEROWS
-    register_function(Arc::new(choose::ChooseColsFn));
-    register_function(Arc::new(choose::ChooseRowsFn));
+    register_builtin(Arc::new(choose::ChooseColsFn));
+    register_builtin(Arc::new(choose::ChooseRowsFn));
 }

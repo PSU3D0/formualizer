@@ -225,8 +225,8 @@ impl Function for TimeFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(DateFn));
-    crate::function_registry::register_function(Arc::new(TimeFn));
+    crate::function_registry::register_builtin(Arc::new(DateFn));
+    crate::function_registry::register_builtin(Arc::new(TimeFn));
 }
 
 #[cfg(test)]

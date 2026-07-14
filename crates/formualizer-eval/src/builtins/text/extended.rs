@@ -919,16 +919,16 @@ impl Function for FixedFn {
 // ============================================================================
 
 pub fn register_builtins() {
-    use crate::function_registry::register_function;
+    use crate::function_registry::register_builtin;
     use std::sync::Arc;
 
-    register_function(Arc::new(CleanFn));
-    register_function(Arc::new(UnicharFn));
-    register_function(Arc::new(UnicodeFn));
-    register_function(Arc::new(TextBeforeFn));
-    register_function(Arc::new(TextAfterFn));
-    register_function(Arc::new(DollarFn));
-    register_function(Arc::new(FixedFn));
+    register_builtin(Arc::new(CleanFn));
+    register_builtin(Arc::new(UnicharFn));
+    register_builtin(Arc::new(UnicodeFn));
+    register_builtin(Arc::new(TextBeforeFn));
+    register_builtin(Arc::new(TextAfterFn));
+    register_builtin(Arc::new(DollarFn));
+    register_builtin(Arc::new(FixedFn));
 }
 
 #[cfg(test)]

@@ -17,6 +17,46 @@ mod tests {
     }
 
     #[test]
+    fn prepared_batch_vertex_overflow_is_checked_before_mutation() {
+        let mut store = VertexStore::new();
+        store.len = u32::MAX as usize - FIRST_NORMAL_VERTEX as usize + 1;
+        let before = (
+            store.coords.len(),
+            store.sheet_kind.len(),
+            store.flags.len(),
+        );
+        assert_eq!(
+            store.try_allocate_batch(
+                &[(AbsCoord::new(0, 0), 0, 0)],
+                &[VertexId(FIRST_NORMAL_VERTEX)],
+            ),
+            Err(VertexBatchAllocationError::IdExhausted)
+        );
+        assert_eq!(
+            before,
+            (
+                store.coords.len(),
+                store.sheet_kind.len(),
+                store.flags.len()
+            )
+        );
+    }
+
+    #[test]
+    fn prepared_batch_reserved_id_mismatch_is_checked_before_mutation() {
+        let mut store = VertexStore::new();
+        let before = (store.len(), store.coords.len(), store.flags.len());
+        assert_eq!(
+            store.try_allocate_batch(
+                &[(AbsCoord::new(0, 0), 0, 0)],
+                &[VertexId(FIRST_NORMAL_VERTEX + 1)],
+            ),
+            Err(VertexBatchAllocationError::ReservedIdsMismatch)
+        );
+        assert_eq!(before, (store.len(), store.coords.len(), store.flags.len()));
+    }
+
+    #[test]
     fn test_vertex_store_grow() {
         let mut store = VertexStore::with_capacity(1000);
         for i in 0..10_000 {
@@ -131,6 +171,12 @@ pub const FIRST_NORMAL_VERTEX: u32 = 1024;
 pub const RANGE_VERTEX_START: u32 = 0;
 pub const EXTERNAL_VERTEX_START: u32 = 256;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VertexBatchAllocationError {
+    IdExhausted,
+    ReservedIdsMismatch,
+}
+
 /// Core columnar storage for vertices in Struct-of-Arrays layout
 ///
 /// Memory layout optimized for cache efficiency:
@@ -218,6 +264,50 @@ impl VertexStore {
         self.len += 1;
 
         id
+    }
+
+    pub(crate) fn try_allocate_batch(
+        &mut self,
+        vertices: &[(AbsCoord, SheetId, u8)],
+        expected_ids: &[VertexId],
+    ) -> Result<Vec<VertexId>, VertexBatchAllocationError> {
+        if vertices.len() != expected_ids.len() {
+            return Err(VertexBatchAllocationError::ReservedIdsMismatch);
+        }
+        let start = u32::try_from(self.len)
+            .map_err(|_| VertexBatchAllocationError::IdExhausted)?
+            .checked_add(FIRST_NORMAL_VERTEX)
+            .ok_or(VertexBatchAllocationError::IdExhausted)?;
+        let count =
+            u32::try_from(vertices.len()).map_err(|_| VertexBatchAllocationError::IdExhausted)?;
+        if count != 0 {
+            start
+                .checked_add(count - 1)
+                .ok_or(VertexBatchAllocationError::IdExhausted)?;
+        }
+        let ids: Vec<_> = (0..count).map(|offset| VertexId(start + offset)).collect();
+        if ids != expected_ids {
+            return Err(VertexBatchAllocationError::ReservedIdsMismatch);
+        }
+        self.reserve(vertices.len());
+        for &(coord, sheet, flags) in vertices {
+            self.coords.push(coord);
+            self.sheet_kind.push((u32::from(sheet)) << 16);
+            self.flags.push(AtomicU8::new(flags));
+            self.value_ref.push(0);
+            self.edge_offset.push(0);
+            self.len += 1;
+        }
+        Ok(ids)
+    }
+
+    /// Allocate a batch whose identifiers were checked against the current
+    /// store length by an exclusively-held prepared transaction.
+    pub(crate) fn allocate_prevalidated_batch(&mut self, vertices: &[(AbsCoord, SheetId, u8)]) {
+        self.reserve(vertices.len());
+        for &(coord, sheet, flags) in vertices {
+            self.allocate(coord, sheet, flags);
+        }
     }
 
     /// Allocate many vertices contiguously in the current store order.

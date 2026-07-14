@@ -234,8 +234,8 @@ fn last_day_of_month(year: i32, month: u32) -> u32 {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(EdateFn));
-    crate::function_registry::register_function(Arc::new(EomonthFn));
+    crate::function_registry::register_builtin(Arc::new(EdateFn));
+    crate::function_registry::register_builtin(Arc::new(EomonthFn));
 }
 
 #[cfg(test)]

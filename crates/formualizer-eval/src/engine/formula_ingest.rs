@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use super::FormulaPlaneMode;
 use super::arena::AstNodeId;
+use super::formula_source::{SourceFamilyId, SourceFormulaOrder};
 
 #[derive(Clone, Debug)]
 pub struct FormulaIngestRecord {
@@ -10,6 +11,9 @@ pub struct FormulaIngestRecord {
     pub col: u32,
     pub ast_id: AstNodeId,
     pub formula_text: Option<Arc<str>>,
+    pub(crate) source_order: Option<SourceFormulaOrder>,
+    pub(crate) source_family: Option<SourceFamilyId>,
+    pub(crate) partition_owner: Option<SourceFamilyId>,
 }
 
 impl FormulaIngestRecord {
@@ -19,7 +23,22 @@ impl FormulaIngestRecord {
             col,
             ast_id,
             formula_text,
+            source_order: None,
+            source_family: None,
+            partition_owner: None,
         }
+    }
+
+    pub(crate) fn with_source_proof(
+        mut self,
+        source_order: SourceFormulaOrder,
+        source_family: Option<SourceFamilyId>,
+        partition_owner: Option<SourceFamilyId>,
+    ) -> Self {
+        self.source_order = Some(source_order);
+        self.source_family = source_family;
+        self.partition_owner = partition_owner;
+        self
     }
 }
 
@@ -94,6 +113,18 @@ pub struct FormulaIngestReport {
     pub source_descendant_analyses_avoided: u64,
     pub source_compressed_families_prepared: u64,
     pub source_compressed_cells_prepared: u64,
+    pub source_partitioned_families_seen: u64,
+    pub source_partitioned_families_prepared: u64,
+    pub source_partitioned_families_rejected: u64,
+    pub source_partition_fragments_prepared: u64,
+    pub source_partition_span_cells_prepared: u64,
+    pub source_partition_fallback_cells: u64,
+    pub source_partition_analyses_reused: u64,
+    pub source_partition_function_semantics: u64,
+    pub source_partition_holes: u64,
+    pub source_partition_ordinary_exceptions: u64,
+    pub source_partition_failures: u64,
+    pub source_partition_surviving_cells: u64,
 
     pub fallback_reasons: BTreeMap<String, u64>,
 }
@@ -143,6 +174,18 @@ impl Default for FormulaIngestReport {
             source_descendant_analyses_avoided: 0,
             source_compressed_families_prepared: 0,
             source_compressed_cells_prepared: 0,
+            source_partitioned_families_seen: 0,
+            source_partitioned_families_prepared: 0,
+            source_partitioned_families_rejected: 0,
+            source_partition_fragments_prepared: 0,
+            source_partition_span_cells_prepared: 0,
+            source_partition_fallback_cells: 0,
+            source_partition_analyses_reused: 0,
+            source_partition_function_semantics: 0,
+            source_partition_holes: 0,
+            source_partition_ordinary_exceptions: 0,
+            source_partition_failures: 0,
+            source_partition_surviving_cells: 0,
             fallback_reasons: BTreeMap::new(),
         }
     }
@@ -280,6 +323,42 @@ impl FormulaIngestReport {
         self.source_compressed_cells_prepared = self
             .source_compressed_cells_prepared
             .saturating_add(other.source_compressed_cells_prepared);
+        self.source_partitioned_families_seen = self
+            .source_partitioned_families_seen
+            .saturating_add(other.source_partitioned_families_seen);
+        self.source_partitioned_families_prepared = self
+            .source_partitioned_families_prepared
+            .saturating_add(other.source_partitioned_families_prepared);
+        self.source_partitioned_families_rejected = self
+            .source_partitioned_families_rejected
+            .saturating_add(other.source_partitioned_families_rejected);
+        self.source_partition_fragments_prepared = self
+            .source_partition_fragments_prepared
+            .saturating_add(other.source_partition_fragments_prepared);
+        self.source_partition_span_cells_prepared = self
+            .source_partition_span_cells_prepared
+            .saturating_add(other.source_partition_span_cells_prepared);
+        self.source_partition_fallback_cells = self
+            .source_partition_fallback_cells
+            .saturating_add(other.source_partition_fallback_cells);
+        self.source_partition_analyses_reused = self
+            .source_partition_analyses_reused
+            .saturating_add(other.source_partition_analyses_reused);
+        self.source_partition_function_semantics = self
+            .source_partition_function_semantics
+            .saturating_add(other.source_partition_function_semantics);
+        self.source_partition_holes = self
+            .source_partition_holes
+            .saturating_add(other.source_partition_holes);
+        self.source_partition_ordinary_exceptions = self
+            .source_partition_ordinary_exceptions
+            .saturating_add(other.source_partition_ordinary_exceptions);
+        self.source_partition_failures = self
+            .source_partition_failures
+            .saturating_add(other.source_partition_failures);
+        self.source_partition_surviving_cells = self
+            .source_partition_surviving_cells
+            .saturating_add(other.source_partition_surviving_cells);
         for (reason, count) in &other.fallback_reasons {
             let total = self.fallback_reasons.entry(reason.clone()).or_default();
             *total = total.saturating_add(*count);

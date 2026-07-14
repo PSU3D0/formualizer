@@ -786,6 +786,12 @@ impl CsrMutableEdges {
         }
     }
 
+    /// End a batch without compacting the delta slab into the full CSR.
+    /// Prepared graph transactions use this to keep application work local.
+    pub(crate) fn end_batch_deferred(&mut self) {
+        self.batch_depth = self.batch_depth.saturating_sub(1);
+    }
+
     /// Add a new vertex with its coordinate and ID
     ///
     /// Does NOT rebuild the CSR base: reads of a vertex that is not in the

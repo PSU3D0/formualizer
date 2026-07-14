@@ -2430,18 +2430,18 @@ impl Function for DCountAFn {
 /// Register all database functions.
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(DSumFn));
-    crate::function_registry::register_function(Arc::new(DAverageFn));
-    crate::function_registry::register_function(Arc::new(DCountFn));
-    crate::function_registry::register_function(Arc::new(DMaxFn));
-    crate::function_registry::register_function(Arc::new(DMinFn));
-    crate::function_registry::register_function(Arc::new(DProductFn));
-    crate::function_registry::register_function(Arc::new(DStdevFn));
-    crate::function_registry::register_function(Arc::new(DStdevPFn));
-    crate::function_registry::register_function(Arc::new(DVarFn));
-    crate::function_registry::register_function(Arc::new(DVarPFn));
-    crate::function_registry::register_function(Arc::new(DGetFn));
-    crate::function_registry::register_function(Arc::new(DCountAFn));
+    crate::function_registry::register_builtin(Arc::new(DSumFn));
+    crate::function_registry::register_builtin(Arc::new(DAverageFn));
+    crate::function_registry::register_builtin(Arc::new(DCountFn));
+    crate::function_registry::register_builtin(Arc::new(DMaxFn));
+    crate::function_registry::register_builtin(Arc::new(DMinFn));
+    crate::function_registry::register_builtin(Arc::new(DProductFn));
+    crate::function_registry::register_builtin(Arc::new(DStdevFn));
+    crate::function_registry::register_builtin(Arc::new(DStdevPFn));
+    crate::function_registry::register_builtin(Arc::new(DVarFn));
+    crate::function_registry::register_builtin(Arc::new(DVarPFn));
+    crate::function_registry::register_builtin(Arc::new(DGetFn));
+    crate::function_registry::register_builtin(Arc::new(DCountAFn));
 }
 
 #[cfg(test)]

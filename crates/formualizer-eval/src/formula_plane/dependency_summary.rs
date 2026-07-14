@@ -19,9 +19,9 @@ use super::span_store::{
     FormulaRejectReason, FormulaRunDescriptor, FormulaRunShape, FormulaRunStore, SpanGapKind,
 };
 use super::template_canonical::{
-    AxisRef, CanonicalExpr, CanonicalReference, CanonicalReferenceContext, CanonicalRejectReason,
-    CanonicalTemplate, SheetBinding, UnsupportedReferenceKind, canonicalize_template,
-    is_known_static_function,
+    AxisRef, CanonicalExpr, CanonicalFunctionId, CanonicalReference, CanonicalReferenceContext,
+    CanonicalRejectReason, CanonicalTemplate, SheetBinding, UnsupportedReferenceKind,
+    canonicalize_template,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -259,8 +259,8 @@ fn compare_dependency_summaries_to_plan(
             continue;
         }
 
-        let summary_cells = match instantiate_summary_cells(input) {
-            Ok(cells) => cells,
+        let summary_universe = match instantiate_summary_universe(input) {
+            Ok(universe) => universe,
             Err(reason) => {
                 report.rejection_count += 1;
                 report.record_fallback(reason);
@@ -268,9 +268,11 @@ fn compare_dependency_summaries_to_plan(
             }
         };
 
-        if summary_cells == planner_universe.cells {
+        if summary_universe.cells == planner_universe.cells
+            && summary_universe.ranges == planner_universe.ranges
+        {
             report.exact_match_count += 1;
-        } else if planner_universe.cells.is_subset(&summary_cells) {
+        } else if symbolic_universe_covers(&summary_universe, &planner_universe) {
             report.over_approximation_count += 1;
         } else {
             report.under_approximation_count += 1;
@@ -306,12 +308,16 @@ impl NormalizedDependencyUniverse {
     fn fallback_reasons(&self) -> Vec<&'static str> {
         let mut reasons = BTreeSet::new();
         for range in &self.ranges {
-            reasons.insert(match range {
-                NormalizedRangeDependency::Finite(_) => "planner_finite_range_dependency",
+            match range {
+                NormalizedRangeDependency::Finite(_) => continue,
                 NormalizedRangeDependency::WholeRow { .. }
-                | NormalizedRangeDependency::WholeCol { .. } => "planner_whole_axis_dependency",
-                NormalizedRangeDependency::OpenRect { .. } => "planner_open_range_dependency",
-            });
+                | NormalizedRangeDependency::WholeCol { .. } => {
+                    reasons.insert("planner_whole_axis_dependency");
+                }
+                NormalizedRangeDependency::OpenRect { .. } => {
+                    reasons.insert("planner_open_range_dependency");
+                }
+            }
         }
         if !self.names.is_empty() {
             reasons.insert("planner_name_dependency");
@@ -436,10 +442,10 @@ fn planner_coord_to_vc(coord: AbsCoord) -> (u32, u32) {
     (coord.row().saturating_add(1), coord.col().saturating_add(1))
 }
 
-fn instantiate_summary_cells(
+fn instantiate_summary_universe(
     input: &DependencySummaryComparisonInput<'_>,
-) -> Result<BTreeSet<FiniteCell>, &'static str> {
-    let mut cells = BTreeSet::new();
+) -> Result<NormalizedDependencyUniverse, &'static str> {
+    let mut universe = NormalizedDependencyUniverse::default();
     for (pattern_index, pattern) in input.summary.precedent_patterns.iter().enumerate() {
         match pattern {
             PrecedentPattern::Cell(cell_pattern) => {
@@ -458,12 +464,81 @@ fn instantiate_summary_cells(
                     PatternAxis::Col,
                 )
                 .map_err(|reason| summary_instantiation_fallback(&reason))?;
-                cells.insert(FiniteCell::new(sheet, row, col));
+                universe.cells.insert(FiniteCell::new(sheet, row, col));
             }
-            PrecedentPattern::Range(_) => return Err("summary_pattern_instantiation_unsupported"),
+            PrecedentPattern::Range(range) => {
+                let sheet = instantiate_sheet(&range.sheet, input.sheet);
+                let row_start = instantiate_axis_cell(
+                    &range.start_row,
+                    input.row,
+                    pattern_index,
+                    PatternAxis::Row,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                let col_start = instantiate_axis_cell(
+                    &range.start_col,
+                    input.col,
+                    pattern_index,
+                    PatternAxis::Col,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                let row_end = instantiate_axis_cell(
+                    &range.end_row,
+                    input.row,
+                    pattern_index,
+                    PatternAxis::Row,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                let col_end = instantiate_axis_cell(
+                    &range.end_col,
+                    input.col,
+                    pattern_index,
+                    PatternAxis::Col,
+                )
+                .map_err(|reason| summary_instantiation_fallback(&reason))?;
+                universe
+                    .ranges
+                    .insert(NormalizedRangeDependency::Finite(FiniteRegion::new(
+                        sheet, row_start, col_start, row_end, col_end,
+                    )));
+            }
         }
     }
-    Ok(cells)
+    Ok(universe)
+}
+
+fn symbolic_universe_covers(
+    summary: &NormalizedDependencyUniverse,
+    planner: &NormalizedDependencyUniverse,
+) -> bool {
+    planner.cells.iter().all(|cell| {
+        summary.cells.contains(cell)
+            || summary.ranges.iter().any(|range| match range {
+                NormalizedRangeDependency::Finite(region) => {
+                    region.sheet == cell.sheet
+                        && region.row_start <= cell.row
+                        && cell.row <= region.row_end
+                        && region.col_start <= cell.col
+                        && cell.col <= region.col_end
+                }
+                _ => false,
+            })
+    }) && planner
+        .ranges
+        .iter()
+        .all(|planner_range| match planner_range {
+            NormalizedRangeDependency::Finite(planner_region) => {
+                summary.ranges.iter().any(|range| {
+                    matches!(range, NormalizedRangeDependency::Finite(summary_region)
+                if summary_region.sheet == planner_region.sheet
+                    && summary_region.row_start <= planner_region.row_start
+                    && summary_region.row_end >= planner_region.row_end
+                    && summary_region.col_start <= planner_region.col_start
+                    && summary_region.col_end >= planner_region.col_end)
+                })
+            }
+            _ => false,
+        })
 }
 
 fn summary_instantiation_fallback(reason: &RunSummaryRejectionReason) -> &'static str {
@@ -630,6 +705,10 @@ impl SummaryAnalyzer {
             | CanonicalRejectReason::OpenRangeReference { .. }
             | CanonicalRejectReason::WholeAxisReference { .. }
             | CanonicalRejectReason::UnsupportedReference { .. } => return,
+            CanonicalRejectReason::FunctionContractUnsupported { name }
+            | CanonicalRejectReason::ContextDependentFunction { name } => {
+                DependencyRejectReason::FunctionUnsupported { name: name.clone() }
+            }
         };
         self.reasons.insert(dependency_reason);
     }
@@ -661,31 +740,22 @@ impl SummaryAnalyzer {
             CanonicalExpr::Function { id, args } => {
                 let mut all_args_supported = true;
                 for (arg_index, arg) in args.iter().enumerate() {
-                    let arg_supported = self.analyze_expr(
-                        arg,
-                        function_arg_context(&id.canonical_name, arg_index),
-                        true,
-                    );
-                    if !arg_supported {
+                    if !self.analyze_expr(arg, function_argument_context(id, arg_index), true) {
                         all_args_supported = false;
                     }
                 }
-
-                if self.has_function_specific_rejection(&id.canonical_name) {
+                if id.contract.is_none() || self.has_function_specific_rejection(&id.canonical_name)
+                {
                     return false;
                 }
-
-                if is_known_static_function(&id.canonical_name) {
-                    if all_args_supported && matches!(context, AnalyzerContext::Value) {
-                        return true;
+                if all_args_supported && matches!(context, AnalyzerContext::Value) {
+                    true
+                } else {
+                    if self.reasons.is_empty() {
+                        self.reject_function(&id.canonical_name);
                     }
-                    if !all_args_supported && !self.reasons.is_empty() {
-                        return false;
-                    }
+                    false
                 }
-
-                self.reject_function(&id.canonical_name);
-                false
             }
             CanonicalExpr::CallUnsupported { callee, args } => {
                 self.analyze_expr(callee, AnalyzerContext::Value, false);
@@ -928,7 +998,7 @@ impl SummaryAnalyzer {
                 function.as_deref() == Some(name)
             }
             DependencyRejectReason::UnknownFunction { name: unknown_name } => unknown_name == name,
-            DependencyRejectReason::SpillUnsupported => is_array_or_spill_function(name),
+            DependencyRejectReason::SpillUnsupported => true,
             _ => false,
         })
     }
@@ -954,37 +1024,48 @@ fn effective_context(
         CanonicalReferenceContext::FunctionArgument {
             function,
             arg_index,
-        } => function_arg_context(function, *arg_index),
+        } => function_argument_context(function, *arg_index),
         CanonicalReferenceContext::CallArgument { .. } => AnalyzerContext::Value,
     }
 }
 
-pub(crate) fn function_arg_context(function: &str, arg_index: usize) -> AnalyzerContext {
-    match function {
-        "LET" | "LAMBDA" => AnalyzerContext::LocalBinding,
-        "SUMIFS" | "AVERAGEIFS" if arg_index == 0 => AnalyzerContext::Value,
-        "SUMIFS" | "AVERAGEIFS" if !arg_index.is_multiple_of(2) => {
-            AnalyzerContext::CriteriaRangeArg
+pub(crate) fn function_argument_context(
+    function: &CanonicalFunctionId,
+    arg_index: usize,
+) -> AnalyzerContext {
+    use crate::function_contract::{
+        CriteriaValueRange, FunctionArgumentDependencyContract as Arguments,
+        FunctionArgumentDependencyRole as Role,
+    };
+    let Some(precision) = function.contract.and_then(|contract| contract.precision) else {
+        return AnalyzerContext::Value;
+    };
+    match precision.arguments {
+        Arguments::AllArgs(role) | Arguments::Variadic(role) => match role {
+            Role::CriteriaRange => AnalyzerContext::CriteriaRangeArg,
+            Role::CriteriaExpression => AnalyzerContext::CriteriaExpressionArg,
+            Role::ByReference => AnalyzerContext::ByRefArg,
+            Role::LocalBindingName | Role::LocalBindingValue | Role::LambdaBody => {
+                AnalyzerContext::LocalBinding
+            }
+            _ => AnalyzerContext::Value,
+        },
+        Arguments::LocalBindingPairs | Arguments::LambdaParameters => AnalyzerContext::LocalBinding,
+        Arguments::CriteriaPairs(criteria) => {
+            let value_index = match criteria.value_range {
+                CriteriaValueRange::Fixed(index) => Some(index),
+                CriteriaValueRange::Optional { provided_index, .. } => Some(provided_index),
+                CriteriaValueRange::None => None,
+            };
+            if value_index == Some(arg_index) || arg_index < criteria.first_criteria_pair {
+                AnalyzerContext::Value
+            } else if (arg_index - criteria.first_criteria_pair).is_multiple_of(2) {
+                AnalyzerContext::CriteriaRangeArg
+            } else {
+                AnalyzerContext::CriteriaExpressionArg
+            }
         }
-        "SUMIFS" | "AVERAGEIFS" => AnalyzerContext::CriteriaExpressionArg,
-        "COUNTIFS" if arg_index.is_multiple_of(2) => AnalyzerContext::CriteriaRangeArg,
-        "COUNTIFS" => AnalyzerContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 1 => AnalyzerContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" => AnalyzerContext::Value,
-        "COUNTIF" if arg_index == 0 => AnalyzerContext::CriteriaRangeArg,
-        "COUNTIF" => AnalyzerContext::CriteriaExpressionArg,
-        "INDEX" => AnalyzerContext::Value,
-        "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => AnalyzerContext::ByRefArg,
-        _ => AnalyzerContext::Value,
     }
-}
-
-pub(crate) fn function_accepts_range_at(function: &str, arg_index: usize) -> bool {
-    matches!(
-        function_arg_context(function, arg_index),
-        AnalyzerContext::Value | AnalyzerContext::CriteriaRangeArg
-    )
 }
 
 fn axis_is_finite_cell(axis: &AxisRef) -> bool {
@@ -1049,13 +1130,6 @@ fn is_supported_pointwise_binary_operator(op: &str) -> bool {
 
 fn is_reference_returning_binary_operator(op: &str) -> bool {
     matches!(op, ":" | "," | " ")
-}
-
-fn is_array_or_spill_function(name: &str) -> bool {
-    matches!(
-        name,
-        "FILTER" | "RANDARRAY" | "SEQUENCE" | "SORT" | "SORTBY" | "TEXTSPLIT" | "UNIQUE"
-    )
 }
 
 const DEFAULT_MAX_EXPLICIT_EXCLUDED_CELLS: usize = 4096;
@@ -2633,12 +2707,16 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_dependency_summary_accepts_index_with_static_range() {
+    fn formula_plane_dependency_summary_rejects_reference_capable_index() {
         let summary = summary("=INDEX(A1:A3,1)", 1, 1);
 
-        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
-        assert!(summary.reject_reasons.is_empty());
-        assert_eq!(summary.precedent_patterns.len(), 1);
+        assert_eq!(summary.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &summary,
+            &DependencyRejectReason::ReferenceReturningUnsupported {
+                function: Some("INDEX".to_string())
+            }
+        ));
     }
 
     #[test]
@@ -2651,11 +2729,14 @@ mod tests {
     }
 
     #[test]
-    fn formula_plane_dependency_summary_accepts_nested_pure_scalar_functions() {
+    fn formula_plane_dependency_summary_rejects_may_spill_short_circuit_function() {
         let summary = summary("=IF(ISNUMBER(A1), A1*2, 0)", 1, 2);
 
-        assert_eq!(summary.formula_class, FormulaClass::StaticPointwise);
-        assert!(summary.reject_reasons.is_empty());
+        assert_eq!(summary.formula_class, FormulaClass::Rejected);
+        assert!(has_reason(
+            &summary,
+            &DependencyRejectReason::SpillUnsupported
+        ));
         assert_eq!(summary.precedent_patterns.len(), 1);
     }
 
@@ -3050,23 +3131,11 @@ mod tests {
         )
         .expect("fixed planner comparison should build");
 
-        assert_eq!(report.exact_match_count, 0);
+        assert_eq!(report.exact_match_count, 1);
         assert_eq!(report.over_approximation_count, 0);
         assert_eq!(report.under_approximation_count, 0);
-        assert_eq!(report.rejection_count, 2);
+        assert_eq!(report.rejection_count, 1);
         assert_eq!(report.policy_drift_count, 0);
-        assert!(
-            report
-                .fallback_reason_histogram
-                .get("finite_range_unsupported")
-                .or_else(|| report
-                    .fallback_reason_histogram
-                    .get("summary_pattern_instantiation_unsupported"))
-                .or_else(|| report
-                    .fallback_reason_histogram
-                    .get("planner_finite_range_dependency"))
-                .is_some()
-        );
         assert_eq!(
             report
                 .fallback_reason_histogram
@@ -3440,5 +3509,72 @@ mod tests {
 
         assert_eq!(expected, reversed);
         assert_eq!(expected, shuffled);
+    }
+
+    #[test]
+    fn swatch0_symbolic_planner_oracle_reports_cells_ranges_and_names_separately() {
+        use formualizer_parse::parser::{ASTNodeType, ReferenceType};
+        #[derive(Default, Debug, PartialEq, Eq)]
+        struct Counts {
+            cells: u64,
+            ranges: u64,
+            names: u64,
+        }
+        fn walk(node: &ASTNode, counts: &mut Counts) {
+            match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => match reference {
+                    ReferenceType::Cell { .. } => counts.cells += 1,
+                    ReferenceType::Range { .. } => counts.ranges += 1,
+                    ReferenceType::NamedRange(_) => counts.names += 1,
+                    _ => {}
+                },
+                ASTNodeType::Function { args, .. } => {
+                    for arg in args {
+                        walk(arg, counts);
+                    }
+                }
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    walk(left, counts);
+                    walk(right, counts);
+                }
+                ASTNodeType::UnaryOp { expr, .. } => walk(expr, counts),
+                _ => {}
+            }
+        }
+        let ast = formualizer_parse::parser::parse("=A1+SUM(B1:B3)+MyName").unwrap();
+        let mut compared = Counts::default();
+        walk(&ast, &mut compared);
+        assert_eq!(
+            compared,
+            Counts {
+                cells: 1,
+                ranges: 1,
+                names: 1
+            }
+        );
+
+        let summary = summary("=A1+SUM(B1:B3)+MyName", 1, 4);
+        let report = compare_one("Sheet1", 1, 4, &ast, &summary);
+        assert_eq!(report.under_approximation_count, 0);
+        assert_eq!(
+            report.exact_match_count + report.over_approximation_count + report.rejection_count,
+            1
+        );
+        let rejected_cells = if report.rejection_count == 0 {
+            0
+        } else {
+            compared.cells
+        };
+        let rejected_ranges = if report.rejection_count == 0 {
+            0
+        } else {
+            compared.ranges
+        };
+        let rejected_names = if report.rejection_count == 0 {
+            0
+        } else {
+            compared.names
+        };
+        assert_eq!((rejected_cells, rejected_ranges, rejected_names), (1, 1, 1));
     }
 }

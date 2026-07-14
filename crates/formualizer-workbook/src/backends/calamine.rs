@@ -5,7 +5,7 @@ use crate::traits::{
 };
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Read, Seek};
 use std::path::Path;
@@ -18,13 +18,14 @@ use formualizer_common::RangeAddress;
 use formualizer_eval::arrow_store::{IngestBuilder, OverlayValue, map_error_code};
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
-    DeferredFormulaPackage, Engine as EvalEngine, FormulaCompressedPreparation,
-    FormulaCompressedSourceBatch, FormulaCompressedSourceReport, FormulaIngestBatch,
-    FormulaIngestRecord, FormulaSpoolDiskPolicy, SourceCoord, SourceFamilyId, SourceFormulaFamily,
-    SourceRect,
+    DeferredFormulaPackage, Engine as EvalEngine, ExplicitPartitionLegacyMembers,
+    FormulaCompressedPreparation, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaSpoolDiskPolicy, PartitionLegacyMember,
+    PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
+    SourceCoord, SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
 };
 use formualizer_eval::traits::EvaluationContext;
-use formualizer_parse::parser::ReferenceType;
+use formualizer_parse::parser::{ASTNode, ReferenceType};
 use quick_xml::Reader as XmlReader;
 use quick_xml::events::{BytesRef, BytesStart, Event};
 use quick_xml::name::QName;
@@ -36,7 +37,7 @@ mod formula_replay;
 use compressed_evidence::{EvidenceRecord, MonotonicFormulaEvidence};
 use formula_replay::{
     CalamineDeferredFormulaReplay, FormulaReplaySpool, FormulaSpoolLimits,
-    HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered,
+    HybridFormulaReplaySpool, SpoolFormulaRecord, replay_spool_per_cell_filtered_with_family,
 };
 
 enum CalamineWorkbook {
@@ -79,6 +80,13 @@ struct WorkbookSpoolUsage {
     files: u32,
 }
 
+struct StreamWorksheetOptions {
+    chunk_rows: usize,
+    debug: bool,
+    workbook_spool_usage: WorkbookSpoolUsage,
+    shadow_relocation_comparator: Option<ShadowRelocationComparator>,
+}
+
 struct FormulaStaging {
     parse_cache: rustc_hash::FxHashMap<String, Option<formualizer_eval::engine::AstNodeId>>,
     formulas: Vec<FormulaIngestRecord>,
@@ -111,6 +119,7 @@ struct StreamedSheet {
     formulas: Vec<FormulaIngestRecord>,
     formula_source_report: FormulaCompressedSourceReport,
     compressed_families: Vec<SourceFormulaFamily>,
+    partitioned_families: Vec<PartitionedSourceFormulaFamily>,
     direct_preparation: Option<FormulaCompressedPreparation>,
     deferred_package: Option<DeferredFormulaPackage>,
     shared_formula_tags: usize,
@@ -186,6 +195,8 @@ impl DebugTimer {
     }
 }
 
+type ShadowRelocationComparator = Arc<dyn Fn(&ASTNode, &ASTNode) -> bool + Send + Sync>;
+
 pub struct CalamineAdapter {
     workbook: RwLock<CalamineWorkbook>,
     loaded_sheets: HashSet<String>,
@@ -194,10 +205,45 @@ pub struct CalamineAdapter {
     external_link_targets: BTreeMap<u32, String>,
     calc_settings: Option<CalcSettings>,
     load_stats: AdapterLoadStats,
+    shadow_relocation_comparator: Option<ShadowRelocationComparator>,
 }
 
 impl CalamineAdapter {
     const EXCEL_MAX_ROWS: u32 = 1_048_576;
+
+    #[doc(hidden)]
+    pub fn set_shadow_relocation_comparator_for_test(
+        &mut self,
+        comparator: impl Fn(&ASTNode, &ASTNode) -> bool + Send + Sync + 'static,
+    ) {
+        self.shadow_relocation_comparator = Some(Arc::new(comparator));
+    }
+
+    fn shadow_relocation_matches(
+        comparator: &ShadowRelocationComparator,
+        family: &SourceFormulaFamily,
+        coord0: SourceCoord,
+        expanded_formula: &str,
+    ) -> bool {
+        let expanded_formula = format!("={}", expanded_formula.trim_start_matches('='));
+        let anchor_formula = format!("={}", family.anchor_text.trim_start_matches('='));
+        let Ok(expanded) = formualizer_parse::parser::parse(&expanded_formula) else {
+            return false;
+        };
+        let Ok(anchor) = formualizer_parse::parser::parse(&anchor_formula) else {
+            return false;
+        };
+        let Ok(relocated) =
+            formualizer_eval::formula_plane::structural::relocate_ast_for_template_placement(
+                &anchor,
+                i64::from(coord0.row) - i64::from(family.anchor_coord0.row),
+                i64::from(coord0.col) - i64::from(family.anchor_coord0.col),
+            )
+        else {
+            return false;
+        };
+        comparator(&expanded, &relocated)
+    }
     const EXCEL_MAX_COLS: u32 = 16_384;
 
     fn stage_formula<C: EvaluationContext>(
@@ -262,15 +308,19 @@ impl CalamineAdapter {
         sheet: &str,
         engine: &mut EvalEngine<C>,
         sheet_instance: u32,
-        chunk_rows: usize,
-        debug: bool,
-        workbook_spool_usage: WorkbookSpoolUsage,
+        options: StreamWorksheetOptions,
     ) -> Result<StreamedSheet, calamine::Error>
     where
         RS: Read + Seek,
         C: EvaluationContext,
     {
         let timer = DebugTimer::start();
+        let StreamWorksheetOptions {
+            chunk_rows,
+            debug,
+            workbook_spool_usage,
+            shadow_relocation_comparator,
+        } = options;
         let mut reader = workbook
             .worksheet_cells_reader(sheet)
             .map_err(calamine::Error::Xlsx)?;
@@ -371,7 +421,11 @@ impl CalamineAdapter {
                 let source_sequence = formula_count as u64;
                 match metadata {
                     XlsxFormulaMetadata::Normal { formula } => {
-                        formula_evidence.observe(coord0, EvidenceRecord::Ordinary);
+                        formula_evidence.observe_ordered(
+                            coord0,
+                            SourceFormulaOrder::new(source_sequence),
+                            EvidenceRecord::Ordinary,
+                        );
                         formula_spool.append(SpoolFormulaRecord::Ordinary {
                             sequence: source_sequence,
                             coord0,
@@ -398,8 +452,9 @@ impl CalamineAdapter {
                             sheet_instance,
                             source_index: shared_index,
                         };
-                        formula_evidence.observe(
+                        formula_evidence.observe_ordered(
                             coord0,
+                            SourceFormulaOrder::new(source_sequence),
                             EvidenceRecord::Anchor {
                                 family,
                                 range: declared_range,
@@ -416,8 +471,9 @@ impl CalamineAdapter {
                     }
                     XlsxFormulaMetadata::SharedDerived { shared_index } => {
                         shared_formula_tags += 1;
-                        formula_evidence.observe(
+                        formula_evidence.observe_ordered(
                             coord0,
+                            SourceFormulaOrder::new(source_sequence),
                             EvidenceRecord::Descendant {
                                 family: SourceFamilyId {
                                     sheet_instance,
@@ -432,7 +488,11 @@ impl CalamineAdapter {
                         })
                     }
                     _ => {
-                        formula_evidence.observe(coord0, EvidenceRecord::Unsupported);
+                        formula_evidence.observe_ordered(
+                            coord0,
+                            SourceFormulaOrder::new(source_sequence),
+                            EvidenceRecord::Unsupported,
+                        );
                         formula_spool.append(SpoolFormulaRecord::Unsupported {
                             sequence: source_sequence,
                             coord0,
@@ -558,7 +618,54 @@ impl CalamineAdapter {
         // still local and is installed by the caller only after this succeeds.
         let compressed_evidence = formula_evidence.finish();
         let mut formula_source_report = compressed_evidence.report;
-        let compressed_families = compressed_evidence.families;
+        let mut compressed_families = compressed_evidence.families;
+        let partitioned_families = compressed_evidence
+            .fragmented
+            .into_iter()
+            .map(|proposal| {
+                let mut legacy_members: Vec<_> = proposal
+                    .fallback_members
+                    .into_iter()
+                    .map(|coord| PartitionLegacyMember {
+                        coord,
+                        kind: PartitionLegacyMemberKind::SharedFamilyMember,
+                    })
+                    .collect();
+                let mut ordinary_exceptions = 0u64;
+                let mut holes = 0u64;
+                for exclusion in proposal.exclusions {
+                    match exclusion {
+                        compressed_evidence::SourceExclusion::Hole(_) => {
+                            holes = holes.saturating_add(1);
+                        }
+                        compressed_evidence::SourceExclusion::OrdinaryFormula(coord) => {
+                            ordinary_exceptions = ordinary_exceptions.saturating_add(1);
+                            legacy_members.push(PartitionLegacyMember {
+                                coord,
+                                kind: PartitionLegacyMemberKind::OrdinaryException,
+                            });
+                        }
+                    }
+                }
+                let legacy_members = ExplicitPartitionLegacyMembers::try_new(legacy_members)
+                    .map_err(|reason| calamine::Error::Io(std::io::Error::other(reason)))?;
+                Ok(PartitionedSourceFormulaFamily {
+                    source_id: proposal.source_id,
+                    source_order: proposal.source_order,
+                    template_origin0: proposal.anchor_coord0,
+                    template_text: proposal.anchor_text,
+                    declared: proposal.declared,
+                    surviving_member_count: proposal.member_count,
+                    fragments: proposal.fragments,
+                    legacy_members,
+                    reconciliation: PartitionReconciliation {
+                        shared_members: proposal.member_count,
+                        ordinary_exceptions,
+                        holes,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, calamine::Error>>()?;
         let formula_spool_bytes = if formula_count == 0 {
             0
         } else {
@@ -575,35 +682,54 @@ impl CalamineAdapter {
         };
         let _formula_spool_storage = formula_spool.storage_kind();
         debug_assert!(formula_count == 0 || formula_spool_bytes >= 5);
+        let mut formula_spool = Some(formula_spool);
         let direct_preparation = if engine.config.formula_plane_mode
             == formualizer_eval::engine::FormulaPlaneMode::AuthoritativeExperimental
             && !engine.config.defer_graph_building
         {
+            let replay: Box<dyn formualizer_eval::engine::DeferredFormulaReplay> =
+                Box::new(CalamineDeferredFormulaReplay::new(
+                    formula_spool.take().expect("eager formula spool available"),
+                    sheet.to_string(),
+                    sheet_instance,
+                ));
             Some(
                 engine
                     .source_formula_ingress()
-                    .prepare_families(sheet, &compressed_families),
+                    .prepare_eager_proposals(
+                        sheet,
+                        &compressed_families,
+                        &partitioned_families,
+                        formula_count as u64,
+                        replay,
+                    )
+                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?,
             )
         } else {
             None
         };
-        let all_formulas_direct = direct_preparation
-            .as_ref()
-            .is_some_and(|preparation| preparation.direct_cell_count() == formula_count as u64);
-        if !all_formulas_direct && !engine.config.defer_graph_building {
+        if direct_preparation.is_none() && !engine.config.defer_graph_building {
             formula_source_report.source_spool_replays = 1;
-            replay_spool_per_cell_filtered(
-                &mut formula_spool,
+            let compare_shadow = engine.config.formula_plane_mode
+                == formualizer_eval::engine::FormulaPlaneMode::Shadow;
+            let mut relocation_mismatches = BTreeSet::new();
+            replay_spool_per_cell_filtered_with_family(
+                formula_spool
+                    .as_mut()
+                    .expect("replay formula spool available"),
                 sheet,
-                |shared_index| {
-                    direct_preparation.as_ref().is_some_and(|preparation| {
-                        preparation.is_direct(SourceFamilyId {
-                            sheet_instance,
-                            source_index: shared_index,
-                        })
-                    })
-                },
-                |coord0, formula| {
+                |_| false,
+                |coord0, formula, shared_index| {
+                    if compare_shadow
+                        && let (Some(comparator), Some(shared_index)) =
+                            (shadow_relocation_comparator.as_ref(), shared_index)
+                        && let Some(family) = compressed_families
+                            .iter()
+                            .find(|family| family.source_id.source_index == shared_index)
+                        && !Self::shadow_relocation_matches(comparator, family, coord0, formula)
+                    {
+                        relocation_mismatches.insert(shared_index);
+                    }
                     Self::stage_formula(
                         engine,
                         sheet,
@@ -614,6 +740,11 @@ impl CalamineAdapter {
                     )
                 },
             )?;
+            if !relocation_mismatches.is_empty() {
+                compressed_families.retain(|family| {
+                    !relocation_mismatches.contains(&family.source_id.source_index)
+                });
+            }
         }
 
         if u64::try_from(value_cells_observed)
@@ -660,8 +791,11 @@ impl CalamineAdapter {
                 sheet.to_string(),
                 formula_source_report.clone(),
                 compressed_families.clone(),
+                partitioned_families.clone(),
                 Box::new(CalamineDeferredFormulaReplay::new(
-                    formula_spool,
+                    formula_spool
+                        .take()
+                        .expect("deferred formula spool available"),
                     sheet.to_string(),
                     sheet_instance,
                 )),
@@ -679,6 +813,7 @@ impl CalamineAdapter {
             formulas: formula_staging.formulas,
             formula_source_report,
             compressed_families,
+            partitioned_families,
             direct_preparation,
             deferred_package,
             shared_formula_tags,
@@ -1191,6 +1326,7 @@ impl SpreadsheetReader for CalamineAdapter {
             external_link_targets,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
+            shadow_relocation_comparator: None,
         })
     }
 
@@ -1232,6 +1368,7 @@ impl SpreadsheetReader for CalamineAdapter {
             external_link_targets,
             calc_settings,
             load_stats: AdapterLoadStats::default(),
+            shadow_relocation_comparator: None,
         })
     }
 
@@ -1360,6 +1497,8 @@ where
                 let _span_sheet =
                     tracing::info_span!("io_populate_sheet", sheet = n.as_str()).entered();
 
+                let shadow_relocation_comparator =
+                    self.shadow_relocation_comparator.as_ref().map(Arc::clone);
                 let streamed = {
                     let mut workbook = self.workbook.write();
                     match &mut *workbook {
@@ -1368,11 +1507,14 @@ where
                             n,
                             engine,
                             sheet_instance as u32,
-                            chunk_rows,
-                            debug,
-                            WorkbookSpoolUsage {
-                                bytes: workbook_spool_bytes_used,
-                                files: workbook_spill_files_used,
+                            StreamWorksheetOptions {
+                                chunk_rows,
+                                debug,
+                                workbook_spool_usage: WorkbookSpoolUsage {
+                                    bytes: workbook_spool_bytes_used,
+                                    files: workbook_spill_files_used,
+                                },
+                                shadow_relocation_comparator: shadow_relocation_comparator.clone(),
                             },
                         ),
                         CalamineWorkbook::Bytes(workbook) => Self::stream_worksheet(
@@ -1380,11 +1522,14 @@ where
                             n,
                             engine,
                             sheet_instance as u32,
-                            chunk_rows,
-                            debug,
-                            WorkbookSpoolUsage {
-                                bytes: workbook_spool_bytes_used,
-                                files: workbook_spill_files_used,
+                            StreamWorksheetOptions {
+                                chunk_rows,
+                                debug,
+                                workbook_spool_usage: WorkbookSpoolUsage {
+                                    bytes: workbook_spool_bytes_used,
+                                    files: workbook_spill_files_used,
+                                },
+                                shadow_relocation_comparator,
                             },
                         ),
                     }?
@@ -1401,6 +1546,7 @@ where
                     formulas,
                     formula_source_report,
                     compressed_families,
+                    partitioned_families,
                     direct_preparation,
                     deferred_package,
                     shared_formula_tags,
@@ -1438,10 +1584,11 @@ where
                     } else {
                         eager_formula_batches.push((
                             batch,
-                            FormulaCompressedSourceBatch::with_families(
+                            FormulaCompressedSourceBatch::with_proposals(
                                 n.clone(),
                                 formula_source_report,
                                 compressed_families,
+                                partitioned_families,
                             ),
                         ));
                     }

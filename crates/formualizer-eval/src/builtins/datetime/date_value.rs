@@ -208,8 +208,8 @@ impl Function for TimeValueFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(DateValueFn));
-    crate::function_registry::register_function(Arc::new(TimeValueFn));
+    crate::function_registry::register_builtin(Arc::new(DateValueFn));
+    crate::function_registry::register_builtin(Arc::new(TimeValueFn));
 }
 
 #[cfg(test)]

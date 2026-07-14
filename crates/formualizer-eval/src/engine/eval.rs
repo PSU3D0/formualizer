@@ -20,10 +20,12 @@ use crate::engine::{
     FormulaPlaneMode, RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind,
     VisibilityMaskMode,
 };
+use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
-    commit_prepared_anchor_once_family, place_candidate_family_with_analyses,
-    prepare_anchor_once_family, split_candidate_affine_literal_runs, validate_anchor_once_syntax,
+    place_candidate_family_with_analyses, prepare_anchor_once_family,
+    split_candidate_affine_literal_runs, validate_anchor_once_fragment_shadow,
+    validate_anchor_once_shadow_relocation, validate_anchor_once_syntax,
 };
 use crate::formula_plane::producer::{
     DirtyProjectionRule, FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex,
@@ -184,7 +186,8 @@ fn producer_dirty_to_span_dirty(
 }
 type PreparedFormulaBatches = Vec<FormulaIngestBatch>;
 type StagedFormulaBatches = Vec<(String, StagedSheet)>;
-struct SourceFamilyPreparationError {
+#[derive(Debug)]
+pub(crate) struct SourceFamilyPreparationError {
     reason: String,
     parse_attempted: bool,
     ast_created: bool,
@@ -229,6 +232,13 @@ impl SourceFamilyPreparationError {
     }
 }
 
+struct PreparedPartitionShadow {
+    fragment_count: u64,
+    direct_cells: u64,
+    fallback_cells: u64,
+    function_semantics_used: bool,
+}
+
 type FormulaPlaneMixedScheduleBuild = (
     MixedSchedule,
     BTreeMap<crate::formula_plane::runtime::FormulaSpanId, FormulaSpanRef>,
@@ -267,9 +277,30 @@ where
         &mut self,
         sheet_name: &str,
         families: &[crate::engine::SourceFormulaFamily],
-    ) -> crate::engine::FormulaCompressedPreparation {
-        self.engine
-            .prepare_source_formula_families(sheet_name, families)
+    ) -> Result<crate::engine::FormulaCompressedPreparation, ExcelError> {
+        self.engine.observe_function_semantic_epoch()?;
+        Ok(self
+            .engine
+            .prepare_source_formula_families(sheet_name, families))
+    }
+
+    pub fn prepare_eager_proposals(
+        &mut self,
+        sheet_name: &str,
+        families: &[crate::engine::SourceFormulaFamily],
+        partitions: &[crate::engine::PartitionedSourceFormulaFamily],
+        formula_record_count: u64,
+        replay: Box<dyn crate::engine::DeferredFormulaReplay>,
+    ) -> Result<crate::engine::FormulaCompressedPreparation, ExcelError> {
+        self.engine.observe_function_semantic_epoch()?;
+        let replay = Arc::new(std::sync::Mutex::new(replay));
+        self.engine.prepare_eager_source_formula_proposals(
+            sheet_name,
+            families,
+            partitions,
+            formula_record_count,
+            replay,
+        )
     }
 
     pub fn stage_deferred(&mut self, package: crate::engine::DeferredFormulaPackage) {
@@ -674,11 +705,25 @@ pub struct Engine<R> {
     /// any active span the engine has not yet evaluated under the current
     /// indexes generation; subsequent passes use bounded dirty closures.
     formula_plane_indexes_epoch_seen: u64,
+    /// Global function-registry semantic epoch observed after the latest
+    /// conservative FormulaPlane invalidation.
+    function_semantic_epoch_seen: u64,
+    /// Runtime-provider semantic revision observed after the latest conservative
+    /// FormulaPlane invalidation.
+    function_provider_revision_seen: Option<u64>,
 
     #[cfg(test)]
     last_formula_plane_span_eval_report: Option<SpanEvalReport>,
+    before_prepared_span_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     #[cfg(test)]
     force_source_family_fallback: bool,
+    #[cfg(test)]
+    fragmented_commit_fault_for_test:
+        Option<crate::engine::fragmented_transaction::FragmentedCommitFault>,
+    #[cfg(test)]
+    before_legacy_fallback_final_provider_sample_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
+    #[cfg(test)]
+    after_eager_proposal_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
 }
 
 /// Minimal edit surface used by `Engine::action`.
@@ -1635,6 +1680,7 @@ where
         };
 
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
+        let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1674,10 +1720,19 @@ where
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
+            function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
+            function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            before_prepared_span_commit_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
+            #[cfg(test)]
+            fragmented_commit_fault_for_test: None,
+            #[cfg(test)]
+            before_legacy_fallback_final_provider_sample_hook: None,
+            #[cfg(test)]
+            after_eager_proposal_commit_hook: None,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -1717,6 +1772,7 @@ where
             }
         });
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
+        let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -1756,10 +1812,19 @@ where
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             formula_plane_indexes_epoch_seen: 0,
+            function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
+            function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            before_prepared_span_commit_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
+            #[cfg(test)]
+            fragmented_commit_fault_for_test: None,
+            #[cfg(test)]
+            before_legacy_fallback_final_provider_sample_hook: None,
+            #[cfg(test)]
+            after_eager_proposal_commit_hook: None,
         };
         // Phase 1 (ticket 610): Arrow-truth is the only supported mode.
         engine.config.arrow_storage_enabled = true;
@@ -3198,6 +3263,14 @@ where
         SourceFormulaIngress { engine: self }
     }
 
+    #[doc(hidden)]
+    pub fn set_before_prepared_span_commit_hook(
+        &mut self,
+        hook: impl FnOnce() + Send + Sync + 'static,
+    ) {
+        self.before_prepared_span_commit_hook = Some(Box::new(hook));
+    }
+
     fn stage_deferred_formula_package(&mut self, package: crate::engine::DeferredFormulaPackage) {
         let sheet = package.sheet_name.clone();
         let staged = self.staged_formulas.entry(sheet).or_default();
@@ -3276,6 +3349,30 @@ where
     }
 
     #[cfg(test)]
+    pub(crate) fn set_fragmented_commit_fault_for_test(
+        &mut self,
+        fault: crate::engine::fragmented_transaction::FragmentedCommitFault,
+    ) {
+        self.fragmented_commit_fault_for_test = Some(fault);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_before_legacy_fallback_final_provider_sample_hook(
+        &mut self,
+        hook: impl FnOnce() + Send + Sync + 'static,
+    ) {
+        self.before_legacy_fallback_final_provider_sample_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_after_eager_proposal_commit_hook(
+        &mut self,
+        hook: impl FnOnce() + Send + Sync + 'static,
+    ) {
+        self.after_eager_proposal_commit_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
     pub(crate) fn formula_plane_indexes_epoch(&self) -> u64 {
         self.graph.formula_authority().indexes_epoch()
     }
@@ -3295,8 +3392,13 @@ where
         &mut self,
         sheet_id: SheetId,
         family: &crate::engine::SourceFormulaFamily,
+        allow_function_closure: bool,
+        planning_provider: Option<&dyn crate::traits::FunctionProvider>,
     ) -> Result<
-        crate::formula_plane::placement::PreparedAnchorOncePlacement,
+        (
+            crate::formula_plane::placement::PreparedAnchorOncePlacement,
+            bool,
+        ),
         SourceFamilyPreparationError,
     > {
         let transport = family
@@ -3328,13 +3430,23 @@ where
         };
         let ast = formualizer_parse::parser::parse(&formula)
             .map_err(|_| SourceFamilyPreparationError::parse("AnchorParseRejected"))?;
-        validate_anchor_once_syntax(
-            &ast,
-            family.anchor_coord0.row,
-            family.anchor_coord0.col,
-            &domain,
-        )
-        .map_err(SourceFamilyPreparationError::ast)?;
+        let relocation = if allow_function_closure {
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                family.anchor_coord0.row,
+                family.anchor_coord0.col,
+                &domain,
+                planning_provider.unwrap_or(&self.resolver),
+            )
+        } else {
+            validate_anchor_once_syntax(
+                &ast,
+                family.anchor_coord0.row,
+                family.anchor_coord0.col,
+                &domain,
+            )
+        };
+        relocation.map_err(SourceFamilyPreparationError::ast)?;
         let ast_id = self.intern_formula_ast(&ast);
         let placement = CellRef::new(
             sheet_id,
@@ -3346,7 +3458,13 @@ where
             ),
         );
         let ingested = {
-            let mut pipeline = self.ingest_pipeline();
+            let mut pipeline = match planning_provider {
+                Some(provider) => self.graph.ingest_pipeline(provider),
+                None => self.ingest_pipeline(),
+            };
+            if allow_function_closure {
+                pipeline = pipeline.enable_function_semantics();
+            }
             pipeline.ingest_formula(
                 FormulaAstInput::RawArena(ast_id),
                 placement,
@@ -3354,6 +3472,9 @@ where
             )
         }
         .map_err(|_| SourceFamilyPreparationError::ast("UnsupportedCanonicalTemplate"))?;
+        let function_semantics_used = ingested
+            .labels
+            .has_flag(crate::engine::arena::ast::CanonicalLabels::FLAG_CONTAINS_FUNCTION);
         let candidate = FormulaPlacementCandidate::new(
             sheet_id,
             family.anchor_coord0.row,
@@ -3364,7 +3485,461 @@ where
         let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested)
             .map_err(|reason| SourceFamilyPreparationError::ast(format!("{reason:?}")))?;
         prepare_anchor_once_family(candidate, analysis, domain, family.member_count)
+            .map(|prepared| (prepared, function_semantics_used))
             .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))
+    }
+
+    fn placement_domain_from_transport(
+        sheet_id: SheetId,
+        transport: crate::engine::PlacementDomainTransport,
+    ) -> PlacementDomain {
+        match transport {
+            crate::engine::PlacementDomainTransport::RowRun {
+                row_start,
+                row_end,
+                col,
+            } => PlacementDomain::row_run(sheet_id, row_start, row_end, col),
+            crate::engine::PlacementDomainTransport::ColRun {
+                row,
+                col_start,
+                col_end,
+            } => PlacementDomain::col_run(sheet_id, row, col_start, col_end),
+            crate::engine::PlacementDomainTransport::Rect(rect) => PlacementDomain::rect(
+                sheet_id,
+                rect.start.row,
+                rect.end.row,
+                rect.start.col,
+                rect.end.col,
+            ),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn analyze_fragmented_exact_replay_record_for_test(
+        &mut self,
+        sheet_name: &str,
+        source_id: crate::engine::SourceFamilyId,
+        expected: crate::engine::PartitionLegacyMember,
+        replay: crate::engine::DeferredReplayFormula,
+    ) -> Result<crate::engine::fragmented_transaction::PreparedFragmentedLegacyFormula, String>
+    {
+        let sheet_id = self.graph.sheet_id_mut(sheet_name);
+        self.graph
+            .analyze_fragmented_exact_replay_record(
+                &self.resolver,
+                sheet_id,
+                source_id,
+                expected,
+                replay,
+            )
+            .map_err(|error| format!("{error:?}"))
+    }
+
+    pub(crate) fn prepare_fragmented_source_transaction(
+        &self,
+        source: &crate::engine::PartitionedSourceFormulaFamily,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        prepared: crate::engine::fragmented_transaction::PreparedPartitionedSourceFamily,
+        legacy_formulas: Vec<
+            crate::engine::fragmented_transaction::PreparedFragmentedLegacyFormula,
+        >,
+    ) -> Result<
+        crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        crate::engine::fragmented_transaction::FragmentedTransactionPrepareError,
+    > {
+        self.graph.prepare_fragmented_source_transaction(
+            &self.source_formula_token,
+            source,
+            disposition,
+            prepared,
+            legacy_formulas,
+        )
+    }
+
+    pub(crate) fn commit_fragmented_source_transaction(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        let registry_guard = crate::function_registry::semantic_epoch_read_guard();
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let epoch = registry_guard.epoch();
+        let resolver = &self.resolver;
+        let decision = self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            epoch,
+            provider_revision,
+            || resolver.planning_semantic_revision(),
+            crate::engine::fragmented_transaction::FragmentedCommitFault::None,
+        );
+        drop(registry_guard);
+        decision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_fragmented_source_transaction_with_fault_for_test(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        fault: crate::engine::fragmented_transaction::FragmentedCommitFault,
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        let registry_guard = crate::function_registry::semantic_epoch_read_guard();
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let epoch = registry_guard.epoch();
+        let resolver = &self.resolver;
+        let decision = self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            epoch,
+            provider_revision,
+            || resolver.planning_semantic_revision(),
+            fault,
+        );
+        drop(registry_guard);
+        decision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_fragmented_source_transaction_with_provider_flip_for_test(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        before_second_sample: impl FnOnce(),
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        let registry_guard = crate::function_registry::semantic_epoch_read_guard();
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let epoch = registry_guard.epoch();
+        let resolver = &self.resolver;
+        let decision = self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            epoch,
+            provider_revision,
+            || {
+                before_second_sample();
+                resolver.planning_semantic_revision()
+            },
+            crate::engine::fragmented_transaction::FragmentedCommitFault::None,
+        );
+        drop(registry_guard);
+        decision
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_fragmented_source_transaction_with_revisions_for_test(
+        &mut self,
+        prepared: crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
+        disposition: &crate::engine::FormulaReplayDisposition,
+        function_semantic_epoch: u64,
+        function_provider_revision: Option<u64>,
+    ) -> crate::engine::fragmented_transaction::FragmentedCommitDecision {
+        self.graph.commit_fragmented_source_transaction(
+            prepared,
+            &self.source_formula_token,
+            disposition,
+            function_semantic_epoch,
+            function_provider_revision,
+            || function_provider_revision,
+            crate::engine::fragmented_transaction::FragmentedCommitFault::None,
+        )
+    }
+
+    pub(crate) fn analyze_partitioned_source_family_for_transaction(
+        &mut self,
+        sheet_name: &str,
+        family: &crate::engine::PartitionedSourceFormulaFamily,
+    ) -> Result<
+        crate::engine::fragmented_transaction::PreparedPartitionedSourceFamily,
+        SourceFamilyPreparationError,
+    > {
+        family
+            .validate(&self.workbook_load_limits)
+            .map_err(SourceFamilyPreparationError::contract)?;
+        let formula = if family.template_text.starts_with('=') {
+            family.template_text.to_string()
+        } else {
+            format!("={}", family.template_text)
+        };
+        let ast = formualizer_parse::parser::parse(&formula)
+            .map_err(|_| SourceFamilyPreparationError::parse("AnchorParseRejected"))?;
+        let mut requests = Vec::new();
+        Self::collect_planning_function_requests(&ast, &mut requests);
+        let snapshot = crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+            &self.resolver,
+            requests,
+        )
+        .map_err(|error| SourceFamilyPreparationError::ast(format!("{error:?}")))?;
+        let sheet_id = self.graph.sheet_id_mut(sheet_name);
+        let domains: Vec<_> = family
+            .fragments
+            .iter()
+            .copied()
+            .map(|transport| Self::placement_domain_from_transport(sheet_id, transport))
+            .collect();
+        for domain in &domains {
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                family.template_origin0.row,
+                family.template_origin0.col,
+                domain,
+                &snapshot,
+            )
+            .map_err(SourceFamilyPreparationError::ast)?;
+        }
+        let ast_id = self.intern_formula_ast(&ast);
+        let placement = CellRef::new(
+            sheet_id,
+            Coord::from_excel(
+                family.template_origin0.row + 1,
+                family.template_origin0.col + 1,
+                true,
+                true,
+            ),
+        );
+        let ingested = self
+            .graph
+            .ingest_pipeline(&snapshot)
+            .enable_function_semantics()
+            .ingest_formula(
+                FormulaAstInput::RawArena(ast_id),
+                placement,
+                Some(family.template_text.clone()),
+            )
+            .map_err(|_| SourceFamilyPreparationError::ast("UnsupportedCanonicalTemplate"))?;
+        let function_semantics_used = ingested
+            .labels
+            .has_flag(crate::engine::arena::ast::CanonicalLabels::FLAG_CONTAINS_FUNCTION);
+        let name_assumptions = self
+            .graph
+            .capture_fragmented_name_assumptions(sheet_id, &ingested.dep_plan.resolved_named_refs)
+            .map_err(|error| SourceFamilyPreparationError::ast(format!("{error:?}")))?;
+        let candidate = FormulaPlacementCandidate::new(
+            sheet_id,
+            family.template_origin0.row,
+            family.template_origin0.col,
+            ingested.ast_id,
+            Some(family.template_text.clone()),
+        );
+        let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested)
+            .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))?;
+        let direct_cells = domains.iter().try_fold(0u64, |total, domain| {
+            total
+                .checked_add(domain.cell_count())
+                .ok_or_else(|| SourceFamilyPreparationError::analysis("PartitionAreaOverflow"))
+        })?;
+        let mut placements = Vec::with_capacity(domains.len());
+        for domain in domains {
+            let member_count = domain.cell_count();
+            placements.push(
+                prepare_anchor_once_fragment(
+                    candidate.clone(),
+                    analysis.clone(),
+                    domain,
+                    member_count,
+                    direct_cells,
+                )
+                .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))?,
+            );
+        }
+        let fallback_cells = family.legacy_members.shared_member_count() as u64;
+        if direct_cells.checked_add(fallback_cells) != Some(family.surviving_member_count) {
+            return Err(SourceFamilyPreparationError::analysis(
+                "PartitionMemberCountMismatch",
+            ));
+        }
+        Ok(
+            crate::engine::fragmented_transaction::PreparedPartitionedSourceFamily {
+                engine_token: Arc::clone(&self.source_formula_token),
+                sheet_id,
+                sheet_name: Arc::from(sheet_name),
+                source: family.clone(),
+                placements,
+                function_semantic_epoch: snapshot.epoch(),
+                function_provider_revision: snapshot.provider_revision(),
+                function_semantics_used,
+                name_assumptions,
+                direct_cells,
+            },
+        )
+    }
+
+    fn prepare_partitioned_source_formula_family_shadow(
+        &mut self,
+        sheet_id: SheetId,
+        family: &crate::engine::PartitionedSourceFormulaFamily,
+    ) -> Result<PreparedPartitionShadow, SourceFamilyPreparationError> {
+        family
+            .validate(&self.workbook_load_limits)
+            .map_err(SourceFamilyPreparationError::contract)?;
+        let formula = if family.template_text.starts_with('=') {
+            family.template_text.to_string()
+        } else {
+            format!("={}", family.template_text)
+        };
+        let ast = formualizer_parse::parser::parse(&formula)
+            .map_err(|_| SourceFamilyPreparationError::parse("AnchorParseRejected"))?;
+        let domains: Vec<_> = family
+            .fragments
+            .iter()
+            .copied()
+            .map(|transport| Self::placement_domain_from_transport(sheet_id, transport))
+            .collect();
+        for domain in &domains {
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                family.template_origin0.row,
+                family.template_origin0.col,
+                domain,
+                &self.resolver,
+            )
+            .map_err(SourceFamilyPreparationError::ast)?;
+        }
+        let ast_id = self.intern_formula_ast(&ast);
+        let placement = CellRef::new(
+            sheet_id,
+            Coord::from_excel(
+                family.template_origin0.row + 1,
+                family.template_origin0.col + 1,
+                true,
+                true,
+            ),
+        );
+        let ingested = self
+            .ingest_pipeline()
+            .enable_function_semantics()
+            .ingest_formula(
+                FormulaAstInput::RawArena(ast_id),
+                placement,
+                Some(family.template_text.clone()),
+            )
+            .map_err(|_| SourceFamilyPreparationError::ast("UnsupportedCanonicalTemplate"))?;
+        let function_semantics_used = ingested
+            .labels
+            .has_flag(crate::engine::arena::ast::CanonicalLabels::FLAG_CONTAINS_FUNCTION);
+        let candidate = FormulaPlacementCandidate::new(
+            sheet_id,
+            family.template_origin0.row,
+            family.template_origin0.col,
+            ingested.ast_id,
+            Some(family.template_text.clone()),
+        );
+        let analysis = CandidateAnalysis::from_ingested(&candidate, &ingested)
+            .map_err(|reason| SourceFamilyPreparationError::ast(format!("{reason:?}")))?;
+        let fragment_count = domains.len() as u64;
+        let mut direct_cells = 0u64;
+        for domain in domains {
+            let member_count = domain.cell_count();
+            validate_anchor_once_fragment_shadow(&analysis, &domain, member_count)
+                .map_err(|reason| SourceFamilyPreparationError::analysis(format!("{reason:?}")))?;
+            direct_cells = direct_cells
+                .checked_add(member_count)
+                .ok_or_else(|| SourceFamilyPreparationError::analysis("PartitionAreaOverflow"))?;
+        }
+        let fallback_cells = family.legacy_members.shared_member_count() as u64;
+        if direct_cells.checked_add(fallback_cells) != Some(family.surviving_member_count) {
+            return Err(SourceFamilyPreparationError::analysis(
+                "PartitionMemberCountMismatch",
+            ));
+        }
+        Ok(PreparedPartitionShadow {
+            fragment_count,
+            direct_cells,
+            fallback_cells,
+            function_semantics_used,
+        })
+    }
+
+    fn analyze_partitioned_formula_plane_shadow(
+        &mut self,
+        batches: &[(String, Vec<crate::engine::PartitionedSourceFormulaFamily>)],
+    ) -> FormulaIngestReport {
+        let mut report = FormulaIngestReport::with_mode(FormulaPlaneMode::Shadow);
+        for (sheet_name, families) in batches {
+            let sheet_id = self.graph.sheet_id_mut(sheet_name);
+            for family in families {
+                report.shadow_candidate_cells = report
+                    .shadow_candidate_cells
+                    .saturating_add(family.surviving_member_count);
+                match self.prepare_partitioned_source_formula_family_shadow(sheet_id, family) {
+                    Ok(prepared) => {
+                        let fragment_count = prepared.fragment_count;
+                        let descendants = family.surviving_member_count.saturating_sub(1);
+                        report.source_anchor_parses = report.source_anchor_parses.saturating_add(1);
+                        report.source_anchor_asts = report.source_anchor_asts.saturating_add(1);
+                        report.source_anchor_analyses =
+                            report.source_anchor_analyses.saturating_add(1);
+                        report.source_partition_analyses_reused = report
+                            .source_partition_analyses_reused
+                            .saturating_add(fragment_count.saturating_sub(1));
+                        report.source_partitioned_families_prepared = report
+                            .source_partitioned_families_prepared
+                            .saturating_add(1);
+                        report.source_partition_fragments_prepared = report
+                            .source_partition_fragments_prepared
+                            .saturating_add(fragment_count);
+                        report.source_partition_span_cells_prepared = report
+                            .source_partition_span_cells_prepared
+                            .saturating_add(prepared.direct_cells);
+                        report.source_partition_fallback_cells = report
+                            .source_partition_fallback_cells
+                            .saturating_add(prepared.fallback_cells);
+                        report.shadow_accepted_span_cells = report
+                            .shadow_accepted_span_cells
+                            .saturating_add(prepared.direct_cells);
+                        report.shadow_fallback_cells = report
+                            .shadow_fallback_cells
+                            .saturating_add(prepared.fallback_cells);
+                        report.source_descendant_strings_avoided = report
+                            .source_descendant_strings_avoided
+                            .saturating_add(descendants);
+                        report.source_descendant_events_avoided = report
+                            .source_descendant_events_avoided
+                            .saturating_add(descendants);
+                        report.source_descendant_analyses_avoided = report
+                            .source_descendant_analyses_avoided
+                            .saturating_add(descendants);
+                        report.graph_formula_vertices_avoided_shadow = report
+                            .graph_formula_vertices_avoided_shadow
+                            .saturating_add(prepared.direct_cells);
+                        report.ast_roots_avoided_shadow = report
+                            .ast_roots_avoided_shadow
+                            .saturating_add(prepared.direct_cells.saturating_sub(fragment_count));
+                        report.edge_rows_avoided_shadow = report
+                            .edge_rows_avoided_shadow
+                            .saturating_add(prepared.direct_cells);
+                        if prepared.function_semantics_used {
+                            report.source_partition_function_semantics =
+                                report.source_partition_function_semantics.saturating_add(1);
+                        }
+                    }
+                    Err(error) => {
+                        if error.parse_attempted {
+                            report.source_anchor_parses =
+                                report.source_anchor_parses.saturating_add(1);
+                        }
+                        if error.ast_created {
+                            report.source_anchor_asts = report.source_anchor_asts.saturating_add(1);
+                        }
+                        if error.analysis_created {
+                            report.source_anchor_analyses =
+                                report.source_anchor_analyses.saturating_add(1);
+                        }
+                        report.shadow_fallback_cells = report
+                            .shadow_fallback_cells
+                            .saturating_add(family.surviving_member_count);
+                        report.source_partitioned_families_rejected = report
+                            .source_partitioned_families_rejected
+                            .saturating_add(1);
+                        *report.fallback_reasons.entry(error.reason).or_default() += 1;
+                    }
+                }
+            }
+        }
+        report
     }
 
     fn analyze_compressed_formula_plane_shadow(
@@ -3382,7 +3957,7 @@ where
                     .shadow_candidate_cells
                     .saturating_add(family.member_count);
 
-                match self.prepare_source_formula_family(sheet_id, family) {
+                match self.prepare_source_formula_family(sheet_id, family, true, None) {
                     Ok(_) => {
                         report.source_descendant_strings_avoided = report
                             .source_descendant_strings_avoided
@@ -3982,6 +4557,39 @@ where
         components
     }
 
+    fn collect_planning_function_requests(
+        ast: &ASTNode,
+        requests: &mut Vec<(String, String, usize)>,
+    ) {
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                requests.push((String::new(), name.clone(), args.len()));
+                for arg in args {
+                    Self::collect_planning_function_requests(arg, requests);
+                }
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                Self::collect_planning_function_requests(left, requests);
+                Self::collect_planning_function_requests(right, requests);
+            }
+            ASTNodeType::UnaryOp { expr, .. } => {
+                Self::collect_planning_function_requests(expr, requests);
+            }
+            ASTNodeType::Call { callee, args } => {
+                Self::collect_planning_function_requests(callee, requests);
+                for arg in args {
+                    Self::collect_planning_function_requests(arg, requests);
+                }
+            }
+            ASTNodeType::Array(rows) => {
+                for cell in rows.iter().flatten() {
+                    Self::collect_planning_function_requests(cell, requests);
+                }
+            }
+            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => {}
+        }
+    }
+
     pub(crate) fn prepare_source_formula_families(
         &mut self,
         sheet_name: &str,
@@ -3989,13 +4597,64 @@ where
     ) -> crate::engine::FormulaCompressedPreparation {
         let mut preparation = crate::engine::FormulaCompressedPreparation {
             engine_token: Arc::clone(&self.source_formula_token),
+            function_semantic_epoch: crate::function_registry::semantic_epoch(),
+            function_provider_revision: None,
+            function_semantics_used: false,
             sheet_name: Arc::from(sheet_name),
             prepared: Vec::new(),
             rejected: BTreeMap::new(),
+            fragmented: Vec::new(),
+            fragmented_sources: BTreeMap::new(),
+            eager_replay: Vec::new(),
+            preparation_spool_replays: 0,
+            clean_rejected_anchor_counts: [0; 3],
+            fragmented_rejected_anchor_counts: [0; 3],
+            exact_replay: None,
+            replay_disposition: crate::engine::FormulaReplayDisposition::default(),
         };
         if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
             return preparation;
         }
+
+        let mut requests = Vec::new();
+        for family in families {
+            let formula = if family.anchor_text.starts_with('=') {
+                family.anchor_text.to_string()
+            } else {
+                format!("={}", family.anchor_text)
+            };
+            if let Ok(ast) = formualizer_parse::parser::parse(&formula) {
+                Self::collect_planning_function_requests(&ast, &mut requests);
+            }
+        }
+        requests.sort();
+        requests.dedup();
+        let snapshot =
+            match crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+                &self.resolver,
+                requests,
+            ) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    let reason = match error {
+                        crate::function_registry::PlanningSnapshotError::RegistryChangedDuringCapture => {
+                            "FunctionSemanticSnapshotUnavailable"
+                        }
+                        crate::function_registry::PlanningSnapshotError::ProviderRevisionUnavailable => {
+                            "FunctionProviderRevisionUnavailable"
+                        }
+                    };
+                    for family in families {
+                        preparation
+                            .rejected
+                            .insert(family.source_id, reason.to_string());
+                    }
+                    return preparation;
+                }
+            };
+        preparation.function_semantic_epoch = snapshot.epoch();
+        preparation.function_provider_revision = snapshot.provider_revision();
+
         let sheet_id = self.graph.sheet_id_mut(sheet_name);
         for family in families {
             #[cfg(test)]
@@ -4012,14 +4671,502 @@ where
                     .insert(family.source_id, "ForcedReplay".to_string());
                 continue;
             }
-            match self.prepare_source_formula_family(sheet_id, family) {
-                Ok(prepared) => preparation.prepared.push((family.source_id, prepared)),
+            match self.prepare_source_formula_family(sheet_id, family, true, Some(&snapshot)) {
+                Ok((prepared, function_semantics_used)) => {
+                    preparation.function_semantics_used |= function_semantics_used;
+                    preparation
+                        .replay_disposition
+                        .set_family_direct(family.source_id);
+                    preparation
+                        .prepared
+                        .push((family.source_id, family.source_order, prepared));
+                }
                 Err(error) => {
+                    preparation.clean_rejected_anchor_counts[0] = preparation
+                        .clean_rejected_anchor_counts[0]
+                        .saturating_add(u64::from(error.parse_attempted));
+                    preparation.clean_rejected_anchor_counts[1] = preparation
+                        .clean_rejected_anchor_counts[1]
+                        .saturating_add(u64::from(error.ast_created));
+                    preparation.clean_rejected_anchor_counts[2] = preparation
+                        .clean_rejected_anchor_counts[2]
+                        .saturating_add(u64::from(error.analysis_created));
                     preparation.rejected.insert(family.source_id, error.reason);
                 }
             }
         }
         preparation
+    }
+
+    fn prepare_eager_source_formula_proposals(
+        &mut self,
+        sheet_name: &str,
+        families: &[crate::engine::SourceFormulaFamily],
+        partitions: &[crate::engine::PartitionedSourceFormulaFamily],
+        formula_record_count: u64,
+        replay: Arc<std::sync::Mutex<Box<dyn crate::engine::DeferredFormulaReplay>>>,
+    ) -> Result<crate::engine::FormulaCompressedPreparation, ExcelError> {
+        let mut preparation = self.prepare_source_formula_families(sheet_name, families);
+        preparation.exact_replay = Some(Arc::clone(&replay));
+        if self.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental
+            || self.config.defer_graph_building
+        {
+            return Ok(preparation);
+        }
+        if partitions.is_empty()
+            && preparation.rejected.is_empty()
+            && preparation.direct_cell_count() == formula_record_count
+        {
+            return Ok(preparation);
+        }
+
+        let mut analyzed = Vec::new();
+        for source in partitions {
+            preparation
+                .fragmented_sources
+                .insert(source.source_id, source.clone());
+            match self.analyze_partitioned_source_family_for_transaction(sheet_name, source) {
+                Ok(prepared) => {
+                    let mut candidate = preparation.replay_disposition.clone();
+                    match candidate.register_partition(source, true) {
+                        Ok(()) => {
+                            preparation.replay_disposition = candidate;
+                            analyzed.push((source.clone(), prepared));
+                        }
+                        Err(reason) => {
+                            preparation
+                                .rejected
+                                .insert(source.source_id, reason.to_string());
+                            preparation
+                                .replay_disposition
+                                .register_partition(source, false)
+                                .map_err(|reason| {
+                                    ExcelError::new(ExcelErrorKind::Value).with_message(reason)
+                                })?;
+                        }
+                    }
+                }
+                Err(error) => {
+                    preparation.fragmented_rejected_anchor_counts[0] = preparation
+                        .fragmented_rejected_anchor_counts[0]
+                        .saturating_add(u64::from(error.parse_attempted));
+                    preparation.fragmented_rejected_anchor_counts[1] = preparation
+                        .fragmented_rejected_anchor_counts[1]
+                        .saturating_add(u64::from(error.ast_created));
+                    preparation.fragmented_rejected_anchor_counts[2] = preparation
+                        .fragmented_rejected_anchor_counts[2]
+                        .saturating_add(u64::from(error.analysis_created));
+                    preparation.rejected.insert(source.source_id, error.reason);
+                    preparation
+                        .replay_disposition
+                        .register_partition(source, false)
+                        .map_err(|reason| {
+                            ExcelError::new(ExcelErrorKind::Value).with_message(reason)
+                        })?;
+                }
+            }
+        }
+
+        let initial_replay = replay
+            .lock()
+            .map_err(|_| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("compressed formula exact replay lock poisoned")
+            })?
+            .replay_partitioned(&preparation.replay_disposition, partitions)
+            .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?;
+        preparation.preparation_spool_replays = 1;
+        let sheet_id = self.graph.sheet_id_mut(sheet_name);
+        let mut preparation_failed = false;
+        for (source, prepared_family) in analyzed {
+            let result = (|| {
+                let expected: BTreeMap<_, _> = source
+                    .legacy_members
+                    .as_slice()
+                    .iter()
+                    .map(|member| (member.coord, member.kind))
+                    .collect();
+                let mut actual = BTreeMap::new();
+                for record in initial_replay
+                    .iter()
+                    .filter(|record| record.partition_owner == Some(source.source_id))
+                {
+                    let coord = record
+                        .row
+                        .checked_sub(1)
+                        .zip(record.col.checked_sub(1))
+                        .map(|(row, col)| crate::engine::SourceCoord { row, col })
+                        .ok_or_else(|| "ExactReplayRecordInvalidCoordinate".to_string())?;
+                    let kind = match record.family {
+                        Some(family) if family == source.source_id => {
+                            crate::engine::PartitionLegacyMemberKind::SharedFamilyMember
+                        }
+                        None => crate::engine::PartitionLegacyMemberKind::OrdinaryException,
+                        Some(_) => return Err("ExactReplayRecordOwnerMismatch".to_string()),
+                    };
+                    if actual.insert(coord, (kind, record.clone())).is_some() {
+                        return Err("ExactReplayRecordDuplicate".to_string());
+                    }
+                }
+                let actual_kinds: BTreeMap<_, _> = actual
+                    .iter()
+                    .map(|(coord, (kind, _))| (*coord, *kind))
+                    .collect();
+                if actual_kinds != expected {
+                    return Err("ExactReplayLegacySetMismatch".to_string());
+                }
+                let mut legacy = Vec::with_capacity(source.legacy_members.len());
+                for expected in source.legacy_members.as_slice() {
+                    let record = actual
+                        .remove(&expected.coord)
+                        .map(|(_, record)| record)
+                        .ok_or_else(|| "ExactReplayRecordMissing".to_string())?;
+                    legacy.push(
+                        self.graph
+                            .analyze_fragmented_exact_replay_record(
+                                &self.resolver,
+                                sheet_id,
+                                source.source_id,
+                                *expected,
+                                record,
+                            )
+                            .map_err(|error| format!("{error:?}"))?,
+                    );
+                }
+                Ok::<_, String>((prepared_family, legacy))
+            })();
+            match result {
+                Ok((prepared_family, legacy)) => preparation.fragmented.push(
+                    crate::engine::formula_source::PreparedEagerFragmentedProposal {
+                        source: source.clone(),
+                        prepared: prepared_family,
+                        legacy,
+                        replay: Arc::clone(&replay),
+                    },
+                ),
+                Err(reason) => {
+                    preparation_failed = true;
+                    for count in &mut preparation.fragmented_rejected_anchor_counts {
+                        *count = count.saturating_add(1);
+                    }
+                    preparation.rejected.insert(source.source_id, reason);
+                    preparation
+                        .replay_disposition
+                        .force_family_legacy(source.source_id);
+                }
+            }
+        }
+
+        preparation.eager_replay = if preparation_failed {
+            preparation.preparation_spool_replays = 2;
+            replay
+                .lock()
+                .map_err(|_| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("compressed formula exact replay lock poisoned")
+                })?
+                .replay_partitioned(&preparation.replay_disposition, partitions)
+                .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?
+        } else {
+            initial_replay
+        };
+        Ok(preparation)
+    }
+
+    fn formula_batch_from_exact_replay(
+        &mut self,
+        sheet_name: &str,
+        replayed: impl IntoIterator<Item = crate::engine::DeferredReplayFormula>,
+    ) -> Result<FormulaIngestBatch, ExcelError> {
+        let mut cache = rustc_hash::FxHashMap::default();
+        let mut formulas = Vec::new();
+        for record in replayed {
+            let key = if record.text.starts_with('=') {
+                record.text
+            } else {
+                format!("={}", record.text)
+            };
+            let ast_id = if let Some(cached) = cache.get(&key) {
+                *cached
+            } else {
+                let parsed = match formualizer_parse::parser::parse(&key) {
+                    Ok(parsed) => parsed,
+                    Err(error) => {
+                        let Some(parsed) = self.handle_formula_parse_error(
+                            sheet_name,
+                            record.row,
+                            record.col,
+                            &key,
+                            error.to_string(),
+                        )?
+                        else {
+                            continue;
+                        };
+                        parsed
+                    }
+                };
+                let ast_id = self.intern_formula_ast(&parsed);
+                cache.insert(key.clone(), ast_id);
+                ast_id
+            };
+            formulas.push(
+                FormulaIngestRecord::new(record.row, record.col, ast_id, Some(Arc::from(key)))
+                    .with_source_proof(record.source_order, record.family, record.partition_owner),
+            );
+        }
+        Ok(FormulaIngestBatch::new(sheet_name.to_string(), formulas))
+    }
+
+    fn replay_prepared_families_exact_records(
+        &mut self,
+        preparation: &crate::engine::FormulaCompressedPreparation,
+    ) -> Result<Vec<crate::engine::DeferredReplayFormula>, ExcelError> {
+        let replay = preparation.exact_replay.as_ref().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("stale compressed preparation has no exact replay owner")
+        })?;
+        let direct: BTreeSet<_> = preparation
+            .prepared
+            .iter()
+            .map(|(family, _, _)| *family)
+            .collect();
+        let mut replay_disposition = preparation.replay_disposition.clone();
+        for family in &direct {
+            replay_disposition.force_family_legacy(*family);
+        }
+        let replayed = replay
+            .lock()
+            .map_err(|_| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("compressed formula exact replay lock poisoned")
+            })?
+            .replay(&replay_disposition)
+            .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?;
+        let mut records: Vec<_> = replayed
+            .into_iter()
+            .filter(|record| record.family.is_some_and(|family| direct.contains(&family)))
+            .collect();
+        records.sort_by_key(|record| record.source_order);
+        let expected: u64 = preparation
+            .prepared
+            .iter()
+            .map(|(_, _, prepared)| prepared.member_count)
+            .sum();
+        if records.len() as u64 != expected {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "compressed formula exact replay incomplete: expected {expected}, got {}",
+                records.len()
+            )));
+        }
+        Ok(records)
+    }
+
+    fn replay_one_prepared_family_exact(
+        &mut self,
+        preparation: &crate::engine::FormulaCompressedPreparation,
+        family: crate::engine::SourceFamilyId,
+        member_count: u64,
+    ) -> Result<FormulaIngestBatch, ExcelError> {
+        let replay = preparation.exact_replay.as_ref().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("stale compressed preparation has no exact replay owner")
+        })?;
+        let mut replay_disposition = preparation.replay_disposition.clone();
+        replay_disposition.force_family_legacy(family);
+        let replayed = replay
+            .lock()
+            .map_err(|_| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("compressed formula exact replay lock poisoned")
+            })?
+            .replay(&replay_disposition)
+            .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?
+            .into_iter()
+            .filter(|record| record.family == Some(family));
+        let batch =
+            self.formula_batch_from_exact_replay(preparation.sheet_name.as_ref(), replayed)?;
+        if batch.formulas.len() as u64 != member_count {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "compressed formula exact replay incomplete: expected {member_count}, got {}",
+                batch.formulas.len()
+            )));
+        }
+        Ok(batch)
+    }
+
+    fn exact_replay_record_is_prepared_partition_legacy(
+        source: &crate::engine::PartitionedSourceFormulaFamily,
+        record: &crate::engine::DeferredReplayFormula,
+    ) -> bool {
+        if record.partition_owner != Some(source.source_id) {
+            return false;
+        }
+        let Some(coord) = record
+            .row
+            .checked_sub(1)
+            .zip(record.col.checked_sub(1))
+            .map(|(row, col)| crate::engine::SourceCoord { row, col })
+        else {
+            return false;
+        };
+        source.legacy_members.as_slice().iter().any(|member| {
+            member.coord == coord
+                && match member.kind {
+                    crate::engine::PartitionLegacyMemberKind::SharedFamilyMember => {
+                        record.family == Some(source.source_id)
+                    }
+                    crate::engine::PartitionLegacyMemberKind::OrdinaryException => {
+                        record.family.is_none()
+                    }
+                }
+        })
+    }
+
+    fn validate_whole_partition_replay(
+        source: &crate::engine::PartitionedSourceFormulaFamily,
+        records: &[crate::engine::DeferredReplayFormula],
+    ) -> Result<(), ExcelError> {
+        let mut coordinates = BTreeSet::new();
+        let mut shared = 0u64;
+        let mut ordinary = 0u64;
+        for record in records {
+            let coord = record
+                .row
+                .checked_sub(1)
+                .zip(record.col.checked_sub(1))
+                .map(|(row, col)| crate::engine::SourceCoord { row, col })
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("whole-family replay contains an invalid coordinate")
+                })?;
+            if !coordinates.insert(coord) {
+                return Err(ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("whole-family replay contains a duplicate coordinate"));
+            }
+            match (record.family, record.partition_owner) {
+                (Some(family), Some(owner))
+                    if family == source.source_id && owner == source.source_id =>
+                {
+                    let direct = source.fragments.iter().any(|fragment| {
+                        let rect = fragment.rect();
+                        coord.row >= rect.start.row
+                            && coord.row <= rect.end.row
+                            && coord.col >= rect.start.col
+                            && coord.col <= rect.end.col
+                    });
+                    let legacy = source.legacy_members.as_slice().iter().any(|member| {
+                        member.coord == coord
+                            && member.kind
+                                == crate::engine::PartitionLegacyMemberKind::SharedFamilyMember
+                    });
+                    if !direct && !legacy {
+                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("whole-family replay contains an extra shared member"));
+                    }
+                    shared = shared.saturating_add(1);
+                }
+                (None, Some(owner)) if owner == source.source_id => {
+                    if !source.legacy_members.as_slice().iter().any(|member| {
+                        member.coord == coord
+                            && member.kind
+                                == crate::engine::PartitionLegacyMemberKind::OrdinaryException
+                    }) {
+                        return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                            "whole-family replay contains an extra ordinary exception",
+                        ));
+                    }
+                    ordinary = ordinary.saturating_add(1);
+                }
+                _ => {
+                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("whole-family replay ownership mismatch"));
+                }
+            }
+        }
+        if shared != source.surviving_member_count
+            || ordinary != source.reconciliation.ordinary_exceptions
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("whole-family replay is incomplete"));
+        }
+        Ok(())
+    }
+
+    fn fallback_planning_snapshot(
+        &self,
+        batch: &FormulaIngestBatch,
+    ) -> Result<crate::function_registry::RegistryPlanningSnapshot, ExcelError> {
+        let mut requests = Vec::new();
+        for formula in &batch.formulas {
+            let ast = self
+                .graph
+                .data_store()
+                .retrieve_ast(formula.ast_id, self.graph.sheet_reg())
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("ordered fallback AST is unavailable")
+                })?;
+            Self::collect_planning_function_requests(&ast, &mut requests);
+        }
+        requests.sort();
+        requests.dedup();
+        crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+            &self.resolver,
+            requests,
+        )
+        .map_err(|error| ExcelError::new(ExcelErrorKind::Value).with_message(format!("{error:?}")))
+    }
+
+    fn prepare_legacy_batch_fallback(
+        &mut self,
+        batch: FormulaIngestBatch,
+        function_provider: &dyn crate::traits::FunctionProvider,
+    ) -> Result<
+        (
+            crate::engine::graph::prepared_legacy_graph::PreparedLegacyGraphPlan,
+            u64,
+        ),
+        ExcelError,
+    > {
+        let formula_count = batch.formulas.len() as u64;
+        let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
+        let mut planned = Vec::with_capacity(batch.formulas.len());
+        for record in batch.formulas {
+            let placement = CellRef::new(
+                sheet_id,
+                Coord::from_excel(record.row, record.col, true, true),
+            );
+            let ingested = self
+                .graph
+                .ingest_pipeline(function_provider)
+                .enable_function_semantics()
+                .ingest_formula(
+                    FormulaAstInput::RawArena(record.ast_id),
+                    placement,
+                    record.formula_text,
+                )
+                .map_err(|error| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message(format!("{error:?}"))
+                })?;
+            planned.push((record.row, record.col, ingested.ast_id, ingested.dep_plan));
+        }
+        let plan = self
+            .graph
+            .prepare_legacy_graph_plan(sheet_id, planned)
+            .map_err(|error| {
+                ExcelError::new(ExcelErrorKind::Value).with_message(error.to_string())
+            })?;
+        Ok((plan, formula_count))
+    }
+
+    fn publish_eager_partial_report(
+        &mut self,
+        report: &FormulaIngestReport,
+        direct_report: &FormulaIngestReport,
+    ) {
+        let mut published = report.clone();
+        published.accumulate(direct_report);
+        self.record_formula_ingest_report(published);
     }
 
     fn finish_eager_compressed_formula_sources(
@@ -4030,6 +5177,7 @@ where
             crate::engine::FormulaCompressedPreparation,
         )>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         if batches.iter().any(|(_, _, preparation)| {
             !Arc::ptr_eq(&preparation.engine_token, &self.source_formula_token)
         }) {
@@ -4042,78 +5190,902 @@ where
             return Err(ExcelError::new(ExcelErrorKind::Value)
                 .with_message("compressed formula preparation sheet mismatch"));
         }
+        let initial_guard = crate::function_registry::semantic_epoch_read_guard();
+        let initial_epoch = initial_guard.epoch();
+        let initial_provider_revision = self.resolver.planning_semantic_revision();
+        drop(initial_guard);
         let mut fallback_batches = Vec::with_capacity(batches.len());
-        let mut prepared_families = Vec::new();
-        for (fallback, mut source, preparation) in batches {
+        let mut stale_fallback_batches = Vec::new();
+        let mut pending_preparations = Vec::new();
+        for (mut fallback, mut source, mut preparation) in batches {
+            for formula in fallback.formulas.drain(..) {
+                let source_order = formula.source_order.ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value).with_message(
+                        "eager compressed backend supplied formulas without source-order proof",
+                    )
+                })?;
+                let text = formula.formula_text.ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("ordered eager fallback formula has no exact source text")
+                })?;
+                preparation
+                    .eager_replay
+                    .push(crate::engine::DeferredReplayFormula {
+                        source_order,
+                        row: formula.row,
+                        col: formula.col,
+                        text: text.to_string(),
+                        family: formula.source_family,
+                        partition_owner: formula.partition_owner,
+                    });
+            }
+            preparation
+                .eager_replay
+                .sort_by_key(|record| record.source_order);
+            source.source_spool_replays = source
+                .source_spool_replays
+                .saturating_add(preparation.preparation_spool_replays);
+            let stale_reason = preparation
+                .function_semantics_used
+                .then(|| {
+                    if preparation.function_provider_revision != initial_provider_revision {
+                        Some("FunctionProviderRevisionChanged")
+                    } else if preparation.function_semantic_epoch != initial_epoch {
+                        Some("FunctionSemanticEpochChanged")
+                    } else {
+                        None
+                    }
+                })
+                .flatten();
+            let stale_semantics = stale_reason.is_some();
+            if let Some(reason) = stale_reason {
+                for (family, _, _) in &preparation.prepared {
+                    preparation.rejected.insert(*family, reason.to_string());
+                }
+            }
             for reason in preparation.rejected.values() {
                 *source.fallback_reasons.entry(reason.clone()).or_default() += 1;
             }
-            let direct_cells: u64 = preparation
+            let clean_direct_cells: u64 = preparation
                 .prepared
                 .iter()
-                .map(|(_, prepared)| prepared.member_count)
+                .map(|(_, _, prepared)| prepared.member_count)
                 .sum();
-            source.replay_families = source
-                .families_seen
-                .saturating_sub(preparation.prepared.len() as u64);
+            let fragmented_direct_cells: u64 = preparation
+                .fragmented
+                .iter()
+                .map(|fragment| fragment.source.surviving_member_count)
+                .sum();
+            let direct_cells = clean_direct_cells.saturating_add(fragmented_direct_cells);
+            source.replay_families = source.families_seen.saturating_sub(
+                preparation
+                    .prepared
+                    .len()
+                    .saturating_add(preparation.fragmented.len()) as u64,
+            );
             source.replay_cells = source.family_cells_seen.saturating_sub(direct_cells);
             let compressed = crate::engine::FormulaCompressedSourceBatch::new(
                 fallback.sheet_name.clone(),
                 source,
             );
-            fallback_batches.push((fallback, compressed));
-            prepared_families.extend(preparation.prepared);
+            if stale_semantics {
+                stale_fallback_batches.push((fallback, compressed));
+            } else {
+                fallback_batches.push((fallback, compressed));
+            }
+            pending_preparations.push((preparation, stale_semantics));
         }
 
-        // All exact fallback graphs are fully built before any direct span is installed.
-        let mut report = self.ingest_compressed_formula_source_batches(fallback_batches)?;
+        // Build known fallback graphs first. Stale batches are forced through legacy ingest.
+        let configured_mode = self.config.formula_plane_mode;
+        self.config.formula_plane_mode = FormulaPlaneMode::Off;
+        let stale_result =
+            self.ingest_compressed_formula_source_batches_inner(stale_fallback_batches, false);
+        self.config.formula_plane_mode = configured_mode;
+        let mut report = stale_result?;
+        report.mode = configured_mode;
+
+        self.config.formula_plane_mode = FormulaPlaneMode::Off;
+        let fallback_result =
+            self.ingest_compressed_formula_source_batches_inner(fallback_batches, false);
+        self.config.formula_plane_mode = configured_mode;
+        match fallback_result {
+            Ok(fallback_report) => report.accumulate(&fallback_report),
+            Err(error) => {
+                self.record_formula_ingest_report(report);
+                return Err(error);
+            }
+        }
+
         let mut direct_report =
             FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
-        for (_, prepared) in prepared_families {
-            let cells = prepared.member_count;
-            direct_report.formula_cells_seen =
-                direct_report.formula_cells_seen.saturating_add(cells);
-            let placement_report = {
-                let authority = self.graph.formula_authority_mut();
-                commit_prepared_anchor_once_family(&mut authority.plane, prepared)
-            };
-            Self::accumulate_formula_plane_placement_report(&mut direct_report, &placement_report);
-            direct_report.source_family_promoted =
-                direct_report.source_family_promoted.saturating_add(1);
-            direct_report.source_family_promoted_cells = direct_report
-                .source_family_promoted_cells
-                .saturating_add(cells);
-            direct_report.source_anchor_parses =
-                direct_report.source_anchor_parses.saturating_add(1);
-            direct_report.source_anchor_asts = direct_report.source_anchor_asts.saturating_add(1);
+        for (preparation, _) in &pending_preparations {
+            direct_report.source_anchor_parses = direct_report.source_anchor_parses.saturating_add(
+                preparation.clean_rejected_anchor_counts[0]
+                    .saturating_add(preparation.fragmented_rejected_anchor_counts[0]),
+            );
+            direct_report.source_anchor_asts = direct_report.source_anchor_asts.saturating_add(
+                preparation.clean_rejected_anchor_counts[1]
+                    .saturating_add(preparation.fragmented_rejected_anchor_counts[1]),
+            );
             direct_report.source_anchor_analyses =
-                direct_report.source_anchor_analyses.saturating_add(1);
-            let descendants = cells.saturating_sub(1);
-            direct_report.source_descendant_strings_avoided = direct_report
-                .source_descendant_strings_avoided
-                .saturating_add(descendants);
-            direct_report.source_descendant_events_avoided = direct_report
-                .source_descendant_events_avoided
-                .saturating_add(descendants);
-            direct_report.source_descendant_analyses_avoided = direct_report
-                .source_descendant_analyses_avoided
-                .saturating_add(descendants);
-            direct_report.source_compressed_families_prepared = direct_report
-                .source_compressed_families_prepared
-                .saturating_add(1);
-            direct_report.source_compressed_cells_prepared = direct_report
-                .source_compressed_cells_prepared
-                .saturating_add(cells);
+                direct_report.source_anchor_analyses.saturating_add(
+                    preparation.clean_rejected_anchor_counts[2]
+                        .saturating_add(preparation.fragmented_rejected_anchor_counts[2]),
+                );
+            let rejected_partitions: Vec<_> = preparation
+                .rejected
+                .keys()
+                .filter_map(|source_id| preparation.fragmented_sources.get(source_id))
+                .collect();
+            direct_report.source_partitioned_families_rejected = direct_report
+                .source_partitioned_families_rejected
+                .saturating_add(rejected_partitions.len() as u64);
+            direct_report.source_partition_failures = direct_report
+                .source_partition_failures
+                .saturating_add(rejected_partitions.len() as u64);
+            direct_report.source_partition_fallback_cells = direct_report
+                .source_partition_fallback_cells
+                .saturating_add(
+                    rejected_partitions
+                        .iter()
+                        .map(|source| source.surviving_member_count)
+                        .sum::<u64>(),
+                );
         }
-        if direct_report.source_family_promoted != 0 {
-            let _ = self.graph.formula_authority_mut().rebuild_indexes();
+        loop {
+            if let Some(hook) = self.before_prepared_span_commit_hook.take() {
+                hook();
+            }
+            let commit_guard = crate::function_registry::semantic_epoch_read_guard();
+            let commit_epoch = commit_guard.epoch();
+            let commit_provider_revision = self.resolver.planning_semantic_revision();
+            let mut newly_stale = Vec::new();
+            let mut current = Vec::new();
+            for pending in pending_preparations.drain(..) {
+                let stale_reason = pending
+                    .0
+                    .function_semantics_used
+                    .then(|| {
+                        if pending.0.function_provider_revision != commit_provider_revision {
+                            Some("FunctionProviderRevisionChanged")
+                        } else if pending.0.function_semantic_epoch != commit_epoch {
+                            Some("FunctionSemanticEpochChanged")
+                        } else {
+                            None
+                        }
+                    })
+                    .flatten();
+                if let Some(reason) = stale_reason {
+                    newly_stale.push((pending, reason));
+                } else {
+                    current.push(pending);
+                }
+            }
+            if !newly_stale.is_empty() {
+                drop(commit_guard);
+                for ((mut preparation, was_initially_stale), reason) in newly_stale {
+                    for (family, _, _) in &preparation.prepared {
+                        preparation.rejected.insert(*family, reason.to_string());
+                    }
+                    let exact = match self.replay_prepared_families_exact_records(&preparation) {
+                        Ok(exact) => exact,
+                        Err(error) => {
+                            self.publish_eager_partial_report(&report, &direct_report);
+                            return Err(error);
+                        }
+                    };
+                    preparation.eager_replay.extend(exact);
+                    preparation
+                        .eager_replay
+                        .sort_by_key(|record| record.source_order);
+                    direct_report.source_spool_replays =
+                        direct_report.source_spool_replays.saturating_add(1);
+                    if !was_initially_stale {
+                        *direct_report
+                            .fallback_reasons
+                            .entry(reason.to_string())
+                            .or_default() += preparation.prepared.len() as u64;
+                    }
+                    direct_report.source_family_fallback = direct_report
+                        .source_family_fallback
+                        .saturating_add(preparation.prepared.len() as u64);
+                    direct_report.source_family_fallback_cells =
+                        direct_report.source_family_fallback_cells.saturating_add(
+                            preparation
+                                .prepared
+                                .iter()
+                                .map(|(_, _, prepared)| prepared.member_count)
+                                .sum(),
+                        );
+                    preparation.prepared.clear();
+                    preparation.function_semantics_used = false;
+                    if !preparation.fragmented.is_empty() || !preparation.eager_replay.is_empty() {
+                        current.push((preparation, false));
+                    }
+                }
+                pending_preparations = current;
+                continue;
+            }
+            drop(commit_guard);
+
+            // Preserve source order across clean and fragmented families. Every clean
+            // placement uses E3's incremental append, so no global index rebuild is needed.
+            enum EagerProposal {
+                KnownFallback {
+                    source_order: crate::engine::SourceFormulaOrder,
+                    records: Vec<crate::engine::DeferredReplayFormula>,
+                },
+                Clean(
+                    crate::engine::SourceFamilyId,
+                    crate::engine::SourceFormulaOrder,
+                    crate::formula_plane::placement::PreparedAnchorOncePlacement,
+                ),
+                Fragment(crate::engine::formula_source::PreparedEagerFragmentedProposal),
+            }
+
+            impl EagerProposal {
+                fn source_order(&self) -> crate::engine::SourceFormulaOrder {
+                    match self {
+                        Self::KnownFallback { source_order, .. } => *source_order,
+                        Self::Clean(_, source_order, _) => *source_order,
+                        Self::Fragment(fragment) => fragment.source.source_order,
+                    }
+                }
+            }
+
+            for (mut preparation, _) in current {
+                let mut proposals = Vec::with_capacity(
+                    preparation
+                        .prepared
+                        .len()
+                        .saturating_add(preparation.fragmented.len())
+                        .saturating_add(preparation.eager_replay.len()),
+                );
+                proposals.extend(preparation.prepared.drain(..).map(
+                    |(source_id, source_order, prepared)| {
+                        EagerProposal::Clean(source_id, source_order, prepared)
+                    },
+                ));
+
+                let accepted_fragments: BTreeMap<_, _> = preparation
+                    .fragmented
+                    .iter()
+                    .map(|fragment| (fragment.source.source_id, &fragment.source))
+                    .collect();
+                let mut family_fallbacks: BTreeMap<_, Vec<_>> = BTreeMap::new();
+                for record in preparation.eager_replay.drain(..).filter(|record| {
+                    !record.partition_owner.is_some_and(|owner| {
+                        accepted_fragments.get(&owner).is_some_and(|source| {
+                            Self::exact_replay_record_is_prepared_partition_legacy(source, record)
+                        })
+                    })
+                }) {
+                    if let Some(owner) = record.partition_owner.or(record.family) {
+                        family_fallbacks.entry(owner).or_default().push(record);
+                    } else {
+                        proposals.push(EagerProposal::KnownFallback {
+                            source_order: record.source_order,
+                            records: vec![record],
+                        });
+                    }
+                }
+                for (_, mut records) in family_fallbacks {
+                    records.sort_by_key(|record| record.source_order);
+                    if records
+                        .windows(2)
+                        .any(|window| window[0].source_order == window[1].source_order)
+                    {
+                        self.publish_eager_partial_report(&report, &direct_report);
+                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("duplicate exact-replay source-order proof"));
+                    }
+                    let Some(source_order) = records.first().map(|record| record.source_order)
+                    else {
+                        self.publish_eager_partial_report(&report, &direct_report);
+                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("empty exact-replay fallback family"));
+                    };
+                    proposals.push(EagerProposal::KnownFallback {
+                        source_order,
+                        records,
+                    });
+                }
+                proposals.extend(
+                    preparation
+                        .fragmented
+                        .drain(..)
+                        .map(EagerProposal::Fragment),
+                );
+                proposals.sort_by_key(EagerProposal::source_order);
+                if proposals
+                    .windows(2)
+                    .any(|window| window[0].source_order() == window[1].source_order())
+                {
+                    self.publish_eager_partial_report(&report, &direct_report);
+                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("ambiguous eager source-order proof"));
+                }
+
+                for proposal in proposals {
+                    match proposal {
+                        EagerProposal::KnownFallback { records, .. } => {
+                            let batch = match self.formula_batch_from_exact_replay(
+                                preparation.sheet_name.as_ref(),
+                                records,
+                            ) {
+                                Ok(batch) => batch,
+                                Err(error) => {
+                                    self.publish_eager_partial_report(&report, &direct_report);
+                                    return Err(error);
+                                }
+                            };
+                            if batch.is_empty() {
+                                continue;
+                            }
+                            let snapshot = match self.fallback_planning_snapshot(&batch) {
+                                Ok(snapshot) => snapshot,
+                                Err(error) => {
+                                    self.publish_eager_partial_report(&report, &direct_report);
+                                    return Err(error);
+                                }
+                            };
+                            let commit_guard =
+                                crate::function_registry::semantic_epoch_read_guard();
+                            let provider_revision_initial =
+                                self.resolver.planning_semantic_revision();
+                            if commit_guard.epoch() != snapshot.epoch()
+                                || snapshot.provider_revision().is_some_and(|revision| {
+                                    Some(revision) != provider_revision_initial
+                                })
+                            {
+                                drop(commit_guard);
+                                self.publish_eager_partial_report(&report, &direct_report);
+                                return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                    "ordered fallback planning snapshot became stale",
+                                ));
+                            }
+                            let (plan, formula_count) =
+                                match self.prepare_legacy_batch_fallback(batch, &snapshot) {
+                                    Ok(plan) => plan,
+                                    Err(error) => {
+                                        drop(commit_guard);
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(error);
+                                    }
+                                };
+                            let provider_revision_after =
+                                self.resolver.planning_semantic_revision();
+                            if provider_revision_after != provider_revision_initial {
+                                drop(commit_guard);
+                                self.publish_eager_partial_report(&report, &direct_report);
+                                return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                    "function provider changed while preparing ordered fallback",
+                                ));
+                            }
+                            let graph_vertices = plan.new_vertex_count();
+                            let Some(graph_edges) = plan.planned_edge_count() else {
+                                drop(commit_guard);
+                                self.publish_eager_partial_report(&report, &direct_report);
+                                return Err(ExcelError::new(ExcelErrorKind::Value)
+                                    .with_message("prepared ordered fallback size overflow"));
+                            };
+                            if let Err(error) =
+                                self.graph.validate_prepared_legacy_graph_plan(&plan)
+                            {
+                                drop(commit_guard);
+                                self.publish_eager_partial_report(&report, &direct_report);
+                                return Err(ExcelError::new(ExcelErrorKind::Value)
+                                    .with_message(error.to_string()));
+                            }
+                            #[cfg(test)]
+                            if let Some(hook) = self
+                                .before_legacy_fallback_final_provider_sample_hook
+                                .take()
+                            {
+                                hook();
+                            }
+                            let provider_revision_final =
+                                self.resolver.planning_semantic_revision();
+                            if provider_revision_final != provider_revision_initial {
+                                drop(commit_guard);
+                                self.publish_eager_partial_report(&report, &direct_report);
+                                return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                    "function provider changed after ordered fallback validation",
+                                ));
+                            }
+                            let graph_formulas =
+                                self.graph.apply_prevalidated_legacy_graph_plan(plan);
+                            direct_report.formula_cells_seen = direct_report
+                                .formula_cells_seen
+                                .saturating_add(formula_count);
+                            direct_report.graph_formula_cells_materialized = direct_report
+                                .graph_formula_cells_materialized
+                                .saturating_add(graph_formulas as u64);
+                            direct_report.graph_vertices_created = direct_report
+                                .graph_vertices_created
+                                .saturating_add(graph_vertices as u64);
+                            direct_report.graph_edges_created = direct_report
+                                .graph_edges_created
+                                .saturating_add(graph_edges as u64);
+                        }
+                        EagerProposal::Clean(source_id, _, prepared) => {
+                            let commit_guard =
+                                crate::function_registry::semantic_epoch_read_guard();
+                            let commit_epoch = commit_guard.epoch();
+                            let commit_provider_revision =
+                                self.resolver.planning_semantic_revision();
+                            let cells = prepared.member_count;
+                            let append = self
+                                .graph
+                                .formula_authority()
+                                .prepare_formula_plane_append(
+                                    vec![prepared],
+                                    self.graph.data_store(),
+                                    self.graph.sheet_reg(),
+                                )
+                                .map_err(|error| error.to_string())
+                                .and_then(|append| {
+                                    if preparation.function_semantics_used
+                                        && preparation.function_semantic_epoch != commit_epoch
+                                    {
+                                        return Err("FunctionSemanticEpochChanged".to_string());
+                                    }
+                                    if preparation.function_semantics_used
+                                        && preparation.function_provider_revision
+                                            != commit_provider_revision
+                                    {
+                                        return Err("FunctionProviderRevisionChanged".to_string());
+                                    }
+                                    if preparation.function_semantics_used
+                                        && self.resolver.planning_semantic_revision()
+                                            != commit_provider_revision
+                                    {
+                                        return Err("FunctionProviderRevisionChanged".to_string());
+                                    }
+                                    self.graph
+                                        .formula_authority()
+                                        .validate_prepared_formula_plane_append(
+                                            &append,
+                                            self.graph.data_store(),
+                                            self.graph.sheet_reg(),
+                                        )
+                                        .map_err(|error| error.to_string())?;
+                                    Ok(append)
+                                });
+                            match append {
+                                Ok(append) => {
+                                    let placement_report = self
+                                        .graph
+                                        .formula_authority_mut()
+                                        .apply_prevalidated_formula_plane_append(append);
+                                    direct_report.formula_cells_seen =
+                                        direct_report.formula_cells_seen.saturating_add(cells);
+                                    direct_report.shadow_candidate_cells =
+                                        direct_report.shadow_candidate_cells.saturating_add(cells);
+                                    direct_report.shadow_accepted_span_cells = direct_report
+                                        .shadow_accepted_span_cells
+                                        .saturating_add(cells);
+                                    direct_report.shadow_templates_interned =
+                                        direct_report.shadow_templates_interned.saturating_add(
+                                            placement_report.work.templates_to_append as u64,
+                                        );
+                                    direct_report.shadow_spans_created = direct_report
+                                        .shadow_spans_created
+                                        .saturating_add(placement_report.spans.len() as u64);
+                                    direct_report.graph_formula_vertices_avoided_shadow =
+                                        direct_report
+                                            .graph_formula_vertices_avoided_shadow
+                                            .saturating_add(cells);
+                                    direct_report.ast_roots_avoided_shadow = direct_report
+                                        .ast_roots_avoided_shadow
+                                        .saturating_add(cells.saturating_sub(1));
+                                    direct_report.edge_rows_avoided_shadow = direct_report
+                                        .edge_rows_avoided_shadow
+                                        .saturating_add(cells);
+                                    direct_report.source_family_promoted =
+                                        direct_report.source_family_promoted.saturating_add(1);
+                                    direct_report.source_family_promoted_cells = direct_report
+                                        .source_family_promoted_cells
+                                        .saturating_add(cells);
+                                    direct_report.source_anchor_parses =
+                                        direct_report.source_anchor_parses.saturating_add(1);
+                                    direct_report.source_anchor_asts =
+                                        direct_report.source_anchor_asts.saturating_add(1);
+                                    direct_report.source_anchor_analyses =
+                                        direct_report.source_anchor_analyses.saturating_add(1);
+                                    let descendants = cells.saturating_sub(1);
+                                    direct_report.source_descendant_strings_avoided = direct_report
+                                        .source_descendant_strings_avoided
+                                        .saturating_add(descendants);
+                                    direct_report.source_descendant_events_avoided = direct_report
+                                        .source_descendant_events_avoided
+                                        .saturating_add(descendants);
+                                    direct_report.source_descendant_analyses_avoided =
+                                        direct_report
+                                            .source_descendant_analyses_avoided
+                                            .saturating_add(descendants);
+                                    direct_report.source_compressed_families_prepared =
+                                        direct_report
+                                            .source_compressed_families_prepared
+                                            .saturating_add(1);
+                                    direct_report.source_compressed_cells_prepared = direct_report
+                                        .source_compressed_cells_prepared
+                                        .saturating_add(cells);
+                                }
+                                Err(error) => {
+                                    drop(commit_guard);
+                                    let reason = format!("CleanFormulaPlaneAppend:{error}");
+                                    let batch = match self.replay_one_prepared_family_exact(
+                                        &preparation,
+                                        source_id,
+                                        cells,
+                                    ) {
+                                        Ok(batch) => batch,
+                                        Err(error) => {
+                                            self.publish_eager_partial_report(
+                                                &report,
+                                                &direct_report,
+                                            );
+                                            return Err(error);
+                                        }
+                                    };
+                                    let snapshot = match self.fallback_planning_snapshot(&batch) {
+                                        Ok(snapshot) => snapshot,
+                                        Err(error) => {
+                                            self.publish_eager_partial_report(
+                                                &report,
+                                                &direct_report,
+                                            );
+                                            return Err(error);
+                                        }
+                                    };
+                                    let commit_guard =
+                                        crate::function_registry::semantic_epoch_read_guard();
+                                    let provider_revision =
+                                        self.resolver.planning_semantic_revision();
+                                    if commit_guard.epoch() != snapshot.epoch()
+                                        || snapshot.provider_revision().is_some_and(|revision| {
+                                            Some(revision) != provider_revision
+                                        })
+                                    {
+                                        drop(commit_guard);
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                                            .with_message(
+                                                "clean-family fallback planning snapshot became stale",
+                                            ));
+                                    }
+                                    let (plan, formula_count) = match self
+                                        .prepare_legacy_batch_fallback(batch, &snapshot)
+                                    {
+                                        Ok(plan) => plan,
+                                        Err(error) => {
+                                            drop(commit_guard);
+                                            self.publish_eager_partial_report(
+                                                &report,
+                                                &direct_report,
+                                            );
+                                            return Err(error);
+                                        }
+                                    };
+                                    let provider_revision_after =
+                                        self.resolver.planning_semantic_revision();
+                                    if provider_revision_after != provider_revision {
+                                        drop(commit_guard);
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                                            .with_message(
+                                                "function provider changed while preparing clean-family fallback",
+                                            ));
+                                    }
+                                    let graph_vertices = plan.new_vertex_count();
+                                    let Some(graph_edges) = plan.planned_edge_count() else {
+                                        drop(commit_guard);
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                                            .with_message(
+                                                "prepared clean-family fallback size overflow",
+                                            ));
+                                    };
+                                    if let Err(error) =
+                                        self.graph.validate_prepared_legacy_graph_plan(&plan)
+                                    {
+                                        drop(commit_guard);
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                                            .with_message(error.to_string()));
+                                    }
+                                    #[cfg(test)]
+                                    if let Some(hook) = self
+                                        .before_legacy_fallback_final_provider_sample_hook
+                                        .take()
+                                    {
+                                        hook();
+                                    }
+                                    let provider_revision_final =
+                                        self.resolver.planning_semantic_revision();
+                                    if provider_revision_final != provider_revision {
+                                        drop(commit_guard);
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(ExcelError::new(ExcelErrorKind::Value)
+                                            .with_message(
+                                                "function provider changed after clean-family fallback validation",
+                                            ));
+                                    }
+                                    let graph_formulas =
+                                        self.graph.apply_prevalidated_legacy_graph_plan(plan);
+                                    direct_report.formula_cells_seen = direct_report
+                                        .formula_cells_seen
+                                        .saturating_add(formula_count);
+                                    direct_report.graph_formula_cells_materialized = direct_report
+                                        .graph_formula_cells_materialized
+                                        .saturating_add(graph_formulas as u64);
+                                    direct_report.graph_vertices_created = direct_report
+                                        .graph_vertices_created
+                                        .saturating_add(graph_vertices as u64);
+                                    direct_report.graph_edges_created = direct_report
+                                        .graph_edges_created
+                                        .saturating_add(graph_edges as u64);
+                                    direct_report.source_spool_replays =
+                                        direct_report.source_spool_replays.saturating_add(1);
+                                    direct_report.source_family_fallback =
+                                        direct_report.source_family_fallback.saturating_add(1);
+                                    direct_report.source_family_fallback_cells = direct_report
+                                        .source_family_fallback_cells
+                                        .saturating_add(cells);
+                                    direct_report.source_anchor_parses =
+                                        direct_report.source_anchor_parses.saturating_add(1);
+                                    direct_report.source_anchor_asts =
+                                        direct_report.source_anchor_asts.saturating_add(1);
+                                    direct_report.source_anchor_analyses =
+                                        direct_report.source_anchor_analyses.saturating_add(1);
+                                    *direct_report.fallback_reasons.entry(reason).or_default() += 1;
+                                }
+                            }
+                        }
+                        EagerProposal::Fragment(fragment) => {
+                            let commit_guard =
+                                crate::function_registry::semantic_epoch_read_guard();
+                            let commit_epoch = commit_guard.epoch();
+                            let commit_provider_revision =
+                                self.resolver.planning_semantic_revision();
+                            let source = fragment.source;
+                            let source_id = source.source_id;
+                            #[cfg(test)]
+                            let commit_fault = self
+                                .fragmented_commit_fault_for_test
+                                .take()
+                                .unwrap_or(
+                                crate::engine::fragmented_transaction::FragmentedCommitFault::None,
+                            );
+                            #[cfg(not(test))]
+                            let commit_fault =
+                                crate::engine::fragmented_transaction::FragmentedCommitFault::None;
+                            let outcome = self
+                                .prepare_fragmented_source_transaction(
+                                    &source,
+                                    &preparation.replay_disposition,
+                                    fragment.prepared,
+                                    fragment.legacy,
+                                )
+                                .map(|transaction| {
+                                    let resolver = &self.resolver;
+                                    self.graph.commit_fragmented_source_transaction(
+                                        transaction,
+                                        &self.source_formula_token,
+                                        &preparation.replay_disposition,
+                                        commit_epoch,
+                                        commit_provider_revision,
+                                        || resolver.planning_semantic_revision(),
+                                        commit_fault,
+                                    )
+                                });
+                            let fallback_reason = match outcome {
+                                Ok(crate::engine::fragmented_transaction::FragmentedCommitDecision::Committed(success)) => {
+                                    let mut delta = success.report_delta;
+                                    delta.mode = FormulaPlaneMode::AuthoritativeExperimental;
+                                    delta.source_family_promoted = 1;
+                                    delta.source_family_promoted_cells =
+                                        source.surviving_member_count;
+                                    delta.source_partitioned_families_seen = 0;
+                                    delta.source_partition_holes = 0;
+                                    delta.source_partition_ordinary_exceptions = 0;
+                                    delta.source_partition_surviving_cells = 0;
+                                    delta.shadow_templates_interned =
+                                        success.plane.work.templates_to_append as u64;
+                                    delta.shadow_spans_created = success.plane.spans.len() as u64;
+                                    let descendants =
+                                        source.surviving_member_count.saturating_sub(1);
+                                    delta.source_descendant_strings_avoided = descendants;
+                                    delta.source_descendant_events_avoided = descendants;
+                                    delta.source_descendant_analyses_avoided = descendants;
+                                    direct_report.accumulate(&delta);
+                                    None
+                                }
+                                Ok(crate::engine::fragmented_transaction::FragmentedCommitDecision::ReplayWholeFamily { reason, .. }) => {
+                                    Some(format!("{reason:?}"))
+                                }
+                                Err(error) => Some(format!("{error:?}")),
+                            };
+                            if let Some(reason) = fallback_reason {
+                                drop(commit_guard);
+                                let mut replay_disposition = preparation.replay_disposition.clone();
+                                replay_disposition.force_family_legacy(source_id);
+                                let replayed = (|| {
+                                    let records = fragment
+                                        .replay
+                                        .lock()
+                                        .map_err(|_| {
+                                            ExcelError::new(ExcelErrorKind::Value).with_message(
+                                                "compressed formula exact replay lock poisoned",
+                                            )
+                                        })?
+                                        .replay_partitioned(
+                                            &replay_disposition,
+                                            std::slice::from_ref(&source),
+                                        )
+                                        .map_err(|message| {
+                                            ExcelError::new(ExcelErrorKind::Value)
+                                                .with_message(message)
+                                        })?
+                                        .into_iter()
+                                        .filter(|record| {
+                                            record.family == Some(source_id)
+                                                || (record.family.is_none()
+                                                    && record.partition_owner == Some(source_id))
+                                        })
+                                        .collect::<Vec<_>>();
+                                    Self::validate_whole_partition_replay(&source, &records)?;
+                                    Ok::<_, ExcelError>(records)
+                                })();
+                                let replayed = match replayed {
+                                    Ok(replayed) => replayed,
+                                    Err(error) => {
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(error);
+                                    }
+                                };
+                                let batch = match self.formula_batch_from_exact_replay(
+                                    preparation.sheet_name.as_ref(),
+                                    replayed,
+                                ) {
+                                    Ok(batch) => batch,
+                                    Err(error) => {
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(error);
+                                    }
+                                };
+                                let snapshot = match self.fallback_planning_snapshot(&batch) {
+                                    Ok(snapshot) => snapshot,
+                                    Err(error) => {
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(error);
+                                    }
+                                };
+                                let commit_guard =
+                                    crate::function_registry::semantic_epoch_read_guard();
+                                let provider_revision = self.resolver.planning_semantic_revision();
+                                if commit_guard.epoch() != snapshot.epoch()
+                                    || snapshot
+                                        .provider_revision()
+                                        .is_some_and(|revision| Some(revision) != provider_revision)
+                                {
+                                    self.publish_eager_partial_report(&report, &direct_report);
+                                    return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                        format!(
+                                            "whole-family fallback planning snapshot became stale: epoch {} != {}, provider {:?} != {:?}",
+                                            snapshot.epoch(),
+                                            commit_guard.epoch(),
+                                            snapshot.provider_revision(),
+                                            provider_revision,
+                                        ),
+                                    ));
+                                }
+                                let (plan, formula_count) = match self
+                                    .prepare_legacy_batch_fallback(batch, &snapshot)
+                                {
+                                    Ok(plan) => plan,
+                                    Err(error) => {
+                                        drop(commit_guard);
+                                        self.publish_eager_partial_report(&report, &direct_report);
+                                        return Err(error);
+                                    }
+                                };
+                                let provider_revision_after =
+                                    self.resolver.planning_semantic_revision();
+                                if provider_revision_after != provider_revision {
+                                    drop(commit_guard);
+                                    self.publish_eager_partial_report(&report, &direct_report);
+                                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                                        .with_message(
+                                            "function provider changed while preparing whole-family fallback",
+                                        ));
+                                }
+                                let graph_vertices = plan.new_vertex_count();
+                                let Some(graph_edges) = plan.planned_edge_count() else {
+                                    drop(commit_guard);
+                                    self.publish_eager_partial_report(&report, &direct_report);
+                                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                                        .with_message(
+                                            "prepared whole-family fallback size overflow",
+                                        ));
+                                };
+                                if let Err(error) =
+                                    self.graph.validate_prepared_legacy_graph_plan(&plan)
+                                {
+                                    drop(commit_guard);
+                                    self.publish_eager_partial_report(&report, &direct_report);
+                                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                                        .with_message(error.to_string()));
+                                }
+                                #[cfg(test)]
+                                if let Some(hook) = self
+                                    .before_legacy_fallback_final_provider_sample_hook
+                                    .take()
+                                {
+                                    hook();
+                                }
+                                let provider_revision_final =
+                                    self.resolver.planning_semantic_revision();
+                                if provider_revision_final != provider_revision {
+                                    drop(commit_guard);
+                                    self.publish_eager_partial_report(&report, &direct_report);
+                                    return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                        "function provider changed after whole-family fallback validation",
+                                    ));
+                                }
+                                let graph_formulas =
+                                    self.graph.apply_prevalidated_legacy_graph_plan(plan);
+                                direct_report.formula_cells_seen = direct_report
+                                    .formula_cells_seen
+                                    .saturating_add(formula_count);
+                                direct_report.graph_formula_cells_materialized = direct_report
+                                    .graph_formula_cells_materialized
+                                    .saturating_add(graph_formulas as u64);
+                                direct_report.graph_vertices_created = direct_report
+                                    .graph_vertices_created
+                                    .saturating_add(graph_vertices as u64);
+                                direct_report.graph_edges_created = direct_report
+                                    .graph_edges_created
+                                    .saturating_add(graph_edges as u64);
+                                direct_report.source_spool_replays =
+                                    direct_report.source_spool_replays.saturating_add(1);
+                                direct_report.source_family_fallback =
+                                    direct_report.source_family_fallback.saturating_add(1);
+                                direct_report.source_family_fallback_cells = direct_report
+                                    .source_family_fallback_cells
+                                    .saturating_add(source.surviving_member_count);
+                                direct_report.source_partitioned_families_rejected = direct_report
+                                    .source_partitioned_families_rejected
+                                    .saturating_add(1);
+                                direct_report.source_partition_failures =
+                                    direct_report.source_partition_failures.saturating_add(1);
+                                direct_report.source_partition_fallback_cells = direct_report
+                                    .source_partition_fallback_cells
+                                    .saturating_add(source.surviving_member_count);
+                                direct_report.source_anchor_parses =
+                                    direct_report.source_anchor_parses.saturating_add(1);
+                                direct_report.source_anchor_asts =
+                                    direct_report.source_anchor_asts.saturating_add(1);
+                                direct_report.source_anchor_analyses =
+                                    direct_report.source_anchor_analyses.saturating_add(1);
+                                *direct_report.fallback_reasons.entry(reason).or_default() += 1;
+                            }
+                        }
+                    }
+                    #[cfg(test)]
+                    if let Some(hook) = self.after_eager_proposal_commit_hook.take() {
+                        hook();
+                    }
+                }
+            }
+            break;
         }
-        self.formula_ingest_report_total.accumulate(&direct_report);
         report.accumulate(&direct_report);
-        self.last_formula_ingest_report = Some(report.clone());
+        self.record_formula_ingest_report(report.clone());
         Ok(report)
     }
-
     /// Ingest replayed per-cell formulas while preserving compressed source counters.
     pub(crate) fn ingest_compressed_formula_source_batches(
         &mut self,
@@ -4122,18 +6094,31 @@ where
             crate::engine::FormulaCompressedSourceBatch,
         )>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.ingest_compressed_formula_source_batches_inner(batches, true)
+    }
+
+    fn ingest_compressed_formula_source_batches_inner(
+        &mut self,
+        batches: Vec<(
+            FormulaIngestBatch,
+            crate::engine::FormulaCompressedSourceBatch,
+        )>,
+        publish_report: bool,
+    ) -> Result<FormulaIngestReport, ExcelError> {
         let mut source_counts = [0_u64; 10];
         let mut source_report = crate::engine::FormulaCompressedSourceReport::default();
         let mut formula_batches = Vec::with_capacity(batches.len());
         let mut compressed_families = Vec::new();
+        let mut partitioned_families = Vec::new();
         for (batch, compressed_batch) in batches {
-            let (sheet_name, compressed, families) = compressed_batch.into_parts();
+            let (sheet_name, compressed, families, partitions) = compressed_batch.into_parts();
             if sheet_name.as_ref() != batch.sheet_name {
                 return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
                     "compressed formula source sheet does not match its replay batch",
                 ));
             }
             compressed_families.push((batch.sheet_name.clone(), families));
+            partitioned_families.push((batch.sheet_name.clone(), partitions));
             source_counts[0] = source_counts[0].saturating_add(compressed.source_formula_events);
             source_counts[1] = source_counts[1].saturating_add(compressed.source_ordinary_events);
             source_counts[2] =
@@ -4161,6 +6146,27 @@ where
             source_report.source_clean_cells = source_report
                 .source_clean_cells
                 .saturating_add(compressed.source_clean_cells);
+            source_report.source_fragmentable_families = source_report
+                .source_fragmentable_families
+                .saturating_add(compressed.source_fragmentable_families);
+            source_report.source_fragmentable_cells = source_report
+                .source_fragmentable_cells
+                .saturating_add(compressed.source_fragmentable_cells);
+            source_report.source_fragment_count = source_report
+                .source_fragment_count
+                .saturating_add(compressed.source_fragment_count);
+            source_report.source_isolated_fallback_cells = source_report
+                .source_isolated_fallback_cells
+                .saturating_add(compressed.source_isolated_fallback_cells);
+            source_report.source_hole_exclusions = source_report
+                .source_hole_exclusions
+                .saturating_add(compressed.source_hole_exclusions);
+            source_report.source_ordinary_exclusions = source_report
+                .source_ordinary_exclusions
+                .saturating_add(compressed.source_ordinary_exclusions);
+            source_report.source_partition_failures = source_report
+                .source_partition_failures
+                .saturating_add(compressed.source_partition_failures);
             source_report.replay_families = source_report
                 .replay_families
                 .saturating_add(compressed.replay_families);
@@ -4186,6 +6192,8 @@ where
             source_counts,
             Some(source_report),
             compressed_families,
+            partitioned_families,
+            publish_report,
         )
     }
 
@@ -4193,7 +6201,14 @@ where
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new())
+        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new(), Vec::new(), true)
+    }
+
+    fn ingest_formula_batches_unpublished(
+        &mut self,
+        batches: Vec<FormulaIngestBatch>,
+    ) -> Result<FormulaIngestReport, ExcelError> {
+        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new(), Vec::new(), false)
     }
 
     fn ingest_formula_batches_inner(
@@ -4202,7 +6217,10 @@ where
         source_counts: [u64; 10],
         source_report: Option<crate::engine::FormulaCompressedSourceReport>,
         compressed_families: Vec<(String, Vec<crate::engine::SourceFormulaFamily>)>,
+        partitioned_families: Vec<(String, Vec<crate::engine::PartitionedSourceFormulaFamily>)>,
+        publish_report: bool,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
         #[cfg(feature = "benchmark_internal")]
         let benchmark_forced_replay =
@@ -4226,10 +6244,27 @@ where
                     BTreeMap::new(),
                 ),
                 FormulaPlaneMode::Shadow => (
-                    if compressed_families.is_empty() {
-                        self.analyze_formula_plane_shadow_candidates(&batches)
+                    if partitioned_families
+                        .iter()
+                        .all(|(_, families)| families.is_empty())
+                    {
+                        if compressed_families.is_empty() {
+                            self.analyze_formula_plane_shadow_candidates(&batches)
+                        } else {
+                            self.analyze_compressed_formula_plane_shadow(&compressed_families)
+                        }
                     } else {
-                        self.analyze_compressed_formula_plane_shadow(&compressed_families)
+                        let mut partition_report =
+                            self.analyze_partitioned_formula_plane_shadow(&partitioned_families);
+                        if compressed_families
+                            .iter()
+                            .any(|(_, families)| !families.is_empty())
+                        {
+                            partition_report.accumulate(
+                                &self.analyze_compressed_formula_plane_shadow(&compressed_families),
+                            );
+                        }
+                        partition_report
                     },
                     batches,
                     BTreeMap::new(),
@@ -4255,6 +6290,11 @@ where
             report.source_family_cells_seen = source.family_cells_seen;
             report.source_family_shadow_eligible = source.source_clean_families;
             report.source_family_shadow_eligible_cells = source.source_clean_cells;
+            report.source_partitioned_families_seen = source.source_fragmentable_families;
+            report.source_partition_holes = source.source_hole_exclusions;
+            report.source_partition_ordinary_exceptions = source.source_ordinary_exclusions;
+            report.source_partition_failures = source.source_partition_failures;
+            report.source_partition_surviving_cells = source.source_fragmentable_cells;
             report.source_family_fallback = report
                 .source_family_fallback
                 .saturating_add(source.replay_families);
@@ -4300,7 +6340,9 @@ where
             report.graph_edges_created = summary.edges as u64;
         }
 
-        self.record_formula_ingest_report(report.clone());
+        if publish_report {
+            self.record_formula_ingest_report(report.clone());
+        }
         Ok(report)
     }
 
@@ -4428,7 +6470,12 @@ where
             if !share_parse_cache_across_sheets {
                 cache.clear();
             }
-            let mut entries = staged.entries.clone();
+            let mut entries: Vec<_> = staged
+                .entries
+                .iter()
+                .cloned()
+                .map(|(row, col, text)| (row, col, text, None))
+                .collect();
             let mut deferred_source = None;
             let mut deferred_fallback = None;
             if let Some(package) = staged.deferred_package.as_mut() {
@@ -4442,15 +6489,26 @@ where
                     .filter(|family| !package.invalidated.contains(&family.source_id))
                     .cloned()
                     .collect();
-                let preparation = (self.config.formula_plane_mode
+                let mut preparation = (self.config.formula_plane_mode
                     == FormulaPlaneMode::AuthoritativeExperimental)
                     .then(|| self.prepare_source_formula_families(sheet, &eligible));
-                let direct_families: BTreeSet<_> = preparation
+                let mut replay_disposition = preparation
                     .as_ref()
-                    .into_iter()
-                    .flat_map(|preparation| preparation.prepared.iter())
-                    .map(|(family, _)| *family)
-                    .collect();
+                    .map(|preparation| preparation.replay_disposition.clone())
+                    .unwrap_or_default();
+                for partition in package
+                    .partitioned_families
+                    .iter()
+                    .filter(|family| !package.invalidated.contains(&family.source_id))
+                {
+                    replay_disposition
+                        .register_partition(partition, false)
+                        .map_err(|reason| {
+                            ExcelError::new(ExcelErrorKind::Value).with_message(reason)
+                        })?;
+                }
+                replay_disposition
+                    .extend_suppressed_excel_coords(package.suppressed.iter().copied());
                 let replayed = package
                     .replay
                     .lock()
@@ -4458,26 +6516,43 @@ where
                         ExcelError::new(ExcelErrorKind::Value)
                             .with_message("deferred formula spool lock poisoned")
                     })?
-                    .replay(&direct_families, &package.suppressed)
+                    .replay(&replay_disposition)
                     .map_err(|message| {
                         ExcelError::new(ExcelErrorKind::Value).with_message(message)
                     })?;
-                entries.extend(
-                    replayed
-                        .into_iter()
-                        .map(|record| (record.row, record.col, record.text)),
-                );
+                if let Some(mut prepared) = preparation.take() {
+                    prepared.replay_disposition = replay_disposition;
+                    preparation = Some(prepared.with_exact_replay(
+                        Arc::clone(&package.replay),
+                        package.suppressed.clone(),
+                    ));
+                }
+                entries.extend(replayed.into_iter().map(|record| {
+                    (
+                        record.row,
+                        record.col,
+                        record.text.clone(),
+                        Some((record.source_order, record.family, record.partition_owner)),
+                    )
+                }));
                 let mut report = package.report.clone();
                 report.source_spool_replays = report.source_spool_replays.saturating_add(1);
                 if let Some(preparation) = preparation {
                     deferred_source = Some((report, preparation));
                 } else {
-                    deferred_fallback = Some((report, package.families.clone()));
+                    let partitions = package
+                        .partitioned_families
+                        .iter()
+                        .filter(|family| !package.invalidated.contains(&family.source_id))
+                        .cloned()
+                        .collect();
+                    deferred_fallback = Some((report, package.families.clone(), partitions));
                 }
             }
 
             let mut formulas = Vec::new();
-            for (row, col, txt) in entries {
+            let staged_order_base = u64::MAX.saturating_sub(entries.len() as u64);
+            for (entry_index, (row, col, txt, source_proof)) in entries.into_iter().enumerate() {
                 let key = if txt.starts_with('=') {
                     txt
                 } else {
@@ -4502,23 +6577,36 @@ where
                 };
 
                 if let Some(ast_id) = ast_id {
-                    formulas.push(FormulaIngestRecord::new(
+                    let mut formula = FormulaIngestRecord::new(
                         row,
                         col,
                         ast_id,
                         Some(Arc::<str>::from(key.clone())),
-                    ));
+                    );
+                    if let Some((order, family, owner)) = source_proof {
+                        formula = formula.with_source_proof(order, family, owner);
+                    } else if deferred_source.is_some() {
+                        formula = formula.with_source_proof(
+                            crate::engine::SourceFormulaOrder::new(
+                                staged_order_base.saturating_add(entry_index as u64),
+                            ),
+                            None,
+                            None,
+                        );
+                    }
+                    formulas.push(formula);
                 }
             }
 
             let batch = FormulaIngestBatch::new(sheet.clone(), formulas);
             if let Some((report, preparation)) = deferred_source {
                 direct.push((batch, report, preparation));
-            } else if let Some((report, families)) = deferred_fallback {
-                let source_batch = crate::engine::FormulaCompressedSourceBatch::with_families(
+            } else if let Some((report, families, partitions)) = deferred_fallback {
+                let source_batch = crate::engine::FormulaCompressedSourceBatch::with_proposals(
                     batch.sheet_name.clone(),
                     report,
                     families,
+                    partitions,
                 );
                 compressed.push((batch, source_batch));
             } else if !batch.is_empty() {
@@ -4756,6 +6844,10 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let row0 = Self::normalize_row_1based(row_1based)?;
         if self.set_row_hidden_by_sheet_id(sheet_id, row0, hidden, source) {
@@ -4893,6 +6985,128 @@ where
         match error {
             crate::engine::EditorError::Excel(error) => error,
             other => ExcelError::new(ExcelErrorKind::Value).with_message(other.to_string()),
+        }
+    }
+
+    fn observe_function_semantic_epoch(&mut self) -> Result<bool, ExcelError> {
+        let changes =
+            crate::function_registry::semantic_changes_since(self.function_semantic_epoch_seen);
+        let global_changed = changes.epoch != self.function_semantic_epoch_seen;
+        let provider_revision = self.resolver.planning_semantic_revision();
+        let provider_changed = provider_revision != self.function_provider_revision_seen;
+        if !global_changed && !provider_changed {
+            return Ok(false);
+        }
+
+        let changed = changes.keys.into_iter().collect::<BTreeSet<_>>();
+        let sheets: BTreeSet<_> = self
+            .graph
+            .formula_authority()
+            .plane
+            .spans
+            .active_spans()
+            .filter_map(|span| {
+                let Some(template) = self
+                    .graph
+                    .formula_authority()
+                    .plane
+                    .templates
+                    .get(span.template_id)
+                else {
+                    return (provider_changed || global_changed && !changes.complete)
+                        .then_some(span.domain.sheet_id());
+                };
+                let Some(ast) = self
+                    .graph
+                    .data_store()
+                    .reconstruct_ast_node(template.ast_id, self.graph.sheet_reg())
+                else {
+                    return (provider_changed || global_changed && !changes.complete)
+                        .then_some(span.domain.sheet_id());
+                };
+                let global_affected = global_changed
+                    && (!changes.complete || Self::ast_uses_changed_function(&ast, &changed));
+                let provider_affected = provider_changed && Self::ast_contains_function(&ast);
+                (global_affected || provider_affected).then_some(span.domain.sheet_id())
+            })
+            .collect();
+        let invalidated = !sheets.is_empty();
+        for sheet_id in sheets {
+            self.demote_spans_preserving_computed_overlays(sheet_id, Region::whole_sheet(sheet_id))
+                .map_err(Self::editor_error_to_excel)?;
+        }
+        if global_changed && !changed.is_empty() || provider_changed {
+            self.cached_static_schedule = None;
+        }
+        self.function_semantic_epoch_seen = changes.epoch;
+        self.function_provider_revision_seen = provider_revision;
+        Ok(invalidated)
+    }
+
+    pub(crate) fn ast_uses_changed_function(
+        ast: &ASTNode,
+        changed: &BTreeSet<(String, String)>,
+    ) -> bool {
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                let normalized = name.to_uppercase();
+                let mut spellings = vec![(String::new(), normalized.clone())];
+                let mut stripped = normalized.as_str();
+                loop {
+                    let Some(rest) = ["_XLFN.", "_XLL.", "_XLWS."]
+                        .iter()
+                        .find_map(|prefix| stripped.strip_prefix(prefix))
+                    else {
+                        break;
+                    };
+                    stripped = rest;
+                    spellings.push((String::new(), stripped.to_string()));
+                }
+                let resolved = crate::function_registry::resolve("", name);
+                let directly_changed = spellings.iter().any(|spelling| changed.contains(spelling))
+                    || resolved.as_ref().is_some_and(|resolved| {
+                        changed.contains(&(
+                            resolved.namespace.clone(),
+                            resolved.canonical_name.clone(),
+                        ))
+                    });
+                directly_changed
+                    || resolved.is_none()
+                    || args
+                        .iter()
+                        .any(|arg| Self::ast_uses_changed_function(arg, changed))
+            }
+            ASTNodeType::Call { callee, args } => {
+                Self::ast_uses_changed_function(callee, changed)
+                    || args
+                        .iter()
+                        .any(|arg| Self::ast_uses_changed_function(arg, changed))
+            }
+            ASTNodeType::UnaryOp { expr, .. } => Self::ast_uses_changed_function(expr, changed),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                Self::ast_uses_changed_function(left, changed)
+                    || Self::ast_uses_changed_function(right, changed)
+            }
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .flatten()
+                .any(|node| Self::ast_uses_changed_function(node, changed)),
+            _ => false,
+        }
+    }
+
+    fn ast_contains_function(ast: &ASTNode) -> bool {
+        match &ast.node_type {
+            ASTNodeType::Function { .. } => true,
+            ASTNodeType::Call { callee, args } => {
+                Self::ast_contains_function(callee) || args.iter().any(Self::ast_contains_function)
+            }
+            ASTNodeType::UnaryOp { expr, .. } => Self::ast_contains_function(expr),
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                Self::ast_contains_function(left) || Self::ast_contains_function(right)
+            }
+            ASTNodeType::Array(rows) => rows.iter().flatten().any(Self::ast_contains_function),
+            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => false,
         }
     }
 
@@ -6550,6 +8764,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
@@ -6585,6 +8801,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
@@ -6620,6 +8838,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.graph.sheet_id(sheet).ok_or(
@@ -6659,6 +8879,8 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.observe_function_semantic_epoch()
+            .map_err(crate::engine::EditorError::Excel)?;
         use crate::engine::graph::editor::vertex_editor::VertexEditor;
         self.materialize_deferred_sheet_before_structural_edit(sheet)?;
         let sheet_id = self.graph.sheet_id(sheet).ok_or(
@@ -8404,6 +10626,7 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let sheet_id = self.graph.sheet_id_mut(sheet);
         self.demote_span_containing_cell_for_write(
             sheet_id,
@@ -8650,6 +10873,7 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let sheet_id = self.graph.sheet_id_mut(sheet);
         self.demote_span_containing_cell_for_write(
             sheet_id,
@@ -8914,6 +11138,7 @@ where
     }
 
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         if self.graph.formula_authority().active_span_count() > 0 {
             let _ = self.evaluate_authoritative_formula_plane_all()?;
         }
@@ -9561,6 +11786,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
         let start = crate::instant::FzInstant::now();
@@ -9767,6 +11993,9 @@ where
 
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        if self.observe_function_semantic_epoch()? {
+            return self.evaluate_all();
+        }
         self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
@@ -10344,6 +12573,7 @@ where
             "deferred-dirty scope leaked into evaluate_all: a begin_deferred_dirty \
              was not balanced by end_deferred_dirty"
         );
+        self.observe_function_semantic_epoch()?;
         self.lookup_index_cache.reset_counters();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;
@@ -10488,6 +12718,7 @@ where
     }
 
     pub fn evaluate_all_with_delta(&mut self) -> Result<(EvalResult, EvalDelta), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         let mut collector = DeltaCollector::new(DeltaMode::Cells);
         let result = self.evaluate_all_with_delta_collector(&mut collector)?;
         Ok((result, collector.finish()))
@@ -10654,6 +12885,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         debug_assert!(
             !self.graph.deferred_dirty_active(),
             "deferred-dirty scope leaked into evaluate_cells: a begin_deferred_dirty \
@@ -10685,6 +12917,7 @@ where
         targets: &[(&str, u32, u32)],
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.active_cancel_flag = Some(cancel_flag.clone());
         let res = self.evaluate_cells_cancellable_impl(targets, &cancel_flag);
         self.active_cancel_flag = None;
@@ -10741,6 +12974,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.validate_deterministic_mode()?;
         if targets.is_empty() {
             return Ok((Vec::new(), EvalDelta::default()));
@@ -11167,6 +13401,7 @@ where
         &mut self,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.active_cancel_flag = Some(cancel_flag.clone());
         let res = self.evaluate_all_cancellable_impl(&cancel_flag);
         self.active_cancel_flag = None;
@@ -11327,6 +13562,7 @@ where
         targets: &[&str],
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.active_cancel_flag = Some(cancel_flag.clone());
         let res = self.evaluate_until_cancellable_impl(targets, &cancel_flag);
         self.active_cancel_flag = None;
@@ -12720,12 +14956,24 @@ impl<R> crate::traits::FunctionProvider for Engine<R>
 where
     R: EvaluationContext,
 {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        self.resolver.planning_semantic_revision()
+    }
+
     fn get_function(
         &self,
         prefix: &str,
         name: &str,
     ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
         self.resolver.get_function(prefix, name)
+    }
+
+    fn get_function_for_planning(
+        &self,
+        prefix: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
+        self.resolver.get_function_for_planning(prefix, name)
     }
 }
 
@@ -15679,6 +17927,7 @@ where
     /// This is the same flow as `evaluate_all` but threads a ChangeLog through
     /// every effect application so that spill commits/clears are captured.
     pub fn evaluate_all_logged(&mut self, log: &mut ChangeLog) -> Result<EvalResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
         self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
         self.validate_deterministic_mode()?;

@@ -461,8 +461,8 @@ impl Function for DdbFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(SlnFn));
-    crate::function_registry::register_function(Arc::new(SydFn));
-    crate::function_registry::register_function(Arc::new(DbFn));
-    crate::function_registry::register_function(Arc::new(DdbFn));
+    crate::function_registry::register_builtin(Arc::new(SlnFn));
+    crate::function_registry::register_builtin(Arc::new(SydFn));
+    crate::function_registry::register_builtin(Arc::new(DbFn));
+    crate::function_registry::register_builtin(Arc::new(DdbFn));
 }

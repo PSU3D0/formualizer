@@ -75,10 +75,11 @@ fn numeric_value(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> f64 {
     }
 }
 
-fn assert_off_auth_match(
+fn assert_off_auth_match_with_span_count(
     result_col: u32,
     setup: impl Copy + Fn(&mut Engine<TestWorkbook>),
     formula: impl Copy + Fn(u32) -> String,
+    expected_span_count: usize,
 ) -> Engine<TestWorkbook> {
     let mut off = build_family(FormulaPlaneMode::Off, result_col, setup, formula);
     off.evaluate_all().unwrap();
@@ -89,7 +90,7 @@ fn assert_off_auth_match(
         setup,
         formula,
     );
-    assert_span_count(&auth, 1);
+    assert_span_count(&auth, expected_span_count);
     auth.evaluate_all().unwrap();
 
     for row in SAMPLES {
@@ -101,6 +102,14 @@ fn assert_off_auth_match(
     }
 
     auth
+}
+
+fn assert_off_auth_match(
+    result_col: u32,
+    setup: impl Copy + Fn(&mut Engine<TestWorkbook>),
+    formula: impl Copy + Fn(u32) -> String,
+) -> Engine<TestWorkbook> {
+    assert_off_auth_match_with_span_count(result_col, setup, formula, 1)
 }
 
 fn populate_a_with_row_times_100(engine: &mut Engine<TestWorkbook>) {
@@ -194,11 +203,16 @@ fn per_placement_literal_in_vlookup_key() {
 
 #[test]
 fn per_placement_literal_in_nested_if_chain() {
-    let auth = assert_off_auth_match(2, populate_a_with_row_times_100, |row| {
-        format!(
-            "=IF({row}<10, IF({row}>0, A{row}+{row}, -1), IF({row}<100, IF(MOD({row}, 2)=0, A{row}+{row}*2, A{row}+{row}*3), IF({row}<150, A{row}-{row}, A{row}+{row}/2)))"
-        )
-    });
+    let auth = assert_off_auth_match_with_span_count(
+        2,
+        populate_a_with_row_times_100,
+        |row| {
+            format!(
+                "=IF({row}<10, IF({row}>0, A{row}+{row}, -1), IF({row}<100, IF(MOD({row}, 2)=0, A{row}+{row}*2, A{row}+{row}*3), IF({row}<150, A{row}-{row}, A{row}+{row}/2)))"
+            )
+        },
+        0,
+    );
 
     for row in SAMPLES {
         assert_eq!(

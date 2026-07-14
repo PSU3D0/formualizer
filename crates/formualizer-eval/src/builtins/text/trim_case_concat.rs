@@ -594,13 +594,13 @@ impl Function for TextJoinFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(TrimFn));
-    crate::function_registry::register_function(Arc::new(UpperFn));
-    crate::function_registry::register_function(Arc::new(LowerFn));
-    crate::function_registry::register_function(Arc::new(ProperFn));
-    crate::function_registry::register_function(Arc::new(ConcatFn));
-    crate::function_registry::register_function(Arc::new(ConcatenateFn));
-    crate::function_registry::register_function(Arc::new(TextJoinFn));
+    crate::function_registry::register_builtin(Arc::new(TrimFn));
+    crate::function_registry::register_builtin(Arc::new(UpperFn));
+    crate::function_registry::register_builtin(Arc::new(LowerFn));
+    crate::function_registry::register_builtin(Arc::new(ProperFn));
+    crate::function_registry::register_builtin(Arc::new(ConcatFn));
+    crate::function_registry::register_builtin(Arc::new(ConcatenateFn));
+    crate::function_registry::register_builtin(Arc::new(TextJoinFn));
 }
 
 #[cfg(test)]

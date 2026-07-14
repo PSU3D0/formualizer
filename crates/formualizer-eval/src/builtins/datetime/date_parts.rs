@@ -928,16 +928,16 @@ impl Function for SecondFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(YearFn));
-    crate::function_registry::register_function(Arc::new(MonthFn));
-    crate::function_registry::register_function(Arc::new(DayFn));
-    crate::function_registry::register_function(Arc::new(HourFn));
-    crate::function_registry::register_function(Arc::new(MinuteFn));
-    crate::function_registry::register_function(Arc::new(SecondFn));
-    crate::function_registry::register_function(Arc::new(DaysFn));
-    crate::function_registry::register_function(Arc::new(Days360Fn));
-    crate::function_registry::register_function(Arc::new(YearFracFn));
-    crate::function_registry::register_function(Arc::new(IsoWeekNumFn));
+    crate::function_registry::register_builtin(Arc::new(YearFn));
+    crate::function_registry::register_builtin(Arc::new(MonthFn));
+    crate::function_registry::register_builtin(Arc::new(DayFn));
+    crate::function_registry::register_builtin(Arc::new(HourFn));
+    crate::function_registry::register_builtin(Arc::new(MinuteFn));
+    crate::function_registry::register_builtin(Arc::new(SecondFn));
+    crate::function_registry::register_builtin(Arc::new(DaysFn));
+    crate::function_registry::register_builtin(Arc::new(Days360Fn));
+    crate::function_registry::register_builtin(Arc::new(YearFracFn));
+    crate::function_registry::register_builtin(Arc::new(IsoWeekNumFn));
 }
 
 #[cfg(test)]

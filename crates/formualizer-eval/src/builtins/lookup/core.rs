@@ -866,11 +866,11 @@ impl Function for HLookupFn {
 }
 
 pub fn register_builtins() {
-    use crate::function_registry::register_function;
+    use crate::function_registry::register_builtin;
     use std::sync::Arc;
-    register_function(Arc::new(MatchFn));
-    register_function(Arc::new(VLookupFn));
-    register_function(Arc::new(HLookupFn));
+    register_builtin(Arc::new(MatchFn));
+    register_builtin(Arc::new(VLookupFn));
+    register_builtin(Arc::new(HLookupFn));
 }
 
 #[cfg(test)]

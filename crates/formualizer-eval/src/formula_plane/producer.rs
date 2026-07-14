@@ -174,6 +174,10 @@ impl FormulaProducerResultIndex {
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }
+
+    pub(crate) fn rebuild_count(&self) -> u64 {
+        self.index.rebuild_count()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -268,6 +272,10 @@ impl FormulaConsumerReadIndex {
 
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    pub(crate) fn rebuild_count(&self) -> u64 {
+        self.index.rebuild_count()
     }
 }
 
@@ -412,6 +420,10 @@ impl SpanReadSummaryStore {
 
     pub(crate) fn len(&self) -> usize {
         self.live
+    }
+
+    pub(crate) fn slot_len(&self) -> usize {
+        self.records.len()
     }
 
     pub(crate) fn epoch(&self) -> u64 {

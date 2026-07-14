@@ -1,9 +1,9 @@
 # Formula Function Closure and Fragmented Source Families
 
-Status: adversarially reviewed implementation plan for the milestone after PR #179
-Branch baseline: `perf/calamine-036-single-pass` at `51729f92`
+Status: accepted function-closure/fragmentation substrate plus reviewed E0–E5 transaction plan
+Branch baseline: `feat/registry-function-closure-fragments` at `2ab54062`
 
-This document is intentionally not part of PR #179. It is normalized against the consolidated backend-neutral source-family ingress and should land as a documentation-only change after PR #179 merges.
+Tranches A–D implement registry-driven function closure, bounded partition evidence, coordinate replay, and one-analysis fragmented Shadow preparation. Eager fragmented authority remains disabled until the E0–E5 transaction foundation in §6.5 and §9 is complete.
 
 ## 1. Decision and sequence
 
@@ -18,7 +18,7 @@ The compatibility rule is unchanged from `formula-family-stream-ingest.md`:
 
 The tracks must not be combined in one writer swatch. Fragmentation may expose more cells to authority and therefore starts only after registry-wide semantic conformance and function differential tests are green.
 
-## 2. Current findings
+## 2. Baseline findings resolved by Tranches A–D
 
 The committed anchor-once implementation provides the correct substrate:
 
@@ -30,7 +30,7 @@ The committed anchor-once implementation provides the correct substrate:
 - `crates/formualizer-eval/src/formula_plane/runtime.rs` already stores `SpanAstRelocation`; `span_eval.rs` evaluates the anchor arena AST with placement offsets. Existing edit, cycle-demotion, and structural-shift paths can materialize or demote spans.
 - `crates/formualizer-eval/src/engine/tests/formula_plane_lookup_semantics.rs` covers first/middle/last virtual formula relocation. The PR #179 completion fix routes `EvaluationContext::formula_text_at_cell` through the same FormulaPlane-aware `Engine::get_cell` seam and adds first/middle/last source-family `FORMULATEXT` coverage. Future formula-inspection APIs must preserve that authority-first ordering.
 
-The function boundary is not ready for closure:
+At the planning baseline, the function boundary was not ready for closure:
 
 - **Blocker:** `crates/formualizer-eval/src/formula_plane/template_canonical.rs` classifies dynamic, local-environment, volatile, reference-returning, array/spill, and approximately 100 "known static" functions by hard-coded names. `is_known_static_function` is a secondary supported-function list and cannot remain an eligibility authority.
 - **Blocker:** `crates/formualizer-eval/src/formula_plane/dependency_summary.rs` calls that list and duplicates name-based argument contexts for criteria functions, lookup/reference functions, LET/LAMBDA, and range acceptance.
@@ -147,7 +147,7 @@ Refactor `template_canonical.rs` so `CanonicalExpr::Function` retains a resolved
 
 ## 5. Calamine/AST relocation and syntax closure
 
-`validate_anchor_once_syntax` in `placement.rs` currently rejects every function before FormulaPlane semantics are consulted. Replace its narrow node allowlist with a recursive **relocation validator** independent of function eligibility:
+At the planning baseline, `validate_anchor_once_syntax` in `placement.rs` rejected every function before FormulaPlane semantics were consulted. Tranche B replaced its narrow node allowlist with a recursive **relocation validator** independent of function eligibility:
 
 - literals and supported operators recurse;
 - function calls recurse into arguments and defer call semantics to the resolved function contract;
@@ -194,20 +194,32 @@ An ordinary exception's source record remains ordinary replay. A true hole remai
 
 ### 6.2 One anchor, many preparations
 
-Extend the hidden backend-neutral source-family transport rather than adding an XLSX- or shared-formula-shaped evaluator event. The engine proposal carries one source-family identity and template origin, multiple existing placement-domain transports, and a bounded exact-member fallback disposition. Calamine-specific exclusions and XML metadata remain private to `compressed_evidence.rs` and its replay owner.
+Extend the hidden backend-neutral source-family transport rather than adding an XLSX- or shared-formula-shaped evaluator event. The engine proposal carries one source-family identity and template origin, multiple existing placement-domain transports, every formula excluded from direct authority with typed legacy ownership, and exact count reconciliation for the declared rectangle. Calamine-specific XML metadata remains private to `compressed_evidence.rs` and its replay owner.
 
 ```rust
 pub struct PartitionedSourceFormulaFamily {
     pub source_id: SourceFamilyId,
-    pub anchor_coord0: SourceCoord,
-    pub anchor_text: Arc<str>,
+    pub template_origin0: SourceCoord,
+    pub template_text: Arc<str>,
+    pub declared: SourceRect,
     pub surviving_member_count: u64,
     pub fragments: Vec<PlacementDomainTransport>,
-    pub fallback_members: ExplicitSourceFamilyMembers,
+    pub legacy_members: ExplicitPartitionLegacyMembers,
+    pub reconciliation: PartitionReconciliation,
+}
+
+pub struct PartitionLegacyMember {
+    pub coord: SourceCoord,
+    pub kind: PartitionLegacyMemberKind,
+}
+
+pub enum PartitionLegacyMemberKind {
+    SharedFamilyMember,
+    OrdinaryException,
 }
 ```
 
-Names may follow crate conventions, but this is a capability proposal, not a new evaluator-side Calamine event contract. The exact representation may compress bounded fallback points further. Engine preparation parses, interns, ingests, canonicalizes, and analyzes the template origin once. For each fragment it reuses the immutable `CandidateAnalysis` and calls the existing placement gates with that fragment's independent domain origin. Binding sets and read summaries are fragment-owned; AST relocation points to the same anchor `ast_id`, row, and column, not a re-anchored clone. A fragment need not contain the source anchor.
+The transport proves that fragment areas plus shared legacy members equal the surviving shared-family count and that shared members, ordinary exceptions, and holes exactly cover the declared rectangle. Hole coordinates do not become evaluator formulas or a second geometry model; their count is sufficient once disjoint fragments and typed legacy coordinates are validated. Names may follow crate conventions, but this is a capability proposal, not a new evaluator-side Calamine event contract. Engine preparation parses, interns, ingests, canonicalizes, and analyzes the template origin once. For each fragment it reuses the immutable `CandidateAnalysis` and calls the existing placement gates with that fragment's independent domain origin. Binding sets and read summaries are fragment-owned; AST relocation points to the same anchor `ast_id`, row, and column, not a re-anchored clone. A fragment need not contain the source anchor.
 
 Small/internal-dependent/unsupported fragments do not silently fall back independently in the first authority slice. Any preparation rejection causes whole-family replay. This conservative atomic rule avoids order-dependent mixed dispositions. A later measured optimization may permit bounded per-fragment fallback through a separately reviewed transaction contract.
 
@@ -219,12 +231,12 @@ Introduce a backend-neutral prepared partition disposition in `engine/formula_so
 2. parse/analyze each anchor once;
 3. prepare every fragment and exact fallback graph record;
 4. build all fallback graph work, including ordinary exceptions and shared isolated cells;
-5. verify disjointness and `direct cells + replayed family cells == surviving source family cells` after duplicate rules;
-6. only then commit all prepared spans consecutively and rebuild indexes once.
+5. verify disjointness and `direct shared + legacy shared == surviving shared`, then `surviving shared + ordinary exceptions + holes == declared area` after duplicate rules;
+6. only then commit the prepared graph and FormulaPlane append batches, including their prebuilt index deltas.
 
 A failure before the first commit replays the whole family. Multi-fragment authority requires a preallocated infallible batch commit or rollback primitive: all logical capacity and index work is preflighted, with no async cancellation point or fallible operation between fragment writes. Process OOM/panic is outside this transaction claim, but a loop that can fail logically halfway is not atomic.
 
-Spool replay filters emission by `(family, coordinate disposition)`, not merely family ID. Shared anchors are always processed to establish Calamine expansion state even when the anchor coordinate is direct; emission filtering occurs afterward. Fragment fallback uses a legacy-graph-only prepared path so ordinary exclusions cannot independently create overlapping FormulaPlane authority. Preserve XML source ordering and the existing duplicate resolver. Never replay an exception twice or skip a family cell because its containing rectangle was promoted.
+Spool replay filters emission by `(family, coordinate disposition)`, not merely family ID. `FormulaReplayDisposition` uses a compact family default plus bounded shared-coordinate overrides, so a direct fragmented family does not expand into per-cell state. Its ordinary-coordinate ownership map binds non-shared exception records to the same atomic family disposition. Shared anchors are always processed to establish Calamine expansion state even when the anchor coordinate is direct; emission filtering occurs afterward. Fragment fallback uses a legacy-graph-only prepared path so ordinary exclusions cannot independently create overlapping FormulaPlane authority. Preserve XML source ordering and the existing duplicate resolver. Never replay an exception twice or skip a family cell because its containing rectangle was promoted.
 
 ### 6.4 Runtime, edits, structure, and cycles
 
@@ -238,6 +250,19 @@ Each fragment is an existing independent span, so scheduling, dirty projection, 
 - dependency edges/read regions are per fragment. A read intersecting any fragment's own result region triggers the existing internal-dependency gate for that fragment during preparation; because initial disposition is family-atomic, it replays the family.
 
 Deferred `DeferredFormulaPackage` continues whole-family replay for fragmented families until selected-build, rename/remove, replacement invalidation, random formula read, and spool cleanup tests support coordinate dispositions. Do not broaden deferred authority in the eager swatch.
+
+### 6.5 Transaction-foundation sequence
+
+Adversarial Tranche E attempts proved that eager activation cannot safely be added inside `finish_eager_compressed_formula_sources`. The prerequisite sequence is:
+
+1. **E0 — complete replay ownership.** Carry typed shared/ordinary legacy coordinates, declared-range reconciliation, and compact coordinate dispositions while fragmented families remain replay-only.
+2. **E1 — immutable semantic planning snapshot.** Resolve transaction callsites through a versioned, non-caching registry snapshot; Excel-prefix resolution must not populate aliases. Publication holds an epoch read guard but performs no function resolution.
+3. **E2 — prepared legacy graph plan.** Plan checked sheet/vertex IDs, formula assignments, dependencies, dirty state, and exact capacity reservations without mutation. Commit only bounded delta work and never clone or rebuild the existing graph.
+4. **E3 — checked FormulaPlane append batch.** Preassign checked IDs, deduplicate immutable stores, prove overlap, reserve touched indexes, and install incremental producer/consumer deltas without `rebuild_indexes`.
+5. **E4 — composed Shadow transaction.** Combine replay, legacy graph, authority, and unpublished report deltas; fix stale-disposition exclusivity; exercise the complete fault matrix with no authority publication.
+6. **E5 — eager activation.** Publish fragmented authority only after E4 passes independent review. Deferred fragmented authority remains disabled.
+
+E2 and E3 have no semantic dependency on each other, but repository work remains single-writer and is reviewed one phase at a time. E4 depends on E0–E3; E5 is activation, not another transaction design.
 
 ## 7. FormulaPlane gate reuse
 
@@ -265,10 +290,10 @@ Extend `FormulaIngestReport`, source-family report, and `probe-formula-family-in
 
 Coverage measurement must use `function_registry::snapshot_registered()` after builtin registration. Report canonical registrations by semantic category, safe-default conformance, specialized precision, unsafe/rejected, and observed corpus calls. Aliases do not inflate function counts. The release artifact records the registry snapshot count/fingerprint and fallback histogram, never a maintained expected-name list.
 
-Benchmark gates use cold child processes and five-run medians on one recorded machine. Every artifact records build profile, allocator, CPU state, fixture hash, baseline SHA, median, and MAD:
+Benchmark gates use cold child processes and five-run medians on one recorded machine. Every artifact records build profile, allocator, CPU state, fixture hash, baseline SHA, median, and MAD. Comparisons between fixtures with different intrinsic formula-evaluation work gate load/ingest phases only; total-time gates require equivalent evaluation work:
 
 - existing 100k/1M clean-family direct gates and fallback <=15% overhead remain green;
-- a nested ordinary-function family (at least 100k) has one anchor analysis, zero descendant graph vertices, no function-name fallback, and <=10% overhead versus the current arithmetic direct fixture;
+- a nested ordinary-function family (at least 100k) has one anchor analysis, zero descendant graph vertices, no function-name fallback, and <=10% authoritative load/ingest median overhead versus the current arithmetic direct fixture;
 - registry closure corpus has zero planner under-approximations and no correctness mismatch; coverage percentage is reported, not gamed by weakening contracts;
 - fragmented 100k fixtures with 1, 8, and 64 bounded exclusions directly promote expected fragments, retain O(exclusions + fragments) evidence, and are at least 25% faster and 40% lower RSS than forced whole-family replay;
 - cap+1, conflict, disorder, preparation-failure, and deferred fixtures replay exactly with <=15% overhead;
@@ -332,21 +357,45 @@ Extend backend-neutral source-family transport with partition proposals. Separat
 
 **Gate:** O(fragments), not O(cells), preparation; fragment domains need not contain the anchor; any fragment rejection discards the complete disposition and replays the family.
 
-### Swatch 9: legacy-only fallback and batch commit primitive
+### Swatch 9 / E0: complete disposition ownership
 
-Add a prepared fallback path that can create only legacy graph records, plus a preallocated FormulaPlane batch commit or rollback primitive. Preflight all logical capacity/index work before mutation.
+Carry the declared range, typed shared/ordinary legacy members, count reconciliation, and compact replay disposition through the backend-neutral seam. Fragmented families remain replay-only.
 
-**Gate:** injected parse, planning, allocation-preflight, indexing, and preparation failures leave no partial spans, overlapping authority, duplicate graph formulas, or published telemetry.
+**Gate:** ordinary exceptions have exactly one family owner; direct family defaults plus bounded overrides preserve anchor processing, source order, and exact replay without O(domain area) state.
 
-### Swatch 10: eager fragmented authority
+### Swatch 10 / E1: immutable semantic planning snapshot
 
-Enable eager partition dispositions through `SourceFormulaIngress`. Commit only preflighted existing-domain spans, then publish exact reconciliation and telemetry. Deferred fragmented evidence continues whole-family replay.
+Add non-caching read-only prefix resolution and a versioned registry snapshot consumed by canonical and dependency planning. The publication guard performs no resolution.
 
-**Gate:** direct cells + shared replay cells + ordinary exception cells + holes reconcile exactly with surviving source cells; Off/Shadow remain unchanged; edit, structural, formula lookup, and cycle tests pass.
+**Gate:** concurrent replacement cannot produce mixed semantics or deadlock; accepted clean-family function authority remains unchanged.
 
-### Swatch 11: deferred lifecycle and rollout
+### Swatch 11 / E2: prepared legacy graph plan
 
-Add deferred coordinate dispositions, selected-build isolation, package move/drop, random formula lookup, rename/remove, replacement invalidation, undo/redo, cleanup, bounded telemetry, coverage artifacts, and the full benchmark matrix.
+Plan checked graph IDs, formulas, dependencies, dirty state, and capacity before mutation. Commit only transaction-local delta work.
+
+**Gate:** every injected planning failure leaves the complete engine digest unchanged, and tiny transactions remain flat against increasing pre-existing graph size.
+
+### Swatch 12 / E3: checked FormulaPlane append batch
+
+Preflight checked IDs, immutable-store deduplication, overlap, capacities, and incremental producer/consumer index deltas.
+
+**Gate:** no logical failure exists after the first write; fragmented publication never clones authority or scans/rebuilds existing indexes.
+
+### Swatch 13 / E4: composed transaction in Shadow
+
+Compose exact replay, legacy graph, FormulaPlane append, reconciliation, stale-disposition ownership, and unpublished report deltas without enabling fragmented authority.
+
+**Gate:** the full replay/parse/epoch/ID/reserve/overlap/reconciliation/cancellation fault matrix publishes no partial state or telemetry.
+
+### Swatch 14 / E5: eager fragmented authority
+
+Enable eager partition dispositions through `SourceFormulaIngress` using only the reviewed composed commit. Deferred fragmented evidence continues whole-family replay.
+
+**Gate:** direct shared + legacy shared equals surviving shared; adding ordinary exceptions and holes equals the declared area; Off/Shadow remain unchanged; edit, structural, formula lookup, cycle, scaling, and full validation suites pass.
+
+### Swatch 15: deferred lifecycle and rollout
+
+Add deferred authority only in a later milestone after selected-build isolation, package move/drop, random formula lookup, rename/remove, replacement invalidation, undo/redo, cleanup, bounded telemetry, coverage artifacts, and the full benchmark matrix all pass.
 
 **Gate:** eager/deferred parity, no spool leak or cross-sheet consume, no descendant strings, and every functional/performance gate in section 8. Deferred fragmentation remains disabled if any gate fails.
 
@@ -377,18 +426,17 @@ The parent records the writer SHA/diff, fresh reviewer findings by severity/path
 - No change to Calamine malformed-source semantics, duplicate resolution, source spooling, parse policy, minimum span size, binding cap, cycle policy, or adaptive partition architecture.
 - No full sheet/workbook transaction claim; atomicity is the prepared source-family disposition only.
 - No raw source-spelling preservation beyond existing canonical formula APIs.
-- No production code in this planning change.
 
 ## 12. Review findings and residual risks
 
-- **Blocker:** `formula_plane/template_canonical.rs`, `formula_plane/dependency_summary.rs`, `engine/arena/canonical.rs`, and `engine/ingest_pipeline.rs` currently maintain duplicated semantic name authorities. Common function closure must delete all four before expanding anchor syntax.
-- **Blocker:** default `Function` metadata is unsafe for custom functions. Trusted builtin defaults and explicit custom opt-in must be distinguishable.
-- **High:** current exceptional builtin caps are not a complete semantic inventory; registry-wide conformance may reveal more misdeclared volatility, spill, reference, or local-environment functions.
-- **High:** criteria and lookup behavior can under-approximate dependencies if argument-role precision is wrong. Fixed-planner differential testing remains mandatory, with fallback on disagreement.
-- **High:** fragmented replay currently skips by whole family ID. Eager fragmented authority requires exact coordinate dispositions while preserving source ordering.
-- **High:** looping over individually prepared commits is atomic only if no operation can fail or cancel between commits. Otherwise a batch commit/rollback primitive is required.
-- **Medium:** maximizing rectangles after point subtraction can become algorithmically complex. Initial caps and deterministic row-interval coalescing trade optimal fragment count for proof simplicity.
-- **Medium:** structural edits and cycle demotion may destroy the runtime relationship between fragments. That is acceptable because source-family identity is ingest provenance, not runtime authority.
-- **Medium:** the benchmark's allocator-tagged heap and phase timers are currently nullable. RSS/spool/evidence counters remain usable, but stronger subsystem attribution is residual tooling work.
+Tranches A–D resolved the original function-name authority, custom trust, relocation, dependency, partition, and source-order replay findings. E0 adds typed ordinary-exception ownership and exact declared-range reconciliation. Eager fragmented authority remains blocked on these independently verified foundations:
 
-The principal residual risk is semantic metadata quality across the complete registry. The safe rule is fail closed: unresolved identity, contradictory contract, exceptional behavior, relocation mismatch, partition uncertainty, or preparation failure replays exact formulas. This narrows coverage without changing workbook correctness.
+- **Blocker / E1:** global registry resolution may write-lock while populating prefix aliases; transaction planning requires an immutable non-caching semantic snapshot before an epoch guard can span publication.
+- **Blocker / E2:** `BulkIngestBuilder` interleaves fallible planning with graph mutation and may rebuild work proportional to the existing graph; fragmented fallback requires a bounded prepared legacy plan.
+- **Blocker / E3:** FormulaPlane store IDs and producer/consumer indexes lack one checked incremental append transaction; publication must not rebuild all existing authority indexes.
+- **Blocker / E4:** nested fallback reports, stale preparation ownership, graph work, and authority work are not yet one unpublished, mutually exclusive disposition.
+- **High:** graph vertex and sheet ID exhaustion need typed preflight failures on the prepared transaction path.
+- **Medium:** structural edits and cycle demotion may destroy the runtime relationship between fragments. That is acceptable because source-family identity is ingest provenance, not runtime authority.
+- **Medium:** the benchmark's allocator-tagged heap and phase timers are nullable. RSS/spool/evidence counters remain usable, but stronger subsystem attribution is residual tooling work.
+
+The safe rule remains fail closed: unresolved identity, contradictory contract, exceptional behavior, relocation mismatch, partition uncertainty, epoch mismatch, or preparation failure replays exact formulas with no partial authority or telemetry.

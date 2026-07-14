@@ -26,7 +26,9 @@ mod ast_utils;
 pub mod editor;
 mod formula_analysis;
 mod names;
+pub(crate) mod prepared_legacy_graph;
 mod range_deps;
+
 mod sheets;
 pub mod snapshot;
 mod sources;
@@ -49,12 +51,24 @@ use formualizer_common::Coord as AbsCoord;
 struct RegistryFunctionProvider;
 
 impl crate::traits::FunctionProvider for RegistryFunctionProvider {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        Some(0)
+    }
+
     fn get_function(
         &self,
         ns: &str,
         name: &str,
     ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
         crate::function_registry::get(ns, name)
+    }
+
+    fn get_function_for_planning(
+        &self,
+        ns: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
+        crate::function_registry::get_for_planning(ns, name)
     }
 }
 
@@ -292,6 +306,8 @@ pub struct DependencyGraph {
 
     #[cfg(test)]
     instr: std::sync::Mutex<GraphInstrumentation>,
+    #[cfg(test)]
+    prepared_legacy_graph_failure_for_test: bool,
 }
 
 impl Default for DependencyGraph {
@@ -1109,6 +1125,8 @@ impl DependencyGraph {
             tombstone_registry: TombstoneRegistry::default(),
             #[cfg(test)]
             instr: std::sync::Mutex::new(GraphInstrumentation::default()),
+            #[cfg(test)]
+            prepared_legacy_graph_failure_for_test: false,
         };
 
         if config.use_dynamic_topo {

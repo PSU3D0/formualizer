@@ -7,6 +7,7 @@
 #[cfg(test)]
 mod axis_range_proptest;
 
+pub(crate) mod append;
 pub(crate) mod authority;
 pub(crate) mod dependency_summary;
 #[cfg(feature = "formula_plane_diagnostics")]
@@ -23,7 +24,8 @@ pub(crate) mod scheduler;
 pub mod span_counters;
 pub(crate) mod span_eval;
 pub mod span_store;
-pub(crate) mod structural;
+#[doc(hidden)]
+pub mod structural;
 pub(crate) mod structural_shift;
 pub(crate) mod template_canonical;
 pub mod virtual_ref;

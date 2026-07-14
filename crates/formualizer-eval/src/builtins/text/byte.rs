@@ -384,16 +384,16 @@ impl Function for SearchBFn {
 }
 
 pub fn register_builtins() {
-    use crate::function_registry::register_function;
+    use crate::function_registry::register_builtin;
     use std::sync::Arc;
 
-    register_function(Arc::new(FindBFn));
-    register_function(Arc::new(LeftBFn));
-    register_function(Arc::new(LenBFn));
-    register_function(Arc::new(MidBFn));
-    register_function(Arc::new(ReplaceBFn));
-    register_function(Arc::new(RightBFn));
-    register_function(Arc::new(SearchBFn));
+    register_builtin(Arc::new(FindBFn));
+    register_builtin(Arc::new(LeftBFn));
+    register_builtin(Arc::new(LenBFn));
+    register_builtin(Arc::new(MidBFn));
+    register_builtin(Arc::new(ReplaceBFn));
+    register_builtin(Arc::new(RightBFn));
+    register_builtin(Arc::new(SearchBFn));
 }
 
 #[cfg(test)]

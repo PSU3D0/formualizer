@@ -1174,6 +1174,32 @@ pub trait Resolver: ReferenceResolver + RangeResolver + NamedRangeResolver + Tab
 
 pub trait FunctionProvider: Send + Sync {
     fn get_function(&self, ns: &str, name: &str) -> Option<Arc<dyn Function>>;
+
+    #[doc(hidden)]
+    fn get_function_for_planning(&self, _ns: &str, _name: &str) -> Option<Arc<dyn Function>> {
+        None
+    }
+
+    /// Monotonic revision for runtime function resolution and semantics used by
+    /// compressed planning. Providers that cannot supply one fail closed.
+    #[doc(hidden)]
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        None
+    }
+
+    #[doc(hidden)]
+    fn function_capabilities(&self, ns: &str, name: &str) -> Option<crate::function::FnCaps> {
+        self.get_function(ns, name).map(|function| function.caps())
+    }
+
+    fn function_semantic_identity(
+        &self,
+        ns: &str,
+        name: &str,
+        arity: usize,
+    ) -> Option<crate::function_contract::FunctionSemanticIdentity> {
+        crate::function_registry::resolve_semantic_identity(self, ns, name, arity)
+    }
 }
 
 pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {

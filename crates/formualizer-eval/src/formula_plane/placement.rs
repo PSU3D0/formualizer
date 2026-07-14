@@ -32,7 +32,7 @@ use super::runtime::{
 };
 use super::template_canonical::{
     AxisRef, CanonicalExpr, CanonicalReference, LiteralSlotDescriptor, SlotContext,
-    canonicalize_template, function_arg_slot_context,
+    canonicalize_template, function_argument_slot_context,
 };
 
 /// Minimum cell count for a non-constant span to be promoted. Below this
@@ -199,6 +199,58 @@ pub(crate) struct PreparedAnchorOncePlacement {
     binding_set: SpanBindingSet,
     is_constant_result: bool,
     pub(crate) member_count: u64,
+}
+
+impl PreparedAnchorOncePlacement {
+    pub(crate) fn ownership_proof(&self) -> (SheetId, u32, u32, AstNodeId, &PlacementDomain, u64) {
+        (
+            self.candidate.sheet_id,
+            self.candidate.row,
+            self.candidate.col,
+            self.candidate.ast_id,
+            &self.domain,
+            self.member_count,
+        )
+    }
+
+    pub(crate) fn fragment_dependency_proof(&self) -> (&PlacementDomain, &SpanReadSummary) {
+        (&self.domain, &self.read_summary)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_resolved_named_refs_for_test(&mut self, names: Vec<String>) {
+        self.analysis.resolved_named_refs = names;
+    }
+
+    /// Decompose the sealed one-analysis placement proof for FormulaPlane append.
+    /// Canonical identity and resolved-name facts can only originate from the
+    /// `CandidateAnalysis` that passed `prepare_anchor_once_family`.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn into_append_proof_parts(
+        self,
+    ) -> (
+        FormulaPlacementCandidate,
+        Arc<str>,
+        Arc<str>,
+        Vec<String>,
+        PlacementDomain,
+        ResultRegion,
+        SpanReadSummary,
+        SpanBindingSet,
+        bool,
+    ) {
+        (
+            self.candidate,
+            self.analysis.exact_canonical_key,
+            self.analysis.parameterized_canonical_key,
+            self.analysis.resolved_named_refs,
+            self.domain,
+            self.result_region,
+            self.read_summary,
+            self.binding_set,
+            self.is_constant_result,
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -390,12 +442,13 @@ pub(crate) fn analyze_candidate(
     })
 }
 
-fn prepare_domain_semantics(
+fn prepare_domain_semantics_for_family_size(
     domain: &PlacementDomain,
     read_projections: &[ReadProjection],
     is_constant_result: bool,
+    promoted_family_cells: u64,
 ) -> Result<(ResultRegion, SpanReadSummary), PlacementFallbackReason> {
-    if !is_constant_result && domain.cell_count() < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
+    if !is_constant_result && promoted_family_cells < MIN_PROMOTED_NON_CONSTANT_SPAN_CELLS {
         return Err(PlacementFallbackReason::SmallDomain);
     }
     let result_region = ResultRegion::scalar_cells(domain.clone());
@@ -409,6 +462,19 @@ fn prepare_domain_semantics(
         return Err(PlacementFallbackReason::InternalDependency);
     }
     Ok((result_region, read_summary))
+}
+
+fn prepare_domain_semantics(
+    domain: &PlacementDomain,
+    read_projections: &[ReadProjection],
+    is_constant_result: bool,
+) -> Result<(ResultRegion, SpanReadSummary), PlacementFallbackReason> {
+    prepare_domain_semantics_for_family_size(
+        domain,
+        read_projections,
+        is_constant_result,
+        domain.cell_count(),
+    )
 }
 
 struct AnchorOnceGateOutput {
@@ -456,6 +522,69 @@ pub(crate) fn prepare_anchor_once_family(
     member_count: u64,
 ) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
     let gates = run_anchor_once_placement_gates(&candidate, &analysis, &domain, member_count)?;
+    build_prepared_anchor_once(candidate, analysis, domain, member_count, gates)
+}
+
+pub(crate) fn prepare_anchor_once_fragment(
+    candidate: FormulaPlacementCandidate,
+    analysis: CandidateAnalysis,
+    domain: PlacementDomain,
+    member_count: u64,
+    promoted_family_cells: u64,
+) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
+    if member_count != domain.cell_count() || analysis.sheet_id != domain.sheet_id() {
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+    let is_constant_result =
+        analysis.read_projections_constant && analysis.value_ref_slot_descriptors.is_empty();
+    let (result_region, read_summary) = prepare_domain_semantics_for_family_size(
+        &domain,
+        &analysis.read_projections,
+        is_constant_result,
+        promoted_family_cells,
+    )?;
+    let binding_bytes = literal_binding_bytes(&analysis.literal_bindings);
+    if binding_bytes > MAX_BINDING_SET_BYTES {
+        return Err(PlacementFallbackReason::BindingMemoryCapExceeded);
+    }
+    build_prepared_anchor_once(
+        candidate,
+        analysis,
+        domain,
+        member_count,
+        AnchorOnceGateOutput {
+            result_region,
+            read_summary,
+            is_constant_result,
+            binding_bytes,
+        },
+    )
+}
+
+pub(crate) fn validate_anchor_once_fragment_shadow(
+    analysis: &CandidateAnalysis,
+    domain: &PlacementDomain,
+    member_count: u64,
+) -> Result<(), PlacementFallbackReason> {
+    if member_count != domain.cell_count() || analysis.sheet_id != domain.sheet_id() {
+        return Err(PlacementFallbackReason::UnsupportedShapeOrGaps);
+    }
+    let is_constant_result =
+        analysis.read_projections_constant && analysis.value_ref_slot_descriptors.is_empty();
+    let _ = prepare_domain_semantics(domain, &analysis.read_projections, is_constant_result)?;
+    if literal_binding_bytes(&analysis.literal_bindings) > MAX_BINDING_SET_BYTES {
+        return Err(PlacementFallbackReason::BindingMemoryCapExceeded);
+    }
+    Ok(())
+}
+
+fn build_prepared_anchor_once(
+    candidate: FormulaPlacementCandidate,
+    analysis: CandidateAnalysis,
+    domain: PlacementDomain,
+    member_count: u64,
+    gates: AnchorOnceGateOutput,
+) -> Result<PreparedAnchorOncePlacement, PlacementFallbackReason> {
     let AnchorOnceGateOutput {
         result_region,
         read_summary,
@@ -583,6 +712,34 @@ pub(crate) fn validate_anchor_once_syntax(
     anchor_col0: u32,
     domain: &PlacementDomain,
 ) -> Result<(), &'static str> {
+    validate_anchor_once_relocation(ast, anchor_row0, anchor_col0, domain, false, None)
+}
+
+pub(crate) fn validate_anchor_once_shadow_relocation(
+    ast: &ASTNode,
+    anchor_row0: u32,
+    anchor_col0: u32,
+    domain: &PlacementDomain,
+    function_provider: &dyn crate::traits::FunctionProvider,
+) -> Result<(), &'static str> {
+    validate_anchor_once_relocation(
+        ast,
+        anchor_row0,
+        anchor_col0,
+        domain,
+        true,
+        Some(function_provider),
+    )
+}
+
+fn validate_anchor_once_relocation(
+    ast: &ASTNode,
+    anchor_row0: u32,
+    anchor_col0: u32,
+    domain: &PlacementDomain,
+    allow_safe_functions: bool,
+    function_provider: Option<&dyn crate::traits::FunctionProvider>,
+) -> Result<(), &'static str> {
     const MAX_ROW: i64 = 1_048_576;
     const MAX_COL: i64 = 16_384;
 
@@ -611,6 +768,8 @@ pub(crate) fn validate_anchor_once_syntax(
         row_end: u32,
         col_start: u32,
         col_end: u32,
+        allow_safe_functions: bool,
+        function_provider: Option<&dyn crate::traits::FunctionProvider>,
     ) -> Result<(), &'static str> {
         match &node.node_type {
             ASTNodeType::Literal(_) => Ok(()),
@@ -668,6 +827,7 @@ pub(crate) fn validate_anchor_once_syntax(
                 {
                     Ok(())
                 }
+                ReferenceType::NamedRange(_) if allow_safe_functions => Ok(()),
                 _ => Err("UnsupportedAnchorReference"),
             },
             ASTNodeType::UnaryOp { op, expr } if matches!(op.as_str(), "+" | "-") => walk(
@@ -678,6 +838,8 @@ pub(crate) fn validate_anchor_once_syntax(
                 row_end,
                 col_start,
                 col_end,
+                allow_safe_functions,
+                function_provider,
             ),
             ASTNodeType::BinaryOp { op, left, right }
                 if matches!(op.as_str(), "+" | "-" | "*" | "/") =>
@@ -690,6 +852,8 @@ pub(crate) fn validate_anchor_once_syntax(
                     row_end,
                     col_start,
                     col_end,
+                    allow_safe_functions,
+                    function_provider,
                 )?;
                 walk(
                     right,
@@ -699,7 +863,44 @@ pub(crate) fn validate_anchor_once_syntax(
                     row_end,
                     col_start,
                     col_end,
+                    allow_safe_functions,
+                    function_provider,
                 )
+            }
+            ASTNodeType::Function { name, args } if allow_safe_functions => {
+                let function = super::template_canonical::resolve_canonical_function_with_provider(
+                    function_provider,
+                    name,
+                    args.len(),
+                );
+                let contract = function
+                    .contract
+                    .ok_or("AnchorFunctionUnresolvedOrInvalid")?;
+                if contract.dependency
+                    != crate::function_contract::FunctionDependencySemantics::RecursiveSyntacticArgs
+                    || contract.environment
+                        != crate::function_contract::FunctionEnvironmentSemantics::None
+                    || contract.context != crate::function_contract::FunctionContextDependence::None
+                    || contract.result.may_return_reference()
+                    || contract.result.may_spill()
+                    || function.semantic_flags & crate::function::FnCaps::VOLATILE.bits() != 0
+                {
+                    return Err("AnchorFunctionSemanticsUnsupported");
+                }
+                for arg in args {
+                    walk(
+                        arg,
+                        anchor_row0,
+                        anchor_col0,
+                        row_start,
+                        row_end,
+                        col_start,
+                        col_end,
+                        allow_safe_functions,
+                        function_provider,
+                    )?;
+                }
+                Ok(())
             }
             _ => Err("UnsupportedAnchorSyntax"),
         }
@@ -734,6 +935,8 @@ pub(crate) fn validate_anchor_once_syntax(
         row_end,
         col_start,
         col_end,
+        allow_safe_functions,
+        function_provider,
     )
 }
 
@@ -968,7 +1171,7 @@ pub(crate) fn value_ref_slot_descriptors(expr: &CanonicalExpr) -> Vec<ValueRefSl
                     super::template_canonical::CanonicalReferenceContext::FunctionArgument {
                         function,
                         arg_index,
-                    } => function_arg_slot_context(function, *arg_index),
+                    } => function_argument_slot_context(function, *arg_index),
                 };
                 if matches!(
                     slot_context,
@@ -1546,7 +1749,7 @@ fn residual_relative_axes(expr: &CanonicalExpr) -> (bool, bool) {
                     super::template_canonical::CanonicalReferenceContext::FunctionArgument {
                         function,
                         arg_index,
-                    } => function_arg_slot_context(function, *arg_index),
+                    } => function_argument_slot_context(function, *arg_index),
                 };
                 let captured_as_value_slot = matches!(
                     slot_context,
@@ -1898,6 +2101,81 @@ mod tests {
         let rect = PlacementDomain::rect(0, 3, 12, 4, 15);
         assert!(
             validate_anchor_once_syntax(&parse("=$A$1+B4+C4:D5").unwrap(), 3, 4, &rect).is_ok()
+        );
+    }
+
+    #[test]
+    fn prefixed_anchor_relocation_uses_captured_provider_generation() {
+        struct RelocationFunction {
+            caps: crate::function::FnCaps,
+        }
+
+        impl crate::function::Function for RelocationFunction {
+            fn name(&self) -> &'static str {
+                "E1_RELOCATION_TARGET"
+            }
+            fn aliases(&self) -> &'static [&'static str] {
+                &["E1_RELOCATION_ALIAS"]
+            }
+            fn caps(&self) -> crate::function::FnCaps {
+                self.caps
+            }
+            fn min_args(&self) -> usize {
+                1
+            }
+            fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+                static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
+                    std::sync::LazyLock::new(|| vec![crate::args::ArgSchema::any()]);
+                &SCHEMA
+            }
+            fn semantic_contract(
+                &self,
+                _arity: usize,
+            ) -> Option<crate::function_contract::FunctionSemanticContract> {
+                let mut contract =
+                    crate::function_contract::FunctionSemanticContract::trusted_builtin_default(
+                        None,
+                    );
+                contract.result =
+                    crate::function_contract::FunctionResultSemantics::from_capabilities(
+                        false,
+                        self.caps.contains(crate::function::FnCaps::MAY_SPILL),
+                    );
+                Some(contract)
+            }
+            fn eval<'a, 'b, 'c>(
+                &self,
+                _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+                _ctx: &dyn crate::traits::FunctionContext<'b>,
+            ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+                unreachable!()
+            }
+        }
+
+        crate::function_registry::register_function(Arc::new(RelocationFunction {
+            caps: crate::function::FnCaps::empty(),
+        }));
+        let snapshot = crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+            &crate::function_registry::GlobalRegistryFunctionProvider,
+            [(String::new(), "_xlfn.E1_RELOCATION_ALIAS".to_string(), 1)],
+        )
+        .unwrap();
+        crate::function_registry::register_function(Arc::new(RelocationFunction {
+            caps: crate::function::FnCaps::MAY_SPILL,
+        }));
+
+        let ast = parse("=_xlfn.E1_RELOCATION_ALIAS(A1)").unwrap();
+        let domain = PlacementDomain::row_run(0, 0, 99, 1);
+        assert!(validate_anchor_once_shadow_relocation(&ast, 0, 1, &domain, &snapshot).is_ok());
+        assert_eq!(
+            validate_anchor_once_shadow_relocation(
+                &ast,
+                0,
+                1,
+                &domain,
+                &crate::function_registry::GlobalRegistryFunctionProvider,
+            ),
+            Err("AnchorFunctionSemanticsUnsupported")
         );
     }
 

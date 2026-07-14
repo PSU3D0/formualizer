@@ -4,15 +4,77 @@ use std::sync::Arc;
 use super::common::abs_cell_ref;
 use crate::engine::{
     DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
-    ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
-    FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
-    PlacementDomainTransport, RowVisibilitySource, SourceCoord, SourceFamilyId,
-    SourceFamilyMembers, SourceFormulaFamily, SourceRect,
+    ExplicitPartitionLegacyMembers, ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch,
+    FormulaCompressedSourceReport, FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy,
+    FormulaPlaneMode, FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
+    PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport,
+    RowVisibilitySource, SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily,
+    SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
+
+struct ExactTestReplay {
+    formulas: Vec<(u32, u32, String, Option<SourceFamilyId>)>,
+}
+
+impl DeferredFormulaReplay for ExactTestReplay {
+    fn replay(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        Ok(self
+            .formulas
+            .iter()
+            .enumerate()
+            .filter_map(|(source_order, (row, col, text, family))| {
+                let coord = SourceCoord {
+                    row: row.saturating_sub(1),
+                    col: col.saturating_sub(1),
+                };
+                let (coordinate_disposition, partition_owner) = match family {
+                    Some(family) => (
+                        disposition.shared_disposition(*family, coord),
+                        Some(*family),
+                    ),
+                    None => disposition.ordinary_disposition(coord),
+                };
+                matches!(
+                    coordinate_disposition,
+                    crate::engine::FormulaReplayCoordinateDisposition::LegacyShared
+                        | crate::engine::FormulaReplayCoordinateDisposition::LegacyOrdinary
+                )
+                .then(|| DeferredReplayFormula {
+                    source_order: crate::engine::SourceFormulaOrder::new(source_order as u64),
+                    row: *row,
+                    col: *col,
+                    text: text.clone(),
+                    family: *family,
+                    partition_owner,
+                })
+            })
+            .collect())
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        Ok(self
+            .formulas
+            .iter()
+            .find(|(candidate_row, candidate_col, _, _)| {
+                *candidate_row == row && *candidate_col == col
+            })
+            .map(|(row, col, text, family)| DeferredReplayFormula {
+                source_order: crate::engine::SourceFormulaOrder::new(0),
+                row: *row,
+                col: *col,
+                text: text.clone(),
+                family: *family,
+                partition_owner: *family,
+            }))
+    }
+}
 
 struct TestDeferredReplay {
     text: &'static str,
@@ -23,28 +85,31 @@ struct TestDeferredReplay {
 impl DeferredFormulaReplay for TestDeferredReplay {
     fn replay(
         &mut self,
-        _skip_families: &BTreeSet<SourceFamilyId>,
-        _suppressed: &BTreeSet<(u32, u32)>,
+        _disposition: &FormulaReplayDisposition,
     ) -> Result<Vec<DeferredReplayFormula>, String> {
         if self.fail_once {
             self.fail_once = false;
             return Err("injected replay failure".to_string());
         }
         Ok(vec![DeferredReplayFormula {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
             row: 1,
             col: 1,
             text: self.text.to_string(),
             family: None,
+            partition_owner: None,
         }])
     }
 
     fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
         assert!(!self.panic_at, "injected formula_at panic");
         Ok(Some(DeferredReplayFormula {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
             row,
             col,
             text: self.text.to_string(),
             family: None,
+            partition_owner: None,
         }))
     }
 }
@@ -57,6 +122,7 @@ fn deferred_package(text: &'static str, fail_once: bool, panic_at: bool) -> Defe
     DeferredFormulaPackage::new(
         "Sheet1".to_string(),
         report,
+        Vec::new(),
         Vec::new(),
         Box::new(TestDeferredReplay {
             text,
@@ -197,6 +263,7 @@ fn formula_text_resolves_authoritative_source_family_placements() {
     engine.add_sheet("Inspect").unwrap();
 
     let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
         source_id: SourceFamilyId {
             sheet_instance: 1,
             source_index: 1,
@@ -273,7 +340,7 @@ fn formula_plane_authoritative_cross_sheet_family_promotes_and_dirty_propagates(
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
     assert_eq!(report.graph_formula_cells_materialized, 0);
-    assert!(engine.baseline_stats().formula_plane_active_span_count > 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
 
     engine.evaluate_all().expect("initial cross-sheet evaluate");
     assert_eq!(
@@ -323,7 +390,7 @@ fn formula_plane_authoritative_sum_static_range_family_promotes() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
-    assert!(engine.baseline_stats().formula_plane_active_span_count > 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
 
     engine.evaluate_all().expect("initial range evaluate");
     assert_eq!(
@@ -382,7 +449,7 @@ fn formula_plane_authoritative_sumifs_family_promotes() {
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
         .expect("authoritative ingest");
     let stats = engine.baseline_stats();
-    assert!(stats.formula_plane_active_span_count > 0);
+    assert_eq!(stats.formula_plane_active_span_count, 1);
 
     engine.evaluate_all().expect("initial sumifs evaluate");
     assert_eq!(
@@ -959,6 +1026,7 @@ fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explic
     };
     let complete = vec![
         SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
             source_id: id(1),
             anchor_coord0: SourceCoord { row: 0, col: 0 },
             anchor_text: Arc::from("1+1"),
@@ -970,6 +1038,7 @@ fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explic
             member_count: 3,
         },
         SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
             source_id: id(2),
             anchor_coord0: SourceCoord { row: 0, col: 2 },
             anchor_text: Arc::from("1+1"),
@@ -981,6 +1050,7 @@ fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explic
             member_count: 3,
         },
         SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
             source_id: id(3),
             anchor_coord0: SourceCoord { row: 4, col: 4 },
             anchor_text: Arc::from("1+1"),
@@ -993,6 +1063,7 @@ fn generic_source_family_preparation_accepts_complete_domains_and_rejects_explic
             member_count: 4,
         },
         SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
             source_id: id(4),
             anchor_coord0: SourceCoord { row: 8, col: 8 },
             anchor_text: Arc::from("1+1"),
@@ -1172,6 +1243,7 @@ fn source_family_preparation_rejects_cross_engine_finalization_before_authority(
     let mut origin = Engine::new(TestWorkbook::default(), cfg.clone());
     let mut other = Engine::new(TestWorkbook::default(), cfg);
     let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
         source_id: SourceFamilyId {
             sheet_instance: 1,
             source_index: 1,
@@ -1206,10 +1278,473 @@ fn source_family_preparation_rejects_cross_engine_finalization_before_authority(
 }
 
 #[test]
+fn partitioned_shadow_prepares_all_fragments_from_one_analysis_without_authority() {
+    let family = PartitionedSourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 90,
+            source_index: 1,
+        },
+        template_origin0: SourceCoord { row: 0, col: 1 },
+        template_text: Arc::from("SUM($A$1)+1"),
+        declared: SourceRect {
+            start: SourceCoord { row: 0, col: 1 },
+            end: SourceCoord { row: 7, col: 1 },
+        },
+        surviving_member_count: 7,
+        fragments: vec![
+            PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 2,
+                col: 1,
+            },
+            PlacementDomainTransport::RowRun {
+                row_start: 4,
+                row_end: 6,
+                col: 1,
+            },
+        ],
+        legacy_members: ExplicitPartitionLegacyMembers::try_new(vec![PartitionLegacyMember {
+            coord: SourceCoord { row: 3, col: 1 },
+            kind: PartitionLegacyMemberKind::SharedFamilyMember,
+        }])
+        .unwrap(),
+        reconciliation: PartitionReconciliation {
+            shared_members: 7,
+            ordinary_exceptions: 0,
+            holes: 1,
+        },
+    };
+    let source_report = FormulaCompressedSourceReport {
+        source_fragmentable_families: 1,
+        source_fragmentable_cells: 7,
+        source_hole_exclusions: 1,
+        ..FormulaCompressedSourceReport::default()
+    };
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    let report = engine
+        .ingest_compressed_formula_source_batches(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceBatch::with_proposals(
+                "Sheet1",
+                source_report,
+                Vec::new(),
+                vec![family],
+            ),
+        )])
+        .unwrap();
+
+    assert_eq!(report.source_anchor_parses, 1, "{report:?}");
+    assert_eq!(report.source_anchor_asts, 1, "{report:?}");
+    assert_eq!(report.source_anchor_analyses, 1, "{report:?}");
+    assert_eq!(report.source_partition_analyses_reused, 1, "{report:?}");
+    assert_eq!(report.source_partitioned_families_prepared, 1, "{report:?}");
+    assert_eq!(report.source_partition_fragments_prepared, 2, "{report:?}");
+    assert_eq!(report.source_partition_span_cells_prepared, 6, "{report:?}");
+    assert_eq!(report.source_partition_fallback_cells, 1, "{report:?}");
+    assert_eq!(report.source_partition_function_semantics, 1, "{report:?}");
+    assert_eq!(report.source_partition_holes, 1, "{report:?}");
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
+fn partitioned_shadow_rejects_the_whole_family_when_one_fragment_fails() {
+    let family = PartitionedSourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 90,
+            source_index: 2,
+        },
+        template_origin0: SourceCoord { row: 0, col: 1 },
+        template_text: Arc::from("A1048575+1"),
+        declared: SourceRect {
+            start: SourceCoord { row: 0, col: 1 },
+            end: SourceCoord { row: 3, col: 1 },
+        },
+        surviving_member_count: 4,
+        fragments: vec![
+            PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 1,
+                col: 1,
+            },
+            PlacementDomainTransport::RowRun {
+                row_start: 2,
+                row_end: 3,
+                col: 1,
+            },
+        ],
+        legacy_members: ExplicitPartitionLegacyMembers::try_new(Vec::new()).unwrap(),
+        reconciliation: PartitionReconciliation {
+            shared_members: 4,
+            ordinary_exceptions: 0,
+            holes: 0,
+        },
+    };
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    let report = engine
+        .ingest_compressed_formula_source_batches(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceBatch::with_proposals(
+                "Sheet1",
+                FormulaCompressedSourceReport {
+                    source_fragmentable_families: 1,
+                    source_fragmentable_cells: 4,
+                    ..FormulaCompressedSourceReport::default()
+                },
+                Vec::new(),
+                vec![family],
+            ),
+        )])
+        .unwrap();
+
+    assert_eq!(report.source_partitioned_families_prepared, 0, "{report:?}");
+    assert_eq!(report.source_partitioned_families_rejected, 1, "{report:?}");
+    assert_eq!(report.source_partition_fragments_prepared, 0, "{report:?}");
+    assert_eq!(report.shadow_accepted_span_cells, 0, "{report:?}");
+    assert_eq!(report.shadow_fallback_cells, 4, "{report:?}");
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+}
+
+#[test]
+fn compressed_modes_accept_registry_resolved_nested_function_relocation() {
+    fn family(text: &str) -> SourceFormulaFamily {
+        SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
+            source_id: SourceFamilyId {
+                sheet_instance: 91,
+                source_index: 1,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        }
+    }
+
+    let mut shadow = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow),
+    );
+    let report = shadow
+        .ingest_compressed_formula_source_batches(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceBatch::with_families(
+                "Sheet1",
+                FormulaCompressedSourceReport::default(),
+                vec![family("SUM(A1:A1)+_xlfn.ABS(A1)")],
+            ),
+        )])
+        .unwrap();
+    assert_eq!(report.source_compressed_families_prepared, 1, "{report:?}");
+    assert_eq!(shadow.baseline_stats().formula_plane_active_span_count, 0);
+
+    let mut authoritative = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    for text in [
+        "SUM(A1:A1)+_xlfn.ABS(A1)",
+        "ROUND(A1,0)",
+        "COUNTIF(A1:A1,\">0\")",
+        "VLOOKUP(A1,A1:A1,1,FALSE)",
+        "ROUND(ABS(A1)+SUM(A1:A1)+COUNTIF(A1:A1,\">0\")+VLOOKUP(A1,A1:A1,1,FALSE),0)",
+    ] {
+        let preparation = authoritative
+            .source_formula_ingress()
+            .prepare_families("Sheet1", &[family(text)])
+            .unwrap();
+        assert_eq!(
+            preparation.direct_family_count(),
+            1,
+            "{text}: {:?}",
+            preparation.rejected
+        );
+    }
+}
+
+#[test]
+fn compressed_shadow_replays_when_runtime_provider_identity_mismatches_registry() {
+    struct LocalAbs;
+    impl crate::function::Function for LocalAbs {
+        fn name(&self) -> &'static str {
+            "ABS"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(9)))
+        }
+    }
+    crate::builtins::load_builtins();
+    let workbook = TestWorkbook::default().with_function(Arc::new(LocalAbs));
+    let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
+    let mut engine = Engine::new(workbook, cfg);
+    let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 93,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("ABS(A1)"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+    let report = engine
+        .ingest_compressed_formula_source_batches(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceBatch::with_families(
+                "Sheet1",
+                FormulaCompressedSourceReport::default(),
+                vec![family],
+            ),
+        )])
+        .unwrap();
+    assert_eq!(report.source_compressed_families_prepared, 0, "{report:?}");
+    assert_eq!(report.shadow_fallback_cells, 100, "{report:?}");
+}
+
+#[test]
+fn authoritative_function_closure_admits_explicit_safe_custom_and_replays_untrusted_custom() {
+    struct ExplicitSafe;
+    impl crate::function::Function for ExplicitSafe {
+        fn name(&self) -> &'static str {
+            "SWATCH5_EXPLICIT_SAFE"
+        }
+        fn semantic_contract(
+            &self,
+            _arity: usize,
+        ) -> Option<crate::function_contract::FunctionSemanticContract> {
+            Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(7)))
+        }
+    }
+    struct Untrusted;
+    impl crate::function::Function for Untrusted {
+        fn name(&self) -> &'static str {
+            "SWATCH5_UNTRUSTED"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(9)))
+        }
+    }
+    fn family(index: usize, text: &str) -> SourceFormulaFamily {
+        SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
+            source_id: SourceFamilyId {
+                sheet_instance: 95,
+                source_index: index,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        }
+    }
+
+    crate::function_registry::register_function(Arc::new(ExplicitSafe));
+    crate::function_registry::register_function(Arc::new(Untrusted));
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let safe = engine
+        .prepare_source_formula_families("Sheet1", &[family(1, "SWATCH5_EXPLICIT_SAFE()+A1")]);
+    assert_eq!(safe.direct_family_count(), 1);
+    let untrusted =
+        engine.prepare_source_formula_families("Sheet1", &[family(2, "SWATCH5_UNTRUSTED()+A1")]);
+    assert_eq!(untrusted.direct_family_count(), 0);
+    assert_eq!(untrusted.rejected.len(), 1);
+}
+
+#[test]
+fn compressed_nested_functions_use_one_semantic_snapshot_across_authority_planning() {
+    struct NestedSafe(&'static str);
+    impl crate::function::Function for NestedSafe {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn min_args(&self) -> usize {
+            1
+        }
+        fn arg_schema(&self) -> &'static [crate::args::ArgSchema] {
+            static SCHEMA: std::sync::LazyLock<Vec<crate::args::ArgSchema>> =
+                std::sync::LazyLock::new(|| vec![crate::args::ArgSchema::any()]);
+            &SCHEMA
+        }
+        fn semantic_contract(
+            &self,
+            _arity: usize,
+        ) -> Option<crate::function_contract::FunctionSemanticContract> {
+            Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)))
+        }
+    }
+
+    crate::function_registry::register_function(Arc::new(NestedSafe("E1_NESTED_OUTER")));
+    crate::function_registry::register_function(Arc::new(NestedSafe("E1_NESTED_INNER")));
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 951,
+            source_index: 1,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("E1_NESTED_OUTER(E1_NESTED_INNER(A1))"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+
+    let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
+    assert_eq!(
+        preparation.direct_family_count(),
+        1,
+        "{:?}",
+        preparation.rejected
+    );
+    assert!(preparation.function_semantics_used);
+    assert_eq!(
+        preparation.function_semantic_epoch,
+        crate::function_registry::semantic_epoch()
+    );
+}
+
+#[test]
+fn authoritative_replays_every_exceptional_function_semantic_category() {
+    for (source_index, text) in [
+        (1, "RAND()+A1"),
+        (2, "OFFSET(A1,0,0)"),
+        (3, "LET(x,A1,x)"),
+        (4, "UNREGISTERED_CLOSURE_FN(A1)"),
+        (5, "SEQUENCE(1,1)"),
+        (6, "CELL(\"filename\",A1)"),
+        (7, "INDEX(A1:A2,1)"),
+        (8, "ROW()"),
+        (9, "IF(TRUE,A1,0)"),
+        (10, "IFERROR(A1,0)"),
+    ] {
+        let mut engine = Engine::new(
+            TestWorkbook::default(),
+            EvalConfig::default()
+                .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+        );
+        let family = SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
+            source_id: SourceFamilyId {
+                sheet_instance: 96,
+                source_index,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        };
+        let preparation = engine.prepare_source_formula_families("Sheet1", &[family]);
+        assert_eq!(preparation.direct_family_count(), 0, "{text}");
+        assert_eq!(preparation.rejected.len(), 1, "{text}");
+    }
+}
+
+#[test]
+fn compressed_shadow_replays_exceptional_and_unresolved_function_semantics() {
+    for (source_index, text) in [
+        (1, "RAND()+A1"),
+        (2, "OFFSET(A1,0,0)"),
+        (3, "LET(x,A1,x)"),
+        (4, "UNREGISTERED_CLOSURE_FN(A1)"),
+    ] {
+        let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
+        let mut engine = Engine::new(TestWorkbook::default(), cfg);
+        let family = SourceFormulaFamily {
+            source_order: crate::engine::SourceFormulaOrder::new(0),
+            source_id: SourceFamilyId {
+                sheet_instance: 92,
+                source_index,
+            },
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(text),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: 1,
+            }),
+            member_count: 100,
+        };
+        let report = engine
+            .ingest_compressed_formula_source_batches(vec![(
+                FormulaIngestBatch::new("Sheet1", Vec::new()),
+                FormulaCompressedSourceBatch::with_families(
+                    "Sheet1",
+                    FormulaCompressedSourceReport::default(),
+                    vec![family],
+                ),
+            )])
+            .unwrap();
+        assert_eq!(
+            report.source_compressed_families_prepared, 0,
+            "{text}: {report:?}"
+        );
+        assert_eq!(report.shadow_fallback_cells, 100, "{text}: {report:?}");
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    }
+}
+
+#[test]
 fn compressed_shadow_counts_only_preparation_work_that_occurs() {
     let cfg = EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::Shadow);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
     let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
         source_id: SourceFamilyId {
             sheet_instance: 1,
             source_index: 1,
@@ -1244,4 +1779,615 @@ fn compressed_shadow_counts_only_preparation_work_that_occurs() {
         report.fallback_reasons.get("CompleteDomainMemberMismatch"),
         Some(&1)
     );
+}
+#[test]
+fn authoritative_clean_parse_rejection_publishes_attempted_work_once() {
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default()
+            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
+            .with_formula_parse_policy(FormulaParsePolicy::KeepCachedValue),
+    );
+    let family_id = SourceFamilyId {
+        sheet_instance: 970,
+        source_index: 1,
+    };
+    let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: family_id,
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("("),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 0,
+            col: 1,
+        }),
+        member_count: 1,
+    };
+    let mut preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap();
+    preparation.eager_replay.push(DeferredReplayFormula {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        row: 1,
+        col: 2,
+        text: "(".to_string(),
+        family: Some(family_id),
+        partition_owner: None,
+    });
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 1,
+                replay_families: 1,
+                replay_cells: 1,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+    assert_eq!(report.source_anchor_parses, 1, "{report:?}");
+    assert_eq!(report.source_anchor_asts, 0, "{report:?}");
+    assert_eq!(report.source_anchor_analyses, 0, "{report:?}");
+}
+
+fn provider_revision_family(source_index: usize) -> SourceFormulaFamily {
+    SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(source_index as u64),
+        source_id: SourceFamilyId {
+            sheet_instance: 971,
+            source_index,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("ABS(A1)"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    }
+}
+
+fn provider_revision_replay(family_id: SourceFamilyId) -> ExactTestReplay {
+    ExactTestReplay {
+        formulas: (1..=100)
+            .map(|row| (row, 2, format!("=ABS(A{row})"), Some(family_id)))
+            .collect(),
+    }
+}
+
+#[test]
+fn unversioned_provider_function_family_fails_closed_to_replay() {
+    let mut engine = Engine::new(
+        TestWorkbook::default().without_planning_revision(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let preparation =
+        engine.prepare_source_formula_families("Sheet1", &[provider_revision_family(1)]);
+    assert_eq!(preparation.direct_family_count(), 0);
+    assert_eq!(
+        preparation.rejected.values().next().map(String::as_str),
+        Some("FunctionProviderRevisionUnavailable")
+    );
+}
+
+#[test]
+fn initially_stale_provider_reason_and_fallback_counts_publish_once() {
+    let workbook = TestWorkbook::default();
+    let revision = workbook.planning_revision_handle();
+    let mut engine = Engine::new(
+        workbook,
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let family = provider_revision_family(20);
+    let family_id = family.source_id;
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
+                family_id,
+            )))),
+            BTreeSet::new(),
+        );
+    revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+    assert_eq!(
+        report
+            .fallback_reasons
+            .get("FunctionProviderRevisionChanged"),
+        Some(&1),
+        "{report:?}"
+    );
+    assert_eq!(report.source_family_fallback, 1, "{report:?}");
+    assert_eq!(report.source_family_fallback_cells, 100, "{report:?}");
+}
+
+#[test]
+fn later_source_order_error_publishes_prior_preparation_commit() {
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let first_family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 500,
+            source_index: 99,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 5 },
+        anchor_text: Arc::from("$A$1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 1,
+            col: 5,
+        }),
+        member_count: 2,
+    };
+    let first = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[first_family])
+        .unwrap();
+    let mut second = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet2", &[])
+        .unwrap();
+    let duplicate_family = SourceFamilyId {
+        sheet_instance: 501,
+        source_index: 2,
+    };
+    second.eager_replay = vec![
+        DeferredReplayFormula {
+            source_order: crate::engine::SourceFormulaOrder::new(5),
+            row: 1,
+            col: 1,
+            text: "=1+1".to_string(),
+            family: Some(duplicate_family),
+            partition_owner: None,
+        },
+        DeferredReplayFormula {
+            source_order: crate::engine::SourceFormulaOrder::new(5),
+            row: 2,
+            col: 1,
+            text: "=1+2".to_string(),
+            family: Some(duplicate_family),
+            partition_owner: None,
+        },
+    ];
+    let error = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![
+            (
+                FormulaIngestBatch::new("Sheet1", Vec::new()),
+                FormulaCompressedSourceReport {
+                    families_seen: 1,
+                    family_cells_seen: 2,
+                    ..Default::default()
+                },
+                first,
+            ),
+            (
+                FormulaIngestBatch::new("Sheet2", Vec::new()),
+                FormulaCompressedSourceReport::default(),
+                second,
+            ),
+        ])
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("duplicate exact-replay source-order proof"),
+        "{error}"
+    );
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    let published = engine.last_formula_ingest_report().unwrap();
+    assert_eq!(published.source_family_promoted, 1, "{published:?}");
+    assert_eq!(published.source_family_promoted_cells, 2, "{published:?}");
+}
+
+#[test]
+fn provider_flip_after_prior_ordered_fallback_demotes_later_function_clean_family() {
+    let workbook = TestWorkbook::default();
+    let revision = workbook.planning_revision_handle();
+    let mut engine = Engine::new(
+        workbook,
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let family = provider_revision_family(10);
+    let family_id = family.source_id;
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
+                family_id,
+            )))),
+            BTreeSet::new(),
+        );
+    let ordinary_ast = engine.intern_formula_ast(&parse("=1+1").unwrap());
+    let ordinary = FormulaIngestRecord::new(1, 4, ordinary_ast, Some(Arc::from("=1+1")))
+        .with_source_proof(crate::engine::SourceFormulaOrder::new(0), None, None);
+    engine.set_after_eager_proposal_commit_hook(move || {
+        revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    });
+
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", vec![ordinary]),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 101);
+    assert_eq!(report.source_family_fallback, 1, "{report:?}");
+    assert_eq!(report.source_family_fallback_cells, 100, "{report:?}");
+    assert_eq!(
+        report
+            .fallback_reasons
+            .get("CleanFormulaPlaneAppend:FunctionProviderRevisionChanged"),
+        Some(&1),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn provider_revision_change_between_preparation_and_commit_replays_exactly() {
+    let workbook = TestWorkbook::default();
+    let revision = workbook.planning_revision_handle();
+    let mut engine = Engine::new(
+        workbook,
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let family = provider_revision_family(2);
+    let family_id = family.source_id;
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
+                family_id,
+            )))),
+            BTreeSet::new(),
+        );
+    assert_eq!(preparation.direct_family_count(), 1);
+    engine.set_before_prepared_span_commit_hook(move || {
+        revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    });
+
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 100);
+    assert_eq!(
+        report
+            .fallback_reasons
+            .get("FunctionProviderRevisionChanged"),
+        Some(&1)
+    );
+}
+
+#[test]
+fn provider_revision_change_after_commit_demotes_before_evaluation() {
+    let workbook = TestWorkbook::default();
+    let revision = workbook.planning_revision_handle();
+    let mut engine = Engine::new(
+        workbook,
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let family = provider_revision_family(3);
+    let family_id = family.source_id;
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
+                family_id,
+            )))),
+            BTreeSet::new(),
+        );
+    engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+
+    revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+}
+
+#[test]
+fn unrelated_semantic_epoch_change_does_not_replay_arithmetic_preparation() {
+    crate::builtins::load_builtins();
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: SourceFamilyId {
+            sheet_instance: 1,
+            source_index: 7,
+        },
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("A1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+    let replay = ExactTestReplay {
+        formulas: (1..=100)
+            .map(|row| {
+                (
+                    row,
+                    2,
+                    format!("=A{row}+1"),
+                    Some(SourceFamilyId {
+                        sheet_instance: 1,
+                        source_index: 7,
+                    }),
+                )
+            })
+            .collect(),
+    };
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(replay))),
+            BTreeSet::new(),
+        );
+    assert_eq!(preparation.direct_family_count(), 1);
+
+    crate::function_registry::register_alias("", "__PREPARED_STALE_EPOCH_FIXTURE__", "", "ABS");
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert!(
+        !report
+            .fallback_reasons
+            .contains_key("FunctionSemanticEpochChanged")
+    );
+}
+
+#[test]
+fn unrelated_commit_boundary_epoch_change_keeps_arithmetic_preparation() {
+    crate::builtins::load_builtins();
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let family_id = SourceFamilyId {
+        sheet_instance: 1,
+        source_index: 8,
+    };
+    let family = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: family_id,
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("A1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 99,
+            col: 1,
+        }),
+        member_count: 100,
+    };
+    let replay = ExactTestReplay {
+        formulas: (1..=100)
+            .map(|row| (row, 2, format!("=A{row}+1"), Some(family_id)))
+            .collect(),
+    };
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(replay))),
+            BTreeSet::new(),
+        );
+    engine.set_before_prepared_span_commit_hook(|| {
+        crate::function_registry::register_alias("", "__PREPARED_COMMIT_RACE_FIXTURE__", "", "ABS");
+    });
+
+    engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 100, 2),
+        Some(LiteralValue::Number(1.0))
+    );
+}
+
+#[test]
+fn ordinary_supported_function_families_preserve_authoritative_behavior() {
+    crate::builtins::load_builtins();
+    let cfg =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+    let formulas = (1..=100)
+        .map(|row| record(&mut engine, row, 2, &format!("=ABS(A{row})")))
+        .collect();
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+}
+
+#[test]
+fn changed_function_ast_discovery_covers_stale_prefix_unresolved_and_calls() {
+    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+
+    let changed = BTreeSet::from([(String::new(), "STALE_ALIAS".to_string())]);
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &parse("=STALE_ALIAS(A1)").unwrap(),
+        &changed
+    ));
+
+    let changed = BTreeSet::from([(String::new(), "SUM".to_string())]);
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &parse("=_xlfn.SUM(A1)").unwrap(),
+        &changed
+    ));
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &parse("=UNRESOLVED_CLOSURE_FN(A1)").unwrap(),
+        &changed
+    ));
+
+    let callee_changed = ASTNode::new(
+        ASTNodeType::Call {
+            callee: Box::new(parse("=SUM(A1)").unwrap()),
+            args: vec![parse("=ABS(A1)").unwrap()],
+        },
+        None,
+    );
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &callee_changed,
+        &changed
+    ));
+    let changed = BTreeSet::from([(String::new(), "ABS".to_string())]);
+    assert!(Engine::<TestWorkbook>::ast_uses_changed_function(
+        &callee_changed,
+        &changed
+    ));
+}
+
+#[test]
+fn semantic_epoch_guard_covers_public_formula_plane_flows() {
+    let source = include_str!("../eval.rs");
+    for signature in [
+        "pub fn prepare_families(",
+        "pub fn evaluate_vertex(",
+        "pub fn evaluate_until(",
+        "pub fn evaluate_recalc_plan(",
+        "pub fn evaluate_all(",
+        "pub fn evaluate_all_with_delta(",
+        "pub fn evaluate_cells(",
+        "pub fn evaluate_cells_cancellable(",
+        "pub fn evaluate_cells_with_delta(",
+        "pub fn evaluate_all_cancellable(",
+        "pub fn evaluate_until_cancellable(",
+        "pub fn evaluate_all_logged(",
+        "fn ingest_formula_batches_inner(",
+        "fn finish_eager_compressed_formula_sources(",
+    ] {
+        let start = source
+            .find(signature)
+            .unwrap_or_else(|| panic!("missing {signature}"));
+        let body = &source[start..source.len().min(start + 1_200)];
+        assert!(
+            body.contains("observe_function_semantic_epoch"),
+            "{signature} bypasses the common semantic epoch guard"
+        );
+    }
+}
+
+#[test]
+fn unique_custom_replacement_publishes_epoch_without_parallel_builtin_contamination() {
+    struct RaceFn;
+    impl crate::function::Function for RaceFn {
+        fn name(&self) -> &'static str {
+            "__UNIQUE_EPOCH_RACE_FN__"
+        }
+        fn semantic_contract(
+            &self,
+            _arity: usize,
+        ) -> Option<crate::function_contract::FunctionSemanticContract> {
+            Some(crate::function_contract::FunctionSemanticContract::trusted_builtin_default(None))
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(1)))
+        }
+    }
+
+    crate::function_registry::register_function(Arc::new(RaceFn));
+    let before = crate::function_registry::semantic_epoch();
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let writer_barrier = Arc::clone(&barrier);
+    let writer = std::thread::spawn(move || {
+        writer_barrier.wait();
+        crate::function_registry::register_function(Arc::new(RaceFn));
+        crate::function_registry::resolve_with_epoch("", "__UNIQUE_EPOCH_RACE_FN__").unwrap()
+    });
+    barrier.wait();
+    let (published_epoch, resolved) = writer.join().unwrap();
+    assert!(published_epoch > before);
+    assert!(resolved.semantics.conforms());
 }

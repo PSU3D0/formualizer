@@ -186,8 +186,9 @@ fn fp_coverage_corpus_pins_section_verdicts_and_values() {
             section.name
         );
 
+        let strict_result_shape_fallback = section.name == "nested_if_literals";
         match section.verdict {
-            SectionVerdict::Span => {
+            SectionVerdict::Span if !strict_result_shape_fallback => {
                 assert_eq!(
                     report.shadow_accepted_span_cells, n,
                     "section {}: expected all {n} cells span-accepted; fallback histogram: {:?}",
@@ -202,6 +203,18 @@ fn fp_coverage_corpus_pins_section_verdicts_and_values() {
                     report.shadow_spans_created >= 1,
                     "section {}: expected at least one span",
                     section.name
+                );
+            }
+            SectionVerdict::Span => {
+                assert_eq!(report.shadow_accepted_span_cells, 0);
+                assert_eq!(report.shadow_fallback_cells, n);
+                assert_eq!(
+                    report
+                        .fallback_reasons
+                        .get("UnsupportedCanonicalTemplate")
+                        .copied()
+                        .unwrap_or(0),
+                    n
                 );
             }
             SectionVerdict::Reject { placement_reason } => {
@@ -292,7 +305,7 @@ fn fp_coverage_corpus_combined_totals() {
     let expected_span_sections = corpus
         .sections
         .iter()
-        .filter(|s| s.verdict == SectionVerdict::Span)
+        .filter(|s| s.verdict == SectionVerdict::Span && s.name != "nested_if_literals")
         .count() as u64;
     let expected_reject_sections = corpus.sections.len() as u64 - expected_span_sections;
 
@@ -305,7 +318,11 @@ fn fp_coverage_corpus_combined_totals() {
 
     let mut expected_histogram: BTreeMap<&'static str, u64> = BTreeMap::new();
     for section in &corpus.sections {
-        if let SectionVerdict::Reject { placement_reason } = section.verdict {
+        if section.name == "nested_if_literals" {
+            *expected_histogram
+                .entry("UnsupportedCanonicalTemplate")
+                .or_default() += n;
+        } else if let SectionVerdict::Reject { placement_reason } = section.verdict {
             *expected_histogram.entry(placement_reason).or_default() += n;
         }
     }
@@ -341,7 +358,16 @@ fn fp_coverage_corpus_pins_canonical_reject_kinds() {
                 diag.reject_kinds
             );
         }
-        if section.expected_canonical_reject_kinds.is_empty()
+        if section.name == "nested_if_literals" {
+            assert!(!diag.authority_supported);
+            assert!(
+                diag.reject_reasons
+                    .iter()
+                    .any(|reason| reason == "array_or_spill_function:IF"),
+                "nested IF must retain its conservative result-shape rejection: {:?}",
+                diag.reject_reasons
+            );
+        } else if section.expected_canonical_reject_kinds.is_empty()
             && section.verdict == SectionVerdict::Span
         {
             assert!(

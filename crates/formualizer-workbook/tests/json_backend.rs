@@ -137,12 +137,24 @@ fn json_loader_declares_sources_before_formula_ingest_eager_mode() {
     }
 
     impl FunctionProvider for Ctx {
+        fn planning_semantic_revision(&self) -> Option<u64> {
+            Some(0)
+        }
+
         fn get_function(
             &self,
             ns: &str,
             name: &str,
         ) -> Option<std::sync::Arc<dyn formualizer_eval::function::Function>> {
             formualizer_eval::function_registry::get(ns, name)
+        }
+
+        fn get_function_for_planning(
+            &self,
+            ns: &str,
+            name: &str,
+        ) -> Option<std::sync::Arc<dyn formualizer_eval::function::Function>> {
+            formualizer_eval::function_registry::get_for_planning(ns, name)
         }
     }
 

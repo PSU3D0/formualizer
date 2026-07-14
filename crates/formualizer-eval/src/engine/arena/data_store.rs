@@ -578,7 +578,7 @@ impl DataStore {
     }
 
     /// Reconstruct an ASTNode from arena representation
-    fn reconstruct_ast_node(
+    pub(crate) fn reconstruct_ast_node(
         &self,
         id: AstNodeId,
         sheet_registry: &SheetRegistry,

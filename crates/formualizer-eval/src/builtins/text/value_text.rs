@@ -447,9 +447,9 @@ fn format_serial_date(n: f64, fmt: &str) -> String {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(ValueFn));
-    crate::function_registry::register_function(Arc::new(NumberValueFn));
-    crate::function_registry::register_function(Arc::new(TextFn));
+    crate::function_registry::register_builtin(Arc::new(ValueFn));
+    crate::function_registry::register_builtin(Arc::new(NumberValueFn));
+    crate::function_registry::register_builtin(Arc::new(TextFn));
 }
 
 #[cfg(test)]

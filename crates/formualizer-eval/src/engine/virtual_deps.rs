@@ -201,12 +201,24 @@ impl<'a, R: EvaluationContext> SourceResolver for DynamicRefCollector<'a, R> {
 impl<'a, R: EvaluationContext> Resolver for DynamicRefCollector<'a, R> {}
 
 impl<'a, R: EvaluationContext> FunctionProvider for DynamicRefCollector<'a, R> {
+    fn planning_semantic_revision(&self) -> Option<u64> {
+        self.engine.planning_semantic_revision()
+    }
+
     fn get_function(
         &self,
         ns: &str,
         name: &str,
     ) -> Option<std::sync::Arc<dyn crate::traits::Function>> {
         self.engine.get_function(ns, name)
+    }
+
+    fn get_function_for_planning(
+        &self,
+        ns: &str,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::traits::Function>> {
+        self.engine.get_function_for_planning(ns, name)
     }
 }
 

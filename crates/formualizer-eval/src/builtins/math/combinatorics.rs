@@ -705,13 +705,13 @@ impl Function for CombinaFn {
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(FactFn));
-    crate::function_registry::register_function(Arc::new(FactDoubleFn));
-    crate::function_registry::register_function(Arc::new(GcdFn));
-    crate::function_registry::register_function(Arc::new(LcmFn));
-    crate::function_registry::register_function(Arc::new(CombinFn));
-    crate::function_registry::register_function(Arc::new(CombinaFn));
-    crate::function_registry::register_function(Arc::new(PermutFn));
+    crate::function_registry::register_builtin(Arc::new(FactFn));
+    crate::function_registry::register_builtin(Arc::new(FactDoubleFn));
+    crate::function_registry::register_builtin(Arc::new(GcdFn));
+    crate::function_registry::register_builtin(Arc::new(LcmFn));
+    crate::function_registry::register_builtin(Arc::new(CombinFn));
+    crate::function_registry::register_builtin(Arc::new(CombinaFn));
+    crate::function_registry::register_builtin(Arc::new(PermutFn));
 }
 
 #[cfg(test)]

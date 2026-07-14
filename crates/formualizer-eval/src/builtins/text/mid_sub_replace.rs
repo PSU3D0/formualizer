@@ -346,9 +346,9 @@ use std::cmp::min;
 
 pub fn register_builtins() {
     use std::sync::Arc;
-    crate::function_registry::register_function(Arc::new(MidFn));
-    crate::function_registry::register_function(Arc::new(SubstituteFn));
-    crate::function_registry::register_function(Arc::new(ReplaceFn));
+    crate::function_registry::register_builtin(Arc::new(MidFn));
+    crate::function_registry::register_builtin(Arc::new(SubstituteFn));
+    crate::function_registry::register_builtin(Arc::new(ReplaceFn));
 }
 
 #[cfg(test)]

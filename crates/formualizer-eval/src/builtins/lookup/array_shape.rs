@@ -215,7 +215,7 @@ fn flatten_array<'b>(args: &[ArgumentHandle<'_, 'b>]) -> Result<Vec<LiteralValue
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for ToColFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "TOCOL"
     }
@@ -254,7 +254,7 @@ impl Function for ToColFn {
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for ToRowFn {
-    func_caps!(PURE);
+    func_caps!(PURE, MAY_SPILL);
     fn name(&self) -> &'static str {
         "TOROW"
     }
@@ -280,11 +280,11 @@ impl Function for ToRowFn {
 }
 
 pub fn register_builtins() {
-    use crate::function_registry::register_function;
+    use crate::function_registry::register_builtin;
     use std::sync::Arc;
 
-    register_function(Arc::new(ToColFn));
-    register_function(Arc::new(ToRowFn));
+    register_builtin(Arc::new(ToColFn));
+    register_builtin(Arc::new(ToRowFn));
 }
 
 #[cfg(test)]

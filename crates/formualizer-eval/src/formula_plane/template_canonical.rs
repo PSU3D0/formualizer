@@ -19,6 +19,12 @@ use formualizer_parse::parser::{
     ASTNode, ASTNodeType, ReferenceType, SpecialItem, TableRowSpecifier, TableSpecifier,
 };
 
+use crate::function::FnCaps;
+use crate::function_contract::{
+    FunctionArgumentDependencyContract, FunctionContextDependence, FunctionDependencySemantics,
+    FunctionEnvironmentSemantics, FunctionSemanticContract, FunctionSemanticIdentity,
+};
+
 /// Canonical template output for a single formula placement.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanonicalTemplate {
@@ -168,7 +174,12 @@ pub(crate) enum LiteralKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CanonicalFunctionId {
+    pub(crate) namespace: String,
     pub(crate) canonical_name: String,
+    pub(crate) semantic_generation: u64,
+    pub(crate) semantic_flags: u32,
+    pub(crate) contract: Option<FunctionSemanticContract>,
+    pub(crate) argument_by_ref: Vec<bool>,
 }
 
 /// Reference context is kept in the tree because by-ref/value semantics are
@@ -178,8 +189,13 @@ pub(crate) struct CanonicalFunctionId {
 pub(crate) enum CanonicalReferenceContext {
     Value,
     Reference,
-    FunctionArgument { function: String, arg_index: usize },
-    CallArgument { arg_index: usize },
+    FunctionArgument {
+        function: CanonicalFunctionId,
+        arg_index: usize,
+    },
+    CallArgument {
+        arg_index: usize,
+    },
 }
 
 /// Canonical reference model with affine axes relative to the formula placement.
@@ -289,6 +305,8 @@ pub(crate) enum CanonicalRejectKind {
     OpenRangeReference,
     WholeAxisReference,
     UnsupportedReference,
+    FunctionContractUnsupported,
+    ContextDependentFunction,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -313,6 +331,8 @@ pub(crate) enum CanonicalRejectReason {
     OpenRangeReference { original: String },
     WholeAxisReference { original: String },
     UnsupportedReference { diagnostic: String },
+    FunctionContractUnsupported { name: String },
+    ContextDependentFunction { name: String },
 }
 
 impl CanonicalRejectReason {
@@ -366,6 +386,12 @@ impl CanonicalRejectReason {
             CanonicalRejectReason::UnsupportedReference { .. } => {
                 CanonicalRejectKind::UnsupportedReference
             }
+            CanonicalRejectReason::FunctionContractUnsupported { .. } => {
+                CanonicalRejectKind::FunctionContractUnsupported
+            }
+            CanonicalRejectReason::ContextDependentFunction { .. } => {
+                CanonicalRejectKind::ContextDependentFunction
+            }
         }
     }
 }
@@ -395,9 +421,25 @@ pub(crate) fn canonicalize_template(
     anchor_row: u32,
     anchor_col: u32,
 ) -> CanonicalTemplate {
+    crate::builtins::load_builtins();
+    canonicalize_template_with_provider(
+        ast,
+        anchor_row,
+        anchor_col,
+        Some(&crate::function_registry::GlobalRegistryFunctionProvider),
+    )
+}
+
+pub(crate) fn canonicalize_template_with_provider(
+    ast: &ASTNode,
+    anchor_row: u32,
+    anchor_col: u32,
+    function_provider: Option<&dyn crate::traits::FunctionProvider>,
+) -> CanonicalTemplate {
     let mut canonicalizer = Canonicalizer {
         anchor_row,
         anchor_col,
+        function_provider,
         labels: CanonicalTemplateLabels::default(),
         literal_slot_descriptors: Vec::new(),
         literal_bindings: Vec::new(),
@@ -451,16 +493,17 @@ pub(crate) fn canonicalize_template(
     }
 }
 
-struct Canonicalizer {
+struct Canonicalizer<'a> {
     anchor_row: u32,
     anchor_col: u32,
+    function_provider: Option<&'a dyn crate::traits::FunctionProvider>,
     labels: CanonicalTemplateLabels,
     literal_slot_descriptors: Vec<LiteralSlotDescriptor>,
     literal_bindings: Vec<LiteralValue>,
     preorder_index: u32,
 }
 
-impl Canonicalizer {
+impl Canonicalizer<'_> {
     fn canonicalize_expr(
         &mut self,
         ast: &ASTNode,
@@ -509,8 +552,12 @@ impl Canonicalizer {
                 }
             }
             ASTNodeType::Function { name, args } => {
-                let canonical_name = normalize_function_name(name);
-                self.classify_function(&canonical_name);
+                let id = resolve_canonical_function_with_provider(
+                    self.function_provider,
+                    name,
+                    args.len(),
+                );
+                self.classify_function(&id);
                 self.labels.flag(CanonicalTemplateFlag::FunctionCall);
                 let canonical_args = args
                     .iter()
@@ -519,7 +566,7 @@ impl Canonicalizer {
                         self.canonicalize_expr(
                             arg,
                             CanonicalReferenceContext::FunctionArgument {
-                                function: canonical_name.clone(),
+                                function: id.clone(),
                                 arg_index,
                             },
                         )
@@ -527,7 +574,7 @@ impl Canonicalizer {
                     .collect();
 
                 CanonicalExpr::Function {
-                    id: CanonicalFunctionId { canonical_name },
+                    id,
                     args: canonical_args,
                 }
             }
@@ -765,52 +812,57 @@ impl Canonicalizer {
         }
     }
 
-    fn classify_function(&mut self, canonical_name: &str) {
-        let mut known_special = false;
-
-        if is_dynamic_reference_function(canonical_name) {
-            known_special = true;
+    fn classify_function(&mut self, id: &CanonicalFunctionId) {
+        let name = id.canonical_name.clone();
+        if id.semantic_flags & FnCaps::VOLATILE.bits() != 0 {
             self.labels
-                .reject(CanonicalRejectReason::DynamicReferenceFunction {
-                    name: canonical_name.to_string(),
-                });
+                .reject(CanonicalRejectReason::VolatileFunction { name: name.clone() });
         }
-        if is_local_environment_function(canonical_name) {
-            known_special = true;
+        if id.semantic_flags & FnCaps::DYNAMIC_DEPENDENCY.bits() != 0 {
             self.labels
-                .reject(CanonicalRejectReason::LocalEnvironmentFunction {
-                    name: canonical_name.to_string(),
-                });
+                .reject(CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() });
         }
-        if is_volatile_function(canonical_name) {
-            known_special = true;
-            self.labels.reject(CanonicalRejectReason::VolatileFunction {
-                name: canonical_name.to_string(),
-            });
-        }
-        if is_reference_returning_function(canonical_name) {
-            known_special = true;
+        if id.semantic_flags & FnCaps::LOCAL_ENVIRONMENT.bits() != 0 {
             self.labels
-                .reject(CanonicalRejectReason::ReferenceReturningFunction {
-                    name: canonical_name.to_string(),
-                });
+                .reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
         }
-        if is_array_or_spill_function(canonical_name) {
-            known_special = true;
+        if id.semantic_flags & FnCaps::RETURNS_REFERENCE.bits() != 0 {
             self.labels
-                .reject(CanonicalRejectReason::ArrayOrSpillFunction {
-                    name: canonical_name.to_string(),
-                });
+                .reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
         }
-
-        // The parser AST does not carry registry identity. Until FP4.B wires in
-        // function contracts, FP4.A.1 treats only a small hard-coded built-in
-        // set as known and labels every other function unknown/custom.
-        if !known_special && !is_known_static_function(canonical_name) {
+        if id.semantic_flags & FnCaps::MAY_SPILL.bits() != 0 {
             self.labels
-                .reject(CanonicalRejectReason::UnknownOrCustomFunction {
-                    name: canonical_name.to_string(),
-                });
+                .reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
+        }
+        let Some(contract) = id.contract else {
+            self.labels
+                .reject(CanonicalRejectReason::UnknownOrCustomFunction { name });
+            return;
+        };
+        match contract.dependency {
+            FunctionDependencySemantics::RecursiveSyntacticArgs => {}
+            FunctionDependencySemantics::Dynamic => self
+                .labels
+                .reject(CanonicalRejectReason::DynamicReferenceFunction { name: name.clone() }),
+            FunctionDependencySemantics::Unsupported => self
+                .labels
+                .reject(CanonicalRejectReason::FunctionContractUnsupported { name: name.clone() }),
+        }
+        if contract.environment != FunctionEnvironmentSemantics::None {
+            self.labels
+                .reject(CanonicalRejectReason::LocalEnvironmentFunction { name: name.clone() });
+        }
+        if contract.result.may_return_reference() {
+            self.labels
+                .reject(CanonicalRejectReason::ReferenceReturningFunction { name: name.clone() });
+        }
+        if contract.result.may_spill() {
+            self.labels
+                .reject(CanonicalRejectReason::ArrayOrSpillFunction { name: name.clone() });
+        }
+        if contract.context != FunctionContextDependence::None {
+            self.labels
+                .reject(CanonicalRejectReason::ContextDependentFunction { name });
         }
     }
 
@@ -909,127 +961,103 @@ pub(crate) fn normalize_function_name(name: &str) -> String {
     }
 }
 
-fn is_dynamic_reference_function(name: &str) -> bool {
-    matches!(name, "INDIRECT" | "OFFSET")
-}
-
-fn is_local_environment_function(name: &str) -> bool {
-    matches!(name, "LET" | "LAMBDA")
-}
-
-fn is_volatile_function(name: &str) -> bool {
-    matches!(name, "NOW" | "TODAY" | "RAND" | "RANDBETWEEN")
-}
-
-fn is_reference_returning_function(name: &str) -> bool {
-    matches!(name, "CHOOSE")
-}
-
-fn is_array_or_spill_function(name: &str) -> bool {
-    matches!(
+pub(crate) fn resolve_canonical_function(name: &str, arity: usize) -> CanonicalFunctionId {
+    crate::builtins::load_builtins();
+    resolve_canonical_function_with_provider(
+        Some(&crate::function_registry::GlobalRegistryFunctionProvider),
         name,
-        "FILTER" | "RANDARRAY" | "SEQUENCE" | "SORT" | "SORTBY" | "TEXTSPLIT" | "UNIQUE"
+        arity,
     )
 }
 
-pub(crate) fn is_known_static_function(name: &str) -> bool {
-    matches!(
-        name,
-        "ABS"
-            | "ACOS"
-            | "ACOSH"
-            | "AND"
-            | "ASIN"
-            | "ASINH"
-            | "ATAN"
-            | "ATAN2"
-            | "ATANH"
-            | "AVERAGE"
-            | "AVERAGEIF"
-            | "AVERAGEIFS"
-            | "CEILING"
-            | "CONCAT"
-            | "CONCATENATE"
-            | "COS"
-            | "COSH"
-            | "COUNT"
-            | "COUNTA"
-            | "COUNTBLANK"
-            | "COUNTIF"
-            | "COUNTIFS"
-            | "DATE"
-            | "DAY"
-            | "ERROR.TYPE"
-            | "EVEN"
-            | "EXACT"
-            | "EXP"
-            | "FALSE"
-            | "FIND"
-            | "FLOOR"
-            | "HLOOKUP"
-            | "IF"
-            | "IFERROR"
-            | "IFNA"
-            | "IFS"
-            | "INDEX"
-            | "INT"
-            | "ISBLANK"
-            | "ISERR"
-            | "ISERROR"
-            | "ISEVEN"
-            | "ISLOGICAL"
-            | "ISNA"
-            | "ISNONTEXT"
-            | "ISNUMBER"
-            | "ISODD"
-            | "ISTEXT"
-            | "LEFT"
-            | "LEN"
-            | "LN"
-            | "LOG"
-            | "LOG10"
-            | "LOWER"
-            | "MATCH"
-            | "MAX"
-            | "MID"
-            | "MIN"
-            | "MOD"
-            | "MONTH"
-            | "NOT"
-            | "ODD"
-            | "OR"
-            | "POWER"
-            | "PRODUCT"
-            | "PROPER"
-            | "REPLACE"
-            | "REPT"
-            | "RIGHT"
-            | "ROUND"
-            | "ROUNDDOWN"
-            | "ROUNDUP"
-            | "SEARCH"
-            | "SIN"
-            | "SINH"
-            | "SQRT"
-            | "SUBSTITUTE"
-            | "SUM"
-            | "SUMIF"
-            | "SUMIFS"
-            | "SWITCH"
-            | "TAN"
-            | "TANH"
-            | "TEXT"
-            | "TEXTJOIN"
-            | "TIME"
-            | "TRIM"
-            | "TRUE"
-            | "TRUNC"
-            | "UPPER"
-            | "VALUE"
-            | "VLOOKUP"
-            | "YEAR"
-            | "XLOOKUP"
-    )
+pub(crate) fn resolve_canonical_function_with_provider(
+    provider: Option<&dyn crate::traits::FunctionProvider>,
+    name: &str,
+    arity: usize,
+) -> CanonicalFunctionId {
+    let identity =
+        provider.and_then(|provider| provider.function_semantic_identity("", name, arity));
+    match identity {
+        Some(identity) => CanonicalFunctionId {
+            namespace: identity.namespace,
+            canonical_name: identity.canonical_name,
+            semantic_generation: identity.generation,
+            semantic_flags: identity.caps.bits(),
+            contract: Some(identity.contract),
+            argument_by_ref: identity.argument_by_ref,
+        },
+        None => CanonicalFunctionId {
+            namespace: String::new(),
+            canonical_name: normalize_function_name(name),
+            semantic_generation: 0,
+            semantic_flags: 0,
+            contract: None,
+            argument_by_ref: Vec::new(),
+        },
+    }
+}
+
+pub(crate) fn function_argument_slot_context(
+    function: &CanonicalFunctionId,
+    arg_index: usize,
+) -> SlotContext {
+    if function
+        .argument_by_ref
+        .get(arg_index)
+        .copied()
+        .unwrap_or(false)
+        || function.semantic_flags & FnCaps::DYNAMIC_DEPENDENCY.bits() != 0
+        || function.contract.is_some_and(|contract| {
+            contract.context == FunctionContextDependence::PlacementDependent
+        })
+    {
+        return SlotContext::ByRefArg;
+    }
+    let Some(precision) = function.contract.and_then(|contract| contract.precision) else {
+        return SlotContext::Value;
+    };
+    match precision.arguments {
+        FunctionArgumentDependencyContract::AllArgs(role)
+        | FunctionArgumentDependencyContract::Variadic(role) => slot_context_for_role(role),
+        FunctionArgumentDependencyContract::LocalBindingPairs
+        | FunctionArgumentDependencyContract::LambdaParameters => SlotContext::LocalBinding,
+        FunctionArgumentDependencyContract::CriteriaPairs(criteria) => {
+            let value_index = match criteria.value_range {
+                crate::function_contract::CriteriaValueRange::Fixed(index) => Some(index),
+                crate::function_contract::CriteriaValueRange::Optional {
+                    provided_index, ..
+                } => Some(provided_index),
+                crate::function_contract::CriteriaValueRange::None => None,
+            };
+            if value_index == Some(arg_index) {
+                SlotContext::Value
+            } else if arg_index >= criteria.first_criteria_pair {
+                if (arg_index - criteria.first_criteria_pair).is_multiple_of(2) {
+                    SlotContext::CriteriaRangeArg
+                } else {
+                    SlotContext::CriteriaExpressionArg
+                }
+            } else {
+                SlotContext::Value
+            }
+        }
+    }
+}
+
+fn slot_context_for_role(
+    role: crate::function_contract::FunctionArgumentDependencyRole,
+) -> SlotContext {
+    use crate::function_contract::FunctionArgumentDependencyRole as Role;
+    match role {
+        Role::CriteriaRange => SlotContext::CriteriaRangeArg,
+        Role::CriteriaExpression => SlotContext::CriteriaExpressionArg,
+        Role::ByReference => SlotContext::ByRefArg,
+        Role::LocalBindingName | Role::LocalBindingValue | Role::LambdaBody => {
+            SlotContext::LocalBinding
+        }
+        Role::Unsupported => SlotContext::Unknown,
+        _ => SlotContext::Value,
+    }
 }
 
 fn literal_kind(value: &LiteralValue) -> Option<LiteralKind> {
@@ -1057,29 +1085,7 @@ fn slot_context_from_canonical(context: &CanonicalReferenceContext) -> SlotConte
         CanonicalReferenceContext::FunctionArgument {
             function,
             arg_index,
-        } => function_arg_slot_context(function, *arg_index),
-    }
-}
-
-pub(crate) fn function_arg_slot_context(function: &str, arg_index: usize) -> SlotContext {
-    match function {
-        "LET" | "LAMBDA" => SlotContext::LocalBinding,
-        "SUMIFS" | "AVERAGEIFS" if arg_index == 0 => SlotContext::Value,
-        "SUMIFS" | "AVERAGEIFS" if !arg_index.is_multiple_of(2) => SlotContext::CriteriaRangeArg,
-        "SUMIFS" | "AVERAGEIFS" => SlotContext::CriteriaExpressionArg,
-        "COUNTIFS" if arg_index.is_multiple_of(2) => SlotContext::CriteriaRangeArg,
-        "COUNTIFS" => SlotContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 0 => SlotContext::CriteriaRangeArg,
-        "SUMIF" | "AVERAGEIF" if arg_index == 1 => SlotContext::CriteriaExpressionArg,
-        "SUMIF" | "AVERAGEIF" => SlotContext::Value,
-        "COUNTIF" if arg_index == 0 => SlotContext::CriteriaRangeArg,
-        "COUNTIF" => SlotContext::CriteriaExpressionArg,
-        // INDEX: arg 0 is the table (Value context so range gets recorded as
-        // precedent); args 1+2 are scalar position/col_index (Value context
-        // so relative refs become value-ref slots).
-        "INDEX" => SlotContext::Value,
-        "OFFSET" | "ROW" | "COLUMN" | "AREAS" | "SHEET" => SlotContext::ByRefArg,
-        _ => SlotContext::Value,
+        } => function_argument_slot_context(function, *arg_index),
     }
 }
 
@@ -1155,7 +1161,7 @@ fn write_parameterized_expr_key_inner(
         }
         CanonicalExpr::Function { id, args } => {
             out.push_str("fn(");
-            write_string_key(&id.canonical_name, out);
+            write_function_id_key(id, out);
             out.push(';');
             out.push_str(&args.len().to_string());
             out.push(':');
@@ -1227,7 +1233,7 @@ fn write_expr_key(expr: &CanonicalExpr, out: &mut String) {
         }
         CanonicalExpr::Function { id, args } => {
             out.push_str("fn(");
-            write_string_key(&id.canonical_name, out);
+            write_function_id_key(id, out);
             out.push(';');
             write_vec_key(args, out, write_expr_key);
             out.push(')');
@@ -1313,7 +1319,7 @@ fn write_reference_context_key(context: &CanonicalReferenceContext, out: &mut St
             arg_index,
         } => {
             out.push_str("fn_arg:");
-            write_string_key(function, out);
+            write_function_id_key(function, out);
             out.push(':');
             out.push_str(&arg_index.to_string());
         }
@@ -1497,6 +1503,14 @@ fn write_reject_reason_key(reason: &CanonicalRejectReason, out: &mut String) {
             out.push_str("unsupported_ref:");
             write_string_key(diagnostic, out);
         }
+        CanonicalRejectReason::FunctionContractUnsupported { name } => {
+            out.push_str("function_contract_unsupported:");
+            write_string_key(name, out);
+        }
+        CanonicalRejectReason::ContextDependentFunction { name } => {
+            out.push_str("context_dependent_function:");
+            write_string_key(name, out);
+        }
     }
 }
 
@@ -1520,6 +1534,28 @@ fn write_vec_key<T>(values: &[T], out: &mut String, write_value: fn(&T, &mut Str
     for value in values {
         write_value(value, out);
         out.push(',');
+    }
+}
+
+fn write_function_id_key(id: &CanonicalFunctionId, out: &mut String) {
+    let Some(contract) = id.contract else {
+        out.push_str("unresolved:");
+        write_string_key(&id.canonical_name, out);
+        return;
+    };
+    let encoded = FunctionSemanticIdentity {
+        namespace: id.namespace.clone(),
+        canonical_name: id.canonical_name.clone(),
+        generation: id.semantic_generation,
+        caps: FnCaps::from_bits_retain(id.semantic_flags),
+        contract,
+        argument_by_ref: id.argument_by_ref.clone(),
+    }
+    .encode();
+    out.push_str("semantic:");
+    for byte in encoded {
+        use std::fmt::Write as _;
+        write!(out, "{byte:02x}").expect("writing to String is infallible");
     }
 }
 
@@ -1556,6 +1592,82 @@ mod tests {
             CanonicalExpr::Reference { reference, .. } => reference,
             other => panic!("expected reference, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn registry_semantic_identity_rejects_may_spill_lookup_and_tracks_generation() {
+        let template = canonical("=XLOOKUP(A1,$D$1:$D$3,$E$1:$E$3)", 1, 2);
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::ArrayOrSpill)
+        );
+        let CanonicalExpr::Function { id, .. } = &template.expr else {
+            panic!("expected function")
+        };
+        assert_eq!(id.canonical_name, "XLOOKUP");
+        assert!(id.semantic_generation > 0);
+        assert!(id.contract.is_some());
+    }
+
+    #[test]
+    fn runtime_provider_override_cannot_borrow_global_registry_semantics() {
+        struct LocalAbs;
+        impl crate::function::Function for LocalAbs {
+            fn name(&self) -> &'static str {
+                "ABS"
+            }
+            fn eval<'a, 'b, 'c>(
+                &self,
+                _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+                _ctx: &dyn crate::traits::FunctionContext<'b>,
+            ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+                unreachable!()
+            }
+        }
+        crate::builtins::load_builtins();
+        let provider = crate::test_workbook::TestWorkbook::new().with_function(Arc::new(LocalAbs));
+        let ast = parse("=ABS(A1)").unwrap();
+        let template = canonicalize_template_with_provider(&ast, 1, 2, Some(&provider));
+        assert!(
+            template
+                .labels
+                .contains_reject_kind(CanonicalRejectKind::UnknownOrCustomFunction)
+        );
+    }
+
+    #[test]
+    fn registry_replacement_changes_full_canonical_semantic_identity() {
+        struct SafeReplacement;
+        impl crate::function::Function for SafeReplacement {
+            fn name(&self) -> &'static str {
+                "__CANONICAL_GENERATION_FIXTURE__"
+            }
+            fn semantic_contract(
+                &self,
+                _arity: usize,
+            ) -> Option<crate::function_contract::FunctionSemanticContract> {
+                Some(
+                    crate::function_contract::FunctionSemanticContract::trusted_builtin_default(
+                        None,
+                    ),
+                )
+            }
+            fn eval<'a, 'b, 'c>(
+                &self,
+                _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+                _ctx: &dyn crate::traits::FunctionContext<'b>,
+            ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+                unreachable!()
+            }
+        }
+        crate::function_registry::register_function(Arc::new(SafeReplacement));
+        let first = canonical("=__CANONICAL_GENERATION_FIXTURE__()", 1, 1);
+        crate::function_registry::register_function(Arc::new(SafeReplacement));
+        let second = canonical("=__CANONICAL_GENERATION_FIXTURE__()", 1, 1);
+        assert!(first.labels.is_authority_supported());
+        assert!(second.labels.is_authority_supported());
+        assert_ne!(first.key, second.key);
     }
 
     #[test]
