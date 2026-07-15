@@ -141,9 +141,8 @@ impl DependencyGraph {
         };
         let vertex_id = self.store.allocate(coord, sheet_id, 0x01);
         self.store.set_kind(vertex_id, VertexKind::NamedScalar);
-        self.store.set_dirty(vertex_id, true);
+        self.mark_vertex_dirty(vertex_id);
         self.edges.add_vertex(coord, vertex_id.0);
-        self.dirty_vertices.insert(vertex_id);
         vertex_id
     }
 
@@ -358,8 +357,7 @@ impl DependencyGraph {
                 } else {
                     self.store.set_kind(vertex, VertexKind::NamedScalar);
                 }
-                self.store.set_dirty(vertex, true);
-                self.dirty_vertices.insert(vertex);
+                self.mark_vertex_dirty(vertex);
 
                 let referenced_names =
                     self.rebuild_name_dependencies(vertex, &definition_snapshot, scope_value);
@@ -735,7 +733,7 @@ impl DependencyGraph {
         self.store.mark_deleted(named_range.vertex, true);
         self.vertex_values.remove(&named_range.vertex);
         self.vertex_formulas.remove(&named_range.vertex);
-        self.dirty_vertices.remove(&named_range.vertex);
+        self.clear_formula_vertex_dirty(named_range.vertex);
         self.volatile_vertices.remove(&named_range.vertex);
         self.vertex_to_names.remove(&named_range.vertex);
         self.name_vertex_lookup.remove(&named_range.vertex);

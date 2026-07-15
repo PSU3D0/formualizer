@@ -57,7 +57,7 @@ An accurate inventory matters because the distance to the end state is shorter t
 | Concern | State |
 | --- | --- |
 | Evaluation loop | **Already one loop.** `evaluate_authoritative_formula_plane_all` builds a `MixedSchedule` whose layers interleave span producers and legacy vertices, evaluating both per layer with a per-layer computed-write flush (eval.rs, scheduler.rs). There is no global legacy-pass/span-pass boundary. |
-| Authority ownership | **Already graph-owned.** `FormulaAuthority` (spans, producer/consumer indexes, pending changed regions) is a field of `DependencyGraph`. |
+| Authority ownership | **Graph-owned.** `FormulaAuthority` owns spans and producer/consumer indexes; `FormulaDirtyState` separately owns all formula dirtiness inside `DependencyGraph`. |
 | Cross-span cycles | **Detected and demoted.** Mixed-schedule toposort detects producer-level cycles, demotes the cyclic spans to legacy vertices, and resolves via the legacy cycle prepass. Intra-family self-reads reject at placement (`InternalDependency`). |
 | Structural ops | **Span-aware.** Insert/delete rows/cols classify each span: uniform shift mutates domain geometry in place; straddling demotes (structural_shift.rs). |
 | Result storage | **Already columnar.** Span results stage in a `ComputedWriteBuffer` and flush as coalesced fragments into the sheet's computed overlay (Arrow-side), consulted at read time. |
@@ -67,12 +67,12 @@ What remains dual — the actual gap:
 
 | Concern | State |
 | --- | --- |
-| Dirty tracking | Graph per-vertex dirty flags vs. `FormulaAuthority::pending_changed_regions` + plane epoch. Epoch bumps escalate to `SpanSeedMode::WholeAll` — every active span re-evaluates whole. |
+| Dirty tracking | **Unified in T1.2.** `FormulaDirtyState` owns sparse legacy vertex dirtiness plus generation-leased region and exact-span events. `FormulaAuthority` has no dirty queue, and `SpanSeedMode` is retired. |
 | Per-cell overrides | **No punchouts.** Editing one cell inside a span (value or different formula) demotes the whole span. `PlacementDomain` is contiguous (`RowRun`/`ColRun`/`Rect`); holes are unrepresentable. |
 | Iterative calculation | Legacy-only. Iterative members are `VertexId`s; spans are excluded from SCC analysis. |
 | Demand-driven evaluation | Legacy-only. `build_demand_subgraph` walks graph vertices; span producers are invisible to it. |
-| Edit notification | Dual: edits must reach both per-vertex `mark_dirty` and `record_changed_region`, and lifecycle events (names, tables, sheets) must remember FP hooks per path. |
-| Schedule/dirty cost model | Mixed-schedule construction and producer indexes are rebuilt/maintained per cycle with cost sensitive to legacy range mass (the warm tax above). |
+| Edit notification | Engine APIs, editor journals, undo/redo, formulas, values, names, tables, sheets, structural operations, span appends, and prepared commits publish through the graph dirty API. Failed preparation publishes nothing. |
+| Schedule/dirty cost model | T1.1 caches immutable mixed topology. T1.2 consumes graph-owned leased dirty events per request while warm no-op and span-free work remain on the sparse legacy floor. |
 
 ## 3. Target Model
 
@@ -291,11 +291,15 @@ side exit without waiting for topology unification:
   edge, and retained-memory budgets stop atomically and route overflow through T1.0b; no
   partial topology is cached. Value-only edits reuse the cache, dependency mutations rebuild
   it, and span-free workbooks perform zero mixed-topology builds.
+- **T1.2 — Graph-owned dirty authority.** `FormulaDirtyState` is the only owner/API for
+  sparse legacy dirty vertices, changed regions, and exact whole-span seeds. Generation leases
+  retain the exact prefix across faults and retries, including same-value post-lease events.
+  Successful evaluation acknowledges only its leased prefix. Global invalidations may seed all
+  active spans explicitly and are telemetered; authority epochs no longer hide whole-span work.
 
-1. **T1 — Single dirty authority (T1.2–T1.3 remaining).** Move region dirtiness into the graph: `mark_dirty`
-   probes the region index natively; `pending_changed_regions` and the FP-side dirty
-   seeding retire; replace `WholeAll` epoch escalation with translated interval
-   dirtiness for shifts. Profile and eliminate the warm tax (§1) — the per-cycle
+1. **T1 — Single dirty authority (T1.3 remaining).** Translate structural shifts into precise
+   interval dirtiness and remove remaining explicit global whole-span invalidations. Profile and
+   eliminate the warm tax (§1) — the per-cycle
    schedule/index rebuild becomes incremental (rebuild only on partition mutation, not
    per eval). **Closes #144 structurally** (capacity bail becomes a node-refinement,
    ordered by the one schedule, not a side exit) and closes the warm-tax family.

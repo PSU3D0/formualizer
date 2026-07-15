@@ -506,8 +506,7 @@ impl DependencyGraph {
             && !self.vertex_formulas.contains_key(&id)
             && !self.vertex_values.contains_key(&id)
             && !self.ref_error_vertices.contains(&id)
-            && !self.store.is_dirty(id)
-            && !self.dirty_vertices.contains(&id)
+            && !self.is_dirty(id)
             && !self.store.is_volatile(id)
             && !self.volatile_vertices.contains(&id)
             && !self.store.is_dynamic(id)
@@ -814,7 +813,7 @@ mod tests {
         let a1_id = graph.get_vertex_for_cell(&a1).unwrap();
         graph.clear_dirty_flags(&[a1_id]);
         assert!(!graph.store.is_dirty(a1_id));
-        assert!(!graph.dirty_vertices.contains(&a1_id));
+        assert!(!graph.get_evaluation_vertices().contains(&a1_id));
         let rebuilds = graph.edges_rebuild_count();
 
         let addition = planned(&mut graph, sheet, 1, 2, "=C1", &[(1, 3)]);
@@ -825,7 +824,7 @@ mod tests {
         assert_eq!(graph.baseline_stats().graph_formula_vertex_count, 2);
         assert_eq!(graph.baseline_stats().graph_edge_count, 2);
         assert!(graph.store.is_dirty(a1_id));
-        assert!(graph.dirty_vertices.contains(&a1_id));
+        assert!(graph.get_evaluation_vertices().contains(&a1_id));
         assert_eq!(graph.edges_rebuild_count(), rebuilds);
     }
 

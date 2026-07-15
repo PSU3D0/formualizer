@@ -172,6 +172,9 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     let build = |mode| build_mixed_engine(mode, |row| format!("=SUM($A{row}:$B${ROWS})"));
     let mut off = build(FormulaPlaneMode::Off);
     let mut authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
+    let pre_eval_dirty = authoritative.baseline_stats();
+    assert!(pre_eval_dirty.formula_plane_dirty_pending_events > 0);
+    assert!(pre_eval_dirty.formula_plane_dirty_whole_span_seeds_recorded > 0);
 
     let default_fallback_cap = authoritative
         .workbook_load_limits()
@@ -189,6 +192,7 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     assert_eq!(first_stats.formula_plane_active_span_count, 1);
     assert_eq!(first_stats.formula_plane_mixed_topology_cache_builds, 1);
     assert_eq!(first_stats.formula_plane_mixed_topology_cache_hits, 0);
+    assert_eq!(first_stats.formula_plane_dirty_pending_events, 0);
     assert_full_capacity_corpus_parity(&off, &authoritative);
 
     off.evaluate_all().unwrap();
@@ -203,6 +207,9 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     );
     assert_full_capacity_corpus_parity(&off, &authoritative);
 
+    let region_events_before_edit = authoritative
+        .baseline_stats()
+        .formula_plane_dirty_region_events_recorded;
     for engine in [&mut off, &mut authoritative] {
         engine
             .set_cell_value(SHEET, ROWS / 2, 1, LiteralValue::Number(10_000.0))
@@ -213,6 +220,8 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     let edited_stats = authoritative.baseline_stats();
     assert_eq!(edited_stats.formula_plane_mixed_topology_cache_builds, 1);
     assert_eq!(edited_stats.formula_plane_mixed_topology_cache_hits, 1);
+    assert_eq!(edited_stats.formula_plane_dirty_pending_events, 0);
+    assert!(edited_stats.formula_plane_dirty_region_events_recorded > region_events_before_edit);
     assert_full_capacity_corpus_parity(&off, &authoritative);
 }
 
@@ -325,8 +334,8 @@ fn fallback_cap_failure_retains_exact_state_and_pending_lease_for_retry() {
     let refs = engine.graph.formula_authority().active_span_refs();
     let pending = engine
         .graph
-        .formula_authority()
-        .pending_changed_regions()
+        .pending_formula_dirty_regions()
+        .collect::<Vec<_>>()
         .to_vec();
     let epochs = (
         engine.graph.formula_authority().plane.epoch(),
@@ -343,7 +352,10 @@ fn fallback_cap_failure_retains_exact_state_and_pending_lease_for_retry() {
     assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
     assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
     assert_eq!(
-        engine.graph.formula_authority().pending_changed_regions(),
+        engine
+            .graph
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>(),
         pending
     );
     assert_eq!(
@@ -375,8 +387,8 @@ fn fallback_cap_failure_retains_exact_state_and_pending_lease_for_retry() {
     assert!(
         engine
             .graph
-            .formula_authority()
-            .pending_changed_regions()
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>()
             .is_empty()
     );
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
@@ -403,8 +415,8 @@ fn capacity_faults_retain_pending_lease_and_count_only_successful_retry() {
         let refs = engine.graph.formula_authority().active_span_refs();
         let pending = engine
             .graph
-            .formula_authority()
-            .pending_changed_regions()
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>()
             .to_vec();
         let epochs = (
             engine.graph.formula_authority().plane.epoch(),
@@ -420,7 +432,10 @@ fn capacity_faults_retain_pending_lease_and_count_only_successful_retry() {
         assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
         assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
         assert_eq!(
-            engine.graph.formula_authority().pending_changed_regions(),
+            engine
+                .graph
+                .pending_formula_dirty_regions()
+                .collect::<Vec<_>>(),
             pending
         );
         assert_eq!(
@@ -440,8 +455,8 @@ fn capacity_faults_retain_pending_lease_and_count_only_successful_retry() {
         assert!(
             engine
                 .graph
-                .formula_authority()
-                .pending_changed_regions()
+                .pending_formula_dirty_regions()
+                .collect::<Vec<_>>()
                 .is_empty()
         );
     }
@@ -525,8 +540,8 @@ fn capacity_fallback_demotes_only_scheduled_dirty_span() {
     assert!(
         engine
             .graph
-            .formula_authority()
-            .pending_changed_regions()
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>()
             .is_empty()
     );
 }
@@ -545,8 +560,8 @@ fn clean_spans_remain_authoritative_when_only_legacy_work_is_dirty() {
     assert!(
         engine
             .graph
-            .formula_authority()
-            .pending_changed_regions()
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>()
             .is_empty()
     );
 }
@@ -575,6 +590,18 @@ fn assert_mutation_invalidates_cache_once(
         "{label} must bump graph topology revision once",
     );
     assert!(!engine.mixed_topology_cache_present_for_test());
+    if label == "sheet" {
+        assert_eq!(
+            engine.graph.pending_formula_dirty_event_count(),
+            0,
+            "metadata-only sheet addition must not invent dirty work"
+        );
+    } else {
+        assert!(
+            engine.graph.pending_formula_dirty_event_count() > 0,
+            "{label} must publish graph-owned formula dirtiness"
+        );
+    }
     engine
         .set_cell_value(SHEET, 1, 1, LiteralValue::Number(10_001.0))
         .unwrap();

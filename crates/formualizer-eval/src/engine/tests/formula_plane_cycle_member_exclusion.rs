@@ -183,6 +183,40 @@ fn span_member_in_runtime_cycle_is_demoted_and_circ() {
     assert_eq!(num(&engine, "Sheet1", 120, 5), 240.0);
 }
 
+#[test]
+fn cycle_retry_lease_extension_preserves_later_identical_span_event() {
+    let mut engine = build_workbook(CycleDetection::Static);
+    engine.rerecord_cycle_retry_span_after_lease_extension_for_test();
+
+    engine
+        .evaluate_all()
+        .expect("cycle evaluation must succeed");
+
+    let surviving_span = active_span_refs_by_sheet(&engine);
+    assert_eq!(surviving_span.len(), 1);
+    assert_eq!(
+        engine
+            .graph
+            .pending_formula_dirty_whole_spans()
+            .collect::<Vec<_>>(),
+        surviving_span,
+        "an identical event recorded after renewal must remain pending"
+    );
+    assert_eq!(engine.graph.pending_formula_dirty_event_count(), 1);
+
+    engine
+        .evaluate_all()
+        .expect("retained event must be consumable on retry");
+    assert_eq!(engine.graph.pending_formula_dirty_event_count(), 0);
+    assert_eq!(
+        engine
+            .last_formula_plane_span_eval_report()
+            .expect("retained whole-span event must schedule the survivor")
+            .span_eval_placement_count,
+        120
+    );
+}
+
 /// A phantom (guarded, live-acyclic) cycle through a span member must not stamp
 /// `#CIRC` under `CycleDetection::Runtime`: the span is still demoted (its
 /// member is a *static* SCC candidate), but live-edge evaluation resolves the
@@ -497,15 +531,18 @@ fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
     let refs = failed.graph.formula_authority().active_span_refs();
     let pending = failed
         .graph
-        .formula_authority()
-        .pending_changed_regions()
+        .pending_formula_dirty_regions()
+        .collect::<Vec<_>>()
         .to_vec();
     let before = failed.baseline_stats();
     failed.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
     assert!(failed.evaluate_all().is_err());
     assert_eq!(failed.graph.formula_authority().active_span_refs(), refs);
     assert_eq!(
-        failed.graph.formula_authority().pending_changed_regions(),
+        failed
+            .graph
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>(),
         pending
     );
     let after = failed.baseline_stats();
@@ -536,8 +573,8 @@ fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
     assert!(
         committed
             .graph
-            .formula_authority()
-            .pending_changed_regions()
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>()
             .is_empty(),
         "successful cyclic demotion plus legacy completion acknowledges the lease"
     );
@@ -553,10 +590,7 @@ fn prepared_span_demotion_rejects_stale_authority_before_graph_mutation() {
     let mut engine = build_workbook(CycleDetection::Static);
     let refs = engine.graph.formula_authority().active_span_refs();
     let prepared = engine.prepare_formula_span_demotion(&refs).unwrap();
-    engine
-        .graph
-        .formula_authority_mut()
-        .mark_all_active_spans_dirty();
+    engine.graph.formula_authority_mut().rebuild_indexes();
     let before = engine.baseline_stats();
     let live_refs = engine.graph.formula_authority().active_span_refs();
 

@@ -5,10 +5,8 @@
 //! for opt-in authoritative FormulaPlane evaluation. Unsupported or demoted
 //! formulas remain on the legacy dependency graph.
 
-use rustc_hash::FxHashSet;
-
 use super::producer::{FormulaConsumerReadIndex, FormulaProducerId, FormulaProducerResultIndex};
-use super::region_index::{FormulaOverlayIndex, Region, SpanDomainIndex};
+use super::region_index::{FormulaOverlayIndex, SpanDomainIndex};
 use super::runtime::{FormulaPlane, FormulaSpanRef};
 
 #[derive(Debug, Default)]
@@ -22,30 +20,6 @@ pub(crate) struct FormulaAuthority {
     pub(crate) indexed_plane_epoch: u64,
     #[cfg(test)]
     pub(crate) prepared_append_failure_for_test: bool,
-    /// Externally-observed changed regions accumulated since the last
-    /// successful evaluation acknowledgement. Edits that intersect span read
-    /// regions drive bounded span dirty work via `compute_dirty_closure`.
-    pending_changed_regions: Vec<Region>,
-    pending_seen: FxHashSet<Region>,
-    pending_lease_generation: u64,
-    active_pending_lease_generation: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PendingChangedRegionsLease {
-    generation: u64,
-    prefix_len: usize,
-    regions: Vec<Region>,
-}
-
-impl PendingChangedRegionsLease {
-    pub(crate) fn regions(&self) -> &[Region] {
-        &self.regions
-    }
-
-    pub(crate) fn is_empty(&self) -> bool {
-        self.regions.is_empty()
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -83,70 +57,6 @@ impl FormulaAuthority {
                 version: span.version,
             })
             .collect()
-    }
-
-    pub(crate) fn record_changed_region(&mut self, region: Region) {
-        if self.pending_seen.insert(region) {
-            self.pending_changed_regions.push(region);
-        }
-    }
-
-    pub(crate) fn lease_pending_changed_regions(&mut self) -> PendingChangedRegionsLease {
-        self.pending_lease_generation = self.pending_lease_generation.wrapping_add(1);
-        let generation = self.pending_lease_generation;
-        self.active_pending_lease_generation = Some(generation);
-        let lease = PendingChangedRegionsLease {
-            generation,
-            prefix_len: self.pending_changed_regions.len(),
-            regions: self.pending_changed_regions.clone(),
-        };
-        // The leased prefix remains queued but no longer participates in
-        // dedupe. Identical post-lease changes therefore append as new work,
-        // while this set dedupes only within the new generation.
-        self.pending_seen.clear();
-        lease
-    }
-
-    pub(crate) fn ack_pending_changed_regions(&mut self, lease: PendingChangedRegionsLease) {
-        if self.active_pending_lease_generation != Some(lease.generation) {
-            return;
-        }
-        let prefix_len = lease.prefix_len.min(self.pending_changed_regions.len());
-        self.pending_changed_regions.drain(..prefix_len);
-        self.active_pending_lease_generation = None;
-    }
-
-    pub(crate) fn pending_changed_regions(&self) -> &[Region] {
-        &self.pending_changed_regions
-    }
-
-    pub(crate) fn pending_changed_region_count(&self) -> usize {
-        self.pending_changed_regions.len()
-    }
-
-    pub(crate) fn mark_all_active_spans_dirty(&mut self) {
-        // Conservative escape hatch: invalidate every span by bumping the
-        // authority index epoch. The FormulaPlane coordinator treats an unseen
-        // epoch as `WholeAll`, which is the only representation that guarantees
-        // self-dirtying for spans whose result region (rather than read region)
-        // was structurally affected.
-        if self.active_span_count() == 0 {
-            return;
-        }
-        self.indexes_epoch = self.indexes_epoch.saturating_add(1);
-
-        // Also publish result regions as changed regions so downstream span
-        // consumers can be discovered through the normal dirty-closure path if
-        // the caller evaluates before another epoch-bumping rebuild.
-        let regions: Vec<Region> = self
-            .plane
-            .spans
-            .active_spans()
-            .map(|span| Region::from_domain(span.result_region.domain()))
-            .collect();
-        for region in regions {
-            self.record_changed_region(region);
-        }
     }
 
     pub(crate) fn rebuild_indexes(&mut self) -> FormulaAuthorityIndexReport {
@@ -490,81 +400,5 @@ mod tests {
         assert_eq!(second.producer_result_entries, 0);
         assert_eq!(authority.producer_results.len(), 0);
         assert!(authority.indexes_epoch() > first.indexes_epoch);
-    }
-
-    #[test]
-    fn pending_lease_ack_preserves_identical_region_recorded_after_lease() {
-        let mut authority = FormulaAuthority::default();
-        let region = Region::point(0, 1, 1);
-        authority.record_changed_region(region);
-        let lease = authority.lease_pending_changed_regions();
-        authority.record_changed_region(region);
-        authority.record_changed_region(region);
-        assert_eq!(authority.pending_changed_regions(), &[region, region]);
-
-        authority.ack_pending_changed_regions(lease);
-
-        assert_eq!(authority.pending_changed_regions(), &[region]);
-    }
-
-    #[test]
-    fn pending_lease_ack_preserves_different_later_regions_in_order() {
-        let mut authority = FormulaAuthority::default();
-        let leased_region = Region::point(0, 1, 1);
-        let later_a = Region::point(0, 2, 2);
-        let later_b = Region::point(0, 3, 3);
-        authority.record_changed_region(leased_region);
-        let lease = authority.lease_pending_changed_regions();
-        authority.record_changed_region(later_a);
-        authority.record_changed_region(later_b);
-        authority.record_changed_region(later_a);
-
-        authority.ack_pending_changed_regions(lease);
-
-        assert_eq!(authority.pending_changed_regions(), &[later_a, later_b]);
-    }
-
-    #[test]
-    fn pending_lease_multiple_ack_cycles_keep_generation_local_dedupe() {
-        let mut authority = FormulaAuthority::default();
-        let first = Region::point(0, 1, 1);
-        let second = Region::point(0, 2, 2);
-        authority.record_changed_region(first);
-        let first_lease = authority.lease_pending_changed_regions();
-        authority.record_changed_region(second);
-        authority.record_changed_region(second);
-        authority.ack_pending_changed_regions(first_lease);
-        assert_eq!(authority.pending_changed_regions(), &[second]);
-
-        let second_lease = authority.lease_pending_changed_regions();
-        authority.record_changed_region(first);
-        authority.record_changed_region(first);
-        authority.ack_pending_changed_regions(second_lease);
-        assert_eq!(authority.pending_changed_regions(), &[first]);
-
-        let final_lease = authority.lease_pending_changed_regions();
-        authority.ack_pending_changed_regions(final_lease);
-        assert!(authority.pending_changed_regions().is_empty());
-    }
-
-    #[test]
-    fn abandoned_pending_lease_retains_original_work_for_failed_evaluation_retry() {
-        let mut authority = FormulaAuthority::default();
-        let original = Region::point(0, 1, 1);
-        let during_failed_evaluation = Region::point(0, 2, 2);
-        authority.record_changed_region(original);
-        let abandoned = authority.lease_pending_changed_regions();
-        authority.record_changed_region(during_failed_evaluation);
-        drop(abandoned);
-        assert_eq!(
-            authority.pending_changed_regions(),
-            &[original, during_failed_evaluation]
-        );
-
-        let retry = authority.lease_pending_changed_regions();
-        assert_eq!(retry.regions(), &[original, during_failed_evaluation]);
-        authority.record_changed_region(original);
-        authority.ack_pending_changed_regions(retry);
-        assert_eq!(authority.pending_changed_regions(), &[original]);
     }
 }

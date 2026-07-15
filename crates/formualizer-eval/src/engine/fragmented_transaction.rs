@@ -618,6 +618,10 @@ impl DependencyGraph {
         let plane = self
             .formula_authority_mut()
             .apply_prevalidated_formula_plane_append(prepared.formula_plane);
+        self.mark_formula_spans_dirty(
+            plane.spans.iter().copied(),
+            super::graph::WholeSpanDirtyReason::NewSpan,
+        );
         FragmentedCommitDecision::Committed(FragmentedCommitSuccess {
             source_id: prepared.source_id,
             graph_formulas,

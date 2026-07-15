@@ -171,7 +171,7 @@ impl DependencyGraph {
         self.store.mark_deleted(vertex, true);
         self.vertex_values.remove(&vertex);
         self.vertex_formulas.remove(&vertex);
-        self.dirty_vertices.remove(&vertex);
+        self.clear_formula_vertex_dirty(vertex);
         self.volatile_vertices.remove(&vertex);
 
         Ok(())
