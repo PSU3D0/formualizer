@@ -43,11 +43,18 @@ xlsx_bytes = wb.to_xlsx_bytes()
 assert isinstance(xlsx_bytes, bytes)
 assert len(xlsx_bytes) > 100
 
-from_bytes = fz.Workbook.from_bytes(xlsx_bytes, backend="umya")
+from_bytes = fz.Workbook.from_bytes(xlsx_bytes)
 assert from_bytes.evaluate_cell("Sheet1", 1, 2) == 42.0
 
-from_top_level = fz.load_workbook_bytes(xlsx_bytes)
+from_top_level = fz.load_workbook_bytes(xlsx_bytes, backend="umya")
 assert from_top_level.evaluate_cell("Sheet1", 1, 2) == 42.0
+
+try:
+    fz.Workbook.from_bytes(xlsx_bytes, backend="calamine")
+except NotImplementedError:
+    pass
+else:
+    raise AssertionError("Pyodide must reject unavailable backend='calamine'")
 
 summary = {
     "ast_formula": ast.to_formula(),

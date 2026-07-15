@@ -13,26 +13,29 @@ except Exception:  # pragma: no cover - allow skipping if not present in dev env
 pytestmark = pytest.mark.skipif(openpyxl is None, reason="openpyxl not installed")
 
 
-def test_load_workbook_bytes_uses_umya_for_xlsx(xlsx_builder):
+def test_load_workbook_bytes_defaults_to_calamine(xlsx_builder):
     path = xlsx_builder(lambda wb: _populate_input_workbook(wb))
     payload = Path(path).read_bytes()
 
     wb = fz.load_workbook_bytes(payload)
     assert wb.evaluate_cell("Sheet1", 1, 2) == 42.0
 
-    wb2 = fz.Workbook.from_bytes(payload, backend="umya")
+    wb2 = fz.Workbook.from_bytes(payload)
     assert wb2.evaluate_cell("Sheet1", 1, 2) == 42.0
 
 
-def test_load_workbook_bytes_rejects_calamine_for_now(xlsx_builder):
+def test_load_workbook_bytes_accepts_explicit_backends(xlsx_builder):
     path = xlsx_builder(lambda wb: _populate_input_workbook(wb))
     payload = Path(path).read_bytes()
 
-    with pytest.raises(NotImplementedError, match="calamine"):
-        fz.load_workbook_bytes(payload, backend="calamine")
+    calamine = fz.load_workbook_bytes(payload, backend="calamine")
+    assert calamine.evaluate_cell("Sheet1", 1, 2) == 42.0
 
-    with pytest.raises(NotImplementedError, match="calamine"):
-        fz.Workbook.from_bytes(payload, backend="calamine")
+    calamine_classmethod = fz.Workbook.from_bytes(payload, backend="calamine")
+    assert calamine_classmethod.evaluate_cell("Sheet1", 1, 2) == 42.0
+
+    umya = fz.Workbook.from_bytes(payload, backend="umya")
+    assert umya.evaluate_cell("Sheet1", 1, 2) == 42.0
 
 
 def test_to_xlsx_bytes_roundtrip_preserves_workbook_content():

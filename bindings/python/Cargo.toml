@@ -41,7 +41,7 @@ formualizer = { path = "../../crates/formualizer", default-features = false, fea
 
 # Pyodide 0.29's wasm-EH sysroot is pinned to Rust 1.86, while Calamine 0.36
 # requires Rust 1.88. Pyodide retains the Umya byte-oriented XLSX path and
-# reports the unavailable Calamine file backend explicitly at runtime.
+# reports the unavailable Calamine backend explicitly at runtime.
 [target.'cfg(target_os = "emscripten")'.dependencies]
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya"] }
 
