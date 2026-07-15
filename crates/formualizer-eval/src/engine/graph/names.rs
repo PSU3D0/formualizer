@@ -148,21 +148,17 @@ impl DependencyGraph {
 
     // Named Range Methods
 
-    /// Define a new named range
-    pub fn define_name(
-        &mut self,
+    pub(crate) fn validate_define_name(
+        &self,
         name: &str,
-        definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
-        // Validate name
         if !is_valid_excel_name(name) {
             return Err(
                 ExcelError::new(ExcelErrorKind::Name).with_message(format!("Invalid name: {name}"))
             );
         }
 
-        // Check for duplicates / collisions (respect case-sensitivity config)
         let lookup_key = self.name_lookup_key(name);
         match scope {
             NameScope::Workbook => {
@@ -173,9 +169,7 @@ impl DependencyGraph {
                 }
             }
             NameScope::Sheet(sheet_id) => {
-                if let Some(existing) = self
-                    .sheet_named_ranges_lookup
-                    .get(&(sheet_id, lookup_key.clone()))
+                if let Some(existing) = self.sheet_named_ranges_lookup.get(&(sheet_id, lookup_key))
                 {
                     return Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!(
                         "Name collision under normalization in sheet: '{name}' conflicts with '{existing}'"
@@ -183,6 +177,30 @@ impl DependencyGraph {
                 }
             }
         }
+        Ok(())
+    }
+
+    pub(crate) fn validate_existing_name(
+        &self,
+        name: &str,
+        scope: NameScope,
+    ) -> Result<(), ExcelError> {
+        self.canonical_name_in_scope(scope, name)
+            .map(|_| ())
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Name not found: {name}"))
+            })
+    }
+
+    /// Define a new named range
+    pub fn define_name(
+        &mut self,
+        name: &str,
+        definition: NamedDefinition,
+        scope: NameScope,
+    ) -> Result<(), ExcelError> {
+        self.validate_define_name(name, scope)?;
 
         let mut final_definition = definition;
         // Extract dependencies if formula

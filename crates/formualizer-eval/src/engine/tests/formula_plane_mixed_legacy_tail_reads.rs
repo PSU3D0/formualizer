@@ -590,11 +590,11 @@ fn assert_mutation_invalidates_cache_once(
         "{label} must bump graph topology revision once",
     );
     assert!(!engine.mixed_topology_cache_present_for_test());
-    if label == "sheet" {
+    if matches!(label, "sheet" | "name" | "table") {
         assert_eq!(
             engine.graph.pending_formula_dirty_event_count(),
             0,
-            "metadata-only sheet addition must not invent dirty work"
+            "metadata-only topology mutation must not invent dirty work"
         );
     } else {
         assert!(
@@ -685,6 +685,39 @@ fn mixed_topology_cache_rejects_stale_span_ref_even_without_epoch_change() {
             .formula_plane_mixed_topology_cache_builds,
         before.formula_plane_mixed_topology_cache_builds + 1
     );
+}
+
+#[test]
+fn stale_exact_span_region_event_is_ignored_after_generation_change() {
+    let mut engine = cached_topology_engine();
+    engine.evaluate_all().unwrap();
+    let span_ref = engine.graph.formula_authority().active_span_refs()[0];
+    let result_region = {
+        let span = engine
+            .graph
+            .formula_authority()
+            .plane
+            .spans
+            .get(span_ref)
+            .unwrap();
+        crate::formula_plane::region_index::Region::from_domain(&span.domain)
+    };
+    engine
+        .graph
+        .mark_formula_span_region_dirty(span_ref, result_region);
+    engine
+        .graph
+        .formula_authority_mut()
+        .plane
+        .spans
+        .get_mut_for_test(span_ref)
+        .unwrap()
+        .version = span_ref.version.wrapping_add(1);
+
+    engine.evaluate_all().unwrap();
+
+    assert!(engine.last_formula_plane_span_eval_report().is_none());
+    assert_eq!(engine.graph.pending_formula_dirty_event_count(), 0);
 }
 
 #[test]

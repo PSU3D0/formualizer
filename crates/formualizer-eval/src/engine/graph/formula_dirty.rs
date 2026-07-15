@@ -14,6 +14,10 @@ pub(crate) enum WholeSpanDirtyReason {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum FormulaDirtyEvent {
     Region(Region),
+    SpanRegion {
+        span_ref: FormulaSpanRef,
+        region: Region,
+    },
     WholeSpan(FormulaSpanRef),
 }
 
@@ -32,13 +36,20 @@ impl FormulaDirtyLease {
     pub(crate) fn regions(&self) -> impl Iterator<Item = Region> + '_ {
         self.events.iter().filter_map(|event| match event {
             FormulaDirtyEvent::Region(region) => Some(*region),
-            FormulaDirtyEvent::WholeSpan(_) => None,
+            FormulaDirtyEvent::SpanRegion { .. } | FormulaDirtyEvent::WholeSpan(_) => None,
+        })
+    }
+
+    pub(crate) fn span_regions(&self) -> impl Iterator<Item = (FormulaSpanRef, Region)> + '_ {
+        self.events.iter().filter_map(|event| match event {
+            FormulaDirtyEvent::SpanRegion { span_ref, region } => Some((*span_ref, *region)),
+            FormulaDirtyEvent::Region(_) | FormulaDirtyEvent::WholeSpan(_) => None,
         })
     }
 
     pub(crate) fn whole_spans(&self) -> impl Iterator<Item = FormulaSpanRef> + '_ {
         self.events.iter().filter_map(|event| match event {
-            FormulaDirtyEvent::Region(_) => None,
+            FormulaDirtyEvent::Region(_) | FormulaDirtyEvent::SpanRegion { .. } => None,
             FormulaDirtyEvent::WholeSpan(span_ref) => Some(*span_ref),
         })
     }
@@ -48,6 +59,7 @@ impl FormulaDirtyLease {
 pub(crate) struct FormulaDirtyStats {
     pub(crate) pending_events: usize,
     pub(crate) region_events_recorded: u64,
+    pub(crate) span_region_events_recorded: u64,
     pub(crate) whole_span_seeds_recorded: u64,
     pub(crate) global_whole_span_invalidations: u64,
 }
@@ -57,10 +69,12 @@ pub(super) struct FormulaDirtyState {
     legacy_vertices: FxHashSet<VertexId>,
     events: Vec<FormulaDirtyEvent>,
     pending_regions_seen: FxHashSet<Region>,
+    pending_span_regions_seen: FxHashSet<(FormulaSpanRef, Region)>,
     pending_spans_seen: FxHashSet<FormulaSpanRef>,
     lease_generation: u64,
     active_lease: Option<ActiveFormulaDirtyLease>,
     region_events_recorded: u64,
+    span_region_events_recorded: u64,
     whole_span_seeds_recorded: u64,
     global_whole_span_invalidations: u64,
 }
@@ -108,6 +122,14 @@ impl FormulaDirtyState {
         }
     }
 
+    pub(super) fn record_span_region(&mut self, span_ref: FormulaSpanRef, region: Region) {
+        if self.pending_span_regions_seen.insert((span_ref, region)) {
+            self.events
+                .push(FormulaDirtyEvent::SpanRegion { span_ref, region });
+            self.span_region_events_recorded = self.span_region_events_recorded.saturating_add(1);
+        }
+    }
+
     pub(super) fn record_whole_spans(
         &mut self,
         spans: impl IntoIterator<Item = FormulaSpanRef>,
@@ -144,6 +166,7 @@ impl FormulaDirtyState {
             events: self.events.clone(),
         };
         self.pending_regions_seen.clear();
+        self.pending_span_regions_seen.clear();
         self.pending_spans_seen.clear();
         lease
     }
@@ -169,6 +192,7 @@ impl FormulaDirtyState {
             events: self.events[..prefix_len].to_vec(),
         };
         self.pending_regions_seen.clear();
+        self.pending_span_regions_seen.clear();
         self.pending_spans_seen.clear();
         Some(lease)
     }
@@ -189,13 +213,22 @@ impl FormulaDirtyState {
     pub(super) fn pending_regions(&self) -> impl Iterator<Item = Region> + '_ {
         self.events.iter().filter_map(|event| match event {
             FormulaDirtyEvent::Region(region) => Some(*region),
-            FormulaDirtyEvent::WholeSpan(_) => None,
+            FormulaDirtyEvent::SpanRegion { .. } | FormulaDirtyEvent::WholeSpan(_) => None,
+        })
+    }
+
+    pub(super) fn pending_span_regions(
+        &self,
+    ) -> impl Iterator<Item = (FormulaSpanRef, Region)> + '_ {
+        self.events.iter().filter_map(|event| match event {
+            FormulaDirtyEvent::SpanRegion { span_ref, region } => Some((*span_ref, *region)),
+            FormulaDirtyEvent::Region(_) | FormulaDirtyEvent::WholeSpan(_) => None,
         })
     }
 
     pub(super) fn pending_whole_spans(&self) -> impl Iterator<Item = FormulaSpanRef> + '_ {
         self.events.iter().filter_map(|event| match event {
-            FormulaDirtyEvent::Region(_) => None,
+            FormulaDirtyEvent::Region(_) | FormulaDirtyEvent::SpanRegion { .. } => None,
             FormulaDirtyEvent::WholeSpan(span_ref) => Some(*span_ref),
         })
     }
@@ -208,6 +241,7 @@ impl FormulaDirtyState {
         FormulaDirtyStats {
             pending_events: self.events.len(),
             region_events_recorded: self.region_events_recorded,
+            span_region_events_recorded: self.span_region_events_recorded,
             whole_span_seeds_recorded: self.whole_span_seeds_recorded,
             global_whole_span_invalidations: self.global_whole_span_invalidations,
         }
@@ -242,6 +276,25 @@ mod tests {
         assert_eq!(
             dirty.pending_whole_spans().collect::<Vec<_>>(),
             vec![span(1)]
+        );
+    }
+
+    #[test]
+    fn span_region_lease_preserves_exact_ref_region_and_post_lease_rerecord() {
+        let mut dirty = FormulaDirtyState::default();
+        let span_ref = span(1);
+        let region = Region::rect(0, 10, 20, 2, 2);
+        dirty.record_span_region(span_ref, region);
+        let lease = dirty.lease();
+        assert_eq!(
+            lease.span_regions().collect::<Vec<_>>(),
+            vec![(span_ref, region)]
+        );
+        dirty.record_span_region(span_ref, region);
+        assert!(dirty.ack(lease));
+        assert_eq!(
+            dirty.pending_span_regions().collect::<Vec<_>>(),
+            vec![(span_ref, region)]
         );
     }
 

@@ -59,7 +59,7 @@ An accurate inventory matters because the distance to the end state is shorter t
 | Evaluation loop | **Already one loop.** `evaluate_authoritative_formula_plane_all` builds a `MixedSchedule` whose layers interleave span producers and legacy vertices, evaluating both per layer with a per-layer computed-write flush (eval.rs, scheduler.rs). There is no global legacy-pass/span-pass boundary. |
 | Authority ownership | **Graph-owned.** `FormulaAuthority` owns spans and producer/consumer indexes; `FormulaDirtyState` separately owns all formula dirtiness inside `DependencyGraph`. |
 | Cross-span cycles | **Detected and demoted.** Mixed-schedule toposort detects producer-level cycles, demotes the cyclic spans to legacy vertices, and resolves via the legacy cycle prepass. Intra-family self-reads reject at placement (`InternalDependency`). |
-| Structural ops | **Span-aware.** Insert/delete rows/cols classify each span: uniform shift mutates domain geometry in place; straddling demotes (structural_shift.rs). |
+| Structural ops | **Precisely dirty.** Insert/delete rows/cols classify each span, mutate proven-safe geometry, and publish exact `(span ref, result interval)` dirtiness only for moved or cleared placements. Demotions transfer work to sparse legacy vertices; no-op and unrelated-sheet spans publish nothing. |
 | Result storage | **Already columnar.** Span results stage in a `ComputedWriteBuffer` and flush as coalesced fragments into the sheet's computed overlay (Arrow-side), consulted at read time. |
 | Ingest/fingerprinting | **Shared.** One pipeline canonicalizes, fingerprints, and computes per-cell read projections for every formula; placement accepts or falls back per family. Reject-path cost is linear (#146). |
 
@@ -67,12 +67,12 @@ What remains dual — the actual gap:
 
 | Concern | State |
 | --- | --- |
-| Dirty tracking | **Unified in T1.2.** `FormulaDirtyState` owns sparse legacy vertex dirtiness plus generation-leased region and exact-span events. `FormulaAuthority` has no dirty queue, and `SpanSeedMode` is retired. |
+| Dirty tracking | **Unified through T1.3.** `FormulaDirtyState` owns sparse legacy vertex dirtiness plus generation-leased changed-region, exact span-region, and exact whole-span events. `FormulaAuthority` has no dirty queue, and topology epochs never imply value dirtiness. |
 | Per-cell overrides | **No punchouts.** Editing one cell inside a span (value or different formula) demotes the whole span. `PlacementDomain` is contiguous (`RowRun`/`ColRun`/`Rect`); holes are unrepresentable. |
 | Iterative calculation | Legacy-only. Iterative members are `VertexId`s; spans are excluded from SCC analysis. |
 | Demand-driven evaluation | Legacy-only. `build_demand_subgraph` walks graph vertices; span producers are invisible to it. |
-| Edit notification | Engine APIs, editor journals, undo/redo, formulas, values, names, tables, sheets, structural operations, span appends, and prepared commits publish through the graph dirty API. Failed preparation publishes nothing. |
-| Schedule/dirty cost model | T1.1 caches immutable mixed topology. T1.2 consumes graph-owned leased dirty events per request while warm no-op and span-free work remain on the sparse legacy floor. |
+| Edit notification | Engine APIs, editor journals, undo/redo, formulas, values, names, tables, sheets, structural operations, span appends, and prepared commits publish through the graph dirty API. Structural deltas are planned before mutation and published once after committed geometry/index changes; failed validation publishes nothing. |
+| Schedule/dirty cost model | T1.1 caches immutable mixed topology. T1.2 consumes graph-owned leased dirty events per request, and T1.3 seeds structural producer work with bounded span regions. Warm no-op and span-free work remain on the sparse legacy floor. |
 
 ## 3. Target Model
 
@@ -297,12 +297,14 @@ side exit without waiting for topology unification:
   Successful evaluation acknowledges only its leased prefix. Global invalidations may seed all
   active spans explicitly and are telemetered; authority epochs no longer hide whole-span work.
 
-1. **T1 — Single dirty authority (T1.3 remaining).** Translate structural shifts into precise
-   interval dirtiness and remove remaining explicit global whole-span invalidations. Profile and
-   eliminate the warm tax (§1) — the per-cycle
-   schedule/index rebuild becomes incremental (rebuild only on partition mutation, not
-   per eval). **Closes #144 structurally** (capacity bail becomes a node-refinement,
-   ordered by the one schedule, not a side exit) and closes the warm-tax family.
+1. **T1 — Single dirty authority (complete through T1.3).** Structural shifts publish precise
+   span-result intervals; duplicate, rename, unrelated name, and table edits avoid unrelated span
+   work; and topology epochs/revisions invalidate only the compiled cache. Explicit whole-span
+   events remain limited to new spans, cycle retry, or documented opaque invalidations. Source
+   invalidation and sheet removal remain explicit global cases because external-source semantics
+   and cross-sheet/name/default-sheet resolution do not yet have a complete exact closure. Warm
+   no-op and span-free requests bypass mixed schedule construction when no graph-owned formula
+   event is pending.
 2. **T2 — Node lifecycle.** Domain interval sets + punchouts + surgical split
    (§5.1 minus coalescing); single-cell overrides stop demoting spans. Editor-path
    unification: `VertexEditor` mutations flow through the same node-lifecycle API as

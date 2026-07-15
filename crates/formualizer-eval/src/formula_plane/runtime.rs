@@ -1028,6 +1028,16 @@ impl SpanStore {
         (span.version == span_ref.version).then_some(span)
     }
 
+    pub(crate) fn current_ref(&self, id: FormulaSpanId) -> Option<FormulaSpanRef> {
+        let slot = self.slots.get(id.0 as usize)?;
+        let span = slot.span.as_ref()?;
+        (span.state == SpanState::Active).then_some(FormulaSpanRef {
+            id,
+            generation: slot.generation,
+            version: span.version,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn get_mut_for_test(
         &mut self,
