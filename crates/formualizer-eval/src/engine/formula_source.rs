@@ -912,6 +912,7 @@ pub struct FormulaCompressedSourceReport {
     pub source_spool_encoded_bytes: u64,
     pub source_spool_peak_memory_bytes: u64,
     pub source_spool_spilled_bytes: u64,
+    pub source_spool_spill_files: u64,
     pub source_spool_replays: u64,
     pub source_ordinary_events: u64,
     pub source_shared_anchor_events: u64,

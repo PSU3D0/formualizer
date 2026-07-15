@@ -20,6 +20,7 @@ pub mod live_graph;
 pub mod lookup_index_cache;
 pub mod plan;
 pub mod range_view;
+pub mod resource_observability;
 pub mod row_visibility;
 pub mod scheduler;
 pub mod spill;
@@ -70,6 +71,12 @@ pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, GraphBaselineStats, OperationSummary, StripeKey,
     StripeType, block_index,
+};
+pub use resource_observability::{
+    EvaluationRequestKind, EvaluationRequestOutcome, EvaluationRequestPhaseTimings,
+    EvaluationResourceBaselineStats, EvaluationResourceClass, EvaluationResourceReason,
+    EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome, FormulaPlaneTopologyCacheOutcome,
+    FormulaPlaneTopologyRequestStats, FormulaPlaneTopologyStrategy,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};

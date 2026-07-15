@@ -680,6 +680,7 @@ impl CalamineAdapter {
         } else {
             0
         };
+        formula_source_report.source_spool_spill_files = u64::from(formula_spool_spilled);
         let _formula_spool_storage = formula_spool.storage_kind();
         debug_assert!(formula_count == 0 || formula_spool_bytes >= 5);
         let mut formula_spool = Some(formula_spool);

@@ -14,6 +14,7 @@ mod deterministic_clock;
 mod dirty_propagation;
 mod dirty_propagation_precision;
 mod evaluation;
+mod evaluation_resource_observability;
 mod graph_basic;
 mod graph_internal_helpers;
 mod layer_evaluation;

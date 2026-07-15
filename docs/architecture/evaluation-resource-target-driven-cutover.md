@@ -1,6 +1,6 @@
 # Evaluation Resources and Target-Driven Cutover
 
-Status: Approved implementation contract
+Status: Approved implementation contract; C0 observability implemented
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
 resource-accounted, target-driven preparation and evaluation. It complements
@@ -626,6 +626,17 @@ includes cross-sheet transitive value/delta parity and strict parse-failure rest
 span empty-delta limitation remains documented until C4.
 
 ### C0 - contract, telemetry, and cold harness
+
+Status: Implemented observationally. Engine request IDs are monotonic and are not reset with
+telemetry counters. Stable request/baseline stats expose staged preparation, mixed topology
+cache/overflow observations, exact fallback materialization, dirty-lease outcome, phase timings, and
+success/cancellation/error outcome. Requests aggregate every topology build, hit, skip, and cap event;
+build-attempt producer/candidate/edge work is summed and retained bytes preserve the request peak.
+The load-envelope probe reports these with process RSS/HWM, output-read time, replay spool
+memory/disk/file counts, FormulaPlane mode, and fresh-child sample
+identity. Eager loader graph preparation remains part of `load_ms`; request-time deferred graph
+preparation is reported separately. Allocator-specific byte counters remain omitted because no stable
+global allocator observer exists; no allocator or evaluation behavior was changed to obtain them.
 
 - Land cap classes, typed reason vocabulary, request IDs, closure definitions, and observational
   counters without behavior changes.
