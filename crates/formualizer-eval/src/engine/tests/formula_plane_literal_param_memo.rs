@@ -685,10 +685,18 @@ fn formula_plane_memo_cache_is_per_evaluate_task() {
         .last_formula_plane_span_eval_report()
         .unwrap()
         .memo_eval_count;
-    engine
-        .graph
-        .formula_authority_mut()
-        .mark_all_active_spans_dirty();
+    let global_before = engine
+        .baseline_stats()
+        .formula_plane_dirty_global_invalidations;
+    engine.graph.mark_all_formula_spans_dirty(
+        crate::engine::graph::WholeSpanDirtyReason::GlobalInvalidation,
+    );
+    assert_eq!(
+        engine
+            .baseline_stats()
+            .formula_plane_dirty_global_invalidations,
+        global_before + 1
+    );
     engine.evaluate_all().unwrap();
     let second = engine
         .last_formula_plane_span_eval_report()

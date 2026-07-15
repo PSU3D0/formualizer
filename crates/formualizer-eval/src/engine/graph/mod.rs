@@ -25,6 +25,7 @@ pub struct GraphInstrumentation {
 mod ast_utils;
 pub mod editor;
 mod formula_analysis;
+mod formula_dirty;
 mod names;
 pub(crate) mod prepared_legacy_graph;
 mod range_deps;
@@ -46,6 +47,8 @@ use crate::engine::topo::{
 };
 use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLocator};
 use formualizer_common::Coord as AbsCoord;
+use formula_dirty::FormulaDirtyState;
+pub(crate) use formula_dirty::{FormulaDirtyLease, FormulaDirtyStats, WholeSpanDirtyReason};
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 struct RegistryFunctionProvider;
@@ -183,8 +186,9 @@ pub struct DependencyGraph {
     cell_to_vertex: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
     load_packed_to_vertex: std::collections::HashMap<PackedSheetCell, VertexId, CoordBuildHasher>,
 
-    // Scheduling state - using HashSet for O(1) operations
-    dirty_vertices: FxHashSet<VertexId>,
+    // Graph-owned formula dirtiness. Legacy vertices retain their sparse bits
+    // and set representation behind this single authority.
+    formula_dirty: FormulaDirtyState,
     volatile_vertices: FxHashSet<VertexId>,
 
     /// Monotonic count of vertices processed by dirty-propagation BFS loops
@@ -336,6 +340,66 @@ impl DependencyGraph {
         &mut self.formula_authority
     }
 
+    pub(crate) fn mark_formula_region_dirty(
+        &mut self,
+        region: crate::formula_plane::region_index::Region,
+    ) {
+        self.formula_dirty.record_region(region);
+    }
+
+    pub(crate) fn mark_formula_spans_dirty(
+        &mut self,
+        spans: impl IntoIterator<Item = crate::formula_plane::runtime::FormulaSpanRef>,
+        reason: WholeSpanDirtyReason,
+    ) {
+        self.formula_dirty.record_whole_spans(spans, reason);
+    }
+
+    pub(crate) fn mark_all_formula_spans_dirty(&mut self, reason: WholeSpanDirtyReason) {
+        let spans = self.formula_authority.active_span_refs();
+        self.formula_dirty.record_whole_spans(spans, reason);
+    }
+
+    pub(crate) fn lease_formula_dirty(&mut self) -> FormulaDirtyLease {
+        self.formula_dirty.lease()
+    }
+
+    pub(crate) fn extend_formula_dirty_lease(
+        &mut self,
+        lease: FormulaDirtyLease,
+    ) -> Option<FormulaDirtyLease> {
+        self.formula_dirty.extend(lease)
+    }
+
+    pub(crate) fn ack_formula_dirty(&mut self, lease: FormulaDirtyLease) -> bool {
+        self.formula_dirty.ack(lease)
+    }
+
+    pub(crate) fn pending_formula_dirty_regions(
+        &self,
+    ) -> impl Iterator<Item = crate::formula_plane::region_index::Region> + '_ {
+        self.formula_dirty.pending_regions()
+    }
+
+    pub(crate) fn pending_formula_dirty_whole_spans(
+        &self,
+    ) -> impl Iterator<Item = crate::formula_plane::runtime::FormulaSpanRef> + '_ {
+        self.formula_dirty.pending_whole_spans()
+    }
+
+    pub(crate) fn pending_formula_dirty_event_count(&self) -> usize {
+        self.formula_dirty.pending_event_count()
+    }
+
+    pub(crate) fn formula_dirty_stats(&self) -> FormulaDirtyStats {
+        self.formula_dirty.stats()
+    }
+
+    pub(crate) fn clear_formula_vertex_dirty(&mut self, vertex_id: VertexId) {
+        self.store.set_dirty(vertex_id, false);
+        self.formula_dirty.legacy_remove(&vertex_id);
+    }
+
     /// Return read-only baseline counters for FormulaPlane/dispatch benchmarking.
     pub fn baseline_stats(&self) -> GraphBaselineStats {
         let data_stats = self.data_store.memory_usage();
@@ -343,7 +407,7 @@ impl DependencyGraph {
             graph_vertex_count: self.store.len(),
             graph_formula_vertex_count: self.vertex_formulas.len(),
             graph_edge_count: self.edges.num_edges_exact(),
-            dirty_vertex_count: self.dirty_vertices.len(),
+            dirty_vertex_count: self.formula_dirty.legacy_len(),
             evaluation_vertex_count: self.get_evaluation_vertices().len(),
             formula_ast_root_count: self.vertex_formulas.len(),
             formula_ast_node_count: data_stats.total_ast_nodes,
@@ -818,7 +882,7 @@ impl DependencyGraph {
     /// Reserve metadata structures for upcoming formula assignments during bulk load.
     pub fn reserve_formula_metadata(&mut self, additional: usize) {
         self.vertex_formulas.reserve(additional);
-        self.dirty_vertices.reserve(additional);
+        self.formula_dirty.legacy_reserve(additional);
         self.volatile_vertices.reserve(additional);
     }
 
@@ -1088,7 +1152,7 @@ impl DependencyGraph {
             graph_value_read_attempts: AtomicU64::new(0),
             cell_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
             load_packed_to_vertex: std::collections::HashMap::with_hasher(CoordBuildHasher),
-            dirty_vertices: FxHashSet::default(),
+            formula_dirty: FormulaDirtyState::default(),
             dirty_propagation_visits: 0,
             deferred_dirty_depth: 0,
             deferred_dirty_pending: Vec::new(),
@@ -2240,7 +2304,7 @@ impl DependencyGraph {
         }
 
         // Add to dirty set
-        self.dirty_vertices.extend(&affected);
+        self.formula_dirty.legacy_extend(affected.iter().copied());
 
         // Return as Vec for compatibility
         affected.into_iter().collect()
@@ -2311,7 +2375,7 @@ impl DependencyGraph {
     /// Get all vertices that need evaluation
     pub fn get_evaluation_vertices(&self) -> Vec<VertexId> {
         let mut combined = FxHashSet::default();
-        combined.extend(&self.dirty_vertices);
+        combined.extend(self.formula_dirty.legacy_iter().copied());
         combined.extend(&self.volatile_vertices);
 
         let mut result: Vec<VertexId> = combined
@@ -2337,7 +2401,7 @@ impl DependencyGraph {
     pub fn clear_dirty_flags(&mut self, vertices: &[VertexId]) {
         for &vertex_id in vertices {
             self.store.set_dirty(vertex_id, false);
-            self.dirty_vertices.remove(&vertex_id);
+            self.formula_dirty.legacy_remove(&vertex_id);
         }
     }
 
@@ -2591,7 +2655,8 @@ impl DependencyGraph {
             self.mark_volatile(tvid, planned[i].3.volatile);
             self.store.set_dynamic(tvid, planned[i].3.dynamic);
         }
-        self.dirty_vertices.extend(target_vids.iter().copied());
+        self.formula_dirty
+            .legacy_extend(target_vids.iter().copied());
 
         self.edges.begin_batch();
         for (i, tvid) in target_vids.iter().copied().enumerate() {
@@ -2680,7 +2745,7 @@ impl DependencyGraph {
         }
         self.edges.add_edge(dependent, dependency);
         self.store.set_dirty(dependent, true);
-        self.dirty_vertices.insert(dependent);
+        self.formula_dirty.legacy_insert(dependent);
     }
 
     fn remove_dependent_edges(&mut self, vertex: VertexId) {
@@ -3151,7 +3216,7 @@ impl DependencyGraph {
                 self.vertex_values.remove(&vid);
             }
             self.store.set_dirty(vid, false);
-            self.dirty_vertices.remove(&vid);
+            self.formula_dirty.legacy_remove(&vid);
             changed_vertices.push(vid);
         }
 
@@ -3240,7 +3305,7 @@ impl DependencyGraph {
             to_visit.extend(self.collect_range_dependents_for_vertex(id));
         }
 
-        self.dirty_vertices.extend(&affected);
+        self.formula_dirty.legacy_extend(affected.iter().copied());
         affected.into_iter().collect()
     }
 
@@ -3630,7 +3695,7 @@ impl DependencyGraph {
         let dependents = self.get_dependents(id);
         for dep_id in dependents {
             self.store.set_dirty(dep_id, true);
-            self.dirty_vertices.insert(dep_id);
+            self.formula_dirty.legacy_insert(dep_id);
         }
     }
 
@@ -3674,9 +3739,9 @@ impl DependencyGraph {
     pub fn set_dirty(&mut self, id: VertexId, dirty: bool) {
         self.store.set_dirty(id, dirty);
         if dirty {
-            self.dirty_vertices.insert(id);
+            self.formula_dirty.legacy_insert(id);
         } else {
-            self.dirty_vertices.remove(&id);
+            self.formula_dirty.legacy_remove(&id);
         }
     }
 
@@ -3811,16 +3876,16 @@ impl DependencyGraph {
     /// Mark a vertex as dirty without propagation (for VertexEditor)
     pub fn mark_vertex_dirty(&mut self, vertex_id: VertexId) {
         self.store.set_dirty(vertex_id, true);
-        self.dirty_vertices.insert(vertex_id);
+        self.formula_dirty.legacy_insert(vertex_id);
     }
 
     /// Batch-mark vertices dirty without propagation.
     pub fn mark_vertices_dirty_batch(&mut self, vertices: &[VertexId]) {
-        self.dirty_vertices.reserve(vertices.len());
+        self.formula_dirty.legacy_reserve(vertices.len());
         for &vertex_id in vertices {
             self.store.set_dirty(vertex_id, true);
         }
-        self.dirty_vertices.extend(vertices.iter().copied());
+        self.formula_dirty.legacy_extend(vertices.iter().copied());
     }
 
     /// Update cell mapping for a vertex (for VertexEditor)

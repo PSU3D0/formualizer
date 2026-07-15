@@ -1405,6 +1405,8 @@ fn every_pre_mutation_fault_replays_without_publication_or_state_change() {
     for (index, fault) in faults.into_iter().enumerate() {
         let (mut engine, source, disposition, prepared, _) = transaction(Shape::Row, 10 + index);
         let before = state(&engine);
+        let dirty_before = engine.graph.formula_dirty_stats();
+        let revision_before = engine.graph.topology_revision();
         let disposition_before = disposition.clone();
         let decision = engine.commit_fragmented_source_transaction_with_fault_for_test(
             prepared,
@@ -1419,6 +1421,8 @@ fn every_pre_mutation_fault_replays_without_publication_or_state_change() {
             } if source_id == source.source_id && actual == fault
         ));
         assert_eq!(state(&engine), before, "fault {fault:?} mutated state");
+        assert_eq!(engine.graph.formula_dirty_stats(), dirty_before);
+        assert_eq!(engine.graph.topology_revision(), revision_before);
         assert_eq!(disposition, disposition_before);
         assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
         assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
@@ -1711,6 +1715,19 @@ fn row_column_and_rect_success_commit_graph_then_plane_and_return_local_deltas()
         assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
         assert_eq!(engine.baseline_stats().graph_edge_count, 2);
         assert_eq!(
+            engine
+                .graph
+                .pending_formula_dirty_whole_spans()
+                .collect::<Vec<_>>(),
+            success.plane.spans
+        );
+        assert_eq!(
+            engine
+                .baseline_stats()
+                .formula_plane_dirty_whole_span_seeds_recorded,
+            source.fragments.len() as u64
+        );
+        assert_eq!(
             (
                 engine.last_formula_ingest_report().cloned(),
                 engine.formula_ingest_report_total().clone(),
@@ -1729,6 +1746,7 @@ fn row_column_and_rect_success_commit_graph_then_plane_and_return_local_deltas()
             assert!(engine.graph.get_formula_id(vertex).is_some());
         }
         engine.evaluate_all().unwrap();
+        assert_eq!(engine.graph.pending_formula_dirty_event_count(), 0);
         let hole = match shape {
             Shape::Row | Shape::Column => source.declared.end,
             Shape::Rect => SourceCoord { row: 3, col: 4 },

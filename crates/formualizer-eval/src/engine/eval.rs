@@ -5,6 +5,7 @@ use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
 use crate::engine::graph::prepared_legacy_graph::{
     PreparedLegacyGraphError, PreparedLegacyGraphPlan,
 };
+use crate::engine::graph::{FormulaDirtyLease, WholeSpanDirtyReason};
 use crate::engine::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use crate::engine::live_edges::{LiveEdgeCollector, RecordingContext};
 use crate::engine::live_graph::analyze_live_graph;
@@ -23,7 +24,6 @@ use crate::engine::{
     FormulaPlaneMode, RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind,
     VisibilityMaskMode,
 };
-use crate::formula_plane::authority::PendingChangedRegionsLease;
 use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
@@ -775,11 +775,6 @@ pub struct Engine<R> {
     /// Empty unless something iterated — zero cost otherwise.
     iterative_state_values: FxHashMap<VertexId, LiteralValue>,
 
-    /// FormulaPlane authority `indexes_epoch` observed by the most recent
-    /// successful `evaluate_all` pass. Used to schedule whole-span work for
-    /// any active span the engine has not yet evaluated under the current
-    /// indexes generation; subsequent passes use bounded dirty closures.
-    formula_plane_indexes_epoch_seen: u64,
     /// Global function-registry semantic epoch observed after the latest
     /// conservative FormulaPlane invalidation.
     function_semantic_epoch_seen: u64,
@@ -792,6 +787,8 @@ pub struct Engine<R> {
     before_prepared_span_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     #[cfg(test)]
     force_source_family_fallback: bool,
+    #[cfg(test)]
+    rerecord_cycle_retry_span_after_lease_extension_for_test: bool,
     #[cfg(test)]
     fragmented_commit_fault_for_test:
         Option<crate::engine::fragmented_transaction::FragmentedCommitFault>,
@@ -1323,6 +1320,10 @@ pub struct EngineBaselineStats {
     pub formula_plane_mixed_topology_cache_builds: u64,
     pub formula_plane_mixed_topology_cache_hits: u64,
     pub formula_plane_mixed_topology_cache_overflows: u64,
+    pub formula_plane_dirty_pending_events: usize,
+    pub formula_plane_dirty_region_events_recorded: u64,
+    pub formula_plane_dirty_whole_span_seeds_recorded: u64,
+    pub formula_plane_dirty_global_invalidations: u64,
     /// Number of spans demoted to legacy because a member participated in a
     /// statically-cyclic SCC (gotcha G8, refs #112).
     pub formula_plane_cycle_member_span_demotions: u64,
@@ -1836,7 +1837,6 @@ where
             last_cycle_telemetry: CycleTelemetry::default(),
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
-            formula_plane_indexes_epoch_seen: 0,
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
             function_provider_revision_seen,
             #[cfg(test)]
@@ -1844,6 +1844,8 @@ where
             before_prepared_span_commit_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
+            #[cfg(test)]
+            rerecord_cycle_retry_span_after_lease_extension_for_test: false,
             #[cfg(test)]
             fragmented_commit_fault_for_test: None,
             #[cfg(test)]
@@ -1934,7 +1936,6 @@ where
             last_cycle_telemetry: CycleTelemetry::default(),
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
-            formula_plane_indexes_epoch_seen: 0,
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
             function_provider_revision_seen,
             #[cfg(test)]
@@ -1942,6 +1943,8 @@ where
             before_prepared_span_commit_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
+            #[cfg(test)]
+            rerecord_cycle_retry_span_after_lease_extension_for_test: false,
             #[cfg(test)]
             fragmented_commit_fault_for_test: None,
             #[cfg(test)]
@@ -2382,10 +2385,7 @@ where
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
-        // Adding a sheet does not invalidate existing SheetId-based FormulaPlane
-        // spans. `graph.add_sheet` handles legacy orphan-healing for formulas
-        // that were explicitly tombstoned for this sheet name; avoid a global
-        // FormulaPlane demotion/dirty mark for unrelated spans.
+        // Adding a sheet does not change any existing span result or dependency.
         self.mark_topology_edited();
         Ok(id)
     }
@@ -2410,6 +2410,8 @@ where
 
         self.clear_all_computed_overlays();
         self.mark_all_formula_vertices_dirty();
+        self.graph
+            .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         self.mark_topology_edited();
         Ok(new_id)
     }
@@ -2480,9 +2482,7 @@ where
                 for v_id in sheet_vertices {
                     self.graph.mark_vertex_dirty(v_id);
                 }
-                // Sheet rename is metadata-only and preserves SheetId. References resolve by
-                // SheetId, so no FormulaPlane changed region is required. Removing this avoids
-                // re-evaluating every span that reads the renamed sheet.
+                // Sheet rename preserves SheetId and therefore formula dependencies.
                 self.mark_topology_edited();
                 Ok(())
             }
@@ -2718,6 +2718,7 @@ where
     pub fn baseline_stats(&self) -> EngineBaselineStats {
         let graph = self.graph.baseline_stats();
         let formula_authority = self.graph.formula_authority();
+        let formula_dirty = self.graph.formula_dirty_stats();
         EngineBaselineStats {
             graph_vertex_count: graph.graph_vertex_count,
             graph_formula_vertex_count: graph.graph_formula_vertex_count,
@@ -2733,6 +2734,10 @@ where
             formula_plane_mixed_topology_cache_builds: self.mixed_topology_cache_builds,
             formula_plane_mixed_topology_cache_hits: self.mixed_topology_cache_hits,
             formula_plane_mixed_topology_cache_overflows: self.mixed_topology_cache_overflows,
+            formula_plane_dirty_pending_events: formula_dirty.pending_events,
+            formula_plane_dirty_region_events_recorded: formula_dirty.region_events_recorded,
+            formula_plane_dirty_whole_span_seeds_recorded: formula_dirty.whole_span_seeds_recorded,
+            formula_plane_dirty_global_invalidations: formula_dirty.global_whole_span_invalidations,
             formula_plane_cycle_member_span_demotions: self
                 .formula_plane_cycle_member_span_demotions,
         }
@@ -3476,6 +3481,11 @@ where
     #[cfg(test)]
     pub(crate) fn force_source_family_fallback_for_test(&mut self, force: bool) {
         self.force_source_family_fallback = force;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn rerecord_cycle_retry_span_after_lease_extension_for_test(&mut self) {
+        self.rerecord_cycle_retry_span_after_lease_extension_for_test = true;
     }
 
     #[cfg(test)]
@@ -4309,6 +4319,12 @@ where
         Vec<FormulaIngestBatch>,
         PlannedFormulaMaterialize,
     ) {
+        let existing_span_refs = self
+            .graph
+            .formula_authority()
+            .active_span_refs()
+            .into_iter()
+            .collect::<rustc_hash::FxHashSet<_>>();
         let mut report =
             FormulaIngestReport::with_mode(FormulaPlaneMode::AuthoritativeExperimental);
         report.formula_cells_seen = batches.iter().map(|batch| batch.len() as u64).sum();
@@ -4557,6 +4573,15 @@ where
         }
 
         let _index_report = self.graph.formula_authority_mut().rebuild_indexes();
+        let new_span_refs = self
+            .graph
+            .formula_authority()
+            .active_span_refs()
+            .into_iter()
+            .filter(|span_ref| !existing_span_refs.contains(span_ref))
+            .collect::<Vec<_>>();
+        self.graph
+            .mark_formula_spans_dirty(new_span_refs, WholeSpanDirtyReason::NewSpan);
 
         let fallback_batches = fallback
             .into_iter()
@@ -5843,6 +5868,10 @@ where
                                         .graph
                                         .formula_authority_mut()
                                         .apply_prevalidated_formula_plane_append(append);
+                                    self.graph.mark_formula_spans_dirty(
+                                        placement_report.spans.iter().copied(),
+                                        WholeSpanDirtyReason::NewSpan,
+                                    );
                                     direct_report.formula_cells_seen =
                                         direct_report.formula_cells_seen.saturating_add(cells);
                                     direct_report.shadow_candidate_cells =
@@ -7472,25 +7501,27 @@ where
             .collect::<BTreeMap<_, _>>();
         let mut dirty_coords = FxHashSet::default();
 
-        if self.formula_plane_indexes_epoch_seen != authority.indexes_epoch() {
-            for span_ref in span_refs {
+        for span_ref in self.graph.pending_formula_dirty_whole_spans() {
+            if span_refs_by_id.get(&span_ref.id) == Some(&span_ref) {
                 self.insert_formula_plane_dirty_coords_for_span(
                     span_ref,
                     ProducerDirtyDomain::Whole,
                     &mut dirty_coords,
                 )?;
             }
-            return Ok(dirty_coords);
         }
 
-        let pending_changed_regions = authority.pending_changed_regions();
+        let pending_changed_regions = self
+            .graph
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>();
         if pending_changed_regions.is_empty() {
             return Ok(dirty_coords);
         }
 
         let closure = compute_dirty_closure(
             &authority.consumer_reads,
-            pending_changed_regions.iter().copied(),
+            pending_changed_regions,
             |producer| authority.producer_results.producer_result_region(producer),
         );
         for work in closure.work {
@@ -8501,7 +8532,9 @@ where
                 }
             }
         }
-        if !shift_plans.is_empty() || !split_plans.is_empty() || !remove_refs.is_empty() {
+        let span_geometry_changed =
+            !shift_plans.is_empty() || !split_plans.is_empty() || !remove_refs.is_empty();
+        if span_geometry_changed {
             // Rewritten template ASTs must be interned into the graph's AST
             // arena before the authority is borrowed mutably; the literal
             // slot map is keyed by the freshly interned arena node ids.
@@ -8738,7 +8771,10 @@ where
                 }
             }
             authority.rebuild_indexes();
-            self.formula_plane_indexes_epoch_seen = 0;
+        }
+        if span_geometry_changed {
+            self.graph
+                .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
         }
 
         let mut span_plans = Vec::new();
@@ -8876,7 +8912,6 @@ where
                 }
             }
         }
-        self.formula_plane_indexes_epoch_seen = 0;
         Ok(())
     }
 
@@ -9213,7 +9248,6 @@ where
             let _ = authority.plane.remove_span(*span_ref);
         }
         let _ = authority.rebuild_indexes();
-        self.formula_plane_indexes_epoch_seen = 0;
         self.mark_topology_edited();
         Ok(FormulaSpanDemotionReport {
             spans_demoted: span_refs.len(),
@@ -11299,18 +11333,14 @@ where
         match scope {
             StructuralScope::Cell { sheet, row, col } => {
                 self.graph
-                    .formula_authority_mut()
-                    .record_changed_region(Region::point(sheet, row, col));
+                    .mark_formula_region_dirty(Region::point(sheet, row, col));
             }
             StructuralScope::Region(region) => {
-                self.graph
-                    .formula_authority_mut()
-                    .record_changed_region(region);
+                self.graph.mark_formula_region_dirty(region);
             }
             StructuralScope::Sheet(sheet_id) => {
                 self.graph
-                    .formula_authority_mut()
-                    .record_changed_region(Region::whole_sheet(sheet_id));
+                    .mark_formula_region_dirty(Region::whole_sheet(sheet_id));
             }
             StructuralScope::RemovedSheet(sheet_id) => {
                 let removed_refs = {
@@ -11329,17 +11359,20 @@ where
                         .collect::<Vec<_>>()
                 };
 
-                let authority = self.graph.formula_authority_mut();
-                for span_ref in removed_refs {
-                    authority.plane.remove_span(span_ref);
+                {
+                    let authority = self.graph.formula_authority_mut();
+                    for span_ref in removed_refs {
+                        authority.plane.remove_span(span_ref);
+                    }
+                    let _ = authority.rebuild_indexes();
                 }
-                authority.mark_all_active_spans_dirty();
-                let _ = authority.rebuild_indexes();
+                self.graph
+                    .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
             }
             StructuralScope::AllSheets => {
-                let authority = self.graph.formula_authority_mut();
-                authority.mark_all_active_spans_dirty();
-                let _ = authority.rebuild_indexes();
+                let _ = self.graph.formula_authority_mut().rebuild_indexes();
+                self.graph
+                    .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
             }
         }
     }
@@ -12660,14 +12693,12 @@ where
             elapsed: start.elapsed(),
         })
     }
-    fn evaluate_all_legacy_and_ack_pending(
+    fn evaluate_all_legacy_and_ack_dirty(
         &mut self,
-        pending_changed_regions: PendingChangedRegionsLease,
+        formula_dirty: FormulaDirtyLease,
     ) -> Result<EvalResult, ExcelError> {
         let result = self.evaluate_all_legacy_impl()?;
-        self.graph
-            .formula_authority_mut()
-            .ack_pending_changed_regions(pending_changed_regions);
+        self.graph.ack_formula_dirty(formula_dirty);
         Ok(result)
     }
 
@@ -12679,64 +12710,42 @@ where
         // below intentionally does not reset, so `evaluate_legacy_cycle_prepass`
         // counts survive into the final telemetry.
         self.begin_evaluation_request();
-        let pending_changed_regions = self
-            .graph
-            .formula_authority_mut()
-            .lease_pending_changed_regions();
+        let mut formula_dirty = self.graph.lease_formula_dirty();
 
-        // The FormulaPlane coordinator is now selected by mode for evaluate_all.
         // SingletonUnique formulas intentionally remain legacy graph vertices;
-        // when no spans are active, execute through the private legacy primitive
-        // rather than the public legacy entry path.
+        // when no spans are active, execute through the private legacy primitive.
         if self.graph.formula_authority().active_span_count() == 0 {
             #[cfg(test)]
             {
                 self.last_formula_plane_span_eval_report = None;
             }
-            return self.evaluate_all_legacy_and_ack_pending(pending_changed_regions);
+            return self.evaluate_all_legacy_and_ack_dirty(formula_dirty);
         }
 
-        // Decide span work seeding strategy: any active span we have not yet
-        // evaluated under the current authority indexes generation must run
-        // whole; subsequent passes use bounded dirty closures derived from
-        // captured changed regions.
-        let current_indexes_epoch = self.graph.formula_authority().indexes_epoch();
-        let span_seed_mode = if self.formula_plane_indexes_epoch_seen != current_indexes_epoch {
-            SpanSeedMode::WholeAll
-        } else {
-            SpanSeedMode::DirtyClosure
-        };
-        // Pending regions are leased for the full retry/cycle loop. They are
-        // acknowledged only after authoritative or demotion/legacy completion.
-        // Steady-state shortcut: in `DirtyClosure` mode span work is derived
-        // exclusively from pending changed regions, so with none pending the
-        // mixed schedule could only ever contain dirty legacy vertices (e.g.
-        // re-dirtied volatiles). Skip the O(all formula vertices)
-        // producer/consumer index rebuild and run them through the legacy
-        // primitive directly — identical evaluation set, with the legacy
-        // path's native cycle/virtual-dep handling.
-        if matches!(span_seed_mode, SpanSeedMode::DirtyClosure)
-            && pending_changed_regions.is_empty()
-        {
+        // With no graph-owned span/region dirtiness, only sparse legacy work
+        // (including volatiles) can remain. Preserve the warm no-op fast path.
+        if formula_dirty.is_empty() {
             #[cfg(test)]
             {
                 self.last_formula_plane_span_eval_report = None;
             }
-            return self.evaluate_all_legacy_and_ack_pending(pending_changed_regions);
+            return self.evaluate_all_legacy_and_ack_dirty(formula_dirty);
         }
 
         let start = crate::instant::FzInstant::now();
-        let mut span_seed_mode = span_seed_mode;
         // #CIRC stamps produced by demoting cyclic spans and resolving the
         // residual legacy-only cycle ahead of the mixed schedule (gotcha G8).
         let mut prepass_cycle_errors = 0usize;
         const MAX_CYCLE_DEMOTE_ITERS: usize = 64;
         let mut cycle_demote_iters = 0usize;
+        let mut include_dirty_regions = true;
+        let mut retry_whole_spans = Vec::new();
         let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) = loop {
             let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) = self
                 .build_formula_plane_mixed_schedule(
-                    span_seed_mode,
-                    pending_changed_regions.regions(),
+                    &formula_dirty,
+                    &retry_whole_spans,
+                    include_dirty_regions,
                 )?;
 
             if schedule.is_authoritative_safe() {
@@ -12784,11 +12793,7 @@ where
                     self.last_formula_plane_span_eval_report = None;
                 }
                 let result = self.evaluate_all_legacy_impl()?;
-                self.formula_plane_indexes_epoch_seen =
-                    self.graph.formula_authority().indexes_epoch();
-                self.graph
-                    .formula_authority_mut()
-                    .ack_pending_changed_regions(pending_changed_regions);
+                self.graph.ack_formula_dirty(formula_dirty);
                 self.formula_plane_capacity_bailouts =
                     self.formula_plane_capacity_bailouts.saturating_add(1);
                 return Ok(result);
@@ -12811,7 +12816,7 @@ where
             if self.graph.formula_authority().active_span_count() == 0 {
                 // All spans demoted; nothing left for the FP coordinator. The
                 // legacy evaluator resolves the (now fully legacy) cycle.
-                return self.evaluate_all_legacy_and_ack_pending(pending_changed_regions);
+                return self.evaluate_all_legacy_and_ack_dirty(formula_dirty);
             }
 
             // Resolve the residual legacy-only cycle (`handle_cycle_unit`
@@ -12820,10 +12825,31 @@ where
             prepass_cycle_errors =
                 prepass_cycle_errors.saturating_add(self.evaluate_legacy_cycle_prepass()?);
 
-            // Re-seed every surviving span whole after the geometry/dirty
-            // changes; the original pending-region lease remains live across
-            // the complete cycle retry loop.
-            span_seed_mode = SpanSeedMode::WholeAll;
+            // Re-seed every surviving span explicitly through the graph-owned
+            // dirty authority, then renew the lease so successful completion
+            // acknowledges both the original prefix and retry seeds.
+            retry_whole_spans = self.graph.formula_authority().active_span_refs();
+            self.graph.mark_formula_spans_dirty(
+                retry_whole_spans.iter().copied(),
+                WholeSpanDirtyReason::CycleRetry,
+            );
+            // Only the first renewal can enlarge this generation's owned
+            // prefix. If another cycle iteration is required, its redundant
+            // retry seeds stay pending rather than risking acknowledgement of
+            // work recorded after the first renewal.
+            if let Some(extended) = self.graph.extend_formula_dirty_lease(formula_dirty.clone()) {
+                formula_dirty = extended;
+                #[cfg(test)]
+                if std::mem::take(
+                    &mut self.rerecord_cycle_retry_span_after_lease_extension_for_test,
+                ) {
+                    self.graph.mark_formula_spans_dirty(
+                        retry_whole_spans.iter().copied().take(1),
+                        WholeSpanDirtyReason::GlobalInvalidation,
+                    );
+                }
+            }
+            include_dirty_regions = false;
 
             cycle_demote_iters += 1;
             if cycle_demote_iters >= MAX_CYCLE_DEMOTE_ITERS {
@@ -12962,12 +12988,7 @@ where
         // vertices weren't in the dirty subset (e.g. recently-introduced span
         // result cells); legacy clear_dirty_flags is safe over the full set.
         self.redirty_for_next_recalc();
-        // Mark this indexes-epoch as fully evaluated so subsequent passes can
-        // use bounded span dirty closures rather than whole-span work.
-        self.formula_plane_indexes_epoch_seen = self.graph.formula_authority().indexes_epoch();
-        self.graph
-            .formula_authority_mut()
-            .ack_pending_changed_regions(pending_changed_regions);
+        self.graph.ack_formula_dirty(formula_dirty);
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
         Ok(EvalResult {
             computed_vertices,
@@ -13140,8 +13161,9 @@ where
 
     fn build_formula_plane_mixed_schedule(
         &mut self,
-        span_seed_mode: SpanSeedMode,
-        pending_changed_regions: &[Region],
+        formula_dirty: &FormulaDirtyLease,
+        retry_whole_spans: &[FormulaSpanRef],
+        include_dirty_regions: bool,
     ) -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
         let key = self.mixed_topology_cache_key();
         let active_refs = self
@@ -13177,10 +13199,13 @@ where
         let dirty_legacy = self.graph.get_evaluation_vertices();
         let mut work = Vec::new();
         let mut scheduled_legacy_vertices = Vec::new();
-        if matches!(span_seed_mode, SpanSeedMode::WholeAll) {
-            for span_id in cached.span_refs_by_id.keys().copied() {
+        for span_ref in formula_dirty
+            .whole_spans()
+            .chain(retry_whole_spans.iter().copied())
+        {
+            if cached.span_refs_by_id.get(&span_ref.id) == Some(&span_ref) {
                 work.push(FormulaProducerWork {
-                    producer: FormulaProducerId::Span(span_id),
+                    producer: FormulaProducerId::Span(span_ref.id),
                     dirty: ProducerDirtyDomain::Whole,
                 });
             }
@@ -13200,9 +13225,8 @@ where
             }
         }
 
-        if matches!(span_seed_mode, SpanSeedMode::DirtyClosure)
-            && !pending_changed_regions.is_empty()
-        {
+        let pending_changed_regions = formula_dirty.regions().collect::<Vec<_>>();
+        if include_dirty_regions && !pending_changed_regions.is_empty() {
             use crate::formula_plane::producer::compute_dirty_closure;
             let closure = compute_dirty_closure(
                 &cached.consumer_reads,
@@ -13239,15 +13263,6 @@ where
             scheduled_legacy_vertices,
         ))
     }
-}
-
-/// Strategy for seeding span producer work in the FP mixed runtime.
-/// `WholeAll` schedules every active span as `Whole`; `DirtyClosure`
-/// computes bounded work from captured changed regions only.
-#[derive(Clone, Copy, Debug)]
-enum SpanSeedMode {
-    WholeAll,
-    DirtyClosure,
 }
 
 impl<R> Engine<R>
