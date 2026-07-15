@@ -16,6 +16,12 @@ scattered one-off formulas) must pay nothing for the span machinery, while dense
 (10M+ rows, hundreds of formula columns) must never materialize per-cell graph state.
 Both extremes, mixed in one workbook, are the design constraint throughout.
 
+The staged delivery contract is defined in
+[Evaluation Resources and Target-Driven Cutover](evaluation-resource-target-driven-cutover.md).
+It supersedes the T1.1 cache-overflow bridge below with exact non-materializing request topology;
+demotion remains for cycle/lifecycle semantics. C0-pre PR #189 fixes deferred cross-sheet delta
+preparation before that cutover.
+
 ## 1. Problem Statement
 
 Authoritative FormulaPlane mode currently splits a workbook between two evaluation
