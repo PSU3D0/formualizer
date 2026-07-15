@@ -237,3 +237,371 @@ fn phantom_cycle_through_span_member_yields_value_under_runtime() {
         "B10 = A10 + D10 = 10 + 0"
     );
 }
+
+fn build_two_sheet_cycle_workbook() -> Engine<TestWorkbook> {
+    let mut engine = authoritative_engine(CycleDetection::Static);
+    engine.add_sheet("Sheet2").unwrap();
+    for sheet in ["Sheet1", "Sheet2"] {
+        let mut formulas = Vec::new();
+        for row in 1..=120 {
+            engine
+                .set_cell_value(sheet, row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+            formulas.push(record(&mut engine, row, 2, &format!("=A{row}+C{row}")));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new(sheet, formulas)])
+            .unwrap();
+        engine
+            .set_cell_formula(sheet, 5, 3, parse("=B5").unwrap())
+            .unwrap();
+    }
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    engine
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct OverlaySnapshot {
+    overlay_ref: crate::formula_plane::runtime::FormulaOverlayRef,
+    id: crate::formula_plane::runtime::FormulaOverlayEntryId,
+    generation: u32,
+    sheet_id: crate::SheetId,
+    domain: crate::formula_plane::runtime::PlacementDomain,
+    source_span: Option<crate::formula_plane::runtime::FormulaSpanRef>,
+    kind: crate::formula_plane::runtime::FormulaOverlayEntryKind,
+    created_epoch: u64,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct GraphVertexSnapshot {
+    cell: crate::reference::CellRef,
+    vertex: crate::engine::VertexId,
+    kind: crate::engine::VertexKind,
+    formula: Option<crate::engine::arena::AstNodeId>,
+    dependencies: Vec<crate::engine::VertexId>,
+    dependents: Vec<crate::engine::VertexId>,
+    dirty: bool,
+    flags: u8,
+}
+
+#[derive(Debug, PartialEq)]
+struct DemotionStateSnapshot {
+    span_refs: Vec<crate::formula_plane::runtime::FormulaSpanRef>,
+    plane_epoch: crate::formula_plane::runtime::FormulaPlaneEpoch,
+    indexes_epoch: u64,
+    indexed_plane_epoch: u64,
+    overlays: Vec<OverlaySnapshot>,
+    graph_vertices: Vec<GraphVertexSnapshot>,
+    graph_counts: (usize, usize, usize, usize),
+    visible_values: Vec<(String, u32, u32, Option<LiteralValue>)>,
+    cycle_member_span_demotions: u64,
+}
+
+fn active_span_refs_by_sheet(
+    engine: &Engine<TestWorkbook>,
+) -> Vec<crate::formula_plane::runtime::FormulaSpanRef> {
+    let authority = engine.graph.formula_authority();
+    let mut refs = authority
+        .active_span_refs()
+        .into_iter()
+        .map(|span_ref| {
+            let sheet_id = authority.plane.spans.get(span_ref).unwrap().sheet_id;
+            (sheet_id, span_ref)
+        })
+        .collect::<Vec<_>>();
+    refs.sort_unstable_by_key(|(sheet_id, _)| *sheet_id);
+    refs.into_iter().map(|(_, span_ref)| span_ref).collect()
+}
+
+fn add_two_sheet_source_overlays(engine: &mut Engine<TestWorkbook>) {
+    use crate::formula_plane::runtime::{FormulaOverlayEntryKind, PlacementDomain};
+
+    let refs = active_span_refs_by_sheet(engine);
+    assert_eq!(refs.len(), 2);
+    for (index, span_ref) in refs.into_iter().enumerate() {
+        let sheet_id = engine
+            .graph
+            .formula_authority()
+            .plane
+            .spans
+            .get(span_ref)
+            .unwrap()
+            .sheet_id;
+        let (row, kind) = if index == 0 {
+            (9, FormulaOverlayEntryKind::ValueOverride)
+        } else {
+            (10, FormulaOverlayEntryKind::Cleared)
+        };
+        engine.graph.formula_authority_mut().plane.insert_overlay(
+            sheet_id,
+            PlacementDomain::row_run(sheet_id, row, row, 1),
+            kind,
+            Some(span_ref),
+        );
+    }
+    engine.graph.formula_authority_mut().rebuild_indexes();
+}
+
+fn snapshot_demotion_state(engine: &Engine<TestWorkbook>) -> DemotionStateSnapshot {
+    let authority = engine.graph.formula_authority();
+    let overlays = authority
+        .plane
+        .formula_overlay
+        .active_entries()
+        .map(|(entry, overlay_ref)| OverlaySnapshot {
+            overlay_ref,
+            id: entry.id,
+            generation: entry.generation,
+            sheet_id: entry.sheet_id,
+            domain: entry.domain.clone(),
+            source_span: entry.source_span,
+            kind: entry.kind.clone(),
+            created_epoch: entry.created_epoch,
+        })
+        .collect();
+
+    let mut graph_vertices = engine
+        .graph
+        .cell_to_vertex()
+        .iter()
+        .map(|(&cell, &vertex)| {
+            let mut dependencies = engine.graph.get_dependencies(vertex);
+            dependencies.sort_unstable();
+            let mut dependents = engine.graph.get_dependents(vertex);
+            dependents.sort_unstable();
+            GraphVertexSnapshot {
+                cell,
+                vertex,
+                kind: engine.graph.get_vertex_kind(vertex),
+                formula: engine.graph.get_formula_id(vertex),
+                dependencies,
+                dependents,
+                dirty: engine.graph.is_dirty(vertex),
+                flags: engine.graph.get_flags(vertex),
+            }
+        })
+        .collect::<Vec<_>>();
+    graph_vertices.sort_unstable_by_key(|snapshot| snapshot.cell);
+
+    let mut visible_values = Vec::new();
+    for sheet in ["Sheet1", "Sheet2"] {
+        for (row, col) in [(5, 1), (5, 2), (5, 3), (10, 2), (11, 2), (120, 2)] {
+            visible_values.push((
+                sheet.to_string(),
+                row,
+                col,
+                engine.get_cell_value(sheet, row, col),
+            ));
+        }
+    }
+
+    let stats = engine.baseline_stats();
+    assert_eq!(
+        graph_vertices.len(),
+        stats.graph_vertex_count,
+        "snapshot must cover every graph vertex"
+    );
+    DemotionStateSnapshot {
+        span_refs: authority.active_span_refs(),
+        plane_epoch: authority.plane.epoch(),
+        indexes_epoch: authority.indexes_epoch(),
+        indexed_plane_epoch: authority.indexed_plane_epoch(),
+        overlays,
+        graph_vertices,
+        graph_counts: (
+            stats.graph_vertex_count,
+            stats.graph_formula_vertex_count,
+            stats.graph_edge_count,
+            stats.dirty_vertex_count,
+        ),
+        visible_values,
+        cycle_member_span_demotions: stats.formula_plane_cycle_member_span_demotions,
+    }
+}
+
+#[test]
+fn two_sheet_span_demotion_fault_matrix_preserves_exact_transaction_state() {
+    use crate::engine::eval::FormulaSpanDemotionFault;
+
+    let faults = [
+        FormulaSpanDemotionFault::AstPreparation,
+        FormulaSpanDemotionFault::LegacyGraphPreparation,
+        FormulaSpanDemotionFault::FinalLegacyGraphValidation,
+        FormulaSpanDemotionFault::FinalAuthorityValidation,
+        FormulaSpanDemotionFault::AllocationReservation,
+        FormulaSpanDemotionFault::BeforeFirstMutation,
+    ];
+    for fault in faults {
+        let mut engine = build_two_sheet_cycle_workbook();
+        add_two_sheet_source_overlays(&mut engine);
+        let refs = active_span_refs_by_sheet(&engine);
+        let before = snapshot_demotion_state(&engine);
+
+        engine.set_formula_span_demotion_fault_for_test(fault);
+        let result = engine
+            .prepare_formula_span_demotion(&refs)
+            .and_then(|prepared| engine.commit_prepared_formula_span_demotion(prepared));
+        assert!(result.is_err(), "fault {fault:?} must fail");
+        assert_eq!(
+            snapshot_demotion_state(&engine),
+            before,
+            "fault {fault:?} changed exact multi-sheet transaction state"
+        );
+    }
+}
+
+#[test]
+fn stale_second_exact_ref_cannot_commit_first_span() {
+    use crate::engine::eval::FormulaSpanDemotionError;
+
+    let mut engine = build_two_sheet_cycle_workbook();
+    add_two_sheet_source_overlays(&mut engine);
+    let refs = active_span_refs_by_sheet(&engine);
+    let prepared = engine.prepare_formula_span_demotion(&refs).unwrap();
+
+    let first_ref = refs[0];
+    let stale_second_ref = refs[1];
+    assert!(
+        engine
+            .graph
+            .formula_authority_mut()
+            .plane
+            .remove_span(stale_second_ref)
+    );
+    engine.graph.formula_authority_mut().rebuild_indexes();
+    let before = snapshot_demotion_state(&engine);
+    assert_eq!(before.span_refs, vec![first_ref]);
+
+    assert!(matches!(
+        engine.commit_prepared_formula_span_demotion(prepared),
+        Err(FormulaSpanDemotionError::StaleAuthority)
+    ));
+    assert_eq!(snapshot_demotion_state(&engine), before);
+    assert!(
+        engine
+            .graph
+            .formula_authority()
+            .plane
+            .spans
+            .get(first_ref)
+            .is_some(),
+        "the first exact ref must remain authoritative"
+    );
+}
+
+#[test]
+fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
+    use crate::engine::eval::FormulaSpanDemotionFault;
+
+    let mut failed = build_two_sheet_cycle_workbook();
+    let refs = failed.graph.formula_authority().active_span_refs();
+    let before = failed.baseline_stats();
+    failed.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
+    assert!(failed.evaluate_all().is_err());
+    assert_eq!(failed.graph.formula_authority().active_span_refs(), refs);
+    let after = failed.baseline_stats();
+    assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
+    assert_eq!(
+        after.graph_formula_vertex_count,
+        before.graph_formula_vertex_count
+    );
+    assert_eq!(after.graph_edge_count, before.graph_edge_count);
+    assert_eq!(after.dirty_vertex_count, before.dirty_vertex_count);
+
+    let mut committed = build_two_sheet_cycle_workbook();
+    let result = committed.evaluate_all().expect("batch demotion commits");
+    assert_eq!(result.cycle_errors, 2);
+    assert_eq!(
+        committed
+            .baseline_stats()
+            .formula_plane_cycle_member_span_demotions,
+        2
+    );
+    assert!(
+        committed
+            .graph
+            .formula_authority()
+            .active_span_refs()
+            .is_empty()
+    );
+    for sheet in ["Sheet1", "Sheet2"] {
+        assert!(is_circ(&committed, sheet, 5, 2));
+        assert!(is_circ(&committed, sheet, 5, 3));
+        assert_eq!(num(&committed, sheet, 10, 2), 10.0);
+    }
+}
+
+#[test]
+fn prepared_span_demotion_rejects_stale_authority_before_graph_mutation() {
+    let mut engine = build_workbook(CycleDetection::Static);
+    let refs = engine.graph.formula_authority().active_span_refs();
+    let prepared = engine.prepare_formula_span_demotion(&refs).unwrap();
+    engine
+        .graph
+        .formula_authority_mut()
+        .mark_all_active_spans_dirty();
+    let before = engine.baseline_stats();
+    let live_refs = engine.graph.formula_authority().active_span_refs();
+
+    assert!(
+        engine
+            .commit_prepared_formula_span_demotion(prepared)
+            .is_err()
+    );
+    let after = engine.baseline_stats();
+    assert_eq!(
+        engine.graph.formula_authority().active_span_refs(),
+        live_refs
+    );
+    assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
+    assert_eq!(
+        after.graph_formula_vertex_count,
+        before.graph_formula_vertex_count
+    );
+    assert_eq!(after.graph_edge_count, before.graph_edge_count);
+    assert_eq!(after.dirty_vertex_count, before.dirty_vertex_count);
+}
+
+#[test]
+fn exact_ref_preparation_rejects_invalid_generation_without_mutation() {
+    let mut engine = build_workbook(CycleDetection::Static);
+    let mut refs = engine.graph.formula_authority().active_span_refs();
+    refs[0].generation = refs[0].generation.wrapping_add(1);
+    let before = engine.baseline_stats();
+    let live_refs = engine.graph.formula_authority().active_span_refs();
+
+    assert!(engine.prepare_formula_span_demotion(&refs).is_err());
+    let after = engine.baseline_stats();
+    assert_eq!(
+        engine.graph.formula_authority().active_span_refs(),
+        live_refs
+    );
+    assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
+    assert_eq!(
+        after.graph_formula_vertex_count,
+        before.graph_formula_vertex_count
+    );
+    assert_eq!(after.graph_edge_count, before.graph_edge_count);
+    assert_eq!(after.dirty_vertex_count, before.dirty_vertex_count);
+}
+
+#[test]
+fn span_demotion_preparation_checks_existing_load_limits_without_mutation() {
+    let mut engine = build_workbook(CycleDetection::Static);
+    let refs = engine.graph.formula_authority().active_span_refs();
+    let before = engine.baseline_stats();
+    let mut limits = engine.workbook_load_limits().clone();
+    limits.max_sheet_rows = 100;
+    engine.set_workbook_load_limits(limits);
+
+    assert!(engine.prepare_formula_span_demotion(&refs).is_err());
+    let after = engine.baseline_stats();
+    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
+    assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
+    assert_eq!(
+        after.graph_formula_vertex_count,
+        before.graph_formula_vertex_count
+    );
+    assert_eq!(after.graph_edge_count, before.graph_edge_count);
+    assert_eq!(after.dirty_vertex_count, before.dirty_vertex_count);
+}

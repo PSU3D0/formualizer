@@ -2,6 +2,9 @@ use crate::SheetId;
 use crate::arrow_store::{OverlayFragment, OverlayValue, SheetStore};
 use crate::engine::arena::AstNodeId;
 use crate::engine::eval_delta::{DeltaCollector, DeltaMode, EvalDelta};
+use crate::engine::graph::prepared_legacy_graph::{
+    PreparedLegacyGraphError, PreparedLegacyGraphPlan,
+};
 use crate::engine::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
 use crate::engine::live_edges::{LiveEdgeCollector, RecordingContext};
 use crate::engine::live_graph::analyze_live_graph;
@@ -251,6 +254,65 @@ type FormulaPlaneMixedScheduleBuild = (
     u64,
     Vec<VertexId>,
 );
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FormulaSpanDemotionFault {
+    #[default]
+    None,
+    AstPreparation,
+    LegacyGraphPreparation,
+    FinalLegacyGraphValidation,
+    FinalAuthorityValidation,
+    AllocationReservation,
+    BeforeFirstMutation,
+}
+
+#[derive(Debug)]
+pub(crate) enum FormulaSpanDemotionError {
+    StaleAuthority,
+    InvalidSpan,
+    CountOverflow,
+    LoadLimit(&'static str),
+    AstPreparation(ExcelError),
+    LegacyGraph(PreparedLegacyGraphError),
+    Injected(FormulaSpanDemotionFault),
+}
+
+impl std::fmt::Display for FormulaSpanDemotionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::StaleAuthority => write!(f, "prepared FormulaPlane demotion is stale"),
+            Self::InvalidSpan => write!(f, "FormulaPlane demotion referenced an invalid span"),
+            Self::CountOverflow => write!(f, "FormulaPlane demotion count overflow"),
+            Self::LoadLimit(reason) => write!(f, "FormulaPlane demotion load limit: {reason}"),
+            Self::AstPreparation(error) => {
+                write!(f, "FormulaPlane demotion analysis failed: {error}")
+            }
+            Self::LegacyGraph(error) => {
+                write!(f, "FormulaPlane demotion graph plan failed: {error}")
+            }
+            Self::Injected(fault) => write!(f, "injected FormulaPlane demotion fault: {fault:?}"),
+        }
+    }
+}
+
+impl std::error::Error for FormulaSpanDemotionError {}
+
+pub(crate) struct PreparedFormulaSpanDemotion {
+    span_refs: Vec<FormulaSpanRef>,
+    expected_plane_epoch: u64,
+    expected_indexes_epoch: u64,
+    expected_indexed_plane_epoch: u64,
+    placement_count: usize,
+    legacy_graph: PreparedLegacyGraphPlan,
+    fault: FormulaSpanDemotionFault,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FormulaSpanDemotionReport {
+    pub(crate) spans_demoted: usize,
+    pub(crate) placements_materialized: usize,
+}
 
 type PlannedFormulaMaterialize = BTreeMap<String, Vec<(u32, u32, AstNodeId, DependencyPlanRow)>>;
 type CompressedReplayBatch = (
@@ -728,6 +790,8 @@ pub struct Engine<R> {
     #[cfg(test)]
     fragmented_commit_fault_for_test:
         Option<crate::engine::fragmented_transaction::FragmentedCommitFault>,
+    #[cfg(test)]
+    formula_span_demotion_fault_for_test: Option<FormulaSpanDemotionFault>,
     #[cfg(test)]
     before_legacy_fallback_final_provider_sample_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     #[cfg(test)]
@@ -1738,6 +1802,8 @@ where
             #[cfg(test)]
             fragmented_commit_fault_for_test: None,
             #[cfg(test)]
+            formula_span_demotion_fault_for_test: None,
+            #[cfg(test)]
             before_legacy_fallback_final_provider_sample_hook: None,
             #[cfg(test)]
             after_eager_proposal_commit_hook: None,
@@ -1829,6 +1895,8 @@ where
             force_source_family_fallback: false,
             #[cfg(test)]
             fragmented_commit_fault_for_test: None,
+            #[cfg(test)]
+            formula_span_demotion_fault_for_test: None,
             #[cfg(test)]
             before_legacy_fallback_final_provider_sample_hook: None,
             #[cfg(test)]
@@ -8731,6 +8799,339 @@ where
         Ok(())
     }
 
+    /// Prepare an exact-ref, additions-only refinement of FormulaPlane spans
+    /// into legacy graph formulas. All fallible relocation, dependency analysis,
+    /// identifier reservation, and conflict checks happen before commit.
+    pub(crate) fn prepare_formula_span_demotion(
+        &mut self,
+        span_refs: &[FormulaSpanRef],
+    ) -> Result<PreparedFormulaSpanDemotion, FormulaSpanDemotionError> {
+        #[cfg(test)]
+        let fault = self
+            .formula_span_demotion_fault_for_test
+            .take()
+            .unwrap_or_default();
+        #[cfg(not(test))]
+        let fault = FormulaSpanDemotionFault::None;
+
+        if fault == FormulaSpanDemotionFault::AstPreparation {
+            return Err(FormulaSpanDemotionError::Injected(fault));
+        }
+
+        fn substitute_literal_slots(ast: &ASTNode, binding: &[LiteralValue]) -> ASTNode {
+            fn visit(
+                ast: &ASTNode,
+                binding: &[LiteralValue],
+                next: &mut usize,
+                in_array: bool,
+            ) -> ASTNode {
+                let node_type = match &ast.node_type {
+                    ASTNodeType::Literal(_) if !in_array => {
+                        let value = binding.get(*next).cloned().unwrap_or(LiteralValue::Empty);
+                        *next = next.saturating_add(1);
+                        ASTNodeType::Literal(value)
+                    }
+                    ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
+                    ASTNodeType::Reference {
+                        original,
+                        reference,
+                    } => ASTNodeType::Reference {
+                        original: original.clone(),
+                        reference: reference.clone(),
+                    },
+                    ASTNodeType::UnaryOp { op, expr } => ASTNodeType::UnaryOp {
+                        op: op.clone(),
+                        expr: Box::new(visit(expr, binding, next, in_array)),
+                    },
+                    ASTNodeType::BinaryOp { op, left, right } => ASTNodeType::BinaryOp {
+                        op: op.clone(),
+                        left: Box::new(visit(left, binding, next, in_array)),
+                        right: Box::new(visit(right, binding, next, in_array)),
+                    },
+                    ASTNodeType::Function { name, args } => ASTNodeType::Function {
+                        name: name.clone(),
+                        args: args
+                            .iter()
+                            .map(|arg| visit(arg, binding, next, in_array))
+                            .collect(),
+                    },
+                    ASTNodeType::Call { callee, args } => ASTNodeType::Call {
+                        callee: Box::new(visit(callee, binding, next, in_array)),
+                        args: args
+                            .iter()
+                            .map(|arg| visit(arg, binding, next, in_array))
+                            .collect(),
+                    },
+                    ASTNodeType::Array(rows) => ASTNodeType::Array(
+                        rows.iter()
+                            .map(|row| {
+                                row.iter()
+                                    .map(|cell| visit(cell, binding, next, true))
+                                    .collect()
+                            })
+                            .collect(),
+                    ),
+                };
+                ASTNode::new(node_type, ast.source_token.clone())
+            }
+            let mut next = 0;
+            visit(ast, binding, &mut next, false)
+        }
+
+        struct SpanMaterialization {
+            span_ref: FormulaSpanRef,
+            sheet_id: SheetId,
+            ast: ASTNode,
+            origin_row: u32,
+            origin_col: u32,
+            binding_set_id: Option<crate::formula_plane::runtime::SpanBindingSetId>,
+            placements: Vec<(u32, u32)>,
+        }
+
+        let authority = self.graph.formula_authority();
+        let expected_plane_epoch = authority.plane.epoch().0;
+        let expected_indexes_epoch = authority.indexes_epoch();
+        let expected_indexed_plane_epoch = authority.indexed_plane_epoch();
+        let mut unique = Vec::new();
+        let mut plans = Vec::new();
+        let mut placement_count = 0usize;
+        let mut placements_by_sheet: BTreeMap<SheetId, u64> = BTreeMap::new();
+        for &span_ref in span_refs {
+            if unique.contains(&span_ref) {
+                continue;
+            }
+            unique.push(span_ref);
+            let span = authority
+                .plane
+                .spans
+                .get(span_ref)
+                .ok_or(FormulaSpanDemotionError::InvalidSpan)?;
+            let relocation = span.ast_relocation;
+            let ast = self
+                .graph
+                .data_store()
+                .retrieve_ast(relocation.ast_id, self.graph.sheet_reg())
+                .ok_or(FormulaSpanDemotionError::InvalidSpan)?;
+            let count = usize::try_from(span.domain.cell_count())
+                .map_err(|_| FormulaSpanDemotionError::CountOverflow)?;
+            placement_count = placement_count
+                .checked_add(count)
+                .ok_or(FormulaSpanDemotionError::CountOverflow)?;
+            let sheet_count = placements_by_sheet.entry(span.sheet_id).or_default();
+            *sheet_count = sheet_count
+                .checked_add(span.domain.cell_count())
+                .ok_or(FormulaSpanDemotionError::CountOverflow)?;
+            if *sheet_count > self.workbook_load_limits.max_sheet_logical_cells {
+                return Err(FormulaSpanDemotionError::LoadLimit(
+                    "max_sheet_logical_cells",
+                ));
+            }
+            let domain_in_bounds = match &span.domain {
+                PlacementDomain::RowRun { row_end, col, .. } => {
+                    *row_end < self.workbook_load_limits.max_sheet_rows
+                        && *col < self.workbook_load_limits.max_sheet_cols
+                }
+                PlacementDomain::ColRun { row, col_end, .. } => {
+                    *row < self.workbook_load_limits.max_sheet_rows
+                        && *col_end < self.workbook_load_limits.max_sheet_cols
+                }
+                PlacementDomain::Rect {
+                    row_end, col_end, ..
+                } => {
+                    *row_end < self.workbook_load_limits.max_sheet_rows
+                        && *col_end < self.workbook_load_limits.max_sheet_cols
+                }
+            };
+            if !domain_in_bounds {
+                return Err(FormulaSpanDemotionError::LoadLimit("sheet_axis_bounds"));
+            }
+            let mut placements = Vec::with_capacity(count);
+            placements.extend(
+                span.domain
+                    .iter()
+                    .map(|coord| (coord.row.saturating_add(1), coord.col.saturating_add(1))),
+            );
+            plans.push(SpanMaterialization {
+                span_ref,
+                sheet_id: span.sheet_id,
+                ast,
+                origin_row: relocation.anchor_row,
+                origin_col: relocation.anchor_col,
+                binding_set_id: span.binding_set_id,
+                placements,
+            });
+        }
+        let mut relocated = Vec::with_capacity(placement_count);
+        for plan in &plans {
+            for &(row, col) in &plan.placements {
+                let bound_ast = if let Some(binding_set_id) = plan.binding_set_id {
+                    let authority = self.graph.formula_authority();
+                    let binding_set = authority
+                        .plane
+                        .binding_sets
+                        .get(binding_set_id)
+                        .ok_or(FormulaSpanDemotionError::InvalidSpan)?;
+                    if binding_set.is_single_literal_binding() {
+                        plan.ast.clone()
+                    } else {
+                        let placement = PlacementCoord::new(
+                            plan.sheet_id,
+                            row.saturating_sub(1),
+                            col.saturating_sub(1),
+                        );
+                        let span = authority
+                            .plane
+                            .spans
+                            .get(plan.span_ref)
+                            .ok_or(FormulaSpanDemotionError::InvalidSpan)?;
+                        let binding = binding_set
+                            .literal_bindings_for_placement(&span.domain, placement)
+                            .ok_or(FormulaSpanDemotionError::InvalidSpan)?;
+                        substitute_literal_slots(&plan.ast, binding.as_ref())
+                    }
+                } else {
+                    plan.ast.clone()
+                };
+                let row_delta = i64::from(row) - i64::from(plan.origin_row);
+                let col_delta = i64::from(col) - i64::from(plan.origin_col);
+                let ast = relocate_ast_for_template_placement(&bound_ast, row_delta, col_delta)
+                    .map_err(FormulaSpanDemotionError::AstPreparation)?;
+                relocated.push((plan.sheet_id, row, col, ast));
+            }
+        }
+
+        let mut analyzed = Vec::with_capacity(relocated.len());
+        {
+            let mut pipeline = self.ingest_pipeline();
+            for (sheet_id, row, col, ast) in relocated {
+                let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+                let ingested = pipeline
+                    .ingest_formula(FormulaAstInput::Tree(ast), placement, None)
+                    .map_err(FormulaSpanDemotionError::AstPreparation)?;
+                analyzed.push((sheet_id, row, col, ingested.ast_id, ingested.dep_plan));
+            }
+        }
+
+        if fault == FormulaSpanDemotionFault::LegacyGraphPreparation {
+            return Err(FormulaSpanDemotionError::Injected(fault));
+        }
+        let legacy_graph = self
+            .graph
+            .prepare_legacy_graph_plan_multi_sheet(analyzed)
+            .map_err(FormulaSpanDemotionError::LegacyGraph)?;
+        if let Some(max_vertices) = self.config.max_vertices {
+            let projected = self
+                .graph
+                .baseline_stats()
+                .graph_vertex_count
+                .checked_add(legacy_graph.new_vertex_count())
+                .ok_or(FormulaSpanDemotionError::CountOverflow)?;
+            if projected > max_vertices {
+                return Err(FormulaSpanDemotionError::LoadLimit("max_vertices"));
+            }
+        }
+
+        Ok(PreparedFormulaSpanDemotion {
+            span_refs: unique,
+            expected_plane_epoch,
+            expected_indexes_epoch,
+            expected_indexed_plane_epoch,
+            placement_count,
+            legacy_graph,
+            fault,
+        })
+    }
+
+    pub(crate) fn validate_prepared_formula_span_demotion(
+        &self,
+        prepared: &PreparedFormulaSpanDemotion,
+    ) -> Result<(), FormulaSpanDemotionError> {
+        let authority = self.graph.formula_authority();
+        if authority.plane.epoch().0 != prepared.expected_plane_epoch
+            || authority.indexes_epoch() != prepared.expected_indexes_epoch
+            || authority.indexed_plane_epoch() != prepared.expected_indexed_plane_epoch
+            || prepared
+                .span_refs
+                .iter()
+                .any(|span_ref| authority.plane.spans.get(*span_ref).is_none())
+        {
+            return Err(FormulaSpanDemotionError::StaleAuthority);
+        }
+        self.graph
+            .validate_prepared_legacy_graph_plan(&prepared.legacy_graph)
+            .map_err(FormulaSpanDemotionError::LegacyGraph)
+    }
+
+    /// Validate every recoverable assumption and fault before the first
+    /// mutation, then compose the existing prevalidated graph append with exact
+    /// authority removal. Allocator OOM/panic remains process-fatal, matching
+    /// the E2/E3 prepared-transaction contract; there is no recoverable branch
+    /// after graph application begins.
+    pub(crate) fn commit_prepared_formula_span_demotion(
+        &mut self,
+        prepared: PreparedFormulaSpanDemotion,
+    ) -> Result<FormulaSpanDemotionReport, FormulaSpanDemotionError> {
+        if prepared.fault == FormulaSpanDemotionFault::FinalLegacyGraphValidation {
+            return Err(FormulaSpanDemotionError::Injected(prepared.fault));
+        }
+        self.graph
+            .validate_prepared_legacy_graph_plan(&prepared.legacy_graph)
+            .map_err(FormulaSpanDemotionError::LegacyGraph)?;
+        if prepared.fault == FormulaSpanDemotionFault::FinalAuthorityValidation {
+            return Err(FormulaSpanDemotionError::Injected(prepared.fault));
+        }
+        {
+            let authority = self.graph.formula_authority();
+            if authority.plane.epoch().0 != prepared.expected_plane_epoch
+                || authority.indexes_epoch() != prepared.expected_indexes_epoch
+                || authority.indexed_plane_epoch() != prepared.expected_indexed_plane_epoch
+                || prepared
+                    .span_refs
+                    .iter()
+                    .any(|span_ref| authority.plane.spans.get(*span_ref).is_none())
+            {
+                return Err(FormulaSpanDemotionError::StaleAuthority);
+            }
+        }
+        if matches!(
+            prepared.fault,
+            FormulaSpanDemotionFault::AllocationReservation
+                | FormulaSpanDemotionFault::BeforeFirstMutation
+        ) {
+            return Err(FormulaSpanDemotionError::Injected(prepared.fault));
+        }
+
+        let PreparedFormulaSpanDemotion {
+            span_refs,
+            placement_count,
+            legacy_graph,
+            ..
+        } = prepared;
+        let _ = self
+            .graph
+            .apply_prevalidated_legacy_graph_plan(legacy_graph);
+        let authority = self.graph.formula_authority_mut();
+        for span_ref in &span_refs {
+            authority.plane.remove_overlays_for_source_span(*span_ref);
+            let _ = authority.plane.remove_span(*span_ref);
+        }
+        let _ = authority.rebuild_indexes();
+        self.formula_plane_indexes_epoch_seen = 0;
+        self.mark_topology_edited();
+        Ok(FormulaSpanDemotionReport {
+            spans_demoted: span_refs.len(),
+            placements_materialized: placement_count,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_formula_span_demotion_fault_for_test(
+        &mut self,
+        fault: FormulaSpanDemotionFault,
+    ) {
+        self.formula_span_demotion_fault_for_test = Some(fault);
+    }
+
     /// Collect the [`FormulaSpanRef`]s for span producers the mixed scheduler
     /// reported as cycle members (gotcha G8, refs #112). These spans must be
     /// demoted to legacy so the cycle members are resolved on the legacy SCC
@@ -8758,38 +9159,32 @@ where
     /// Demote the given cyclic spans to legacy graph vertices so their member
     /// cells participate in the legacy Tarjan SCC pass (gotcha G8, refs #112).
     ///
-    /// Reuses the non-structural demotion seam, which materializes each span's
-    /// cells back onto the legacy graph and re-promotes any acyclic remainder
-    /// that still forms a promotable run. We pass a `Region` that covers exactly
-    /// the demote-target span domains so disjoint spans are left untouched.
+    /// Uses one exact-ref prepared transaction for every cyclic span reported
+    /// by this schedule. All recoverable validation and injected faults precede
+    /// the first graph/authority mutation, so a multi-span or multi-sheet cycle
+    /// cannot publish only an earlier subset.
     fn demote_cyclic_spans(&mut self, span_refs: &[FormulaSpanRef]) -> Result<(), ExcelError> {
-        let mut regions: Vec<Region> = Vec::new();
-        {
-            let authority = self.graph.formula_authority();
-            for span_ref in span_refs {
-                if let Some(span) = authority.plane.spans.get(*span_ref) {
-                    regions.push(Region::from_domain(&span.domain));
-                }
-            }
-        }
-        for region in regions {
-            self.demote_spans_preserving_computed_overlays(region.sheet_id(), region)
-                .map_err(|err| {
-                    ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
-                        "FormulaPlane cycle-member span demotion failed: {err:?}"
-                    ))
-                })?;
-        }
+        let prepared = self
+            .prepare_formula_span_demotion(span_refs)
+            .map_err(|error| {
+                ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                    "FormulaPlane cycle-member span demotion preparation failed: {error}"
+                ))
+            })?;
+        let report = self
+            .commit_prepared_formula_span_demotion(prepared)
+            .map_err(|error| {
+                ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                    "FormulaPlane cycle-member span demotion commit failed: {error}"
+                ))
+            })?;
         self.formula_plane_cycle_member_span_demotions = self
             .formula_plane_cycle_member_span_demotions
-            .saturating_add(span_refs.len() as u64);
-        // Mirror the demotion into the cumulative ingest report's fallback
-        // histogram so cycle exclusions are visible like every other placement
-        // fallback reason.
+            .saturating_add(report.spans_demoted as u64);
         Self::record_shadow_fallback_reason(
             &mut self.formula_ingest_report_total,
             PlacementFallbackReason::CycleMember,
-            span_refs.len() as u64,
+            report.spans_demoted as u64,
         );
         Ok(())
     }

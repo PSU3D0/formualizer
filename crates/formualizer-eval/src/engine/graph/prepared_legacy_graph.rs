@@ -113,6 +113,7 @@ impl SymbolMetadata {
 
 #[derive(Debug, Clone, PartialEq)]
 struct SymbolBinding {
+    sheet_id: SheetId,
     kind: SymbolKind,
     name: String,
     metadata: SymbolMetadata,
@@ -120,6 +121,7 @@ struct SymbolBinding {
 
 #[derive(Debug)]
 struct PreparedFormula {
+    current_sheet_id: SheetId,
     target: VertexId,
     target_packed: PackedSheetCell,
     ast_id: AstNodeId,
@@ -137,7 +139,6 @@ struct PreparedFormula {
 /// only appends the reserved vertices and installs this plan's formulas.
 #[derive(Debug)]
 pub(crate) struct PreparedLegacyGraphPlan {
-    sheet_id: SheetId,
     sheet_names: Vec<(SheetId, String)>,
     expected_vertex_len: usize,
     coordinates: BTreeMap<PackedSheetCell, VertexId>,
@@ -164,7 +165,7 @@ impl PreparedLegacyGraphPlan {
             let range_contains_target = formula.plan.range_deps.iter().any(|range| {
                 let sheet_id = match range.sheet {
                     SharedSheetLocator::Id(id) => id,
-                    _ => self.sheet_id,
+                    _ => formula.current_sheet_id,
                 };
                 sheet_id == target.sheet_id()
                     && range
@@ -238,6 +239,7 @@ impl DependencyGraph {
                 .unwrap_or(SymbolMetadata::Missing),
         };
         SymbolBinding {
+            sheet_id: sheet,
             kind,
             name: name.to_string(),
             metadata,
@@ -249,28 +251,44 @@ impl DependencyGraph {
         sheet_id: SheetId,
         planned: Vec<(u32, u32, AstNodeId, DependencyPlanRow)>,
     ) -> Result<PreparedLegacyGraphPlan, PreparedLegacyGraphError> {
+        self.prepare_legacy_graph_plan_multi_sheet(
+            planned
+                .into_iter()
+                .map(|(row, col, ast_id, plan)| (sheet_id, row, col, ast_id, plan))
+                .collect(),
+        )
+    }
+
+    /// Prepare one additions-only graph plan spanning any number of sheets.
+    /// All targets and cross-sheet placeholders share one vertex-id reservation.
+    pub(crate) fn prepare_legacy_graph_plan_multi_sheet(
+        &self,
+        planned: Vec<(SheetId, u32, u32, AstNodeId, DependencyPlanRow)>,
+    ) -> Result<PreparedLegacyGraphPlan, PreparedLegacyGraphError> {
         if self.pk_order.is_some() {
             return Err(PreparedLegacyGraphError::DynamicTopologyUnsupported);
         }
         let mut sheet_names = BTreeMap::new();
-        sheet_names.insert(sheet_id, self.checked_sheet_name(sheet_id)?);
         let mut packed_inputs = Vec::new();
         let mut target_inputs = Vec::with_capacity(planned.len());
         let mut seen_targets = std::collections::BTreeSet::new();
-        for (row, col, ast_id, plan) in &planned {
+        for (sheet_id, row, col, ast_id, plan) in &planned {
+            sheet_names
+                .entry(*sheet_id)
+                .or_insert(self.checked_sheet_name(*sheet_id)?);
             if self.data_store.get_node(*ast_id).is_none() {
                 return Err(PreparedLegacyGraphError::InvalidAst(*ast_id));
             }
-            let target = PackedSheetCell::try_from_excel_1based(sheet_id, *row, *col).ok_or(
+            let target = PackedSheetCell::try_from_excel_1based(*sheet_id, *row, *col).ok_or(
                 PreparedLegacyGraphError::InvalidCoordinate {
-                    sheet: sheet_id,
+                    sheet: *sheet_id,
                     row: *row,
                     col: *col,
                 },
             )?;
             if !seen_targets.insert(target) {
                 return Err(PreparedLegacyGraphError::DuplicateTarget {
-                    sheet: sheet_id,
+                    sheet: *sheet_id,
                     row: *row,
                     col: *col,
                 });
@@ -298,7 +316,7 @@ impl DependencyGraph {
                 }
                 let range_sheet = match range.sheet {
                     SharedSheetLocator::Id(id) => id,
-                    _ => sheet_id,
+                    _ => *sheet_id,
                 };
                 for bound in [range.start_row, range.end_row].into_iter().flatten() {
                     if bound.index > PackedSheetCell::MAX_ROW0 {
@@ -392,7 +410,9 @@ impl DependencyGraph {
 
         let mut symbols = Vec::new();
         let mut formulas = Vec::with_capacity(planned.len());
-        for ((_, _, ast_id, plan), target_packed) in planned.into_iter().zip(target_inputs) {
+        for ((current_sheet_id, _, _, ast_id, plan), target_packed) in
+            planned.into_iter().zip(target_inputs)
+        {
             let target = coordinates
                 .get(&target_packed)
                 .copied()
@@ -416,13 +436,17 @@ impl DependencyGraph {
                 .iter()
                 .chain(plan.named_refs.iter())
             {
-                let binding = self.prepared_symbol_binding(SymbolKind::Name, name, sheet_id);
+                let binding =
+                    self.prepared_symbol_binding(SymbolKind::Name, name, current_sheet_id);
                 if let Some(id) = binding.metadata.vertex() {
                     push_unique(&mut named_dependencies, id);
                     push_unique(&mut other_dependencies, id);
                 } else {
-                    let scalar =
-                        self.prepared_symbol_binding(SymbolKind::SourceScalar, name, sheet_id);
+                    let scalar = self.prepared_symbol_binding(
+                        SymbolKind::SourceScalar,
+                        name,
+                        current_sheet_id,
+                    );
                     if let Some(id) = scalar.metadata.vertex() {
                         push_unique(&mut other_dependencies, id);
                     } else {
@@ -433,22 +457,26 @@ impl DependencyGraph {
                 symbols.push(binding);
             }
             for name in &plan.source_refs {
-                let scalar = self.prepared_symbol_binding(SymbolKind::SourceScalar, name, sheet_id);
-                let table = self.prepared_symbol_binding(SymbolKind::SourceTable, name, sheet_id);
+                let scalar =
+                    self.prepared_symbol_binding(SymbolKind::SourceScalar, name, current_sheet_id);
+                let table =
+                    self.prepared_symbol_binding(SymbolKind::SourceTable, name, current_sheet_id);
                 if let Some(id) = scalar.metadata.vertex().or_else(|| table.metadata.vertex()) {
                     push_unique(&mut other_dependencies, id);
                 }
                 symbols.extend([scalar, table]);
             }
             for name in &plan.table_refs {
-                let table = self.prepared_symbol_binding(SymbolKind::Table, name, sheet_id);
-                let source = self.prepared_symbol_binding(SymbolKind::SourceTable, name, sheet_id);
+                let table = self.prepared_symbol_binding(SymbolKind::Table, name, current_sheet_id);
+                let source =
+                    self.prepared_symbol_binding(SymbolKind::SourceTable, name, current_sheet_id);
                 if let Some(id) = table.metadata.vertex().or_else(|| source.metadata.vertex()) {
                     push_unique(&mut other_dependencies, id);
                 }
                 symbols.extend([table, source]);
             }
             formulas.push(PreparedFormula {
+                current_sheet_id,
                 target,
                 target_packed,
                 ast_id,
@@ -460,7 +488,6 @@ impl DependencyGraph {
             });
         }
         Ok(PreparedLegacyGraphPlan {
-            sheet_id,
             sheet_names: sheet_names.into_iter().collect(),
             expected_vertex_len: self.store.len(),
             coordinates,
@@ -532,7 +559,7 @@ impl DependencyGraph {
             return Err(PreparedLegacyGraphError::Stale);
         }
         for binding in &plan.symbols {
-            if self.prepared_symbol_binding(binding.kind.clone(), &binding.name, plan.sheet_id)
+            if self.prepared_symbol_binding(binding.kind.clone(), &binding.name, binding.sheet_id)
                 != *binding
             {
                 return Err(PreparedLegacyGraphError::Stale);
@@ -605,7 +632,7 @@ impl DependencyGraph {
                 self.attach_vertex_to_names(formula.target, &formula.named_dependencies);
             }
             for name in &formula.unresolved_names {
-                self.record_pending_name_reference(plan.sheet_id, name, formula.target);
+                self.record_pending_name_reference(formula.current_sheet_id, name, formula.target);
             }
             let mut deps = formula.direct_dependencies.clone();
             for id in &formula.other_dependencies {
@@ -614,7 +641,11 @@ impl DependencyGraph {
             if !deps.is_empty() {
                 self.add_dependent_edges_nobatch(formula.target, &deps);
             }
-            self.add_range_dependent_edges(formula.target, &formula.plan.range_deps, plan.sheet_id);
+            self.add_range_dependent_edges(
+                formula.target,
+                &formula.plan.range_deps,
+                formula.current_sheet_id,
+            );
         }
         self.edges.end_batch_deferred();
         let _ = self.mark_dirty_many(&targets);
@@ -657,6 +688,35 @@ mod tests {
             ..DependencyPlanRow::default()
         };
         (row, col, ast_id, plan)
+    }
+
+    #[test]
+    fn multi_sheet_plan_reserves_targets_and_cross_sheet_placeholders_once() {
+        let (mut graph, sheet1) = graph();
+        let sheet2 = graph.sheet_id_mut("Sheet2");
+        let ast1 = graph.store_ast(&parse("=Sheet2!B1").unwrap());
+        let ast2 = graph.store_ast(&parse("=Sheet1!B1").unwrap());
+        let plan1 = DependencyPlanRow {
+            direct_cell_deps: vec![CellRef::new(sheet2, Coord::from_excel(1, 2, true, true))],
+            ..DependencyPlanRow::default()
+        };
+        let plan2 = DependencyPlanRow {
+            direct_cell_deps: vec![CellRef::new(sheet1, Coord::from_excel(1, 2, true, true))],
+            ..DependencyPlanRow::default()
+        };
+        let plan = graph
+            .prepare_legacy_graph_plan_multi_sheet(vec![
+                (sheet1, 1, 1, ast1, plan1),
+                (sheet2, 1, 1, ast2, plan2),
+            ])
+            .unwrap();
+        assert_eq!(plan.new_vertex_count(), 4);
+        assert_eq!(plan.planned_edge_count(), Some(2));
+        assert_eq!(graph.apply_prepared_legacy_graph_plan(plan).unwrap(), 2);
+        let stats = graph.baseline_stats();
+        assert_eq!(stats.graph_vertex_count, 4);
+        assert_eq!(stats.graph_formula_vertex_count, 2);
+        assert_eq!(stats.graph_edge_count, 2);
     }
 
     #[test]
