@@ -17,6 +17,14 @@ type SheetCache = HashMap<String, SheetCellMap>;
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
+#[cfg(not(target_os = "emscripten"))]
+pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "calamine";
+
+// Pyodide currently excludes Calamine because its Rust sysroot is older than
+// Calamine 0.36's MSRV. Keep the existing Umya byte path as its default.
+#[cfg(target_os = "emscripten")]
+pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "umya";
+
 fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
     if row == 0 || col == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -327,8 +335,8 @@ impl PyWorkbook {
     ///
     /// Args:
     ///     data: XLSX payload as `bytes`.
-    ///     backend: Backend name. Defaults to `umya` because `calamine` byte-open
-    ///         is not currently supported in this repository.
+    ///     backend: Backend name. Defaults to `calamine` in native Python builds
+    ///         and `umya` in Pyodide builds where Calamine is unavailable.
     ///     mode/config: Optional workbook configuration.
     #[classmethod]
     #[pyo3(signature = (data, backend=None, *, mode=None, config=None, span_evaluation=None))]
@@ -341,7 +349,11 @@ impl PyWorkbook {
         span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
         let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
-        Self::from_bytes_impl(data.as_bytes().to_vec(), backend.unwrap_or("umya"), cfg)
+        Self::from_bytes_impl(
+            data.as_bytes().to_vec(),
+            backend.unwrap_or(DEFAULT_XLSX_BYTE_BACKEND),
+            cfg,
+        )
     }
 
     /// Serialize the current workbook contents into XLSX bytes.
@@ -1295,9 +1307,36 @@ impl PyWorkbook {
                 })?;
                 Ok(Self::from_inner_workbook(wb))
             }
-            "calamine" => Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-                "backend='calamine' does not currently support XLSX byte open; use backend='umya'",
-            )),
+            "calamine" => {
+                #[cfg(target_os = "emscripten")]
+                {
+                    let _ = (data, cfg);
+                    Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
+                        "backend='calamine' is unavailable in the Pyodide build; use backend='umya' with in-memory XLSX bytes",
+                    ))
+                }
+                #[cfg(not(target_os = "emscripten"))]
+                {
+                    use formualizer::workbook::backends::CalamineAdapter;
+                    use formualizer::workbook::traits::SpreadsheetReader;
+
+                    let adapter = <CalamineAdapter as SpreadsheetReader>::open_bytes(data)
+                        .map_err(|e| {
+                            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                                "open failed: {e}"
+                            ))
+                        })?;
+                    let wb = formualizer::workbook::Workbook::from_reader(
+                        adapter,
+                        formualizer::workbook::LoadStrategy::EagerAll,
+                        cfg,
+                    )
+                    .map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
+                    })?;
+                    Ok(Self::from_inner_workbook(wb))
+                }
+            }
             other => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported backend: {other}"
             ))),
@@ -1374,7 +1413,7 @@ fn resolve_workbook_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{PyWorkbookConfig, resolve_workbook_config};
+    use super::{DEFAULT_XLSX_BYTE_BACKEND, PyWorkbookConfig, resolve_workbook_config};
     use crate::enums::PyWorkbookMode;
     use formualizer::eval::engine::{EvalConfig, FormulaPlaneMode};
 
@@ -1388,6 +1427,12 @@ mod tests {
         assert!(resolved.enable_changelog);
         assert!(resolved.eval.defer_graph_building);
         assert_eq!(resolved.eval.formula_plane_mode, FormulaPlaneMode::Off);
+    }
+
+    #[cfg(not(target_os = "emscripten"))]
+    #[test]
+    fn native_xlsx_byte_loads_default_to_calamine() {
+        assert_eq!(DEFAULT_XLSX_BYTE_BACKEND, "calamine");
     }
 
     #[test]

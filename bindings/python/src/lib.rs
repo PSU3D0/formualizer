@@ -138,8 +138,9 @@ fn load_workbook(
 
 /// Load an XLSX workbook from in-memory bytes.
 ///
-/// This is the byte-oriented counterpart to `load_workbook(...)` and defaults to
-/// the `umya` backend because `calamine` byte-open is not yet supported here.
+/// This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
+/// builds default to `calamine`; Pyodide defaults to `umya` because Calamine is
+/// not currently compiled into that target.
 #[gen_stub_pyfunction(module = "formualizer")]
 #[pyfunction]
 #[pyo3(signature = (data, strategy=None, backend=None, *, span_evaluation=None))]
@@ -154,7 +155,7 @@ fn load_workbook_bytes<'py>(
     workbook::PyWorkbook::from_bytes(
         &py.get_type::<workbook::PyWorkbook>(),
         data,
-        Some(backend.unwrap_or("umya")),
+        Some(backend.unwrap_or(workbook::DEFAULT_XLSX_BYTE_BACKEND)),
         None,
         None,
         span_evaluation,

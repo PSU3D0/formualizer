@@ -68,13 +68,13 @@ print(wb.evaluate_cell("Summary", 1, 2))
 import formualizer as fz
 
 payload = open("financial_model.xlsx", "rb").read()
-wb = fz.load_workbook_bytes(payload, backend="umya")
+wb = fz.load_workbook_bytes(payload)
 print(wb.evaluate_cell("Summary", 1, 2))
 
 out = wb.to_xlsx_bytes()
 ```
 
-`backend="umya"` is currently the byte-oriented XLSX path. Path-based loading still defaults to `calamine`.
+Native Python builds use `calamine` by default for both path-based and byte-oriented XLSX loading. Pyodide currently defaults to `umya`, which also remains available explicitly on native builds. XLSX byte export uses `umya` because Calamine is read-only.
 
 ### Recalculate XLSX cached values (writeback)
 
@@ -338,7 +338,7 @@ wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 
 **Pyodide-specific behavior:**
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
-- XLSX byte I/O (`Workbook.to_xlsx_bytes`, `Workbook.from_bytes`, `load_workbook_bytes`) uses the `umya` backend on all platforms.
+- Native XLSX byte loading (`Workbook.from_bytes`, `load_workbook_bytes`) defaults to `calamine`; Pyodide defaults to `umya`. XLSX byte export uses `umya` on all platforms.
 - Python UDFs registered via `Workbook.register_function` work identically to native; single-cell refs arrive as scalars (Excel-native semantics).
 
 ### Building a Pyodide wheel from source

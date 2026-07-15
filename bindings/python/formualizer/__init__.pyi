@@ -1126,8 +1126,8 @@ class Workbook:
         
         Args:
             data: XLSX payload as `bytes`.
-            backend: Backend name. Defaults to `umya` because `calamine` byte-open
-                is not currently supported in this repository.
+            backend: Backend name. Defaults to `calamine` in native Python builds
+                and `umya` in Pyodide builds where Calamine is unavailable.
             mode/config: Optional workbook configuration.
         """
     def to_xlsx_bytes(self, backend: typing.Optional[builtins.str] = None) -> bytes:
@@ -1430,8 +1430,9 @@ def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = N
     r"""
     Load an XLSX workbook from in-memory bytes.
     
-    This is the byte-oriented counterpart to `load_workbook(...)` and defaults to
-    the `umya` backend because `calamine` byte-open is not yet supported here.
+    This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
+    builds default to `calamine`; Pyodide defaults to `umya` because Calamine is
+    not currently compiled into that target.
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:
