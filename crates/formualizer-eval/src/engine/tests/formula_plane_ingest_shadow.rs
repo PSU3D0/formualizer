@@ -936,7 +936,7 @@ fn formula_plane_row_visibility_change_redirties_absolute_anchor_span() {
 }
 
 #[test]
-fn formula_plane_insert_rows_conservatively_redirties_sheet_spans() {
+fn formula_plane_insert_rows_dirties_only_shifted_span_interval() {
     let cfg =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
@@ -952,11 +952,32 @@ fn formula_plane_insert_rows_conservatively_redirties_sheet_spans() {
     engine.ingest_formula_batches(batches).unwrap();
     engine.evaluate_all().unwrap();
 
+    let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
+    let globals_before = engine
+        .baseline_stats()
+        .formula_plane_dirty_global_invalidations;
     engine.insert_rows("Sheet1", 10, 1).unwrap();
+    assert_eq!(
+        engine
+            .graph
+            .pending_formula_dirty_span_regions()
+            .map(|(_, region)| region)
+            .collect::<Vec<_>>(),
+        vec![crate::formula_plane::region_index::Region::rect(
+            sheet_id, 10, 100, 1, 1
+        )]
+    );
     let result = engine.evaluate_all().unwrap();
-    assert!(
-        result.computed_vertices >= 100,
-        "expected sheet structural notification to re-evaluate span, got {result:?}"
+    assert_eq!(result.computed_vertices, 91, "result={result:?}");
+    assert_eq!(
+        engine
+            .baseline_stats()
+            .formula_plane_dirty_global_invalidations,
+        globals_before
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 11, 2),
+        Some(LiteralValue::Number(6.0))
     );
 }
 

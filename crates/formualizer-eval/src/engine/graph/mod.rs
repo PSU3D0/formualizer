@@ -347,6 +347,14 @@ impl DependencyGraph {
         self.formula_dirty.record_region(region);
     }
 
+    pub(crate) fn mark_formula_span_region_dirty(
+        &mut self,
+        span_ref: crate::formula_plane::runtime::FormulaSpanRef,
+        region: crate::formula_plane::region_index::Region,
+    ) {
+        self.formula_dirty.record_span_region(span_ref, region);
+    }
+
     pub(crate) fn mark_formula_spans_dirty(
         &mut self,
         spans: impl IntoIterator<Item = crate::formula_plane::runtime::FormulaSpanRef>,
@@ -379,6 +387,17 @@ impl DependencyGraph {
         &self,
     ) -> impl Iterator<Item = crate::formula_plane::region_index::Region> + '_ {
         self.formula_dirty.pending_regions()
+    }
+
+    pub(crate) fn pending_formula_dirty_span_regions(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            crate::formula_plane::runtime::FormulaSpanRef,
+            crate::formula_plane::region_index::Region,
+        ),
+    > + '_ {
+        self.formula_dirty.pending_span_regions()
     }
 
     pub(crate) fn pending_formula_dirty_whole_spans(

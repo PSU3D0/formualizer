@@ -188,6 +188,33 @@ impl FormulaProducerResultIndex {
         }
     }
 
+    pub(crate) fn query_bounded(
+        &self,
+        read_region: Region,
+        max_candidates: usize,
+    ) -> BoundedRegionQueryResult<FormulaProducerResultEntry> {
+        match self.index.query_bounded(read_region, max_candidates) {
+            BoundedRegionQueryResult::Incomplete {
+                observed_candidates,
+            } => BoundedRegionQueryResult::Incomplete {
+                observed_candidates,
+            },
+            BoundedRegionQueryResult::Complete(result) => {
+                BoundedRegionQueryResult::Complete(RegionQueryResult {
+                    matches: result
+                        .matches
+                        .into_iter()
+                        .map(|matched| RegionMatch {
+                            value: self.entries[matched.value.0].clone(),
+                            indexed_region: matched.indexed_region,
+                        })
+                        .collect(),
+                    stats: result.stats,
+                })
+            }
+        }
+    }
+
     pub(crate) fn producer_result_region(&self, producer: FormulaProducerId) -> Option<Region> {
         self.by_producer.get(&producer).copied()
     }

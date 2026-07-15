@@ -828,13 +828,24 @@ fn formula_plane_duplicate_sheet_only_demotes_source_sheet_spans() {
 #[test]
 fn formula_plane_zero_count_structural_ops_are_noops() {
     let mut engine = build_single_formula_column_family(100);
+    engine.evaluate_all().unwrap();
+    let before = engine.baseline_stats();
+    let topology_before = engine.topology_epoch_for_test();
 
     engine.insert_rows("Sheet1", 3, 0).unwrap();
     engine.delete_rows("Sheet1", 3, 0).unwrap();
     engine.insert_columns("Sheet1", 2, 0).unwrap();
     engine.delete_columns("Sheet1", 2, 0).unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.graph.pending_formula_dirty_event_count(), 0);
+    assert_eq!(engine.topology_epoch_for_test(), topology_before);
     engine.evaluate_all().unwrap();
+    let after = engine.baseline_stats();
+    assert_eq!(
+        after.formula_plane_mixed_topology_cache_builds,
+        before.formula_plane_mixed_topology_cache_builds
+    );
+    assert!(engine.last_formula_plane_span_eval_report().is_none());
 
     assert_eq!(
         engine.get_cell_value("Sheet1", 50, 2),
@@ -876,7 +887,7 @@ fn formula_plane_origin_shift_with_stationary_value_ref_does_not_memo_broadcast_
 /// plane. Engine batch ingest groups families per column (so it only ever
 /// produces RowRun spans); this helper lets structural tests exercise ColRun
 /// and Rect domains through the real engine insert path.
-fn seed_absolute_read_span(
+pub(super) fn seed_absolute_read_span(
     engine: &mut Engine<TestWorkbook>,
     formula: &str,
     domain: crate::formula_plane::runtime::PlacementDomain,

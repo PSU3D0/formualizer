@@ -556,6 +556,7 @@ pub(crate) struct SheetRegionIndex<T: Clone> {
     col_intervals: BTreeMap<(SheetId, u32), IntervalTree<usize>>,
     row_intervals: BTreeMap<(SheetId, u32), IntervalTree<usize>>,
     rect_buckets: BTreeMap<(SheetId, u32, u32), Vec<usize>>,
+    rect_buckets_by_col: BTreeMap<(SheetId, u32, u32), Vec<usize>>,
     rows_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>,
     cols_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>,
     whole_rows: BTreeMap<(SheetId, u32), Vec<usize>>,
@@ -595,6 +596,7 @@ impl<T: Clone> SheetRegionIndex<T> {
             col_intervals: BTreeMap::new(),
             row_intervals: BTreeMap::new(),
             rect_buckets: BTreeMap::new(),
+            rect_buckets_by_col: BTreeMap::new(),
             rows_from: FxHashMap::default(),
             cols_from: FxHashMap::default(),
             whole_rows: BTreeMap::new(),
@@ -628,6 +630,7 @@ impl<T: Clone> SheetRegionIndex<T> {
         self.col_intervals.clear();
         self.row_intervals.clear();
         self.rect_buckets.clear();
+        self.rect_buckets_by_col.clear();
         self.rows_from.clear();
         self.cols_from.clear();
         self.whole_rows.clear();
@@ -734,6 +737,7 @@ impl<T: Clone> SheetRegionIndex<T> {
         bytes = bytes.checked_add(estimate_interval_map(&self.col_intervals)?)?;
         bytes = bytes.checked_add(estimate_interval_map(&self.row_intervals)?)?;
         bytes = bytes.checked_add(estimate_btree_vec_map(&self.rect_buckets)?)?;
+        bytes = bytes.checked_add(estimate_btree_vec_map(&self.rect_buckets_by_col)?)?;
         bytes = bytes.checked_add(estimate_nested_btree_vec_map(&self.rows_from)?)?;
         bytes = bytes.checked_add(estimate_nested_btree_vec_map(&self.cols_from)?)?;
         bytes = bytes.checked_add(estimate_btree_vec_map(&self.whole_rows)?)?;
@@ -942,6 +946,86 @@ impl<T: Clone> SheetRegionIndex<T> {
                     visitor,
                 )
             }
+            (AxisRange::Span(row_start, row_end), AxisRange::All) => {
+                for ids in self
+                    .points_by_row
+                    .range((sheet_id, row_start, 0)..=(sheet_id, row_end, u32::MAX))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                for tree in self
+                    .col_intervals
+                    .range((sheet_id, 0)..=(sheet_id, u32::MAX))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, row_start, row_end, visitor)?;
+                }
+                for tree in self
+                    .row_intervals
+                    .range((sheet_id, row_start)..=(sheet_id, row_end))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, 0, u32::MAX, visitor)?;
+                }
+                for ids in self
+                    .rect_buckets
+                    .range(
+                        (sheet_id, self.row_bucket(row_start), 0)
+                            ..=(sheet_id, self.row_bucket(row_end), u32::MAX),
+                    )
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                visit_common(
+                    row_end,
+                    u32::MAX,
+                    Some((row_start, row_end)),
+                    Some((0, u32::MAX)),
+                    visitor,
+                )
+            }
+            (AxisRange::All, AxisRange::Span(col_start, col_end)) => {
+                for ids in self
+                    .points_by_col
+                    .range((sheet_id, col_start, 0)..=(sheet_id, col_end, u32::MAX))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                for tree in self
+                    .col_intervals
+                    .range((sheet_id, col_start)..=(sheet_id, col_end))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, 0, u32::MAX, visitor)?;
+                }
+                for tree in self
+                    .row_intervals
+                    .range((sheet_id, 0)..=(sheet_id, u32::MAX))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, col_start, col_end, visitor)?;
+                }
+                for ids in self
+                    .rect_buckets_by_col
+                    .range(
+                        (sheet_id, self.col_bucket(col_start), 0)
+                            ..=(sheet_id, self.col_bucket(col_end), u32::MAX),
+                    )
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                visit_common(
+                    u32::MAX,
+                    col_end,
+                    Some((0, u32::MAX)),
+                    Some((col_start, col_end)),
+                    visitor,
+                )
+            }
             (AxisRange::All, AxisRange::All) => {
                 for ids in self
                     .points_by_row
@@ -1027,8 +1111,13 @@ impl<T: Clone> SheetRegionIndex<T> {
                     unreachable!()
                 };
                 let rect = RectRegion::new(sheet_id, row_start, row_end, col_start, col_end);
-                for bucket in self.rect_buckets_for_rect(rect) {
+                for bucket @ (sheet_id, row_bucket, col_bucket) in self.rect_buckets_for_rect(rect)
+                {
                     self.rect_buckets.entry(bucket).or_default().push(id);
+                    self.rect_buckets_by_col
+                        .entry((sheet_id, col_bucket, row_bucket))
+                        .or_default()
+                        .push(id);
                 }
             }
             (AxisKind::From, AxisKind::All) => {
@@ -2717,5 +2806,56 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 3]
         );
+    }
+}
+
+#[cfg(test)]
+mod structural_stripe_tests {
+    use super::*;
+
+    #[test]
+    fn bounded_column_stripe_uses_mirrored_rect_buckets() {
+        let mut index = SheetRegionIndex::with_rect_bucket_size(8, 8);
+        for item in 0..2_000u32 {
+            let col = item.saturating_mul(16);
+            index.insert(Region::rect(0, 10, 11, col, col + 1), item);
+        }
+        let target = 1_234u32.saturating_mul(16);
+        let query = Region {
+            sheet_id: 0,
+            rows: AxisRange::All,
+            cols: AxisRange::Span(target, target + 1),
+        };
+        let BoundedRegionQueryResult::Complete(result) = index.query_bounded(query, 8) else {
+            panic!("narrow column stripe must remain bounded");
+        };
+        assert_eq!(
+            result.matches.iter().map(|m| m.value).collect::<Vec<_>>(),
+            vec![1_234]
+        );
+        assert!(result.stats.visited_index_entries <= 2, "{result:?}");
+    }
+
+    #[test]
+    fn bounded_row_stripe_uses_row_major_rect_buckets() {
+        let mut index = SheetRegionIndex::with_rect_bucket_size(8, 8);
+        for item in 0..2_000u32 {
+            let row = item.saturating_mul(16);
+            index.insert(Region::rect(0, row, row + 1, 10, 11), item);
+        }
+        let target = 1_234u32.saturating_mul(16);
+        let query = Region {
+            sheet_id: 0,
+            rows: AxisRange::Span(target, target + 1),
+            cols: AxisRange::All,
+        };
+        let BoundedRegionQueryResult::Complete(result) = index.query_bounded(query, 8) else {
+            panic!("narrow row stripe must remain bounded");
+        };
+        assert_eq!(
+            result.matches.iter().map(|m| m.value).collect::<Vec<_>>(),
+            vec![1_234]
+        );
+        assert!(result.stats.visited_index_entries <= 2, "{result:?}");
     }
 }

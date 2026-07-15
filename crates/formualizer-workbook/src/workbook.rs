@@ -2179,9 +2179,16 @@ impl Workbook {
                 .get_cell(sheet, row, col)
                 .and_then(|(ast, _)| ast);
 
-            self.engine.edit_with_logger(&mut self.log, |editor| {
-                editor.set_cell_value_with_old_state(cell, value.clone(), old_value, old_formula);
-            });
+            self.engine
+                .edit_with_logger(&mut self.log, |editor| {
+                    editor.set_cell_value_with_old_state(
+                        cell,
+                        value.clone(),
+                        old_value,
+                        old_formula,
+                    );
+                })
+                .map_err(|e| IoError::from_backend("editor", e))?;
 
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.clear_staged_formula_text(sheet, row, col);
@@ -2232,9 +2239,16 @@ impl Workbook {
                     let old_value = self.engine.get_cell_value(sheet, row, col);
                     let old_formula = self.engine.get_cell(sheet, row, col).and_then(|(a, _)| a);
 
-                    self.engine.edit_with_logger(&mut self.log, |editor| {
-                        editor.set_cell_formula_with_old_state(cell, ast, old_value, old_formula);
-                    });
+                    self.engine
+                        .edit_with_logger(&mut self.log, |editor| {
+                            editor.set_cell_formula_with_old_state(
+                                cell,
+                                ast,
+                                old_value,
+                                old_formula,
+                            );
+                        })
+                        .map_err(|e| IoError::from_backend("editor", e))?;
 
                     self.engine.clear_staged_formula_text(sheet, row, col);
                     if let Some(before) = staged_before {
@@ -2275,9 +2289,11 @@ impl Workbook {
                     sheet_id,
                     formualizer_eval::reference::Coord::from_excel(row, col, true, true),
                 );
-                self.engine.edit_with_logger(&mut self.log, |editor| {
-                    editor.set_cell_formula(cell, ast);
-                });
+                self.engine
+                    .edit_with_logger(&mut self.log, |editor| {
+                        editor.set_cell_formula(cell, ast);
+                    })
+                    .map_err(|e| IoError::from_backend("editor", e))?;
                 self.engine.clear_staged_formula_text(sheet, row, col);
                 if let Some(before) = staged_before {
                     self.record_staged_formula_cell_change(sheet, row, col, before, None);
@@ -2478,7 +2494,8 @@ impl Workbook {
                         }
                     }
                     Ok(())
-                })?;
+                })
+                .map_err(|e| IoError::from_backend("editor", e))??;
 
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
@@ -2600,18 +2617,20 @@ impl Workbook {
                 }
             }
 
-            self.engine.edit_with_logger(&mut self.log, |editor| {
-                for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
-                    // Old state captured from Arrow truth rides directly on the
-                    // event (graph-captured state wins; this only fills `None`).
-                    editor.set_cell_value_with_old_state(
-                        *cell,
-                        v.clone(),
-                        old_value.clone(),
-                        old_formula.clone(),
-                    );
-                }
-            });
+            self.engine
+                .edit_with_logger(&mut self.log, |editor| {
+                    for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
+                        // Old state captured from Arrow truth rides directly on the
+                        // event (graph-captured state wins; this only fills `None`).
+                        editor.set_cell_value_with_old_state(
+                            *cell,
+                            v.clone(),
+                            old_value.clone(),
+                            old_formula.clone(),
+                        );
+                    }
+                })
+                .map_err(|e| IoError::from_backend("editor", e))?;
 
             for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
@@ -2728,7 +2747,8 @@ impl Workbook {
                         }
                     }
                     Ok(())
-                })?;
+                })
+                .map_err(|e| IoError::from_backend("editor", e))??;
 
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
@@ -2872,10 +2892,9 @@ impl Workbook {
     ) -> Result<(), IoError> {
         let (definition, scope) = self.named_definition_with_scope(address, scope)?;
         if self.enable_changelog {
-            let result = self.engine.edit_with_logger(&mut self.log, |editor| {
-                editor.define_name(name, definition, scope)
-            });
-            result.map_err(|e| IoError::from_backend("editor", e))
+            self.engine
+                .define_name_with_logger(&mut self.log, name, definition, scope)
+                .map_err(|e| IoError::from_backend("editor", e))
         } else {
             self.engine
                 .define_name(name, definition, scope)
@@ -2891,10 +2910,9 @@ impl Workbook {
     ) -> Result<(), IoError> {
         let (definition, scope) = self.named_definition_with_scope(address, scope)?;
         if self.enable_changelog {
-            let result = self.engine.edit_with_logger(&mut self.log, |editor| {
-                editor.update_name(name, definition, scope)
-            });
-            result.map_err(|e| IoError::from_backend("editor", e))
+            self.engine
+                .update_name_with_logger(&mut self.log, name, definition, scope)
+                .map_err(|e| IoError::from_backend("editor", e))
         } else {
             self.engine
                 .update_name(name, definition, scope)
@@ -2910,10 +2928,9 @@ impl Workbook {
     ) -> Result<(), IoError> {
         let scope = self.name_scope_from_hint(scope, sheet)?;
         if self.enable_changelog {
-            let result = self
-                .engine
-                .edit_with_logger(&mut self.log, |editor| editor.delete_name(name, scope));
-            result.map_err(|e| IoError::from_backend("editor", e))
+            self.engine
+                .delete_name_with_logger(&mut self.log, name, scope)
+                .map_err(|e| IoError::from_backend("editor", e))
         } else {
             self.engine
                 .delete_name(name, scope)

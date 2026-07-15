@@ -87,6 +87,14 @@ impl UndoEngine {
         Ok(batch)
     }
 
+    pub(crate) fn pending_redo_events(&self) -> Vec<ChangeEvent> {
+        self.undone
+            .last()
+            .into_iter()
+            .flat_map(|batch| batch.iter().map(|item| item.event.clone()))
+            .collect()
+    }
+
     pub fn redo(
         &mut self,
         graph: &mut DependencyGraph,
