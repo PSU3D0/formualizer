@@ -12,6 +12,8 @@ use clap::{Parser, ValueEnum};
 use serde::Serialize;
 
 #[cfg(feature = "formualizer_runner")]
+use formualizer_eval::engine::FormulaPlaneMode;
+#[cfg(feature = "formualizer_runner")]
 use formualizer_testkit::write_workbook;
 #[cfg(feature = "formualizer_runner")]
 use formualizer_workbook::{
@@ -43,6 +45,9 @@ struct Cli {
 
     #[arg(long, value_enum, default_value_t = BackendKind::Umya)]
     backend: BackendKind,
+
+    #[arg(long, value_enum, default_value_t = FormulaPlaneProbeMode::Off)]
+    formula_plane_mode: FormulaPlaneProbeMode,
 
     /// Logical row count for the primary large sheet.
     #[arg(long)]
@@ -109,10 +114,60 @@ enum BackendKind {
 }
 
 #[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum FormulaPlaneProbeMode {
+    Off,
+    Shadow,
+    Authoritative,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Serialize)]
+struct EngineTelemetry {
+    graph_vertices: usize,
+    graph_formula_vertices: usize,
+    graph_edges: usize,
+    active_spans: usize,
+    request_id: u64,
+    request_kind: &'static str,
+    request_outcome: &'static str,
+    staged_selected: u64,
+    staged_retained: u64,
+    request_total_ms: f64,
+    graph_prepare_ms: f64,
+    topology_ms: f64,
+    materialization_ms: f64,
+    evaluation_ms: f64,
+    topology_strategy: &'static str,
+    topology_cache_outcome: &'static str,
+    topology_cache_hit_events: u64,
+    topology_cache_build_events: u64,
+    topology_cache_skip_events: u64,
+    topology_overflow_reason: Option<&'static str>,
+    topology_producers_observed: u64,
+    topology_candidates_observed: u64,
+    topology_edges_observed: u64,
+    topology_retained_bytes_observed: u64,
+    topology_candidate_cap_hits: u64,
+    topology_edge_cap_hits: u64,
+    topology_byte_cap_hits: u64,
+    fallback_materialized_cells: u64,
+    cycle_materialized_cells: u64,
+    dirty_lease_outcome: &'static str,
+    spool_records: u64,
+    spool_encoded_bytes: u64,
+    spool_peak_memory_bytes: u64,
+    spool_spilled_bytes: u64,
+    spool_spill_files: u64,
+    spool_replays: u64,
+}
+
+#[cfg(feature = "formualizer_runner")]
 #[derive(Debug, Serialize)]
 struct ProbeReport {
     backend: &'static str,
     scenario: &'static str,
+    formula_plane_mode: &'static str,
     workbook_path: String,
     logical_rows: u32,
     logical_cols: u32,
@@ -123,6 +178,10 @@ struct ProbeReport {
     generation_ms: f64,
     load_ms: Option<f64>,
     evaluate_ms: Option<f64>,
+    output_read_ms: Option<f64>,
+    current_rss_bytes: Option<u64>,
+    peak_rss_bytes: Option<u64>,
+    engine: Option<EngineTelemetry>,
     load_within_budget: Option<bool>,
     evaluate_within_budget: Option<bool>,
     error: Option<String>,
@@ -169,6 +228,7 @@ fn run(cli: Cli) -> Result<ProbeReport> {
         return Ok(ProbeReport {
             backend: cli.backend.label(),
             scenario: cli.scenario.label(),
+            formula_plane_mode: cli.formula_plane_mode.label(),
             workbook_path: output.display().to_string(),
             logical_rows,
             logical_cols,
@@ -179,6 +239,10 @@ fn run(cli: Cli) -> Result<ProbeReport> {
             generation_ms,
             load_ms: None,
             evaluate_ms: None,
+            output_read_ms: None,
+            current_rss_bytes: None,
+            peak_rss_bytes: None,
+            engine: None,
             load_within_budget: None,
             evaluate_within_budget: None,
             error: None,
@@ -205,6 +269,7 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                     return Ok(ProbeReport {
                         backend: cli.backend.label(),
                         scenario: cli.scenario.label(),
+                        formula_plane_mode: cli.formula_plane_mode.label(),
                         workbook_path: output.display().to_string(),
                         logical_rows,
                         logical_cols,
@@ -215,6 +280,10 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                         generation_ms,
                         load_ms: None,
                         evaluate_ms: None,
+                        output_read_ms: None,
+                        current_rss_bytes: None,
+                        peak_rss_bytes: None,
+                        engine: None,
                         load_within_budget: None,
                         evaluate_within_budget: None,
                         error: Some(err.to_string()),
@@ -227,13 +296,15 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                 backend,
                 LoadStrategy::EagerAll,
                 formualizer_workbook::WorkbookConfig::ephemeral()
-                    .with_ingest_limits(limits.clone()),
+                    .with_ingest_limits(limits.clone())
+                    .with_formula_plane_mode(cli.formula_plane_mode.engine_mode()),
             ) {
                 Ok(wb) => wb,
                 Err(err) => {
                     return Ok(ProbeReport {
                         backend: cli.backend.label(),
                         scenario: cli.scenario.label(),
+                        formula_plane_mode: cli.formula_plane_mode.label(),
                         workbook_path: output.display().to_string(),
                         logical_rows,
                         logical_cols,
@@ -244,6 +315,10 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                         generation_ms,
                         load_ms: Some(load_start.elapsed().as_secs_f64() * 1000.0),
                         evaluate_ms: None,
+                        output_read_ms: None,
+                        current_rss_bytes: None,
+                        peak_rss_bytes: None,
+                        engine: None,
                         load_within_budget: None,
                         evaluate_within_budget: None,
                         error: Some(err.to_string()),
@@ -258,6 +333,7 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                     return Ok(ProbeReport {
                         backend: cli.backend.label(),
                         scenario: cli.scenario.label(),
+                        formula_plane_mode: cli.formula_plane_mode.label(),
                         workbook_path: output.display().to_string(),
                         logical_rows,
                         logical_cols,
@@ -268,6 +344,10 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                         generation_ms,
                         load_ms: None,
                         evaluate_ms: None,
+                        output_read_ms: None,
+                        current_rss_bytes: None,
+                        peak_rss_bytes: None,
+                        engine: None,
                         load_within_budget: None,
                         evaluate_within_budget: None,
                         error: Some(err.to_string()),
@@ -280,13 +360,15 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                 backend,
                 LoadStrategy::EagerAll,
                 formualizer_workbook::WorkbookConfig::ephemeral()
-                    .with_ingest_limits(limits.clone()),
+                    .with_ingest_limits(limits.clone())
+                    .with_formula_plane_mode(cli.formula_plane_mode.engine_mode()),
             ) {
                 Ok(wb) => wb,
                 Err(err) => {
                     return Ok(ProbeReport {
                         backend: cli.backend.label(),
                         scenario: cli.scenario.label(),
+                        formula_plane_mode: cli.formula_plane_mode.label(),
                         workbook_path: output.display().to_string(),
                         logical_rows,
                         logical_cols,
@@ -297,6 +379,10 @@ fn run(cli: Cli) -> Result<ProbeReport> {
                         generation_ms,
                         load_ms: Some(load_start.elapsed().as_secs_f64() * 1000.0),
                         evaluate_ms: None,
+                        output_read_ms: None,
+                        current_rss_bytes: None,
+                        peak_rss_bytes: None,
+                        engine: None,
                         load_within_budget: None,
                         evaluate_within_budget: None,
                         error: Some(err.to_string()),
@@ -310,10 +396,14 @@ fn run(cli: Cli) -> Result<ProbeReport> {
 
     let eval_start = Instant::now();
     eprintln!("[probe] evaluating workbook");
-    if let Err(err) = workbook.evaluate_all() {
+    let evaluation = workbook.evaluate_all();
+    let evaluate_ms = eval_start.elapsed().as_secs_f64() * 1000.0;
+    if let Err(err) = evaluation {
+        let (current_rss_bytes, peak_rss_bytes) = process_memory_bytes();
         return Ok(ProbeReport {
             backend: cli.backend.label(),
             scenario: cli.scenario.label(),
+            formula_plane_mode: cli.formula_plane_mode.label(),
             workbook_path: output.display().to_string(),
             logical_rows,
             logical_cols,
@@ -323,14 +413,22 @@ fn run(cli: Cli) -> Result<ProbeReport> {
             status: "evaluate_error",
             generation_ms,
             load_ms: Some(load_ms),
-            evaluate_ms: Some(eval_start.elapsed().as_secs_f64() * 1000.0),
+            evaluate_ms: Some(evaluate_ms),
+            output_read_ms: None,
+            current_rss_bytes,
+            peak_rss_bytes,
+            engine: collect_engine_telemetry(&workbook),
             load_within_budget: Some(load_ms <= cli.timeout_seconds as f64 * 1000.0),
             evaluate_within_budget: None,
             error: Some(err.to_string()),
         });
     }
-    let evaluate_ms = eval_start.elapsed().as_secs_f64() * 1000.0;
     eprintln!("[probe] evaluation complete in {:.1} ms", evaluate_ms);
+    let output_read_started = Instant::now();
+    read_probe_output(&workbook, &cli);
+    let output_read_ms = output_read_started.elapsed().as_secs_f64() * 1000.0;
+    let engine = collect_engine_telemetry(&workbook);
+    let (current_rss_bytes, peak_rss_bytes) = process_memory_bytes();
 
     if !cli.keep_workbook && using_temp_output {
         let _ = std::fs::remove_file(&output);
@@ -339,6 +437,7 @@ fn run(cli: Cli) -> Result<ProbeReport> {
     Ok(ProbeReport {
         backend: cli.backend.label(),
         scenario: cli.scenario.label(),
+        formula_plane_mode: cli.formula_plane_mode.label(),
         workbook_path: output.display().to_string(),
         logical_rows,
         logical_cols,
@@ -355,6 +454,10 @@ fn run(cli: Cli) -> Result<ProbeReport> {
         generation_ms,
         load_ms: Some(load_ms),
         evaluate_ms: Some(evaluate_ms),
+        output_read_ms: Some(output_read_ms),
+        current_rss_bytes,
+        peak_rss_bytes,
+        engine,
         load_within_budget: Some(load_ms <= cli.timeout_seconds as f64 * 1000.0),
         evaluate_within_budget: Some(evaluate_ms <= cli.timeout_seconds as f64 * 1000.0),
         error: None,
@@ -380,6 +483,108 @@ impl BackendKind {
             BackendKind::Calamine => "calamine",
         }
     }
+}
+
+#[cfg(feature = "formualizer_runner")]
+impl FormulaPlaneProbeMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Shadow => "shadow",
+            Self::Authoritative => "authoritative",
+        }
+    }
+
+    fn engine_mode(self) -> FormulaPlaneMode {
+        match self {
+            Self::Off => FormulaPlaneMode::Off,
+            Self::Shadow => FormulaPlaneMode::Shadow,
+            Self::Authoritative => FormulaPlaneMode::AuthoritativeExperimental,
+        }
+    }
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn ns_to_ms(ns: u64) -> f64 {
+    ns as f64 / 1_000_000.0
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn collect_engine_telemetry(workbook: &Workbook) -> Option<EngineTelemetry> {
+    let request = workbook.engine().last_evaluation_resource_request_stats()?;
+    let baseline = workbook.engine().baseline_stats();
+    let ingest = workbook.formula_ingest_report_total();
+    Some(EngineTelemetry {
+        graph_vertices: baseline.graph_vertex_count,
+        graph_formula_vertices: baseline.graph_formula_vertex_count,
+        graph_edges: baseline.graph_edge_count,
+        active_spans: baseline.formula_plane_active_span_count,
+        request_id: request.request_id,
+        request_kind: request.kind.as_str(),
+        request_outcome: request.outcome.as_str(),
+        staged_selected: request.staged_selected,
+        staged_retained: request.staged_retained,
+        request_total_ms: ns_to_ms(request.phases.total_ns),
+        graph_prepare_ms: ns_to_ms(request.phases.staged_prepare_ns),
+        topology_ms: ns_to_ms(request.phases.topology_ns),
+        materialization_ms: ns_to_ms(request.phases.materialization_ns),
+        evaluation_ms: ns_to_ms(request.phases.evaluation_ns),
+        topology_strategy: request.topology.strategy.as_str(),
+        topology_cache_outcome: request.topology.cache_outcome.as_str(),
+        topology_cache_hit_events: request.topology.cache_hit_events,
+        topology_cache_build_events: request.topology.cache_build_events,
+        topology_cache_skip_events: request.topology.cache_skip_events,
+        topology_overflow_reason: request
+            .topology
+            .overflow_reason
+            .map(|reason| reason.as_str()),
+        topology_producers_observed: request.topology.producers_observed,
+        topology_candidates_observed: request.topology.candidates_observed,
+        topology_edges_observed: request.topology.edges_observed,
+        topology_retained_bytes_observed: request.topology.retained_bytes_observed,
+        topology_candidate_cap_hits: request.topology.candidate_cap_hits,
+        topology_edge_cap_hits: request.topology.edge_cap_hits,
+        topology_byte_cap_hits: request.topology.byte_cap_hits,
+        fallback_materialized_cells: request.fallback_materialized_cells,
+        cycle_materialized_cells: request.cycle_materialized_cells,
+        dirty_lease_outcome: request.dirty_lease.as_str(),
+        spool_records: ingest.source_formula_records_spooled,
+        spool_encoded_bytes: ingest.source_spool_encoded_bytes,
+        spool_peak_memory_bytes: ingest.source_spool_peak_memory_bytes,
+        spool_spilled_bytes: ingest.source_spool_spilled_bytes,
+        spool_spill_files: ingest.source_spool_spill_files,
+        spool_replays: ingest.source_spool_replays,
+    })
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn read_probe_output(workbook: &Workbook, cli: &Cli) {
+    let _ = match cli.scenario {
+        ScenarioKind::LinearRollup => {
+            workbook.get_value("Sheet1", cli.rows.max(1), cli.active_cols.max(2))
+        }
+        ScenarioKind::SumifsReport => {
+            workbook.get_value("Report", cli.report_rows.max(1).saturating_add(1), 4)
+        }
+        ScenarioKind::WholeColumnSummary => {
+            workbook.get_value("Summary", cli.report_rows.max(1).saturating_add(1), 3)
+        }
+    };
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn process_memory_bytes() -> (Option<u64>, Option<u64>) {
+    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
+        return (None, None);
+    };
+    let parse_kib = |name: &str| {
+        status.lines().find_map(|line| {
+            let rest = line.strip_prefix(name)?.trim();
+            let kib = rest.split_whitespace().next()?.parse::<u64>().ok()?;
+            kib.checked_mul(1024)
+        })
+    };
+    (parse_kib("VmRSS:"), parse_kib("VmHWM:"))
 }
 
 #[cfg(feature = "formualizer_runner")]

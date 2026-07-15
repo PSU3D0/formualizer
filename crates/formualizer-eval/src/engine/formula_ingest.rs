@@ -89,6 +89,7 @@ pub struct FormulaIngestReport {
     pub source_spool_encoded_bytes: u64,
     pub source_spool_peak_memory_bytes: u64,
     pub source_spool_spilled_bytes: u64,
+    pub source_spool_spill_files: u64,
     pub source_spool_replays: u64,
     pub source_ordinary_events: u64,
     pub source_shared_anchor_events: u64,
@@ -150,6 +151,7 @@ impl Default for FormulaIngestReport {
             source_spool_encoded_bytes: 0,
             source_spool_peak_memory_bytes: 0,
             source_spool_spilled_bytes: 0,
+            source_spool_spill_files: 0,
             source_spool_replays: 0,
             source_ordinary_events: 0,
             source_shared_anchor_events: 0,
@@ -251,6 +253,9 @@ impl FormulaIngestReport {
         self.source_spool_spilled_bytes = self
             .source_spool_spilled_bytes
             .saturating_add(other.source_spool_spilled_bytes);
+        self.source_spool_spill_files = self
+            .source_spool_spill_files
+            .saturating_add(other.source_spool_spill_files);
         self.source_spool_replays = self
             .source_spool_replays
             .saturating_add(other.source_spool_replays);

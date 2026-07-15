@@ -59,6 +59,13 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = BackendKind::Umya)]
     backend: BackendKind,
 
+    #[arg(long, value_enum, default_value_t = FormulaPlaneProbeMode::Off)]
+    formula_plane_mode: FormulaPlaneProbeMode,
+
+    /// Fresh child-process samples per case.
+    #[arg(long, default_value_t = 1)]
+    samples: usize,
+
     /// Hard timeout applied to generation and load/eval subprocesses independently.
     #[arg(long, default_value_t = 60)]
     timeout_seconds: u64,
@@ -121,6 +128,14 @@ enum BackendKind {
 }
 
 #[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum FormulaPlaneProbeMode {
+    Off,
+    Shadow,
+    Authoritative,
+}
+
+#[cfg(feature = "formualizer_runner")]
 #[derive(Debug, Clone, Copy)]
 struct Case {
     scenario: &'static str,
@@ -132,9 +147,51 @@ struct Case {
 
 #[cfg(feature = "formualizer_runner")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct EngineTelemetry {
+    graph_vertices: usize,
+    graph_formula_vertices: usize,
+    graph_edges: usize,
+    active_spans: usize,
+    request_id: u64,
+    request_kind: String,
+    request_outcome: String,
+    staged_selected: u64,
+    staged_retained: u64,
+    request_total_ms: f64,
+    graph_prepare_ms: f64,
+    topology_ms: f64,
+    materialization_ms: f64,
+    evaluation_ms: f64,
+    topology_strategy: String,
+    topology_cache_outcome: String,
+    topology_cache_hit_events: u64,
+    topology_cache_build_events: u64,
+    topology_cache_skip_events: u64,
+    topology_overflow_reason: Option<String>,
+    topology_producers_observed: u64,
+    topology_candidates_observed: u64,
+    topology_edges_observed: u64,
+    topology_retained_bytes_observed: u64,
+    topology_candidate_cap_hits: u64,
+    topology_edge_cap_hits: u64,
+    topology_byte_cap_hits: u64,
+    fallback_materialized_cells: u64,
+    cycle_materialized_cells: u64,
+    dirty_lease_outcome: String,
+    spool_records: u64,
+    spool_encoded_bytes: u64,
+    spool_peak_memory_bytes: u64,
+    spool_spilled_bytes: u64,
+    spool_spill_files: u64,
+    spool_replays: u64,
+}
+
+#[cfg(feature = "formualizer_runner")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProbeReport {
     backend: String,
     scenario: String,
+    formula_plane_mode: String,
     workbook_path: String,
     logical_rows: u32,
     logical_cols: u32,
@@ -145,6 +202,10 @@ struct ProbeReport {
     generation_ms: f64,
     load_ms: Option<f64>,
     evaluate_ms: Option<f64>,
+    output_read_ms: Option<f64>,
+    current_rss_bytes: Option<u64>,
+    peak_rss_bytes: Option<u64>,
+    engine: Option<EngineTelemetry>,
     load_within_budget: Option<bool>,
     evaluate_within_budget: Option<bool>,
     error: Option<String>,
@@ -155,6 +216,8 @@ struct ProbeReport {
 struct MatrixResult {
     backend: String,
     scenario: String,
+    formula_plane_mode: String,
+    sample: usize,
     workbook_path: String,
     logical_rows: u32,
     logical_cols: u32,
@@ -165,6 +228,10 @@ struct MatrixResult {
     generation_ms: Option<f64>,
     load_ms: Option<f64>,
     evaluate_ms: Option<f64>,
+    output_read_ms: Option<f64>,
+    current_rss_bytes: Option<u64>,
+    peak_rss_bytes: Option<u64>,
+    engine: Option<EngineTelemetry>,
     load_within_budget: Option<bool>,
     evaluate_within_budget: Option<bool>,
     generate_log_path: String,
@@ -407,6 +474,17 @@ impl BackendKind {
 }
 
 #[cfg(feature = "formualizer_runner")]
+impl FormulaPlaneProbeMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Shadow => "shadow",
+            Self::Authoritative => "authoritative",
+        }
+    }
+}
+
+#[cfg(feature = "formualizer_runner")]
 fn workbook_path(output_dir: &Path, case: Case) -> PathBuf {
     output_dir.join(format!(
         "{}-{}x{}.xlsx",
@@ -415,13 +493,22 @@ fn workbook_path(output_dir: &Path, case: Case) -> PathBuf {
 }
 
 #[cfg(feature = "formualizer_runner")]
-fn log_path(output_dir: &Path, backend: BackendKind, case: Case, phase: &str) -> PathBuf {
+fn log_path(
+    output_dir: &Path,
+    backend: BackendKind,
+    mode: FormulaPlaneProbeMode,
+    case: Case,
+    sample: usize,
+    phase: &str,
+) -> PathBuf {
     output_dir.join(format!(
-        "{}-{}-{}x{}-{}.log",
+        "{}-{}-{}-{}x{}-sample{}-{}.log",
         backend.label(),
+        mode.label(),
         case.scenario,
         case.rows,
         case.logical_cols,
+        sample,
         phase,
     ))
 }
@@ -437,7 +524,9 @@ fn run_matrix(root: &Path, cli: &Cli) -> Result<Vec<MatrixResult>> {
     let probe = probe_binary_path(root);
     let mut results = Vec::new();
     for case in cases_for_preset(cli.preset) {
-        results.push(run_case(root, &probe, &output_dir, *case, cli)?);
+        for sample in 1..=cli.samples.max(1) {
+            results.push(run_case(root, &probe, &output_dir, *case, sample, cli)?);
+        }
     }
     Ok(results)
 }
@@ -448,11 +537,26 @@ fn run_case(
     probe: &Path,
     output_dir: &Path,
     case: Case,
+    sample: usize,
     cli: &Cli,
 ) -> Result<MatrixResult> {
     let workbook = workbook_path(output_dir, case);
-    let generate_log_path = log_path(output_dir, cli.backend, case, "generate");
-    let measure_log_path = log_path(output_dir, cli.backend, case, "measure");
+    let generate_log_path = log_path(
+        output_dir,
+        cli.backend,
+        cli.formula_plane_mode,
+        case,
+        sample,
+        "generate",
+    );
+    let measure_log_path = log_path(
+        output_dir,
+        cli.backend,
+        cli.formula_plane_mode,
+        case,
+        sample,
+        "measure",
+    );
 
     let generate_args = probe_args(case, cli, &workbook, true);
     let generated = run_probe_subprocess(
@@ -479,6 +583,8 @@ fn run_case(
             return Ok(MatrixResult {
                 backend: cli.backend.label().to_string(),
                 scenario: case.scenario.to_string(),
+                formula_plane_mode: cli.formula_plane_mode.label().to_string(),
+                sample,
                 workbook_path: workbook.display().to_string(),
                 logical_rows: case.rows,
                 logical_cols: case.logical_cols,
@@ -489,6 +595,10 @@ fn run_case(
                 generation_ms: None,
                 load_ms: None,
                 evaluate_ms: None,
+                output_read_ms: None,
+                current_rss_bytes: None,
+                peak_rss_bytes: None,
+                engine: None,
                 load_within_budget: None,
                 evaluate_within_budget: None,
                 generate_log_path: generate_log_path.display().to_string(),
@@ -521,6 +631,8 @@ fn run_case(
         Ok(result) => MatrixResult {
             backend: result.backend,
             scenario: result.scenario,
+            formula_plane_mode: result.formula_plane_mode,
+            sample,
             workbook_path: result.workbook_path,
             logical_rows: result.logical_rows,
             logical_cols: result.logical_cols,
@@ -531,6 +643,10 @@ fn run_case(
             generation_ms: Some(generated.generation_ms),
             load_ms: result.load_ms,
             evaluate_ms: result.evaluate_ms,
+            output_read_ms: result.output_read_ms,
+            current_rss_bytes: result.current_rss_bytes,
+            peak_rss_bytes: result.peak_rss_bytes,
+            engine: result.engine,
             load_within_budget: result.load_within_budget,
             evaluate_within_budget: result.evaluate_within_budget,
             generate_log_path: generate_log_path.display().to_string(),
@@ -540,6 +656,8 @@ fn run_case(
         Err(err) => MatrixResult {
             backend: cli.backend.label().to_string(),
             scenario: case.scenario.to_string(),
+            formula_plane_mode: cli.formula_plane_mode.label().to_string(),
+            sample,
             workbook_path: workbook.display().to_string(),
             logical_rows: case.rows,
             logical_cols: case.logical_cols,
@@ -550,6 +668,10 @@ fn run_case(
             generation_ms: Some(generated.generation_ms),
             load_ms: None,
             evaluate_ms: None,
+            output_read_ms: None,
+            current_rss_bytes: None,
+            peak_rss_bytes: None,
+            engine: None,
             load_within_budget: Some(false),
             evaluate_within_budget: Some(false),
             generate_log_path: generate_log_path.display().to_string(),
@@ -579,6 +701,8 @@ fn probe_args(case: Case, cli: &Cli, workbook: &Path, generate_only: bool) -> Ve
         case.scenario.to_string(),
         "--backend".to_string(),
         cli.backend.label().to_string(),
+        "--formula-plane-mode".to_string(),
+        cli.formula_plane_mode.label().to_string(),
         "--rows".to_string(),
         case.rows.to_string(),
         "--logical-cols".to_string(),
@@ -730,33 +854,40 @@ fn fmt_ms(value: Option<f64>) -> String {
 }
 
 #[cfg(feature = "formualizer_runner")]
-fn fmt_bool(value: Option<bool>) -> &'static str {
-    match value {
-        Some(true) => "yes",
-        Some(false) => "no",
-        None => "-",
-    }
-}
-
-#[cfg(feature = "formualizer_runner")]
 fn render_markdown(results: &[MatrixResult]) -> String {
     let mut out = String::from(
-        "| Backend | Scenario | Shape | Logical cells | Status | Gen ms | Load ms | Eval ms | Load <=60s | Eval <=60s |\n|---|---|---:|---:|---|---:|---:|---:|---|---|\n",
+        "| Backend | Mode | Sample | Scenario | Shape | Status | Load ms | Eval ms | Output ms | Peak MiB | Topology | Materialized |\n|---|---|---:|---|---:|---|---:|---:|---:|---:|---|---:|\n",
     );
     for item in results {
         let shape = format!("{}x{}", item.logical_rows, item.logical_cols);
+        let topology = item
+            .engine
+            .as_ref()
+            .map(|engine| engine.topology_strategy.as_str())
+            .unwrap_or("-");
+        let materialized = item
+            .engine
+            .as_ref()
+            .map(|engine| engine.fallback_materialized_cells)
+            .unwrap_or(0);
+        let peak_mib = item
+            .peak_rss_bytes
+            .map(|bytes| format!("{:.1}", bytes as f64 / (1024.0 * 1024.0)))
+            .unwrap_or_else(|| "-".to_string());
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             item.backend,
+            item.formula_plane_mode,
+            item.sample,
             item.scenario,
             shape,
-            item.logical_cells,
             item.status,
-            fmt_ms(item.generation_ms),
             fmt_ms(item.load_ms),
             fmt_ms(item.evaluate_ms),
-            fmt_bool(item.load_within_budget),
-            fmt_bool(item.evaluate_within_budget)
+            fmt_ms(item.output_read_ms),
+            peak_mib,
+            topology,
+            materialized,
         ));
     }
     out

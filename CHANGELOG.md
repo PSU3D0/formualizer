@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- Added observational evaluation-resource telemetry with monotonic request IDs, typed cap reasons, FormulaPlane topology/cache/materialization/dirty-lease counters, staged preparation and phase timings, replay-spool storage counters, and cold-process load-envelope JSON reporting. Defaults, fallback strategies, errors, and evaluation behavior are unchanged.
 - Added Calamine-backed in-memory XLSX loading to the native Python binding and made it the default for `Workbook.from_bytes` and `load_workbook_bytes`; Pyodide retains its Umya fallback.
 - Added backend-neutral source-family ingest with anchor-once FormulaPlane authority for proven complete domains. Calamine supplies bounded XLSX evidence and exact replay for eager and deferred loading, with structural-edit, cycle-demotion, and source-family telemetry support.
 - Added registry-owned function semantic contracts so safe current and future ordinary functions can use FormulaPlane authority without a secondary supported-name list, while exceptional and untrusted functions continue to replay conservatively.

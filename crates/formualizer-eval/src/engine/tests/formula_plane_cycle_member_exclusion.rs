@@ -107,6 +107,26 @@ fn span_member_in_static_cycle_is_demoted_and_circ() {
 
     // (a) the cyclic span family was demoted to legacy.
     let stats = engine.baseline_stats();
+    let resource_baseline = engine.evaluation_resource_baseline_stats();
+    let request = engine
+        .last_evaluation_resource_request_stats()
+        .expect("evaluation publishes resource telemetry");
+    assert_eq!(request.topology.cache_build_events, 2);
+    assert_eq!(request.topology.cache_hit_events, 0);
+    assert_eq!(request.topology.cache_skip_events, 0);
+    assert_eq!(request.topology.producers_observed, 125);
+    assert_eq!(request.topology.candidates_observed, 4);
+    assert_eq!(request.topology.edges_observed, 4);
+    assert_eq!(
+        resource_baseline.topology_cache_builds,
+        stats.formula_plane_mixed_topology_cache_builds,
+    );
+    assert_eq!(resource_baseline.topology_candidates_observed_total, 4);
+    assert_eq!(resource_baseline.topology_edges_observed_total, 4);
+    assert_eq!(
+        resource_baseline.topology_retained_bytes_observed_max,
+        request.topology.retained_bytes_observed,
+    );
     assert_eq!(
         stats.formula_plane_cycle_member_span_demotions, 1,
         "the column-B span must be demoted for cycle membership"

@@ -19,10 +19,12 @@ use crate::engine::row_visibility::RowVisibilityState;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
-    CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, FormulaIngestBatch,
+    CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
+    EvaluationRequestOutcome, EvaluationResourceBaselineStats, EvaluationResourceReason,
+    EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome, FormulaIngestBatch,
     FormulaIngestRecord, FormulaIngestReport, FormulaParseDiagnostic, FormulaParsePolicy,
-    FormulaPlaneMode, RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind,
-    VisibilityMaskMode,
+    FormulaPlaneMode, FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyStrategy,
+    RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind, VisibilityMaskMode,
 };
 use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
@@ -40,8 +42,8 @@ use crate::formula_plane::runtime::{
     FormulaPlane, FormulaSpanId, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
 };
 use crate::formula_plane::scheduler::{
-    MixedSchedule, MixedScheduleFallbackReason, MixedTopology, MixedTopologyConfig,
-    compile_mixed_topology, schedule_dirty_work,
+    MixedSchedule, MixedScheduleFallbackReason, MixedTopology, MixedTopologyCompileStats,
+    MixedTopologyConfig, compile_mixed_topology, schedule_dirty_work,
 };
 #[cfg(test)]
 use crate::formula_plane::span_eval::SpanEvalReport;
@@ -750,6 +752,14 @@ pub struct Engine<R> {
 
     // Runtime-cycle SCC evaluation telemetry (RFC #112, Stage 2)
     last_cycle_telemetry: CycleTelemetry,
+
+    // C0 evaluation-resource observability. IDs are never reset or reused.
+    next_evaluation_resource_request_id: u64,
+    evaluation_resource_request_depth: usize,
+    active_evaluation_resource_request: Option<EvaluationResourceRequestStats>,
+    last_evaluation_resource_request: Option<EvaluationResourceRequestStats>,
+    evaluation_resource_baseline: EvaluationResourceBaselineStats,
+    evaluation_resource_request_started_at: Option<crate::instant::FzInstant>,
 
     /// SCC members that entered iterative calculation (`CyclePolicy::Iterate`
     /// with a witnessed live cycle) during the current evaluation request.
@@ -1856,6 +1866,12 @@ where
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
+            next_evaluation_resource_request_id: 1,
+            evaluation_resource_request_depth: 0,
+            active_evaluation_resource_request: None,
+            last_evaluation_resource_request: None,
+            evaluation_resource_baseline: EvaluationResourceBaselineStats::default(),
+            evaluation_resource_request_started_at: None,
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
@@ -1956,6 +1972,12 @@ where
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
+            next_evaluation_resource_request_id: 1,
+            evaluation_resource_request_depth: 0,
+            active_evaluation_resource_request: None,
+            last_evaluation_resource_request: None,
+            evaluation_resource_baseline: EvaluationResourceBaselineStats::default(),
+            evaluation_resource_request_started_at: None,
             pending_iterative_redirty: Vec::new(),
             iterative_state_values: FxHashMap::default(),
             function_semantic_epoch_seen: crate::function_registry::semantic_epoch(),
@@ -2008,6 +2030,243 @@ where
     /// or when `enable_virtual_dep_telemetry` is off).
     pub fn last_cycle_telemetry(&self) -> &CycleTelemetry {
         &self.last_cycle_telemetry
+    }
+
+    /// Resource observations for the most recently completed public evaluation request.
+    pub fn last_evaluation_resource_request_stats(
+        &self,
+    ) -> Option<&EvaluationResourceRequestStats> {
+        self.last_evaluation_resource_request.as_ref()
+    }
+
+    /// Cumulative resource observations since engine creation or the last telemetry reset.
+    pub fn evaluation_resource_baseline_stats(&self) -> EvaluationResourceBaselineStats {
+        self.evaluation_resource_baseline
+    }
+
+    /// Reset accumulated and last-request observations without reusing request IDs.
+    pub fn reset_evaluation_resource_telemetry(&mut self) {
+        self.evaluation_resource_baseline = EvaluationResourceBaselineStats::default();
+        self.last_evaluation_resource_request = None;
+    }
+
+    fn duration_ns(duration: std::time::Duration) -> u64 {
+        u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+    }
+
+    fn observe_evaluation_resource_request<T>(
+        &mut self,
+        kind: EvaluationRequestKind,
+        evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
+    ) -> Result<T, ExcelError> {
+        let outermost = self.evaluation_resource_request_depth == 0;
+        if outermost {
+            let request_id = self.next_evaluation_resource_request_id;
+            self.next_evaluation_resource_request_id = request_id
+                .checked_add(1)
+                .expect("evaluation resource request ID exhausted");
+            self.active_evaluation_resource_request = Some(EvaluationResourceRequestStats::new(
+                request_id,
+                kind,
+                self.config.formula_plane_mode,
+                self.staged_formula_count(),
+            ));
+            self.evaluation_resource_baseline.record_started(request_id);
+            self.evaluation_resource_request_started_at = Some(crate::instant::FzInstant::now());
+        }
+        self.evaluation_resource_request_depth =
+            self.evaluation_resource_request_depth.saturating_add(1);
+        let result = evaluate(self);
+        self.evaluation_resource_request_depth =
+            self.evaluation_resource_request_depth.saturating_sub(1);
+
+        if outermost {
+            let total_ns = self
+                .evaluation_resource_request_started_at
+                .take()
+                .map(|start| Self::duration_ns(start.elapsed()))
+                .unwrap_or(0);
+            let mut stats = self
+                .active_evaluation_resource_request
+                .take()
+                .expect("outer evaluation resource request has active stats");
+            stats.outcome = match &result {
+                Ok(_) => EvaluationRequestOutcome::Success,
+                Err(error) if error.kind == ExcelErrorKind::Cancelled => {
+                    EvaluationRequestOutcome::Cancelled
+                }
+                Err(_) => EvaluationRequestOutcome::Error,
+            };
+            if stats.dirty_lease == FormulaDirtyLeaseOutcome::Acquired {
+                stats.dirty_lease = if stats.outcome == EvaluationRequestOutcome::Cancelled {
+                    FormulaDirtyLeaseOutcome::RetainedOnCancellation
+                } else {
+                    FormulaDirtyLeaseOutcome::RetainedOnError
+                };
+            }
+            stats.phases.total_ns = total_ns;
+            let attributed = stats
+                .phases
+                .staged_prepare_ns
+                .saturating_add(stats.phases.topology_ns)
+                .saturating_add(stats.phases.materialization_ns);
+            stats.phases.evaluation_ns = total_ns.saturating_sub(attributed);
+            self.evaluation_resource_baseline.record_finished(&stats);
+            self.last_evaluation_resource_request = Some(stats);
+        }
+        result
+    }
+
+    fn observe_staged_preparation(
+        &mut self,
+        selected: usize,
+        retained: usize,
+        elapsed: std::time::Duration,
+    ) {
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            stats.staged_selected = stats.staged_selected.saturating_add(selected as u64);
+            stats.staged_retained = retained as u64;
+            stats.phases.staged_prepare_ns = stats
+                .phases
+                .staged_prepare_ns
+                .saturating_add(Self::duration_ns(elapsed));
+        }
+    }
+
+    fn observe_topology(
+        &mut self,
+        outcome: FormulaPlaneTopologyCacheOutcome,
+        strategy: FormulaPlaneTopologyStrategy,
+        observed: &MixedTopologyCompileStats,
+        elapsed: std::time::Duration,
+    ) {
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            if outcome.severity() > stats.topology.cache_outcome.severity() {
+                stats.topology.cache_outcome = outcome;
+            }
+            if strategy.severity() > stats.topology.strategy.severity() {
+                stats.topology.strategy = strategy;
+            }
+            match outcome {
+                FormulaPlaneTopologyCacheOutcome::Hit => {
+                    stats.topology.cache_hit_events =
+                        stats.topology.cache_hit_events.saturating_add(1);
+                }
+                FormulaPlaneTopologyCacheOutcome::Built => {
+                    stats.topology.cache_build_events =
+                        stats.topology.cache_build_events.saturating_add(1);
+                }
+                FormulaPlaneTopologyCacheOutcome::SkippedOverflow => {
+                    stats.topology.cache_build_events =
+                        stats.topology.cache_build_events.saturating_add(1);
+                    stats.topology.cache_skip_events =
+                        stats.topology.cache_skip_events.saturating_add(1);
+                }
+                FormulaPlaneTopologyCacheOutcome::NotUsed => {}
+            }
+            if matches!(
+                outcome,
+                FormulaPlaneTopologyCacheOutcome::Built
+                    | FormulaPlaneTopologyCacheOutcome::SkippedOverflow
+            ) {
+                stats.topology.producers_observed = stats
+                    .topology
+                    .producers_observed
+                    .saturating_add(observed.producers as u64);
+                stats.topology.candidates_observed = stats
+                    .topology
+                    .candidates_observed
+                    .saturating_add(observed.candidates as u64);
+                stats.topology.edges_observed = stats
+                    .topology
+                    .edges_observed
+                    .saturating_add(observed.relationships as u64);
+                stats.topology.candidate_cap_hits = stats
+                    .topology
+                    .candidate_cap_hits
+                    .saturating_add(observed.candidate_overflow_count as u64);
+                stats.topology.edge_cap_hits = stats
+                    .topology
+                    .edge_cap_hits
+                    .saturating_add(observed.edge_overflow_count as u64);
+                stats.topology.byte_cap_hits = stats
+                    .topology
+                    .byte_cap_hits
+                    .saturating_add(observed.memory_overflow_count as u64);
+                stats.topology.overflow_reason = if stats.topology.byte_cap_hits > 0 {
+                    Some(EvaluationResourceReason::FormulaPlaneTopologyRetainedBytes)
+                } else if stats.topology.edge_cap_hits > 0 {
+                    Some(EvaluationResourceReason::FormulaPlaneTopologyEdges)
+                } else if stats.topology.candidate_cap_hits > 0 {
+                    Some(EvaluationResourceReason::FormulaPlaneTopologyCandidates)
+                } else {
+                    None
+                };
+            }
+            stats.topology.retained_bytes_observed = stats
+                .topology
+                .retained_bytes_observed
+                .max(observed.estimated_memory_bytes as u64);
+            stats.phases.topology_ns = stats
+                .phases
+                .topology_ns
+                .saturating_add(Self::duration_ns(elapsed));
+        }
+    }
+
+    fn observe_topology_strategy(&mut self, strategy: FormulaPlaneTopologyStrategy) {
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut()
+            && strategy.severity() > stats.topology.strategy.severity()
+        {
+            stats.topology.strategy = strategy;
+        }
+    }
+
+    fn observe_materialization(
+        &mut self,
+        placements: usize,
+        cycle: bool,
+        elapsed: std::time::Duration,
+    ) {
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            if cycle {
+                stats.cycle_materialized_cells = stats
+                    .cycle_materialized_cells
+                    .saturating_add(placements as u64);
+            } else {
+                stats.fallback_materialized_cells = stats
+                    .fallback_materialized_cells
+                    .saturating_add(placements as u64);
+                stats.topology.strategy =
+                    FormulaPlaneTopologyStrategy::CapacityFallbackMaterialization;
+            }
+            stats.phases.materialization_ns = stats
+                .phases
+                .materialization_ns
+                .saturating_add(Self::duration_ns(elapsed));
+        }
+    }
+
+    fn observe_dirty_lease_acquired(&mut self, empty: bool) {
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            stats.dirty_lease = if empty {
+                FormulaDirtyLeaseOutcome::Empty
+            } else {
+                FormulaDirtyLeaseOutcome::Acquired
+            };
+        }
+    }
+
+    fn ack_formula_dirty_observed(&mut self, lease: FormulaDirtyLease) {
+        let empty = lease.is_empty();
+        let _ = self.graph.ack_formula_dirty(lease);
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            stats.dirty_lease = if empty {
+                FormulaDirtyLeaseOutcome::AcknowledgedEmpty
+            } else {
+                FormulaDirtyLeaseOutcome::Acknowledged
+            };
+        }
     }
 
     /// Begin a new evaluation request: reset per-recalc cycle telemetry and
@@ -6623,7 +6882,7 @@ where
         )>,
         publish_report: bool,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        let mut source_counts = [0_u64; 10];
+        let mut source_counts = [0_u64; 11];
         let mut source_report = crate::engine::FormulaCompressedSourceReport::default();
         let mut formula_batches = Vec::with_capacity(batches.len());
         let mut compressed_families = Vec::new();
@@ -6651,7 +6910,8 @@ where
             source_counts[7] = source_counts[7].max(compressed.source_spool_peak_memory_bytes);
             source_counts[8] =
                 source_counts[8].saturating_add(compressed.source_spool_spilled_bytes);
-            source_counts[9] = source_counts[9].saturating_add(compressed.source_spool_replays);
+            source_counts[9] = source_counts[9].saturating_add(compressed.source_spool_spill_files);
+            source_counts[10] = source_counts[10].saturating_add(compressed.source_spool_replays);
             source_report.families_seen = source_report
                 .families_seen
                 .saturating_add(compressed.families_seen);
@@ -6722,7 +6982,7 @@ where
         let has_formulas = batches.iter().any(|batch| !batch.formulas.is_empty());
         let report = self.ingest_formula_batches_inner(
             batches,
-            [0; 10],
+            [0; 11],
             None,
             Vec::new(),
             Vec::new(),
@@ -6738,13 +6998,13 @@ where
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new(), Vec::new(), false)
+        self.ingest_formula_batches_inner(batches, [0; 11], None, Vec::new(), Vec::new(), false)
     }
 
     fn ingest_formula_batches_inner(
         &mut self,
         batches: Vec<FormulaIngestBatch>,
-        source_counts: [u64; 10],
+        source_counts: [u64; 11],
         source_report: Option<crate::engine::FormulaCompressedSourceReport>,
         compressed_families: Vec<(String, Vec<crate::engine::SourceFormulaFamily>)>,
         partitioned_families: Vec<(String, Vec<crate::engine::PartitionedSourceFormulaFamily>)>,
@@ -6814,7 +7074,8 @@ where
         report.source_spool_encoded_bytes = source_counts[6];
         report.source_spool_peak_memory_bytes = source_counts[7];
         report.source_spool_spilled_bytes = source_counts[8];
-        report.source_spool_replays = source_counts[9];
+        report.source_spool_spill_files = source_counts[9];
+        report.source_spool_replays = source_counts[10];
         if let Some(source) = source_report {
             report.source_families_seen = source.families_seen;
             report.source_family_cells_seen = source.family_cells_seen;
@@ -6922,10 +7183,14 @@ where
 
     /// Build graph for all staged formulas.
     pub fn build_graph_all(&mut self) -> Result<(), formualizer_parse::ExcelError> {
+        let selected = self.staged_formula_count();
+        let started = crate::instant::FzInstant::now();
         let collected = std::mem::take(&mut self.staged_formulas)
             .into_iter()
             .collect();
-        self.build_graph_from_staged_batches(collected, false)
+        let result = self.build_graph_from_staged_batches(collected, false);
+        self.observe_staged_preparation(selected, self.staged_formula_count(), started.elapsed());
+        result
     }
 
     /// Build graph for specific sheets (consuming only those staged entries).
@@ -6933,13 +7198,20 @@ where
         &mut self,
         sheets: I,
     ) -> Result<(), formualizer_parse::ExcelError> {
+        let started = crate::instant::FzInstant::now();
         let mut collected = Vec::new();
         for sheet in sheets {
             if let Some(staged) = self.staged_formulas.remove(sheet) {
                 collected.push((sheet.to_string(), staged));
             }
         }
-        self.build_graph_from_staged_batches(collected, true)
+        let selected = collected
+            .iter()
+            .map(|(_, staged)| staged.len())
+            .sum::<usize>();
+        let result = self.build_graph_from_staged_batches(collected, true);
+        self.observe_staged_preparation(selected, self.staged_formula_count(), started.elapsed());
+        result
     }
 
     fn build_graph_from_staged_batches(
@@ -9774,6 +10046,7 @@ where
     /// the first graph/authority mutation, so a multi-span or multi-sheet cycle
     /// cannot publish only an earlier subset.
     fn demote_cyclic_spans(&mut self, span_refs: &[FormulaSpanRef]) -> Result<(), ExcelError> {
+        let materialization_started = crate::instant::FzInstant::now();
         let prepared = self
             .prepare_formula_span_demotion(span_refs)
             .map_err(|error| {
@@ -9788,6 +10061,11 @@ where
                     "FormulaPlane cycle-member span demotion commit failed: {error}"
                 ))
             })?;
+        self.observe_materialization(
+            report.placements_materialized,
+            true,
+            materialization_started.elapsed(),
+        );
         self.formula_plane_cycle_member_span_demotions = self
             .formula_plane_cycle_member_span_demotions
             .saturating_add(report.spans_demoted as u64);
@@ -12257,11 +12535,13 @@ where
     }
 
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
-        self.observe_function_semantic_epoch()?;
-        if self.graph.formula_authority().active_span_count() > 0 {
-            let _ = self.evaluate_authoritative_formula_plane_all()?;
-        }
-        self.evaluate_vertex_impl(vertex_id, None)
+        self.observe_evaluation_resource_request(EvaluationRequestKind::Vertex, |engine| {
+            engine.observe_function_semantic_epoch()?;
+            if engine.graph.formula_authority().active_span_count() > 0 {
+                let _ = engine.evaluate_authoritative_formula_plane_all()?;
+            }
+            engine.evaluate_vertex_impl(vertex_id, None)
+        })
     }
 
     fn evaluate_vertex_impl(
@@ -12905,6 +13185,15 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<EvalResult, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::Targeted, |engine| {
+            engine.evaluate_until_unobserved(targets)
+        })
+    }
+
+    fn evaluate_until_unobserved(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<EvalResult, ExcelError> {
         self.observe_function_semantic_epoch()?;
         #[cfg(feature = "tracing")]
         let _span_eval = tracing::info_span!("evaluate_until", targets = targets.len()).entered();
@@ -13112,6 +13401,15 @@ where
 
     /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
+            engine.evaluate_recalc_plan_unobserved(plan)
+        })
+    }
+
+    fn evaluate_recalc_plan_unobserved(
+        &mut self,
+        plan: &RecalcPlan,
+    ) -> Result<EvalResult, ExcelError> {
         if self.observe_function_semantic_epoch()? {
             return self.evaluate_all();
         }
@@ -13200,7 +13498,7 @@ where
         formula_dirty: FormulaDirtyLease,
     ) -> Result<EvalResult, ExcelError> {
         let result = self.evaluate_all_legacy_impl()?;
-        self.graph.ack_formula_dirty(formula_dirty);
+        self.ack_formula_dirty_observed(formula_dirty);
         Ok(result)
     }
 
@@ -13213,10 +13511,12 @@ where
         // counts survive into the final telemetry.
         self.begin_evaluation_request();
         let mut formula_dirty = self.graph.lease_formula_dirty();
+        self.observe_dirty_lease_acquired(formula_dirty.is_empty());
 
         // SingletonUnique formulas intentionally remain legacy graph vertices;
         // when no spans are active, execute through the private legacy primitive.
         if self.graph.formula_authority().active_span_count() == 0 {
+            self.observe_topology_strategy(FormulaPlaneTopologyStrategy::SkippedNoActiveSpans);
             #[cfg(test)]
             {
                 self.last_formula_plane_span_eval_report = None;
@@ -13227,6 +13527,7 @@ where
         // With no graph-owned span/region dirtiness, only sparse legacy work
         // (including volatiles) can remain. Preserve the warm no-op fast path.
         if formula_dirty.is_empty() {
+            self.observe_topology_strategy(FormulaPlaneTopologyStrategy::SkippedNoDirtyWork);
             #[cfg(test)]
             {
                 self.last_formula_plane_span_eval_report = None;
@@ -13275,6 +13576,7 @@ where
                     .collect::<Vec<_>>();
 
                 if !selected_span_refs.is_empty() {
+                    let materialization_started = crate::instant::FzInstant::now();
                     let prepared = self
                         .prepare_formula_span_demotion(&selected_span_refs)
                         .map_err(|error| {
@@ -13282,12 +13584,18 @@ where
                                 "FormulaPlane capacity fallback demotion preparation failed: {error}"
                             ))
                         })?;
-                    self.commit_prepared_formula_span_demotion(prepared)
+                    let report = self
+                        .commit_prepared_formula_span_demotion(prepared)
                         .map_err(|error| {
                             ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
                                 "FormulaPlane capacity fallback demotion commit failed: {error}"
                             ))
                         })?;
+                    self.observe_materialization(
+                        report.placements_materialized,
+                        false,
+                        materialization_started.elapsed(),
+                    );
                 }
 
                 #[cfg(test)]
@@ -13295,7 +13603,7 @@ where
                     self.last_formula_plane_span_eval_report = None;
                 }
                 let result = self.evaluate_all_legacy_impl()?;
-                self.graph.ack_formula_dirty(formula_dirty);
+                self.ack_formula_dirty_observed(formula_dirty);
                 self.formula_plane_capacity_bailouts =
                     self.formula_plane_capacity_bailouts.saturating_add(1);
                 return Ok(result);
@@ -13490,7 +13798,7 @@ where
         // vertices weren't in the dirty subset (e.g. recently-introduced span
         // result cells); legacy clear_dirty_flags is safe over the full set.
         self.redirty_for_next_recalc();
-        self.graph.ack_formula_dirty(formula_dirty);
+        self.ack_formula_dirty_observed(formula_dirty);
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
         Ok(EvalResult {
             computed_vertices,
@@ -13680,19 +13988,49 @@ where
             .as_ref()
             .is_some_and(|cached| cached.key == key && cached.span_refs_by_id == active_refs);
         let mut uncached_topology = None;
-        if cache_hit {
+        let topology_started = crate::instant::FzInstant::now();
+        let (cache_outcome, strategy, compile_stats) = if cache_hit {
             self.mixed_topology_cache_hits = self.mixed_topology_cache_hits.saturating_add(1);
+            let stats = self
+                .cached_mixed_topology
+                .as_ref()
+                .expect("cache hit has topology")
+                .topology
+                .stats
+                .clone();
+            (
+                FormulaPlaneTopologyCacheOutcome::Hit,
+                FormulaPlaneTopologyStrategy::Cached,
+                stats,
+            )
         } else {
             let compiled = self.compile_formula_plane_mixed_topology(key)?;
             self.mixed_topology_cache_builds = self.mixed_topology_cache_builds.saturating_add(1);
+            let stats = compiled.topology.stats.clone();
             if compiled.topology.is_complete() {
                 self.cached_mixed_topology = Some(compiled);
+                (
+                    FormulaPlaneTopologyCacheOutcome::Built,
+                    FormulaPlaneTopologyStrategy::CompiledAndCached,
+                    stats,
+                )
             } else {
                 self.mixed_topology_cache_overflows =
                     self.mixed_topology_cache_overflows.saturating_add(1);
                 uncached_topology = Some(compiled);
+                (
+                    FormulaPlaneTopologyCacheOutcome::SkippedOverflow,
+                    FormulaPlaneTopologyStrategy::CapacityFallbackMaterialization,
+                    stats,
+                )
             }
-        }
+        };
+        self.observe_topology(
+            cache_outcome,
+            strategy,
+            &compile_stats,
+            topology_started.elapsed(),
+        );
 
         let cached = uncached_topology
             .as_ref()
@@ -13813,6 +14151,12 @@ where
 
     /// Evaluate all dirty/volatile vertices
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
+            engine.evaluate_all_unobserved()
+        })
+    }
+
+    fn evaluate_all_unobserved(&mut self) -> Result<EvalResult, ExcelError> {
         debug_assert!(
             !self.graph.deferred_dirty_active(),
             "deferred-dirty scope leaked into evaluate_all: a begin_deferred_dirty \
@@ -13963,10 +14307,12 @@ where
     }
 
     pub fn evaluate_all_with_delta(&mut self) -> Result<(EvalResult, EvalDelta), ExcelError> {
-        self.observe_function_semantic_epoch()?;
-        let mut collector = DeltaCollector::new(DeltaMode::Cells);
-        let result = self.evaluate_all_with_delta_collector(&mut collector)?;
-        Ok((result, collector.finish()))
+        self.observe_evaluation_resource_request(EvaluationRequestKind::FullWithDelta, |engine| {
+            engine.observe_function_semantic_epoch()?;
+            let mut collector = DeltaCollector::new(DeltaMode::Cells);
+            let result = engine.evaluate_all_with_delta_collector(&mut collector)?;
+            Ok((result, collector.finish()))
+        })
     }
 
     fn evaluate_all_with_delta_collector(
@@ -14092,6 +14438,17 @@ where
         row: u32,
         col: u32,
     ) -> Result<Option<LiteralValue>, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::Cell, |engine| {
+            engine.evaluate_cell_unobserved(sheet, row, col)
+        })
+    }
+
+    fn evaluate_cell_unobserved(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> Result<Option<LiteralValue>, ExcelError> {
         if row == 0 || col == 0 {
             return Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Row and column must be >= 1".to_string()));
@@ -14130,6 +14487,15 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::Cells, |engine| {
+            engine.evaluate_cells_unobserved(targets)
+        })
+    }
+
+    fn evaluate_cells_unobserved(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
         self.observe_function_semantic_epoch()?;
         debug_assert!(
             !self.graph.deferred_dirty_active(),
@@ -14162,11 +14528,16 @@ where
         targets: &[(&str, u32, u32)],
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
-        self.observe_function_semantic_epoch()?;
-        self.active_cancel_flag = Some(cancel_flag.clone());
-        let res = self.evaluate_cells_cancellable_impl(targets, &cancel_flag);
-        self.active_cancel_flag = None;
-        res
+        self.observe_evaluation_resource_request(
+            EvaluationRequestKind::CellsCancellable,
+            |engine| {
+                engine.observe_function_semantic_epoch()?;
+                engine.active_cancel_flag = Some(cancel_flag.clone());
+                let res = engine.evaluate_cells_cancellable_impl(targets, &cancel_flag);
+                engine.active_cancel_flag = None;
+                res
+            },
+        )
     }
 
     fn evaluate_cells_cancellable_impl(
@@ -14216,6 +14587,15 @@ where
     }
 
     pub fn evaluate_cells_with_delta(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::CellsWithDelta, |engine| {
+            engine.evaluate_cells_with_delta_unobserved(targets)
+        })
+    }
+
+    fn evaluate_cells_with_delta_unobserved(
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
@@ -14645,11 +15025,13 @@ where
         &mut self,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<EvalResult, ExcelError> {
-        self.observe_function_semantic_epoch()?;
-        self.active_cancel_flag = Some(cancel_flag.clone());
-        let res = self.evaluate_all_cancellable_impl(&cancel_flag);
-        self.active_cancel_flag = None;
-        res
+        self.observe_evaluation_resource_request(EvaluationRequestKind::FullCancellable, |engine| {
+            engine.observe_function_semantic_epoch()?;
+            engine.active_cancel_flag = Some(cancel_flag.clone());
+            let res = engine.evaluate_all_cancellable_impl(&cancel_flag);
+            engine.active_cancel_flag = None;
+            res
+        })
     }
 
     fn evaluate_all_cancellable_impl(
@@ -14806,11 +15188,16 @@ where
         targets: &[&str],
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<EvalResult, ExcelError> {
-        self.observe_function_semantic_epoch()?;
-        self.active_cancel_flag = Some(cancel_flag.clone());
-        let res = self.evaluate_until_cancellable_impl(targets, &cancel_flag);
-        self.active_cancel_flag = None;
-        res
+        self.observe_evaluation_resource_request(
+            EvaluationRequestKind::TargetedCancellable,
+            |engine| {
+                engine.observe_function_semantic_epoch()?;
+                engine.active_cancel_flag = Some(cancel_flag.clone());
+                let res = engine.evaluate_until_cancellable_impl(targets, &cancel_flag);
+                engine.active_cancel_flag = None;
+                res
+            },
+        )
     }
 
     fn evaluate_until_cancellable_impl(
@@ -19171,6 +19558,15 @@ where
     /// This is the same flow as `evaluate_all` but threads a ChangeLog through
     /// every effect application so that spill commits/clears are captured.
     pub fn evaluate_all_logged(&mut self, log: &mut ChangeLog) -> Result<EvalResult, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::FullLogged, |engine| {
+            engine.evaluate_all_logged_unobserved(log)
+        })
+    }
+
+    fn evaluate_all_logged_unobserved(
+        &mut self,
+        log: &mut ChangeLog,
+    ) -> Result<EvalResult, ExcelError> {
         self.observe_function_semantic_epoch()?;
         self.begin_evaluation_request();
         let _source_cache = self.source_cache_session();
