@@ -285,8 +285,14 @@ side exit without waiting for topology unification:
   are generation-leased until successful completion, and a finite fallback-cell cap fails
   closed without partial graph, authority, overlay, telemetry, or dirty-state publication.
   This directly closes #144 while T1 removes the dual-authority boundary that produced it.
+- **T1.1 — Cached mixed topology.** Compile immutable producer relationships and dirty
+  projections once per exact graph/authority/semantic revision, then derive each request's
+  schedule from its current dirty domains. Indexed candidate visitors and finite candidate,
+  edge, and retained-memory budgets stop atomically and route overflow through T1.0b; no
+  partial topology is cached. Value-only edits reuse the cache, dependency mutations rebuild
+  it, and span-free workbooks perform zero mixed-topology builds.
 
-1. **T1 — Single dirty authority.** Move region dirtiness into the graph: `mark_dirty`
+1. **T1 — Single dirty authority (T1.2–T1.3 remaining).** Move region dirtiness into the graph: `mark_dirty`
    probes the region index natively; `pending_changed_regions` and the FP-side dirty
    seeding retire; replace `WholeAll` epoch escalation with translated interval
    dirtiness for shifts. Profile and eliminate the warm tax (§1) — the per-cycle

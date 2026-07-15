@@ -40,7 +40,8 @@ use crate::formula_plane::runtime::{
     FormulaPlane, FormulaSpanId, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
 };
 use crate::formula_plane::scheduler::{
-    MixedSchedule, MixedScheduleFallbackReason, build_mixed_schedule,
+    MixedSchedule, MixedScheduleFallbackReason, MixedTopology, MixedTopologyConfig,
+    compile_mixed_topology, schedule_dirty_work,
 };
 #[cfg(test)]
 use crate::formula_plane::span_eval::SpanEvalReport;
@@ -677,6 +678,10 @@ pub struct Engine<R> {
     snapshot_id: std::sync::atomic::AtomicU64,
     topology_epoch: u64,
     cached_static_schedule: Option<CachedScheduleEntry>,
+    cached_mixed_topology: Option<CachedMixedTopology>,
+    mixed_topology_cache_builds: u64,
+    mixed_topology_cache_hits: u64,
+    mixed_topology_cache_overflows: u64,
     spill_mgr: ShimSpillManager,
     /// Arrow-backed storage for sheet values (Phase A)
     arrow_sheets: SheetStore,
@@ -1315,6 +1320,9 @@ pub struct EngineBaselineStats {
     pub formula_plane_active_span_count: usize,
     pub formula_plane_producer_result_entries: usize,
     pub formula_plane_consumer_read_entries: usize,
+    pub formula_plane_mixed_topology_cache_builds: u64,
+    pub formula_plane_mixed_topology_cache_hits: u64,
+    pub formula_plane_mixed_topology_cache_overflows: u64,
     /// Number of spans demoted to legacy because a member participated in a
     /// statically-cyclic SCC (gotcha G8, refs #112).
     pub formula_plane_cycle_member_span_demotions: u64,
@@ -1399,6 +1407,39 @@ struct CachedScheduleEntry {
     topology_epoch: u64,
     candidate_vertices: Vec<VertexId>,
     schedule: crate::engine::scheduler::Schedule,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MixedTopologyCacheKey {
+    engine_topology_epoch: u64,
+    graph_topology_revision: u64,
+    authority_indexes_epoch: u64,
+    function_semantic_epoch: u64,
+    function_provider_revision: Option<u64>,
+    max_candidates: usize,
+    max_edges: usize,
+    max_memory_bytes: usize,
+}
+
+#[derive(Debug)]
+struct CachedMixedTopology {
+    key: MixedTopologyCacheKey,
+    topology: MixedTopology,
+    producer_results: FormulaProducerResultIndex,
+    consumer_reads: FormulaConsumerReadIndex,
+    span_refs_by_id: BTreeMap<FormulaSpanId, FormulaSpanRef>,
+    plane_epoch: u64,
+}
+
+fn estimated_span_bindings_bytes(
+    bindings: &BTreeMap<FormulaSpanId, FormulaSpanRef>,
+) -> Option<usize> {
+    const TREE_ENTRY_OVERHEAD: usize = 4 * std::mem::size_of::<usize>();
+    bindings.len().checked_mul(
+        std::mem::size_of::<FormulaSpanId>()
+            .checked_add(std::mem::size_of::<FormulaSpanRef>())?
+            .checked_add(TREE_ENTRY_OVERHEAD)?,
+    )
 }
 
 type ScheduleBuildOutput = (
@@ -1764,6 +1805,10 @@ where
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
             cached_static_schedule: None,
+            cached_mixed_topology: None,
+            mixed_topology_cache_builds: 0,
+            mixed_topology_cache_hits: 0,
+            mixed_topology_cache_overflows: 0,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             has_edited: false,
@@ -1858,6 +1903,10 @@ where
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
             cached_static_schedule: None,
+            cached_mixed_topology: None,
+            mixed_topology_cache_builds: 0,
+            mixed_topology_cache_hits: 0,
+            mixed_topology_cache_overflows: 0,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             has_edited: false,
@@ -2681,6 +2730,9 @@ where
             formula_plane_active_span_count: formula_authority.active_span_count(),
             formula_plane_producer_result_entries: formula_authority.producer_results.len(),
             formula_plane_consumer_read_entries: formula_authority.consumer_reads.len(),
+            formula_plane_mixed_topology_cache_builds: self.mixed_topology_cache_builds,
+            formula_plane_mixed_topology_cache_hits: self.mixed_topology_cache_hits,
+            formula_plane_mixed_topology_cache_overflows: self.mixed_topology_cache_overflows,
             formula_plane_cycle_member_span_demotions: self
                 .formula_plane_cycle_member_span_demotions,
         }
@@ -3286,7 +3338,9 @@ where
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.topology_epoch = self.topology_epoch.wrapping_add(1);
+        self.graph.bump_topology_revision();
         self.clear_cached_static_schedule();
+        self.cached_mixed_topology = None;
         self.has_edited = true;
     }
 
@@ -3461,6 +3515,16 @@ where
     #[cfg(test)]
     pub(crate) fn topology_epoch_for_test(&self) -> u64 {
         self.topology_epoch
+    }
+
+    #[cfg(test)]
+    pub(crate) fn graph_topology_revision_for_test(&self) -> u64 {
+        self.graph.topology_revision()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mixed_topology_cache_present_for_test(&self) -> bool {
+        self.cached_mixed_topology.is_some()
     }
 
     fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
@@ -6347,7 +6411,19 @@ where
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
-        self.ingest_formula_batches_inner(batches, [0; 10], None, Vec::new(), Vec::new(), true)
+        let has_formulas = batches.iter().any(|batch| !batch.formulas.is_empty());
+        let report = self.ingest_formula_batches_inner(
+            batches,
+            [0; 10],
+            None,
+            Vec::new(),
+            Vec::new(),
+            true,
+        )?;
+        if has_formulas {
+            self.mark_topology_edited();
+        }
+        Ok(report)
     }
 
     fn ingest_formula_batches_unpublished(
@@ -12900,25 +12976,39 @@ where
         })
     }
 
-    fn build_formula_plane_mixed_schedule(
+    fn mixed_topology_cache_key(&self) -> MixedTopologyCacheKey {
+        MixedTopologyCacheKey {
+            engine_topology_epoch: self.topology_epoch,
+            graph_topology_revision: self.graph.topology_revision(),
+            authority_indexes_epoch: self.graph.formula_authority().indexes_epoch(),
+            function_semantic_epoch: self.function_semantic_epoch_seen,
+            function_provider_revision: self.function_provider_revision_seen,
+            max_candidates: self.config.max_formula_plane_cache_candidates,
+            max_edges: self.config.max_formula_plane_cache_edges,
+            max_memory_bytes: self.config.max_formula_plane_cache_bytes,
+        }
+    }
+
+    fn compile_formula_plane_mixed_topology(
         &self,
-        span_seed_mode: SpanSeedMode,
-        pending_changed_regions: &[Region],
-    ) -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
+        key: MixedTopologyCacheKey,
+    ) -> Result<CachedMixedTopology, ExcelError> {
         let authority = self.graph.formula_authority();
         let mut producer_results = FormulaProducerResultIndex::default();
         let mut consumer_reads = FormulaConsumerReadIndex::default();
-        let mut work = Vec::new();
-
-        // Legacy formula producers participate in the mixed runtime only when
-        // they are dirty under graph semantics. Result/read indexes still cover
-        // every legacy formula so that span->legacy and legacy->span ordering is
-        // visible to the scheduler regardless of dirty status, but only dirty
-        // vertices receive scheduled work.
-        let dirty_legacy: rustc_hash::FxHashSet<VertexId> =
-            self.graph.get_evaluation_vertices().into_iter().collect();
-
         let span_refs = authority.active_span_refs();
+        let legacy_vertices = self.graph.formula_vertices();
+        let producer_count = span_refs
+            .len()
+            .checked_add(legacy_vertices.len())
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane cache producer count overflow")
+            })?;
+        producer_results.try_reserve(producer_count).map_err(|_| {
+            ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("FormulaPlane cache producer index reservation failed")
+        })?;
         let span_refs_by_id = span_refs
             .iter()
             .copied()
@@ -12945,6 +13035,10 @@ where
                     .with_message("FormulaPlane active span read summary is stale"));
             }
             for dependency in &read_summary.dependencies {
+                consumer_reads.try_reserve(1).map_err(|_| {
+                    ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("FormulaPlane cache read-index reservation failed")
+                })?;
                 consumer_reads.insert_read(
                     FormulaProducerId::Span(span.id),
                     dependency.read_region,
@@ -12952,31 +13046,17 @@ where
                     dependency.projection,
                 );
             }
-            if matches!(span_seed_mode, SpanSeedMode::WholeAll) {
-                work.push(FormulaProducerWork {
-                    producer: FormulaProducerId::Span(span.id),
-                    dirty: ProducerDirtyDomain::Whole,
-                });
-            }
         }
 
-        let legacy_vertices = self.graph.formula_vertices();
-        let mut scheduled_legacy_vertices = Vec::new();
         for vertex in &legacy_vertices {
             let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
                 continue;
             };
-            let result_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
-            producer_results.insert_producer(FormulaProducerId::Legacy(*vertex), result_region);
-            if dirty_legacy.contains(vertex) {
-                scheduled_legacy_vertices.push(*vertex);
-                work.push(FormulaProducerWork {
-                    producer: FormulaProducerId::Legacy(*vertex),
-                    dirty: ProducerDirtyDomain::Whole,
-                });
-            }
+            producer_results.insert_producer(
+                FormulaProducerId::Legacy(*vertex),
+                Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col()),
+            );
         }
-
         for vertex in &legacy_vertices {
             let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
                 continue;
@@ -12993,6 +13073,10 @@ where
                     dep_cell.coord.col(),
                 );
                 if seen.insert(read_region) {
+                    consumer_reads.try_reserve(1).map_err(|_| {
+                        ExcelError::new(ExcelErrorKind::NImpl)
+                            .with_message("FormulaPlane cache read-index reservation failed")
+                    })?;
                     consumer_reads.insert_read(
                         FormulaProducerId::Legacy(*vertex),
                         read_region,
@@ -13007,6 +13091,10 @@ where
                         continue;
                     };
                     if seen.insert(read_region) {
+                        consumer_reads.try_reserve(1).map_err(|_| {
+                            ExcelError::new(ExcelErrorKind::NImpl)
+                                .with_message("FormulaPlane cache read-index reservation failed")
+                        })?;
                         consumer_reads.insert_read(
                             FormulaProducerId::Legacy(*vertex),
                             read_region,
@@ -13018,35 +13106,120 @@ where
             }
         }
 
-        // When span seed mode is DirtyClosure, derive bounded span work from
-        // captured changed regions via the consumer-read index. This avoids
-        // recomputing every active span on edits that only touch a small
-        // number of cells.
+        let retained_memory_bytes = std::mem::size_of::<CachedMixedTopology>()
+            .checked_add(
+                producer_results
+                    .estimated_memory_bytes()
+                    .unwrap_or(usize::MAX),
+            )
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    consumer_reads
+                        .estimated_memory_bytes()
+                        .unwrap_or(usize::MAX),
+                )
+            })
+            .and_then(|bytes| bytes.checked_add(estimated_span_bindings_bytes(&span_refs_by_id)?))
+            .unwrap_or(usize::MAX);
+        let config = MixedTopologyConfig {
+            max_candidates: self.config.max_formula_plane_cache_candidates,
+            max_edges: self.config.max_formula_plane_cache_edges,
+            max_memory_bytes: self.config.max_formula_plane_cache_bytes,
+            retained_memory_bytes,
+        };
+        let topology = compile_mixed_topology(&producer_results, &consumer_reads, &config);
+        Ok(CachedMixedTopology {
+            key,
+            topology,
+            producer_results,
+            consumer_reads,
+            span_refs_by_id,
+            plane_epoch: authority.plane.epoch().0,
+        })
+    }
+
+    fn build_formula_plane_mixed_schedule(
+        &mut self,
+        span_seed_mode: SpanSeedMode,
+        pending_changed_regions: &[Region],
+    ) -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
+        let key = self.mixed_topology_cache_key();
+        let active_refs = self
+            .graph
+            .formula_authority()
+            .active_span_refs()
+            .into_iter()
+            .map(|span_ref| (span_ref.id, span_ref))
+            .collect::<BTreeMap<_, _>>();
+        let cache_hit = self
+            .cached_mixed_topology
+            .as_ref()
+            .is_some_and(|cached| cached.key == key && cached.span_refs_by_id == active_refs);
+        let mut uncached_topology = None;
+        if cache_hit {
+            self.mixed_topology_cache_hits = self.mixed_topology_cache_hits.saturating_add(1);
+        } else {
+            let compiled = self.compile_formula_plane_mixed_topology(key)?;
+            self.mixed_topology_cache_builds = self.mixed_topology_cache_builds.saturating_add(1);
+            if compiled.topology.is_complete() {
+                self.cached_mixed_topology = Some(compiled);
+            } else {
+                self.mixed_topology_cache_overflows =
+                    self.mixed_topology_cache_overflows.saturating_add(1);
+                uncached_topology = Some(compiled);
+            }
+        }
+
+        let cached = uncached_topology
+            .as_ref()
+            .or(self.cached_mixed_topology.as_ref())
+            .expect("mixed topology available for request");
+        let dirty_legacy = self.graph.get_evaluation_vertices();
+        let mut work = Vec::new();
+        let mut scheduled_legacy_vertices = Vec::new();
+        if matches!(span_seed_mode, SpanSeedMode::WholeAll) {
+            for span_id in cached.span_refs_by_id.keys().copied() {
+                work.push(FormulaProducerWork {
+                    producer: FormulaProducerId::Span(span_id),
+                    dirty: ProducerDirtyDomain::Whole,
+                });
+            }
+        }
+        for vertex in dirty_legacy {
+            let producer = FormulaProducerId::Legacy(vertex);
+            if cached
+                .producer_results
+                .producer_result_region(producer)
+                .is_some()
+            {
+                scheduled_legacy_vertices.push(vertex);
+                work.push(FormulaProducerWork {
+                    producer,
+                    dirty: ProducerDirtyDomain::Whole,
+                });
+            }
+        }
+
         if matches!(span_seed_mode, SpanSeedMode::DirtyClosure)
             && !pending_changed_regions.is_empty()
         {
             use crate::formula_plane::producer::compute_dirty_closure;
-            let producer_results_ref = &producer_results;
             let closure = compute_dirty_closure(
-                &consumer_reads,
+                &cached.consumer_reads,
                 pending_changed_regions.iter().copied(),
-                |producer| producer_results_ref.producer_result_region(producer),
+                |producer| cached.producer_results.producer_result_region(producer),
             );
-            for fallback_work in closure.work {
-                work.push(fallback_work);
-            }
-            // Any unsupported/conservative fallbacks for spans imply we may have
-            // missed work; in that case demote to whole-span for affected spans.
+            work.extend(closure.work);
             if !closure.fallbacks.is_empty() {
-                let mut already_whole: rustc_hash::FxHashSet<_> = work
+                let mut already_whole = work
                     .iter()
-                    .filter_map(|w| match (w.producer, &w.dirty) {
+                    .filter_map(|item| match (item.producer, &item.dirty) {
                         (FormulaProducerId::Span(id), ProducerDirtyDomain::Whole) => Some(id),
                         _ => None,
                     })
-                    .collect();
-                for fb in &closure.fallbacks {
-                    if let FormulaProducerId::Span(id) = fb.consumer
+                    .collect::<rustc_hash::FxHashSet<_>>();
+                for fallback in closure.fallbacks {
+                    if let FormulaProducerId::Span(id) = fallback.consumer
                         && already_whole.insert(id)
                     {
                         work.push(FormulaProducerWork {
@@ -13058,11 +13231,11 @@ where
             }
         }
 
-        let schedule = build_mixed_schedule(work, &producer_results, &consumer_reads);
+        let schedule = schedule_dirty_work(work, &cached.producer_results, &cached.topology, 256);
         Ok((
             schedule,
-            span_refs_by_id,
-            authority.plane.epoch().0,
+            cached.span_refs_by_id.clone(),
+            cached.plane_epoch,
             scheduled_legacy_vertices,
         ))
     }

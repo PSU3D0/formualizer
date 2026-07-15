@@ -21,6 +21,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Performance
 
+- Experimental authoritative FormulaPlane evaluation now caches compiled mixed producer topology across warm and value-only evaluations. Exact graph, authority, and semantic revisions invalidate the cache on dependency mutations; bounded candidate, edge, and memory limits fail closed through transactional span demotion, while span-free workbooks retain the legacy sparse floor with zero mixed-cache builds.
 - Proven complete source-formula families now parse and analyze one anchor and avoid per-descendant strings, ASTs, staging entries, and graph vertices. In same-machine release probes, a clean 100k-family load improved from 997 ms and 313 MiB RSS under forced replay to 129 ms and 26 MiB RSS; a 1M-family load completed in 2.2 s at 167 MiB RSS instead of 13.1 s at 3.0 GiB.
 
 ## [0.7.1] - 2026-07-02

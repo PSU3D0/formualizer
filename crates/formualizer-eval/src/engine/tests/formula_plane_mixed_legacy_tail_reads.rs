@@ -168,7 +168,7 @@ fn assert_full_capacity_corpus_parity(
 }
 
 #[test]
-fn capacity_fallback_matches_off_first_warm_and_post_edit() {
+fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     let build = |mode| build_mixed_engine(mode, |row| format!("=SUM($A{row}:$B${ROWS})"));
     let mut off = build(FormulaPlaneMode::Off);
     let mut authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
@@ -184,22 +184,22 @@ fn capacity_fallback_matches_off_first_warm_and_post_edit() {
 
     off.evaluate_all().unwrap();
     authoritative.evaluate_all().unwrap();
-    assert_eq!(authoritative.formula_plane_capacity_bailouts(), 1);
-    assert_eq!(
-        authoritative
-            .baseline_stats()
-            .formula_plane_active_span_count,
-        0,
-        "first-eval WholeAll must select and demote every scheduled span"
-    );
+    assert_eq!(authoritative.formula_plane_capacity_bailouts(), 0);
+    let first_stats = authoritative.baseline_stats();
+    assert_eq!(first_stats.formula_plane_active_span_count, 1);
+    assert_eq!(first_stats.formula_plane_mixed_topology_cache_builds, 1);
+    assert_eq!(first_stats.formula_plane_mixed_topology_cache_hits, 0);
     assert_full_capacity_corpus_parity(&off, &authoritative);
 
     off.evaluate_all().unwrap();
     authoritative.evaluate_all().unwrap();
+    assert_eq!(authoritative.formula_plane_capacity_bailouts(), 0);
     assert_eq!(
-        authoritative.formula_plane_capacity_bailouts(),
+        authoritative
+            .baseline_stats()
+            .formula_plane_mixed_topology_cache_builds,
         1,
-        "successful fallback telemetry increments once, not on warm legacy recalc"
+        "warm recalculation must not rebuild mixed topology"
     );
     assert_full_capacity_corpus_parity(&off, &authoritative);
 
@@ -209,7 +209,10 @@ fn capacity_fallback_matches_off_first_warm_and_post_edit() {
             .unwrap();
         engine.evaluate_all().unwrap();
     }
-    assert_eq!(authoritative.formula_plane_capacity_bailouts(), 1);
+    assert_eq!(authoritative.formula_plane_capacity_bailouts(), 0);
+    let edited_stats = authoritative.baseline_stats();
+    assert_eq!(edited_stats.formula_plane_mixed_topology_cache_builds, 1);
+    assert_eq!(edited_stats.formula_plane_mixed_topology_cache_hits, 1);
     assert_full_capacity_corpus_parity(&off, &authoritative);
 }
 
@@ -313,6 +316,7 @@ fn fallback_cap_failure_retains_exact_state_and_pending_lease_for_retry() {
     let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
         format!("=SUM($A{row}:$B${ROWS})")
     });
+    engine.config.max_formula_plane_cache_candidates = 0;
     add_capacity_source_overlay(&mut engine);
     let mut limits = engine.workbook_load_limits().clone();
     limits.max_formula_plane_fallback_cells = u64::from(ROWS - 1);
@@ -394,6 +398,7 @@ fn capacity_faults_retain_pending_lease_and_count_only_successful_retry() {
         let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
             format!("=SUM($A{row}:$B${ROWS})")
         });
+        engine.config.max_formula_plane_cache_candidates = 0;
         add_capacity_source_overlay(&mut engine);
         let refs = engine.graph.formula_authority().active_span_refs();
         let pending = engine
@@ -489,6 +494,7 @@ fn capacity_fallback_demotes_only_scheduled_dirty_span() {
     engine.evaluate_all().expect("initial span-only evaluation");
     assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    engine.config.max_formula_plane_cache_candidates = 0;
 
     let topology_epoch = engine.topology_epoch_for_test();
     engine
@@ -543,4 +549,191 @@ fn clean_spans_remain_authoritative_when_only_legacy_work_is_dirty() {
             .pending_changed_regions()
             .is_empty()
     );
+}
+
+fn cached_topology_engine() -> Engine<TestWorkbook> {
+    build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
+        format!("=SUM($A{row}:$A${ROWS})")
+    })
+}
+
+fn assert_mutation_invalidates_cache_once(
+    label: &str,
+    mut engine: Engine<TestWorkbook>,
+    mutate: impl FnOnce(&mut Engine<TestWorkbook>),
+) {
+    engine.evaluate_all().unwrap();
+    let before = engine.baseline_stats();
+    let revision = engine.graph_topology_revision_for_test();
+    assert!(engine.mixed_topology_cache_present_for_test());
+
+    mutate(&mut engine);
+
+    assert_eq!(
+        engine.graph_topology_revision_for_test(),
+        revision + 1,
+        "{label} must bump graph topology revision once",
+    );
+    assert!(!engine.mixed_topology_cache_present_for_test());
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(10_001.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine
+            .baseline_stats()
+            .formula_plane_mixed_topology_cache_builds,
+        before.formula_plane_mixed_topology_cache_builds + 1
+    );
+}
+
+#[test]
+fn mixed_topology_cache_mutation_class_invalidation_audit() {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use crate::reference::{CellRef, Coord, RangeRef};
+
+    assert_mutation_invalidates_cache_once("formula", cached_topology_engine(), |engine| {
+        engine
+            .set_cell_formula(SHEET, ROWS + 10, 10, parse("=1+1").unwrap())
+            .unwrap();
+    });
+    assert_mutation_invalidates_cache_once("sheet", cached_topology_engine(), |engine| {
+        engine.add_sheet("Added").unwrap();
+    });
+    assert_mutation_invalidates_cache_once("structural", cached_topology_engine(), |engine| {
+        engine.insert_rows(SHEET, ROWS + 10, 1).unwrap();
+    });
+    assert_mutation_invalidates_cache_once("name", cached_topology_engine(), |engine| {
+        engine
+            .define_name(
+                "CacheAuditName",
+                NamedDefinition::Literal(LiteralValue::Number(1.0)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+    });
+    assert_mutation_invalidates_cache_once("table", cached_topology_engine(), |engine| {
+        let sheet_id = engine.graph.sheet_id(SHEET).unwrap();
+        let range = RangeRef::new(
+            CellRef::new(sheet_id, Coord::from_excel(1, 1, true, true)),
+            CellRef::new(sheet_id, Coord::from_excel(2, 1, true, true)),
+        );
+        engine
+            .define_table("CacheAuditTable", range, true, vec!["Value".into()], false)
+            .unwrap();
+    });
+    assert_mutation_invalidates_cache_once("span", cached_topology_engine(), |engine| {
+        let formulas = (1..=120)
+            .map(|row| record(engine, row, 5, &format!("=A{row}*3")))
+            .collect();
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
+            .unwrap();
+    });
+}
+
+#[test]
+fn mixed_topology_cache_rejects_stale_span_ref_even_without_epoch_change() {
+    let mut engine = cached_topology_engine();
+    engine.evaluate_all().unwrap();
+    let before = engine.baseline_stats();
+    let span_ref = engine.graph.formula_authority().active_span_refs()[0];
+    engine
+        .graph
+        .formula_authority_mut()
+        .plane
+        .spans
+        .get_mut_for_test(span_ref)
+        .unwrap()
+        .version = span_ref.version.wrapping_add(1);
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(11.0))
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine
+            .baseline_stats()
+            .formula_plane_mixed_topology_cache_builds,
+        before.formula_plane_mixed_topology_cache_builds + 1
+    );
+}
+
+#[test]
+fn span_free_authoritative_workbook_never_builds_mixed_topology_cache() {
+    let config =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), config);
+    engine
+        .set_cell_formula(SHEET, 1, 1, parse("=1+1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    engine
+        .set_cell_value(SHEET, 2, 1, LiteralValue::Number(3.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let stats = engine.baseline_stats();
+    assert_eq!(stats.formula_plane_active_span_count, 0);
+    assert_eq!(stats.formula_plane_mixed_topology_cache_builds, 0);
+    assert_eq!(stats.formula_plane_mixed_topology_cache_hits, 0);
+}
+
+#[test]
+fn prepared_demotion_failure_keeps_revision_and_cache_success_invalidates_once() {
+    use crate::engine::eval::FormulaSpanDemotionFault;
+
+    let mut failed = cached_topology_engine();
+    failed.evaluate_all().unwrap();
+    let refs = failed.graph.formula_authority().active_span_refs();
+    let revision = failed.graph_topology_revision_for_test();
+    let stats = failed.baseline_stats();
+    failed.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
+    let prepared = failed.prepare_formula_span_demotion(&refs).unwrap();
+    assert!(
+        failed
+            .commit_prepared_formula_span_demotion(prepared)
+            .is_err()
+    );
+    assert_eq!(failed.graph_topology_revision_for_test(), revision);
+    assert!(failed.mixed_topology_cache_present_for_test());
+    assert_eq!(
+        failed
+            .baseline_stats()
+            .formula_plane_mixed_topology_cache_builds,
+        stats.formula_plane_mixed_topology_cache_builds
+    );
+
+    let mut committed = cached_topology_engine();
+    committed.evaluate_all().unwrap();
+    let refs = committed.graph.formula_authority().active_span_refs();
+    let revision = committed.graph_topology_revision_for_test();
+    let prepared = committed.prepare_formula_span_demotion(&refs).unwrap();
+    committed
+        .commit_prepared_formula_span_demotion(prepared)
+        .unwrap();
+    assert_eq!(committed.graph_topology_revision_for_test(), revision + 1);
+    assert!(!committed.mixed_topology_cache_present_for_test());
+}
+
+#[test]
+fn cache_edge_and_memory_caps_route_fail_closed_through_demotion() {
+    for limit_kind in ["edges", "memory"] {
+        let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
+            format!("=SUM($A{row}:$B${ROWS})")
+        });
+        match limit_kind {
+            "edges" => engine.config.max_formula_plane_cache_edges = 0,
+            "memory" => engine.config.max_formula_plane_cache_bytes = 0,
+            _ => unreachable!(),
+        }
+        engine.evaluate_all().unwrap();
+        let stats = engine.baseline_stats();
+        assert_eq!(stats.formula_plane_mixed_topology_cache_builds, 1);
+        assert_eq!(stats.formula_plane_mixed_topology_cache_overflows, 1);
+        assert_eq!(stats.formula_plane_mixed_topology_cache_hits, 0);
+        assert!(!engine.mixed_topology_cache_present_for_test());
+        assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
+        assert_eq!(stats.formula_plane_active_span_count, 0);
+    }
 }
