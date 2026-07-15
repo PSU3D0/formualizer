@@ -14224,12 +14224,11 @@ where
         if targets.is_empty() {
             return Ok((Vec::new(), EvalDelta::default()));
         }
+        // A target formula can depend transitively on a formula staged on any
+        // sheet. Preparing only target sheets can leave those precedents as
+        // empty placeholders and produce stale values and incomplete deltas.
         if self.config.defer_graph_building {
-            let mut sheets: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
-            for (s, _, _) in targets.iter() {
-                sheets.insert(*s);
-            }
-            self.build_graph_for_sheets(sheets.iter().cloned())?;
+            self.build_graph_all()?;
         }
         if self.graph.formula_authority().active_span_count() > 0 {
             let _ = self.evaluate_authoritative_formula_plane_all()?;

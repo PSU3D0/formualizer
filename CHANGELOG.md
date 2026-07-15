@@ -19,6 +19,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Fixed deferred `evaluate_cells_with_delta` requests missing transitive formula precedents staged on non-target sheets.
 - Fixed experimental FormulaPlane capacity fallbacks evaluating legacy readers before required span results were available. Unsafe requests now transactionally demote exactly their scheduled spans, retain pending dirty regions across failed attempts, and fail closed behind a finite materialization limit.
 
 ### Performance
