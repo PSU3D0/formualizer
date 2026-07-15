@@ -5,7 +5,7 @@
 //! dirty projections. It does not wire FormulaPlane into graph dirty routing,
 //! scheduling, ingest cut-over, or evaluation.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, TryReserveError, VecDeque};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -15,7 +15,8 @@ use crate::engine::sheet_registry::SheetRegistry;
 
 use super::dependency_summary::{FormulaClass, FormulaDependencySummary, PrecedentPattern};
 use super::region_index::{
-    AxisRange, Region, RegionKey, RegionMatch, RegionQueryResult, SheetRegionIndex,
+    AxisRange, BoundedRegionQueryResult, Region, RegionKey, RegionMatch, RegionQueryResult,
+    SheetRegionIndex,
 };
 use super::runtime::{FormulaSpanId, ResultRegion};
 use super::template_canonical::{AxisRef, SheetBinding};
@@ -129,6 +130,30 @@ pub(crate) struct FormulaProducerResultIndex {
 }
 
 impl FormulaProducerResultIndex {
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.entries.try_reserve(additional)?;
+        self.by_producer.try_reserve(additional)?;
+        self.index.try_reserve_entries(additional)
+    }
+
+    pub(crate) fn estimated_memory_bytes(&self) -> Option<usize> {
+        let mut bytes = std::mem::size_of::<Self>();
+        bytes = bytes.checked_add(
+            self.entries
+                .capacity()
+                .checked_mul(std::mem::size_of::<FormulaProducerResultEntry>())?,
+        )?;
+        bytes = bytes.checked_add(
+            self.by_producer.capacity().checked_mul(
+                std::mem::size_of::<FormulaProducerId>()
+                    .checked_add(std::mem::size_of::<Region>())?
+                    .checked_add(std::mem::size_of::<usize>())?,
+            )?,
+        )?;
+        bytes = bytes.checked_add(self.index.estimated_heap_bytes()?)?;
+        Some(bytes)
+    }
+
     pub(crate) fn insert_producer(
         &mut self,
         producer: FormulaProducerId,
@@ -165,6 +190,10 @@ impl FormulaProducerResultIndex {
 
     pub(crate) fn producer_result_region(&self, producer: FormulaProducerId) -> Option<Region> {
         self.by_producer.get(&producer).copied()
+    }
+
+    pub(crate) fn producers(&self) -> impl Iterator<Item = FormulaProducerId> + '_ {
+        self.entries.iter().map(|entry| entry.producer)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -208,6 +237,22 @@ pub(crate) struct FormulaConsumerReadIndex {
 }
 
 impl FormulaConsumerReadIndex {
+    pub(crate) fn try_reserve(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.entries.try_reserve(additional)?;
+        self.index.try_reserve_entries(additional)
+    }
+
+    pub(crate) fn estimated_memory_bytes(&self) -> Option<usize> {
+        let mut bytes = std::mem::size_of::<Self>();
+        bytes = bytes.checked_add(
+            self.entries
+                .capacity()
+                .checked_mul(std::mem::size_of::<FormulaConsumerReadEntry>())?,
+        )?;
+        bytes = bytes.checked_add(self.index.estimated_heap_bytes()?)?;
+        Some(bytes)
+    }
+
     pub(crate) fn insert_read(
         &mut self,
         consumer: FormulaProducerId,
@@ -263,6 +308,47 @@ impl FormulaConsumerReadIndex {
                 })
                 .collect(),
             stats: result.stats,
+        }
+    }
+
+    pub(crate) fn query_changed_region_bounded(
+        &self,
+        changed: Region,
+        max_candidates: usize,
+    ) -> BoundedRegionQueryResult<FormulaConsumerDirtyCandidate> {
+        match self.index.query_bounded(changed, max_candidates) {
+            BoundedRegionQueryResult::Incomplete {
+                observed_candidates,
+            } => BoundedRegionQueryResult::Incomplete {
+                observed_candidates,
+            },
+            BoundedRegionQueryResult::Complete(result) => {
+                BoundedRegionQueryResult::Complete(RegionQueryResult {
+                    stats: result.stats,
+                    matches: result
+                        .matches
+                        .into_iter()
+                        .map(|matched| {
+                            let entry = self.entries[matched.value.0].clone();
+                            let dirty = entry.projection.project_changed_region(
+                                changed,
+                                entry.read_region,
+                                entry.consumer_result_region,
+                            );
+                            RegionMatch {
+                                indexed_region: matched.indexed_region,
+                                value: FormulaConsumerDirtyCandidate {
+                                    consumer: entry.consumer,
+                                    read_region: entry.read_region,
+                                    consumer_result_region: entry.consumer_result_region,
+                                    projection: entry.projection,
+                                    dirty,
+                                },
+                            }
+                        })
+                        .collect(),
+                })
+            }
         }
     }
 

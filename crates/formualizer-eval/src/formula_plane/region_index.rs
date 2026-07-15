@@ -3,7 +3,8 @@
 //! This module is internal FormulaPlane substrate only. It does not wire dirty
 //! routing into the engine, graph, scheduler, or evaluator.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, TryReserveError};
+use std::ops::ControlFlow;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -426,6 +427,7 @@ impl RegionSet {
 pub(crate) struct RegionQueryStats {
     pub(crate) candidate_count: usize,
     pub(crate) exact_filter_drop_count: usize,
+    pub(crate) visited_index_entries: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -440,23 +442,124 @@ pub(crate) struct RegionQueryResult<T> {
     pub(crate) stats: RegionQueryStats,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BoundedRegionQueryResult<T> {
+    Complete(RegionQueryResult<T>),
+    Incomplete { observed_candidates: usize },
+}
+
 #[derive(Clone, Debug)]
 struct RegionEntry<T> {
     value: T,
     region: Region,
 }
 
+struct BoundedCandidateVisitor {
+    max: usize,
+    visited: usize,
+    ids: Vec<usize>,
+    seen: FxHashSet<usize>,
+}
+
+const TREE_ENTRY_OVERHEAD: usize = 4 * std::mem::size_of::<usize>();
+
+fn estimate_btree_vec_map<K>(map: &BTreeMap<K, Vec<usize>>) -> Option<usize> {
+    let mut bytes = map.len().checked_mul(
+        std::mem::size_of::<K>()
+            .checked_add(std::mem::size_of::<Vec<usize>>())?
+            .checked_add(TREE_ENTRY_OVERHEAD)?,
+    )?;
+    for ids in map.values() {
+        bytes = bytes.checked_add(ids.capacity().checked_mul(std::mem::size_of::<usize>())?)?;
+    }
+    Some(bytes)
+}
+
+fn estimate_hash_vec_map<K>(map: &FxHashMap<K, Vec<usize>>) -> Option<usize> {
+    let mut bytes = map.capacity().checked_mul(
+        std::mem::size_of::<K>()
+            .checked_add(std::mem::size_of::<Vec<usize>>())?
+            .checked_add(std::mem::size_of::<usize>())?,
+    )?;
+    for ids in map.values() {
+        bytes = bytes.checked_add(ids.capacity().checked_mul(std::mem::size_of::<usize>())?)?;
+    }
+    Some(bytes)
+}
+
+fn estimate_nested_btree_vec_map(
+    map: &FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>,
+) -> Option<usize> {
+    let mut bytes = map.capacity().checked_mul(
+        std::mem::size_of::<SheetId>()
+            .checked_add(std::mem::size_of::<BTreeMap<u32, Vec<usize>>>())?
+            .checked_add(std::mem::size_of::<usize>())?,
+    )?;
+    for inner in map.values() {
+        bytes = bytes.checked_add(estimate_btree_vec_map(inner)?)?;
+    }
+    Some(bytes)
+}
+
+fn estimate_interval_map(map: &BTreeMap<(SheetId, u32), IntervalTree<usize>>) -> Option<usize> {
+    let mut bytes = map.len().checked_mul(
+        std::mem::size_of::<(SheetId, u32)>()
+            .checked_add(std::mem::size_of::<IntervalTree<usize>>())?
+            .checked_add(TREE_ENTRY_OVERHEAD)?,
+    )?;
+    for tree in map.values() {
+        bytes = bytes.checked_add(tree.estimated_heap_bytes()?)?;
+    }
+    Some(bytes)
+}
+
+impl BoundedCandidateVisitor {
+    fn new(max: usize) -> Self {
+        Self {
+            max,
+            visited: 0,
+            ids: Vec::new(),
+            seen: FxHashSet::default(),
+        }
+    }
+
+    fn inspect(&mut self) -> ControlFlow<()> {
+        self.visited = self.visited.saturating_add(1);
+        if self.visited > self.max {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+
+    fn accept(&mut self, id: usize) -> ControlFlow<()> {
+        if self.seen.insert(id) {
+            if self.ids.len() == self.max {
+                return ControlFlow::Break(());
+            }
+            self.ids.push(id);
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn visit(&mut self, id: usize) -> ControlFlow<()> {
+        self.inspect()?;
+        self.accept(id)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct SheetRegionIndex<T: Clone> {
     entries: Vec<RegionEntry<T>>,
-    points: FxHashMap<RegionKey, Vec<usize>>,
-    col_intervals: FxHashMap<(SheetId, u32), IntervalTree<usize>>,
-    row_intervals: FxHashMap<(SheetId, u32), IntervalTree<usize>>,
-    rect_buckets: FxHashMap<(SheetId, u32, u32), Vec<usize>>,
+    points_by_row: BTreeMap<(SheetId, u32, u32), Vec<usize>>,
+    points_by_col: BTreeMap<(SheetId, u32, u32), Vec<usize>>,
+    col_intervals: BTreeMap<(SheetId, u32), IntervalTree<usize>>,
+    row_intervals: BTreeMap<(SheetId, u32), IntervalTree<usize>>,
+    rect_buckets: BTreeMap<(SheetId, u32, u32), Vec<usize>>,
     rows_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>,
     cols_from: FxHashMap<SheetId, BTreeMap<u32, Vec<usize>>>,
-    whole_rows: FxHashMap<(SheetId, u32), Vec<usize>>,
-    whole_cols: FxHashMap<(SheetId, u32), Vec<usize>>,
+    whole_rows: BTreeMap<(SheetId, u32), Vec<usize>>,
+    whole_cols: BTreeMap<(SheetId, u32), Vec<usize>>,
     whole_sheets: FxHashMap<SheetId, Vec<usize>>,
     rect_bucket_rows: u32,
     rect_bucket_cols: u32,
@@ -487,14 +590,15 @@ impl<T: Clone> SheetRegionIndex<T> {
         assert!(rect_bucket_cols > 0, "rect_bucket_cols must be nonzero");
         Self {
             entries: Vec::new(),
-            points: FxHashMap::default(),
-            col_intervals: FxHashMap::default(),
-            row_intervals: FxHashMap::default(),
-            rect_buckets: FxHashMap::default(),
+            points_by_row: BTreeMap::new(),
+            points_by_col: BTreeMap::new(),
+            col_intervals: BTreeMap::new(),
+            row_intervals: BTreeMap::new(),
+            rect_buckets: BTreeMap::new(),
             rows_from: FxHashMap::default(),
             cols_from: FxHashMap::default(),
-            whole_rows: FxHashMap::default(),
-            whole_cols: FxHashMap::default(),
+            whole_rows: BTreeMap::new(),
+            whole_cols: BTreeMap::new(),
             whole_sheets: FxHashMap::default(),
             rect_bucket_rows,
             rect_bucket_cols,
@@ -519,7 +623,8 @@ impl<T: Clone> SheetRegionIndex<T> {
 
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
-        self.points.clear();
+        self.points_by_row.clear();
+        self.points_by_col.clear();
         self.col_intervals.clear();
         self.row_intervals.clear();
         self.rect_buckets.clear();
@@ -568,7 +673,313 @@ impl<T: Clone> SheetRegionIndex<T> {
             stats: RegionQueryStats {
                 candidate_count,
                 exact_filter_drop_count,
+                visited_index_entries: candidate_count,
             },
+        }
+    }
+
+    /// Bounded exact visitor used by topology compilation. Candidate IDs are
+    /// obtained from the coordinate indexes rather than scanning `entries`.
+    /// Both unique candidates and raw index-entry visits stop at the bound,
+    /// and no partial matches escape on overflow.
+    pub(crate) fn query_bounded(
+        &self,
+        query: Region,
+        max_candidates: usize,
+    ) -> BoundedRegionQueryResult<T> {
+        let mut visitor = BoundedCandidateVisitor::new(max_candidates);
+        if self
+            .visit_bounded_candidates(query.normalized(), &mut visitor)
+            .is_break()
+        {
+            return BoundedRegionQueryResult::Incomplete {
+                observed_candidates: max_candidates.saturating_add(1),
+            };
+        }
+        let indexed_candidate_count = visitor.ids.len();
+        let visited_index_entries = visitor.visited;
+        let mut matches = Vec::with_capacity(indexed_candidate_count);
+        for id in visitor.ids {
+            let entry = &self.entries[id];
+            if entry.region.intersects(&query) {
+                matches.push(RegionMatch {
+                    value: entry.value.clone(),
+                    indexed_region: entry.region,
+                });
+            }
+        }
+        let candidate_count = matches.len();
+        let exact_filter_drop_count = indexed_candidate_count.saturating_sub(candidate_count);
+        BoundedRegionQueryResult::Complete(RegionQueryResult {
+            stats: RegionQueryStats {
+                candidate_count,
+                exact_filter_drop_count,
+                visited_index_entries,
+            },
+            matches,
+        })
+    }
+
+    pub(crate) fn try_reserve_entries(&mut self, additional: usize) -> Result<(), TryReserveError> {
+        self.entries.try_reserve(additional)
+    }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .entries
+            .capacity()
+            .checked_mul(std::mem::size_of::<RegionEntry<T>>())?;
+        bytes = bytes.checked_add(estimate_btree_vec_map(&self.points_by_row)?)?;
+        bytes = bytes.checked_add(estimate_btree_vec_map(&self.points_by_col)?)?;
+        bytes = bytes.checked_add(estimate_interval_map(&self.col_intervals)?)?;
+        bytes = bytes.checked_add(estimate_interval_map(&self.row_intervals)?)?;
+        bytes = bytes.checked_add(estimate_btree_vec_map(&self.rect_buckets)?)?;
+        bytes = bytes.checked_add(estimate_nested_btree_vec_map(&self.rows_from)?)?;
+        bytes = bytes.checked_add(estimate_nested_btree_vec_map(&self.cols_from)?)?;
+        bytes = bytes.checked_add(estimate_btree_vec_map(&self.whole_rows)?)?;
+        bytes = bytes.checked_add(estimate_btree_vec_map(&self.whole_cols)?)?;
+        bytes = bytes.checked_add(estimate_hash_vec_map(&self.whole_sheets)?)?;
+        Some(bytes)
+    }
+
+    fn visit_bounded_candidates(
+        &self,
+        query: Region,
+        visitor: &mut BoundedCandidateVisitor,
+    ) -> ControlFlow<()> {
+        let sheet_id = query.sheet_id();
+        let visit_ids = |ids: &[usize], visitor: &mut BoundedCandidateVisitor| {
+            for &id in ids {
+                visitor.visit(id)?;
+            }
+            ControlFlow::Continue(())
+        };
+        let visit_tree =
+            |tree: &IntervalTree<usize>, low, high, visitor: &mut BoundedCandidateVisitor| {
+                tree.visit_query(low, high, |event| match event {
+                    None => visitor.inspect(),
+                    Some(id) => visitor.accept(*id),
+                })
+            };
+        let visit_common = |row_end: u32,
+                            col_end: u32,
+                            row_range: Option<(u32, u32)>,
+                            col_range: Option<(u32, u32)>,
+                            visitor: &mut BoundedCandidateVisitor| {
+            if let Some(rows_from) = self.rows_from.get(&sheet_id) {
+                for ids in rows_from.range(..=row_end).map(|(_, ids)| ids) {
+                    visit_ids(ids, visitor)?;
+                }
+            }
+            if let Some(cols_from) = self.cols_from.get(&sheet_id) {
+                for ids in cols_from.range(..=col_end).map(|(_, ids)| ids) {
+                    visit_ids(ids, visitor)?;
+                }
+            }
+            if let Some((start, end)) = row_range {
+                for ids in self
+                    .whole_rows
+                    .range((sheet_id, start)..=(sheet_id, end))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+            }
+            if let Some((start, end)) = col_range {
+                for ids in self
+                    .whole_cols
+                    .range((sheet_id, start)..=(sheet_id, end))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+            }
+            if let Some(ids) = self.whole_sheets.get(&sheet_id) {
+                visit_ids(ids, visitor)?;
+            }
+            ControlFlow::Continue(())
+        };
+
+        match query.axis_ranges() {
+            (AxisRange::Point(row), AxisRange::Point(col)) => {
+                if let Some(ids) = self.points_by_row.get(&(sheet_id, row, col)) {
+                    visit_ids(ids, visitor)?;
+                }
+                if let Some(tree) = self.col_intervals.get(&(sheet_id, col)) {
+                    visit_tree(tree, row, row, visitor)?;
+                }
+                if let Some(tree) = self.row_intervals.get(&(sheet_id, row)) {
+                    visit_tree(tree, col, col, visitor)?;
+                }
+                if let Some(ids) =
+                    self.rect_buckets
+                        .get(&(sheet_id, self.row_bucket(row), self.col_bucket(col)))
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                visit_common(row, col, Some((row, row)), Some((col, col)), visitor)
+            }
+            (AxisRange::Span(row_start, row_end), AxisRange::Point(col)) => {
+                for ids in self
+                    .points_by_col
+                    .range((sheet_id, col, row_start)..=(sheet_id, col, row_end))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                if let Some(tree) = self.col_intervals.get(&(sheet_id, col)) {
+                    visit_tree(tree, row_start, row_end, visitor)?;
+                }
+                for tree in self
+                    .row_intervals
+                    .range((sheet_id, row_start)..=(sheet_id, row_end))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, col, col, visitor)?;
+                }
+                let col_bucket = self.col_bucket(col);
+                for row_bucket in self.row_bucket(row_start)..=self.row_bucket(row_end) {
+                    if let Some(ids) = self.rect_buckets.get(&(sheet_id, row_bucket, col_bucket)) {
+                        visit_ids(ids, visitor)?;
+                    }
+                }
+                visit_common(
+                    row_end,
+                    col,
+                    Some((row_start, row_end)),
+                    Some((col, col)),
+                    visitor,
+                )
+            }
+            (AxisRange::Point(row), AxisRange::Span(col_start, col_end)) => {
+                for ids in self
+                    .points_by_row
+                    .range((sheet_id, row, col_start)..=(sheet_id, row, col_end))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                for tree in self
+                    .col_intervals
+                    .range((sheet_id, col_start)..=(sheet_id, col_end))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, row, row, visitor)?;
+                }
+                if let Some(tree) = self.row_intervals.get(&(sheet_id, row)) {
+                    visit_tree(tree, col_start, col_end, visitor)?;
+                }
+                let row_bucket = self.row_bucket(row);
+                for col_bucket in self.col_bucket(col_start)..=self.col_bucket(col_end) {
+                    if let Some(ids) = self.rect_buckets.get(&(sheet_id, row_bucket, col_bucket)) {
+                        visit_ids(ids, visitor)?;
+                    }
+                }
+                visit_common(
+                    row,
+                    col_end,
+                    Some((row, row)),
+                    Some((col_start, col_end)),
+                    visitor,
+                )
+            }
+            (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) => {
+                let row_width = row_end.saturating_sub(row_start);
+                let col_width = col_end.saturating_sub(col_start);
+                if row_width <= col_width {
+                    for ((_, _, col), ids) in self
+                        .points_by_row
+                        .range((sheet_id, row_start, 0)..=(sheet_id, row_end, u32::MAX))
+                    {
+                        for &id in ids {
+                            visitor.inspect()?;
+                            if col_start <= *col && *col <= col_end {
+                                visitor.accept(id)?;
+                            }
+                        }
+                    }
+                } else {
+                    for ((_, _, row), ids) in self
+                        .points_by_col
+                        .range((sheet_id, col_start, 0)..=(sheet_id, col_end, u32::MAX))
+                    {
+                        for &id in ids {
+                            visitor.inspect()?;
+                            if row_start <= *row && *row <= row_end {
+                                visitor.accept(id)?;
+                            }
+                        }
+                    }
+                }
+                for tree in self
+                    .col_intervals
+                    .range((sheet_id, col_start)..=(sheet_id, col_end))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, row_start, row_end, visitor)?;
+                }
+                for tree in self
+                    .row_intervals
+                    .range((sheet_id, row_start)..=(sheet_id, row_end))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, col_start, col_end, visitor)?;
+                }
+                for row_bucket in self.row_bucket(row_start)..=self.row_bucket(row_end) {
+                    for col_bucket in self.col_bucket(col_start)..=self.col_bucket(col_end) {
+                        if let Some(ids) =
+                            self.rect_buckets.get(&(sheet_id, row_bucket, col_bucket))
+                        {
+                            visit_ids(ids, visitor)?;
+                        }
+                    }
+                }
+                visit_common(
+                    row_end,
+                    col_end,
+                    Some((row_start, row_end)),
+                    Some((col_start, col_end)),
+                    visitor,
+                )
+            }
+            (AxisRange::All, AxisRange::All) => {
+                for ids in self
+                    .points_by_row
+                    .range((sheet_id, 0, 0)..=(sheet_id, u32::MAX, u32::MAX))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                for tree in self
+                    .col_intervals
+                    .range((sheet_id, 0)..=(sheet_id, u32::MAX))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, 0, u32::MAX, visitor)?;
+                }
+                for tree in self
+                    .row_intervals
+                    .range((sheet_id, 0)..=(sheet_id, u32::MAX))
+                    .map(|(_, tree)| tree)
+                {
+                    visit_tree(tree, 0, u32::MAX, visitor)?;
+                }
+                for ids in self
+                    .rect_buckets
+                    .range((sheet_id, 0, 0)..=(sheet_id, u32::MAX, u32::MAX))
+                    .map(|(_, ids)| ids)
+                {
+                    visit_ids(ids, visitor)?;
+                }
+                visit_common(
+                    u32::MAX,
+                    u32::MAX,
+                    Some((0, u32::MAX)),
+                    Some((0, u32::MAX)),
+                    visitor,
+                )
+            }
+            _ => ControlFlow::Break(()),
         }
     }
 
@@ -580,8 +991,12 @@ impl<T: Clone> SheetRegionIndex<T> {
                 let (AxisRange::Point(row), AxisRange::Point(col)) = (rows, cols) else {
                     unreachable!()
                 };
-                self.points
-                    .entry(RegionKey::new(sheet_id, row, col))
+                self.points_by_row
+                    .entry((sheet_id, row, col))
+                    .or_default()
+                    .push(id);
+                self.points_by_col
+                    .entry((sheet_id, col, row))
                     .or_default()
                     .push(id);
             }
@@ -674,7 +1089,7 @@ impl<T: Clone> SheetRegionIndex<T> {
                 let (AxisRange::Point(row), AxisRange::Point(col)) = (rows, cols) else {
                     unreachable!()
                 };
-                if let Some(ids) = self.points.get(&RegionKey::new(sheet_id, row, col)) {
+                if let Some(ids) = self.points_by_row.get(&(sheet_id, row, col)) {
                     Self::extend_ids(out, ids);
                 }
                 self.collect_col_interval_exact_col(sheet_id, col, row, row, out);
@@ -946,8 +1361,9 @@ impl<T: Clone> SheetRegionIndex<T> {
     ) where
         F: Fn(RegionKey) -> bool,
     {
-        for (&key, ids) in &self.points {
-            if key.sheet_id == sheet_id && matches_key(key) {
+        for (&(entry_sheet, row, col), ids) in &self.points_by_row {
+            let key = RegionKey::new(entry_sheet, row, col);
+            if entry_sheet == sheet_id && matches_key(key) {
                 Self::extend_ids(out, ids);
             }
         }
@@ -2246,5 +2662,60 @@ mod tests {
         let result = index.query_changed_region(Region::point(6, 4, 1));
 
         assert!(result.matches.is_empty());
+    }
+
+    #[test]
+    fn bounded_query_large_disjoint_corpus_visits_only_addressed_index_entries() {
+        let mut index = SheetRegionIndex::default();
+        for row in 0..20_000 {
+            index.insert(Region::point(0, row, 100), row);
+            index.insert(Region::col_interval(0, 101, row, row + 1), row);
+            index.insert(Region::row_interval(0, row, 102, 103), row);
+            index.insert(Region::rect(0, row, row + 1, 104, 105), row);
+        }
+
+        let BoundedRegionQueryResult::Complete(result) =
+            index.query_bounded(Region::point(0, 30_000, 500), 8)
+        else {
+            panic!("disjoint indexed query must complete");
+        };
+        assert!(result.matches.is_empty());
+        assert_eq!(result.stats.candidate_count, 0);
+        assert_eq!(result.stats.visited_index_entries, 0);
+
+        assert_eq!(
+            index.query_bounded(Region::rect(0, 0, 19_999, 500, 501), 8),
+            BoundedRegionQueryResult::Incomplete {
+                observed_candidates: 9,
+            },
+            "a broad sparse query must stop at the visit budget rather than scan all reads"
+        );
+    }
+
+    #[test]
+    fn bounded_query_reports_incomplete_without_partial_matches() {
+        let mut index = SheetRegionIndex::default();
+        for row in 0..4 {
+            index.insert(Region::point(0, row, 0), row);
+        }
+        assert_eq!(
+            index.query_bounded(Region::whole_sheet(0), 2),
+            BoundedRegionQueryResult::Incomplete {
+                observed_candidates: 3,
+            }
+        );
+        let BoundedRegionQueryResult::Complete(result) =
+            index.query_bounded(Region::whole_sheet(0), 4)
+        else {
+            panic!("four-candidate bound must complete");
+        };
+        assert_eq!(
+            result
+                .matches
+                .into_iter()
+                .map(|m| m.value)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
     }
 }

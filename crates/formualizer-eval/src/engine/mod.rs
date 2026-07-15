@@ -789,6 +789,12 @@ pub struct EvalConfig {
     /// `Shadow` may report candidate span opportunities but must still materialize
     /// every formula via the legacy graph path.
     pub formula_plane_mode: FormulaPlaneMode,
+    /// Hard candidate bound for compiling mixed FormulaPlane topology.
+    pub max_formula_plane_cache_candidates: usize,
+    /// Hard relationship bound for compiled mixed FormulaPlane topology.
+    pub max_formula_plane_cache_edges: usize,
+    /// Hard byte estimate bound for compiled mixed FormulaPlane topology.
+    pub max_formula_plane_cache_bytes: usize,
 
     /// Maximum bytes for the engine-side lookup-index cache.
     pub lookup_index_cache_max_bytes: usize,
@@ -846,6 +852,9 @@ impl Default for EvalConfig {
             defer_graph_building: false,
             enable_virtual_dep_telemetry: false,
             formula_plane_mode: FormulaPlaneMode::Off,
+            max_formula_plane_cache_candidates: 100_000,
+            max_formula_plane_cache_edges: 100_000,
+            max_formula_plane_cache_bytes: 64 * 1024 * 1024,
             lookup_index_cache_max_bytes: 64 * 1024 * 1024,
         }
     }

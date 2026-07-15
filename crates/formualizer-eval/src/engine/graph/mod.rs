@@ -284,6 +284,8 @@ pub struct DependencyGraph {
 
     // Evaluation configuration
     config: super::EvalConfig,
+    /// Low-level monotonic dependency-topology revision used by engine caches.
+    topology_revision: u64,
 
     // Graph-owned FormulaPlane authority shell. Inert until a later runtime cut-over.
     formula_authority: FormulaAuthority,
@@ -1116,6 +1118,7 @@ impl DependencyGraph {
             cell_to_name_dependents: FxHashMap::default(),
             name_to_cell_dependencies: FxHashMap::default(),
             config: config.clone(),
+            topology_revision: 0,
             formula_authority: FormulaAuthority::default(),
             pk_order: None,
             spill_anchor_to_cells: FxHashMap::default(),
@@ -1379,6 +1382,14 @@ impl DependencyGraph {
 
     pub(crate) fn vertex_len(&self) -> usize {
         self.store.len()
+    }
+
+    pub(crate) fn topology_revision(&self) -> u64 {
+        self.topology_revision
+    }
+
+    pub(crate) fn bump_topology_revision(&mut self) {
+        self.topology_revision = self.topology_revision.wrapping_add(1);
     }
 
     /// Get mutable access to a sheet's index, creating it if it doesn't exist

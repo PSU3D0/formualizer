@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
+use std::ops::ControlFlow;
 
 /// Custom interval tree optimized for spreadsheet cell indexing.
 ///
@@ -90,6 +91,51 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
             }
         }
         results
+    }
+
+    /// Visits matching values without cloning or materializing the query.
+    /// Returning `Break` from the visitor stops traversal immediately.
+    pub(crate) fn visit_query(
+        &self,
+        q_low: u32,
+        q_high: u32,
+        mut visitor: impl FnMut(Option<&T>) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        for (_low, nodes) in self.map.range(..=q_high) {
+            for node in nodes {
+                visitor(None)?;
+                if node.high < q_low {
+                    continue;
+                }
+                for value in &node.values {
+                    visitor(Some(value))?;
+                }
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    pub(crate) fn estimated_heap_bytes(&self) -> Option<usize> {
+        const NODE_ALLOCATION_OVERHEAD: usize = 3 * std::mem::size_of::<usize>();
+        let mut bytes = 0usize;
+        for nodes in self.map.values() {
+            bytes = bytes.checked_add(
+                std::mem::size_of::<u32>()
+                    .checked_add(std::mem::size_of::<Vec<IntervalNode<T>>>())?
+                    .checked_add(NODE_ALLOCATION_OVERHEAD)?,
+            )?;
+            bytes = bytes.checked_add(
+                nodes
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<IntervalNode<T>>())?,
+            )?;
+            for node in nodes {
+                bytes = bytes.checked_add(node.values.capacity().checked_mul(
+                    std::mem::size_of::<T>().checked_add(std::mem::size_of::<usize>())?,
+                )?)?;
+            }
+        }
+        Some(bytes)
     }
 
     pub fn remove(&mut self, low: u32, high: u32, value: &T) -> bool {
