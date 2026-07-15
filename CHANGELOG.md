@@ -15,6 +15,10 @@ All notable changes to Formualizer will be documented in this file.
 
 - Upgraded Calamine-backed XLSX loading to Calamine 0.36 and a single-pass value/formula metadata stream, preserving formula-only worksheet dimensions, cached-value semantics, load limits, shared-formula relocation, and malformed-family fallback.
 
+### Fixed
+
+- Fixed experimental FormulaPlane capacity fallbacks evaluating legacy readers before required span results were available. Unsafe requests now transactionally demote exactly their scheduled spans, retain pending dirty regions across failed attempts, and fail closed behind a finite materialization limit.
+
 ### Performance
 
 - Proven complete source-formula families now parse and analyze one anchor and avoid per-descendant strings, ASTs, staging entries, and graph vertices. In same-machine release probes, a clean 100k-family load improved from 997 ms and 313 MiB RSS under forced replay to 129 ms and 26 MiB RSS; a 1M-family load completed in 2.2 s at 167 MiB RSS instead of 13.1 s at 3.0 GiB.

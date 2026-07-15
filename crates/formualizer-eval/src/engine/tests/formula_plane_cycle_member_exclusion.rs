@@ -495,10 +495,19 @@ fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
 
     let mut failed = build_two_sheet_cycle_workbook();
     let refs = failed.graph.formula_authority().active_span_refs();
+    let pending = failed
+        .graph
+        .formula_authority()
+        .pending_changed_regions()
+        .to_vec();
     let before = failed.baseline_stats();
     failed.set_formula_span_demotion_fault_for_test(FormulaSpanDemotionFault::BeforeFirstMutation);
     assert!(failed.evaluate_all().is_err());
     assert_eq!(failed.graph.formula_authority().active_span_refs(), refs);
+    assert_eq!(
+        failed.graph.formula_authority().pending_changed_regions(),
+        pending
+    );
     let after = failed.baseline_stats();
     assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
     assert_eq!(
@@ -523,6 +532,14 @@ fn two_sheet_cyclic_demotion_is_one_atomic_batch() {
             .formula_authority()
             .active_span_refs()
             .is_empty()
+    );
+    assert!(
+        committed
+            .graph
+            .formula_authority()
+            .pending_changed_regions()
+            .is_empty(),
+        "successful cyclic demotion plus legacy completion acknowledges the lease"
     );
     for sheet in ["Sheet1", "Sheet2"] {
         assert!(is_circ(&committed, sheet, 5, 2));
