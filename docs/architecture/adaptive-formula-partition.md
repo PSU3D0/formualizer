@@ -274,6 +274,18 @@ Each tranche is independently shippable behind the existing
 `FormulaPlaneMode::AuthoritativeExperimental` gate, lands with the §6 gates, and is
 sequenced so the open boundary bugs are *eliminated by construction* rather than patched.
 
+Before the main T1 migration, a bounded correctness bridge removes the unsafe capacity-bail
+side exit without waiting for topology unification:
+
+- **T1.0a — Transactional span demotion.** Prepare, validate, and commit exact-ref,
+  multi-sheet span demotion as one additions-only graph/authority transaction; cyclic span
+  demotion uses the same batch so a later failure cannot publish an earlier subset.
+- **T1.0b — Capacity-bail parity.** Unsafe non-cycle schedules transactionally demote
+  exactly their scheduled spans before one legacy completion pass. Pending changed regions
+  are generation-leased until successful completion, and a finite fallback-cell cap fails
+  closed without partial graph, authority, overlay, telemetry, or dirty-state publication.
+  This directly closes #144 while T1 removes the dual-authority boundary that produced it.
+
 1. **T1 — Single dirty authority.** Move region dirtiness into the graph: `mark_dirty`
    probes the region index natively; `pending_changed_regions` and the FP-side dirty
    seeding retire; replace `WholeAll` epoch escalation with translated interval

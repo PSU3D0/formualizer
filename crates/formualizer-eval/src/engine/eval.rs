@@ -23,6 +23,7 @@ use crate::engine::{
     FormulaPlaneMode, RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind,
     VisibilityMaskMode,
 };
+use crate::formula_plane::authority::PendingChangedRegionsLease;
 use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
     CandidateAnalysis, FormulaPlacementCandidate, FormulaPlacementResult, PlacementFallbackReason,
@@ -722,11 +723,10 @@ pub struct Engine<R> {
     /// producers become visible) so the cycle members land on the legacy graph
     /// path. Observational only.
     formula_plane_cycle_member_span_demotions: u64,
-    /// Times the FormulaPlane coordinator failed over to the legacy
-    /// primitive because the mixed schedule reported only non-cycle
-    /// fallbacks (capacity caps, unsupported projections, missing result
-    /// regions). One increment per `evaluate_all`-level bailout — the
-    /// cyclic-span demote loop must never spin on these. Observational only.
+    /// Successfully completed non-cycle unsafe mixed requests. Incremented
+    /// only after every scheduled span has committed demotion and the single
+    /// legacy completion pass succeeds; failed attempts are not counted.
+    /// Observational only.
     formula_plane_capacity_bailouts: u64,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
@@ -3456,6 +3456,11 @@ where
     #[cfg(test)]
     pub(crate) fn formula_plane_capacity_bailouts(&self) -> u64 {
         self.formula_plane_capacity_bailouts
+    }
+
+    #[cfg(test)]
+    pub(crate) fn topology_epoch_for_test(&self) -> u64 {
+        self.topology_epoch
     }
 
     fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
@@ -8885,7 +8890,7 @@ where
             origin_row: u32,
             origin_col: u32,
             binding_set_id: Option<crate::formula_plane::runtime::SpanBindingSetId>,
-            placements: Vec<(u32, u32)>,
+            domain: PlacementDomain,
         }
 
         let authority = self.graph.formula_authority();
@@ -8893,7 +8898,13 @@ where
         let expected_indexes_epoch = authority.indexes_epoch();
         let expected_indexed_plane_epoch = authority.indexed_plane_epoch();
         let mut unique = Vec::new();
+        unique
+            .try_reserve_exact(span_refs.len())
+            .map_err(|_| FormulaSpanDemotionError::LoadLimit("allocation_reservation"))?;
         let mut plans = Vec::new();
+        plans
+            .try_reserve_exact(span_refs.len())
+            .map_err(|_| FormulaSpanDemotionError::LoadLimit("allocation_reservation"))?;
         let mut placement_count = 0usize;
         let mut placements_by_sheet: BTreeMap<SheetId, u64> = BTreeMap::new();
         for &span_ref in span_refs {
@@ -8917,6 +8928,14 @@ where
             placement_count = placement_count
                 .checked_add(count)
                 .ok_or(FormulaSpanDemotionError::CountOverflow)?;
+            if u64::try_from(placement_count)
+                .map_err(|_| FormulaSpanDemotionError::CountOverflow)?
+                > self.workbook_load_limits.max_formula_plane_fallback_cells
+            {
+                return Err(FormulaSpanDemotionError::LoadLimit(
+                    "max_formula_plane_fallback_cells",
+                ));
+            }
             let sheet_count = placements_by_sheet.entry(span.sheet_id).or_default();
             *sheet_count = sheet_count
                 .checked_add(span.domain.cell_count())
@@ -8945,12 +8964,6 @@ where
             if !domain_in_bounds {
                 return Err(FormulaSpanDemotionError::LoadLimit("sheet_axis_bounds"));
             }
-            let mut placements = Vec::with_capacity(count);
-            placements.extend(
-                span.domain
-                    .iter()
-                    .map(|coord| (coord.row.saturating_add(1), coord.col.saturating_add(1))),
-            );
             plans.push(SpanMaterialization {
                 span_ref,
                 sheet_id: span.sheet_id,
@@ -8958,12 +8971,17 @@ where
                 origin_row: relocation.anchor_row,
                 origin_col: relocation.anchor_col,
                 binding_set_id: span.binding_set_id,
-                placements,
+                domain: span.domain.clone(),
             });
         }
-        let mut relocated = Vec::with_capacity(placement_count);
+        let mut relocated = Vec::new();
+        relocated
+            .try_reserve_exact(placement_count)
+            .map_err(|_| FormulaSpanDemotionError::LoadLimit("allocation_reservation"))?;
         for plan in &plans {
-            for &(row, col) in &plan.placements {
+            for coord in plan.domain.iter() {
+                let row = coord.row.saturating_add(1);
+                let col = coord.col.saturating_add(1);
                 let bound_ast = if let Some(binding_set_id) = plan.binding_set_id {
                     let authority = self.graph.formula_authority();
                     let binding_set = authority
@@ -9000,7 +9018,10 @@ where
             }
         }
 
-        let mut analyzed = Vec::with_capacity(relocated.len());
+        let mut analyzed = Vec::new();
+        analyzed
+            .try_reserve_exact(relocated.len())
+            .map_err(|_| FormulaSpanDemotionError::LoadLimit("allocation_reservation"))?;
         {
             let mut pipeline = self.ingest_pipeline();
             for (sheet_id, row, col, ast) in relocated {
@@ -12563,6 +12584,17 @@ where
             elapsed: start.elapsed(),
         })
     }
+    fn evaluate_all_legacy_and_ack_pending(
+        &mut self,
+        pending_changed_regions: PendingChangedRegionsLease,
+    ) -> Result<EvalResult, ExcelError> {
+        let result = self.evaluate_all_legacy_impl()?;
+        self.graph
+            .formula_authority_mut()
+            .ack_pending_changed_regions(pending_changed_regions);
+        Ok(result)
+    }
+
     fn evaluate_authoritative_formula_plane_all(&mut self) -> Result<EvalResult, ExcelError> {
         // Fresh per-request cycle counters. Some callers (`evaluate_vertex`,
         // `evaluate_cells*`) reach this coordinator without an entry-point
@@ -12571,6 +12603,11 @@ where
         // below intentionally does not reset, so `evaluate_legacy_cycle_prepass`
         // counts survive into the final telemetry.
         self.begin_evaluation_request();
+        let pending_changed_regions = self
+            .graph
+            .formula_authority_mut()
+            .lease_pending_changed_regions();
+
         // The FormulaPlane coordinator is now selected by mode for evaluate_all.
         // SingletonUnique formulas intentionally remain legacy graph vertices;
         // when no spans are active, execute through the private legacy primitive
@@ -12580,7 +12617,7 @@ where
             {
                 self.last_formula_plane_span_eval_report = None;
             }
-            return self.evaluate_all_legacy_impl();
+            return self.evaluate_all_legacy_and_ack_pending(pending_changed_regions);
         }
 
         // Decide span work seeding strategy: any active span we have not yet
@@ -12593,13 +12630,8 @@ where
         } else {
             SpanSeedMode::DirtyClosure
         };
-        // Take pending regions out of the authority so subsequent reschedules
-        // start from a clean slate after a successful eval pass.
-        let pending_changed_regions = self
-            .graph
-            .formula_authority_mut()
-            .take_pending_changed_regions();
-
+        // Pending regions are leased for the full retry/cycle loop. They are
+        // acknowledged only after authoritative or demotion/legacy completion.
         // Steady-state shortcut: in `DirtyClosure` mode span work is derived
         // exclusively from pending changed regions, so with none pending the
         // mixed schedule could only ever contain dirty legacy vertices (e.g.
@@ -12614,47 +12646,76 @@ where
             {
                 self.last_formula_plane_span_eval_report = None;
             }
-            return self.evaluate_all_legacy_impl();
+            return self.evaluate_all_legacy_and_ack_pending(pending_changed_regions);
         }
 
         let start = crate::instant::FzInstant::now();
         let mut span_seed_mode = span_seed_mode;
-        let mut pending_changed_regions = pending_changed_regions;
         // #CIRC stamps produced by demoting cyclic spans and resolving the
         // residual legacy-only cycle ahead of the mixed schedule (gotcha G8).
         let mut prepass_cycle_errors = 0usize;
         const MAX_CYCLE_DEMOTE_ITERS: usize = 64;
         let mut cycle_demote_iters = 0usize;
         let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) = loop {
-            let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) =
-                self.build_formula_plane_mixed_schedule(span_seed_mode, &pending_changed_regions)?;
+            let (schedule, span_refs_by_id, plane_epoch, legacy_vertices) = self
+                .build_formula_plane_mixed_schedule(
+                    span_seed_mode,
+                    pending_changed_regions.regions(),
+                )?;
 
             if schedule.is_authoritative_safe() {
                 break (schedule, span_refs_by_id, plane_epoch, legacy_vertices);
             }
 
-            // The demote loop below can only make progress on cycles: it
-            // demotes cyclic spans and stamps residual legacy-only cycles.
-            // Every other fallback reason (capacity caps, unsupported
-            // projections, missing result regions) is a property of the
-            // inputs — rebuilding the schedule from identical state
-            // reproduces the identical fallback, so iterating would spin
-            // `MAX_CYCLE_DEMOTE_ITERS` times doing O(graph) schedule builds
-            // per iteration before giving up anyway. Fail over to the legacy
-            // primitive immediately instead.
+            // Non-cycle unsafe schedules cannot safely run legacy-only while a
+            // scheduled span remains virtual. Refine exactly every span in this
+            // request's scheduled work, then complete the request in one legacy
+            // pass. Clean, unscheduled spans keep their authority and overlays.
             let has_cycle_fallback = schedule.stats.cycle_count > 0
                 || schedule
                     .fallbacks
                     .iter()
                     .any(|fb| fb.reason == MixedScheduleFallbackReason::CycleDetected);
             if !has_cycle_fallback {
-                self.formula_plane_capacity_bailouts =
-                    self.formula_plane_capacity_bailouts.saturating_add(1);
+                let selected_span_refs = schedule
+                    .layers
+                    .iter()
+                    .flat_map(|layer| layer.work.iter())
+                    .filter_map(|work| match work.producer {
+                        FormulaProducerId::Span(span_id) => span_refs_by_id.get(&span_id).copied(),
+                        FormulaProducerId::Legacy(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+
+                if !selected_span_refs.is_empty() {
+                    let prepared = self
+                        .prepare_formula_span_demotion(&selected_span_refs)
+                        .map_err(|error| {
+                            ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                                "FormulaPlane capacity fallback demotion preparation failed: {error}"
+                            ))
+                        })?;
+                    self.commit_prepared_formula_span_demotion(prepared)
+                        .map_err(|error| {
+                            ExcelError::new(ExcelErrorKind::NImpl).with_message(format!(
+                                "FormulaPlane capacity fallback demotion commit failed: {error}"
+                            ))
+                        })?;
+                }
+
                 #[cfg(test)]
                 {
                     self.last_formula_plane_span_eval_report = None;
                 }
-                return self.evaluate_all_legacy_impl();
+                let result = self.evaluate_all_legacy_impl()?;
+                self.formula_plane_indexes_epoch_seen =
+                    self.graph.formula_authority().indexes_epoch();
+                self.graph
+                    .formula_authority_mut()
+                    .ack_pending_changed_regions(pending_changed_regions);
+                self.formula_plane_capacity_bailouts =
+                    self.formula_plane_capacity_bailouts.saturating_add(1);
+                return Ok(result);
             }
 
             // Gotcha G8 (refs #112): a span whose member cell participates in a
@@ -12674,7 +12735,7 @@ where
             if self.graph.formula_authority().active_span_count() == 0 {
                 // All spans demoted; nothing left for the FP coordinator. The
                 // legacy evaluator resolves the (now fully legacy) cycle.
-                return self.evaluate_all_legacy_impl();
+                return self.evaluate_all_legacy_and_ack_pending(pending_changed_regions);
             }
 
             // Resolve the residual legacy-only cycle (`handle_cycle_unit`
@@ -12684,21 +12745,14 @@ where
                 prepass_cycle_errors.saturating_add(self.evaluate_legacy_cycle_prepass()?);
 
             // Re-seed every surviving span whole after the geometry/dirty
-            // changes; the demotion already reset
-            // `formula_plane_indexes_epoch_seen` to 0.
+            // changes; the original pending-region lease remains live across
+            // the complete cycle retry loop.
             span_seed_mode = SpanSeedMode::WholeAll;
-            pending_changed_regions = self
-                .graph
-                .formula_authority_mut()
-                .take_pending_changed_regions();
 
             cycle_demote_iters += 1;
             if cycle_demote_iters >= MAX_CYCLE_DEMOTE_ITERS {
-                // Defensive bound: every iteration either demotes ≥1 span or
-                // stamps the legacy cycle, both strictly reducing residual work.
-                // If we somehow fail to converge, fall back to pure legacy to
-                // stay correct rather than spin.
-                return self.evaluate_all_legacy_impl();
+                return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message("FormulaPlane cyclic demotion did not converge".to_string()));
             }
         };
 
@@ -12835,6 +12889,9 @@ where
         // Mark this indexes-epoch as fully evaluated so subsequent passes can
         // use bounded span dirty closures rather than whole-span work.
         self.formula_plane_indexes_epoch_seen = self.graph.formula_authority().indexes_epoch();
+        self.graph
+            .formula_authority_mut()
+            .ack_pending_changed_regions(pending_changed_regions);
         self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
         Ok(EvalResult {
             computed_vertices,
