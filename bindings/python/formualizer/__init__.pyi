@@ -284,6 +284,20 @@ class EvaluationConfig:
         per-cell graph formulas.
         """
     @property
+    def max_work_units(self) -> typing.Optional[builtins.int]: ...
+    @max_work_units.setter
+    def max_work_units(self, value: typing.Optional[builtins.int]) -> None:
+        r"""
+        Maximum evaluation work units for one outer request.
+        """
+    @property
+    def max_eval_time_ms(self) -> typing.Optional[builtins.int]: ...
+    @max_eval_time_ms.setter
+    def max_eval_time_ms(self, value: typing.Optional[builtins.int]) -> None:
+        r"""
+        Maximum elapsed evaluation time in milliseconds for one outer request.
+        """
+    @property
     def warmup_enabled(self) -> builtins.bool: ...
     @warmup_enabled.setter
     def warmup_enabled(self, value: builtins.bool) -> None:

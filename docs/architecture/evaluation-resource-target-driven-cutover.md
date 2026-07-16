@@ -1,6 +1,6 @@
 # Evaluation Resources and Target-Driven Cutover
 
-Status: Approved implementation contract; C0 observability implemented
+Status: Approved implementation contract; C1a contract, ledger, deadlines, and typed completeness implemented
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
 resource-accounted, target-driven preparation and evaluation. It complements
@@ -19,18 +19,18 @@ cross-sheet work. The two tracks therefore ship as one cutover.
 
 ## 1. Compatibility Contract
 
-Given the same workbook, explicit resource envelope, cancellation or deadline, and supported
+Given the same workbook, explicit evaluation budgets, cancellation or deadline, and supported
 semantics, authoritative mode must not return a FormulaPlane-only resource error for a request that
-Off mode completes. FormulaPlane optimization overflow selects another exact strategy. A common hard
-envelope may reject both modes with the same typed error and unchanged retry state.
+Off mode completes. FormulaPlane optimization overflow selects another exact strategy. Common hard
+budgets may reject both modes with the same typed error and unchanged retry state.
 
-With no explicit envelope, `Compatibility` preserves current public behavior. Authoritative execution
-must keep degrading through paging, sorted runs, and repeated indexed passes until it reaches a limit
-that equivalent Off-mode graph or schedule work would also reach. Zero FormulaPlane-only rejection is
-the invariant; identical failure points are required only under a shared explicit envelope.
+With all evaluation budget fields unset, current public behavior is preserved. Authoritative
+execution must keep degrading through paging, sorted runs, and repeated indexed passes until it reaches
+a limit that equivalent Off-mode graph or schedule work would also reach. Zero FormulaPlane-only
+rejection is the invariant; identical failure points are required only under shared explicit budgets.
 
-`FormulaPlaneMode::Off` remains the default independently of resource-profile rollout. Resource
-profiles must work in Off and Shadow before any authoritative-default discussion.
+`FormulaPlaneMode::Off` remains the default independently of evaluation-budget rollout. Explicit
+budgets must work in Off and Shadow before any authoritative-default discussion.
 
 ## 2. Current State and Cutover Boundary
 
@@ -203,7 +203,7 @@ Important classifications include:
 | Lookup/warmup/source caches | `R/O`; skip or evict, never affect values |
 | Range expansion, stripe shape, PK visit/compaction | `O/R/W`; preserve exact compressed/indexed dependencies |
 | Spill cells/output | `S/A/X`; common semantics, separate from FormulaPlane materialization |
-| Cycle iteration settings | `S/W`; calculation semantics, never profile-derived |
+| Cycle iteration settings | `S/W`; calculation semantics, never budget-derived |
 | Dirty closure iteration | `W`; existing typed incomplete reason must route to an exact full closure |
 | SheetPort layout scan | `S/W/A`; explicit selector/manifest limit with typed exhaustion, never silent truncation |
 
@@ -229,24 +229,27 @@ The implementation inventory starts from these current defaults and internal gua
 | SheetPort layout scan 100k rows | `S/W/A` | Typed selector exhaustion and explicit manifest override |
 
 `max_vertices` is deprecated as an ambient `EvalConfig` field. New
-`graph_vertex_hard_limit` and `graph_edge_hard_limit` apply at every graph mutation seam in both
-modes only when an explicit profile or budget sets them. A legacy value maps into `Custom`; it is
-never newly enforced under `Compatibility`.
+`graph_vertex_hard_limit` and `graph_edge_hard_limit` remain declarative and diagnostic throughout
+C1a. A legacy value maps into an otherwise-unset explicit budget field, but no budget changes graph
+acceptance in C1a. Activation moves to C2, after direct, bulk, logged, replacement, demotion, staged,
+and generic graph mutation paths share one composed prepared transaction. Existing baseline
+`max_vertices` behavior is
+not broadened by the mapping.
 
-The unused `max_memory_mb` and `max_eval_time` hooks are deprecated. Compatibility mapping uses a
-documented fixed retained/scratch split and maps time to a request deadline, with a once-per-engine
-diagnostic.
+The unused `max_memory_mb` and `max_eval_time` hooks are deprecated. Legacy memory bytes split 50/50
+between retained and request scratch totals (an odd byte belongs to retained), and legacy time maps to
+the request deadline. Precedence is field-level: an explicit destination budget wins and the
+conflicting legacy mapping is ignored, while every non-conflicting legacy destination still maps. One
+once-per-engine diagnostic reports each source/destination as mapped, ignored by an explicit budget,
+or absent. `max_vertices` follows the same rule for the declarative graph vertex limit.
 
-### 4.2 Profiles and budgets
+### 4.2 Budgets and envelope derivation
+
+`EvalConfig::evaluation_budgets` is the sole evaluation resource configuration object. Its default has
+all fields unset. `ResourceEnvelope` is an optional aggregate value-to-budgets derivation helper; it
+does not select a mode or named set.
 
 ```rust
-pub enum EvaluationResourceProfile {
-    Compatibility,
-    FinanceBalanced,
-    Constrained(ResourceEnvelope),
-    Custom(EvaluationBudgets),
-}
-
 pub struct ResourceEnvelope {
     pub retained_bytes: u64,
     pub request_scratch_bytes: u64,
@@ -257,39 +260,81 @@ pub struct ResourceEnvelope {
     pub disk_scratch: DiskScratchPolicy,
 }
 
-pub struct EvaluationBudgets {
-    pub mixed_cache_bytes: usize,
-    pub mixed_cache_candidates: usize,
-    pub mixed_cache_edges: usize,
-    pub target_discovery_entries: usize,
-    pub target_discovery_work: u64,
-    pub schedule_scratch_bytes: usize,
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SemanticResourceBudget {
+    pub max_rows: Option<u32>,
+    pub max_columns: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdmissionResourceBudget {
     pub graph_vertex_hard_limit: Option<usize>,
     pub graph_edge_hard_limit: Option<usize>,
-    pub materialization_cells: u64,
-    pub overlay_retained_bytes: usize,
-    pub lookup_cache_bytes: usize,
-    pub deadline: Option<Duration>,
+    pub materialization_cells: Option<u64>,
+    pub materialized_graph_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RetainedResourceBudget {
+    pub total_bytes: Option<u64>,
+    pub mixed_cache_bytes: Option<u64>,
+    pub lookup_cache_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScratchResourceBudget {
+    pub total_bytes: Option<u64>,
+    pub schedule_discovery_bytes: Option<u64>,
+    pub graph_source_bytes: Option<u64>,
+    pub spill_overlay_bytes: Option<u64>,
+    pub disk_scratch_policy: Option<DiskScratchPolicy>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WorkResourceBudget {
+    pub max_work_units: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DeadlineResourceBudget {
+    pub max_elapsed: Option<Duration>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OptimizationResourceBudget {
+    pub mixed_cache_candidates: Option<usize>,
+    pub mixed_cache_edges: Option<usize>,
+    pub max_threads: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EvaluationBudgets {
+    pub semantic: SemanticResourceBudget,
+    pub admission: AdmissionResourceBudget,
+    pub retained: RetainedResourceBudget,
+    pub scratch: ScratchResourceBudget,
+    pub work: WorkResourceBudget,
+    pub deadline: DeadlineResourceBudget,
+    pub optimization: OptimizationResourceBudget,
 }
 ```
 
-Budget derivation uses explicit envelope arithmetic, never ambient free-memory sampling. The initial
-calibration shape is:
+Budget derivation is a neutral value conversion using explicit envelope arithmetic, never ambient
+free-memory sampling or a named default. The current shape is:
 
-- Retained cache pool: 12.5% of retained bytes, clamped per host class.
-- FormulaPlane topology receives 60% and lookup indexes 40%, with checked borrowing.
-- Request scratch allocates 50% to schedule/discovery, 35% to graph/source preparation, and 15% to
-  spill/overlay flush, with borrowing through one ledger.
-- Candidate and edge counts derive from measured byte cost and work units rather than independent
-  arbitrary defaults.
-- `FinanceBalanced` begins calibration at 256 MiB retained, 256 MiB scratch, 1 GiB materialized graph,
-  and no implicit native wall deadline. These are not default or rollout constants until cold data
-  ratifies them.
-- WASM uses an explicit smaller, no-disk envelope.
+- Retained total is copied exactly; its 12.5% cache pool is split 60% to FormulaPlane topology and 40%
+  to lookup indexes.
+- Request scratch total is copied exactly and split 50% to schedule/discovery, 35% to graph/source
+  preparation, and the remainder to spill/overlay flush.
+- Materialized graph bytes, work units, deadline, maximum threads, and disk scratch policy are copied
+  exactly into their corresponding optional budget fields.
+- Mixed-cache candidate and edge limits each derive from 64-byte units in the mixed-cache share.
+- WASM can derive explicit smaller, memory-only budgets from an envelope.
 
-`Compatibility` remains the default for interactive workbooks and SheetPort for at least one full
-release after C6. `FinanceBalanced` may later become SheetPort's default after cold gates and
-real-workload soak. Interactive stays on `Compatibility` longer.
+Recommended named constructors and default sets are deferred until cold calibration. If introduced,
+they will produce ordinary `EvaluationBudgets` values; they will not be enums, profiles, modes, or
+precedence layers. Interactive workbooks and SheetPort retain all-unset budgets until a separately
+reviewed rollout.
 
 ### 4.3 Request ledger and typed errors
 
@@ -359,7 +404,7 @@ pub struct PrepareTargetsOptions<'a> {
     pub request_id: Option<RequestId>,
     pub cancel: Option<&'a AtomicBool>,
     pub deadline: Option<Instant>,
-    pub profile: Option<&'a EvaluationResourceProfile>,
+    pub budgets: Option<&'a EvaluationBudgets>,
     pub opaque_policy: OpaquePreparePolicy,
 }
 
@@ -420,7 +465,7 @@ publishes no semantic state. Parser/interner residue is permitted only under Inv
 The algorithm is:
 
 1. Snapshot engine identity, topology and authority revisions, semantic/provider revisions,
-   name/table/source revisions, staged-index revisions, limits, and profile shape.
+   name/table/source revisions, staged-index revisions, limits, and budget values.
 2. Normalize targets. Preserve name/table symbol roots while adding their concrete result regions.
 3. Seed a deterministic demand-closure queue of cells, regions, and symbols.
 4. For each item, resolve committed legacy producers, spill anchors, FormulaPlane result producers,
@@ -476,7 +521,7 @@ Commit order is fixed:
    deadline. If it cannot fit, exit with zero semantic mutation. Telemetry compares estimate with
    actual duration; estimate accuracy is observability, not a correctness assumption.
 3. Revalidate every revision, lease generation, symbol/source assumption, span reference, target
-   conflict, profile, and limit.
+   conflict, budgets and limits.
 4. Reserve final graph, AST, index, authority, dirty, report, and staged-residual capacities.
 5. Run injected fault seams before first mutation.
 6. Apply prevalidated legacy and FormulaPlane plans without logical failure or allocation.
@@ -544,7 +589,7 @@ C4 removes the empty-authoritative-delta shortcut. Legacy, span, and spill write
 collector at layer flush.
 
 The delta API gains a versioned additive run/region representation. Large span or spill changes do
-not allocate one delta record per placement. `Compatibility` callers may request per-cell records up
+not allocate one delta record per placement. Legacy callers may request per-cell records up
 to a documented cap; caller policy then either upgrades to run/region records or returns a typed
 common overflow. Python, WASM, serialized diagnostics, and SheetPort mappings are audited with the
 resource error surface.
@@ -561,8 +606,8 @@ pub struct RecalcPlan {
 }
 ```
 
-The key includes graph, authority, semantic/provider, staged, name/table, span-generation, and profile
-shape revisions. A stale plan returns `PlanStale` with the revision category that moved; the engine
+The key includes graph, authority, semantic/provider, staged, name/table, span-generation, and budget
+value revisions. A stale plan returns `PlanStale` with the revision category that moved; the engine
 never replays stale producer identities. SheetPort batch may opt into `RebuildOnStale` because it owns
 the workbook and target list.
 
@@ -583,7 +628,7 @@ C5 changes one-shot and batch evaluation as follows:
 5. Return typed errors for unsupported structured selector syntax. Never reinterpret an error as a
    request for full evaluation.
 6. Make layout scan exhaustion a typed selector error controlled by an explicit manifest/selector
-   setting. A resource profile cannot change selector meaning.
+   setting. Evaluation budgets cannot change selector meaning.
 7. Prepare batch targets before building a revision-bound target plan. Apply `PlanStale` or
    `RebuildOnStale` according to batch options.
 8. Restore evaluation options with RAII across preparation, cancellation, resource, stale, and
@@ -601,12 +646,12 @@ units correctly.
 
 | # | Decision |
 | --- | --- |
-| 1 | Parity is under the same explicit envelope; `Compatibility` additionally guarantees no new FormulaPlane-only rejection. |
+| 1 | Parity is under the same explicit budgets; all-unset budgets additionally guarantee no new FormulaPlane-only rejection. |
 | 2 | Mixed cache limits are soft. Exact request topology handles overflow; demotion is cycle/lifecycle/operator-only. |
 | 3 | Native disk scratch is allowed by a separate request-scratch policy. WASM uses bounded runs and repeated passes with a charged pass bound. |
-| 4 | Deprecate ambient `max_vertices`; explicit vertex/edge hard limits apply at every mutation seam, never newly under `Compatibility`. |
+| 4 | Deprecate ambient `max_vertices`; explicit vertex/edge hard limits apply at every mutation seam, never newly with all budget fields unset. |
 | 5 | Deprecate `max_memory_mb` and `max_eval_time`; map them to explicit retained/scratch/deadline budgets with diagnostics. |
-| 6 | `Compatibility` remains interactive and SheetPort default through at least one post-C6 release; FormulaPlane default is independent. |
+| 6 | All-unset budgets remain the interactive and SheetPort default; FormulaPlane default is independent. |
 | 7 | Whole deferred family/package is the C3 atomic unit. Residual family ownership is post-C5 work. |
 | 8 | Opaque widening is monotone `Exact -> Sheets -> Workbook` across discovery and runtime retries under one request ledger. |
 | 9 | Engine exposes Name and Table targets because it owns symbol resolution and dependency roots. |
@@ -614,7 +659,7 @@ units correctly.
 | 11 | Initial cancellation acknowledges no dirty sublease; success requires exact partial acknowledgement at C4. |
 | 12 | C0 records cold baselines; performance numbers are ratified at C1 exit and revalidated at C6. |
 | 13 | Authority admission needs no future-cycle capability certificate; an over-cap true mixed SCC returns a deterministic typed error after exact preflight. |
-| 14 | SheetPort layout scan exhaustion is a typed selector error with an explicit manifest setting, never profile-based widening or truncation. |
+| 14 | SheetPort layout scan exhaustion is a typed selector error with an explicit manifest setting, never budget-based widening or truncation. |
 | 15 | Delta adds versioned run/region records; per-cell compatibility output is bounded and policy-controlled. |
 
 ## 11. Delivery Order
@@ -648,17 +693,41 @@ global allocator observer exists; no allocator or evaluation behavior was change
 
 Gate: Off, Shadow, and authoritative values/errors are unchanged; telemetry is observational.
 
-### C1a - ledger, deadlines, and typed completeness
+### C1a - contract, ledger, deadlines, and typed completeness
 
-- Add profile/envelope mapping, `ResourceLedger`, legacy deadline checkpoints, typed resource details,
-  and binding/serialization audits.
-- Deprecate ambient vertex/memory/time fields under the compatibility rules.
-- Make cache compilation return cached/skipped and route the existing dirty-closure incomplete reason
-  without consuming partial data.
+Status: Implemented. One explicit `EvaluationBudgets` value resolves without ambient host sampling;
+all fields are unset by default. `ResourceEnvelope` only derives a budget value. One request-bound
+checked ledger is shared by nested public coordinators across modes; typed resource details retain the
+existing Excel error kind. Legacy fields merge at the destination-field level, with explicit fields
+winning conflicts and one diagnostic reporting every mapped or ignored destination. C1a activates
+common work and deadline limits while graph vertex/edge and materialization budgets remain declarative
+until C2. No budget changes graph acceptance, lookup-cache size, mixed-topology cache thresholds, or
+thread defaults in C1a; retained and scratch budgets are observational only.
+
+Topology allocation and semantic errors preserve their baseline errors and never become cache skips
+or demotion. Only the pre-existing configured candidate, edge, and byte incomplete stats select the
+baseline capacity fallback. Dirty fixed-point incompleteness discards partial closure output and
+continues conservatively in the same schedule path. Existing demotion/materialization guards now carry
+typed `Resource` details without changing their canonical Excel error kind. Allocator OOM and panic are
+process-fatal by contract; C1a does not catch either and continue. Temporary ledger accounting is
+restored on every normal `Result` exit, and no unwind is treated as recoverable engine state.
+
+- Add explicit budget/envelope derivation, `ResourceLedger`, legacy deadline checkpoints, typed
+  resource details, and binding/serialization audits.
+- Deprecate ambient vertex/memory/time fields under field-level precedence rules.
+- Preserve baseline topology errors and configured-cap fallback while routing dirty-closure
+  incompleteness conservatively without consuming partial data or adding a demotion route.
+
+Mixed-schedule discovery and construction work is charged per attempt to the shared request ledger,
+including attempts rebuilt after cycle demotion; retry work is not refunded.
 
 Gate: mapping and deadline tests pass; no consumer accepts an incomplete result.
 
 ### C1b - exact request topology
+
+The C1b residual is the pre-existing configured mixed-cache candidate/edge/byte cap overflow demotion.
+C1a does not add a retained-ledger or scratch-ledger overflow route. All graph hard-limit enforcement
+is pending C2 and requires one composed transaction common to every graph mutation path.
 
 - Implement exact paged topology, sorted runs, native disk policy, and bounded no-disk repeated passes.
 - Add skip-streak telemetry and operator guidance.
@@ -671,6 +740,9 @@ scratch stays within estimate plus the accounting tolerance.
 
 - Add staged source index, pure discovery, monotone widening, and composed transaction for ordinary
   staged formulas, cross-sheet static dependencies, names, and ranges.
+- Activate exact graph vertex/edge admission for direct, bulk, logged, replacement, demotion, staged
+  ordinary/compressed/direct, and generic publication only after they share that composed prepared
+  transaction.
 - Ratify the inert-residue digest and audit staged-index revision coupling.
 
 Gate: every pre-commit fault preserves the semantic digest; only reachable staged units commit;
@@ -706,9 +778,10 @@ requests widen explicitly, prior errors are not swallowed, and options restore o
 
 - Run the full native and WASM/no-disk cold matrices.
 - Revalidate C1-ratified performance numbers.
-- Keep `Compatibility` default and publish `FinanceBalanced` as opt-in with calibration data.
+- Keep all-unset budgets as the default. Defer recommended named constructors/default sets until
+  calibration; any future helpers return budget values and are not enums or modes.
 
-Profile rollout remains separate from FormulaPlane-mode rollout.
+Budget rollout remains separate from FormulaPlane-mode rollout.
 
 ## 12. Validation and Fault Matrix
 
@@ -733,7 +806,7 @@ Profile rollout remains separate from FormulaPlane-mode rollout.
 - Spill anchors/children and formula/source inspection reads.
 - Complete and fragmented families with holes, exceptions, and duplicate replay records.
 - Every parse policy publishes diagnostics exactly once.
-- Rename, edit, remove, structure, provider, or profile change between prepare and commit returns stale.
+- Rename, edit, remove, structure, provider, or budget change between prepare and commit returns stale.
 - Faults and cancellation before commit preserve graph, authority, staged/package ownership, reports,
   diagnostics, dirty state, overlay, epochs, and visible values except declared inert residue.
 
@@ -762,9 +835,9 @@ Profile rollout remains separate from FormulaPlane-mode rollout.
 ## 13. Cold-Process Gates
 
 The harness builds binaries and immutable fixtures before measurement, then spawns a fresh process for
-each fixture, mode, profile, target scope, and sample. It collects seven successful samples, median and
-p95, an external hard timeout, current RSS/HWM or WASM linear-memory high water, fixture checksum, and
-raw JSON. Run order is randomized. Load, prepare, topology, evaluation, and output read are reported
+each fixture, mode, budget set, target scope, and sample. It collects seven successful samples, median
+and p95, an external hard timeout, current RSS/HWM or WASM linear-memory high water, fixture checksum,
+and raw JSON. Run order is randomized. Load, prepare, topology, evaluation, and output read are reported
 separately.
 
 Fixtures cover 50k and 250k finance chains/rollups plus the largest CI-safe tier; targets touching less
@@ -778,7 +851,7 @@ materialization cap.
   typed error.
 - Cache overflow causes zero capacity demotion and zero materialized cells absent a true SCC.
 - Prepared and scheduled units are at most reachable oracle plus 1%; unrelated units stay staged/dirty.
-- Sparse Compatibility regression stays within 5% median and 10% p95 of the C0 baseline.
+- Sparse all-unset-budget regression stays within 5% median and 10% p95 of the C0 baseline.
 - Observed peak scratch stays within ledger estimate plus 10%.
 - Authoritative peak RSS remains inside envelope plus measured unaccounted baseline and 10%, and does
   not exceed Off RSS on the same fixture.
@@ -788,7 +861,7 @@ materialization cap.
 The following begin as calibration targets, not safety gates: target-vs-full median/p95 ratios, warm
 target scaling bounds, dynamic-widening allowance, and the 70%-of-Off RSS aspiration. C0 and C1 cold
 data set absolute fixture-tier gates at C1 exit. C6 revalidates those exact values on the complete
-matrix. A failed gate changes algorithm, accounting, or profile; it never raises a safety or
+matrix. A failed gate changes algorithm, accounting, or budgets; it never raises a safety or
 materialization cap merely to make a benchmark pass.
 
 ## 14. Migration and Public Compatibility
@@ -797,7 +870,8 @@ materialization cap merely to make a benchmark pass.
 - `prepare_graph_all` and `prepare_graph_for_sheets` remain compatibility APIs. Documentation states
   that only target preparation proves transitive completeness. Sheet preparation can be deprecated
   after loaders and SheetPort migrate.
-- Explicit custom profiles win over legacy fields and emit one diagnostic. Ambiguous fields are
+- Each explicit budget field wins over only its conflicting legacy mapping. Non-conflicting legacy
+  destinations still map, and one diagnostic reports every mapped/ignored field. Legacy fields are
   removed only in a semver-breaking release.
 - `WorkbookLoadLimits` stays load-facing; evaluation materialization moves behind evaluation budgets
   with compatibility accessors.
@@ -821,15 +895,16 @@ materialization cap merely to make a benchmark pass.
   acknowledgement may follow after successful partial acknowledgement is proven.
 - Delta run/region adoption requires callers to consume the additive version; bounded compatibility
   expansion remains available during migration.
-- Numeric `FinanceBalanced` settings and target latency gates remain data-dependent until the C1-exit
-  ratification artifact.
+- Recommended named constructors/default sets and target latency gates remain deferred until the
+  C1-exit calibration artifact; future recommendations will be plain budget-producing helpers, never
+  enums or modes.
 - Adaptive node punchouts, cycle refinement, coalescing, columnar execution, and wavefront execution
   remain governed by the long-term adaptive partition design. This cutover supplies their target and
   resource contract but does not implement those executors.
 
 ## 16. Primary Implementation Areas
 
-- `formualizer-eval`: profiles, ledger, typed errors, target preparation/evaluation, recalc plans,
+- `formualizer-eval`: budgets, ledger, typed errors, target preparation/evaluation, recalc plans,
   dirty subleases, exact topology visitors, scheduler, region delta collection, and fault seams.
 - `formualizer-workbook`: typed preparation/evaluation wrappers and compatibility adapters.
 - `formualizer-sheetport`: target collection, revision-bound batch plans, selector limits, and removal

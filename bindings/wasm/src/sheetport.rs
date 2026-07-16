@@ -609,7 +609,15 @@ fn set(target: &js_sys::Object, key: impl AsRef<str>, value: JsValue) -> Result<
 }
 
 fn sheetport_error_to_js(err: formualizer::SheetPortError) -> JsValue {
-    let error = js_sys::Error::new(&err.to_string());
+    let error = match &err {
+        formualizer::SheetPortError::Engine { source } => {
+            crate::errors::excel_error_to_js(source.clone()).unchecked_into()
+        }
+        formualizer::SheetPortError::Workbook { source } => {
+            crate::errors::workbook_error_ref_to_js(source).unchecked_into()
+        }
+        _ => js_sys::Error::new(&err.to_string()),
+    };
     let object = error.unchecked_ref::<js_sys::Object>();
     let kind = match &err {
         formualizer::SheetPortError::InvalidManifest { .. } => "InvalidManifest",

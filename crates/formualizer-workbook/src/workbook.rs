@@ -2789,17 +2789,31 @@ impl Workbook {
 
     // Evaluation
     pub fn prepare_graph_all(&mut self) -> Result<(), IoError> {
-        self.engine
-            .build_graph_all()
-            .map_err(|e| IoError::from_backend("parser", e))
+        self.engine.build_graph_all().map_err(|error| {
+            if matches!(
+                &error.extra,
+                formualizer_common::ExcelErrorExtra::Resource { .. }
+            ) {
+                IoError::Engine(error)
+            } else {
+                IoError::from_backend("parser", error)
+            }
+        })
     }
     pub fn prepare_graph_for_sheets<'a, I: IntoIterator<Item = &'a str>>(
         &mut self,
         sheets: I,
     ) -> Result<(), IoError> {
-        self.engine
-            .build_graph_for_sheets(sheets)
-            .map_err(|e| IoError::from_backend("parser", e))
+        self.engine.build_graph_for_sheets(sheets).map_err(|error| {
+            if matches!(
+                &error.extra,
+                formualizer_common::ExcelErrorExtra::Resource { .. }
+            ) {
+                IoError::Engine(error)
+            } else {
+                IoError::from_backend("parser", error)
+            }
+        })
     }
     pub fn evaluate_cell(
         &mut self,

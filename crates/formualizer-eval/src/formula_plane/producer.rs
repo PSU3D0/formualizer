@@ -934,6 +934,7 @@ pub(crate) struct FormulaDirtyClosure {
     pub(crate) changed_result_regions: Vec<Region>,
     pub(crate) stats: FormulaDirtyClosureStats,
     pub(crate) fallbacks: Vec<FormulaDirtyFallback>,
+    pub(crate) incomplete: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -966,10 +967,45 @@ pub(crate) fn compute_dirty_closure(
     changed_regions: impl IntoIterator<Item = Region>,
     result_region: impl Fn(FormulaProducerId) -> Option<Region>,
 ) -> FormulaDirtyClosure {
+    compute_dirty_closure_checked(consumer_reads, changed_regions, result_region, |_| {
+        Ok::<(), std::convert::Infallible>(())
+    })
+    .expect("infallible dirty-closure checkpoint")
+}
+
+pub(crate) fn compute_dirty_closure_checked<E>(
+    consumer_reads: &FormulaConsumerReadIndex,
+    changed_regions: impl IntoIterator<Item = Region>,
+    result_region: impl Fn(FormulaProducerId) -> Option<Region>,
+    checkpoint: impl FnMut(u64) -> Result<(), E>,
+) -> Result<FormulaDirtyClosure, E> {
+    compute_dirty_closure_with_iteration_limit(
+        consumer_reads,
+        changed_regions,
+        result_region,
+        DIRTY_CLOSURE_ITERATION_LIMIT,
+        checkpoint,
+    )
+}
+
+fn compute_dirty_closure_with_iteration_limit<E>(
+    consumer_reads: &FormulaConsumerReadIndex,
+    changed_regions: impl IntoIterator<Item = Region>,
+    result_region: impl Fn(FormulaProducerId) -> Option<Region>,
+    iteration_limit: usize,
+    mut checkpoint: impl FnMut(u64) -> Result<(), E>,
+) -> Result<FormulaDirtyClosure, E> {
+    checkpoint(0)?;
+    let mut pending_work = 0_u64;
     let mut stats = FormulaDirtyClosureStats::default();
     let mut queue = VecDeque::new();
     let mut seen_changed_regions = FxHashSet::default();
     for region in changed_regions {
+        pending_work = pending_work.saturating_add(1);
+        if pending_work == 256 {
+            checkpoint(pending_work)?;
+            pending_work = 0;
+        }
         stats.input_changed_regions = stats.input_changed_regions.saturating_add(1);
         if seen_changed_regions.insert(region) {
             queue.push_back(region);
@@ -982,10 +1018,20 @@ pub(crate) fn compute_dirty_closure(
     let mut dirty_by_producer: BTreeMap<FormulaProducerId, ProducerDirtyDomain> = BTreeMap::new();
     let mut changed_result_regions = Vec::new();
     let mut fallbacks = Vec::new();
+    let mut incomplete = false;
 
     while let Some(changed_region) = queue.pop_front() {
+        pending_work = pending_work.saturating_add(1);
+        if pending_work == 256 {
+            checkpoint(pending_work)?;
+            pending_work = 0;
+        }
         stats.fixed_point_iterations = stats.fixed_point_iterations.saturating_add(1);
-        if stats.fixed_point_iterations > DIRTY_CLOSURE_ITERATION_LIMIT {
+        if stats.fixed_point_iterations > iteration_limit {
+            incomplete = true;
+            dirty_by_producer.clear();
+            changed_result_regions.clear();
+            fallbacks.clear();
             fallbacks.push(FormulaDirtyFallback {
                 consumer: FormulaProducerId::Legacy(VertexId(0)),
                 changed_region,
@@ -1004,6 +1050,11 @@ pub(crate) fn compute_dirty_closure(
             .saturating_add(query.stats.exact_filter_drop_count);
 
         for matched in query.matches {
+            pending_work = pending_work.saturating_add(1);
+            if pending_work == 256 {
+                checkpoint(pending_work)?;
+                pending_work = 0;
+            }
             let candidate = matched.value;
             match candidate.dirty {
                 ProjectionResult::Exact(dirty) => {
@@ -1064,12 +1115,18 @@ pub(crate) fn compute_dirty_closure(
         .map(|(producer, dirty)| FormulaProducerWork { producer, dirty })
         .collect();
 
-    FormulaDirtyClosure {
+    if pending_work > 0 {
+        checkpoint(pending_work)?;
+    } else {
+        checkpoint(0)?;
+    }
+    Ok(FormulaDirtyClosure {
         work,
         changed_result_regions,
         stats,
         fallbacks,
-    }
+        incomplete,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2098,6 +2155,47 @@ mod tests {
             ProducerDirtyDomain::Regions(vec![expected])
         );
         assert_eq!(closure.changed_result_regions, vec![expected]);
+    }
+
+    #[test]
+    fn fixed_point_limit_discards_all_partial_closure_work() {
+        let mut index = FormulaConsumerReadIndex::default();
+        let first_result = Region::point(0, 0, 1);
+        let second_result = Region::point(0, 0, 2);
+        index.insert_read(
+            span(1),
+            Region::point(0, 0, 0),
+            first_result,
+            DirtyProjectionRule::WholeResult,
+        );
+        index.insert_read(
+            span(2),
+            first_result,
+            second_result,
+            DirtyProjectionRule::WholeResult,
+        );
+
+        let closure = compute_dirty_closure_with_iteration_limit(
+            &index,
+            [Region::point(0, 0, 0)],
+            |producer| match producer {
+                producer if producer == span(1) => Some(first_result),
+                producer if producer == span(2) => Some(second_result),
+                _ => None,
+            },
+            1,
+            |_| Ok::<(), std::convert::Infallible>(()),
+        )
+        .unwrap();
+
+        assert!(closure.incomplete);
+        assert!(closure.work.is_empty());
+        assert!(closure.changed_result_regions.is_empty());
+        assert_eq!(closure.fallbacks.len(), 1);
+        assert_eq!(
+            closure.fallbacks[0].reason,
+            ProjectionFallbackReason::FixedPointIterationLimit
+        );
     }
 
     #[test]

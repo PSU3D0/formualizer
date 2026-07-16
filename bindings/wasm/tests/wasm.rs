@@ -130,6 +130,7 @@ fn make_custom_fn_options(
     options.into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn assert_ast_reference(
     node: &js_sys::Object,
     sheet: Option<&str>,
@@ -1144,6 +1145,157 @@ fn test_constructor_with_iterate_options_converges_and_reports_telemetry() {
     let telemetry: Object = wb.last_cycle_telemetry().unwrap().dyn_into().unwrap();
     assert!(js_get_f64(&telemetry, "iteratedSccs") >= 1.0);
     assert!(js_get_f64(&telemetry, "convergedSccs") >= 1.0);
+}
+
+#[wasm_bindgen_test]
+fn test_max_eval_time_ms_load_option_is_applied() {
+    let options = Object::new();
+    set_prop(&options, "maxEvalTimeMs", JsValue::from_f64(0.0));
+    let wb = Workbook::new(Some(options.into())).unwrap();
+    wb.add_sheet("S".to_string()).unwrap();
+    wb.set_formula("S".to_string(), 1, 1, "=1+1".to_string())
+        .unwrap();
+
+    let error: js_sys::Error = wb.evaluate_all().unwrap_err().dyn_into().unwrap();
+    assert_eq!(
+        Reflect::get(error.as_ref(), &JsValue::from_str("resource_reason"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "deadline"
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_evaluation_resource_error_preserves_wasm_detail() {
+    let options = Object::new();
+    set_prop(&options, "maxWorkUnits", JsValue::from_f64(0.0));
+    let wb = Workbook::new(Some(options.into())).unwrap();
+    wb.add_sheet("S".to_string()).unwrap();
+    wb.set_formula("S".to_string(), 1, 1, "=1+1".to_string())
+        .unwrap();
+
+    let error: js_sys::Error = wb.evaluate_all().unwrap_err().dyn_into().unwrap();
+    assert_eq!(
+        Reflect::get(error.as_ref(), &JsValue::from_str("kind"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "Engine"
+    );
+    assert_eq!(
+        Reflect::get(error.as_ref(), &JsValue::from_str("excel_kind"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "#N/IMPL!"
+    );
+    assert!(
+        error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("evaluation resource exhausted")
+    );
+    assert_eq!(
+        Reflect::get(error.as_ref(), &JsValue::from_str("resource_reason"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "work_units"
+    );
+    assert_eq!(
+        Reflect::get(error.as_ref(), &JsValue::from_str("limit"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "0"
+    );
+    let observed = Reflect::get(error.as_ref(), &JsValue::from_str("observed"))
+        .unwrap()
+        .as_string()
+        .unwrap();
+    assert!(observed.parse::<u64>().unwrap() > 0);
+    assert!(
+        Reflect::get(error.as_ref(), &JsValue::from_str("request_id"))
+            .unwrap()
+            .as_string()
+            .is_some()
+    );
+
+    let sheet = wb.sheet("S".to_string()).unwrap();
+    let sheet_error: js_sys::Error = sheet.evaluate_cell(1, 1).unwrap_err().dyn_into().unwrap();
+    assert_eq!(
+        Reflect::get(sheet_error.as_ref(), &JsValue::from_str("kind"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "Engine"
+    );
+    assert_eq!(
+        Reflect::get(sheet_error.as_ref(), &JsValue::from_str("excel_kind"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "#N/IMPL!"
+    );
+
+    let manifest = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest:
+  id: wasm-resource-sheetport
+  name: WASM Resource SheetPort
+  workbook:
+    uri: memory://wasm-resource-sheetport.xlsx
+    locale: en-US
+    date_system: 1900
+ports:
+  - id: result
+    dir: out
+    shape: scalar
+    location:
+      a1: S!A1
+    schema:
+      type: number
+"#;
+    let mut session = SheetPortSession::from_manifest_yaml(manifest.to_string(), &wb).unwrap();
+    let sheetport_error: js_sys::Error = session
+        .evaluate_once(JsValue::UNDEFINED)
+        .unwrap_err()
+        .dyn_into()
+        .unwrap();
+    assert_eq!(
+        Reflect::get(sheetport_error.as_ref(), &JsValue::from_str("kind"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "Workbook"
+    );
+    assert_eq!(
+        Reflect::get(
+            sheetport_error.as_ref(),
+            &JsValue::from_str("workbook_kind")
+        )
+        .unwrap()
+        .as_string()
+        .unwrap(),
+        "Engine"
+    );
+    assert_eq!(
+        Reflect::get(sheetport_error.as_ref(), &JsValue::from_str("excel_kind"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "#N/IMPL!"
+    );
+    assert!(
+        sheetport_error
+            .message()
+            .as_string()
+            .unwrap()
+            .contains("evaluation resource exhausted")
+    );
 }
 
 #[wasm_bindgen_test]

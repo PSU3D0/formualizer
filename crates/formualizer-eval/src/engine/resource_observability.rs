@@ -1,4 +1,7 @@
-use super::FormulaPlaneMode;
+use super::{
+    DiskScratchPolicy, EvaluationIncompleteReason, FormulaPlaneMode, ResourceLedgerSnapshot,
+};
+use formualizer_common::ResourceExhaustionReason;
 
 /// Stable classification for evaluation limits. C0 is observational only: these classes do not
 /// alter limit enforcement or fallback selection.
@@ -239,6 +242,40 @@ pub struct FormulaPlaneTopologyRequestStats {
     pub edge_cap_hits: u64,
     pub byte_cap_hits: u64,
     pub overflow_reason: Option<EvaluationResourceReason>,
+    pub incomplete_reason: Option<EvaluationIncompleteReason>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EvaluationResourceLedgerRequestStats {
+    pub retained_limit: Option<u64>,
+    pub retained_current: u64,
+    pub retained_peak: u64,
+    pub scratch_limit: Option<u64>,
+    pub scratch_current: u64,
+    pub scratch_peak: u64,
+    pub disk_scratch_policy: Option<DiskScratchPolicy>,
+    pub work_limit: Option<u64>,
+    pub work_charged: u64,
+    pub deadline_ns: Option<u64>,
+    pub deadline_checkpoints: u64,
+    pub exhaustion: Option<ResourceExhaustionReason>,
+}
+
+impl EvaluationResourceLedgerRequestStats {
+    pub(crate) fn update(&mut self, snapshot: ResourceLedgerSnapshot) {
+        self.retained_limit = snapshot.retained_limit;
+        self.retained_current = snapshot.retained_current;
+        self.retained_peak = snapshot.retained_peak;
+        self.scratch_limit = snapshot.scratch_limit;
+        self.scratch_current = snapshot.scratch_current;
+        self.scratch_peak = snapshot.scratch_peak;
+        self.disk_scratch_policy = snapshot.disk_scratch_policy;
+        self.work_limit = snapshot.work_limit;
+        self.work_charged = snapshot.work_charged;
+        self.deadline_ns = snapshot.deadline_ns;
+        self.deadline_checkpoints = snapshot.deadline_checkpoints;
+        self.exhaustion = snapshot.exhaustion;
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -262,6 +299,7 @@ pub struct EvaluationResourceRequestStats {
     pub fallback_materialized_cells: u64,
     pub cycle_materialized_cells: u64,
     pub dirty_lease: FormulaDirtyLeaseOutcome,
+    pub ledger: EvaluationResourceLedgerRequestStats,
     pub phases: EvaluationRequestPhaseTimings,
 }
 
@@ -290,6 +328,7 @@ impl EvaluationResourceRequestStats {
             fallback_materialized_cells: 0,
             cycle_materialized_cells: 0,
             dirty_lease: FormulaDirtyLeaseOutcome::NotAcquired,
+            ledger: EvaluationResourceLedgerRequestStats::default(),
             phases: EvaluationRequestPhaseTimings::default(),
         }
     }
@@ -319,6 +358,12 @@ pub struct EvaluationResourceBaselineStats {
     pub dirty_leases_acknowledged: u64,
     pub dirty_leases_retained_on_cancel: u64,
     pub dirty_leases_retained_on_error: u64,
+    pub ledger_retained_peak: u64,
+    pub ledger_scratch_peak: u64,
+    pub ledger_work_charged_total: u64,
+    pub ledger_deadline_checkpoints: u64,
+    pub ledger_exhaustions: u64,
+    pub last_ledger_exhaustion: Option<ResourceExhaustionReason>,
     pub total_request_ns: u64,
     pub staged_prepare_ns: u64,
     pub topology_ns: u64,
@@ -395,6 +440,18 @@ impl EvaluationResourceBaselineStats {
                     self.dirty_leases_retained_on_error.saturating_add(1)
             }
             _ => {}
+        }
+        self.ledger_retained_peak = self.ledger_retained_peak.max(stats.ledger.retained_peak);
+        self.ledger_scratch_peak = self.ledger_scratch_peak.max(stats.ledger.scratch_peak);
+        self.ledger_work_charged_total = self
+            .ledger_work_charged_total
+            .saturating_add(stats.ledger.work_charged);
+        self.ledger_deadline_checkpoints = self
+            .ledger_deadline_checkpoints
+            .saturating_add(stats.ledger.deadline_checkpoints);
+        if let Some(reason) = stats.ledger.exhaustion {
+            self.ledger_exhaustions = self.ledger_exhaustions.saturating_add(1);
+            self.last_ledger_exhaustion = Some(reason);
         }
         self.total_request_ns = self.total_request_ns.saturating_add(stats.phases.total_ns);
         self.staged_prepare_ns = self

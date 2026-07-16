@@ -20,6 +20,7 @@ pub mod live_graph;
 pub mod lookup_index_cache;
 pub mod plan;
 pub mod range_view;
+pub mod resource_ledger;
 pub mod resource_observability;
 pub mod row_visibility;
 pub mod scheduler;
@@ -67,16 +68,25 @@ pub use formula_source::{
 };
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
+pub use formualizer_common::{ResourceExhaustionDetail, ResourceExhaustionReason};
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, GraphBaselineStats, OperationSummary, StripeKey,
     StripeType, block_index,
 };
+pub use resource_ledger::{
+    AdmissionResourceBudget, DeadlineResourceBudget, DiskScratchPolicy, EvaluationBudgets,
+    EvaluationIncompleteReason, EvaluationResourceConfigDiagnostic,
+    LegacyResourceConfigDisposition, OptimizationResourceBudget, ResourceEnvelope, ResourceLedger,
+    ResourceLedgerError, ResourceLedgerSnapshot, RetainedResourceBudget, ScratchResourceBudget,
+    SemanticResourceBudget, WorkResourceBudget,
+};
 pub use resource_observability::{
     EvaluationRequestKind, EvaluationRequestOutcome, EvaluationRequestPhaseTimings,
-    EvaluationResourceBaselineStats, EvaluationResourceClass, EvaluationResourceReason,
-    EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome, FormulaPlaneTopologyCacheOutcome,
-    FormulaPlaneTopologyRequestStats, FormulaPlaneTopologyStrategy,
+    EvaluationResourceBaselineStats, EvaluationResourceClass, EvaluationResourceLedgerRequestStats,
+    EvaluationResourceReason, EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome,
+    FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyRequestStats,
+    FormulaPlaneTopologyStrategy,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
@@ -688,10 +698,20 @@ impl Default for WorkbookLoadLimits {
 pub struct EvalConfig {
     pub enable_parallel: bool,
     pub max_threads: Option<usize>,
-    // 🔮 Scalability Hook: Resource limits (future-proofing)
+    /// Deprecated. Maps to `evaluation_budgets.admission.graph_vertex_hard_limit` only when that
+    /// explicit field is unset.
     pub max_vertices: Option<usize>,
+    /// Deprecated. Maps to `evaluation_budgets.deadline.max_elapsed` only when that explicit field
+    /// is unset.
     pub max_eval_time: Option<std::time::Duration>,
+    /// Deprecated. Converts MiB to bytes and splits the result 50/50 between otherwise-unset
+    /// retained and scratch totals; an odd byte goes to retained. Each explicit total wins its own
+    /// conflict independently.
     pub max_memory_mb: Option<usize>,
+    /// Explicit evaluation budgets. All fields are unset by default, preserving current behavior.
+    /// Deprecated resource fields fill only otherwise-unset destination fields and produce one
+    /// field-level diagnostic describing every mapping or conflict.
+    pub evaluation_budgets: EvaluationBudgets,
 
     /// Default sheet name used when no sheet is provided.
     pub default_sheet_name: String,
@@ -815,6 +835,7 @@ impl Default for EvalConfig {
             max_vertices: None,
             max_eval_time: None,
             max_memory_mb: None,
+            evaluation_budgets: EvaluationBudgets::default(),
 
             default_sheet_name: format!("Sheet{}", 1),
 
@@ -938,6 +959,23 @@ impl EvalConfig {
     pub fn with_formula_plane_mode(mut self, mode: FormulaPlaneMode) -> Self {
         self.formula_plane_mode = mode;
         self
+    }
+
+    #[inline]
+    pub fn with_evaluation_budgets(mut self, budgets: EvaluationBudgets) -> Self {
+        self.evaluation_budgets = budgets;
+        self
+    }
+
+    /// Resolve explicit and deprecated resource settings without consulting ambient host state.
+    pub fn resolved_evaluation_budgets(&self) -> EvaluationBudgets {
+        resource_ledger::resolve_evaluation_budgets(
+            &self.evaluation_budgets,
+            self.max_vertices,
+            self.max_memory_mb,
+            self.max_eval_time,
+        )
+        .budgets
     }
 
     /// Set the cycle configuration.

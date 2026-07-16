@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use super::common::abs_cell_ref;
 use crate::engine::{
-    DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula, Engine, EvalConfig,
-    ExplicitPartitionLegacyMembers, ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch,
-    FormulaCompressedSourceReport, FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy,
-    FormulaPlaneMode, FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
-    PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport,
-    RowVisibilitySource, SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily,
-    SourceRect,
+    AdmissionResourceBudget, DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
+    Engine, EvalConfig, EvaluationBudgets, ExplicitPartitionLegacyMembers,
+    ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
+    FormulaReplayDisposition, OptimizationResourceBudget, PartitionLegacyMember,
+    PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
+    PlacementDomainTransport, RetainedResourceBudget, RowVisibilitySource, ScratchResourceBudget,
+    SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
@@ -56,6 +57,14 @@ impl DeferredFormulaReplay for ExactTestReplay {
                 })
             })
             .collect())
+    }
+
+    fn replay_partitioned(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+        _partitions: &[PartitionedSourceFormulaFamily],
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.replay(disposition)
     }
 
     fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
@@ -132,6 +141,81 @@ fn deferred_package(text: &'static str, fail_once: bool, panic_at: bool) -> Defe
     )
 }
 
+fn real_deferred_source_package() -> DeferredFormulaPackage {
+    let complete_id = SourceFamilyId {
+        sheet_instance: 700,
+        source_index: 1,
+    };
+    let fragmented_id = SourceFamilyId {
+        sheet_instance: 700,
+        source_index: 2,
+    };
+    let complete = SourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(0),
+        source_id: complete_id,
+        anchor_coord0: SourceCoord { row: 0, col: 1 },
+        anchor_text: Arc::from("A1+1"),
+        members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+            row_start: 0,
+            row_end: 7,
+            col: 1,
+        }),
+        member_count: 8,
+    };
+    let fragmented = PartitionedSourceFormulaFamily {
+        source_order: crate::engine::SourceFormulaOrder::new(1),
+        source_id: fragmented_id,
+        template_origin0: SourceCoord { row: 0, col: 2 },
+        template_text: Arc::from("B1+1"),
+        declared: SourceRect {
+            start: SourceCoord { row: 0, col: 2 },
+            end: SourceCoord { row: 7, col: 2 },
+        },
+        surviving_member_count: 7,
+        fragments: vec![
+            PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 2,
+                col: 2,
+            },
+            PlacementDomainTransport::RowRun {
+                row_start: 4,
+                row_end: 7,
+                col: 2,
+            },
+        ],
+        legacy_members: ExplicitPartitionLegacyMembers::try_new(vec![PartitionLegacyMember {
+            coord: SourceCoord { row: 3, col: 2 },
+            kind: PartitionLegacyMemberKind::SharedFamilyMember,
+        }])
+        .unwrap(),
+        reconciliation: PartitionReconciliation {
+            shared_members: 7,
+            ordinary_exceptions: 0,
+            holes: 1,
+        },
+    };
+    let formulas = (1..=8)
+        .map(|row| (row, 2, format!("=A{row}+1"), Some(complete_id)))
+        .chain((1..=8).map(|row| (row, 3, format!("=B{row}+1"), Some(fragmented_id))))
+        .collect();
+    DeferredFormulaPackage::new(
+        "Sheet1".to_string(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: 16,
+            families_seen: 2,
+            family_cells_seen: 16,
+            source_fragmentable_families: 1,
+            source_fragmentable_cells: 7,
+            source_hole_exclusions: 1,
+            ..FormulaCompressedSourceReport::default()
+        },
+        vec![complete],
+        vec![fragmented],
+        Box::new(ExactTestReplay { formulas }),
+    )
+}
+
 fn record(
     engine: &mut Engine<TestWorkbook>,
     row: u32,
@@ -141,6 +225,87 @@ fn record(
     let ast = parse(formula).unwrap();
     let ast_id = engine.intern_formula_ast(&ast);
     FormulaIngestRecord::new(row, col, ast_id, Some(Arc::<str>::from(formula)))
+}
+
+#[test]
+fn real_deferred_source_families_are_budget_invariant_in_every_mode() {
+    fn run(
+        mode: FormulaPlaneMode,
+        budgets: EvaluationBudgets,
+    ) -> (
+        crate::engine::eval::EngineBaselineStats,
+        crate::engine::FormulaIngestReport,
+        Vec<LiteralValue>,
+    ) {
+        let mut config = EvalConfig::default()
+            .with_formula_plane_mode(mode)
+            .with_evaluation_budgets(budgets);
+        config.defer_graph_building = true;
+        let mut engine = Engine::new(TestWorkbook::default(), config);
+        for row in 1..=8 {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+                .unwrap();
+        }
+        engine
+            .source_formula_ingress()
+            .stage_deferred(real_deferred_source_package());
+        engine.build_graph_all().unwrap();
+        engine.evaluate_all().unwrap();
+        let values = [(1, 3), (4, 3), (8, 3)]
+            .into_iter()
+            .map(|(row, col)| engine.get_cell_value("Sheet1", row, col).unwrap())
+            .collect();
+        (
+            engine.baseline_stats(),
+            engine.last_formula_ingest_report().unwrap().clone(),
+            values,
+        )
+    }
+
+    let observational = EvaluationBudgets {
+        admission: AdmissionResourceBudget {
+            graph_vertex_hard_limit: Some(0),
+            graph_edge_hard_limit: Some(0),
+            materialization_cells: Some(0),
+            materialized_graph_bytes: Some(0),
+        },
+        retained: RetainedResourceBudget {
+            total_bytes: Some(0),
+            mixed_cache_bytes: Some(0),
+            lookup_cache_bytes: Some(0),
+        },
+        scratch: ScratchResourceBudget {
+            total_bytes: Some(0),
+            schedule_discovery_bytes: Some(0),
+            graph_source_bytes: Some(0),
+            spill_overlay_bytes: Some(0),
+            disk_scratch_policy: None,
+        },
+        optimization: OptimizationResourceBudget {
+            mixed_cache_candidates: Some(0),
+            mixed_cache_edges: Some(0),
+            max_threads: Some(0),
+        },
+        ..EvaluationBudgets::default()
+    };
+
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let expected = run(mode, EvaluationBudgets::default());
+        assert_eq!(run(mode, observational.clone()), expected, "mode {mode:?}");
+        assert_eq!(
+            expected.2,
+            vec![
+                LiteralValue::Number(3.0),
+                LiteralValue::Number(6.0),
+                LiteralValue::Number(10.0),
+            ]
+        );
+    }
 }
 
 #[test]

@@ -1,9 +1,11 @@
+use crate::errors::workbook_error_to_js;
 use crate::utils::{js_error, js_error_with_cause};
 use formualizer::common::error::{ExcelError, ExcelErrorKind};
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
@@ -52,6 +54,8 @@ struct JsWorkbookLoadOptions {
     iterate_max_iterations: Option<u32>,
     /// Iterative-calculation absolute convergence threshold (Excel default 0.001).
     iterate_max_change: Option<f64>,
+    max_work_units: Option<u64>,
+    max_eval_time_ms: Option<u64>,
 }
 
 fn workbook_config_from_options(
@@ -144,6 +148,13 @@ fn workbook_config_from_options(
         .validate()
         .map_err(|msg| js_error(format!("invalid cycle config: {msg}")))?;
     cfg.eval.cycle = cycle;
+    if let Some(max_work_units) = parsed.max_work_units {
+        cfg.eval.evaluation_budgets.work.max_work_units = Some(max_work_units);
+    }
+    if let Some(max_eval_time_ms) = parsed.max_eval_time_ms {
+        cfg.eval.evaluation_budgets.deadline.max_elapsed =
+            Some(Duration::from_millis(max_eval_time_ms));
+    }
 
     Ok(cfg)
 }
@@ -919,11 +930,7 @@ impl Workbook {
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
             .evaluate_cell(&sheet, row, col)
-            .map_err(|e| {
-                js_error(format!(
-                    "evaluate_cell failed for {sheet}!R{row}C{col}: {e}"
-                ))
-            })?;
+            .map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
     }
 
@@ -936,7 +943,7 @@ impl Workbook {
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
         wb.evaluate_all_cancellable(self.cancel_flag.clone())
-            .map_err(|e| js_error(format!("evaluate_all failed: {e}")))?;
+            .map_err(workbook_error_to_js)?;
         Ok(())
     }
 
@@ -970,7 +977,7 @@ impl Workbook {
 
         let results = wb
             .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
-            .map_err(|e| js_error(format!("evaluate_cells failed: {e}")))?;
+            .map_err(workbook_error_to_js)?;
 
         let out = js_sys::Array::new();
         for v in results {
@@ -1306,12 +1313,7 @@ impl Sheet {
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
             .evaluate_cell(&self.name, row, col)
-            .map_err(|e| {
-                js_error(format!(
-                    "evaluate_cell failed for {sheet}!R{row}C{col}: {e}",
-                    sheet = self.name
-                ))
-            })?;
+            .map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
     }
 
