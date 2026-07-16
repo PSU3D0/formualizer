@@ -1148,6 +1148,25 @@ fn test_constructor_with_iterate_options_converges_and_reports_telemetry() {
 }
 
 #[wasm_bindgen_test]
+fn test_max_eval_time_ms_load_option_is_applied() {
+    let options = Object::new();
+    set_prop(&options, "maxEvalTimeMs", JsValue::from_f64(0.0));
+    let wb = Workbook::new(Some(options.into())).unwrap();
+    wb.add_sheet("S".to_string()).unwrap();
+    wb.set_formula("S".to_string(), 1, 1, "=1+1".to_string())
+        .unwrap();
+
+    let error: js_sys::Error = wb.evaluate_all().unwrap_err().dyn_into().unwrap();
+    assert_eq!(
+        Reflect::get(error.as_ref(), &JsValue::from_str("resource_reason"))
+            .unwrap()
+            .as_string()
+            .unwrap(),
+        "deadline"
+    );
+}
+
+#[wasm_bindgen_test]
 fn test_evaluation_resource_error_preserves_wasm_detail() {
     let options = Object::new();
     set_prop(&options, "maxWorkUnits", JsValue::from_f64(0.0));

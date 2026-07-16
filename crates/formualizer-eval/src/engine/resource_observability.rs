@@ -1,6 +1,5 @@
 use super::{
-    EvaluationIncompleteReason, EvaluationResourceProfileKind, FormulaPlaneMode,
-    ResourceLedgerSnapshot,
+    DiskScratchPolicy, EvaluationIncompleteReason, FormulaPlaneMode, ResourceLedgerSnapshot,
 };
 use formualizer_common::ResourceExhaustionReason;
 
@@ -248,13 +247,13 @@ pub struct FormulaPlaneTopologyRequestStats {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EvaluationResourceLedgerRequestStats {
-    pub profile: EvaluationResourceProfileKind,
     pub retained_limit: Option<u64>,
     pub retained_current: u64,
     pub retained_peak: u64,
     pub scratch_limit: Option<u64>,
     pub scratch_current: u64,
     pub scratch_peak: u64,
+    pub disk_scratch_policy: Option<DiskScratchPolicy>,
     pub work_limit: Option<u64>,
     pub work_charged: u64,
     pub deadline_ns: Option<u64>,
@@ -263,18 +262,14 @@ pub struct EvaluationResourceLedgerRequestStats {
 }
 
 impl EvaluationResourceLedgerRequestStats {
-    pub(crate) fn update(
-        &mut self,
-        profile: EvaluationResourceProfileKind,
-        snapshot: ResourceLedgerSnapshot,
-    ) {
-        self.profile = profile;
+    pub(crate) fn update(&mut self, snapshot: ResourceLedgerSnapshot) {
         self.retained_limit = snapshot.retained_limit;
         self.retained_current = snapshot.retained_current;
         self.retained_peak = snapshot.retained_peak;
         self.scratch_limit = snapshot.scratch_limit;
         self.scratch_current = snapshot.scratch_current;
         self.scratch_peak = snapshot.scratch_peak;
+        self.disk_scratch_policy = snapshot.disk_scratch_policy;
         self.work_limit = snapshot.work_limit;
         self.work_charged = snapshot.work_charged;
         self.deadline_ns = snapshot.deadline_ns;

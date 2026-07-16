@@ -76,10 +76,10 @@ pub use graph::{
 };
 pub use resource_ledger::{
     AdmissionResourceBudget, DeadlineResourceBudget, DiskScratchPolicy, EvaluationBudgets,
-    EvaluationIncompleteReason, EvaluationResourceConfigDiagnostic, EvaluationResourceProfile,
-    EvaluationResourceProfileKind, LegacyResourceConfigDisposition, OptimizationResourceBudget,
-    ResourceEnvelope, ResourceLedger, ResourceLedgerError, ResourceLedgerSnapshot,
-    RetainedResourceBudget, ScratchResourceBudget, SemanticResourceBudget, WorkResourceBudget,
+    EvaluationIncompleteReason, EvaluationResourceConfigDiagnostic,
+    LegacyResourceConfigDisposition, OptimizationResourceBudget, ResourceEnvelope, ResourceLedger,
+    ResourceLedgerError, ResourceLedgerSnapshot, RetainedResourceBudget, ScratchResourceBudget,
+    SemanticResourceBudget, WorkResourceBudget,
 };
 pub use resource_observability::{
     EvaluationRequestKind, EvaluationRequestOutcome, EvaluationRequestPhaseTimings,
@@ -698,12 +698,20 @@ impl Default for WorkbookLoadLimits {
 pub struct EvalConfig {
     pub enable_parallel: bool,
     pub max_threads: Option<usize>,
-    // 🔮 Scalability Hook: Resource limits (future-proofing)
+    /// Deprecated. Maps to `evaluation_budgets.admission.graph_vertex_hard_limit` only when that
+    /// explicit field is unset.
     pub max_vertices: Option<usize>,
+    /// Deprecated. Maps to `evaluation_budgets.deadline.max_elapsed` only when that explicit field
+    /// is unset.
     pub max_eval_time: Option<std::time::Duration>,
+    /// Deprecated. Converts MiB to bytes and splits the result 50/50 between otherwise-unset
+    /// retained and scratch totals; an odd byte goes to retained. Each explicit total wins its own
+    /// conflict independently.
     pub max_memory_mb: Option<usize>,
-    /// Explicit C1 resource profile. `Compatibility` with no legacy hooks is unbounded.
-    pub resource_profile: EvaluationResourceProfile,
+    /// Explicit evaluation budgets. All fields are unset by default, preserving current behavior.
+    /// Deprecated resource fields fill only otherwise-unset destination fields and produce one
+    /// field-level diagnostic describing every mapping or conflict.
+    pub evaluation_budgets: EvaluationBudgets,
 
     /// Default sheet name used when no sheet is provided.
     pub default_sheet_name: String,
@@ -827,7 +835,7 @@ impl Default for EvalConfig {
             max_vertices: None,
             max_eval_time: None,
             max_memory_mb: None,
-            resource_profile: EvaluationResourceProfile::Compatibility,
+            evaluation_budgets: EvaluationBudgets::default(),
 
             default_sheet_name: format!("Sheet{}", 1),
 
@@ -954,20 +962,20 @@ impl EvalConfig {
     }
 
     #[inline]
-    pub fn with_resource_profile(mut self, profile: EvaluationResourceProfile) -> Self {
-        self.resource_profile = profile;
+    pub fn with_evaluation_budgets(mut self, budgets: EvaluationBudgets) -> Self {
+        self.evaluation_budgets = budgets;
         self
     }
 
     /// Resolve explicit and deprecated resource settings without consulting ambient host state.
-    pub fn resolved_resource_budgets(&self) -> (EvaluationResourceProfileKind, EvaluationBudgets) {
-        let resolved = resource_ledger::resolve_resource_profile(
-            &self.resource_profile,
+    pub fn resolved_evaluation_budgets(&self) -> EvaluationBudgets {
+        resource_ledger::resolve_evaluation_budgets(
+            &self.evaluation_budgets,
             self.max_vertices,
             self.max_memory_mb,
             self.max_eval_time,
-        );
-        (resolved.kind, resolved.budgets)
+        )
+        .budgets
     }
 
     /// Set the cycle configuration.

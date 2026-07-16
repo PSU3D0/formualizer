@@ -65,6 +65,8 @@ pub struct ScratchResourceBudget {
     pub schedule_discovery_bytes: Option<u64>,
     pub graph_source_bytes: Option<u64>,
     pub spill_overlay_bytes: Option<u64>,
+    /// Request scratch backing policy. Declarative until disk-backed scratch is activated.
+    pub disk_scratch_policy: Option<DiskScratchPolicy>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -101,6 +103,15 @@ pub enum DiskScratchPolicy {
     MemoryOnly,
 }
 
+impl DiskScratchPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NativeTemporary => "native_temporary",
+            Self::MemoryOnly => "memory_only",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceEnvelope {
     pub retained_bytes: u64,
@@ -113,22 +124,7 @@ pub struct ResourceEnvelope {
 }
 
 impl ResourceEnvelope {
-    pub fn finance_balanced() -> Self {
-        Self {
-            retained_bytes: 256 * 1024 * 1024,
-            request_scratch_bytes: 256 * 1024 * 1024,
-            materialized_graph_bytes: 1024 * 1024 * 1024,
-            max_work_units: u64::MAX,
-            deadline: None,
-            max_threads: usize::MAX,
-            disk_scratch: if cfg!(target_arch = "wasm32") {
-                DiskScratchPolicy::MemoryOnly
-            } else {
-                DiskScratchPolicy::NativeTemporary
-            },
-        }
-    }
-
+    /// Deterministically derive detailed budgets from this aggregate envelope.
     pub fn to_budgets(&self) -> EvaluationBudgets {
         let cache_pool = self.retained_bytes / 8;
         let mixed_cache = cache_pool.saturating_mul(60) / 100;
@@ -154,6 +150,7 @@ impl ResourceEnvelope {
                 schedule_discovery_bytes: Some(schedule),
                 graph_source_bytes: Some(graph_source),
                 spill_overlay_bytes: Some(spill_overlay),
+                disk_scratch_policy: Some(self.disk_scratch),
             },
             work: WorkResourceBudget {
                 max_work_units: Some(self.max_work_units),
@@ -171,75 +168,41 @@ impl ResourceEnvelope {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum EvaluationResourceProfile {
-    #[default]
-    Compatibility,
-    FinanceBalanced,
-    Constrained(ResourceEnvelope),
-    Custom(EvaluationBudgets),
-}
-
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum EvaluationResourceProfileKind {
+pub enum LegacyResourceConfigDisposition {
     #[default]
-    Compatibility,
-    FinanceBalanced,
-    Constrained,
-    Custom,
+    NotPresent,
+    Mapped,
+    IgnoredByExplicitBudget,
 }
 
-impl EvaluationResourceProfileKind {
+impl LegacyResourceConfigDisposition {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Compatibility => "compatibility",
-            Self::FinanceBalanced => "finance_balanced",
-            Self::Constrained => "constrained",
-            Self::Custom => "custom",
+            Self::NotPresent => "not_present",
+            Self::Mapped => "mapped",
+            Self::IgnoredByExplicitBudget => "ignored_by_explicit_budget",
         }
     }
 }
 
-impl EvaluationResourceProfile {
-    pub fn budgets(&self) -> EvaluationBudgets {
-        match self {
-            Self::Compatibility => EvaluationBudgets::default(),
-            Self::FinanceBalanced => ResourceEnvelope::finance_balanced().to_budgets(),
-            Self::Constrained(envelope) => envelope.to_budgets(),
-            Self::Custom(budgets) => budgets.clone(),
-        }
-    }
-
-    pub const fn kind(&self) -> EvaluationResourceProfileKind {
-        match self {
-            Self::Compatibility => EvaluationResourceProfileKind::Compatibility,
-            Self::FinanceBalanced => EvaluationResourceProfileKind::FinanceBalanced,
-            Self::Constrained(_) => EvaluationResourceProfileKind::Constrained,
-            Self::Custom(_) => EvaluationResourceProfileKind::Custom,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LegacyResourceConfigDisposition {
-    MappedToCustom,
-    IgnoredByExplicitProfile,
-}
-
+/// Field-level disposition of deprecated resource configuration.
+///
+/// Every legacy value fills only its otherwise-unset destination budget field. An explicit
+/// destination wins independently, so one `max_memory_mb` value can map to retained memory while
+/// being ignored for scratch memory. Engines expose at most one diagnostic containing all fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationResourceConfigDiagnostic {
-    pub disposition: LegacyResourceConfigDisposition,
-    pub max_vertices_present: bool,
-    pub max_memory_mb_present: bool,
-    pub max_eval_time_present: bool,
+    pub max_vertices: LegacyResourceConfigDisposition,
+    pub max_memory_mb_retained: LegacyResourceConfigDisposition,
+    pub max_memory_mb_scratch: LegacyResourceConfigDisposition,
+    pub max_eval_time: LegacyResourceConfigDisposition,
     /// C1a does not enforce graph caps in any mutation path; composed activation is C2.
     pub graph_admission_activation_deferred_to_c2: bool,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ResolvedResourceProfile {
-    pub kind: EvaluationResourceProfileKind,
+pub(crate) struct ResolvedEvaluationBudgets {
     pub budgets: EvaluationBudgets,
     pub diagnostic: Option<EvaluationResourceConfigDiagnostic>,
 }
@@ -249,57 +212,68 @@ pub(crate) fn split_legacy_memory_bytes(bytes: u64) -> (u64, u64) {
     (bytes.saturating_sub(scratch), scratch)
 }
 
-pub(crate) fn resolve_resource_profile(
-    profile: &EvaluationResourceProfile,
+pub(crate) fn resolve_evaluation_budgets(
+    explicit: &EvaluationBudgets,
     max_vertices: Option<usize>,
     max_memory_mb: Option<usize>,
     max_eval_time: Option<Duration>,
-) -> ResolvedResourceProfile {
+) -> ResolvedEvaluationBudgets {
     let legacy_present =
         max_vertices.is_some() || max_memory_mb.is_some() || max_eval_time.is_some();
-    if !matches!(profile, EvaluationResourceProfile::Compatibility) {
-        return ResolvedResourceProfile {
-            kind: profile.kind(),
-            budgets: profile.budgets(),
-            diagnostic: legacy_present.then_some(EvaluationResourceConfigDiagnostic {
-                disposition: LegacyResourceConfigDisposition::IgnoredByExplicitProfile,
-                max_vertices_present: max_vertices.is_some(),
-                max_memory_mb_present: max_memory_mb.is_some(),
-                max_eval_time_present: max_eval_time.is_some(),
-                graph_admission_activation_deferred_to_c2: true,
-            }),
-        };
-    }
-
     if !legacy_present {
-        return ResolvedResourceProfile {
-            kind: EvaluationResourceProfileKind::Compatibility,
-            budgets: EvaluationBudgets::default(),
+        return ResolvedEvaluationBudgets {
+            budgets: explicit.clone(),
             diagnostic: None,
         };
     }
 
-    let mut budgets = EvaluationBudgets::default();
-    budgets.admission.graph_vertex_hard_limit = max_vertices;
-    budgets.deadline.max_elapsed = max_eval_time;
+    let mut budgets = explicit.clone();
+    let mut diagnostic = EvaluationResourceConfigDiagnostic {
+        max_vertices: LegacyResourceConfigDisposition::NotPresent,
+        max_memory_mb_retained: LegacyResourceConfigDisposition::NotPresent,
+        max_memory_mb_scratch: LegacyResourceConfigDisposition::NotPresent,
+        max_eval_time: LegacyResourceConfigDisposition::NotPresent,
+        graph_admission_activation_deferred_to_c2: true,
+    };
+    if let Some(max_vertices) = max_vertices {
+        if budgets.admission.graph_vertex_hard_limit.is_none() {
+            budgets.admission.graph_vertex_hard_limit = Some(max_vertices);
+            diagnostic.max_vertices = LegacyResourceConfigDisposition::Mapped;
+        } else {
+            diagnostic.max_vertices = LegacyResourceConfigDisposition::IgnoredByExplicitBudget;
+        }
+    }
+    if let Some(max_eval_time) = max_eval_time {
+        if budgets.deadline.max_elapsed.is_none() {
+            budgets.deadline.max_elapsed = Some(max_eval_time);
+            diagnostic.max_eval_time = LegacyResourceConfigDisposition::Mapped;
+        } else {
+            diagnostic.max_eval_time = LegacyResourceConfigDisposition::IgnoredByExplicitBudget;
+        }
+    }
     if let Some(memory_mb) = max_memory_mb {
         let bytes = u64::try_from(memory_mb)
             .unwrap_or(u64::MAX)
             .saturating_mul(1024 * 1024);
         let (retained, scratch) = split_legacy_memory_bytes(bytes);
-        budgets.retained.total_bytes = Some(retained);
-        budgets.scratch.total_bytes = Some(scratch);
+        if budgets.retained.total_bytes.is_none() {
+            budgets.retained.total_bytes = Some(retained);
+            diagnostic.max_memory_mb_retained = LegacyResourceConfigDisposition::Mapped;
+        } else {
+            diagnostic.max_memory_mb_retained =
+                LegacyResourceConfigDisposition::IgnoredByExplicitBudget;
+        }
+        if budgets.scratch.total_bytes.is_none() {
+            budgets.scratch.total_bytes = Some(scratch);
+            diagnostic.max_memory_mb_scratch = LegacyResourceConfigDisposition::Mapped;
+        } else {
+            diagnostic.max_memory_mb_scratch =
+                LegacyResourceConfigDisposition::IgnoredByExplicitBudget;
+        }
     }
-    ResolvedResourceProfile {
-        kind: EvaluationResourceProfileKind::Custom,
+    ResolvedEvaluationBudgets {
         budgets,
-        diagnostic: Some(EvaluationResourceConfigDiagnostic {
-            disposition: LegacyResourceConfigDisposition::MappedToCustom,
-            max_vertices_present: max_vertices.is_some(),
-            max_memory_mb_present: max_memory_mb.is_some(),
-            max_eval_time_present: max_eval_time.is_some(),
-            graph_admission_activation_deferred_to_c2: true,
-        }),
+        diagnostic: Some(diagnostic),
     }
 }
 
@@ -347,6 +321,7 @@ pub struct ResourceLedgerSnapshot {
     pub scratch_limit: Option<u64>,
     pub scratch_current: u64,
     pub scratch_peak: u64,
+    pub disk_scratch_policy: Option<DiskScratchPolicy>,
     pub work_limit: Option<u64>,
     pub work_charged: u64,
     pub deadline_ns: Option<u64>,
@@ -543,6 +518,7 @@ impl ResourceLedger {
             scratch_limit: self.budgets.scratch.total_bytes,
             scratch_current: self.scratch_current,
             scratch_peak: self.scratch_peak,
+            disk_scratch_policy: self.budgets.scratch.disk_scratch_policy,
             work_limit: self.budgets.work.max_work_units,
             work_charged: self.work_charged,
             deadline_ns: self

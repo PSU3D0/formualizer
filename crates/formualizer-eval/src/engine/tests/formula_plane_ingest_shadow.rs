@@ -4,10 +4,10 @@ use std::sync::Arc;
 use super::common::abs_cell_ref;
 use crate::engine::{
     AdmissionResourceBudget, DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
-    Engine, EvalConfig, EvaluationBudgets, EvaluationResourceProfile,
-    ExplicitPartitionLegacyMembers, ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch,
-    FormulaCompressedSourceReport, FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy,
-    FormulaPlaneMode, FormulaReplayDisposition, OptimizationResourceBudget, PartitionLegacyMember,
+    Engine, EvalConfig, EvaluationBudgets, ExplicitPartitionLegacyMembers,
+    ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
+    FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
+    FormulaReplayDisposition, OptimizationResourceBudget, PartitionLegacyMember,
     PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
     PlacementDomainTransport, RetainedResourceBudget, RowVisibilitySource, ScratchResourceBudget,
     SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
@@ -228,10 +228,10 @@ fn record(
 }
 
 #[test]
-fn real_deferred_source_families_are_profile_invariant_in_every_mode() {
+fn real_deferred_source_families_are_budget_invariant_in_every_mode() {
     fn run(
         mode: FormulaPlaneMode,
-        profile: EvaluationResourceProfile,
+        budgets: EvaluationBudgets,
     ) -> (
         crate::engine::eval::EngineBaselineStats,
         crate::engine::FormulaIngestReport,
@@ -239,7 +239,7 @@ fn real_deferred_source_families_are_profile_invariant_in_every_mode() {
     ) {
         let mut config = EvalConfig::default()
             .with_formula_plane_mode(mode)
-            .with_resource_profile(profile);
+            .with_evaluation_budgets(budgets);
         config.defer_graph_building = true;
         let mut engine = Engine::new(TestWorkbook::default(), config);
         for row in 1..=8 {
@@ -263,7 +263,7 @@ fn real_deferred_source_families_are_profile_invariant_in_every_mode() {
         )
     }
 
-    let observational = EvaluationResourceProfile::Custom(EvaluationBudgets {
+    let observational = EvaluationBudgets {
         admission: AdmissionResourceBudget {
             graph_vertex_hard_limit: Some(0),
             graph_edge_hard_limit: Some(0),
@@ -280,6 +280,7 @@ fn real_deferred_source_families_are_profile_invariant_in_every_mode() {
             schedule_discovery_bytes: Some(0),
             graph_source_bytes: Some(0),
             spill_overlay_bytes: Some(0),
+            disk_scratch_policy: None,
         },
         optimization: OptimizationResourceBudget {
             mixed_cache_candidates: Some(0),
@@ -287,20 +288,15 @@ fn real_deferred_source_families_are_profile_invariant_in_every_mode() {
             max_threads: Some(0),
         },
         ..EvaluationBudgets::default()
-    });
+    };
 
     for mode in [
         FormulaPlaneMode::Off,
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let expected = run(mode, EvaluationResourceProfile::Compatibility);
-        for profile in [
-            EvaluationResourceProfile::FinanceBalanced,
-            observational.clone(),
-        ] {
-            assert_eq!(run(mode, profile), expected, "mode {mode:?}");
-        }
+        let expected = run(mode, EvaluationBudgets::default());
+        assert_eq!(run(mode, observational.clone()), expected, "mode {mode:?}");
         assert_eq!(
             expected.2,
             vec![

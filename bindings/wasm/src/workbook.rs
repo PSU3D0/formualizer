@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
@@ -54,6 +55,7 @@ struct JsWorkbookLoadOptions {
     /// Iterative-calculation absolute convergence threshold (Excel default 0.001).
     iterate_max_change: Option<f64>,
     max_work_units: Option<u64>,
+    max_eval_time_ms: Option<u64>,
 }
 
 fn workbook_config_from_options(
@@ -147,15 +149,11 @@ fn workbook_config_from_options(
         .map_err(|msg| js_error(format!("invalid cycle config: {msg}")))?;
     cfg.eval.cycle = cycle;
     if let Some(max_work_units) = parsed.max_work_units {
-        use formualizer::eval::engine::{
-            EvaluationBudgets, EvaluationResourceProfile, WorkResourceBudget,
-        };
-        cfg.eval.resource_profile = EvaluationResourceProfile::Custom(EvaluationBudgets {
-            work: WorkResourceBudget {
-                max_work_units: Some(max_work_units),
-            },
-            ..EvaluationBudgets::default()
-        });
+        cfg.eval.evaluation_budgets.work.max_work_units = Some(max_work_units);
+    }
+    if let Some(max_eval_time_ms) = parsed.max_eval_time_ms {
+        cfg.eval.evaluation_budgets.deadline.max_elapsed =
+            Some(Duration::from_millis(max_eval_time_ms));
     }
 
     Ok(cfg)

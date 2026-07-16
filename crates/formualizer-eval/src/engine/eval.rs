@@ -777,7 +777,6 @@ pub struct Engine<R> {
     last_evaluation_resource_request: Option<EvaluationResourceRequestStats>,
     evaluation_resource_baseline: EvaluationResourceBaselineStats,
     evaluation_resource_request_started_at: Option<crate::instant::FzInstant>,
-    evaluation_resource_profile_kind: crate::engine::EvaluationResourceProfileKind,
     evaluation_resource_budgets: crate::engine::EvaluationBudgets,
     evaluation_resource_config_diagnostic:
         Option<crate::engine::EvaluationResourceConfigDiagnostic>,
@@ -1810,8 +1809,8 @@ where
             panic!("invalid CycleConfig: {msg}");
         }
         crate::builtins::load_builtins();
-        let resolved_resources = crate::engine::resource_ledger::resolve_resource_profile(
-            &config.resource_profile,
+        let resolved_resources = crate::engine::resource_ledger::resolve_evaluation_budgets(
+            &config.evaluation_budgets,
             config.max_vertices,
             config.max_memory_mb,
             config.max_eval_time,
@@ -1851,7 +1850,7 @@ where
             None
         };
 
-        // C1a profiles are observational for retained/cache budgets; cache defaults stay explicit.
+        // C1a retained/cache budgets are observational; cache defaults stay explicit.
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
@@ -1901,7 +1900,6 @@ where
             last_evaluation_resource_request: None,
             evaluation_resource_baseline: EvaluationResourceBaselineStats::default(),
             evaluation_resource_request_started_at: None,
-            evaluation_resource_profile_kind: resolved_resources.kind,
             evaluation_resource_budgets: resolved_resources.budgets,
             evaluation_resource_config_diagnostic: resolved_resources.diagnostic,
             active_resource_ledger: None,
@@ -1947,8 +1945,8 @@ where
             panic!("invalid CycleConfig: {msg}");
         }
         crate::builtins::load_builtins();
-        let resolved_resources = crate::engine::resource_ledger::resolve_resource_profile(
-            &config.resource_profile,
+        let resolved_resources = crate::engine::resource_ledger::resolve_evaluation_budgets(
+            &config.evaluation_budgets,
             config.max_vertices,
             config.max_memory_mb,
             config.max_eval_time,
@@ -1968,7 +1966,7 @@ where
                 ))
             }
         });
-        // C1a profiles are observational for retained/cache budgets; cache defaults stay explicit.
+        // C1a retained/cache budgets are observational; cache defaults stay explicit.
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
@@ -2018,7 +2016,6 @@ where
             last_evaluation_resource_request: None,
             evaluation_resource_baseline: EvaluationResourceBaselineStats::default(),
             evaluation_resource_request_started_at: None,
-            evaluation_resource_profile_kind: resolved_resources.kind,
             evaluation_resource_budgets: resolved_resources.budgets,
             evaluation_resource_config_diagnostic: resolved_resources.diagnostic,
             active_resource_ledger: None,
@@ -2092,10 +2089,6 @@ where
         &self.evaluation_resource_budgets
     }
 
-    pub fn evaluation_resource_profile_kind(&self) -> crate::engine::EvaluationResourceProfileKind {
-        self.evaluation_resource_profile_kind
-    }
-
     /// At most one diagnostic is emitted for deprecated resource fields.
     pub fn evaluation_resource_config_diagnostic(
         &self,
@@ -2162,9 +2155,7 @@ where
                 .take()
                 .expect("outer evaluation resource request has active ledger");
             ledger.release_all_scratch();
-            stats
-                .ledger
-                .update(self.evaluation_resource_profile_kind, ledger.snapshot());
+            stats.ledger.update(ledger.snapshot());
             stats.outcome = match &result {
                 Ok(_) => EvaluationRequestOutcome::Success,
                 Err(error) if error.kind == ExcelErrorKind::Cancelled => {
@@ -2193,13 +2184,12 @@ where
     }
 
     #[cfg(test)]
-    pub(crate) fn set_evaluation_resource_profile_for_test(
+    pub(crate) fn set_evaluation_budgets_for_test(
         &mut self,
-        profile: crate::engine::EvaluationResourceProfile,
+        budgets: crate::engine::EvaluationBudgets,
     ) {
-        self.evaluation_resource_profile_kind = profile.kind();
-        self.evaluation_resource_budgets = profile.budgets();
-        self.config.resource_profile = profile;
+        self.evaluation_resource_budgets = budgets.clone();
+        self.config.evaluation_budgets = budgets;
     }
 
     fn resource_loop_checkpoint(
@@ -10157,10 +10147,13 @@ where
             .graph
             .prepare_legacy_graph_plan_multi_sheet(analyzed)
             .map_err(FormulaSpanDemotionError::LegacyGraph)?;
-        if matches!(
-            self.config.resource_profile,
-            crate::engine::EvaluationResourceProfile::Compatibility
-        ) && let Some(max_vertices) = self.config.max_vertices
+        if self
+            .config
+            .evaluation_budgets
+            .admission
+            .graph_vertex_hard_limit
+            .is_none()
+            && let Some(max_vertices) = self.config.max_vertices
         {
             let projected = self
                 .graph

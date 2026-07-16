@@ -315,6 +315,10 @@ export interface WorkbookLoadOptions {
   iterateMaxIterations?: number;
   /** Iterative-calculation absolute convergence threshold (Excel default 0.001). */
   iterateMaxChange?: number;
+  /** Maximum evaluation work units for one outer request. */
+  maxWorkUnits?: number;
+  /** Maximum elapsed evaluation time in milliseconds for one outer request. */
+  maxEvalTimeMs?: number;
 }
 
 /**

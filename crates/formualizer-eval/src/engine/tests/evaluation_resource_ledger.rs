@@ -6,26 +6,23 @@ use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason
 use formualizer_parse::parser::parse;
 
 use crate::engine::eval::classify_mixed_topology_incomplete;
-use crate::engine::resource_ledger::{resolve_resource_profile, split_legacy_memory_bytes};
+use crate::engine::resource_ledger::{resolve_evaluation_budgets, split_legacy_memory_bytes};
 use crate::engine::{
-    AdmissionResourceBudget, ChangeLog, DeadlineResourceBudget, Engine, EvalConfig,
-    EvaluationBudgets, EvaluationIncompleteReason, EvaluationResourceProfile,
-    EvaluationResourceProfileKind, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
-    FormulaPlaneTopologyCacheOutcome, LegacyResourceConfigDisposition, ResourceEnvelope,
-    ResourceLedger, RetainedResourceBudget, ScratchResourceBudget, WorkResourceBudget,
+    AdmissionResourceBudget, ChangeLog, DeadlineResourceBudget, DiskScratchPolicy, Engine,
+    EvalConfig, EvaluationBudgets, EvaluationIncompleteReason, FormulaIngestBatch,
+    FormulaIngestRecord, FormulaPlaneMode, FormulaPlaneTopologyCacheOutcome,
+    LegacyResourceConfigDisposition, ResourceEnvelope, ResourceLedger, RetainedResourceBudget,
+    ScratchResourceBudget, WorkResourceBudget,
 };
 use crate::formula_plane::scheduler::MixedTopologyCompileStats;
 use crate::test_workbook::TestWorkbook;
 
-fn formula_engine(
-    mode: FormulaPlaneMode,
-    profile: EvaluationResourceProfile,
-) -> Engine<TestWorkbook> {
+fn formula_engine(mode: FormulaPlaneMode, budgets: EvaluationBudgets) -> Engine<TestWorkbook> {
     let mut engine = Engine::new(
         TestWorkbook::default(),
         EvalConfig::default()
             .with_formula_plane_mode(mode)
-            .with_resource_profile(profile),
+            .with_evaluation_budgets(budgets),
     );
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("=1+1").unwrap())
@@ -41,26 +38,30 @@ fn resource_reason(error: &formualizer_common::ExcelError) -> Option<ResourceExh
 }
 
 #[test]
-fn compatibility_and_legacy_mapping_are_explicit_and_deterministic() {
-    let resolved =
-        resolve_resource_profile(&EvaluationResourceProfile::Compatibility, None, None, None);
-    assert_eq!(resolved.kind, EvaluationResourceProfileKind::Compatibility);
+fn explicit_and_legacy_budgets_merge_at_field_level_deterministically() {
+    let resolved = resolve_evaluation_budgets(&EvaluationBudgets::default(), None, None, None);
     assert_eq!(resolved.budgets, EvaluationBudgets::default());
     assert!(resolved.diagnostic.is_none());
 
     assert_eq!(split_legacy_memory_bytes(9), (5, 4));
-    let resolved = resolve_resource_profile(
-        &EvaluationResourceProfile::Compatibility,
-        Some(7),
-        Some(3),
-        Some(Duration::from_millis(25)),
-    );
-    assert_eq!(resolved.kind, EvaluationResourceProfileKind::Custom);
-    assert_eq!(resolved.budgets.admission.graph_vertex_hard_limit, Some(7));
-    assert_eq!(
-        resolved.budgets.retained.total_bytes,
-        Some(3 * 1024 * 1024 / 2)
-    );
+    let explicit = EvaluationBudgets {
+        admission: AdmissionResourceBudget {
+            graph_vertex_hard_limit: Some(99),
+            ..AdmissionResourceBudget::default()
+        },
+        retained: RetainedResourceBudget {
+            total_bytes: Some(42),
+            ..RetainedResourceBudget::default()
+        },
+        work: WorkResourceBudget {
+            max_work_units: Some(11),
+        },
+        ..EvaluationBudgets::default()
+    };
+    let resolved =
+        resolve_evaluation_budgets(&explicit, Some(7), Some(3), Some(Duration::from_millis(25)));
+    assert_eq!(resolved.budgets.admission.graph_vertex_hard_limit, Some(99));
+    assert_eq!(resolved.budgets.retained.total_bytes, Some(42));
     assert_eq!(
         resolved.budgets.scratch.total_bytes,
         Some(3 * 1024 * 1024 / 2)
@@ -69,30 +70,72 @@ fn compatibility_and_legacy_mapping_are_explicit_and_deterministic() {
         resolved.budgets.deadline.max_elapsed,
         Some(Duration::from_millis(25))
     );
+    assert_eq!(resolved.budgets.work.max_work_units, Some(11));
+
     let diagnostic = resolved.diagnostic.unwrap();
     assert_eq!(
-        diagnostic.disposition,
-        LegacyResourceConfigDisposition::MappedToCustom
+        diagnostic.max_vertices,
+        LegacyResourceConfigDisposition::IgnoredByExplicitBudget
+    );
+    assert_eq!(
+        diagnostic.max_memory_mb_retained,
+        LegacyResourceConfigDisposition::IgnoredByExplicitBudget
+    );
+    assert_eq!(
+        diagnostic.max_memory_mb_scratch,
+        LegacyResourceConfigDisposition::Mapped
+    );
+    assert_eq!(
+        diagnostic.max_eval_time,
+        LegacyResourceConfigDisposition::Mapped
     );
     assert!(diagnostic.graph_admission_activation_deferred_to_c2);
+}
 
-    let custom = EvaluationBudgets {
-        work: WorkResourceBudget {
-            max_work_units: Some(11),
-        },
-        ..EvaluationBudgets::default()
+#[test]
+fn aggregate_envelope_derives_budgets_without_selecting_a_mode() {
+    let envelope = ResourceEnvelope {
+        retained_bytes: 800,
+        request_scratch_bytes: 200,
+        materialized_graph_bytes: 1_000,
+        max_work_units: 77,
+        deadline: Some(Duration::from_millis(12)),
+        max_threads: 3,
+        disk_scratch: DiskScratchPolicy::MemoryOnly,
     };
-    let resolved = resolve_resource_profile(
-        &EvaluationResourceProfile::Custom(custom.clone()),
-        Some(1),
-        Some(1),
-        Some(Duration::ZERO),
-    );
-    assert_eq!(resolved.budgets, custom);
+    let budgets = envelope.to_budgets();
+
+    assert_eq!(budgets.retained.total_bytes, Some(800));
+    assert_eq!(budgets.retained.mixed_cache_bytes, Some(60));
+    assert_eq!(budgets.retained.lookup_cache_bytes, Some(40));
+    assert_eq!(budgets.scratch.total_bytes, Some(200));
+    assert_eq!(budgets.scratch.schedule_discovery_bytes, Some(100));
+    assert_eq!(budgets.scratch.graph_source_bytes, Some(70));
+    assert_eq!(budgets.scratch.spill_overlay_bytes, Some(30));
     assert_eq!(
-        resolved.diagnostic.unwrap().disposition,
-        LegacyResourceConfigDisposition::IgnoredByExplicitProfile
+        budgets.scratch.disk_scratch_policy,
+        Some(DiskScratchPolicy::MemoryOnly)
     );
+    let native_budgets = ResourceEnvelope {
+        disk_scratch: DiskScratchPolicy::NativeTemporary,
+        ..envelope
+    }
+    .to_budgets();
+    assert_eq!(
+        native_budgets.scratch.disk_scratch_policy,
+        Some(DiskScratchPolicy::NativeTemporary)
+    );
+    assert_ne!(
+        budgets.scratch.disk_scratch_policy,
+        native_budgets.scratch.disk_scratch_policy
+    );
+    assert_eq!(budgets.admission.materialized_graph_bytes, Some(1_000));
+    assert_eq!(budgets.work.max_work_units, Some(77));
+    assert_eq!(
+        budgets.deadline.max_elapsed,
+        Some(Duration::from_millis(12))
+    );
+    assert_eq!(budgets.optimization.max_threads, Some(3));
 }
 
 #[test]
@@ -163,13 +206,13 @@ fn work_and_deadline_errors_are_common_across_modes() {
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let work_profile = EvaluationResourceProfile::Custom(EvaluationBudgets {
+        let work_budgets = EvaluationBudgets {
             work: WorkResourceBudget {
                 max_work_units: Some(0),
             },
             ..EvaluationBudgets::default()
-        });
-        let error = formula_engine(mode, work_profile)
+        };
+        let error = formula_engine(mode, work_budgets)
             .evaluate_all()
             .unwrap_err();
         assert_eq!(
@@ -177,13 +220,13 @@ fn work_and_deadline_errors_are_common_across_modes() {
             Some(ResourceExhaustionReason::WorkUnits)
         );
 
-        let deadline_profile = EvaluationResourceProfile::Custom(EvaluationBudgets {
+        let deadline_budgets = EvaluationBudgets {
             deadline: DeadlineResourceBudget {
                 max_elapsed: Some(Duration::ZERO),
             },
             ..EvaluationBudgets::default()
-        });
-        let error = formula_engine(mode, deadline_profile)
+        };
+        let error = formula_engine(mode, deadline_budgets)
             .evaluate_all()
             .unwrap_err();
         assert_eq!(
@@ -194,23 +237,19 @@ fn work_and_deadline_errors_are_common_across_modes() {
 }
 
 #[test]
-fn default_compatibility_preserves_acceptance_and_reports_ledger() {
+fn default_unset_budgets_preserve_acceptance_and_report_ledger() {
     for mode in [
         FormulaPlaneMode::Off,
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let mut engine = formula_engine(mode, EvaluationResourceProfile::Compatibility);
+        let mut engine = formula_engine(mode, EvaluationBudgets::default());
         engine.evaluate_all().unwrap();
         assert_eq!(
             engine.get_cell_value("Sheet1", 1, 1),
             Some(LiteralValue::Number(2.0))
         );
         let request = engine.last_evaluation_resource_request_stats().unwrap();
-        assert_eq!(
-            request.ledger.profile,
-            EvaluationResourceProfileKind::Compatibility
-        );
         assert_eq!(request.ledger.work_limit, None);
         assert!(request.ledger.deadline_checkpoints > 0);
         assert_eq!(request.ledger.exhaustion, None);
@@ -219,27 +258,27 @@ fn default_compatibility_preserves_acceptance_and_reports_ledger() {
 
 #[test]
 fn deferred_preparation_work_and_deadline_failures_are_retry_safe() {
-    for (profile, expected) in [
+    for (budgets, expected) in [
         (
-            EvaluationResourceProfile::Custom(EvaluationBudgets {
+            EvaluationBudgets {
                 work: WorkResourceBudget {
                     max_work_units: Some(0),
                 },
                 ..EvaluationBudgets::default()
-            }),
+            },
             ResourceExhaustionReason::WorkUnits,
         ),
         (
-            EvaluationResourceProfile::Custom(EvaluationBudgets {
+            EvaluationBudgets {
                 deadline: DeadlineResourceBudget {
                     max_elapsed: Some(Duration::ZERO),
                 },
                 ..EvaluationBudgets::default()
-            }),
+            },
             ResourceExhaustionReason::Deadline,
         ),
     ] {
-        let mut config = EvalConfig::default().with_resource_profile(profile);
+        let mut config = EvalConfig::default().with_evaluation_budgets(budgets);
         config.defer_graph_building = true;
         let mut engine = Engine::new(TestWorkbook::default(), config);
         let _ = engine.add_sheet("Sheet1");
@@ -264,13 +303,10 @@ fn structural_topology_incompleteness_is_not_mislabeled_as_a_cap() {
 
 #[test]
 fn graph_caps_are_declarative_across_staged_and_generic_paths_in_all_modes() {
-    fn prepared(
-        mode: FormulaPlaneMode,
-        profile: EvaluationResourceProfile,
-    ) -> Engine<TestWorkbook> {
+    fn prepared(mode: FormulaPlaneMode, budgets: EvaluationBudgets) -> Engine<TestWorkbook> {
         let mut config = EvalConfig::default()
             .with_formula_plane_mode(mode)
-            .with_resource_profile(profile);
+            .with_evaluation_budgets(budgets);
         config.defer_graph_building = true;
         let mut engine = Engine::new(TestWorkbook::default(), config);
         let _ = engine.add_sheet("Sheet1");
@@ -279,11 +315,11 @@ fn graph_caps_are_declarative_across_staged_and_generic_paths_in_all_modes() {
         engine.stage_formula_text("Other", 1, 2, "=A1+2".to_string());
         engine
             .build_graph_for_sheets(["Sheet1"])
-            .expect("C1a profiles must not change selected staged acceptance");
+            .expect("C1a budgets must not change selected staged acceptance");
         assert_eq!(engine.staged_formula_count(), 1);
         engine
             .build_graph_all()
-            .expect("C1a profiles must not change prepare-all acceptance");
+            .expect("C1a budgets must not change prepare-all acceptance");
         engine
             .evaluate_all()
             .expect("generic evaluation checkpoints must not fail after staging");
@@ -295,17 +331,17 @@ fn graph_caps_are_declarative_across_staged_and_generic_paths_in_all_modes() {
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let baseline = prepared(mode, EvaluationResourceProfile::Compatibility);
+        let baseline = prepared(mode, EvaluationBudgets::default());
         let capped = prepared(
             mode,
-            EvaluationResourceProfile::Custom(EvaluationBudgets {
+            EvaluationBudgets {
                 admission: AdmissionResourceBudget {
                     graph_vertex_hard_limit: Some(0),
                     graph_edge_hard_limit: Some(0),
                     ..AdmissionResourceBudget::default()
                 },
                 ..EvaluationBudgets::default()
-            }),
+            },
         );
         let baseline_stats = baseline.baseline_stats();
         let capped_stats = capped.baseline_stats();
@@ -344,14 +380,14 @@ fn graph_caps_are_declarative_across_staged_and_generic_paths_in_all_modes() {
 fn authoritative_staged_spans_do_not_charge_hypothetical_legacy_vertices() {
     let mut config = EvalConfig::default()
         .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-        .with_resource_profile(EvaluationResourceProfile::Custom(EvaluationBudgets {
+        .with_evaluation_budgets(EvaluationBudgets {
             admission: AdmissionResourceBudget {
                 graph_vertex_hard_limit: Some(0),
                 graph_edge_hard_limit: Some(0),
                 ..AdmissionResourceBudget::default()
             },
             ..EvaluationBudgets::default()
-        }));
+        });
     config.defer_graph_building = true;
     let mut engine = Engine::new(TestWorkbook::default(), config);
     let _ = engine.add_sheet("Sheet1");
@@ -383,12 +419,11 @@ fn c1a_retained_and_scratch_budgets_are_observational_without_new_skip_or_demoti
             ..EvaluationBudgets::default()
         },
     ] {
-        let profile = EvaluationResourceProfile::Custom(budgets);
         let mut engine = Engine::new(
             TestWorkbook::default(),
             EvalConfig::default()
                 .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-                .with_resource_profile(profile),
+                .with_evaluation_budgets(budgets),
         );
         let mut records = Vec::new();
         for row in 1..=100 {
@@ -422,12 +457,12 @@ fn span_work_exhaustion_happens_before_value_or_dirty_acknowledgement() {
         TestWorkbook::default(),
         EvalConfig::default()
             .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-            .with_resource_profile(EvaluationResourceProfile::Custom(EvaluationBudgets {
+            .with_evaluation_budgets(EvaluationBudgets {
                 work: WorkResourceBudget {
                     max_work_units: Some(1),
                 },
                 ..EvaluationBudgets::default()
-            })),
+            }),
     );
     let mut records = Vec::new();
     for row in 1..=4 {
@@ -499,13 +534,13 @@ fn existing_materialization_guard_is_typed_without_changing_error_kind() {
 fn skipped_topology_is_typed_atomic_and_never_cached() {
     let mut config = EvalConfig::default()
         .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-        .with_resource_profile(EvaluationResourceProfile::Custom(EvaluationBudgets {
+        .with_evaluation_budgets(EvaluationBudgets {
             admission: AdmissionResourceBudget {
                 materialization_cells: Some(0),
                 ..AdmissionResourceBudget::default()
             },
             ..EvaluationBudgets::default()
-        }));
+        });
     config.max_formula_plane_cache_candidates = 0;
     let mut engine = Engine::new(TestWorkbook::default(), config);
     let mut records = Vec::new();
@@ -561,13 +596,13 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let profile = EvaluationResourceProfile::Custom(EvaluationBudgets {
+        let budgets = EvaluationBudgets {
             work: WorkResourceBudget {
                 max_work_units: Some(0),
             },
             ..EvaluationBudgets::default()
-        });
-        let mut engine = formula_engine(mode, profile);
+        };
+        let mut engine = formula_engine(mode, budgets);
         let address = engine.graph.make_cell_ref("Sheet1", 1, 1);
         let vertex = *engine
             .graph
@@ -585,11 +620,11 @@ fn evaluate_vertex_max_work_zero_matches_all_modes_without_publication() {
 }
 
 #[test]
-fn explicit_profiles_ignore_legacy_vertex_limit_at_the_shared_demotion_seam() {
-    fn demote(profile: EvaluationResourceProfile) -> Result<(), String> {
+fn explicit_vertex_budget_ignores_legacy_limit_at_shared_demotion_seam() {
+    fn demote(budgets: EvaluationBudgets) -> Result<(), String> {
         let mut config = EvalConfig::default()
             .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-            .with_resource_profile(profile);
+            .with_evaluation_budgets(budgets);
         config.max_vertices = Some(0);
         let mut engine = Engine::new(TestWorkbook::default(), config);
         let mut formulas = Vec::new();
@@ -617,19 +652,16 @@ fn explicit_profiles_ignore_legacy_vertex_limit_at_the_shared_demotion_seam() {
         Ok(())
     }
 
-    let mut constrained = ResourceEnvelope::finance_balanced();
-    constrained.max_work_units = 1_000_000;
-    for profile in [
-        EvaluationResourceProfile::FinanceBalanced,
-        EvaluationResourceProfile::Constrained(constrained),
-        EvaluationResourceProfile::Custom(EvaluationBudgets::default()),
-    ] {
-        demote(profile).expect(
-            "capacity, cycle, name, and structural routes share an explicit-profile demotion seam",
-        );
-    }
+    let explicit = EvaluationBudgets {
+        admission: AdmissionResourceBudget {
+            graph_vertex_hard_limit: Some(1_000_000),
+            ..AdmissionResourceBudget::default()
+        },
+        ..EvaluationBudgets::default()
+    };
+    demote(explicit).expect("the explicit vertex budget wins over the legacy field");
 
-    let error = demote(EvaluationResourceProfile::Compatibility).unwrap_err();
+    let error = demote(EvaluationBudgets::default()).unwrap_err();
     assert!(error.contains("resource") || error.contains("vertex"));
 }
 
@@ -637,15 +669,15 @@ fn explicit_profiles_ignore_legacy_vertex_limit_at_the_shared_demotion_seam() {
 fn logged_resource_failures_close_groups_and_keep_dirty_retryable() {
     use crate::engine::graph::editor::change_log::ChangeEvent;
 
-    let work_limited = EvaluationResourceProfile::Custom(EvaluationBudgets {
+    let work_limited = EvaluationBudgets {
         work: WorkResourceBudget {
             max_work_units: Some(1),
         },
         ..EvaluationBudgets::default()
-    });
+    };
     let mut engine = Engine::new(
         TestWorkbook::default(),
-        EvalConfig::default().with_resource_profile(work_limited),
+        EvalConfig::default().with_evaluation_budgets(work_limited),
     );
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("=SEQUENCE(2,1)").unwrap())
@@ -675,7 +707,7 @@ fn logged_resource_failures_close_groups_and_keep_dirty_retryable() {
     ));
     assert_eq!(log.meta(0).unwrap().1, log.meta(log.len() - 1).unwrap().1);
 
-    engine.set_evaluation_resource_profile_for_test(EvaluationResourceProfile::Compatibility);
+    engine.set_evaluation_budgets_for_test(EvaluationBudgets::default());
     engine.evaluate_all_logged(&mut log).unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
@@ -683,12 +715,12 @@ fn logged_resource_failures_close_groups_and_keep_dirty_retryable() {
     );
     assert_eq!(log.compound_depth(), 0);
 
-    let deadline_limited = EvaluationResourceProfile::Custom(EvaluationBudgets {
+    let deadline_limited = EvaluationBudgets {
         deadline: DeadlineResourceBudget {
             max_elapsed: Some(Duration::ZERO),
         },
         ..EvaluationBudgets::default()
-    });
+    };
     let mut engine = formula_engine(FormulaPlaneMode::Off, deadline_limited);
     let mut log = ChangeLog::new();
     let error = engine.evaluate_all_logged(&mut log).unwrap_err();
@@ -697,7 +729,7 @@ fn logged_resource_failures_close_groups_and_keep_dirty_retryable() {
         Some(ResourceExhaustionReason::Deadline)
     );
     assert_eq!(log.compound_depth(), 0);
-    engine.set_evaluation_resource_profile_for_test(EvaluationResourceProfile::Compatibility);
+    engine.set_evaluation_budgets_for_test(EvaluationBudgets::default());
     engine.evaluate_all_logged(&mut log).unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
