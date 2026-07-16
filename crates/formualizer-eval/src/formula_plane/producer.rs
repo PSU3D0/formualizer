@@ -383,6 +383,19 @@ impl FormulaConsumerReadIndex {
         self.entries.len()
     }
 
+    pub(crate) fn entries(&self) -> impl Iterator<Item = &FormulaConsumerReadEntry> {
+        self.entries.iter()
+    }
+
+    pub(crate) fn entries_page(
+        &self,
+        start: usize,
+        page_size: usize,
+    ) -> &[FormulaConsumerReadEntry] {
+        let end = start.saturating_add(page_size).min(self.entries.len());
+        self.entries.get(start..end).unwrap_or_default()
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch
     }

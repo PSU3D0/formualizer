@@ -114,6 +114,11 @@ fn span_member_in_static_cycle_is_demoted_and_circ() {
     assert_eq!(request.topology.cache_build_events, 2);
     assert_eq!(request.topology.cache_hit_events, 0);
     assert_eq!(request.topology.cache_skip_events, 0);
+    assert_eq!(
+        request.ledger.retained_peak, request.topology.retained_bytes_observed,
+        "cycle retry cache replacement must not add both retained topologies",
+    );
+    assert!(request.ledger.retained_current <= request.ledger.retained_peak);
     assert_eq!(request.topology.producers_observed, 125);
     assert_eq!(request.topology.candidates_observed, 4);
     assert_eq!(request.topology.edges_observed, 4);

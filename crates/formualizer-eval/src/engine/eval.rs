@@ -43,9 +43,13 @@ use crate::formula_plane::runtime::{
     FormulaPlane, FormulaSpanId, FormulaSpanRef, PlacementCoord, PlacementDomain, ResultRegion,
 };
 use crate::formula_plane::scheduler::{
-    MixedSchedule, MixedScheduleFallbackReason, MixedTopology, MixedTopologyCompileStats,
-    MixedTopologyConfig, compile_mixed_topology, schedule_dirty_work,
+    MixedSchedule, MixedScheduleFallbackReason, MixedTopology, MixedTopologyCompileResult,
+    MixedTopologyCompileStats, MixedTopologyConfig, compile_mixed_topology, schedule_dirty_work,
+    schedule_dirty_work_in_memory_runs, schedule_dirty_work_paged,
+    schedule_dirty_work_repeated_passes,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::formula_plane::scheduler::{NativeExactScheduleError, schedule_dirty_work_native};
 #[cfg(test)]
 use crate::formula_plane::span_eval::SpanEvalReport;
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
@@ -701,6 +705,7 @@ pub struct Engine<R> {
     mixed_topology_cache_builds: u64,
     mixed_topology_cache_hits: u64,
     mixed_topology_cache_overflows: u64,
+    mixed_topology_cache_skip_streak: u64,
     spill_mgr: ShimSpillManager,
     /// Arrow-backed storage for sheet values (Phase A)
     arrow_sheets: SheetStore,
@@ -827,6 +832,10 @@ pub struct Engine<R> {
         Option<crate::engine::fragmented_transaction::FragmentedCommitFault>,
     #[cfg(test)]
     formula_span_demotion_fault_for_test: Option<FormulaSpanDemotionFault>,
+    #[cfg(test)]
+    force_non_cycle_schedule_fallback_for_test: bool,
+    #[cfg(test)]
+    mixed_topology_index_builds_for_test: u64,
     #[cfg(test)]
     before_legacy_fallback_final_provider_sample_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     #[cfg(test)]
@@ -1483,6 +1492,62 @@ struct CachedMixedTopology {
     plane_epoch: u64,
 }
 
+#[derive(Debug)]
+struct SkippedMixedTopology {
+    reason: MixedScheduleFallbackReason,
+    observed: MixedTopologyCompileStats,
+    producer_results: FormulaProducerResultIndex,
+    consumer_reads: FormulaConsumerReadIndex,
+    span_refs_by_id: BTreeMap<FormulaSpanId, FormulaSpanRef>,
+    plane_epoch: u64,
+}
+
+#[derive(Debug)]
+enum FormulaPlaneTopologyCompileResult {
+    Cached(CachedMixedTopology),
+    CacheSkipped(SkippedMixedTopology),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct NativeTopologyScratch {
+    path: std::path::PathBuf,
+    file: std::fs::File,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeTopologyScratch {
+    fn create(request_id: u64) -> std::io::Result<Self> {
+        use std::fs::OpenOptions;
+        for attempt in 0..32_u64 {
+            let path = std::env::temp_dir().join(format!(
+                "formualizer-topology-{request_id}-{attempt}-{}.tmp",
+                std::process::id()
+            ));
+            match OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(file) => return Ok(Self { path, file }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not allocate unique topology scratch file",
+        ))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for NativeTopologyScratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 fn estimated_span_bindings_bytes(
     bindings: &BTreeMap<FormulaSpanId, FormulaSpanRef>,
 ) -> Option<usize> {
@@ -1868,6 +1933,7 @@ where
             mixed_topology_cache_builds: 0,
             mixed_topology_cache_hits: 0,
             mixed_topology_cache_overflows: 0,
+            mixed_topology_cache_skip_streak: 0,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             has_edited: false,
@@ -1918,6 +1984,10 @@ where
             fragmented_commit_fault_for_test: None,
             #[cfg(test)]
             formula_span_demotion_fault_for_test: None,
+            #[cfg(test)]
+            force_non_cycle_schedule_fallback_for_test: false,
+            #[cfg(test)]
+            mixed_topology_index_builds_for_test: 0,
             #[cfg(test)]
             before_legacy_fallback_final_provider_sample_hook: None,
             #[cfg(test)]
@@ -1984,6 +2054,7 @@ where
             mixed_topology_cache_builds: 0,
             mixed_topology_cache_hits: 0,
             mixed_topology_cache_overflows: 0,
+            mixed_topology_cache_skip_streak: 0,
             spill_mgr: ShimSpillManager::default(),
             arrow_sheets: SheetStore::default(),
             has_edited: false,
@@ -2034,6 +2105,10 @@ where
             fragmented_commit_fault_for_test: None,
             #[cfg(test)]
             formula_span_demotion_fault_for_test: None,
+            #[cfg(test)]
+            force_non_cycle_schedule_fallback_for_test: false,
+            #[cfg(test)]
+            mixed_topology_index_builds_for_test: 0,
             #[cfg(test)]
             before_legacy_fallback_final_provider_sample_hook: None,
             #[cfg(test)]
@@ -2245,6 +2320,19 @@ where
                 "request scratch release exceeded the outstanding reservation"
             );
         }
+    }
+
+    fn can_reserve_topology_scratch(&self, bytes: u64) -> bool {
+        self.active_resource_ledger
+            .as_ref()
+            .is_none_or(|ledger| ledger.can_reserve_schedule_discovery(bytes))
+    }
+
+    fn reserve_topology_scratch(&mut self, bytes: u64) -> Result<(), ExcelError> {
+        self.active_resource_ledger
+            .as_mut()
+            .map_or(Ok(()), |ledger| ledger.reserve_schedule_discovery(bytes))
+            .map_err(crate::engine::ResourceLedgerError::into_excel_error)
     }
 
     fn with_request_scratch<T>(
@@ -4048,6 +4136,10 @@ where
         self.graph.bump_topology_revision();
         self.clear_cached_static_schedule();
         self.cached_mixed_topology = None;
+        if let Some(ledger) = self.active_resource_ledger.as_mut() {
+            let released = ledger.account_mixed_cache(0);
+            debug_assert!(released.is_ok());
+        }
         self.has_edited = true;
     }
 
@@ -10274,6 +10366,16 @@ where
         self.formula_span_demotion_fault_for_test = Some(fault);
     }
 
+    #[cfg(test)]
+    pub(crate) fn force_non_cycle_schedule_fallback_for_test(&mut self) {
+        self.force_non_cycle_schedule_fallback_for_test = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mixed_topology_index_builds_for_test(&self) -> u64 {
+        self.mixed_topology_index_builds_for_test
+    }
+
     /// Collect the [`FormulaSpanRef`]s for span producers the mixed scheduler
     /// reported as cycle members (gotcha G8, refs #112). These spans must be
     /// demoted to legacy so the cycle members are resolved on the legacy SCC
@@ -13886,6 +13988,24 @@ where
                     &retry_whole_spans,
                     include_dirty_regions,
                 )?;
+            #[cfg(test)]
+            let mut schedule = schedule;
+            #[cfg(test)]
+            if std::mem::take(&mut self.force_non_cycle_schedule_fallback_for_test) {
+                let producer = schedule
+                    .layers
+                    .iter()
+                    .flat_map(|layer| layer.work.iter())
+                    .map(|work| work.producer)
+                    .next()
+                    .unwrap_or(FormulaProducerId::Legacy(VertexId(0)));
+                schedule
+                    .fallbacks
+                    .push(crate::formula_plane::scheduler::MixedScheduleFallback {
+                        producer,
+                        reason: MixedScheduleFallbackReason::MissingProducerResultRegion,
+                    });
+            }
 
             if schedule.is_authoritative_safe() {
                 break (schedule, span_refs_by_id, plane_epoch, legacy_vertices);
@@ -14121,23 +14241,125 @@ where
         })
     }
 
+    fn effective_mixed_cache_limits(&self) -> (usize, usize, usize) {
+        let budgets = &self.evaluation_resource_budgets;
+        let candidate_limit = budgets
+            .optimization
+            .mixed_cache_candidates
+            .map_or(self.config.max_formula_plane_cache_candidates, |limit| {
+                limit.min(self.config.max_formula_plane_cache_candidates)
+            });
+        let edge_limit = budgets
+            .optimization
+            .mixed_cache_edges
+            .map_or(self.config.max_formula_plane_cache_edges, |limit| {
+                limit.min(self.config.max_formula_plane_cache_edges)
+            });
+        let mut byte_limit =
+            u64::try_from(self.config.max_formula_plane_cache_bytes).unwrap_or(u64::MAX);
+        if let Some(limit) = budgets.retained.total_bytes {
+            byte_limit = byte_limit.min(limit);
+        }
+        if let Some(limit) = budgets.retained.mixed_cache_bytes {
+            byte_limit = byte_limit.min(limit);
+        }
+        (
+            candidate_limit,
+            edge_limit,
+            usize::try_from(byte_limit).unwrap_or(usize::MAX),
+        )
+    }
+
     fn mixed_topology_cache_key(&self) -> MixedTopologyCacheKey {
+        let (max_candidates, max_edges, max_memory_bytes) = self.effective_mixed_cache_limits();
         MixedTopologyCacheKey {
             engine_topology_epoch: self.topology_epoch,
             graph_topology_revision: self.graph.topology_revision(),
             authority_indexes_epoch: self.graph.formula_authority().indexes_epoch(),
             function_semantic_epoch: self.function_semantic_epoch_seen,
             function_provider_revision: self.function_provider_revision_seen,
-            max_candidates: self.config.max_formula_plane_cache_candidates,
-            max_edges: self.config.max_formula_plane_cache_edges,
-            max_memory_bytes: self.config.max_formula_plane_cache_bytes,
+            max_candidates,
+            max_edges,
+            max_memory_bytes,
         }
     }
 
+    fn mixed_topology_index_preflight_bytes(&self) -> u64 {
+        use crate::formula_plane::region_index::AxisRange;
+
+        const FIXED_BYTES: u64 = 8 * 1024;
+        const ENTRY_BYTES: u64 = 512;
+        const INDEX_UNIT_BYTES: u64 = 1024;
+        const BINDING_BYTES: u64 = 128;
+        let index_units = |region: Region| -> u64 {
+            match region.normalized().axis_ranges() {
+                (AxisRange::Point(_), AxisRange::Point(_)) => 2,
+                (AxisRange::Span(row_start, row_end), AxisRange::Span(col_start, col_end)) => {
+                    let row_buckets = u64::from(row_end / 64 - row_start / 64).saturating_add(1);
+                    let col_buckets = u64::from(col_end / 16 - col_start / 16).saturating_add(1);
+                    row_buckets.saturating_mul(col_buckets).saturating_mul(2)
+                }
+                _ => 1,
+            }
+        };
+
+        let authority = self.graph.formula_authority();
+        let span_refs = authority.active_span_refs();
+        let legacy_vertices = self.graph.formula_vertices();
+        let mut entry_count = 0_u64;
+        let mut units = 0_u64;
+        for span_ref in &span_refs {
+            if let Some(span) = authority.plane.spans.get(*span_ref) {
+                let result_region = Region::from_domain(span.result_region.domain());
+                entry_count = entry_count.saturating_add(1);
+                units = units.saturating_add(index_units(result_region));
+                if let Some(summary_id) = span.read_summary_id
+                    && let Some(summary) = authority.plane.span_read_summaries.get(summary_id)
+                {
+                    for dependency in &summary.dependencies {
+                        entry_count = entry_count.saturating_add(1);
+                        units = units.saturating_add(index_units(dependency.read_region));
+                    }
+                }
+            }
+        }
+        for &vertex in &legacy_vertices {
+            if let Some(cell) = self.graph.get_cell_ref_for_vertex(vertex) {
+                let point = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                entry_count = entry_count.saturating_add(1);
+                units = units.saturating_add(index_units(point));
+            }
+            for dependency in self.graph.get_dependencies(vertex) {
+                if let Some(cell) = self.graph.get_cell_ref_for_vertex(dependency) {
+                    let point = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                    entry_count = entry_count.saturating_add(1);
+                    units = units.saturating_add(index_units(point));
+                }
+            }
+            if let Some(ranges) = self.graph.get_range_dependencies(vertex) {
+                for range in ranges {
+                    if let Ok(Some(region)) = self.shared_range_to_region_pattern(range) {
+                        entry_count = entry_count.saturating_add(1);
+                        units = units.saturating_add(index_units(region));
+                    }
+                }
+            }
+        }
+        FIXED_BYTES
+            .saturating_add(entry_count.saturating_mul(ENTRY_BYTES))
+            .saturating_add(units.saturating_mul(INDEX_UNIT_BYTES))
+            .saturating_add((span_refs.len() as u64).saturating_mul(BINDING_BYTES))
+    }
+
     fn compile_formula_plane_mixed_topology(
-        &self,
+        &mut self,
         key: MixedTopologyCacheKey,
-    ) -> Result<CachedMixedTopology, ExcelError> {
+    ) -> Result<FormulaPlaneTopologyCompileResult, ExcelError> {
+        #[cfg(test)]
+        {
+            self.mixed_topology_index_builds_for_test =
+                self.mixed_topology_index_builds_for_test.saturating_add(1);
+        }
         let authority = self.graph.formula_authority();
         let mut producer_results = FormulaProducerResultIndex::default();
         let mut consumer_reads = FormulaConsumerReadIndex::default();
@@ -14267,19 +14489,34 @@ where
             .and_then(|bytes| bytes.checked_add(estimated_span_bindings_bytes(&span_refs_by_id)?))
             .unwrap_or(usize::MAX);
         let config = MixedTopologyConfig {
-            max_candidates: self.config.max_formula_plane_cache_candidates,
-            max_edges: self.config.max_formula_plane_cache_edges,
-            max_memory_bytes: self.config.max_formula_plane_cache_bytes,
+            max_candidates: key.max_candidates,
+            max_edges: key.max_edges,
+            max_memory_bytes: key.max_memory_bytes,
             retained_memory_bytes,
         };
-        let topology = compile_mixed_topology(&producer_results, &consumer_reads, &config);
-        Ok(CachedMixedTopology {
-            key,
-            topology,
-            producer_results,
-            consumer_reads,
-            span_refs_by_id,
-            plane_epoch: authority.plane.epoch().0,
+        let compiled = compile_mixed_topology(&producer_results, &consumer_reads, &config);
+        let plane_epoch = authority.plane.epoch().0;
+        Ok(match compiled {
+            MixedTopologyCompileResult::Cached(topology) => {
+                FormulaPlaneTopologyCompileResult::Cached(CachedMixedTopology {
+                    key,
+                    topology,
+                    producer_results,
+                    consumer_reads,
+                    span_refs_by_id,
+                    plane_epoch,
+                })
+            }
+            MixedTopologyCompileResult::CacheSkipped { reason, observed } => {
+                FormulaPlaneTopologyCompileResult::CacheSkipped(SkippedMixedTopology {
+                    reason,
+                    observed,
+                    producer_results,
+                    consumer_reads,
+                    span_refs_by_id,
+                    plane_epoch,
+                })
+            }
         })
     }
 
@@ -14289,18 +14526,11 @@ where
         retry_whole_spans: &[FormulaSpanRef],
         include_dirty_regions: bool,
     ) -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
-        let baseline = self.graph.baseline_stats();
-        let scratch_bytes = baseline
-            .graph_vertex_count
-            .saturating_add(baseline.graph_edge_count)
-            .saturating_mul(std::mem::size_of::<usize>()) as u64;
-        self.with_request_scratch(scratch_bytes, |engine| {
-            engine.build_formula_plane_mixed_schedule_inner(
-                formula_dirty,
-                retry_whole_spans,
-                include_dirty_regions,
-            )
-        })
+        self.build_formula_plane_mixed_schedule_inner(
+            formula_dirty,
+            retry_whole_spans,
+            include_dirty_regions,
+        )
     }
 
     fn build_formula_plane_mixed_schedule_inner(
@@ -14327,10 +14557,12 @@ where
             .cached_mixed_topology
             .as_ref()
             .is_some_and(|cached| cached.key == key && cached.span_refs_by_id == active_refs);
-        let mut uncached_topology = None;
+        let mut skipped_topology = None;
+        let mut index_scratch_reserved = 0_u64;
         let topology_started = crate::instant::FzInstant::now();
         let (cache_outcome, strategy, compile_stats) = if cache_hit {
             self.mixed_topology_cache_hits = self.mixed_topology_cache_hits.saturating_add(1);
+            self.mixed_topology_cache_skip_streak = 0;
             let stats = self
                 .cached_mixed_topology
                 .as_ref()
@@ -14338,36 +14570,135 @@ where
                 .topology
                 .stats
                 .clone();
+            if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                ledger
+                    .account_mixed_cache(stats.estimated_memory_bytes as u64)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            }
             (
                 FormulaPlaneTopologyCacheOutcome::Hit,
                 FormulaPlaneTopologyStrategy::Cached,
                 stats,
             )
         } else {
-            // Allocation and semantic compilation errors propagate exactly as before C1a. Only
-            // the compiler's pre-existing configured cap stats select the baseline fallback.
-            let compiled = self.compile_formula_plane_mixed_topology(key)?;
-            self.mixed_topology_cache_builds = self.mixed_topology_cache_builds.saturating_add(1);
-            let stats = compiled.topology.stats.clone();
-            if compiled.topology.is_complete() {
-                if let Some(ledger) = self.active_resource_ledger.as_mut() {
-                    ledger.observe_retained(stats.estimated_memory_bytes as u64);
+            // A key/cap miss makes the old retained topology stale. Drop it before building its
+            // replacement so the request never accounts or owns both generations concurrently.
+            self.cached_mixed_topology = None;
+            if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                ledger
+                    .account_mixed_cache(0)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            }
+
+            let preflight = self.mixed_topology_index_preflight_bytes();
+            if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                ledger
+                    .reserve_schedule_discovery(preflight)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            }
+            index_scratch_reserved = preflight;
+            let compiled = match self.compile_formula_plane_mixed_topology(key.clone()) {
+                Ok(compiled) => compiled,
+                Err(error) => {
+                    if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                        let _ = ledger.release_scratch(index_scratch_reserved);
+                    }
+                    return Err(error);
                 }
-                self.cached_mixed_topology = Some(compiled);
-                (
-                    FormulaPlaneTopologyCacheOutcome::Built,
-                    FormulaPlaneTopologyStrategy::CompiledAndCached,
-                    stats,
-                )
-            } else {
-                self.mixed_topology_cache_overflows =
-                    self.mixed_topology_cache_overflows.saturating_add(1);
-                uncached_topology = Some(compiled);
-                (
-                    FormulaPlaneTopologyCacheOutcome::SkippedOverflow,
-                    FormulaPlaneTopologyStrategy::CapacityFallbackMaterialization,
-                    stats,
-                )
+            };
+            let actual_index_bytes = match &compiled {
+                FormulaPlaneTopologyCompileResult::Cached(compiled) => compiled
+                    .producer_results
+                    .estimated_memory_bytes()
+                    .and_then(|bytes| {
+                        bytes.checked_add(compiled.consumer_reads.estimated_memory_bytes()?)
+                    })
+                    .and_then(|bytes| {
+                        bytes.checked_add(estimated_span_bindings_bytes(&compiled.span_refs_by_id)?)
+                    }),
+                FormulaPlaneTopologyCompileResult::CacheSkipped(skipped) => skipped
+                    .producer_results
+                    .estimated_memory_bytes()
+                    .and_then(|bytes| {
+                        bytes.checked_add(skipped.consumer_reads.estimated_memory_bytes()?)
+                    })
+                    .and_then(|bytes| {
+                        bytes.checked_add(estimated_span_bindings_bytes(&skipped.span_refs_by_id)?)
+                    }),
+            }
+            .unwrap_or(usize::MAX) as u64;
+            debug_assert!(
+                actual_index_bytes <= index_scratch_reserved,
+                "mixed topology index preflight underestimated actual allocation"
+            );
+            if actual_index_bytes > index_scratch_reserved {
+                let additional = actual_index_bytes - index_scratch_reserved;
+                let reserve_result = self
+                    .active_resource_ledger
+                    .as_mut()
+                    .map_or(Ok(()), |ledger| {
+                        ledger.reserve_schedule_discovery(additional)
+                    });
+                if let Err(error) = reserve_result {
+                    drop(compiled);
+                    if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                        let _ = ledger.release_scratch(index_scratch_reserved);
+                    }
+                    return Err(error.into_excel_error());
+                }
+            } else if actual_index_bytes < index_scratch_reserved
+                && let Some(ledger) = self.active_resource_ledger.as_mut()
+            {
+                ledger
+                    .release_scratch(index_scratch_reserved - actual_index_bytes)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            }
+            index_scratch_reserved = actual_index_bytes;
+
+            self.mixed_topology_cache_builds = self.mixed_topology_cache_builds.saturating_add(1);
+            match compiled {
+                FormulaPlaneTopologyCompileResult::Cached(compiled) => {
+                    let stats = compiled.topology.stats.clone();
+                    let retained_result = self
+                        .active_resource_ledger
+                        .as_mut()
+                        .map_or(Ok(()), |ledger| {
+                            ledger.account_mixed_cache(stats.estimated_memory_bytes as u64)
+                        });
+                    if let Err(error) = retained_result {
+                        if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                            let _ = ledger.release_scratch(index_scratch_reserved);
+                        }
+                        return Err(error.into_excel_error());
+                    }
+                    self.mixed_topology_cache_skip_streak = 0;
+                    self.cached_mixed_topology = Some(compiled);
+                    if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                        ledger
+                            .release_scratch(index_scratch_reserved)
+                            .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+                    }
+                    index_scratch_reserved = 0;
+                    (
+                        FormulaPlaneTopologyCacheOutcome::Built,
+                        FormulaPlaneTopologyStrategy::CompiledAndCached,
+                        stats,
+                    )
+                }
+                FormulaPlaneTopologyCompileResult::CacheSkipped(skipped) => {
+                    debug_assert!(self.cached_mixed_topology.is_none());
+                    self.mixed_topology_cache_overflows =
+                        self.mixed_topology_cache_overflows.saturating_add(1);
+                    self.mixed_topology_cache_skip_streak =
+                        self.mixed_topology_cache_skip_streak.saturating_add(1);
+                    let stats = skipped.observed.clone();
+                    skipped_topology = Some(skipped);
+                    (
+                        FormulaPlaneTopologyCacheOutcome::SkippedOverflow,
+                        FormulaPlaneTopologyStrategy::ExactPagedIndexed,
+                        stats,
+                    )
+                }
             }
         };
         self.observe_topology(
@@ -14376,132 +14707,426 @@ where
             &compile_stats,
             topology_started.elapsed(),
         );
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            stats.topology.cache_skip_streak = self.mixed_topology_cache_skip_streak;
+            stats.topology.candidate_cap = Some(key.max_candidates as u64);
+            stats.topology.edge_cap = Some(key.max_edges as u64);
+            stats.topology.retained_byte_cap = Some(key.max_memory_bytes as u64);
+            if cache_outcome == FormulaPlaneTopologyCacheOutcome::SkippedOverflow {
+                stats.topology.operator_guidance =
+                    Some(if compile_stats.candidate_overflow_count > 0 {
+                        "raise the mixed-cache candidate limit to avoid exact request rebuilds"
+                    } else if compile_stats.edge_overflow_count > 0 {
+                        "raise the mixed-cache edge limit to avoid exact request rebuilds"
+                    } else {
+                        "raise the retained mixed-cache byte limit to avoid exact request rebuilds"
+                    });
+            }
+        }
 
-        let cached = uncached_topology
-            .as_ref()
-            .or(self.cached_mixed_topology.as_ref())
-            .expect("mixed topology available for request");
-        let dirty_legacy = self.graph.get_evaluation_vertices();
-        let mut work = Vec::new();
-        let mut scheduled_legacy_vertices = Vec::new();
-        for (span_ref, region) in formula_dirty.span_regions() {
-            if cached.span_refs_by_id.get(&span_ref.id) == Some(&span_ref) {
-                work.push(FormulaProducerWork {
-                    producer: FormulaProducerId::Span(span_ref.id),
-                    dirty: ProducerDirtyDomain::Regions(vec![region]),
-                });
+        let schedule_result = (|| -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
+            let (producer_results, consumer_reads, span_refs_by_id, plane_epoch, cached_topology) =
+                if let Some(skipped) = skipped_topology.as_ref() {
+                    (
+                        &skipped.producer_results,
+                        &skipped.consumer_reads,
+                        &skipped.span_refs_by_id,
+                        skipped.plane_epoch,
+                        None,
+                    )
+                } else {
+                    let cached = self
+                        .cached_mixed_topology
+                        .as_ref()
+                        .expect("complete mixed topology available for request");
+                    (
+                        &cached.producer_results,
+                        &cached.consumer_reads,
+                        &cached.span_refs_by_id,
+                        cached.plane_epoch,
+                        Some(&cached.topology),
+                    )
+                };
+            let dirty_legacy = self.graph.get_evaluation_vertices();
+            let mut work = Vec::new();
+            let mut scheduled_legacy_vertices = Vec::new();
+            for (span_ref, region) in formula_dirty.span_regions() {
+                if span_refs_by_id.get(&span_ref.id) == Some(&span_ref) {
+                    work.push(FormulaProducerWork {
+                        producer: FormulaProducerId::Span(span_ref.id),
+                        dirty: ProducerDirtyDomain::Regions(vec![region]),
+                    });
+                }
             }
-        }
-        for span_ref in formula_dirty
-            .whole_spans()
-            .chain(retry_whole_spans.iter().copied())
-        {
-            if cached.span_refs_by_id.get(&span_ref.id) == Some(&span_ref) {
-                work.push(FormulaProducerWork {
-                    producer: FormulaProducerId::Span(span_ref.id),
-                    dirty: ProducerDirtyDomain::Whole,
-                });
-            }
-        }
-        for vertex in dirty_legacy {
-            let producer = FormulaProducerId::Legacy(vertex);
-            if cached
-                .producer_results
-                .producer_result_region(producer)
-                .is_some()
+            for span_ref in formula_dirty
+                .whole_spans()
+                .chain(retry_whole_spans.iter().copied())
             {
-                scheduled_legacy_vertices.push(vertex);
-                work.push(FormulaProducerWork {
-                    producer,
-                    dirty: ProducerDirtyDomain::Whole,
-                });
+                if span_refs_by_id.get(&span_ref.id) == Some(&span_ref) {
+                    work.push(FormulaProducerWork {
+                        producer: FormulaProducerId::Span(span_ref.id),
+                        dirty: ProducerDirtyDomain::Whole,
+                    });
+                }
             }
-        }
+            for vertex in dirty_legacy {
+                let producer = FormulaProducerId::Legacy(vertex);
+                if producer_results.producer_result_region(producer).is_some() {
+                    scheduled_legacy_vertices.push(vertex);
+                    work.push(FormulaProducerWork {
+                        producer,
+                        dirty: ProducerDirtyDomain::Whole,
+                    });
+                }
+            }
 
-        let pending_changed_regions = formula_dirty
-            .regions()
-            .chain(formula_dirty.span_regions().map(|(_, region)| region))
-            .collect::<Vec<_>>();
-        if include_dirty_regions && !pending_changed_regions.is_empty() {
-            use crate::formula_plane::producer::compute_dirty_closure_checked;
-            let closure = compute_dirty_closure_checked(
-                &cached.consumer_reads,
-                pending_changed_regions.iter().copied(),
-                |producer| cached.producer_results.producer_result_region(producer),
-                |units| Self::resource_loop_checkpoint(&mut self.active_resource_ledger, units),
-            )?;
-            if closure.incomplete {
-                // The fixed-point guard discards partial closure output. Complete conservatively
-                // in the same topology/schedule path; it must not become a new demotion route.
-                work.clear();
-                scheduled_legacy_vertices.clear();
-                work.extend(
-                    cached
-                        .span_refs_by_id
-                        .keys()
-                        .copied()
-                        .map(|id| FormulaProducerWork {
-                            producer: FormulaProducerId::Span(id),
-                            dirty: ProducerDirtyDomain::Whole,
-                        }),
-                );
-                for vertex in self.graph.formula_vertices() {
-                    let producer = FormulaProducerId::Legacy(vertex);
-                    if cached
-                        .producer_results
-                        .producer_result_region(producer)
-                        .is_some()
-                    {
-                        scheduled_legacy_vertices.push(vertex);
-                        work.push(FormulaProducerWork {
-                            producer,
-                            dirty: ProducerDirtyDomain::Whole,
-                        });
+            let pending_changed_regions = formula_dirty
+                .regions()
+                .chain(formula_dirty.span_regions().map(|(_, region)| region))
+                .collect::<Vec<_>>();
+            if include_dirty_regions && !pending_changed_regions.is_empty() {
+                use crate::formula_plane::producer::compute_dirty_closure_checked;
+                let closure = compute_dirty_closure_checked(
+                    consumer_reads,
+                    pending_changed_regions.iter().copied(),
+                    |producer| producer_results.producer_result_region(producer),
+                    |units| Self::resource_loop_checkpoint(&mut self.active_resource_ledger, units),
+                )?;
+                if closure.incomplete {
+                    // The fixed-point guard discards partial closure output. Complete conservatively
+                    // in the same topology/schedule path; it must not become a new demotion route.
+                    work.clear();
+                    scheduled_legacy_vertices.clear();
+                    work.extend(
+                        span_refs_by_id
+                            .keys()
+                            .copied()
+                            .map(|id| FormulaProducerWork {
+                                producer: FormulaProducerId::Span(id),
+                                dirty: ProducerDirtyDomain::Whole,
+                            }),
+                    );
+                    for vertex in self.graph.formula_vertices() {
+                        let producer = FormulaProducerId::Legacy(vertex);
+                        if producer_results.producer_result_region(producer).is_some() {
+                            scheduled_legacy_vertices.push(vertex);
+                            work.push(FormulaProducerWork {
+                                producer,
+                                dirty: ProducerDirtyDomain::Whole,
+                            });
+                        }
+                    }
+                    if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+                        stats.topology.incomplete_reason =
+                            Some(crate::engine::EvaluationIncompleteReason::DirtyClosureWork);
+                    }
+                } else {
+                    work.extend(closure.work);
+                }
+                if !closure.incomplete && !closure.fallbacks.is_empty() {
+                    let mut already_whole = work
+                        .iter()
+                        .filter_map(|item| match (item.producer, &item.dirty) {
+                            (FormulaProducerId::Span(id), ProducerDirtyDomain::Whole) => Some(id),
+                            _ => None,
+                        })
+                        .collect::<rustc_hash::FxHashSet<_>>();
+                    for fallback in closure.fallbacks {
+                        if let FormulaProducerId::Span(id) = fallback.consumer
+                            && already_whole.insert(id)
+                        {
+                            work.push(FormulaProducerWork {
+                                producer: FormulaProducerId::Span(id),
+                                dirty: ProducerDirtyDomain::Whole,
+                            });
+                        }
                     }
                 }
-                if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
-                    stats.topology.incomplete_reason =
-                        Some(crate::engine::EvaluationIncompleteReason::DirtyClosureWork);
-                }
+            }
+
+            Self::resource_loop_checkpoint(&mut self.active_resource_ledger, work.len() as u64)?;
+            let producer_count = producer_results.len();
+            let dirty_units = work.iter().fold(0usize, |total, item| {
+                total.saturating_add(match &item.dirty {
+                    ProducerDirtyDomain::Whole => 0,
+                    ProducerDirtyDomain::Cells(cells) => cells.len(),
+                    ProducerDirtyDomain::Regions(regions) => regions.len(),
+                })
+            });
+            let work_bytes = work
+                .len()
+                .saturating_mul(std::mem::size_of::<FormulaProducerWork>() + 64)
+                .saturating_add(
+                    dirty_units.saturating_mul(std::mem::size_of::<Region>().max(
+                        std::mem::size_of::<crate::formula_plane::region_index::RegionKey>(),
+                    )),
+                ) as u64;
+            let binding_bytes =
+                estimated_span_bindings_bytes(span_refs_by_id).unwrap_or(usize::MAX) as u64;
+            let schedule_bytes = work_bytes
+                .saturating_mul(4)
+                .saturating_add((producer_count as u64).saturating_mul(192))
+                .saturating_add(binding_bytes)
+                .saturating_add(1024);
+            let maximum_edges =
+                producer_count.saturating_mul(producer_count.saturating_sub(1)) as u64;
+            // Producer/read indexes are either retained by the cache or covered by the live index
+            // preflight reservation. Strategy reservations therefore cover only additional scheduling
+            // structures and must not charge those indexes a second time.
+            let paged_bytes = schedule_bytes
+                .saturating_add(maximum_edges.saturating_mul(160))
+                .saturating_add(16 * 1024);
+            let runs_bytes = schedule_bytes
+                .saturating_add(maximum_edges.saturating_mul(48))
+                .saturating_add(8192);
+            let native_bytes = schedule_bytes
+                .saturating_add((producer_count as u64).saturating_mul(128))
+                .saturating_add(2048);
+            let repeated_bytes = schedule_bytes
+                .saturating_add((producer_count as u64).saturating_mul(96))
+                .saturating_add(1024);
+            let native_allowed = self
+                .active_resource_ledger
+                .as_ref()
+                .and_then(ResourceLedger::disk_scratch_policy)
+                == Some(crate::engine::DiskScratchPolicy::NativeTemporary)
+                && !cfg!(target_arch = "wasm32");
+
+            let cached_schedule_bytes = schedule_bytes
+                .saturating_add(
+                    cached_topology
+                        .map_or(0, |topology| topology.stats.relationships as u64)
+                        .saturating_mul(160),
+                )
+                .saturating_add(1024);
+            let use_cached_schedule = cached_topology.is_some()
+                && self.can_reserve_topology_scratch(cached_schedule_bytes);
+            let (selected_strategy, scratch) = if use_cached_schedule {
+                (None, cached_schedule_bytes)
+            } else if self.can_reserve_topology_scratch(paged_bytes) {
+                (
+                    Some(FormulaPlaneTopologyStrategy::ExactPagedIndexed),
+                    paged_bytes,
+                )
+            } else if self.can_reserve_topology_scratch(runs_bytes) {
+                (
+                    Some(FormulaPlaneTopologyStrategy::ExactInMemoryRuns),
+                    runs_bytes,
+                )
+            } else if native_allowed && self.can_reserve_topology_scratch(native_bytes) {
+                (
+                    Some(FormulaPlaneTopologyStrategy::ExactNativeScratch),
+                    native_bytes,
+                )
+            } else if self.can_reserve_topology_scratch(repeated_bytes) {
+                (
+                    Some(FormulaPlaneTopologyStrategy::ExactRepeatedPasses),
+                    repeated_bytes,
+                )
             } else {
-                work.extend(closure.work);
-            }
-            if !closure.incomplete && !closure.fallbacks.is_empty() {
-                let mut already_whole = work
-                    .iter()
-                    .filter_map(|item| match (item.producer, &item.dirty) {
-                        (FormulaProducerId::Span(id), ProducerDirtyDomain::Whole) => Some(id),
-                        _ => None,
-                    })
-                    .collect::<rustc_hash::FxHashSet<_>>();
-                for fallback in closure.fallbacks {
-                    if let FormulaProducerId::Span(id) = fallback.consumer
-                        && already_whole.insert(id)
-                    {
-                        work.push(FormulaProducerWork {
-                            producer: FormulaProducerId::Span(id),
-                            dirty: ProducerDirtyDomain::Whole,
-                        });
-                    }
+                if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                    ledger
+                        .reserve_schedule_discovery(repeated_bytes)
+                        .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
                 }
+                unreachable!("failed scratch reservation must return a typed error")
+            };
+            if let Some(ledger) = self.active_resource_ledger.as_mut() {
+                ledger
+                    .reserve_schedule_discovery(scratch)
+                    .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+            }
+            let request_id = self
+                .active_evaluation_resource_request
+                .as_ref()
+                .map_or(0, |stats| stats.request_id);
+            let build_result = (|| -> Result<_, ExcelError> {
+                let (schedule, actual_strategy, passes, native_disk_bytes) =
+                    match (cached_topology, selected_strategy) {
+                        (Some(topology), None) => (
+                            schedule_dirty_work(work, producer_results, topology, 256),
+                            None,
+                            0,
+                            0,
+                        ),
+                        (_, Some(FormulaPlaneTopologyStrategy::ExactPagedIndexed)) => {
+                            let (schedule, passes) = schedule_dirty_work_paged(
+                                work,
+                                producer_results,
+                                consumer_reads,
+                                256,
+                                |units| {
+                                    Self::resource_loop_checkpoint(
+                                        &mut self.active_resource_ledger,
+                                        units,
+                                    )
+                                },
+                            )?;
+                            (schedule, selected_strategy, passes.max(1), 0)
+                        }
+                        (_, Some(FormulaPlaneTopologyStrategy::ExactInMemoryRuns)) => {
+                            let (schedule, passes) = schedule_dirty_work_in_memory_runs(
+                                work,
+                                producer_results,
+                                consumer_reads,
+                                256,
+                                |units| {
+                                    Self::resource_loop_checkpoint(
+                                        &mut self.active_resource_ledger,
+                                        units,
+                                    )
+                                },
+                            )?;
+                            (schedule, selected_strategy, passes.max(1), 0)
+                        }
+                        #[cfg(not(target_arch = "wasm32"))]
+                        (_, Some(FormulaPlaneTopologyStrategy::ExactNativeScratch)) => {
+                            let native = NativeTopologyScratch::create(request_id);
+                            if let Ok(mut native) = native {
+                                match schedule_dirty_work_native(
+                                    work.clone(),
+                                    producer_results,
+                                    consumer_reads,
+                                    256,
+                                    &mut native.file,
+                                    |units| {
+                                        Self::resource_loop_checkpoint(
+                                            &mut self.active_resource_ledger,
+                                            units,
+                                        )
+                                    },
+                                ) {
+                                    Ok((schedule, passes, topology_bytes)) => (
+                                        schedule,
+                                        Some(FormulaPlaneTopologyStrategy::ExactNativeScratch),
+                                        passes.max(1),
+                                        topology_bytes,
+                                    ),
+                                    Err(NativeExactScheduleError::Work(error)) => {
+                                        return Err(error);
+                                    }
+                                    Err(NativeExactScheduleError::Io(_)) => {
+                                        let (schedule, passes) =
+                                            schedule_dirty_work_repeated_passes(
+                                                work,
+                                                producer_results,
+                                                consumer_reads,
+                                                256,
+                                                |units| {
+                                                    Self::resource_loop_checkpoint(
+                                                        &mut self.active_resource_ledger,
+                                                        units,
+                                                    )
+                                                },
+                                            )?;
+                                        (
+                                            schedule,
+                                            Some(FormulaPlaneTopologyStrategy::ExactRepeatedPasses),
+                                            passes.max(1),
+                                            0,
+                                        )
+                                    }
+                                }
+                            } else {
+                                let (schedule, passes) = schedule_dirty_work_repeated_passes(
+                                    work,
+                                    producer_results,
+                                    consumer_reads,
+                                    256,
+                                    |units| {
+                                        Self::resource_loop_checkpoint(
+                                            &mut self.active_resource_ledger,
+                                            units,
+                                        )
+                                    },
+                                )?;
+                                (
+                                    schedule,
+                                    Some(FormulaPlaneTopologyStrategy::ExactRepeatedPasses),
+                                    passes.max(1),
+                                    0,
+                                )
+                            }
+                        }
+                        (_, Some(FormulaPlaneTopologyStrategy::ExactRepeatedPasses)) => {
+                            let (schedule, passes) = schedule_dirty_work_repeated_passes(
+                                work,
+                                producer_results,
+                                consumer_reads,
+                                256,
+                                |units| {
+                                    Self::resource_loop_checkpoint(
+                                        &mut self.active_resource_ledger,
+                                        units,
+                                    )
+                                },
+                            )?;
+                            (schedule, selected_strategy, passes.max(1), 0)
+                        }
+                        _ => unreachable!(
+                            "topology cache and exact strategy selection are exhaustive"
+                        ),
+                    };
+                Ok((
+                    schedule,
+                    actual_strategy,
+                    passes,
+                    native_disk_bytes,
+                    span_refs_by_id.clone(),
+                ))
+            })();
+            let release_result = self
+                .active_resource_ledger
+                .as_mut()
+                .map_or(Ok(()), |ledger| ledger.release_scratch(scratch))
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error);
+            let (schedule, exact_strategy, pass_count, native_disk_bytes, result_span_refs) =
+                match build_result {
+                    Ok(output) => {
+                        release_result?;
+                        output
+                    }
+                    Err(error) => {
+                        let _ = release_result;
+                        return Err(error);
+                    }
+                };
+            if let Some(strategy) = exact_strategy
+                && let Some(stats) = self.active_evaluation_resource_request.as_mut()
+            {
+                if strategy.severity() > stats.topology.strategy.severity() {
+                    stats.topology.strategy = strategy;
+                }
+                stats.topology.exact_pass_count = pass_count;
+                stats.topology.native_topology_disk_bytes = stats
+                    .topology
+                    .native_topology_disk_bytes
+                    .saturating_add(native_disk_bytes);
+            }
+            Ok((
+                schedule,
+                result_span_refs,
+                plane_epoch,
+                scheduled_legacy_vertices,
+            ))
+        })();
+        let index_release_result = self
+            .active_resource_ledger
+            .as_mut()
+            .map_or(Ok(()), |ledger| {
+                ledger.release_scratch(index_scratch_reserved)
+            })
+            .map_err(crate::engine::ResourceLedgerError::into_excel_error);
+        match schedule_result {
+            Ok(output) => {
+                index_release_result?;
+                Ok(output)
+            }
+            Err(error) => {
+                let _ = index_release_result;
+                Err(error)
             }
         }
-
-        Self::resource_loop_checkpoint(&mut self.active_resource_ledger, work.len() as u64)?;
-        let schedule = schedule_dirty_work(work, &cached.producer_results, &cached.topology, 256);
-        Self::resource_loop_checkpoint(
-            &mut self.active_resource_ledger,
-            schedule
-                .stats
-                .consumer_candidate_count
-                .saturating_add(schedule.stats.edges_added) as u64,
-        )?;
-        Ok((
-            schedule,
-            cached.span_refs_by_id.clone(),
-            cached.plane_epoch,
-            scheduled_legacy_vertices,
-        ))
     }
 }
 

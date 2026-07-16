@@ -110,6 +110,10 @@ pub enum FormulaPlaneTopologyStrategy {
     SkippedNoDirtyWork,
     Cached,
     CompiledAndCached,
+    ExactPagedIndexed,
+    ExactInMemoryRuns,
+    ExactNativeScratch,
+    ExactRepeatedPasses,
     CapacityFallbackMaterialization,
 }
 
@@ -173,6 +177,10 @@ impl FormulaPlaneTopologyStrategy {
             Self::SkippedNoDirtyWork => "skipped_no_dirty_work",
             Self::Cached => "cached",
             Self::CompiledAndCached => "compiled_and_cached",
+            Self::ExactPagedIndexed => "exact_paged_indexed",
+            Self::ExactInMemoryRuns => "exact_in_memory_runs",
+            Self::ExactNativeScratch => "exact_native_scratch",
+            Self::ExactRepeatedPasses => "exact_repeated_passes",
             Self::CapacityFallbackMaterialization => "capacity_fallback_materialization",
         }
     }
@@ -185,7 +193,11 @@ impl FormulaPlaneTopologyStrategy {
             Self::SkippedNoDirtyWork => 3,
             Self::Cached => 4,
             Self::CompiledAndCached => 5,
-            Self::CapacityFallbackMaterialization => 6,
+            Self::ExactPagedIndexed => 6,
+            Self::ExactInMemoryRuns => 7,
+            Self::ExactNativeScratch => 8,
+            Self::ExactRepeatedPasses => 9,
+            Self::CapacityFallbackMaterialization => 10,
         }
     }
 }
@@ -233,6 +245,14 @@ pub struct FormulaPlaneTopologyRequestStats {
     pub cache_hit_events: u64,
     pub cache_build_events: u64,
     pub cache_skip_events: u64,
+    pub cache_skip_streak: u64,
+    pub exact_pass_count: u64,
+    /// Delete-on-drop native topology edge-record bytes written by this request.
+    pub native_topology_disk_bytes: u64,
+    pub candidate_cap: Option<u64>,
+    pub edge_cap: Option<u64>,
+    pub retained_byte_cap: Option<u64>,
+    pub operator_guidance: Option<&'static str>,
     /// Sum across topology build attempts; cache hits do not replay prior build work.
     pub producers_observed: u64,
     pub candidates_observed: u64,
@@ -248,9 +268,11 @@ pub struct FormulaPlaneTopologyRequestStats {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EvaluationResourceLedgerRequestStats {
     pub retained_limit: Option<u64>,
+    pub mixed_cache_limit: Option<u64>,
     pub retained_current: u64,
     pub retained_peak: u64,
     pub scratch_limit: Option<u64>,
+    pub schedule_discovery_limit: Option<u64>,
     pub scratch_current: u64,
     pub scratch_peak: u64,
     pub disk_scratch_policy: Option<DiskScratchPolicy>,
@@ -264,9 +286,11 @@ pub struct EvaluationResourceLedgerRequestStats {
 impl EvaluationResourceLedgerRequestStats {
     pub(crate) fn update(&mut self, snapshot: ResourceLedgerSnapshot) {
         self.retained_limit = snapshot.retained_limit;
+        self.mixed_cache_limit = snapshot.mixed_cache_limit;
         self.retained_current = snapshot.retained_current;
         self.retained_peak = snapshot.retained_peak;
         self.scratch_limit = snapshot.scratch_limit;
+        self.schedule_discovery_limit = snapshot.schedule_discovery_limit;
         self.scratch_current = snapshot.scratch_current;
         self.scratch_peak = snapshot.scratch_peak;
         self.disk_scratch_policy = snapshot.disk_scratch_policy;
@@ -347,6 +371,10 @@ pub struct EvaluationResourceBaselineStats {
     pub topology_cache_hits: u64,
     pub topology_cache_builds: u64,
     pub topology_cache_skips: u64,
+    pub topology_cache_skip_streak_current: u64,
+    pub topology_cache_skip_streak_max: u64,
+    pub topology_exact_passes_total: u64,
+    pub topology_native_disk_bytes_total: u64,
     pub topology_candidate_cap_hits: u64,
     pub topology_edge_cap_hits: u64,
     pub topology_byte_cap_hits: u64,
@@ -402,6 +430,16 @@ impl EvaluationResourceBaselineStats {
         self.topology_cache_skips = self
             .topology_cache_skips
             .saturating_add(stats.topology.cache_skip_events);
+        self.topology_cache_skip_streak_current = stats.topology.cache_skip_streak;
+        self.topology_cache_skip_streak_max = self
+            .topology_cache_skip_streak_max
+            .max(stats.topology.cache_skip_streak);
+        self.topology_exact_passes_total = self
+            .topology_exact_passes_total
+            .saturating_add(stats.topology.exact_pass_count);
+        self.topology_native_disk_bytes_total = self
+            .topology_native_disk_bytes_total
+            .saturating_add(stats.topology.native_topology_disk_bytes);
         self.topology_candidate_cap_hits = self
             .topology_candidate_cap_hits
             .saturating_add(stats.topology.candidate_cap_hits);

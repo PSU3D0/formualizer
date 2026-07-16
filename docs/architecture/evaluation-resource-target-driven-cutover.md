@@ -1,6 +1,6 @@
 # Evaluation Resources and Target-Driven Cutover
 
-Status: Approved implementation contract; C1a contract, ledger, deadlines, and typed completeness implemented
+Status: Approved implementation contract; C1a and C1b exact request topology implemented
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
 resource-accounted, target-driven preparation and evaluation. It complements
@@ -362,7 +362,7 @@ Mixed cache overflow follows this ladder:
 complete retained mixed topology
   -> exact paged request topology
   -> bounded in-memory sorted runs and merge
-  -> native delete-on-drop disk runs, if policy permits
+  -> native delete-on-drop sorted/deduplicated edge records, if policy permits
   -> bounded repeated indexed passes (required no-disk path)
   -> common typed resource/deadline error
 ```
@@ -701,8 +701,9 @@ checked ledger is shared by nested public coordinators across modes; typed resou
 existing Excel error kind. Legacy fields merge at the destination-field level, with explicit fields
 winning conflicts and one diagnostic reporting every mapped or ignored destination. C1a activates
 common work and deadline limits while graph vertex/edge and materialization budgets remain declarative
-until C2. No budget changes graph acceptance, lookup-cache size, mixed-topology cache thresholds, or
-thread defaults in C1a; retained and scratch budgets are observational only.
+until C2. C1b additionally activates only retained mixed-cache limits and topology/schedule-discovery
+request scratch. Graph/source preparation, spill/overlay, lookup-cache, graph admission, materialization,
+and thread budget fields remain inactive.
 
 Topology allocation and semantic errors preserve their baseline errors and never become cache skips
 or demotion. Only the pre-existing configured candidate, edge, and byte incomplete stats select the
@@ -725,7 +726,9 @@ Gate: mapping and deadline tests pass; no consumer accepts an incomplete result.
 
 ### C1b - exact request topology
 
-The C1b residual is the pre-existing configured mixed-cache candidate/edge/byte cap overflow demotion.
+Status: Implemented. Retained compilation publishes only a complete topology or an explicit cache skip. Configured candidate, edge, and retained-byte skips retain FormulaPlane authority and select exact request topology through paged/indexed construction, bounded in-memory runs, explicit native delete-on-drop topology scratch, or bounded work-accounted repeated passes. Native topology scratch is request-owned and independent from formula replay spool ownership and limits. Temporary producer/read indexes are conservatively preflighted against schedule/discovery scratch before construction, then trued up and held until cache publication or exact scheduling completes. Skip streak, cap/observed size, strategy, pass count, native topology disk bytes, typed exhaustion, and operator guidance are exposed in request telemetry. Only retained mixed-cache and topology/schedule-discovery scratch budget seams are active; C2 fields remain declarative.
+
+The C1b residual was the pre-existing configured mixed-cache candidate/edge/byte cap overflow demotion.
 C1a does not add a retained-ledger or scratch-ledger overflow route. All graph hard-limit enforcement
 is pending C2 and requires one composed transaction common to every graph mutation path.
 

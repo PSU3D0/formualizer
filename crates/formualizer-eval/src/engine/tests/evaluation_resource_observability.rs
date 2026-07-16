@@ -6,9 +6,10 @@ use formualizer_parse::ExcelErrorKind;
 use formualizer_parse::parser::parse;
 
 use crate::engine::{
-    Engine, EvalConfig, EvaluationRequestKind, EvaluationRequestOutcome, EvaluationResourceClass,
-    EvaluationResourceReason, FormulaDirtyLeaseOutcome, FormulaIngestBatch, FormulaIngestRecord,
-    FormulaPlaneMode, FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyStrategy,
+    DiskScratchPolicy, Engine, EvalConfig, EvaluationBudgets, EvaluationRequestKind,
+    EvaluationRequestOutcome, EvaluationResourceClass, EvaluationResourceReason,
+    FormulaDirtyLeaseOutcome, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+    FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyStrategy, ScratchResourceBudget,
 };
 use crate::test_workbook::TestWorkbook;
 
@@ -223,12 +224,14 @@ fn topology_build_hit_and_overflow_materialization_are_exactly_observed() {
     assert_eq!(request.topology.cache_skip_events, 1);
     assert!(request.topology.byte_cap_hits > 0);
     assert!(request.topology.retained_bytes_observed > 0);
-    assert_eq!(request.fallback_materialized_cells, 100);
-    assert_eq!(overflow.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(request.fallback_materialized_cells, 0);
+    assert!(request.topology.exact_pass_count > 0);
+    assert_eq!(request.topology.cache_skip_streak, 1);
+    assert_eq!(overflow.baseline_stats().formula_plane_active_span_count, 1);
     let totals = overflow.evaluation_resource_baseline_stats();
     assert_eq!(totals.topology_cache_skips, 1);
     assert_eq!(totals.topology_byte_cap_hits, 1);
-    assert_eq!(totals.fallback_materialized_cells_total, 100);
+    assert_eq!(totals.fallback_materialized_cells_total, 0);
 
     let mut candidate = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
     candidate.config.max_formula_plane_cache_candidates = 0;
@@ -251,6 +254,80 @@ fn topology_build_hit_and_overflow_materialization_are_exactly_observed() {
     );
     assert!(request.topology.edge_cap_hits > 0);
     assert!(request.topology.edges_observed > 0);
+}
+
+#[test]
+fn perpetual_cache_skip_preserves_values_streak_and_no_disk_policy() {
+    for (policy, scratch_limit, expected) in [
+        (
+            DiskScratchPolicy::NativeTemporary,
+            20_000,
+            FormulaPlaneTopologyStrategy::ExactNativeScratch,
+        ),
+        (
+            DiskScratchPolicy::MemoryOnly,
+            30_000,
+            FormulaPlaneTopologyStrategy::ExactInMemoryRuns,
+        ),
+        (
+            DiskScratchPolicy::MemoryOnly,
+            19_000,
+            FormulaPlaneTopologyStrategy::ExactRepeatedPasses,
+        ),
+    ] {
+        let mut engine = build_mode_engine(FormulaPlaneMode::AuthoritativeExperimental, None);
+        engine.config.max_formula_plane_cache_candidates = 0;
+        engine.set_evaluation_budgets_for_test(EvaluationBudgets {
+            scratch: ScratchResourceBudget {
+                total_bytes: Some(scratch_limit),
+                schedule_discovery_bytes: Some(scratch_limit),
+                disk_scratch_policy: Some(policy),
+                ..ScratchResourceBudget::default()
+            },
+            ..EvaluationBudgets::default()
+        });
+        let mut native_disk_bytes = 0_u64;
+        for request in 1..=3_u64 {
+            if request > 1 {
+                engine
+                    .set_cell_value("Sheet1", request as u32, 1, LiteralValue::Number(10.0))
+                    .unwrap();
+            }
+            engine.evaluate_all().unwrap();
+            let stats = engine.last_evaluation_resource_request_stats().unwrap();
+            if request == 1 {
+                assert_eq!(stats.topology.strategy, expected);
+            } else {
+                assert!(matches!(
+                    stats.topology.strategy,
+                    FormulaPlaneTopologyStrategy::ExactPagedIndexed
+                        | FormulaPlaneTopologyStrategy::ExactInMemoryRuns
+                        | FormulaPlaneTopologyStrategy::ExactNativeScratch
+                        | FormulaPlaneTopologyStrategy::ExactRepeatedPasses
+                ));
+            }
+            native_disk_bytes =
+                native_disk_bytes.saturating_add(stats.topology.native_topology_disk_bytes);
+            assert_eq!(stats.ledger.scratch_current, 0);
+            assert_eq!(stats.topology.cache_skip_streak, request);
+            assert!(stats.topology.exact_pass_count > 0);
+            assert_eq!(stats.fallback_materialized_cells, 0);
+            assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+        }
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 100, 2),
+            Some(LiteralValue::Number(200.0))
+        );
+        let totals = engine.evaluation_resource_baseline_stats();
+        assert_eq!(totals.topology_cache_skip_streak_current, 3);
+        assert_eq!(totals.topology_cache_skip_streak_max, 3);
+        assert_eq!(totals.topology_native_disk_bytes_total, native_disk_bytes);
+        if expected == FormulaPlaneTopologyStrategy::ExactNativeScratch {
+            assert!(native_disk_bytes > 0);
+        } else {
+            assert_eq!(native_disk_bytes, 0);
+        }
+    }
 }
 
 #[test]

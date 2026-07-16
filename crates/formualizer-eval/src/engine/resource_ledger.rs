@@ -318,9 +318,11 @@ impl ResourceLedgerError {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ResourceLedgerSnapshot {
     pub retained_limit: Option<u64>,
+    pub mixed_cache_limit: Option<u64>,
     pub retained_current: u64,
     pub retained_peak: u64,
     pub scratch_limit: Option<u64>,
+    pub schedule_discovery_limit: Option<u64>,
     pub scratch_current: u64,
     pub scratch_peak: u64,
     pub disk_scratch_policy: Option<DiskScratchPolicy>,
@@ -338,6 +340,7 @@ pub struct ResourceLedger {
     budgets: EvaluationBudgets,
     retained_current: u64,
     retained_peak: u64,
+    mixed_cache_current: u64,
     scratch_current: u64,
     scratch_peak: u64,
     work_charged: u64,
@@ -372,6 +375,7 @@ impl ResourceLedger {
             budgets,
             retained_current: 0,
             retained_peak: 0,
+            mixed_cache_current: 0,
             scratch_current: 0,
             scratch_peak: 0,
             work_charged: 0,
@@ -411,10 +415,92 @@ impl ResourceLedger {
         self.retained_peak = self.retained_peak.max(self.retained_current);
     }
 
-    /// Observe scoped scratch ownership without activating the C1b scratch cap.
+    /// Observe scoped scratch ownership without activating non-C1b scratch fields.
     pub(crate) fn observe_scratch(&mut self, bytes: u64) {
         self.scratch_current = self.scratch_current.saturating_add(bytes);
         self.scratch_peak = self.scratch_peak.max(self.scratch_current);
+    }
+
+    fn minimum_limit(first: Option<u64>, second: Option<u64>) -> Option<u64> {
+        match (first, second) {
+            (Some(first), Some(second)) => Some(first.min(second)),
+            (Some(limit), None) | (None, Some(limit)) => Some(limit),
+            (None, None) => None,
+        }
+    }
+
+    pub(crate) fn mixed_cache_limit(&self) -> Option<u64> {
+        Self::minimum_limit(
+            self.budgets.retained.total_bytes,
+            self.budgets.retained.mixed_cache_bytes,
+        )
+    }
+
+    pub(crate) fn schedule_discovery_limit(&self) -> Option<u64> {
+        Self::minimum_limit(
+            self.budgets.scratch.total_bytes,
+            self.budgets.scratch.schedule_discovery_bytes,
+        )
+    }
+
+    pub(crate) fn disk_scratch_policy(&self) -> Option<DiskScratchPolicy> {
+        self.budgets.scratch.disk_scratch_policy
+    }
+
+    pub(crate) fn can_reserve_schedule_discovery(&self, bytes: u64) -> bool {
+        let Some(next) = self.scratch_current.checked_add(bytes) else {
+            return false;
+        };
+        self.schedule_discovery_limit()
+            .is_none_or(|limit| next <= limit)
+    }
+
+    pub(crate) fn account_mixed_cache(&mut self, bytes: u64) -> Result<(), ResourceLedgerError> {
+        let Some(without_previous) = self.retained_current.checked_sub(self.mixed_cache_current)
+        else {
+            return Err(ResourceLedgerError::ReleaseUnderflow {
+                reason: ResourceExhaustionReason::RetainedMemory,
+                reserved: self.retained_current,
+                released: self.mixed_cache_current,
+            });
+        };
+        let Some(next) = without_previous.checked_add(bytes) else {
+            return Err(self.exhausted(
+                ResourceExhaustionReason::ArithmeticOverflow,
+                u64::MAX,
+                u64::MAX,
+            ));
+        };
+        if let Some(limit) = self.mixed_cache_limit()
+            && next > limit
+        {
+            return Err(self.exhausted(ResourceExhaustionReason::RetainedMemory, limit, next));
+        }
+        self.retained_current = next;
+        self.mixed_cache_current = bytes;
+        self.retained_peak = self.retained_peak.max(next);
+        Ok(())
+    }
+
+    pub(crate) fn reserve_schedule_discovery(
+        &mut self,
+        bytes: u64,
+    ) -> Result<(), ResourceLedgerError> {
+        let Some(next) = self.scratch_current.checked_add(bytes) else {
+            return Err(self.exhausted(
+                ResourceExhaustionReason::ArithmeticOverflow,
+                u64::MAX,
+                u64::MAX,
+            ));
+        };
+        if let Some(limit) = self.schedule_discovery_limit()
+            && next > limit
+        {
+            return Err(self.exhausted(ResourceExhaustionReason::ScratchMemory, limit, next));
+        }
+        self.scratch_current = next;
+        self.scratch_peak = self.scratch_peak.max(next);
+        Ok(())
     }
 
     pub fn reserve_retained(&mut self, bytes: u64) -> Result<(), ResourceLedgerError> {
@@ -515,9 +601,11 @@ impl ResourceLedger {
     pub fn snapshot(&self) -> ResourceLedgerSnapshot {
         ResourceLedgerSnapshot {
             retained_limit: self.budgets.retained.total_bytes,
+            mixed_cache_limit: self.mixed_cache_limit(),
             retained_current: self.retained_current,
             retained_peak: self.retained_peak,
             scratch_limit: self.budgets.scratch.total_bytes,
+            schedule_discovery_limit: self.schedule_discovery_limit(),
             scratch_current: self.scratch_current,
             scratch_peak: self.scratch_peak,
             disk_scratch_policy: self.budgets.scratch.disk_scratch_policy,
