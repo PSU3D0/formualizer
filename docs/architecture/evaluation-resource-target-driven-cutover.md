@@ -3,12 +3,10 @@
 Status: Approved implementation contract; C1a contract, ledger, deadlines, and typed completeness implemented
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
-resource-accounted, target-driven preparation and evaluation. Start with the
-[Evaluation Cutover Roadmap and Session Handoff](evaluation-cutover-roadmap.md) for the program history,
-strategic destination, longer-term FormulaPlane roadmap, mutable status, and fresh-session boot procedure.
-This document complements [Adaptive Formula Partition](adaptive-formula-partition.md): that document
-describes the long-term formula-node model, while this document governs the compatibility boundary,
-request algorithms, transactions, public API migration, and rollout gates needed to reach it safely.
+resource-accounted, target-driven preparation and evaluation. It complements
+[Adaptive Formula Partition](adaptive-formula-partition.md): that document describes the long-term
+formula-node model, while this document governs the compatibility boundary, request algorithms,
+transactions, public API migration, and rollout gates needed to reach it safely.
 
 The program deliberately combines two changes:
 
