@@ -20,6 +20,7 @@ pub mod live_graph;
 pub mod lookup_index_cache;
 pub mod plan;
 pub mod range_view;
+pub mod resource_ledger;
 pub mod resource_observability;
 pub mod row_visibility;
 pub mod scheduler;
@@ -67,16 +68,25 @@ pub use formula_source::{
 };
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
 // Use SoA implementation
+pub use formualizer_common::{ResourceExhaustionDetail, ResourceExhaustionReason};
 pub use graph::snapshot::VertexSnapshot;
 pub use graph::{
     ChangeEvent, DependencyGraph, DependencyRef, GraphBaselineStats, OperationSummary, StripeKey,
     StripeType, block_index,
 };
+pub use resource_ledger::{
+    AdmissionResourceBudget, DeadlineResourceBudget, DiskScratchPolicy, EvaluationBudgets,
+    EvaluationIncompleteReason, EvaluationResourceConfigDiagnostic, EvaluationResourceProfile,
+    EvaluationResourceProfileKind, LegacyResourceConfigDisposition, OptimizationResourceBudget,
+    ResourceEnvelope, ResourceLedger, ResourceLedgerError, ResourceLedgerSnapshot,
+    RetainedResourceBudget, ScratchResourceBudget, SemanticResourceBudget, WorkResourceBudget,
+};
 pub use resource_observability::{
     EvaluationRequestKind, EvaluationRequestOutcome, EvaluationRequestPhaseTimings,
-    EvaluationResourceBaselineStats, EvaluationResourceClass, EvaluationResourceReason,
-    EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome, FormulaPlaneTopologyCacheOutcome,
-    FormulaPlaneTopologyRequestStats, FormulaPlaneTopologyStrategy,
+    EvaluationResourceBaselineStats, EvaluationResourceClass, EvaluationResourceLedgerRequestStats,
+    EvaluationResourceReason, EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome,
+    FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyRequestStats,
+    FormulaPlaneTopologyStrategy,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
@@ -692,6 +702,8 @@ pub struct EvalConfig {
     pub max_vertices: Option<usize>,
     pub max_eval_time: Option<std::time::Duration>,
     pub max_memory_mb: Option<usize>,
+    /// Explicit C1 resource profile. `Compatibility` with no legacy hooks is unbounded.
+    pub resource_profile: EvaluationResourceProfile,
 
     /// Default sheet name used when no sheet is provided.
     pub default_sheet_name: String,
@@ -815,6 +827,7 @@ impl Default for EvalConfig {
             max_vertices: None,
             max_eval_time: None,
             max_memory_mb: None,
+            resource_profile: EvaluationResourceProfile::Compatibility,
 
             default_sheet_name: format!("Sheet{}", 1),
 
@@ -938,6 +951,23 @@ impl EvalConfig {
     pub fn with_formula_plane_mode(mut self, mode: FormulaPlaneMode) -> Self {
         self.formula_plane_mode = mode;
         self
+    }
+
+    #[inline]
+    pub fn with_resource_profile(mut self, profile: EvaluationResourceProfile) -> Self {
+        self.resource_profile = profile;
+        self
+    }
+
+    /// Resolve explicit and deprecated resource settings without consulting ambient host state.
+    pub fn resolved_resource_budgets(&self) -> (EvaluationResourceProfileKind, EvaluationBudgets) {
+        let resolved = resource_ledger::resolve_resource_profile(
+            &self.resource_profile,
+            self.max_vertices,
+            self.max_memory_mb,
+            self.max_eval_time,
+        );
+        (resolved.kind, resolved.budgets)
     }
 
     /// Set the cycle configuration.

@@ -98,6 +98,47 @@ pub struct ErrorContext {
     pub origin_sheet: Option<String>,
 }
 
+/// Stable reason for a resource exhaustion diagnostic.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum ResourceExhaustionReason {
+    Admission,
+    RetainedMemory,
+    ScratchMemory,
+    WorkUnits,
+    Deadline,
+    GraphVertices,
+    GraphEdges,
+    MaterializationCells,
+    ArithmeticOverflow,
+}
+
+impl ResourceExhaustionReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Admission => "admission",
+            Self::RetainedMemory => "retained_memory",
+            Self::ScratchMemory => "scratch_memory",
+            Self::WorkUnits => "work_units",
+            Self::Deadline => "deadline",
+            Self::GraphVertices => "graph_vertices",
+            Self::GraphEdges => "graph_edges",
+            Self::MaterializationCells => "materialization_cells",
+            Self::ArithmeticOverflow => "arithmetic_overflow",
+        }
+    }
+}
+
+/// Binding-safe typed resource exhaustion payload.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ResourceExhaustionDetail {
+    pub reason: ResourceExhaustionReason,
+    pub limit: u64,
+    pub observed: u64,
+    pub request_id: Option<u64>,
+}
+
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
@@ -112,6 +153,12 @@ pub enum ExcelErrorExtra {
     Spill {
         expected_rows: u32,
         expected_cols: u32,
+    },
+
+    /// Typed resource exhaustion. The canonical Excel error kind remains
+    /// unchanged so existing bindings and formula error handling stay compatible.
+    Resource {
+        detail: Box<ResourceExhaustionDetail>,
     },
     // --- Add future custom payloads below -------------------------------
     // AnotherKind { … },
@@ -273,6 +320,15 @@ impl fmt::Display for ExcelError {
                 expected_cols,
             } => {
                 write!(f, " [spill {expected_rows}×{expected_cols}]")?;
+            }
+            ExcelErrorExtra::Resource { detail } => {
+                write!(
+                    f,
+                    " [resource {} {}/{}]",
+                    detail.reason.as_str(),
+                    detail.observed,
+                    detail.limit
+                )?;
             }
         }
 

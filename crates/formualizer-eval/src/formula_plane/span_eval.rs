@@ -155,6 +155,7 @@ pub(crate) enum ErrorExtraAtom {
         expected_rows: u32,
         expected_cols: u32,
     },
+    Resource(Box<formualizer_common::ResourceExhaustionDetail>),
 }
 
 struct MemoGroup {
@@ -857,15 +858,16 @@ fn parameter_atom_from_literal(value: &LiteralValue) -> ParameterAtom {
                 .context
                 .as_ref()
                 .and_then(|context| context.origin_sheet.as_deref().map(Arc::from)),
-            extra: match err.extra {
+            extra: match &err.extra {
                 ExcelErrorExtra::None => ErrorExtraAtom::None,
                 ExcelErrorExtra::Spill {
                     expected_rows,
                     expected_cols,
                 } => ErrorExtraAtom::Spill {
-                    expected_rows,
-                    expected_cols,
+                    expected_rows: *expected_rows,
+                    expected_cols: *expected_cols,
                 },
+                ExcelErrorExtra::Resource { detail } => ErrorExtraAtom::Resource(detail.clone()),
             },
         },
         LiteralValue::Array(rows) => ParameterAtom::Text(Arc::from(format!("{rows:?}"))),

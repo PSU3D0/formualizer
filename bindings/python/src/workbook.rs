@@ -9,6 +9,7 @@ use crate::engine::{
     PyEvaluationConfig, apply_binding_eval_defaults, eval_plan_to_py, merge_python_eval_config,
 };
 use crate::enums::PyWorkbookMode;
+use crate::errors::workbook_error_to_pyerr;
 use crate::value::{literal_to_py, py_to_literal};
 use std::collections::HashMap;
 
@@ -703,7 +704,7 @@ impl PyWorkbook {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         let v = wb
             .evaluate_cell(sheet, row, col)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            .map_err(workbook_error_to_pyerr)?;
         literal_to_py(py, &v)
     }
 
@@ -718,7 +719,7 @@ impl PyWorkbook {
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
         wb.evaluate_all_cancellable(self.cancel_flag.clone())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            .map_err(workbook_error_to_pyerr)?;
         Ok(())
     }
 
@@ -786,7 +787,7 @@ impl PyWorkbook {
 
         let results = wb
             .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            .map_err(workbook_error_to_pyerr)?;
 
         let py_results = pyo3::types::PyList::empty(py);
         for v in results {

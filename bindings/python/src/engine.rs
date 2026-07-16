@@ -1,8 +1,10 @@
 use formualizer::eval::engine::{
-    CycleConfig, CycleDetection, CyclePolicy, DateSystem, EvalConfig, FormulaPlaneMode,
+    CycleConfig, CycleDetection, CyclePolicy, DateSystem, EvalConfig, EvaluationResourceProfile,
+    FormulaPlaneMode,
 };
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use std::time::Duration;
 
 /// Configuration for workbook-backed evaluation.
 ///
@@ -52,6 +54,7 @@ pub(crate) fn merge_python_eval_config(base: &mut EvalConfig, python_config: &Ev
     base.warmup = python_config.warmup.clone();
     base.date_system = python_config.date_system;
     base.formula_plane_mode = python_config.formula_plane_mode;
+    base.resource_profile = python_config.resource_profile.clone();
     base.cycle = python_config.cycle;
 }
 
@@ -148,6 +151,37 @@ impl PyEvaluationConfig {
     #[getter]
     pub fn get_span_evaluation(&self) -> bool {
         self.inner.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+    }
+
+    /// Maximum evaluation work units for one outer request.
+    #[setter]
+    pub fn set_max_work_units(&mut self, value: Option<u64>) {
+        let mut budgets = self.inner.resource_profile.budgets();
+        budgets.work.max_work_units = value;
+        self.inner.resource_profile = EvaluationResourceProfile::Custom(budgets);
+    }
+
+    #[getter]
+    pub fn get_max_work_units(&self) -> Option<u64> {
+        self.inner.resource_profile.budgets().work.max_work_units
+    }
+
+    /// Maximum elapsed evaluation time in milliseconds for one outer request.
+    #[setter]
+    pub fn set_max_eval_time_ms(&mut self, value: Option<u64>) {
+        let mut budgets = self.inner.resource_profile.budgets();
+        budgets.deadline.max_elapsed = value.map(Duration::from_millis);
+        self.inner.resource_profile = EvaluationResourceProfile::Custom(budgets);
+    }
+
+    #[getter]
+    pub fn get_max_eval_time_ms(&self) -> Option<u64> {
+        self.inner
+            .resource_profile
+            .budgets()
+            .deadline
+            .max_elapsed
+            .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
     }
 
     fn __repr__(&self) -> String {

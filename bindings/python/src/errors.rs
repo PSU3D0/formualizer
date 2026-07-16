@@ -15,6 +15,81 @@ pyo3::create_exception!(formualizer, ExcelEvaluationError, PyException);
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
+fn error_context_to_py(py: Python<'_>, context: &ErrorContext) -> PyObject {
+    let dict = PyDict::new(py);
+    let _ = dict.set_item("row", context.row);
+    let _ = dict.set_item("col", context.col);
+    let _ = dict.set_item("origin_row", context.origin_row);
+    let _ = dict.set_item("origin_col", context.origin_col);
+    let _ = dict.set_item("origin_sheet", &context.origin_sheet);
+    dict.into_any().unbind()
+}
+
+fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject> {
+    let dict = PyDict::new(py);
+    match extra {
+        ExcelErrorExtra::None => return None,
+        ExcelErrorExtra::Spill {
+            expected_rows,
+            expected_cols,
+        } => {
+            let _ = dict.set_item("expected_rows", expected_rows);
+            let _ = dict.set_item("expected_cols", expected_cols);
+        }
+        ExcelErrorExtra::Resource { detail } => {
+            let _ = dict.set_item("resource_reason", detail.reason.as_str());
+            let _ = dict.set_item("limit", detail.limit);
+            let _ = dict.set_item("observed", detail.observed);
+            let _ = dict.set_item("request_id", detail.request_id);
+        }
+    }
+    Some(dict.into_any().unbind())
+}
+
+/// Map a canonical engine error to the Python evaluation exception without
+/// flattening its structured Excel-domain fields.
+pub(crate) fn excel_error_to_pyerr(error: RustExcelError) -> PyErr {
+    let pyerr = ExcelEvaluationError::new_err(error.to_string());
+    Python::attach(|py| {
+        let value = pyerr.value(py);
+        let kind = format!("{:?}", error.kind);
+        let _ = value.setattr("kind", &kind);
+        let _ = value.setattr("excel_kind", kind);
+        let _ = value.setattr("message", error.message.clone());
+        let _ = value.setattr("excel_message", error.message.clone());
+
+        let context = error
+            .context
+            .as_ref()
+            .map(|context| error_context_to_py(py, context));
+        let _ = value.setattr("context", context);
+        if let Some(context) = &error.context {
+            let _ = value.setattr("row", context.row);
+            let _ = value.setattr("col", context.col);
+            let _ = value.setattr("origin_row", context.origin_row);
+            let _ = value.setattr("origin_col", context.origin_col);
+            let _ = value.setattr("origin_sheet", &context.origin_sheet);
+        }
+
+        let extra = error_extra_to_py(py, &error.extra);
+        let _ = value.setattr("extra", extra.as_ref().map(|extra| extra.bind(py)));
+        if let ExcelErrorExtra::Resource { detail } = &error.extra {
+            let _ = value.setattr("resource_reason", detail.reason.as_str());
+            let _ = value.setattr("limit", detail.limit);
+            let _ = value.setattr("observed", detail.observed);
+            let _ = value.setattr("request_id", detail.request_id);
+        }
+    });
+    pyerr
+}
+
+pub(crate) fn workbook_error_to_pyerr(error: formualizer::workbook::IoError) -> PyErr {
+    match error {
+        formualizer::workbook::IoError::Engine(error) => excel_error_to_pyerr(error),
+        other => PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(other.to_string()),
+    }
+}
+
 // Helper functions to create errors with position information
 impl TokenizerError {
     pub fn new_with_pos(message: String, pos: Option<usize>) -> PyErr {
@@ -142,18 +217,7 @@ impl PyExcelError {
     /// Get extra error data
     #[getter]
     pub fn extra(&self, py: Python) -> Option<PyObject> {
-        match &self.inner.extra {
-            ExcelErrorExtra::None => None,
-            ExcelErrorExtra::Spill {
-                expected_rows,
-                expected_cols,
-            } => {
-                let dict = PyDict::new(py);
-                let _ = dict.set_item("expected_rows", expected_rows);
-                let _ = dict.set_item("expected_cols", expected_cols);
-                Some(dict.into_pyobject(py).unwrap().unbind().into())
-            }
-        }
+        error_extra_to_py(py, &self.inner.extra)
     }
 
     /// Check if this is a #DIV/0! error

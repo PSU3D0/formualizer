@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use crate::errors::ExcelEvaluationError;
+use crate::errors::excel_error_to_pyerr;
 use crate::value::{literal_to_py, py_to_literal};
 use crate::workbook::PyWorkbook;
 use formualizer::common::LiteralValue;
@@ -684,12 +684,11 @@ fn map_sheetport_err(py: Python<'_>, err: RuntimeSheetPortError) -> PyErr {
                 }
             }
         }
-        RuntimeSheetPortError::Workbook { source } => {
-            SheetPortWorkbookError::new_err(source.to_string())
-        }
-        RuntimeSheetPortError::Engine { source } => {
-            ExcelEvaluationError::new_err(source.to_string())
-        }
+        RuntimeSheetPortError::Workbook { source } => match source {
+            formualizer::workbook::IoError::Engine(error) => excel_error_to_pyerr(error),
+            other => SheetPortWorkbookError::new_err(other.to_string()),
+        },
+        RuntimeSheetPortError::Engine { source } => excel_error_to_pyerr(source),
         RuntimeSheetPortError::UnsupportedSelector { port, reason } => {
             SheetPortError::new_err(format!("port `{port}` uses unsupported selector: {reason}"))
         }

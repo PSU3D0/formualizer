@@ -1,6 +1,6 @@
 # Evaluation Resources and Target-Driven Cutover
 
-Status: Approved implementation contract; C0 observability implemented
+Status: Approved implementation contract; C1a contract, ledger, deadlines, and typed completeness implemented
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
 resource-accounted, target-driven preparation and evaluation. It complements
@@ -229,13 +229,16 @@ The implementation inventory starts from these current defaults and internal gua
 | SheetPort layout scan 100k rows | `S/W/A` | Typed selector exhaustion and explicit manifest override |
 
 `max_vertices` is deprecated as an ambient `EvalConfig` field. New
-`graph_vertex_hard_limit` and `graph_edge_hard_limit` apply at every graph mutation seam in both
-modes only when an explicit profile or budget sets them. A legacy value maps into `Custom`; it is
-never newly enforced under `Compatibility`.
+`graph_vertex_hard_limit` and `graph_edge_hard_limit` remain declarative and diagnostic throughout
+C1a. A legacy value maps into `Custom`, but no resource profile changes graph acceptance in C1a.
+Activation moves to C2, after direct, bulk, logged, replacement, demotion, staged, and generic graph
+mutation paths share one composed prepared transaction. Existing baseline `max_vertices` behavior is
+not broadened by the mapping.
 
-The unused `max_memory_mb` and `max_eval_time` hooks are deprecated. Compatibility mapping uses a
-documented fixed retained/scratch split and maps time to a request deadline, with a once-per-engine
-diagnostic.
+The unused `max_memory_mb` and `max_eval_time` hooks are deprecated. Compatibility mapping splits
+legacy memory bytes 50/50 between retained and request scratch (an odd byte belongs to retained) and
+maps time to a request deadline, with a once-per-engine diagnostic. Explicit non-Compatibility
+profiles take precedence and ignore all three legacy hooks with one diagnostic.
 
 ### 4.2 Profiles and budgets
 
@@ -648,17 +651,37 @@ global allocator observer exists; no allocator or evaluation behavior was change
 
 Gate: Off, Shadow, and authoritative values/errors are unchanged; telemetry is observational.
 
-### C1a - ledger, deadlines, and typed completeness
+### C1a - contract, ledger, deadlines, and typed completeness
+
+Status: Implemented. Public Compatibility, FinanceBalanced, Constrained-envelope, and Custom profiles
+resolve without ambient host sampling. One request-bound checked ledger is shared by nested public
+coordinators across modes; typed resource details retain the existing Excel error kind. Legacy fields
+map only from Compatibility. C1a activates common work and deadline limits while graph vertex/edge and
+profile materialization budgets remain declarative until C2. No profile changes graph acceptance,
+lookup-cache size, mixed-topology cache thresholds, or thread defaults in C1a; retained and scratch
+budgets are observational only.
+
+Topology allocation and semantic errors preserve their baseline errors and never become cache skips
+or demotion. Only the pre-existing configured candidate, edge, and byte incomplete stats select the
+baseline capacity fallback. Dirty fixed-point incompleteness discards partial closure output and
+continues conservatively in the same schedule path. Existing demotion/materialization guards now carry
+typed `Resource` details without changing their canonical Excel error kind. Allocator OOM and panic are
+process-fatal by contract; C1a does not catch either and continue. Temporary ledger accounting is
+restored on every normal `Result` exit, and no unwind is treated as recoverable engine state.
 
 - Add profile/envelope mapping, `ResourceLedger`, legacy deadline checkpoints, typed resource details,
   and binding/serialization audits.
 - Deprecate ambient vertex/memory/time fields under the compatibility rules.
-- Make cache compilation return cached/skipped and route the existing dirty-closure incomplete reason
-  without consuming partial data.
+- Preserve baseline topology errors and configured-cap fallback while routing dirty-closure
+  incompleteness conservatively without consuming partial data or adding a demotion route.
 
 Gate: mapping and deadline tests pass; no consumer accepts an incomplete result.
 
 ### C1b - exact request topology
+
+The C1b residual is the pre-existing configured mixed-cache candidate/edge/byte cap overflow demotion.
+C1a does not add a retained-ledger or scratch-ledger overflow route. All graph hard-limit enforcement
+is pending C2 and requires one composed transaction common to every graph mutation path.
 
 - Implement exact paged topology, sorted runs, native disk policy, and bounded no-disk repeated passes.
 - Add skip-streak telemetry and operator guidance.
@@ -671,6 +694,9 @@ scratch stays within estimate plus the accounting tolerance.
 
 - Add staged source index, pure discovery, monotone widening, and composed transaction for ordinary
   staged formulas, cross-sheet static dependencies, names, and ranges.
+- Activate exact graph vertex/edge admission for direct, bulk, logged, replacement, demotion, staged
+  ordinary/compressed/direct, and generic publication only after they share that composed prepared
+  transaction.
 - Ratify the inert-residue digest and audit staged-index revision coupling.
 
 Gate: every pre-commit fault preserves the semantic digest; only reachable staged units commit;
