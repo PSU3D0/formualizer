@@ -10,7 +10,6 @@ from formualizer import (
     WorkbookConfig,
 )
 
-
 SHEETPORT_MANIFEST = textwrap.dedent(
     """
     spec: fio
