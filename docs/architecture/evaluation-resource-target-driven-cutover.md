@@ -718,6 +718,9 @@ restored on every normal `Result` exit, and no unwind is treated as recoverable 
 - Preserve baseline topology errors and configured-cap fallback while routing dirty-closure
   incompleteness conservatively without consuming partial data or adding a demotion route.
 
+Mixed-schedule discovery and construction work is charged per attempt to the shared request ledger,
+including attempts rebuilt after cycle demotion; retry work is not refunded.
+
 Gate: mapping and deadline tests pass; no consumer accepts an incomplete result.
 
 ### C1b - exact request topology

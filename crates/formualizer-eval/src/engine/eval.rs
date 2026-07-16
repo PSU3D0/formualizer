@@ -2239,7 +2239,11 @@ where
 
     fn release_request_scratch(&mut self, bytes: u64) {
         if let Some(ledger) = self.active_resource_ledger.as_mut() {
-            let _ = ledger.release_scratch(bytes);
+            let released = ledger.release_scratch(bytes);
+            debug_assert!(
+                released.is_ok(),
+                "request scratch release exceeded the outstanding reservation"
+            );
         }
     }
 
@@ -12815,7 +12819,19 @@ where
         vertex_id: VertexId,
         delta: Option<&mut DeltaCollector>,
     ) -> Result<LiteralValue, ExcelError> {
-        if self.active_resource_ledger.is_some() {
+        // Preserve the direct evaluator's compatibility behavior for invalid IDs, literal cells,
+        // names, and other non-formula vertices. Only formula publication needs the C1a final
+        // deadline checkpoint and effects pipeline.
+        if !self.graph.vertex_exists(vertex_id) {
+            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
+                .with_message(format!("Vertex not found: {vertex_id:?}")));
+        }
+        if self.active_resource_ledger.is_some()
+            && matches!(
+                self.graph.get_vertex_kind(vertex_id),
+                VertexKind::FormulaScalar | VertexKind::FormulaArray
+            )
+        {
             let value = self
                 .evaluate_vertex_immutable(vertex_id)
                 .unwrap_or_else(LiteralValue::Error);
@@ -12830,11 +12846,6 @@ where
         }
 
         let mut delta = delta;
-        // Check if vertex exists
-        if !self.graph.vertex_exists(vertex_id) {
-            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
-                .with_message(format!("Vertex not found: {vertex_id:?}")));
-        }
 
         // Get vertex kind and check if it needs evaluation
         let kind = self.graph.get_vertex_kind(vertex_id);
@@ -13821,9 +13832,9 @@ where
             self.last_formula_plane_span_eval_report = None;
         }
         let result = self.evaluate_all_legacy_impl()?;
-        self.checked_ack_formula_dirty_observed(formula_dirty)?;
         self.formula_plane_capacity_bailouts =
             self.formula_plane_capacity_bailouts.saturating_add(1);
+        self.checked_ack_formula_dirty_observed(formula_dirty)?;
         Ok(result)
     }
 

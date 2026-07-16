@@ -159,8 +159,10 @@ impl ResourceEnvelope {
                 max_elapsed: self.deadline,
             },
             optimization: OptimizationResourceBudget {
-                mixed_cache_candidates: usize::try_from(mixed_cache / 64).ok(),
-                mixed_cache_edges: usize::try_from(mixed_cache / 64).ok(),
+                mixed_cache_candidates: Some(
+                    usize::try_from(mixed_cache / 64).unwrap_or(usize::MAX),
+                ),
+                mixed_cache_edges: Some(usize::try_from(mixed_cache / 64).unwrap_or(usize::MAX)),
                 max_threads: Some(self.max_threads),
             },
             ..EvaluationBudgets::default()

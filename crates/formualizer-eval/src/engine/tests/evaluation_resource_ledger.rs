@@ -6,15 +6,17 @@ use formualizer_common::{ExcelErrorExtra, LiteralValue, ResourceExhaustionReason
 use formualizer_parse::parser::parse;
 
 use crate::engine::eval::classify_mixed_topology_incomplete;
+use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::resource_ledger::{resolve_evaluation_budgets, split_legacy_memory_bytes};
 use crate::engine::{
     AdmissionResourceBudget, ChangeLog, DeadlineResourceBudget, DiskScratchPolicy, Engine,
     EvalConfig, EvaluationBudgets, EvaluationIncompleteReason, FormulaIngestBatch,
     FormulaIngestRecord, FormulaPlaneMode, FormulaPlaneTopologyCacheOutcome,
     LegacyResourceConfigDisposition, ResourceEnvelope, ResourceLedger, RetainedResourceBudget,
-    ScratchResourceBudget, WorkResourceBudget,
+    ScratchResourceBudget, VertexId, VertexKind, WorkResourceBudget,
 };
 use crate::formula_plane::scheduler::MixedTopologyCompileStats;
+use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
 
 fn formula_engine(mode: FormulaPlaneMode, budgets: EvaluationBudgets) -> Engine<TestWorkbook> {
@@ -136,6 +138,74 @@ fn aggregate_envelope_derives_budgets_without_selecting_a_mode() {
         Some(Duration::from_millis(12))
     );
     assert_eq!(budgets.optimization.max_threads, Some(3));
+
+    let large_budgets = ResourceEnvelope {
+        retained_bytes: u64::MAX,
+        ..envelope
+    }
+    .to_budgets();
+    let derived_limit = (u64::MAX / 8).saturating_mul(60) / 100 / 64;
+    let clamped_limit = usize::try_from(derived_limit).unwrap_or(usize::MAX);
+    assert_eq!(
+        large_budgets.optimization.mixed_cache_candidates,
+        Some(clamped_limit)
+    );
+    assert_eq!(
+        large_budgets.optimization.mixed_cache_edges,
+        Some(clamped_limit)
+    );
+}
+
+#[test]
+fn evaluate_vertex_all_unset_preserves_non_formula_compatibility() {
+    let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(42.0))
+        .unwrap();
+    let cell = engine.graph.make_cell_ref("Sheet1", 1, 1);
+    let cell_vertex = *engine
+        .graph
+        .get_vertex_id_for_address(&cell)
+        .expect("literal cell vertex");
+    engine
+        .graph
+        .update_vertex_value(cell_vertex, LiteralValue::Number(-1.0));
+    let graph_value_before = engine.vertex_value(cell_vertex);
+
+    assert_eq!(
+        engine.evaluate_vertex(cell_vertex).unwrap(),
+        LiteralValue::Number(42.0)
+    );
+    assert_eq!(
+        engine.vertex_value(cell_vertex),
+        graph_value_before,
+        "direct literal reads must not publish through the formula effects path"
+    );
+
+    let error = engine.evaluate_vertex(VertexId::new(u32::MAX)).unwrap_err();
+    assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Ref);
+
+    let range = RangeRef::new(
+        CellRef::new(0, Coord::new(0, 0, true, true)),
+        CellRef::new(0, Coord::new(0, 0, true, true)),
+    );
+    engine
+        .define_name(
+            "ScalarRangeMismatch",
+            NamedDefinition::Range(range),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    let named_vertex = engine
+        .graph
+        .named_ranges_iter()
+        .find(|(name, _)| name.as_str() == "ScalarRangeMismatch")
+        .map(|(_, named)| named.vertex)
+        .expect("named range vertex");
+    engine.graph.set_kind(named_vertex, VertexKind::NamedScalar);
+
+    let error = engine.evaluate_vertex(named_vertex).unwrap_err();
+    assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Value);
 }
 
 #[test]
