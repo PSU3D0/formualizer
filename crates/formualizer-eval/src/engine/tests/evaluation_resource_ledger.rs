@@ -245,6 +245,30 @@ fn ledger_reservations_release_overflow_and_work_are_checked() {
 }
 
 #[test]
+fn mixed_cache_accounting_is_idempotent_and_replaces_retained_ownership() {
+    let mut ledger = ResourceLedger::new(
+        Some(42),
+        EvaluationBudgets {
+            retained: RetainedResourceBudget {
+                total_bytes: Some(10),
+                mixed_cache_bytes: Some(10),
+                ..RetainedResourceBudget::default()
+            },
+            ..EvaluationBudgets::default()
+        },
+    );
+    ledger.account_mixed_cache(6).unwrap();
+    ledger.account_mixed_cache(6).unwrap();
+    assert_eq!(ledger.snapshot().retained_current, 6);
+    assert_eq!(ledger.snapshot().retained_peak, 6);
+    ledger.account_mixed_cache(4).unwrap();
+    assert_eq!(ledger.snapshot().retained_current, 4);
+    assert_eq!(ledger.snapshot().retained_peak, 6);
+    ledger.account_mixed_cache(0).unwrap();
+    assert_eq!(ledger.snapshot().retained_current, 0);
+}
+
+#[test]
 fn fake_clock_deadline_is_monotonic_and_typed() {
     let now_ns = Arc::new(AtomicU64::new(0));
     let clock_value = Arc::clone(&now_ns);
@@ -319,7 +343,7 @@ fn default_unset_budgets_preserve_acceptance_and_report_ledger() {
             engine.get_cell_value("Sheet1", 1, 1),
             Some(LiteralValue::Number(2.0))
         );
-        let request = engine.last_evaluation_resource_request_stats().unwrap();
+        let request = *engine.last_evaluation_resource_request_stats().unwrap();
         assert_eq!(request.ledger.work_limit, None);
         assert!(request.ledger.deadline_checkpoints > 0);
         assert_eq!(request.ledger.exhaustion, None);
@@ -472,23 +496,8 @@ fn authoritative_staged_spans_do_not_charge_hypothetical_legacy_vertices() {
 }
 
 #[test]
-fn c1a_retained_and_scratch_budgets_are_observational_without_new_skip_or_demotion() {
-    for budgets in [
-        EvaluationBudgets {
-            scratch: ScratchResourceBudget {
-                total_bytes: Some(0),
-                ..ScratchResourceBudget::default()
-            },
-            ..EvaluationBudgets::default()
-        },
-        EvaluationBudgets {
-            retained: RetainedResourceBudget {
-                total_bytes: Some(0),
-                ..RetainedResourceBudget::default()
-            },
-            ..EvaluationBudgets::default()
-        },
-    ] {
+fn c1b_activates_only_mixed_cache_and_schedule_discovery_memory() {
+    let build = |budgets| {
         let mut engine = Engine::new(
             TestWorkbook::default(),
             EvalConfig::default()
@@ -498,8 +507,7 @@ fn c1a_retained_and_scratch_budgets_are_observational_without_new_skip_or_demoti
         let mut records = Vec::new();
         for row in 1..=100 {
             let formula = format!("=A{row}+1");
-            let ast = parse(&formula).unwrap();
-            let ast_id = engine.intern_formula_ast(&ast);
+            let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
             records.push(FormulaIngestRecord::new(
                 row,
                 2,
@@ -510,15 +518,102 @@ fn c1a_retained_and_scratch_budgets_are_observational_without_new_skip_or_demoti
         engine
             .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
             .unwrap();
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-        engine.evaluate_all().unwrap();
-        assert!(engine.mixed_topology_cache_present_for_test());
-        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
-        assert_eq!(
-            engine.get_cell_value("Sheet1", 100, 2),
-            Some(LiteralValue::Number(1.0))
-        );
+        engine
+    };
+
+    let mut retained = build(EvaluationBudgets {
+        retained: RetainedResourceBudget {
+            total_bytes: Some(0),
+            mixed_cache_bytes: Some(0),
+            ..RetainedResourceBudget::default()
+        },
+        ..EvaluationBudgets::default()
+    });
+    retained.evaluate_all().unwrap();
+    assert!(!retained.mixed_topology_cache_present_for_test());
+    assert_eq!(retained.baseline_stats().formula_plane_active_span_count, 1);
+
+    let mut scratch = build(EvaluationBudgets {
+        scratch: ScratchResourceBudget {
+            total_bytes: Some(0),
+            schedule_discovery_bytes: Some(0),
+            ..ScratchResourceBudget::default()
+        },
+        ..EvaluationBudgets::default()
+    });
+    assert_eq!(scratch.mixed_topology_index_builds_for_test(), 0);
+    let error = scratch.evaluate_all().unwrap_err();
+    assert_eq!(
+        resource_reason(&error),
+        Some(ResourceExhaustionReason::ScratchMemory)
+    );
+    assert_eq!(
+        scratch.mixed_topology_index_builds_for_test(),
+        0,
+        "index scratch preflight must fail before temporary indexes are constructed",
+    );
+    let request = scratch.last_evaluation_resource_request_stats().unwrap();
+    assert_eq!(request.ledger.scratch_current, 0);
+    assert_eq!(request.ledger.scratch_peak, 0);
+    assert_eq!(scratch.baseline_stats().formula_plane_active_span_count, 1);
+    assert!(scratch.baseline_stats().formula_plane_dirty_pending_events > 0);
+}
+
+#[test]
+fn exact_schedule_work_error_releases_reserved_scratch() {
+    let build = |work_limit| {
+        let mut config = EvalConfig::default()
+            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
+            .with_evaluation_budgets(EvaluationBudgets {
+                work: WorkResourceBudget {
+                    max_work_units: work_limit,
+                },
+                ..EvaluationBudgets::default()
+            });
+        config.max_formula_plane_cache_candidates = 0;
+        let mut engine = Engine::new(TestWorkbook::default(), config);
+        let mut records = Vec::new();
+        for row in 1..=100 {
+            let formula = format!("=A{row}+1");
+            let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
+            records.push(FormulaIngestRecord::new(row, 2, ast_id, None));
+        }
+        for col in 3..=12 {
+            let tail = engine.intern_formula_ast(&parse("=B32+1").unwrap());
+            records.push(FormulaIngestRecord::new(1, col, tail, None));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
+            .unwrap();
+        engine
+    };
+
+    let mut unlimited = build(None);
+    unlimited.evaluate_all().unwrap();
+    let total_work = unlimited
+        .last_evaluation_resource_request_stats()
+        .unwrap()
+        .ledger
+        .work_charged;
+    let mut witnessed = None;
+    for limit in 0..total_work {
+        let mut engine = build(Some(limit));
+        let result = engine.evaluate_all();
+        let request = *engine.last_evaluation_resource_request_stats().unwrap();
+        if result.is_err()
+            && request.topology.exact_pass_count == 0
+            && request.ledger.scratch_peak > 0
+        {
+            witnessed = Some(request);
+            break;
+        }
     }
+    let request = witnessed.expect("a work limit must fail inside exact schedule construction");
+    assert_eq!(request.ledger.scratch_current, 0);
+    assert_eq!(
+        request.ledger.exhaustion,
+        Some(ResourceExhaustionReason::WorkUnits)
+    );
 }
 
 #[test]
@@ -560,20 +655,16 @@ fn span_work_exhaustion_happens_before_value_or_dirty_acknowledgement() {
 }
 
 #[test]
-fn existing_materialization_guard_is_typed_without_changing_error_kind() {
+fn cache_overflow_does_not_charge_existing_materialization_guard() {
     let mut config =
         EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     config.max_formula_plane_cache_candidates = 0;
     let mut engine = Engine::new(TestWorkbook::default(), config);
     let mut limits = engine.workbook_load_limits().clone();
-    limits.max_formula_plane_fallback_cells = 1;
+    limits.max_formula_plane_fallback_cells = 0;
     engine.set_workbook_load_limits(limits);
-
     let mut records = Vec::new();
     for row in 1..=100 {
-        engine
-            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
-            .unwrap();
         let formula = format!("=A{row}+1");
         let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
         records.push(FormulaIngestRecord::new(row, 2, ast_id, None));
@@ -583,20 +674,14 @@ fn existing_materialization_guard_is_typed_without_changing_error_kind() {
     engine
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
         .unwrap();
-    let before = engine.baseline_stats();
-    let error = engine.evaluate_all().unwrap_err();
-    assert_eq!(error.kind, formualizer_common::ExcelErrorKind::NImpl);
+
+    engine.evaluate_all().unwrap();
+    let request = engine.last_evaluation_resource_request_stats().unwrap();
+    assert_eq!(request.fallback_materialized_cells, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(
-        resource_reason(&error),
-        Some(ResourceExhaustionReason::MaterializationCells)
-    );
-    let after = engine.baseline_stats();
-    assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
-    assert_eq!(after.graph_edge_count, before.graph_edge_count);
-    assert_eq!(after.formula_plane_active_span_count, 1);
-    assert_eq!(
-        after.formula_plane_dirty_pending_events,
-        before.formula_plane_dirty_pending_events
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(2.0))
     );
 }
 
@@ -651,8 +736,11 @@ fn skipped_topology_is_typed_atomic_and_never_cached() {
         Some(EvaluationIncompleteReason::FormulaPlaneTopologyCandidates)
     );
     assert_eq!(request.topology.cache_skip_events, 1);
+    assert_eq!(engine.mixed_topology_index_builds_for_test(), 1);
+    assert_eq!(request.ledger.scratch_current, 0);
+    assert!(request.ledger.scratch_peak > 0);
     assert!(!engine.mixed_topology_cache_present_for_test());
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     assert_eq!(
         engine.get_cell_value("Sheet1", 100, 2),
         Some(LiteralValue::Number(200.0))

@@ -321,103 +321,64 @@ fn capacity_visible_snapshot(
 }
 
 #[test]
-fn fallback_cap_failure_retains_exact_state_and_pending_lease_for_retry() {
+fn cache_skip_ignores_materialization_cap_and_retains_exact_state() {
     let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
         format!("=SUM($A{row}:$B${ROWS})")
     });
     engine.config.max_formula_plane_cache_candidates = 0;
     add_capacity_source_overlay(&mut engine);
     let mut limits = engine.workbook_load_limits().clone();
-    limits.max_formula_plane_fallback_cells = u64::from(ROWS - 1);
+    limits.max_formula_plane_fallback_cells = 0;
     engine.set_workbook_load_limits(limits);
-
     let refs = engine.graph.formula_authority().active_span_refs();
-    let pending = engine
-        .graph
-        .pending_formula_dirty_regions()
-        .collect::<Vec<_>>()
-        .to_vec();
-    let epochs = (
-        engine.graph.formula_authority().plane.epoch(),
-        engine.graph.formula_authority().indexes_epoch(),
-        engine.graph.formula_authority().indexed_plane_epoch(),
-    );
-    let graph = capacity_graph_snapshot(&engine);
+    let baseline = engine.baseline_stats();
     let overlays = capacity_overlay_snapshot(&engine);
-    let values = capacity_visible_snapshot(&engine);
-    let before = engine.baseline_stats();
 
-    assert!(engine.evaluate_all().is_err());
-    let after = engine.baseline_stats();
-    assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
-    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
-    assert_eq!(
-        engine
-            .graph
-            .pending_formula_dirty_regions()
-            .collect::<Vec<_>>(),
-        pending
-    );
-    assert_eq!(
-        (
-            engine.graph.formula_authority().plane.epoch(),
-            engine.graph.formula_authority().indexes_epoch(),
-            engine.graph.formula_authority().indexed_plane_epoch(),
-        ),
-        epochs
-    );
-    assert_eq!(capacity_graph_snapshot(&engine), graph);
-    assert_eq!(capacity_overlay_snapshot(&engine), overlays);
-    assert_eq!(capacity_visible_snapshot(&engine), values);
-    assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
-    assert_eq!(
-        after.graph_formula_vertex_count,
-        before.graph_formula_vertex_count
-    );
-    assert_eq!(after.graph_edge_count, before.graph_edge_count);
-    assert_eq!(after.dirty_vertex_count, before.dirty_vertex_count);
-
-    let mut limits = engine.workbook_load_limits().clone();
-    limits.max_formula_plane_fallback_cells = u64::from(ROWS);
-    engine.set_workbook_load_limits(limits);
     engine
         .evaluate_all()
-        .expect("raised-cap retry must succeed");
-    assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
+        .expect("exact request topology must not materialize");
+
+    assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
+    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
+    let after = engine.baseline_stats();
+    assert_eq!(after.graph_vertex_count, baseline.graph_vertex_count);
+    assert_eq!(
+        after.graph_formula_vertex_count,
+        baseline.graph_formula_vertex_count
+    );
+    assert_eq!(after.graph_edge_count, baseline.graph_edge_count);
+    assert_eq!(capacity_overlay_snapshot(&engine), overlays);
     assert!(
         engine
             .graph
             .pending_formula_dirty_regions()
-            .collect::<Vec<_>>()
-            .is_empty()
+            .next()
+            .is_none()
     );
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(numeric_value(&engine, ROWS, 2), ROWS as f64 + 1.0);
 }
 
 #[test]
-fn capacity_faults_retain_pending_lease_and_count_only_successful_retry() {
-    use crate::engine::eval::{FormulaSpanDemotionFault, FormulaSpanDemotionFault::*};
+fn non_cycle_unsafe_fallback_faults_preserve_epochs_pending_lease_and_values() {
+    use crate::engine::eval::FormulaSpanDemotionFault;
 
-    let faults: [FormulaSpanDemotionFault; 6] = [
-        AstPreparation,
-        LegacyGraphPreparation,
-        FinalLegacyGraphValidation,
-        FinalAuthorityValidation,
-        AllocationReservation,
-        BeforeFirstMutation,
-    ];
-    for fault in faults {
+    for fault in [
+        FormulaSpanDemotionFault::AstPreparation,
+        FormulaSpanDemotionFault::LegacyGraphPreparation,
+        FormulaSpanDemotionFault::FinalLegacyGraphValidation,
+        FormulaSpanDemotionFault::FinalAuthorityValidation,
+        FormulaSpanDemotionFault::AllocationReservation,
+        FormulaSpanDemotionFault::BeforeFirstMutation,
+    ] {
         let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
             format!("=SUM($A{row}:$B${ROWS})")
         });
-        engine.config.max_formula_plane_cache_candidates = 0;
         add_capacity_source_overlay(&mut engine);
         let refs = engine.graph.formula_authority().active_span_refs();
         let pending = engine
             .graph
             .pending_formula_dirty_regions()
-            .collect::<Vec<_>>()
-            .to_vec();
+            .collect::<Vec<_>>();
         let epochs = (
             engine.graph.formula_authority().plane.epoch(),
             engine.graph.formula_authority().indexes_epoch(),
@@ -427,6 +388,7 @@ fn capacity_faults_retain_pending_lease_and_count_only_successful_retry() {
         let overlays = capacity_overlay_snapshot(&engine);
         let values = capacity_visible_snapshot(&engine);
 
+        engine.force_non_cycle_schedule_fallback_for_test();
         engine.set_formula_span_demotion_fault_for_test(fault);
         assert!(engine.evaluate_all().is_err(), "fault {fault:?} must fail");
         assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
@@ -450,15 +412,37 @@ fn capacity_faults_retain_pending_lease_and_count_only_successful_retry() {
         assert_eq!(capacity_overlay_snapshot(&engine), overlays);
         assert_eq!(capacity_visible_snapshot(&engine), values);
 
+        engine.force_non_cycle_schedule_fallback_for_test();
         engine.evaluate_all().expect("fault retry must succeed");
         assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
         assert!(
             engine
                 .graph
                 .pending_formula_dirty_regions()
-                .collect::<Vec<_>>()
-                .is_empty()
+                .next()
+                .is_none()
         );
+    }
+}
+
+#[test]
+fn cache_skip_never_enters_capacity_demotion_fault_seams() {
+    use crate::engine::eval::FormulaSpanDemotionFault;
+    for fault in [
+        FormulaSpanDemotionFault::AstPreparation,
+        FormulaSpanDemotionFault::LegacyGraphPreparation,
+        FormulaSpanDemotionFault::BeforeFirstMutation,
+    ] {
+        let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
+            format!("=SUM($A{row}:$B${ROWS})")
+        });
+        engine.config.max_formula_plane_cache_candidates = 0;
+        engine.set_formula_span_demotion_fault_for_test(fault);
+        engine
+            .evaluate_all()
+            .expect("capacity skip must bypass demotion");
+        assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
+        assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
     }
 }
 
@@ -502,48 +486,22 @@ fn build_selective_capacity_engine() -> (Engine<TestWorkbook>, Vec<crate::engine
 }
 
 #[test]
-fn capacity_fallback_demotes_only_scheduled_dirty_span() {
-    use crate::formula_plane::runtime::PlacementCoord;
-
+fn cache_skip_retains_all_scheduled_and_clean_span_authority() {
     let (mut engine, tail_vertices) = build_selective_capacity_engine();
     engine.evaluate_all().expect("initial span-only evaluation");
-    assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
-    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    let refs = engine.graph.formula_authority().active_span_refs();
     engine.config.max_formula_plane_cache_candidates = 0;
-
-    let topology_epoch = engine.topology_epoch_for_test();
     engine
         .set_cell_value(SHEET, ROWS / 2, 1, LiteralValue::Number(10_000.0))
         .unwrap();
     engine.graph.mark_dirty_many(&tail_vertices);
-    engine.evaluate_all().expect("selective capacity fallback");
+    engine.evaluate_all().expect("exact cache-skip evaluation");
 
-    assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
-    assert_eq!(engine.topology_epoch_for_test(), topology_epoch + 1);
-    let refs = engine.graph.formula_authority().active_span_refs();
-    assert_eq!(refs.len(), 1, "the unrelated clean span must remain active");
-    let survivor = engine
-        .graph
-        .formula_authority()
-        .plane
-        .spans
-        .get(refs[0])
-        .unwrap();
-    assert!(
-        survivor
-            .domain
-            .contains(PlacementCoord::new(survivor.sheet_id, ROWS / 2 - 1, 4,)),
-        "the clean column-E span must retain authority"
-    );
+    assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
+    assert_eq!(engine.graph.formula_authority().active_span_refs(), refs);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
     assert_eq!(numeric_value(&engine, ROWS / 2, 2), 10_001.0);
     assert_eq!(numeric_value(&engine, ROWS / 2, 5), 3_001.0);
-    assert!(
-        engine
-            .graph
-            .pending_formula_dirty_regions()
-            .collect::<Vec<_>>()
-            .is_empty()
-    );
 }
 
 #[test]
@@ -777,7 +735,69 @@ fn prepared_demotion_failure_keeps_revision_and_cache_success_invalidates_once()
 }
 
 #[test]
-fn cache_edge_and_memory_caps_route_fail_closed_through_demotion() {
+fn warm_cache_can_bypass_retained_schedule_into_exact_ladder() {
+    use crate::engine::{
+        DiskScratchPolicy, EvaluationBudgets, FormulaPlaneTopologyCacheOutcome,
+        FormulaPlaneTopologyStrategy, ScratchResourceBudget,
+    };
+
+    let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |_| {
+        format!("=SUM($B$1:$B${ROWS})")
+    });
+    engine.evaluate_all().unwrap();
+    assert!(engine.mixed_topology_cache_present_for_test());
+    engine.set_evaluation_budgets_for_test(EvaluationBudgets {
+        scratch: ScratchResourceBudget {
+            total_bytes: Some(430_000),
+            schedule_discovery_bytes: Some(430_000),
+            disk_scratch_policy: Some(DiskScratchPolicy::MemoryOnly),
+            ..ScratchResourceBudget::default()
+        },
+        ..EvaluationBudgets::default()
+    });
+    engine
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(10_000.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let request = engine.last_evaluation_resource_request_stats().unwrap();
+    assert_eq!(
+        request.topology.cache_outcome,
+        FormulaPlaneTopologyCacheOutcome::Hit
+    );
+    assert_eq!(
+        request.topology.strategy,
+        FormulaPlaneTopologyStrategy::ExactRepeatedPasses
+    );
+    assert!(engine.mixed_topology_cache_present_for_test());
+    assert_eq!(request.ledger.scratch_current, 0);
+}
+
+#[test]
+fn stale_cached_topology_is_dropped_when_cap_key_rebuild_skips() {
+    let mut engine = cached_topology_engine();
+    engine.evaluate_all().unwrap();
+    assert!(engine.mixed_topology_cache_present_for_test());
+
+    engine.config.max_formula_plane_cache_bytes = 0;
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(9.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    let request = engine.last_evaluation_resource_request_stats().unwrap();
+    assert_eq!(
+        request.topology.cache_outcome,
+        crate::engine::FormulaPlaneTopologyCacheOutcome::SkippedOverflow
+    );
+    assert!(!engine.mixed_topology_cache_present_for_test());
+    assert_eq!(request.ledger.retained_current, 0);
+    assert_eq!(request.ledger.retained_peak, 0);
+    assert_eq!(request.ledger.scratch_current, 0);
+}
+
+#[test]
+fn cache_edge_and_memory_caps_use_exact_request_topology() {
     for limit_kind in ["edges", "memory"] {
         let mut engine = build_mixed_engine(FormulaPlaneMode::AuthoritativeExperimental, |row| {
             format!("=SUM($A{row}:$B${ROWS})")
@@ -789,11 +809,12 @@ fn cache_edge_and_memory_caps_route_fail_closed_through_demotion() {
         }
         engine.evaluate_all().unwrap();
         let stats = engine.baseline_stats();
-        assert_eq!(stats.formula_plane_mixed_topology_cache_builds, 1);
         assert_eq!(stats.formula_plane_mixed_topology_cache_overflows, 1);
-        assert_eq!(stats.formula_plane_mixed_topology_cache_hits, 0);
         assert!(!engine.mixed_topology_cache_present_for_test());
-        assert_eq!(engine.formula_plane_capacity_bailouts(), 1);
-        assert_eq!(stats.formula_plane_active_span_count, 0);
+        assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
+        assert_eq!(stats.formula_plane_active_span_count, 1);
+        let request = engine.last_evaluation_resource_request_stats().unwrap();
+        assert_eq!(request.fallback_materialized_cells, 0);
+        assert!(request.topology.exact_pass_count > 0);
     }
 }
