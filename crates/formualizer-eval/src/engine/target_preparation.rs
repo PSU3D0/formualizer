@@ -132,6 +132,8 @@ pub struct PreparedTargetGraphReport {
     pub normalized_regions: usize,
     pub normalized_target_list: Vec<EvaluationTarget>,
     pub selected_staged_cells: usize,
+    /// Total family proposals owned by the whole deferred packages selected by
+    /// this request. Selection and consumption are package-atomic.
     pub selected_source_families: usize,
     pub retained_staged_cells: usize,
     pub selected_cells: Vec<RangeAddress>,
@@ -161,13 +163,45 @@ struct StagedFormulaPresence {
     insertion_order: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct StagedPackageLease {
+    pub(crate) generation: u64,
+    pub(crate) family_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StagedPackageRect {
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+}
+
+impl StagedPackageRect {
+    fn intersects(self, start_row: u32, start_col: u32, end_row: u32, end_col: u32) -> bool {
+        self.start_row <= end_row
+            && start_row <= self.end_row
+            && self.start_col <= end_col
+            && start_col <= self.end_col
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StagedPackagePresence {
+    generation: u64,
+    family_count: usize,
+    geometry: Vec<StagedPackageRect>,
+    fallback_points: BTreeSet<(u32, u32)>,
+    geometry_complete: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct StagedFormulaIndex {
     revision: u64,
     next_generation: u64,
     next_insertion_order: u64,
     sheets: BTreeMap<String, BTreeMap<(u32, u32), StagedFormulaPresence>>,
-    package_sheets: BTreeSet<String>,
+    packages: BTreeMap<String, StagedPackagePresence>,
 }
 
 impl StagedFormulaIndex {
@@ -225,25 +259,84 @@ impl StagedFormulaIndex {
     }
 
     pub(crate) fn clear_sheet(&mut self, sheet: &str) {
-        let changed = self.sheets.remove(sheet).is_some() | self.package_sheets.remove(sheet);
+        let changed = self.sheets.remove(sheet).is_some() | self.packages.remove(sheet).is_some();
         if changed {
             self.bump();
         }
     }
 
     pub(crate) fn clear_all(&mut self) {
-        if !self.sheets.is_empty() || !self.package_sheets.is_empty() {
+        if !self.sheets.is_empty() || !self.packages.is_empty() {
             self.sheets.clear();
-            self.package_sheets.clear();
+            self.packages.clear();
             self.bump();
         }
     }
 
-    pub(crate) fn set_package(&mut self, sheet: &str, present: bool) {
-        let changed = if present {
-            self.package_sheets.insert(sheet.to_string())
+    pub(crate) fn set_package(
+        &mut self,
+        sheet: &str,
+        package: Option<&super::DeferredFormulaPackage>,
+    ) {
+        let changed = if let Some(package) = package {
+            let generation = self.next_generation;
+            self.next_generation = self
+                .next_generation
+                .checked_add(1)
+                .expect("staged package generation exhausted");
+            let mut geometry = Vec::new();
+            for family in &package.families {
+                match &family.members {
+                    super::SourceFamilyMembers::CompleteDomain(domain) => {
+                        let rect = domain.rect();
+                        geometry.push(StagedPackageRect {
+                            start_row: rect.start.row.saturating_add(1),
+                            start_col: rect.start.col.saturating_add(1),
+                            end_row: rect.end.row.saturating_add(1),
+                            end_col: rect.end.col.saturating_add(1),
+                        });
+                    }
+                    super::SourceFamilyMembers::ExplicitMembers(members) => {
+                        geometry.extend(members.as_slice().iter().map(|coord| StagedPackageRect {
+                            start_row: coord.row.saturating_add(1),
+                            start_col: coord.col.saturating_add(1),
+                            end_row: coord.row.saturating_add(1),
+                            end_col: coord.col.saturating_add(1),
+                        }));
+                    }
+                }
+            }
+            geometry.extend(
+                package
+                    .partitioned_families
+                    .iter()
+                    .map(|family| StagedPackageRect {
+                        start_row: family.declared.start.row.saturating_add(1),
+                        start_col: family.declared.start.col.saturating_add(1),
+                        end_row: family.declared.end.row.saturating_add(1),
+                        end_col: family.declared.end.col.saturating_add(1),
+                    }),
+            );
+            let fallback_points = package
+                .source_coordinates
+                .iter()
+                .map(|coord| (coord.row.saturating_add(1), coord.col.saturating_add(1)))
+                .collect();
+            let geometry_complete = package.source_geometry_complete
+                || package.report.source_formula_records_spooled == 0;
+            self.packages.insert(
+                sheet.to_string(),
+                StagedPackagePresence {
+                    generation,
+                    family_count: package.families.len() + package.partitioned_families.len(),
+                    geometry,
+                    fallback_points,
+                    geometry_complete,
+                },
+            );
+            true
         } else {
-            self.package_sheets.remove(sheet)
+            self.packages.remove(sheet).is_some()
         };
         if changed {
             self.bump();
@@ -251,17 +344,65 @@ impl StagedFormulaIndex {
     }
 
     pub(crate) fn touch_package(&mut self, sheet: &str) {
-        if self.package_sheets.contains(sheet) {
+        if let Some(package) = self.packages.get_mut(sheet) {
+            package.generation = self.next_generation;
+            self.next_generation = self
+                .next_generation
+                .checked_add(1)
+                .expect("staged package generation exhausted");
             self.bump();
         }
     }
 
     pub(crate) fn has_packages(&self) -> bool {
-        !self.package_sheets.is_empty()
+        !self.packages.is_empty()
     }
 
     pub(crate) fn package_sheets(&self) -> impl Iterator<Item = &str> {
-        self.package_sheets.iter().map(String::as_str)
+        self.packages.keys().map(String::as_str)
+    }
+
+    pub(crate) fn package_for_region(
+        &self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Option<Result<StagedPackageLease, ()>> {
+        let package = self.packages.get(sheet)?;
+        let intersects = package
+            .geometry
+            .iter()
+            .copied()
+            .any(|rect| rect.intersects(start_row, start_col, end_row, end_col))
+            || package
+                .fallback_points
+                .range((start_row, 0)..=(end_row, u32::MAX))
+                .any(|&(row, col)| col >= start_col && col <= end_col);
+        if intersects {
+            Some(Ok(StagedPackageLease {
+                generation: package.generation,
+                family_count: package.family_count,
+            }))
+        } else if package.geometry_complete {
+            None
+        } else {
+            Some(Err(()))
+        }
+    }
+
+    pub(crate) fn package_lease_for_sheet(&self, sheet: &str) -> Option<StagedPackageLease> {
+        self.packages.get(sheet).map(|package| StagedPackageLease {
+            generation: package.generation,
+            family_count: package.family_count,
+        })
+    }
+
+    pub(crate) fn package_lease_matches(&self, sheet: &str, lease: StagedPackageLease) -> bool {
+        self.packages.get(sheet).is_some_and(|package| {
+            package.generation == lease.generation && package.family_count == lease.family_count
+        })
     }
 
     pub(crate) fn leases_in_region(
@@ -326,8 +467,12 @@ impl StagedFormulaIndex {
             })
     }
 
-    #[cfg(test)]
     pub(crate) fn ordinary_count(&self) -> usize {
         self.sheets.values().map(BTreeMap::len).sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn package_count(&self) -> usize {
+        self.packages.len()
     }
 }

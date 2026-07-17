@@ -1,6 +1,6 @@
 # Evaluation Resources and Target-Driven Cutover
 
-Status: Approved implementation contract; C1a, C1b, and C2 implemented
+Status: Approved implementation contract; C1a, C1b, C2, and C3 implemented; C4 next
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
 resource-accounted, target-driven preparation and evaluation. It complements
@@ -55,10 +55,10 @@ Workbook::prepare_graph_for_sheets
      -> the same batch pipeline
 ```
 
-Failures during parsing and preflight restore staged batches and diagnostics. The three ingest calls
-after preparation are separate publications, however, so the existing pipeline is not a composed
-all-or-nothing transaction across ordinary formulas, compressed replay, and direct FormulaPlane
-append.
+Failures during parsing and preflight restore staged batches and diagnostics. The legacy prepare-all
+pipeline still uses separate ingest publications. C2/C3 target preparation instead composes ordinary
+formulas, exact compressed replay, and checked FormulaPlane append into one all-or-nothing
+transaction.
 
 Sheet selection is not dependency selection. A formula on a target sheet may depend transitively on
 staged formulas on any other sheet. Existing cell, cell-list, and cancellable evaluators therefore
@@ -453,9 +453,10 @@ Structural edits, formula edits, rename/remove, package invalidation, and sheet 
 the same transaction as staged storage. An audit test proves that every such mutation changes its
 revision so prepare/commit stale checks are honest.
 
-C3 selects an entire compressed or fragmented family as the initial atomic ownership unit. Residual
-per-family replay splitting is deferred until after C5 as a separately reviewed optimization. Whole
-package selection is required whenever safe residual ownership cannot be proven.
+C3 selects an entire deferred package when any of its compressed-family, fragmented-family, or exact
+fallback geometry intersects the demand closure. Selection and consumption are package-atomic:
+family-level residual replay ownership is never split, and unrelated packages remain staged. Residual
+splitting is deferred until after C5 as a separately reviewed optimization.
 
 ### 6.3 Discovery and widening
 
@@ -475,7 +476,8 @@ The algorithm is:
    consumer direction for this traversal.
 6. Track visited identities with staged generations, `VertexId`, `FormulaSpanRef` generation,
    symbol revision, and region key. Cycles terminate discovery by identity and are scheduled later.
-7. Select complete family disposition plus exact exceptions and replay records in source order.
+7. Select each intersecting package as a whole, compose complete and fragmented family disposition,
+   and retain exact exceptions and replay records in source order.
 8. On opaque semantics, return a widening decision rather than a partial plan.
 
 Widening uses set union and moves strictly upward for the request lifetime:
@@ -502,7 +504,7 @@ struct PreparedGraphForTargets {
     engine_token: Arc<()>,
     assumptions: PreparationRevision,
     selected_staged: Vec<StagedUnitLease>,
-    residual_packages: Vec<PreparedPackageResidual>,
+    selected_packages: Vec<PreparedWholePackage>,
     legacy_graph: PreparedLegacyGraphPlan,
     formula_plane: PreparedFormulaPlaneAppend,
     symbol_assumptions: Vec<SymbolAssumption>,
@@ -525,7 +527,7 @@ Commit order is fixed:
 4. Reserve final graph, AST, index, authority, dirty, report, and staged-residual capacities.
 5. Run injected fault seams before first mutation.
 6. Apply prevalidated legacy and FormulaPlane plans without logical failure or allocation.
-7. Remove exactly leased staged units and install residual package/index state.
+7. Remove exactly leased staged formulas and whole packages; retain every unselected package/index entry.
 8. Publish diagnostics, reports, dirty events, and topology revisions once.
 
 There is no cancellation point from steps 6 through 8. The section is bounded by final counts and
@@ -746,11 +748,13 @@ name-based generation/revision-coupled staged index, bounded sheet-index discove
 widening, and prepared legacy addition/replacement publication are active in Off and Shadow.
 Graph vertex/edge/materialization-cell/materialized-byte admission uses the common exact preflight for
 direct, bulk, logged/editor replay, staged compatibility, prepared legacy, demotion, fragmented, and
-generic graph mutations. All-unset budgets bypass preview work. Authoritative mode and deferred source
-packages retain whole-workbook/whole-package compatibility; C3 family selection and residual splitting
-remain disabled. FormulaPlane-only direct spans charge no hypothetical legacy materialization.
+generic graph mutations. All-unset budgets bypass preview work. At the C2 boundary, authoritative
+mode and deferred source packages retained whole-workbook/whole-package compatibility; C3 now
+supplies package-atomic deferred source selection.
+FormulaPlane-only direct spans charge no hypothetical legacy materialization.
 
-- Staged source indexing, pure discovery, monotone widening, and composed ordinary publication are active.
+- Staged source indexing, pure discovery, monotone widening, and composed ordinary publication are
+  active.
 - Exact common admission covers direct, bulk, logged, replay, replacement, demotion, staged,
   compressed fallback, fragmented, and generic graph publication.
 - Fault and seam audits pin semantic state, staged-index revision coupling, and scratch release.
@@ -760,11 +764,25 @@ prepare-target values match prepare-all.
 
 ### C3 - deferred FormulaPlane source units
 
-- Compose complete and fragmented family disposition with checked authority append.
-- Select whole families/packages; do not split residual replay ownership.
+Status: Complete. Exact package geometry participates in demand discovery, and intersection with any
+complete family, fragmented family, or fallback point selects the whole deferred package. There is no
+residual splitting: the selected package is consumed atomically while unrelated packages remain
+staged. Complete and fragmented dispositions, exact replay fallbacks, ordinary staged replacements,
+legacy graph publication, and checked FormulaPlane append share one prepared transaction.
 
-Gate: eager/deferred by Off/Shadow/authoritative parity, source-order preservation, and exact package
-restoration on failure.
+Off mode replays the selected package into the legacy graph. Shadow analyzes eligible FormulaPlane
+placements but retains legacy graph authority. Authoritative experimental mode commits supported
+complete or fragmented placements directly and sends exact unsupported or invalidated records through
+the legacy graph. All modes preserve source order and last-writer behavior. A package spool is replayed
+once per successful preparation (a package attached after ordinary formulas reuses its one indexed
+reconciliation replay), replay records are work-accounted in bounded chunks, and stale, parse,
+resource, cancellation, deadline, admission, or injected pre-commit failure leaves package ownership,
+staged formulas, reports, diagnostics, graph topology, and FormulaPlane authority unpublished and
+retryable.
+
+Gate complete: focused eager/deferred Off/Shadow/authoritative parity, source-order, replay-count,
+package-retention, exact failure restoration, resource, cancellation, stale-revision, and Calamine
+workbook tests pass. No C3 benchmark result is claimed.
 
 ### C4 - unified mixed target coordinator
 

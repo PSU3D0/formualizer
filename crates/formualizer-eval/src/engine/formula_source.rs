@@ -988,6 +988,16 @@ pub struct DeferredFormulaPackage {
     pub(crate) replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
     pub(crate) invalidated: std::collections::BTreeSet<SourceFamilyId>,
     pub(crate) suppressed: std::collections::BTreeSet<(u32, u32)>,
+    /// Exact source-record coordinates used only by staged target discovery.
+    /// Family rectangles remain the compact vocabulary for family members;
+    /// this list supplies ordinary and otherwise unclassified fallback points.
+    pub(crate) source_coordinates: Vec<SourceCoord>,
+    pub(crate) source_geometry_complete: bool,
+    /// Replay cached only when an already-staged ordinary formula must be
+    /// reconciled with a subsequently attached package. This keeps that
+    /// reconciliation linear in the package instead of scanning the spool
+    /// once per ordinary coordinate; target preparation reuses the same replay.
+    pub(crate) reconciliation_replay: Option<Vec<DeferredReplayFormula>>,
 }
 
 impl DeferredFormulaPackage {
@@ -999,6 +1009,58 @@ impl DeferredFormulaPackage {
         partitioned_families: Vec<PartitionedSourceFormulaFamily>,
         replay: Box<dyn DeferredFormulaReplay>,
     ) -> Self {
+        let represented_records = families
+            .iter()
+            .map(|family| family.member_count)
+            .chain(partitioned_families.iter().map(|family| {
+                family
+                    .surviving_member_count
+                    .saturating_add(family.reconciliation.ordinary_exceptions)
+            }))
+            .fold(0u64, u64::saturating_add);
+        let source_geometry_complete = represented_records == report.source_formula_records_spooled;
+        Self::new_with_geometry(
+            sheet_name,
+            report,
+            families,
+            partitioned_families,
+            Vec::new(),
+            source_geometry_complete,
+            replay,
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn new_with_source_coordinates(
+        sheet_name: String,
+        report: FormulaCompressedSourceReport,
+        families: Vec<SourceFormulaFamily>,
+        partitioned_families: Vec<PartitionedSourceFormulaFamily>,
+        source_coordinates: Vec<SourceCoord>,
+        replay: Box<dyn DeferredFormulaReplay>,
+    ) -> Self {
+        Self::new_with_geometry(
+            sheet_name,
+            report,
+            families,
+            partitioned_families,
+            source_coordinates,
+            true,
+            replay,
+        )
+    }
+
+    fn new_with_geometry(
+        sheet_name: String,
+        report: FormulaCompressedSourceReport,
+        families: Vec<SourceFormulaFamily>,
+        partitioned_families: Vec<PartitionedSourceFormulaFamily>,
+        mut source_coordinates: Vec<SourceCoord>,
+        source_geometry_complete: bool,
+        replay: Box<dyn DeferredFormulaReplay>,
+    ) -> Self {
+        source_coordinates.sort();
+        source_coordinates.dedup();
         Self {
             sheet_name,
             report,
@@ -1007,6 +1069,9 @@ impl DeferredFormulaPackage {
             replay: Arc::new(std::sync::Mutex::new(replay)),
             invalidated: Default::default(),
             suppressed: Default::default(),
+            source_coordinates,
+            source_geometry_complete,
+            reconciliation_replay: None,
         }
     }
 }

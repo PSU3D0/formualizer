@@ -1,7 +1,7 @@
 use formualizer_common::RangeAddress;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{
-    Engine, EvalConfig, FormulaIngestReport, FormulaParsePolicy, FormulaPlaneMode,
+    Engine, EvalConfig, EvaluationTarget, FormulaIngestReport, FormulaParsePolicy, FormulaPlaneMode,
 };
 use formualizer_workbook::LiteralValue;
 use formualizer_workbook::{
@@ -1215,6 +1215,52 @@ fn deferred_all_and_selected_builds_are_differentially_identical() {
         selected.baseline_stats().formula_plane_active_span_count,
         all.baseline_stats().formula_plane_active_span_count
     );
+}
+
+#[test]
+fn deferred_target_preparation_uses_calamine_package_geometry_without_cross_sheet_consumption() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let config = EvalConfig {
+            formula_plane_mode: mode,
+            defer_graph_building: true,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(formualizer_eval::test_workbook::TestWorkbook::new(), config);
+        let mut adapter = CalamineAdapter::open_bytes(two_shared_sheets_xlsx()).unwrap();
+        adapter.stream_into_engine(&mut engine).unwrap();
+
+        let report = engine
+            .prepare_graph_for_targets(
+                &[EvaluationTarget::Cell {
+                    sheet: "Sheet1".to_string(),
+                    row: 1,
+                    col: 2,
+                }],
+                Default::default(),
+            )
+            .unwrap();
+        assert_eq!(report.selected_source_families, 1, "{mode:?}");
+        assert!(engine.get_staged_formula_text("Sheet1", 1, 2).is_none());
+        assert!(engine.get_staged_formula_text("Other", 1, 2).is_some());
+        assert!(engine.has_staged_formulas());
+
+        let later = engine
+            .prepare_graph_for_targets(
+                &[EvaluationTarget::Cell {
+                    sheet: "Other".to_string(),
+                    row: 1,
+                    col: 2,
+                }],
+                Default::default(),
+            )
+            .unwrap();
+        assert_eq!(later.selected_source_families, 1, "{mode:?}");
+        assert!(!engine.has_staged_formulas());
+    }
 }
 
 #[test]
