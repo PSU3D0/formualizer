@@ -1,4 +1,5 @@
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use formualizer_common::{ExcelErrorExtra, LiteralValue, RangeAddress, ResourceExhaustionReason};
 
@@ -6,14 +7,20 @@ use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::target_preparation::TargetPreparationFault;
 use crate::engine::{
     AdmissionResourceBudget, DeferredFormulaPackage, DeferredFormulaReplay, DeferredReplayFormula,
-    Engine, EvalConfig, EvaluationBudgets, EvaluationTarget, FormulaCompressedSourceReport,
-    FormulaPlaneMode, OpaqueReason, PreparationOutcome, PrepareScope, PrepareTargetsOptions,
-    TableSelection,
+    Engine, EvalConfig, EvaluationBudgets, EvaluationTarget, ExplicitPartitionLegacyMembers,
+    FormulaCompressedSourceReport, FormulaParsePolicy, FormulaPlaneMode,
+    FormulaReplayCoordinateDisposition, FormulaReplayDisposition, OpaquePreparePolicy,
+    OpaqueReason, PartitionLegacyMember, PartitionLegacyMemberKind, PartitionReconciliation,
+    PartitionedSourceFormulaFamily, PlacementDomainTransport, PreparationOutcome, PrepareScope,
+    PrepareTargetsOptions, SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily,
+    SourceFormulaOrder, SourceRect, TableSelection,
 };
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
 
 fn engine(mode: FormulaPlaneMode) -> Engine<TestWorkbook> {
+    static BUILTINS_READY: OnceLock<()> = OnceLock::new();
+    BUILTINS_READY.get_or_init(crate::builtins::load_builtins);
     let mut config = EvalConfig::default().with_formula_plane_mode(mode);
     config.defer_graph_building = true;
     let mut engine = Engine::new(TestWorkbook::new(), config);
@@ -201,6 +208,121 @@ fn opaque_dynamic_formula_widens_once_to_workbook_and_retains_reason() {
     assert_eq!(report.retained_staged_cells, 0);
 }
 
+#[test]
+fn package_fallback_table_reference_discovers_the_same_staged_closure_as_ordinary() {
+    let setup = || {
+        let mut engine = engine(FormulaPlaneMode::Off);
+        let inputs = engine.sheet_id("Inputs").unwrap();
+        engine
+            .define_table(
+                "Sales",
+                RangeRef::new(
+                    CellRef::new(inputs, Coord::from_excel(10, 1, true, true)),
+                    CellRef::new(inputs, Coord::from_excel(12, 2, true, true)),
+                ),
+                true,
+                vec!["Region".into(), "Amount".into()],
+                false,
+            )
+            .unwrap();
+        engine.stage_formula_text("Inputs", 11, 2, "=40+2".into());
+        engine
+            .source_formula_ingress()
+            .stage_deferred(fallback_package(
+                "Outputs",
+                &[(1, 1, "=SUM(Sales[Amount])")],
+            ));
+        engine
+    };
+
+    let mut target = setup();
+    let mut oracle = setup();
+    let report = target
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+        .unwrap();
+    assert_eq!(report.selected_staged_cells, 2);
+    assert_eq!(report.widened_scope, PrepareScope::Exact);
+    oracle.build_graph_all().unwrap();
+    target.config.defer_graph_building = false;
+    oracle.config.defer_graph_building = false;
+    assert_eq!(
+        target.evaluate_cell("Outputs", 1, 1).unwrap(),
+        oracle.evaluate_cell("Outputs", 1, 1).unwrap()
+    );
+}
+
+#[test]
+fn package_fallback_opaque_3d_reference_widens_and_matches_prepare_all_error() {
+    let setup = || {
+        let mut engine = engine(FormulaPlaneMode::Off);
+        engine.stage_formula_text("Inputs", 9, 9, "=99".into());
+        engine
+            .source_formula_ingress()
+            .stage_deferred(fallback_package("Outputs", &[(1, 1, "=Inputs:Middle!A1")]));
+        engine
+    };
+    let mut target = setup();
+    let mut oracle = setup();
+    let report = target
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+        .unwrap();
+    assert_eq!(report.widened_scope, PrepareScope::Workbook);
+    assert!(
+        report
+            .widening_reasons
+            .contains(&OpaqueReason::UnresolvedCrossSheetBinding)
+    );
+    assert_eq!(report.selected_staged_cells, 2);
+    oracle.build_graph_all().unwrap();
+    target.config.defer_graph_building = false;
+    oracle.config.defer_graph_building = false;
+    assert_eq!(
+        target.evaluate_cell("Outputs", 1, 1).unwrap(),
+        oracle.evaluate_cell("Outputs", 1, 1).unwrap()
+    );
+    assert!(matches!(
+        target.evaluate_cell("Outputs", 1, 1).unwrap(),
+        Some(LiteralValue::Error(ref error))
+            if error.kind == formualizer_common::ExcelErrorKind::NImpl
+    ));
+}
+
+#[test]
+fn strict_opaque_policy_is_preserved_for_package_fallback_and_authoritative_compatibility() {
+    let strict = PrepareTargetsOptions {
+        opaque_policy: OpaquePreparePolicy::Error,
+        ..Default::default()
+    };
+
+    for formula in [
+        "=INDIRECT(\"Inputs!A1\")",
+        "=MYSTERY(A1)",
+        "=Inputs:Middle!A1",
+    ] {
+        let mut fallback = engine(FormulaPlaneMode::Off);
+        fallback
+            .source_formula_ingress()
+            .stage_deferred(fallback_package("Outputs", &[(1, 1, formula)]));
+        let error = fallback
+            .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], strict.clone())
+            .unwrap_err();
+        assert_eq!(
+            error.kind,
+            formualizer_common::ExcelErrorKind::NImpl,
+            "{formula}"
+        );
+        assert!(fallback.has_staged_formulas(), "{formula}");
+    }
+
+    let mut authoritative = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    authoritative.stage_formula_text("Outputs", 1, 1, "=1".into());
+    let error = authoritative
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], strict)
+        .unwrap_err();
+    assert_eq!(error.kind, formualizer_common::ExcelErrorKind::NImpl);
+    assert!(authoritative.has_staged_formulas());
+}
+
 #[derive(Default)]
 struct EmptyReplay;
 
@@ -219,6 +341,350 @@ impl DeferredFormulaReplay for EmptyReplay {
     ) -> Result<Option<DeferredReplayFormula>, String> {
         Ok(None)
     }
+}
+
+struct FamilyReplay {
+    records: Vec<DeferredReplayFormula>,
+}
+
+impl DeferredFormulaReplay for FamilyReplay {
+    fn replay(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        Ok(self
+            .records
+            .iter()
+            .filter(|record| {
+                let coord = SourceCoord {
+                    row: record.row - 1,
+                    col: record.col - 1,
+                };
+                record.family.is_none_or(|family| {
+                    disposition.shared_disposition(family, coord)
+                        == FormulaReplayCoordinateDisposition::LegacyShared
+                })
+            })
+            .cloned()
+            .collect())
+    }
+
+    fn replay_partitioned(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+        _partitions: &[PartitionedSourceFormulaFamily],
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.replay(disposition)
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        Ok(self
+            .records
+            .iter()
+            .find(|record| record.row == row && record.col == col)
+            .cloned())
+    }
+}
+
+fn fallback_package(sheet: &str, formulas: &[(u32, u32, &str)]) -> DeferredFormulaPackage {
+    let records = formulas
+        .iter()
+        .enumerate()
+        .map(|(source_order, &(row, col, text))| DeferredReplayFormula {
+            source_order: SourceFormulaOrder::new(source_order as u64),
+            row,
+            col,
+            text: text.to_string(),
+            family: None,
+            partition_owner: None,
+        })
+        .collect::<Vec<_>>();
+    let coordinates = formulas
+        .iter()
+        .map(|&(row, col, _)| SourceCoord {
+            row: row - 1,
+            col: col - 1,
+        })
+        .collect();
+    DeferredFormulaPackage::new_with_source_coordinates(
+        sheet.to_string(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: records.len() as u64,
+            ..Default::default()
+        },
+        Vec::new(),
+        Vec::new(),
+        coordinates,
+        Box::new(FamilyReplay { records }),
+    )
+}
+
+struct CountingReplay {
+    records: Vec<DeferredReplayFormula>,
+    replay_count: Arc<AtomicUsize>,
+}
+
+impl DeferredFormulaReplay for CountingReplay {
+    fn replay(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.replay_count.fetch_add(1, Ordering::AcqRel);
+        Ok(self
+            .records
+            .iter()
+            .filter(|record| {
+                let coord = SourceCoord {
+                    row: record.row - 1,
+                    col: record.col - 1,
+                };
+                record.family.is_none_or(|family| {
+                    disposition.shared_disposition(family, coord)
+                        == FormulaReplayCoordinateDisposition::LegacyShared
+                })
+            })
+            .cloned()
+            .collect())
+    }
+
+    fn replay_partitioned(
+        &mut self,
+        disposition: &FormulaReplayDisposition,
+        _partitions: &[PartitionedSourceFormulaFamily],
+    ) -> Result<Vec<DeferredReplayFormula>, String> {
+        self.replay(disposition)
+    }
+
+    fn formula_at(&mut self, row: u32, col: u32) -> Result<Option<DeferredReplayFormula>, String> {
+        Ok(self
+            .records
+            .iter()
+            .find(|record| record.row == row && record.col == col)
+            .cloned())
+    }
+}
+
+fn counting_fallback_package(
+    sheet: &str,
+    formula: &str,
+    replay_count: Arc<AtomicUsize>,
+) -> DeferredFormulaPackage {
+    let record = DeferredReplayFormula {
+        source_order: SourceFormulaOrder::new(0),
+        row: 1,
+        col: 1,
+        text: formula.to_string(),
+        family: None,
+        partition_owner: None,
+    };
+    DeferredFormulaPackage::new_with_source_coordinates(
+        sheet.to_string(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: 1,
+            ..Default::default()
+        },
+        Vec::new(),
+        Vec::new(),
+        vec![SourceCoord { row: 0, col: 0 }],
+        Box::new(CountingReplay {
+            records: vec![record],
+            replay_count,
+        }),
+    )
+}
+
+fn fragmented_family_package(sheet: &str, sheet_instance: u32) -> DeferredFormulaPackage {
+    let source_id = SourceFamilyId {
+        sheet_instance,
+        source_index: 0,
+    };
+    let ordinary_coord = SourceCoord { row: 151, col: 2 };
+    let family = PartitionedSourceFormulaFamily {
+        source_id,
+        source_order: SourceFormulaOrder::new(0),
+        template_origin0: SourceCoord { row: 0, col: 2 },
+        template_text: Arc::from("$A$1+1"),
+        declared: SourceRect {
+            start: SourceCoord { row: 0, col: 2 },
+            end: SourceCoord { row: 301, col: 2 },
+        },
+        surviving_member_count: 300,
+        fragments: vec![
+            PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 149,
+                col: 2,
+            },
+            PlacementDomainTransport::RowRun {
+                row_start: 152,
+                row_end: 301,
+                col: 2,
+            },
+        ],
+        legacy_members: ExplicitPartitionLegacyMembers::try_new(vec![PartitionLegacyMember {
+            coord: ordinary_coord,
+            kind: PartitionLegacyMemberKind::OrdinaryException,
+        }])
+        .unwrap(),
+        reconciliation: PartitionReconciliation {
+            shared_members: 300,
+            ordinary_exceptions: 1,
+            holes: 1,
+        },
+    };
+    let mut records = Vec::new();
+    let mut coordinates = Vec::new();
+    for row0 in 0..=301 {
+        if row0 == 150 {
+            continue;
+        }
+        let coord = SourceCoord { row: row0, col: 2 };
+        coordinates.push(coord);
+        records.push(DeferredReplayFormula {
+            source_order: SourceFormulaOrder::new(u64::from(row0)),
+            row: row0 + 1,
+            col: 3,
+            text: if coord == ordinary_coord {
+                "=$A$1+5".to_string()
+            } else {
+                "=$A$1+1".to_string()
+            },
+            family: (coord != ordinary_coord).then_some(source_id),
+            partition_owner: Some(source_id),
+        });
+    }
+    DeferredFormulaPackage::new_with_source_coordinates(
+        sheet.to_string(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: 301,
+            families_seen: 1,
+            family_cells_seen: 300,
+            source_fragmentable_families: 1,
+            source_fragmentable_cells: 300,
+            source_fragment_count: 2,
+            source_hole_exclusions: 1,
+            source_ordinary_exclusions: 1,
+            ..Default::default()
+        },
+        Vec::new(),
+        vec![family],
+        coordinates,
+        Box::new(FamilyReplay { records }),
+    )
+}
+
+fn complete_family_package(
+    sheet: &str,
+    sheet_instance: u32,
+    family_count: u32,
+) -> DeferredFormulaPackage {
+    let mut families = Vec::new();
+    let mut records = Vec::new();
+    let mut coordinates = Vec::new();
+    for family_index in 0..family_count {
+        let col0 = family_index + 1;
+        let source_id = SourceFamilyId {
+            sheet_instance,
+            source_index: family_index as usize,
+        };
+        families.push(SourceFormulaFamily {
+            source_id,
+            source_order: SourceFormulaOrder::new(u64::from(family_index) * 100),
+            anchor_coord0: SourceCoord { row: 0, col: col0 },
+            anchor_text: Arc::from(format!("$A$1+{}", family_index + 1)),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 99,
+                col: col0,
+            }),
+            member_count: 100,
+        });
+        for row0 in 0..100 {
+            coordinates.push(SourceCoord {
+                row: row0,
+                col: col0,
+            });
+            records.push(DeferredReplayFormula {
+                source_order: SourceFormulaOrder::new(
+                    u64::from(family_index) * 100 + u64::from(row0),
+                ),
+                row: row0 + 1,
+                col: col0 + 1,
+                text: format!("=$A$1+{}", family_index + 1),
+                family: Some(source_id),
+                partition_owner: Some(source_id),
+            });
+        }
+    }
+    families.reverse();
+    DeferredFormulaPackage::new_with_source_coordinates(
+        sheet.to_string(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: u64::from(family_count) * 100,
+            families_seen: u64::from(family_count),
+            family_cells_seen: u64::from(family_count) * 100,
+            source_clean_families: u64::from(family_count),
+            source_clean_cells: u64::from(family_count) * 100,
+            ..Default::default()
+        },
+        families,
+        Vec::new(),
+        coordinates,
+        Box::new(FamilyReplay { records }),
+    )
+}
+
+fn overlapping_families_package(sheet: &str, sheet_instance: u32) -> DeferredFormulaPackage {
+    let mut families = Vec::new();
+    let mut records = Vec::new();
+    for family_index in 0..2u32 {
+        let source_id = SourceFamilyId {
+            sheet_instance,
+            source_index: family_index as usize,
+        };
+        families.push(SourceFormulaFamily {
+            source_id,
+            source_order: SourceFormulaOrder::new(u64::from(family_index) * 2),
+            anchor_coord0: SourceCoord { row: 0, col: 1 },
+            anchor_text: Arc::from(format!("$A$1+{}", family_index + 1)),
+            members: SourceFamilyMembers::CompleteDomain(PlacementDomainTransport::RowRun {
+                row_start: 0,
+                row_end: 1,
+                col: 1,
+            }),
+            member_count: 2,
+        });
+        for row0 in 0..2 {
+            records.push(DeferredReplayFormula {
+                source_order: SourceFormulaOrder::new(
+                    u64::from(family_index) * 2 + u64::from(row0),
+                ),
+                row: row0 + 1,
+                col: 2,
+                text: format!("=$A$1+{}", family_index + 1),
+                family: Some(source_id),
+                partition_owner: Some(source_id),
+            });
+        }
+    }
+    DeferredFormulaPackage::new_with_source_coordinates(
+        sheet.to_string(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: 4,
+            families_seen: 2,
+            family_cells_seen: 4,
+            source_clean_families: 2,
+            source_clean_cells: 4,
+            ..Default::default()
+        },
+        families,
+        Vec::new(),
+        vec![
+            SourceCoord { row: 0, col: 1 },
+            SourceCoord { row: 1, col: 1 },
+        ],
+        Box::new(FamilyReplay { records }),
+    )
 }
 
 #[test]
@@ -240,7 +706,7 @@ fn authoritative_mode_uses_prepare_all_compatibility_without_partial_c2_ownershi
 }
 
 #[test]
-fn deferred_package_selects_whole_workbook_compatibility_without_splitting() {
+fn empty_deferred_package_does_not_force_unrelated_ordinary_target_compatibility() {
     let mut engine = engine(FormulaPlaneMode::Shadow);
     engine.stage_formula_text("Outputs", 1, 1, "=1".into());
     engine
@@ -256,7 +722,231 @@ fn deferred_package_selects_whole_workbook_compatibility_without_splitting() {
     let report = engine
         .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
         .unwrap();
+    assert_eq!(report.outcome, PreparationOutcome::Prepared);
+    assert_eq!(report.widened_scope, PrepareScope::Exact);
+    assert_eq!(report.selected_staged_cells, 1);
+    assert!(engine.has_staged_formulas());
+}
+
+#[test]
+fn demanding_one_family_consumes_whole_package_and_retains_unrelated_package() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut engine = engine(mode);
+        engine
+            .source_formula_ingress()
+            .stage_deferred(complete_family_package("Outputs", 800, 2));
+        engine
+            .source_formula_ingress()
+            .stage_deferred(complete_family_package("Middle", 801, 1));
+
+        let first = engine
+            .prepare_graph_for_targets(&[cell("Outputs", 1, 2)], Default::default())
+            .unwrap();
+        assert_eq!(first.outcome, PreparationOutcome::Prepared, "{mode:?}");
+        assert_eq!(first.selected_source_families, 2, "{mode:?}");
+        assert!(engine.get_staged_formula_text("Outputs", 1, 2).is_none());
+        assert!(engine.get_staged_formula_text("Middle", 1, 2).is_some());
+        let stats = engine.baseline_stats();
+        match mode {
+            FormulaPlaneMode::AuthoritativeExperimental => {
+                assert_eq!(stats.formula_plane_active_span_count, 2);
+                assert_eq!(stats.graph_formula_vertex_count, 0);
+            }
+            FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
+                assert_eq!(stats.formula_plane_active_span_count, 0);
+                assert_eq!(stats.graph_formula_vertex_count, 200);
+            }
+        }
+
+        let second = engine
+            .prepare_graph_for_targets(&[cell("Middle", 1, 2)], Default::default())
+            .unwrap();
+        assert_eq!(second.selected_source_families, 1, "{mode:?}");
+        assert!(!engine.has_staged_formulas());
+    }
+}
+
+#[test]
+fn fragmented_package_reuses_complete_disposition_with_exact_exception() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut engine = engine(mode);
+        engine
+            .source_formula_ingress()
+            .stage_deferred(fragmented_family_package("Outputs", 825));
+        let target_report = engine
+            .prepare_graph_for_targets(&[cell("Outputs", 1, 3)], Default::default())
+            .unwrap();
+        assert_eq!(target_report.selected_source_families, 1, "{mode:?}");
+        assert!(!engine.has_staged_formulas());
+        let ingest = engine.last_formula_ingest_report().unwrap();
+        assert_eq!(ingest.formula_cells_seen, 301, "{mode:?} {ingest:?}");
+        assert_eq!(ingest.source_spool_replays, 1, "{mode:?} {ingest:?}");
+        let stats = engine.baseline_stats();
+        match mode {
+            FormulaPlaneMode::AuthoritativeExperimental => {
+                assert_eq!(stats.formula_plane_active_span_count, 2);
+                assert_eq!(stats.graph_formula_vertex_count, 1);
+                assert_eq!(ingest.source_partitioned_families_prepared, 1);
+                assert_eq!(ingest.source_partition_fragments_prepared, 2);
+                assert_eq!(ingest.source_partition_span_cells_prepared, 300);
+                assert_eq!(ingest.graph_formula_cells_materialized, 1);
+            }
+            FormulaPlaneMode::Off | FormulaPlaneMode::Shadow => {
+                assert_eq!(stats.formula_plane_active_span_count, 0);
+                assert_eq!(stats.graph_formula_vertex_count, 301);
+            }
+        }
+    }
+}
+
+#[test]
+fn package_replacement_preserves_ordinary_last_writer_in_both_staging_orders() {
+    for mode in [FormulaPlaneMode::Off, FormulaPlaneMode::Shadow] {
+        for ordinary_first in [false, true] {
+            let mut engine = engine(mode);
+            if ordinary_first {
+                engine.stage_formula_text("Outputs", 1, 2, "=99".into());
+            }
+            engine
+                .source_formula_ingress()
+                .stage_deferred(complete_family_package("Outputs", 850, 2));
+            if !ordinary_first {
+                engine.stage_formula_text("Outputs", 1, 2, "=99".into());
+            }
+
+            let report = engine
+                .prepare_graph_for_targets(&[cell("Outputs", 1, 2)], Default::default())
+                .unwrap();
+            assert_eq!(
+                report.selected_source_families, 2,
+                "{mode:?} ordinary_first={ordinary_first}"
+            );
+            assert!(!engine.has_staged_formulas());
+            engine.config.defer_graph_building = false;
+            assert_eq!(
+                engine.evaluate_cell("Outputs", 1, 2).unwrap(),
+                Some(LiteralValue::Number(99.0)),
+                "{mode:?} ordinary_first={ordinary_first}"
+            );
+            assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 200);
+        }
+    }
+}
+
+#[test]
+fn package_after_ordinary_reconciles_with_one_replay_reused_by_preparation() {
+    let replay_count = Arc::new(AtomicUsize::new(0));
+    let mut engine = engine(FormulaPlaneMode::Off);
+    engine.stage_formula_text("Outputs", 1, 1, "=99".into());
+    engine
+        .source_formula_ingress()
+        .stage_deferred(counting_fallback_package(
+            "Outputs",
+            "=1",
+            Arc::clone(&replay_count),
+        ));
+    assert_eq!(replay_count.load(Ordering::Acquire), 1);
+
+    let report = engine
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+        .unwrap();
+    assert_eq!(report.outcome, PreparationOutcome::Prepared);
+    assert_eq!(replay_count.load(Ordering::Acquire), 1);
+    assert!(!engine.has_staged_formulas());
+}
+
+#[test]
+fn compatibility_after_package_discovery_replays_each_package_once() {
+    let replay_count = Arc::new(AtomicUsize::new(0));
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(counting_fallback_package(
+            "Outputs",
+            "=1",
+            Arc::clone(&replay_count),
+        ));
+    engine.stage_formula_text("Inputs", 1, 1, "=2".into());
+
+    let report = engine
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+        .unwrap();
     assert_eq!(report.outcome, PreparationOutcome::CompatibilityPrepared);
+    assert_eq!(replay_count.load(Ordering::Acquire), 1);
+    assert_eq!(
+        engine
+            .last_formula_ingest_report()
+            .unwrap()
+            .source_spool_replays,
+        1
+    );
+}
+
+#[test]
+fn unknown_sheet_package_enters_compatibility_before_any_package_replay() {
+    let known_replays = Arc::new(AtomicUsize::new(0));
+    let unknown_replays = Arc::new(AtomicUsize::new(0));
+    let mut engine = engine(FormulaPlaneMode::Off);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(counting_fallback_package(
+            "Outputs",
+            "=INDIRECT(\"Inputs!A1\")",
+            Arc::clone(&known_replays),
+        ));
+    engine
+        .source_formula_ingress()
+        .stage_deferred(counting_fallback_package(
+            "Future",
+            "=1",
+            Arc::clone(&unknown_replays),
+        ));
+
+    let report = engine
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+        .unwrap();
+    assert_eq!(report.outcome, PreparationOutcome::CompatibilityPrepared);
+    assert_eq!(known_replays.load(Ordering::Acquire), 1);
+    assert_eq!(unknown_replays.load(Ordering::Acquire), 1);
+    assert!(engine.sheet_id("Future").is_some());
+}
+
+#[test]
+fn incomplete_package_geometry_fails_safe_to_workbook_discovery() {
+    let mut engine = engine(FormulaPlaneMode::Off);
+    let package = DeferredFormulaPackage::new(
+        "Outputs".into(),
+        FormulaCompressedSourceReport {
+            source_formula_records_spooled: 2,
+            ..Default::default()
+        },
+        Vec::new(),
+        Vec::new(),
+        Box::new(FamilyReplay {
+            records: vec![DeferredReplayFormula {
+                source_order: SourceFormulaOrder::new(0),
+                row: 1,
+                col: 1,
+                text: "=1".into(),
+                family: None,
+                partition_owner: None,
+            }],
+        }),
+    );
+    engine.source_formula_ingress().stage_deferred(package);
+    engine.stage_formula_text("Inputs", 4, 4, "=4".into());
+
+    let report = engine
+        .prepare_graph_for_targets(&[cell("Outputs", 10, 10)], Default::default())
+        .unwrap();
     assert_eq!(report.widened_scope, PrepareScope::Workbook);
     assert!(
         report
@@ -264,6 +954,218 @@ fn deferred_package_selects_whole_workbook_compatibility_without_splitting() {
             .contains(&OpaqueReason::DeferredSourcePackage)
     );
     assert!(!engine.has_staged_formulas());
+}
+
+#[test]
+fn package_fallback_parse_policy_matrix_is_transactional() {
+    for policy in [
+        FormulaParsePolicy::Strict,
+        FormulaParsePolicy::KeepCachedValue,
+        FormulaParsePolicy::AsText,
+        FormulaParsePolicy::CoerceToError,
+    ] {
+        let mut engine = engine(FormulaPlaneMode::Off);
+        engine.config.formula_parse_policy = policy;
+        engine
+            .source_formula_ingress()
+            .stage_deferred(fallback_package("Outputs", &[(1, 1, "=BROKEN(")]));
+        let result = engine.prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default());
+        if policy == FormulaParsePolicy::Strict {
+            assert!(result.is_err());
+            assert!(engine.has_staged_formulas());
+            assert!(engine.formula_parse_diagnostics().is_empty());
+        } else {
+            let report = result.unwrap();
+            assert_eq!(report.selected_staged_cells, 1, "{policy:?}");
+            assert!(!engine.has_staged_formulas());
+            assert_eq!(engine.formula_parse_diagnostics().len(), 1, "{policy:?}");
+            let expected_vertices = usize::from(policy != FormulaParsePolicy::KeepCachedValue);
+            assert_eq!(
+                engine.baseline_stats().graph_formula_vertex_count,
+                expected_vertices,
+                "{policy:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn plane_append_failure_materializes_every_direct_coordinate_without_losing_last_writer() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    engine
+        .set_cell_value("Outputs", 1, 1, LiteralValue::Number(40.0))
+        .unwrap();
+    engine
+        .source_formula_ingress()
+        .stage_deferred(overlapping_families_package("Outputs", 870));
+
+    let report = engine
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 2)], Default::default())
+        .unwrap();
+    assert_eq!(report.outcome, PreparationOutcome::Prepared);
+    assert!(!engine.has_staged_formulas());
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 2);
+    assert!(
+        engine
+            .last_formula_ingest_report()
+            .unwrap()
+            .fallback_reasons
+            .keys()
+            .any(|reason| reason.starts_with("TargetFormulaPlaneAppend:"))
+    );
+    engine.config.defer_graph_building = false;
+    assert_eq!(
+        engine.evaluate_cell("Outputs", 1, 2).unwrap(),
+        Some(LiteralValue::Number(42.0))
+    );
+}
+
+#[test]
+fn authoritative_direct_package_does_not_charge_hypothetical_legacy_materialization() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(complete_family_package("Outputs", 875, 1));
+    let budgets = EvaluationBudgets {
+        admission: AdmissionResourceBudget {
+            graph_vertex_hard_limit: Some(0),
+            graph_edge_hard_limit: Some(0),
+            materialization_cells: Some(0),
+            materialized_graph_bytes: Some(0),
+        },
+        ..Default::default()
+    };
+    let report = engine
+        .prepare_graph_for_targets(
+            &[cell("Outputs", 1, 2)],
+            PrepareTargetsOptions {
+                budgets: Some(&budgets),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(report.selected_source_families, 1);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    assert_eq!(engine.baseline_stats().graph_vertex_count, 0);
+}
+
+#[test]
+fn direct_heavy_package_honors_target_work_budget_and_remains_staged() {
+    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    engine
+        .source_formula_ingress()
+        .stage_deferred(complete_family_package("Outputs", 885, 1));
+    let budgets = EvaluationBudgets {
+        work: crate::engine::WorkResourceBudget {
+            max_work_units: Some(10),
+        },
+        ..Default::default()
+    };
+    let error = engine
+        .prepare_graph_for_targets(
+            &[cell("Outputs", 1, 2)],
+            PrepareTargetsOptions {
+                budgets: Some(&budgets),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error.extra,
+        ExcelErrorExtra::Resource { ref detail }
+            if detail.reason == ResourceExhaustionReason::WorkUnits
+    ));
+    assert!(engine.has_staged_formulas());
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+}
+
+#[test]
+fn authoritative_target_preparation_matches_prepare_all_for_values_and_errors() {
+    for input in [
+        LiteralValue::Number(41.0),
+        LiteralValue::Error(formualizer_common::ExcelError::new(
+            formualizer_common::ExcelErrorKind::Div,
+        )),
+    ] {
+        let setup = || {
+            let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+            engine
+                .set_cell_value("Outputs", 1, 1, input.clone())
+                .unwrap();
+            engine
+                .source_formula_ingress()
+                .stage_deferred(complete_family_package("Outputs", 890, 1));
+            engine
+        };
+        let mut target = setup();
+        let mut oracle = setup();
+        target
+            .prepare_graph_for_targets(&[cell("Outputs", 1, 2)], Default::default())
+            .unwrap();
+        oracle.build_graph_all().unwrap();
+        target.config.defer_graph_building = false;
+        oracle.config.defer_graph_building = false;
+        assert_eq!(
+            target.evaluate_cell("Outputs", 1, 2).unwrap(),
+            oracle.evaluate_cell("Outputs", 1, 2).unwrap(),
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
+fn selected_package_survives_every_target_precommit_fault_without_publication() {
+    let seams = [
+        TargetPreparationFault::AfterDiscovery,
+        TargetPreparationFault::FinalRevisionValidation,
+        TargetPreparationFault::FinalGraphValidation,
+        TargetPreparationFault::Admission,
+        TargetPreparationFault::Reservation,
+        TargetPreparationFault::BeforeFirstMutation,
+    ];
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        for seam in seams {
+            let mut engine = engine(mode);
+            engine
+                .source_formula_ingress()
+                .stage_deferred(complete_family_package("Outputs", 900, 1));
+            let before = engine.baseline_stats();
+            let index_revision = engine.staged_formula_index_revision_for_test();
+            engine.set_target_preparation_fault_for_test(seam);
+            assert!(
+                engine
+                    .prepare_graph_for_targets(&[cell("Outputs", 1, 2)], Default::default())
+                    .is_err(),
+                "{mode:?} {seam:?}"
+            );
+            let after = engine.baseline_stats();
+            assert_eq!(after.graph_vertex_count, before.graph_vertex_count);
+            assert_eq!(after.graph_edge_count, before.graph_edge_count);
+            assert_eq!(
+                after.graph_formula_vertex_count,
+                before.graph_formula_vertex_count
+            );
+            assert_eq!(
+                after.formula_plane_active_span_count,
+                before.formula_plane_active_span_count
+            );
+            assert_eq!(after.dirty_vertex_count, before.dirty_vertex_count);
+            assert_eq!(
+                engine.staged_formula_index_revision_for_test(),
+                index_revision,
+                "{mode:?} {seam:?}"
+            );
+            assert!(engine.get_staged_formula_text("Outputs", 1, 2).is_some());
+            assert!(engine.last_formula_ingest_report().is_none());
+            assert!(engine.formula_parse_diagnostics().is_empty());
+            assert!(engine.staged_formula_index_is_consistent_for_test());
+        }
+    }
 }
 
 #[test]
@@ -1013,6 +1915,37 @@ fn mid_discovery_provider_mismatch_returns_typed_stale() {
         }
     ));
     assert_eq!(engine.staged_formula_count(), 1);
+}
+
+#[test]
+fn package_fallback_checks_each_planning_snapshot_against_request_assumptions() {
+    let workbook = TestWorkbook::default();
+    let revision = workbook.planning_revision_handle();
+    let mut engine = Engine::new(
+        workbook,
+        EvalConfig {
+            defer_graph_building: true,
+            ..Default::default()
+        },
+    );
+    engine.add_sheet("Outputs").unwrap();
+    engine
+        .source_formula_ingress()
+        .stage_deferred(fallback_package("Outputs", &[(1, 1, "=SUM(1,2)")]));
+    let bump = revision.clone();
+    engine.set_before_target_planning_snapshot_hook_for_test(move || {
+        bump.fetch_add(1, Ordering::AcqRel);
+    });
+    let error = engine
+        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+        .unwrap_err();
+    assert!(matches!(
+        error.extra,
+        ExcelErrorExtra::PreparationStale {
+            reason: formualizer_common::PreparationStaleReason::Provider
+        }
+    ));
+    assert!(engine.has_staged_formulas());
 }
 
 #[test]

@@ -357,6 +357,7 @@ impl CalamineAdapter {
         let mut values_handed_to_engine = 0usize;
         let mut formula_staging = FormulaStaging::new();
         let mut formula_count = 0usize;
+        let mut deferred_source_coordinates = engine.config.defer_graph_building.then(Vec::new);
         let mut formula_evidence = MonotonicFormulaEvidence::new();
         let spool_limits = engine.workbook_load_limits();
         let workbook_bytes_remaining = spool_limits
@@ -421,6 +422,9 @@ impl CalamineAdapter {
                 let source_sequence = formula_count as u64;
                 match metadata {
                     XlsxFormulaMetadata::Normal { formula } => {
+                        if let Some(coordinates) = deferred_source_coordinates.as_mut() {
+                            coordinates.push((coord0, None));
+                        }
                         formula_evidence.observe_ordered(
                             coord0,
                             SourceFormulaOrder::new(source_sequence),
@@ -452,6 +456,9 @@ impl CalamineAdapter {
                             sheet_instance,
                             source_index: shared_index,
                         };
+                        if let Some(coordinates) = deferred_source_coordinates.as_mut() {
+                            coordinates.push((coord0, Some(family)));
+                        }
                         formula_evidence.observe_ordered(
                             coord0,
                             SourceFormulaOrder::new(source_sequence),
@@ -471,15 +478,17 @@ impl CalamineAdapter {
                     }
                     XlsxFormulaMetadata::SharedDerived { shared_index } => {
                         shared_formula_tags += 1;
+                        let family = SourceFamilyId {
+                            sheet_instance,
+                            source_index: shared_index,
+                        };
+                        if let Some(coordinates) = deferred_source_coordinates.as_mut() {
+                            coordinates.push((coord0, Some(family)));
+                        }
                         formula_evidence.observe_ordered(
                             coord0,
                             SourceFormulaOrder::new(source_sequence),
-                            EvidenceRecord::Descendant {
-                                family: SourceFamilyId {
-                                    sheet_instance,
-                                    source_index: shared_index,
-                                },
-                            },
+                            EvidenceRecord::Descendant { family },
                         );
                         formula_spool.append(SpoolFormulaRecord::SharedDescendant {
                             sequence: source_sequence,
@@ -488,6 +497,9 @@ impl CalamineAdapter {
                         })
                     }
                     _ => {
+                        if let Some(coordinates) = deferred_source_coordinates.as_mut() {
+                            coordinates.push((coord0, None));
+                        }
                         formula_evidence.observe_ordered(
                             coord0,
                             SourceFormulaOrder::new(source_sequence),
@@ -666,6 +678,20 @@ impl CalamineAdapter {
                 })
             })
             .collect::<Result<Vec<_>, calamine::Error>>()?;
+        let represented_families = compressed_families
+            .iter()
+            .map(|family| family.source_id)
+            .chain(partitioned_families.iter().map(|family| family.source_id))
+            .collect::<BTreeSet<_>>();
+        let deferred_source_coordinates = deferred_source_coordinates
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(coord, family)| {
+                family
+                    .is_none_or(|family| !represented_families.contains(&family))
+                    .then_some(coord)
+            })
+            .collect::<Vec<_>>();
         let formula_spool_bytes = if formula_count == 0 {
             0
         } else {
@@ -788,11 +814,12 @@ impl CalamineAdapter {
             );
         }
         let deferred_package = engine.config.defer_graph_building.then(|| {
-            DeferredFormulaPackage::new(
+            DeferredFormulaPackage::new_with_source_coordinates(
                 sheet.to_string(),
                 formula_source_report.clone(),
                 compressed_families.clone(),
                 partitioned_families.clone(),
+                deferred_source_coordinates,
                 Box::new(CalamineDeferredFormulaReplay::new(
                     formula_spool
                         .take()

@@ -17,7 +17,9 @@ use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::row_visibility::RowVisibilityState;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
-use crate::engine::target_preparation::{StagedFormulaIndex, StagedFormulaLease};
+use crate::engine::target_preparation::{
+    StagedFormulaIndex, StagedFormulaLease, StagedPackageLease,
+};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
     CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
@@ -96,6 +98,18 @@ pub(crate) struct StagedSheet {
 }
 
 impl StagedSheet {
+    fn invalidate_all_deferred_families(package: &mut crate::engine::DeferredFormulaPackage) {
+        package
+            .invalidated
+            .extend(package.families.iter().map(|family| family.source_id));
+        package.invalidated.extend(
+            package
+                .partitioned_families
+                .iter()
+                .map(|family| family.source_id),
+        );
+    }
+
     fn invalidate_deferred_at(&mut self, row: u32, col: u32) {
         let Some(package) = self.deferred_package.as_mut() else {
             return;
@@ -113,17 +127,53 @@ impl StagedSheet {
             // A poisoned lock, replay failure, malformed spool, or missing
             // lookup result must never let a possibly edited family commit.
             // Fail closed at package scope before suppressing the edited cell.
-            package
-                .invalidated
-                .extend(package.families.iter().map(|family| family.source_id));
-            package.invalidated.extend(
-                package
-                    .partitioned_families
-                    .iter()
-                    .map(|family| family.source_id),
-            );
+            Self::invalidate_all_deferred_families(package);
         }
         package.suppressed.insert((row, col));
+    }
+
+    fn reconcile_attached_deferred_package(&mut self) {
+        let Some(package) = self.deferred_package.as_mut() else {
+            return;
+        };
+        if self.entries.is_empty() {
+            return;
+        }
+
+        let replayed = (|| {
+            let mut disposition = crate::engine::FormulaReplayDisposition::default();
+            for partition in &package.partitioned_families {
+                disposition.register_partition(partition, false)?;
+            }
+            package
+                .replay
+                .lock()
+                .map_err(|_| "deferred formula spool lock poisoned".to_string())?
+                .replay_partitioned(&disposition, &package.partitioned_families)
+        })();
+
+        let Ok(records) = replayed else {
+            Self::invalidate_all_deferred_families(package);
+            package
+                .suppressed
+                .extend(self.entries.iter().map(|(row, col, _)| (*row, *col)));
+            return;
+        };
+        let mut owners = FxHashMap::default();
+        for record in &records {
+            owners
+                .entry((record.row, record.col))
+                .or_insert(record.partition_owner.or(record.family));
+        }
+        for (row, col, _) in &self.entries {
+            if let Some(family) = owners.get(&(*row, *col)).copied().flatten() {
+                package.invalidated.insert(family);
+            } else {
+                Self::invalidate_all_deferred_families(package);
+            }
+            package.suppressed.insert((*row, *col));
+        }
+        package.reconciliation_replay = Some(records);
     }
 
     fn stage(&mut self, row: u32, col: u32, text: String) {
@@ -228,6 +278,47 @@ struct PreparedOrdinaryStagedFormula {
     lease: StagedFormulaLease,
     ast_id: Option<AstNodeId>,
     plan: Option<DependencyPlanRow>,
+}
+
+struct PreparedTargetSourcePackage {
+    sheet: String,
+    sheet_id: SheetId,
+    lease: StagedPackageLease,
+    source_report: crate::engine::FormulaCompressedSourceReport,
+    replay_records: Vec<crate::engine::DeferredReplayFormula>,
+    disposition: crate::engine::FormulaReplayDisposition,
+    placements: Vec<crate::formula_plane::placement::PreparedAnchorOncePlacement>,
+    legacy: Vec<(u32, u32, AstNodeId, DependencyPlanRow)>,
+    direct_families: usize,
+    direct_cells: u64,
+    direct_fragments: u64,
+    direct_complete_families: u64,
+    direct_complete_cells: u64,
+    direct_partition_families: u64,
+    direct_partition_cells: u64,
+    anchor_parses: u64,
+    anchor_asts: u64,
+    anchor_analyses: u64,
+}
+
+impl PreparedTargetSourcePackage {
+    fn fallback_records(&self) -> impl Iterator<Item = &crate::engine::DeferredReplayFormula> {
+        self.replay_records.iter().filter(|record| {
+            let Some((row, col)) = record.row.checked_sub(1).zip(record.col.checked_sub(1)) else {
+                return true;
+            };
+            let coord = crate::engine::SourceCoord { row, col };
+            let disposition = match record.family {
+                Some(family) => self.disposition.shared_disposition(family, coord),
+                None => self.disposition.ordinary_disposition(coord).0,
+            };
+            !matches!(
+                disposition,
+                crate::engine::FormulaReplayCoordinateDisposition::Direct
+                    | crate::engine::FormulaReplayCoordinateDisposition::Suppressed
+            )
+        })
+    }
 }
 
 fn producer_dirty_to_span_dirty(
@@ -4525,7 +4616,7 @@ where
             self.staged_formula_index.remove(sheet, *row, *col);
         }
         if staged.deferred_package.is_some() {
-            self.staged_formula_index.set_package(sheet, false);
+            self.staged_formula_index.set_package(sheet, None);
         }
     }
 
@@ -4559,7 +4650,9 @@ where
         let staged = self.staged_formulas.entry(sheet.clone()).or_default();
         debug_assert!(staged.deferred_package.is_none());
         staged.deferred_package = Some(package);
-        self.staged_formula_index.set_package(&sheet, true);
+        staged.reconcile_attached_deferred_package();
+        self.staged_formula_index
+            .set_package(&sheet, staged.deferred_package.as_ref());
     }
 
     pub fn clear_staged_formula_text(&mut self, sheet: &str, row: u32, col: u32) -> Option<String> {
@@ -4577,7 +4670,7 @@ where
         }
         if remove_sheet {
             self.staged_formulas.remove(sheet);
-            self.staged_formula_index.set_package(sheet, false);
+            self.staged_formula_index.set_package(sheet, None);
         }
         removed
     }
@@ -4660,7 +4753,13 @@ where
             .values()
             .map(|sheet| sheet.entries.len())
             .sum::<usize>();
+        let package_storage = self
+            .staged_formulas
+            .values()
+            .filter(|sheet| sheet.deferred_package.is_some())
+            .count();
         ordinary_storage == self.staged_formula_index.ordinary_count()
+            && package_storage == self.staged_formula_index.package_count()
             && self.staged_formulas.iter().all(|(name, sheet)| {
                 sheet.entries.iter().all(|(row, col, _)| {
                     let leases = self
@@ -6498,6 +6597,367 @@ where
                 .with_message("whole-family replay is incomplete"));
         }
         Ok(())
+    }
+
+    fn prepare_target_combined_legacy_graph(
+        &self,
+        packages: &[PreparedTargetSourcePackage],
+        ordinary: &[PreparedOrdinaryStagedFormula],
+    ) -> Result<(PreparedLegacyGraphPlan, usize), ExcelError> {
+        let mut planned_by_coord = BTreeMap::new();
+        for package in packages {
+            for (row, col, ast_id, plan) in &package.legacy {
+                planned_by_coord.insert((package.sheet_id, *row, *col), (*ast_id, plan.clone()));
+            }
+        }
+        for formula in ordinary {
+            if let Some((ast_id, plan)) = formula.ast_id.zip(formula.plan.clone()) {
+                planned_by_coord.insert(
+                    (formula.sheet_id, formula.lease.row, formula.lease.col),
+                    (ast_id, plan),
+                );
+            }
+        }
+        let planned = planned_by_coord
+            .into_iter()
+            .map(|((sheet_id, row, col), (ast_id, plan))| (sheet_id, row, col, ast_id, plan))
+            .collect::<Vec<_>>();
+        let formula_count = planned.len();
+        let graph = self
+            .graph
+            .prepare_legacy_graph_plan_multi_sheet(planned)
+            .map_err(|error| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message(format!("target graph preparation failed: {error}"))
+            })?;
+        Ok((graph, formula_count))
+    }
+
+    fn materialize_target_package_direct_records(
+        &mut self,
+        package: &mut PreparedTargetSourcePackage,
+        assumptions: &crate::engine::PreparationRevision,
+        cancel: Option<&AtomicBool>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<(), ExcelError> {
+        let existing = package
+            .legacy
+            .iter()
+            .map(|(row, col, _, _)| (*row, *col))
+            .collect::<BTreeSet<_>>();
+        let mut missing = BTreeMap::new();
+        for record in &package.replay_records {
+            if !existing.contains(&(record.row, record.col)) {
+                missing.insert((record.row, record.col), record.clone());
+            }
+        }
+        let batch = self.formula_batch_from_exact_replay(&package.sheet, missing.into_values())?;
+        for record in batch.formulas {
+            self.target_preparation_checkpoint(cancel, deadline, 1)?;
+            let ast = self
+                .graph
+                .data_store()
+                .retrieve_ast(record.ast_id, self.graph.sheet_reg())
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("target fallback AST is unavailable")
+                })?;
+            let snapshot = self.target_planning_snapshot(&ast)?;
+            if let Some(reason) =
+                Self::target_planning_snapshot_stale_reason(&snapshot, assumptions)
+            {
+                return Err(Self::preparation_stale(
+                    reason,
+                    "target fallback planning snapshot became stale during materialization",
+                ));
+            }
+            let placement = CellRef::new(
+                package.sheet_id,
+                Coord::from_excel(record.row, record.col, true, true),
+            );
+            let ingested = self
+                .graph
+                .ingest_pipeline(&snapshot)
+                .enable_function_semantics()
+                .ingest_formula(
+                    FormulaAstInput::RawArena(record.ast_id),
+                    placement,
+                    record.formula_text,
+                )?;
+            package
+                .legacy
+                .push((record.row, record.col, ingested.ast_id, ingested.dep_plan));
+        }
+        package.direct_families = 0;
+        package.direct_cells = 0;
+        package.direct_fragments = 0;
+        package.direct_complete_families = 0;
+        package.direct_complete_cells = 0;
+        package.direct_partition_families = 0;
+        package.direct_partition_cells = 0;
+        Ok(())
+    }
+
+    fn prepare_target_source_package(
+        &mut self,
+        sheet: &str,
+        lease: StagedPackageLease,
+        cancel: Option<&AtomicBool>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<PreparedTargetSourcePackage, ExcelError> {
+        let sheet_id = self.graph.sheet_id(sheet).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message(format!("deferred source sheet not found: {sheet}"))
+        })?;
+        let (
+            mut source_report,
+            families,
+            partitions,
+            replay,
+            invalidated,
+            suppressed,
+            reconciliation_replay,
+        ) = {
+            let package = self
+                .staged_formulas
+                .get(sheet)
+                .and_then(|staged| staged.deferred_package.as_ref())
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("staged deferred source package is unavailable")
+                })?;
+            if package.sheet_name != sheet {
+                return Err(ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("deferred formula package sheet mismatch"));
+            }
+            (
+                package.report.clone(),
+                package.families.clone(),
+                package.partitioned_families.clone(),
+                Arc::clone(&package.replay),
+                package.invalidated.clone(),
+                package.suppressed.clone(),
+                package.reconciliation_replay.clone(),
+            )
+        };
+
+        let mut replay_disposition = crate::engine::FormulaReplayDisposition::default();
+        for partition in &partitions {
+            replay_disposition
+                .register_partition(partition, false)
+                .map_err(|reason| ExcelError::new(ExcelErrorKind::Value).with_message(reason))?;
+        }
+        replay_disposition.extend_suppressed_excel_coords(suppressed.iter().copied());
+        self.target_preparation_checkpoint(cancel, deadline, 1)?;
+        let mut replay_records = if let Some(mut records) = reconciliation_replay {
+            records.retain(|record| {
+                let Some((row, col)) = record.row.checked_sub(1).zip(record.col.checked_sub(1))
+                else {
+                    return true;
+                };
+                let coord = crate::engine::SourceCoord { row, col };
+                let disposition = record.family.map_or_else(
+                    || replay_disposition.ordinary_disposition(coord).0,
+                    |family| replay_disposition.shared_disposition(family, coord),
+                );
+                !matches!(
+                    disposition,
+                    crate::engine::FormulaReplayCoordinateDisposition::Direct
+                        | crate::engine::FormulaReplayCoordinateDisposition::Suppressed
+                )
+            });
+            records
+        } else {
+            replay
+                .lock()
+                .map_err(|_| {
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("deferred formula spool lock poisoned")
+                })?
+                .replay_partitioned(&replay_disposition, &partitions)
+                .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?
+        };
+        replay_records.sort_by_key(|record| record.source_order);
+        for chunk in replay_records.chunks(256) {
+            self.target_preparation_checkpoint(cancel, deadline, chunk.len() as u64)?;
+        }
+        if replay_records
+            .windows(2)
+            .any(|records| records[0].source_order == records[1].source_order)
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("duplicate deferred source-order proof"));
+        }
+
+        let mut disposition = replay_disposition;
+        let mut ordered_placements = Vec::new();
+        let mut direct_families = 0usize;
+        let mut direct_cells = 0u64;
+        let mut direct_fragments = 0u64;
+        let mut direct_complete_families = 0u64;
+        let mut direct_complete_cells = 0u64;
+        let mut direct_partition_families = 0u64;
+        let mut direct_partition_cells = 0u64;
+        let mut anchor_parses = 0u64;
+        let mut anchor_asts = 0u64;
+        let mut anchor_analyses = 0u64;
+        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+            for family in &families {
+                self.target_preparation_checkpoint(cancel, deadline, 1)?;
+                if invalidated.contains(&family.source_id) {
+                    continue;
+                }
+                match self.prepare_source_formula_family(sheet_id, family, true, None) {
+                    Ok((prepared, _)) => {
+                        anchor_parses = anchor_parses.saturating_add(1);
+                        anchor_asts = anchor_asts.saturating_add(1);
+                        anchor_analyses = anchor_analyses.saturating_add(1);
+                        direct_families = direct_families.saturating_add(1);
+                        direct_cells = direct_cells.saturating_add(prepared.member_count);
+                        direct_complete_families = direct_complete_families.saturating_add(1);
+                        direct_complete_cells =
+                            direct_complete_cells.saturating_add(prepared.member_count);
+                        if self.config.formula_plane_mode
+                            == FormulaPlaneMode::AuthoritativeExperimental
+                        {
+                            disposition.set_family_direct(family.source_id);
+                        }
+                        ordered_placements.push((family.source_order, vec![prepared]));
+                    }
+                    Err(error) => {
+                        anchor_parses =
+                            anchor_parses.saturating_add(u64::from(error.parse_attempted));
+                        anchor_asts = anchor_asts.saturating_add(u64::from(error.ast_created));
+                        anchor_analyses =
+                            anchor_analyses.saturating_add(u64::from(error.analysis_created));
+                        *source_report
+                            .fallback_reasons
+                            .entry(error.reason)
+                            .or_default() += 1;
+                    }
+                }
+            }
+
+            for source in &partitions {
+                self.target_preparation_checkpoint(cancel, deadline, 1)?;
+                if invalidated.contains(&source.source_id) {
+                    continue;
+                }
+                let prepared =
+                    match self.analyze_partitioned_source_family_for_transaction(sheet, source) {
+                        Ok(prepared) => {
+                            anchor_parses = anchor_parses.saturating_add(1);
+                            anchor_asts = anchor_asts.saturating_add(1);
+                            anchor_analyses = anchor_analyses.saturating_add(1);
+                            prepared
+                        }
+                        Err(error) => {
+                            anchor_parses =
+                                anchor_parses.saturating_add(u64::from(error.parse_attempted));
+                            anchor_asts = anchor_asts.saturating_add(u64::from(error.ast_created));
+                            anchor_analyses =
+                                anchor_analyses.saturating_add(u64::from(error.analysis_created));
+                            *source_report
+                                .fallback_reasons
+                                .entry(error.reason)
+                                .or_default() += 1;
+                            continue;
+                        }
+                    };
+                let fragment_regions: Vec<_> = prepared
+                    .placements
+                    .iter()
+                    .map(|placement| Region::from_domain(placement.fragment_dependency_proof().0))
+                    .collect();
+                let crosses_fragment =
+                    prepared
+                        .placements
+                        .iter()
+                        .enumerate()
+                        .any(|(fragment_index, placement)| {
+                            placement
+                                .fragment_dependency_proof()
+                                .1
+                                .dependencies
+                                .iter()
+                                .any(|dependency| {
+                                    fragment_regions.iter().enumerate().any(
+                                        |(candidate_index, candidate)| {
+                                            candidate_index != fragment_index
+                                                && dependency.read_region.intersects(candidate)
+                                        },
+                                    )
+                                })
+                        });
+                let family_records = replay_records
+                    .iter()
+                    .filter(|record| {
+                        record.family == Some(source.source_id)
+                            || record.partition_owner == Some(source.source_id)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if crosses_fragment {
+                    *source_report
+                        .fallback_reasons
+                        .entry("CrossFragmentDependency".to_string())
+                        .or_default() += 1;
+                    continue;
+                }
+                if let Err(error) = Self::validate_whole_partition_replay(source, &family_records) {
+                    *source_report
+                        .fallback_reasons
+                        .entry(format!("TargetPartitionReplay:{error}"))
+                        .or_default() += 1;
+                    continue;
+                }
+                if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+                    let mut candidate = disposition.clone();
+                    if let Err(reason) = candidate.register_partition(source, true) {
+                        *source_report
+                            .fallback_reasons
+                            .entry(reason.to_string())
+                            .or_default() += 1;
+                        continue;
+                    }
+                    disposition = candidate;
+                }
+                direct_families = direct_families.saturating_add(1);
+                direct_cells = direct_cells.saturating_add(prepared.direct_cells);
+                direct_partition_families = direct_partition_families.saturating_add(1);
+                direct_partition_cells =
+                    direct_partition_cells.saturating_add(prepared.direct_cells);
+                direct_fragments =
+                    direct_fragments.saturating_add(prepared.placements.len() as u64);
+                ordered_placements.push((source.source_order, prepared.placements));
+            }
+        }
+        ordered_placements.sort_by_key(|(source_order, _)| *source_order);
+        let placements = ordered_placements
+            .into_iter()
+            .flat_map(|(_, placements)| placements)
+            .collect();
+
+        Ok(PreparedTargetSourcePackage {
+            sheet: sheet.to_string(),
+            sheet_id,
+            lease,
+            source_report,
+            replay_records,
+            disposition,
+            placements,
+            legacy: Vec::new(),
+            direct_families,
+            direct_cells,
+            direct_fragments,
+            direct_complete_families,
+            direct_complete_cells,
+            direct_partition_families,
+            direct_partition_cells,
+            anchor_parses,
+            anchor_asts,
+            anchor_analyses,
+        })
     }
 
     fn fallback_planning_snapshot(
@@ -8355,16 +8815,6 @@ where
 
         let mut scope = PrepareScope::Exact;
         let mut reasons = Vec::new();
-        let authoritative_compatibility =
-            self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental;
-        if authoritative_compatibility {
-            Self::widen_target_preparation(
-                options.opaque_policy,
-                &mut scope,
-                &mut reasons,
-                OpaqueReason::UnsupportedSourceSemantics,
-            )?;
-        }
         let mut regions = VecDeque::new();
         let mut normalized = Vec::with_capacity(targets.len());
         let mut symbol_vertices = VecDeque::new();
@@ -8461,7 +8911,16 @@ where
         let mut sheet_scope_seeded = BTreeSet::new();
         let mut indexed_query_sheets = FxHashSet::default();
         let mut discovery_scratch_reserved = 0u64;
-        let mut package_encountered = authoritative_compatibility;
+        let mut package_encountered = false;
+        let mut selected_package_sheets = FxHashSet::default();
+        let mut prepared_packages = Vec::new();
+        let authoritative_with_ordinary = self.config.formula_plane_mode
+            == FormulaPlaneMode::AuthoritativeExperimental
+            && self.staged_formula_index.ordinary_count() != 0;
+        let has_unknown_package_sheet = self
+            .staged_formula_index
+            .package_sheets()
+            .any(|sheet| self.graph.sheet_id(sheet).is_none());
 
         loop {
             if let PrepareScope::Sheets(sheets) = &scope {
@@ -8471,9 +8930,12 @@ where
                     }
                     let Some(sheet_id) = self.graph.sheet_id(&sheet) else {
                         package_encountered = true;
-                        if !reasons.contains(&OpaqueReason::UnsupportedSourceSemantics) {
-                            reasons.push(OpaqueReason::UnsupportedSourceSemantics);
-                        }
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnsupportedSourceSemantics,
+                        )?;
                         continue;
                     };
                     for lease in self.staged_formula_index.leases_for_sheet(&sheet) {
@@ -8487,10 +8949,20 @@ where
                             end_col: lease.col,
                         });
                     }
-                    package_encountered |= self
+                    if self
                         .staged_formula_index
-                        .package_sheets()
-                        .any(|candidate| candidate == sheet);
+                        .package_lease_for_sheet(&sheet)
+                        .is_some()
+                    {
+                        regions.push_back(PreparationRegion {
+                            sheet: sheet.clone(),
+                            sheet_id,
+                            start_row: 1,
+                            start_col: 1,
+                            end_row: self.workbook_load_limits.max_sheet_rows,
+                            end_col: self.workbook_load_limits.max_sheet_cols,
+                        });
+                    }
                 }
             }
             if matches!(scope, PrepareScope::Workbook) && !workbook_seeded {
@@ -8499,9 +8971,12 @@ where
                     self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
                     let Some(sheet_id) = self.graph.sheet_id(&sheet) else {
                         package_encountered = true;
-                        if !reasons.contains(&OpaqueReason::UnsupportedSourceSemantics) {
-                            reasons.push(OpaqueReason::UnsupportedSourceSemantics);
-                        }
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnsupportedSourceSemantics,
+                        )?;
                         continue;
                     };
                     regions.push_back(PreparationRegion {
@@ -8513,7 +8988,31 @@ where
                         end_col: lease.col,
                     });
                 }
-                package_encountered |= self.staged_formula_index.has_packages();
+                let package_sheets = self
+                    .staged_formula_index
+                    .package_sheets()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                for sheet in package_sheets {
+                    let Some(sheet_id) = self.graph.sheet_id(&sheet) else {
+                        package_encountered = true;
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnsupportedSourceSemantics,
+                        )?;
+                        continue;
+                    };
+                    regions.push_back(PreparationRegion {
+                        sheet,
+                        sheet_id,
+                        start_row: 1,
+                        start_col: 1,
+                        end_row: self.workbook_load_limits.max_sheet_rows,
+                        end_col: self.workbook_load_limits.max_sheet_cols,
+                    });
+                }
             }
 
             let Some(region) = regions.pop_front() else {
@@ -8739,19 +9238,245 @@ where
                 sheets.push(region.sheet.clone());
                 sheets.sort();
             }
-            if self
-                .staged_formula_index
-                .package_sheets()
-                .any(|sheet| sheet == region.sheet)
-            {
+            let package_match = self.staged_formula_index.package_for_region(
+                &region.sheet,
+                region.start_row,
+                region.start_col,
+                region.end_row,
+                region.end_col,
+            );
+            let package_lease = match package_match {
+                Some(Ok(lease)) => Some(lease),
+                Some(Err(()))
+                    if region.start_row == 1
+                        && region.start_col == 1
+                        && region.end_row == self.workbook_load_limits.max_sheet_rows
+                        && region.end_col == self.workbook_load_limits.max_sheet_cols =>
+                {
+                    self.staged_formula_index
+                        .package_lease_for_sheet(&region.sheet)
+                }
+                Some(Err(())) => {
+                    Self::widen_target_preparation(
+                        options.opaque_policy,
+                        &mut scope,
+                        &mut reasons,
+                        OpaqueReason::DeferredSourcePackage,
+                    )?;
+                    None
+                }
+                None => None,
+            };
+            let compatibility_before_package_replay = package_lease.is_some()
+                && (authoritative_with_ordinary || has_unknown_package_sheet);
+            let package_lease = if compatibility_before_package_replay {
                 package_encountered = true;
                 Self::widen_target_preparation(
                     options.opaque_policy,
                     &mut scope,
                     &mut reasons,
-                    OpaqueReason::DeferredSourcePackage,
+                    OpaqueReason::UnsupportedSourceSemantics,
                 )?;
-                continue;
+                None
+            } else {
+                package_lease
+            };
+            if let Some(package_lease) = package_lease
+                && selected_package_sheets.insert(region.sheet.clone())
+            {
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                let mut package = self.prepare_target_source_package(
+                    &region.sheet,
+                    package_lease,
+                    options.cancel,
+                    options.deadline,
+                )?;
+                for placement in &package.placements {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    for dependency in &placement.fragment_dependency_proof().1.dependencies {
+                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        let (rows, cols) = dependency.read_region.axis_ranges();
+                        let (start_row, end_row) = rows.query_bounds();
+                        let (start_col, end_col) = cols.query_bounds();
+                        let dependency_sheet = dependency.read_region.sheet_id();
+                        regions.push_back(PreparationRegion {
+                            sheet: self.graph.sheet_name(dependency_sheet).to_string(),
+                            sheet_id: dependency_sheet,
+                            start_row: start_row.saturating_add(1),
+                            start_col: start_col.saturating_add(1),
+                            end_row: end_row
+                                .min(self.workbook_load_limits.max_sheet_rows.saturating_sub(1))
+                                .saturating_add(1),
+                            end_col: end_col
+                                .min(self.workbook_load_limits.max_sheet_cols.saturating_sub(1))
+                                .saturating_add(1),
+                        });
+                    }
+                }
+
+                let mut final_fallback = BTreeMap::new();
+                for record in package.fallback_records() {
+                    final_fallback.insert((record.row, record.col), record.clone());
+                }
+                let batch = self
+                    .formula_batch_from_exact_replay(&region.sheet, final_fallback.into_values())?;
+                for record in batch.formulas {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    let ast = self
+                        .graph
+                        .data_store()
+                        .retrieve_ast(record.ast_id, self.graph.sheet_reg())
+                        .ok_or_else(|| {
+                            ExcelError::new(ExcelErrorKind::Value)
+                                .with_message("target fallback AST is unavailable")
+                        })?;
+                    let snapshot = self.target_planning_snapshot(&ast)?;
+                    if let Some(reason) =
+                        Self::target_planning_snapshot_stale_reason(&snapshot, &assumptions)
+                    {
+                        return Err(Self::preparation_stale(
+                            reason,
+                            "target fallback planning snapshot became stale during discovery",
+                        ));
+                    }
+                    let proven_sheet_local_dynamic =
+                        Self::ast_has_proven_sheet_local_dynamic(&ast, &snapshot);
+                    if let Some(reason) = self.opaque_reason_in_ast(&ast, &snapshot) {
+                        if reason == OpaqueReason::DynamicReference && proven_sheet_local_dynamic {
+                            Self::widen_target_preparation_to_sheet(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                reason,
+                                &region.sheet,
+                            )?;
+                        } else {
+                            Self::widen_target_preparation(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                reason,
+                            )?;
+                        }
+                    }
+                    let placement = CellRef::new(
+                        package.sheet_id,
+                        Coord::from_excel(record.row, record.col, true, true),
+                    );
+                    let ingested = self
+                        .graph
+                        .ingest_pipeline(&snapshot)
+                        .enable_function_semantics()
+                        .ingest_formula(
+                            FormulaAstInput::RawArena(record.ast_id),
+                            placement,
+                            record.formula_text,
+                        )?;
+                    if ingested.dep_plan.dynamic {
+                        if proven_sheet_local_dynamic {
+                            Self::widen_target_preparation_to_sheet(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                OpaqueReason::DynamicReference,
+                                &region.sheet,
+                            )?;
+                        } else {
+                            Self::widen_target_preparation(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                OpaqueReason::DynamicReference,
+                            )?;
+                        }
+                    }
+                    for dep in &ingested.dep_plan.direct_cell_deps {
+                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        regions.push_back(PreparationRegion {
+                            sheet: self.graph.sheet_name(dep.sheet_id).to_string(),
+                            sheet_id: dep.sheet_id,
+                            start_row: dep.coord.row().saturating_add(1),
+                            start_col: dep.coord.col().saturating_add(1),
+                            end_row: dep.coord.row().saturating_add(1),
+                            end_col: dep.coord.col().saturating_add(1),
+                        });
+                    }
+                    for range in &ingested.dep_plan.range_deps {
+                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        let dependency_sheet = match &range.sheet {
+                            crate::reference::SharedSheetLocator::Id(id) => *id,
+                            crate::reference::SharedSheetLocator::Current => package.sheet_id,
+                            crate::reference::SharedSheetLocator::Name(name) => {
+                                let Some(id) = self.graph.sheet_id(name) else {
+                                    Self::widen_target_preparation(
+                                        options.opaque_policy,
+                                        &mut scope,
+                                        &mut reasons,
+                                        OpaqueReason::UnresolvedCrossSheetBinding,
+                                    )?;
+                                    continue;
+                                };
+                                id
+                            }
+                        };
+                        regions.push_back(PreparationRegion {
+                            sheet: self.graph.sheet_name(dependency_sheet).to_string(),
+                            sheet_id: dependency_sheet,
+                            start_row: range.start_row.map_or(1, |bound| bound.index + 1),
+                            start_col: range.start_col.map_or(1, |bound| bound.index + 1),
+                            end_row: range
+                                .end_row
+                                .map_or(self.workbook_load_limits.max_sheet_rows, |bound| {
+                                    bound.index + 1
+                                }),
+                            end_col: range
+                                .end_col
+                                .map_or(self.workbook_load_limits.max_sheet_cols, |bound| {
+                                    bound.index + 1
+                                }),
+                        });
+                    }
+                    for name in ingested
+                        .dep_plan
+                        .resolved_named_refs
+                        .iter()
+                        .chain(&ingested.dep_plan.named_refs)
+                    {
+                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        if let Some(entry) = self.graph.resolve_name_entry(name, package.sheet_id) {
+                            symbol_vertices.push_back(entry.vertex);
+                        } else if self.graph.resolve_source_scalar_entry(name).is_none()
+                            && self.graph.resolve_source_table_entry(name).is_none()
+                        {
+                            Self::widen_target_preparation(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                OpaqueReason::UnresolvedName,
+                            )?;
+                        }
+                    }
+                    for table in &ingested.dep_plan.table_refs {
+                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        if let Some(entry) = self.graph.resolve_table_entry(table) {
+                            symbol_vertices.push_back(entry.vertex);
+                        } else if self.graph.resolve_source_table_entry(table).is_none() {
+                            Self::widen_target_preparation(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                OpaqueReason::UnresolvedTable,
+                            )?;
+                        }
+                    }
+                    package.legacy.push((
+                        record.row,
+                        record.col,
+                        ingested.ast_id,
+                        ingested.dep_plan,
+                    ));
+                }
+                prepared_packages.push(package);
             }
             let leases = self.staged_formula_index.leases_in_region(
                 &region.sheet,
@@ -9038,7 +9763,16 @@ where
             crate::engine::target_preparation::TargetPreparationFault::AfterDiscovery,
         )?;
 
-        if package_encountered {
+        if package_encountered
+            || (self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+                && !prepared.is_empty())
+        {
+            Self::widen_target_preparation(
+                options.opaque_policy,
+                &mut scope,
+                &mut reasons,
+                OpaqueReason::UnsupportedSourceSemantics,
+            )?;
             self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
             let selected_count = self.staged_formula_count();
             let selected_packages = self
@@ -9093,31 +9827,66 @@ where
         }
 
         prepared.sort_by_key(|formula| formula.lease.insertion_order);
-        let planned = prepared
-            .iter()
-            .filter_map(|formula| {
-                formula
-                    .ast_id
-                    .zip(formula.plan.clone())
-                    .map(|(ast_id, plan)| {
-                        (
-                            formula.sheet_id,
-                            formula.lease.row,
-                            formula.lease.col,
-                            ast_id,
-                            plan,
-                        )
-                    })
-            })
+        for package in &prepared_packages {
+            selected_cells.extend(package.replay_records.iter().filter_map(|record| {
+                formualizer_common::RangeAddress::new(
+                    package.sheet.clone(),
+                    record.row,
+                    record.col,
+                    record.row,
+                    record.col,
+                )
+                .ok()
+            }));
+        }
+        let (mut legacy_graph, mut planned_formula_count) =
+            self.prepare_target_combined_legacy_graph(&prepared_packages, &prepared)?;
+        let placements = prepared_packages
+            .iter_mut()
+            .flat_map(|package| std::mem::take(&mut package.placements))
             .collect::<Vec<_>>();
-        let planned_formula_count = planned.len();
-        let legacy_graph = self
-            .graph
-            .prepare_legacy_graph_plan_multi_sheet(planned)
-            .map_err(|error| {
-                ExcelError::new(ExcelErrorKind::Value)
-                    .with_message(format!("target graph preparation failed: {error}"))
-            })?;
+        let formula_plane = if placements.is_empty() {
+            None
+        } else {
+            match self.graph.formula_authority().prepare_formula_plane_append(
+                placements,
+                self.graph.data_store(),
+                self.graph.sheet_reg(),
+            ) {
+                Ok(append) => Some(append),
+                Err(error) => {
+                    let reason = format!("TargetFormulaPlaneAppend:{error}");
+                    for package in &mut prepared_packages {
+                        *package
+                            .source_report
+                            .fallback_reasons
+                            .entry(reason.clone())
+                            .or_default() += package.direct_families as u64;
+                        if self.config.formula_plane_mode
+                            == FormulaPlaneMode::AuthoritativeExperimental
+                        {
+                            self.materialize_target_package_direct_records(
+                                package,
+                                &assumptions,
+                                options.cancel,
+                                options.deadline,
+                            )?;
+                        } else {
+                            package.direct_families = 0;
+                            package.direct_cells = 0;
+                            package.direct_fragments = 0;
+                            package.direct_complete_families = 0;
+                            package.direct_complete_cells = 0;
+                            package.direct_partition_families = 0;
+                            package.direct_partition_cells = 0;
+                        }
+                    }
+                    (legacy_graph, planned_formula_count) =
+                        self.prepare_target_combined_legacy_graph(&prepared_packages, &prepared)?;
+                    None
+                }
+            }
+        };
         let new_vertices = legacy_graph.new_vertex_count();
         let new_edges = legacy_graph.planned_edge_count().ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::NImpl).with_message("target graph edge count overflow")
@@ -9186,7 +9955,12 @@ where
             }
             return Err(error);
         }
+        let selected_package_records = prepared_packages
+            .iter()
+            .map(|package| package.replay_records.len() as u64)
+            .sum::<u64>();
         let planned_working_bytes = (prepared.len() as u64)
+            .saturating_add(selected_package_records)
             .saturating_mul(256)
             .saturating_add((visited_regions.len() as u64).saturating_mul(128))
             .saturating_add((visited_vertices.len() as u64).saturating_mul(32))
@@ -9205,6 +9979,7 @@ where
             (new_vertices as u64)
                 .saturating_add(new_edges as u64)
                 .saturating_add(prepared.len() as u64)
+                .saturating_add(selected_package_records)
                 .max(1)
                 .saturating_mul(100),
         );
@@ -9244,6 +10019,11 @@ where
                     .staged_formula_index
                     .lease_matches(&formula.sheet, formula.lease)
             })
+            || prepared_packages.iter().any(|package| {
+                !self
+                    .staged_formula_index
+                    .package_lease_matches(&package.sheet, package.lease)
+            })
         {
             Some(formualizer_common::PreparationStaleReason::Staged)
         } else if assumptions.symbols != current_revisions.symbols {
@@ -9273,6 +10053,21 @@ where
                     format!("target graph preparation plan is stale: {error}"),
                 )
             })?;
+        if let Some(append) = formula_plane.as_ref() {
+            self.graph
+                .formula_authority()
+                .validate_prepared_formula_plane_append(
+                    append,
+                    self.graph.data_store(),
+                    self.graph.sheet_reg(),
+                )
+                .map_err(|error| {
+                    Self::preparation_stale(
+                        formualizer_common::PreparationStaleReason::Authority,
+                        format!("target FormulaPlane preparation is stale: {error}"),
+                    )
+                })?;
+        }
         #[cfg(test)]
         self.target_preparation_fault(
             crate::engine::target_preparation::TargetPreparationFault::Reservation,
@@ -9297,6 +10092,22 @@ where
         let committed = self
             .graph
             .apply_prevalidated_legacy_graph_plan(legacy_graph);
+        let plane_report =
+            if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
+                formula_plane.map(|append| {
+                    self.graph
+                        .formula_authority_mut()
+                        .apply_prevalidated_formula_plane_append(append)
+                })
+            } else {
+                None
+            };
+        if let Some(report) = plane_report.as_ref() {
+            self.graph.mark_formula_spans_dirty(
+                report.spans.iter().copied(),
+                WholeSpanDirtyReason::NewSpan,
+            );
+        }
         for formula in &prepared {
             let removed = self
                 .staged_formulas
@@ -9310,6 +10121,14 @@ where
             );
             debug_assert!(index_removed);
         }
+        for package in &prepared_packages {
+            let removed = self
+                .staged_formulas
+                .get_mut(&package.sheet)
+                .and_then(|staged| staged.deferred_package.take());
+            debug_assert!(removed.is_some());
+            self.staged_formula_index.set_package(&package.sheet, None);
+        }
         let empty_sheets = self
             .staged_formulas
             .iter()
@@ -9318,16 +10137,188 @@ where
         for sheet in empty_sheets {
             self.staged_formulas.remove(&sheet);
         }
-        if committed > 0 {
+        if committed > 0 || plane_report.is_some() {
             self.mark_topology_edited();
         }
         self.formula_parse_diagnostics.extend(pending_diagnostics);
-        if !prepared.is_empty() {
+        if !prepared.is_empty() || !prepared_packages.is_empty() {
             let mut ingest_delta = FormulaIngestReport::with_mode(self.config.formula_plane_mode);
-            ingest_delta.formula_cells_seen = prepared.len() as u64;
+            ingest_delta.formula_cells_seen = (prepared.len() as u64).saturating_add(
+                prepared_packages
+                    .iter()
+                    .map(|package| package.replay_records.len() as u64)
+                    .sum::<u64>(),
+            );
             ingest_delta.graph_formula_cells_materialized = committed as u64;
             ingest_delta.graph_vertices_created = new_vertices as u64;
             ingest_delta.graph_edges_created = new_edges as u64;
+            for package in &prepared_packages {
+                let source = &package.source_report;
+                ingest_delta.source_formula_events = ingest_delta
+                    .source_formula_events
+                    .saturating_add(source.source_formula_events);
+                ingest_delta.source_formula_records_spooled = ingest_delta
+                    .source_formula_records_spooled
+                    .saturating_add(source.source_formula_records_spooled);
+                ingest_delta.source_spool_encoded_bytes = ingest_delta
+                    .source_spool_encoded_bytes
+                    .saturating_add(source.source_spool_encoded_bytes);
+                ingest_delta.source_spool_peak_memory_bytes = ingest_delta
+                    .source_spool_peak_memory_bytes
+                    .max(source.source_spool_peak_memory_bytes);
+                ingest_delta.source_spool_spilled_bytes = ingest_delta
+                    .source_spool_spilled_bytes
+                    .saturating_add(source.source_spool_spilled_bytes);
+                ingest_delta.source_spool_spill_files = ingest_delta
+                    .source_spool_spill_files
+                    .saturating_add(source.source_spool_spill_files);
+                ingest_delta.source_spool_replays = ingest_delta
+                    .source_spool_replays
+                    .saturating_add(source.source_spool_replays)
+                    .saturating_add(1);
+                ingest_delta.source_families_seen = ingest_delta
+                    .source_families_seen
+                    .saturating_add(source.families_seen);
+                ingest_delta.source_family_cells_seen = ingest_delta
+                    .source_family_cells_seen
+                    .saturating_add(source.family_cells_seen);
+                ingest_delta.source_family_shadow_eligible = ingest_delta
+                    .source_family_shadow_eligible
+                    .saturating_add(source.source_clean_families);
+                ingest_delta.source_family_shadow_eligible_cells = ingest_delta
+                    .source_family_shadow_eligible_cells
+                    .saturating_add(source.source_clean_cells);
+                ingest_delta.source_partitioned_families_seen = ingest_delta
+                    .source_partitioned_families_seen
+                    .saturating_add(source.source_fragmentable_families);
+                ingest_delta.source_partition_holes = ingest_delta
+                    .source_partition_holes
+                    .saturating_add(source.source_hole_exclusions);
+                ingest_delta.source_partition_ordinary_exceptions = ingest_delta
+                    .source_partition_ordinary_exceptions
+                    .saturating_add(source.source_ordinary_exclusions);
+                ingest_delta.source_partition_surviving_cells = ingest_delta
+                    .source_partition_surviving_cells
+                    .saturating_add(source.source_fragmentable_cells);
+                for (reason, count) in &source.fallback_reasons {
+                    let total = ingest_delta
+                        .fallback_reasons
+                        .entry(reason.clone())
+                        .or_default();
+                    *total = total.saturating_add(*count);
+                }
+                if self.config.formula_plane_mode == FormulaPlaneMode::Off {
+                    ingest_delta.source_family_fallback = ingest_delta
+                        .source_family_fallback
+                        .saturating_add(source.families_seen);
+                    ingest_delta.source_family_fallback_cells = ingest_delta
+                        .source_family_fallback_cells
+                        .saturating_add(source.family_cells_seen);
+                } else {
+                    ingest_delta.shadow_candidate_cells = ingest_delta
+                        .shadow_candidate_cells
+                        .saturating_add(source.family_cells_seen);
+                    ingest_delta.shadow_accepted_span_cells = ingest_delta
+                        .shadow_accepted_span_cells
+                        .saturating_add(package.direct_cells);
+                    ingest_delta.shadow_fallback_cells =
+                        ingest_delta.shadow_fallback_cells.saturating_add(
+                            source
+                                .family_cells_seen
+                                .saturating_sub(package.direct_cells),
+                        );
+                    ingest_delta.source_anchor_parses = ingest_delta
+                        .source_anchor_parses
+                        .saturating_add(package.anchor_parses);
+                    ingest_delta.source_anchor_asts = ingest_delta
+                        .source_anchor_asts
+                        .saturating_add(package.anchor_asts);
+                    ingest_delta.source_anchor_analyses = ingest_delta
+                        .source_anchor_analyses
+                        .saturating_add(package.anchor_analyses);
+                    ingest_delta.source_compressed_families_prepared = ingest_delta
+                        .source_compressed_families_prepared
+                        .saturating_add(package.direct_complete_families);
+                    ingest_delta.source_compressed_cells_prepared = ingest_delta
+                        .source_compressed_cells_prepared
+                        .saturating_add(package.direct_complete_cells);
+                    ingest_delta.source_partitioned_families_prepared = ingest_delta
+                        .source_partitioned_families_prepared
+                        .saturating_add(package.direct_partition_families);
+                    ingest_delta.source_partition_fragments_prepared = ingest_delta
+                        .source_partition_fragments_prepared
+                        .saturating_add(package.direct_fragments);
+                    ingest_delta.source_partition_span_cells_prepared = ingest_delta
+                        .source_partition_span_cells_prepared
+                        .saturating_add(package.direct_partition_cells);
+                    ingest_delta.source_partition_analyses_reused = ingest_delta
+                        .source_partition_analyses_reused
+                        .saturating_add(
+                            package
+                                .direct_fragments
+                                .saturating_sub(package.direct_partition_families),
+                        );
+                    ingest_delta.graph_formula_vertices_avoided_shadow = ingest_delta
+                        .graph_formula_vertices_avoided_shadow
+                        .saturating_add(package.direct_cells);
+                    ingest_delta.ast_roots_avoided_shadow =
+                        ingest_delta.ast_roots_avoided_shadow.saturating_add(
+                            package
+                                .direct_complete_cells
+                                .saturating_sub(package.direct_complete_families)
+                                .saturating_add(
+                                    package
+                                        .direct_partition_cells
+                                        .saturating_sub(package.direct_fragments),
+                                ),
+                        );
+                    ingest_delta.edge_rows_avoided_shadow = ingest_delta
+                        .edge_rows_avoided_shadow
+                        .saturating_add(package.direct_cells);
+                    if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
+                    {
+                        ingest_delta.source_family_promoted = ingest_delta
+                            .source_family_promoted
+                            .saturating_add(package.direct_families as u64);
+                        ingest_delta.source_family_promoted_cells = ingest_delta
+                            .source_family_promoted_cells
+                            .saturating_add(package.direct_cells);
+                        let descendants = package
+                            .direct_complete_cells
+                            .saturating_sub(package.direct_complete_families)
+                            .saturating_add(
+                                package
+                                    .direct_partition_cells
+                                    .saturating_sub(package.direct_partition_families),
+                            );
+                        ingest_delta.source_descendant_strings_avoided = ingest_delta
+                            .source_descendant_strings_avoided
+                            .saturating_add(descendants);
+                        ingest_delta.source_descendant_events_avoided = ingest_delta
+                            .source_descendant_events_avoided
+                            .saturating_add(descendants);
+                        ingest_delta.source_descendant_analyses_avoided = ingest_delta
+                            .source_descendant_analyses_avoided
+                            .saturating_add(descendants);
+                    }
+                    ingest_delta.source_family_fallback =
+                        ingest_delta.source_family_fallback.saturating_add(
+                            source
+                                .families_seen
+                                .saturating_sub(package.direct_families as u64),
+                        );
+                    ingest_delta.source_family_fallback_cells =
+                        ingest_delta.source_family_fallback_cells.saturating_add(
+                            source
+                                .family_cells_seen
+                                .saturating_sub(package.direct_cells),
+                        );
+                }
+            }
+            if let Some(report) = plane_report.as_ref() {
+                ingest_delta.shadow_templates_interned = report.work.templates_to_append as u64;
+                ingest_delta.shadow_spans_created = report.spans.len() as u64;
+            }
             self.record_formula_ingest_report(ingest_delta);
         }
         let commit_window = commit_started.elapsed();
@@ -9347,17 +10338,29 @@ where
             .as_ref()
             .map_or(0, |ledger| ledger.snapshot().scratch_peak)
             .saturating_sub(ledger_at_start.map_or(0, |snapshot| snapshot.scratch_current));
+        let committed_spans = plane_report
+            .as_ref()
+            .map_or(0, |report| report.spans.len() as u64);
+        let selected_source_families = prepared_packages
+            .iter()
+            .map(|package| package.lease.family_count)
+            .sum::<usize>();
+        let selected_staged_cells = prepared
+            .len()
+            .saturating_add(usize::try_from(selected_package_records).unwrap_or(usize::MAX));
         let actual_commit_work = (new_vertices as u64)
             .saturating_add(new_edges as u64)
             .saturating_add(committed as u64)
-            .saturating_add(prepared.len() as u64);
+            .saturating_add(committed_spans)
+            .saturating_add(prepared.len() as u64)
+            .saturating_add(prepared_packages.len() as u64);
         let report = PreparedTargetGraphReport {
             request_id: request_id.unwrap_or_default(),
             requested_targets: targets.len(),
             normalized_regions: visited_regions.len(),
             normalized_target_list: normalized,
-            selected_staged_cells: prepared.len(),
-            selected_source_families: 0,
+            selected_staged_cells,
+            selected_source_families,
             retained_staged_cells: self.staged_formula_count(),
             selected_cells,
             retained_cells,
@@ -9369,7 +10372,8 @@ where
             observed_scratch_bytes,
             estimated_commit_work: (new_vertices as u64)
                 .saturating_add(new_edges as u64)
-                .saturating_add(prepared.len() as u64),
+                .saturating_add(prepared.len() as u64)
+                .saturating_add(selected_package_records),
             actual_commit_work,
             outcome: PreparationOutcome::Prepared,
         };
