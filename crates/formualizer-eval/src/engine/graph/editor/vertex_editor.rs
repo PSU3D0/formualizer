@@ -459,7 +459,7 @@ impl<'g> VertexEditor<'g> {
                 if let (Some(c), Some(sid)) = (coord, sheet_id) {
                     let meta =
                         VertexMeta::new(c.row(), c.col(), sid, kind.unwrap_or(VertexKind::Cell));
-                    let new_id = self.add_vertex(meta);
+                    let new_id = self.try_add_vertex(meta)?;
                     if let Some(v) = old_value {
                         let cell_ref = self.graph.make_cell_ref_internal(sid, c.row(), c.col());
                         self.set_cell_value(cell_ref, v);
@@ -469,10 +469,10 @@ impl<'g> VertexEditor<'g> {
                         self.set_cell_formula(cell_ref, f);
                     }
                     for dep in old_dependencies {
-                        self.graph.add_dependency_edge(new_id, dep);
+                        self.graph.add_dependency_edge(new_id, dep)?;
                     }
                     for parent in old_dependents {
-                        self.graph.add_dependency_edge(parent, new_id);
+                        self.graph.add_dependency_edge(parent, new_id)?;
                     }
                 }
             }
@@ -578,50 +578,37 @@ impl<'g> VertexEditor<'g> {
         Ok(())
     }
 
-    /// Add a vertex to the graph
+    /// Add a vertex to the graph.
+    ///
+    /// This compatibility API preserves the historical sentinel return on failure. New
+    /// transactional callers should use [`Self::try_add_vertex`] to retain typed admission errors.
     pub fn add_vertex(&mut self, meta: VertexMeta) -> VertexId {
+        self.try_add_vertex(meta)
+            .unwrap_or_else(|_| VertexId::new(0))
+    }
+
+    pub fn try_add_vertex(&mut self, meta: VertexMeta) -> Result<VertexId, EditorError> {
         // For now, use the existing set_cell_value method to create vertices
         // This is a simplified implementation that works with the current API
         let sheet_name = self.graph.sheet_name(meta.sheet_id).to_string();
 
-        let id = match meta.kind {
-            VertexKind::Cell => {
-                // Create with empty value initially.
-                // NOTE: VertexEditor/VertexMeta use internal 0-based coords, while
-                // DependencyGraph::set_cell_value is a public 1-based API. Convert here.
-                match self.graph.set_cell_value(
-                    &sheet_name,
-                    meta.coord.row() + 1,
-                    meta.coord.col() + 1,
-                    LiteralValue::Empty,
-                ) {
-                    Ok(summary) => summary
-                        .affected_vertices
-                        .into_iter()
-                        .next()
-                        .unwrap_or(VertexId::new(0)),
-                    Err(_) => VertexId::new(0),
-                }
-            }
-            _ => {
-                // For now, treat other kinds as cells.
-                // A full implementation would handle different vertex kinds properly.
-                // Convert internal 0-based coords to public 1-based API.
-                match self.graph.set_cell_value(
-                    &sheet_name,
-                    meta.coord.row() + 1,
-                    meta.coord.col() + 1,
-                    LiteralValue::Empty,
-                ) {
-                    Ok(summary) => summary
-                        .affected_vertices
-                        .into_iter()
-                        .next()
-                        .unwrap_or(VertexId::new(0)),
-                    Err(_) => VertexId::new(0),
-                }
-            }
-        };
+        // VertexEditor/VertexMeta use internal 0-based coordinates, while the
+        // graph mutation API is 1-based and owns common admission.
+        let id = self
+            .graph
+            .set_cell_value(
+                &sheet_name,
+                meta.coord.row() + 1,
+                meta.coord.col() + 1,
+                LiteralValue::Empty,
+            )
+            .map_err(EditorError::Excel)?
+            .affected_vertices
+            .into_iter()
+            .next()
+            .ok_or_else(|| EditorError::TransactionFailed {
+                reason: "vertex addition produced no affected vertex".to_string(),
+            })?;
 
         if self.has_logger() && id.0 != 0 {
             self.log_change(ChangeEvent::AddVertex {
@@ -634,7 +621,7 @@ impl<'g> VertexEditor<'g> {
                 flags: Some(meta.flags),
             });
         }
-        id
+        Ok(id)
     }
 
     /// Remove a vertex from the graph with proper cleanup
@@ -1494,6 +1481,44 @@ impl<'g> VertexEditor<'g> {
         fallback_old_value: Option<LiteralValue>,
         fallback_old_formula: Option<ASTNode>,
     ) -> VertexId {
+        self.set_cell_formula_with_old_state_and_plan(
+            cell_ref,
+            formula,
+            fallback_old_value,
+            fallback_old_formula,
+            None,
+        )
+    }
+
+    pub(crate) fn set_cell_formula_with_prepared_plan(
+        &mut self,
+        cell_ref: CellRef,
+        formula: ASTNode,
+        fallback_old_value: Option<LiteralValue>,
+        fallback_old_formula: Option<ASTNode>,
+        ast_id: crate::engine::arena::AstNodeId,
+        plan: crate::engine::ingest_pipeline::DependencyPlanRow,
+    ) -> VertexId {
+        self.set_cell_formula_with_old_state_and_plan(
+            cell_ref,
+            formula,
+            fallback_old_value,
+            fallback_old_formula,
+            Some((ast_id, plan)),
+        )
+    }
+
+    fn set_cell_formula_with_old_state_and_plan(
+        &mut self,
+        cell_ref: CellRef,
+        formula: ASTNode,
+        fallback_old_value: Option<LiteralValue>,
+        fallback_old_formula: Option<ASTNode>,
+        prepared: Option<(
+            crate::engine::arena::AstNodeId,
+            crate::engine::ingest_pipeline::DependencyPlanRow,
+        )>,
+    ) -> VertexId {
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
         // Capture old state before modification (value + formula); fall back
@@ -1526,14 +1551,26 @@ impl<'g> VertexEditor<'g> {
             });
         }
 
-        // Use the existing DependencyGraph API
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
-        match self.graph.set_cell_formula(
-            &sheet_name,
-            cell_ref.coord.row() + 1,
-            cell_ref.coord.col() + 1,
-            formula.clone(),
-        ) {
+        let result = if let Some((ast_id, plan)) = prepared {
+            self.graph.set_cell_formula_with_plan(
+                &sheet_name,
+                cell_ref.coord.row() + 1,
+                cell_ref.coord.col() + 1,
+                ast_id,
+                &plan,
+                plan.volatile,
+                plan.dynamic,
+            )
+        } else {
+            self.graph.set_cell_formula(
+                &sheet_name,
+                cell_ref.coord.row() + 1,
+                cell_ref.coord.col() + 1,
+                formula.clone(),
+            )
+        };
+        match result {
             Ok(summary) => {
                 // Log change event
                 let change_event = ChangeEvent::SetFormula {
@@ -1708,7 +1745,7 @@ impl<'g> VertexEditor<'g> {
                     } else {
                         let meta =
                             VertexMeta::new(dest_row, dest_col, to_sheet_id, VertexKind::Cell);
-                        let id = self.add_vertex(meta);
+                        let id = self.try_add_vertex(meta)?;
                         self.graph.update_vertex_value(id, value);
                         summary.vertices_created.push(id);
                     }
@@ -1732,7 +1769,7 @@ impl<'g> VertexEditor<'g> {
                             to_sheet_id,
                             VertexKind::FormulaScalar,
                         );
-                        let id = self.add_vertex(meta);
+                        let id = self.try_add_vertex(meta)?;
                         self.graph.update_vertex_formula(id, adjusted)?;
                         summary.vertices_created.push(id);
                     }

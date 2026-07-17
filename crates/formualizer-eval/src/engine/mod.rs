@@ -25,6 +25,7 @@ pub mod resource_observability;
 pub mod row_visibility;
 pub mod scheduler;
 pub mod spill;
+mod target_preparation;
 pub mod vertex;
 pub mod virtual_deps;
 
@@ -90,6 +91,10 @@ pub use resource_observability::{
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
+pub use target_preparation::{
+    EvaluationTarget, OpaquePreparePolicy, OpaqueReason, PreparationOutcome, PreparationRevision,
+    PrepareScope, PrepareTargetsOptions, PreparedTargetGraphReport, RequestId, TableSelection,
+};
 pub use vertex::{VertexId, VertexKind};
 
 pub use graph::editor::{

@@ -1,6 +1,6 @@
 # Evaluation Resources and Target-Driven Cutover
 
-Status: Approved implementation contract; C1a and C1b exact request topology implemented
+Status: Approved implementation contract; C1a, C1b, and C2 implemented
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
 resource-accounted, target-driven preparation and evaluation. It complements
@@ -729,8 +729,8 @@ Gate: mapping and deadline tests pass; no consumer accepts an incomplete result.
 Status: Implemented. Retained compilation publishes only a complete topology or an explicit cache skip. Configured candidate, edge, and retained-byte skips retain FormulaPlane authority and select exact request topology through paged/indexed construction, bounded in-memory runs, explicit native delete-on-drop topology scratch, or bounded work-accounted repeated passes. Native topology scratch is request-owned and independent from formula replay spool ownership and limits. Temporary producer/read indexes are conservatively preflighted against schedule/discovery scratch before construction, then trued up and held until cache publication or exact scheduling completes. Skip streak, cap/observed size, strategy, pass count, native topology disk bytes, typed exhaustion, and operator guidance are exposed in request telemetry. Only retained mixed-cache and topology/schedule-discovery scratch budget seams are active; C2 fields remain declarative.
 
 The C1b residual was the pre-existing configured mixed-cache candidate/edge/byte cap overflow demotion.
-C1a does not add a retained-ledger or scratch-ledger overflow route. All graph hard-limit enforcement
-is pending C2 and requires one composed transaction common to every graph mutation path.
+C1a did not add a retained-ledger or scratch-ledger overflow route. C2 activates graph hard-limit
+enforcement at the common exact preflight used by graph mutation paths.
 
 - Implement exact paged topology, sorted runs, native disk policy, and bounded no-disk repeated passes.
 - Add skip-streak telemetry and operator guidance.
@@ -741,12 +741,19 @@ scratch stays within estimate plus the accounting tolerance.
 
 ### C2 - transactional target preparation in Off and Shadow
 
-- Add staged source index, pure discovery, monotone widening, and composed transaction for ordinary
-  staged formulas, cross-sheet static dependencies, names, and ranges.
-- Activate exact graph vertex/edge admission for direct, bulk, logged, replacement, demotion, staged
-  ordinary/compressed/direct, and generic publication only after they share that composed prepared
-  transaction.
-- Ratify the inert-residue digest and audit staged-index revision coupling.
+Status: Complete. `EvaluationTarget`, target options/reports, Workbook wrappers, the
+name-based generation/revision-coupled staged index, bounded sheet-index discovery, exact and Sheets
+widening, and prepared legacy addition/replacement publication are active in Off and Shadow.
+Graph vertex/edge/materialization-cell/materialized-byte admission uses the common exact preflight for
+direct, bulk, logged/editor replay, staged compatibility, prepared legacy, demotion, fragmented, and
+generic graph mutations. All-unset budgets bypass preview work. Authoritative mode and deferred source
+packages retain whole-workbook/whole-package compatibility; C3 family selection and residual splitting
+remain disabled. FormulaPlane-only direct spans charge no hypothetical legacy materialization.
+
+- Staged source indexing, pure discovery, monotone widening, and composed ordinary publication are active.
+- Exact common admission covers direct, bulk, logged, replay, replacement, demotion, staged,
+  compressed fallback, fragmented, and generic graph publication.
+- Fault and seam audits pin semantic state, staged-index revision coupling, and scratch release.
 
 Gate: every pre-commit fault preserves the semantic digest; only reachable staged units commit;
 prepare-target values match prepare-all.

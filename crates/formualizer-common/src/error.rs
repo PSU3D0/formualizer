@@ -139,6 +139,18 @@ pub struct ResourceExhaustionDetail {
     pub request_id: Option<u64>,
 }
 
+/// Stable category for a target-preparation plan rejected at its final boundary.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PreparationStaleReason {
+    Graph,
+    Authority,
+    Staged,
+    Symbols,
+    Semantic,
+    Provider,
+}
+
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
@@ -159,6 +171,10 @@ pub enum ExcelErrorExtra {
     /// unchanged so existing bindings and formula error handling stay compatible.
     Resource {
         detail: Box<ResourceExhaustionDetail>,
+    },
+
+    PreparationStale {
+        reason: PreparationStaleReason,
     },
     // --- Add future custom payloads below -------------------------------
     // AnotherKind { … },
@@ -329,6 +345,9 @@ impl fmt::Display for ExcelError {
                     detail.observed,
                     detail.limit
                 )?;
+            }
+            ExcelErrorExtra::PreparationStale { reason } => {
+                write!(f, " [preparation stale {reason:?}]")?;
             }
         }
 

@@ -32,6 +32,23 @@ fn values_roundtrip_and_range() {
 }
 
 #[test]
+fn target_preparation_wrapper_reports_reachable_staging_without_evaluating() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Inputs").unwrap();
+    wb.add_sheet("Outputs").unwrap();
+    wb.set_formula("Inputs", 1, 1, "1").unwrap();
+    wb.set_formula("Outputs", 1, 1, "Inputs!A1+1").unwrap();
+    wb.set_formula("Inputs", 5, 5, "99").unwrap();
+
+    let report = wb
+        .prepare_graph_for_cells(&[("Outputs", 1, 1)])
+        .expect("typed target preparation");
+    assert_eq!(report.selected_staged_cells, 2);
+    assert_eq!(report.retained_staged_cells, 1);
+    assert_eq!(wb.get_value("Outputs", 1, 1), None);
+}
+
+#[test]
 fn deferred_formula_evaluation() {
     let mut wb = Workbook::new();
     wb.add_sheet("S").unwrap();

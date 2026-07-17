@@ -156,6 +156,7 @@ pub(crate) enum ErrorExtraAtom {
         expected_cols: u32,
     },
     Resource(Box<formualizer_common::ResourceExhaustionDetail>),
+    PreparationStale(formualizer_common::PreparationStaleReason),
 }
 
 struct MemoGroup {
@@ -868,6 +869,9 @@ fn parameter_atom_from_literal(value: &LiteralValue) -> ParameterAtom {
                     expected_cols: *expected_cols,
                 },
                 ExcelErrorExtra::Resource { detail } => ErrorExtraAtom::Resource(detail.clone()),
+                ExcelErrorExtra::PreparationStale { reason } => {
+                    ErrorExtraAtom::PreparationStale(*reason)
+                }
             },
         },
         LiteralValue::Array(rows) => ParameterAtom::Text(Arc::from(format!("{rows:?}"))),

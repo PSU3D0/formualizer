@@ -112,6 +112,7 @@ impl DependencyGraph {
         self.tables_lookup
             .insert(self.table_lookup_key(&original), original.clone());
         self.table_vertex_lookup.insert(vertex, original);
+        self.bump_symbol_revision();
         Ok(())
     }
 
@@ -145,6 +146,7 @@ impl DependencyGraph {
 
         // Propagate to dependents.
         self.mark_dirty(vertex);
+        self.bump_symbol_revision();
         Ok(())
     }
 
@@ -173,6 +175,7 @@ impl DependencyGraph {
         self.vertex_formulas.remove(&vertex);
         self.clear_formula_vertex_dirty(vertex);
         self.volatile_vertices.remove(&vertex);
+        self.bump_symbol_revision();
 
         Ok(())
     }

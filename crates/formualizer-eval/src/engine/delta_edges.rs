@@ -458,6 +458,11 @@ impl DeltaEdgeSlab {
         }
     }
 
+    fn reserve_additions(&mut self, additional: usize) {
+        self.additions.reserve(additional);
+        self.additions_in.reserve(additional);
+    }
+
     /// Add an edge from source to target
     pub fn add_edge(&mut self, from: VertexId, to: VertexId) {
         // Last-op-wins: if previously removed, cancel the removal
@@ -655,6 +660,13 @@ impl CsrMutableEdges {
             batch_depth: 0,
             rebuild_count: 0,
         }
+    }
+
+    pub(crate) fn reserve_prepared_additions(&mut self, vertices: usize, edges: usize) {
+        self.coords.reserve(vertices);
+        self.vertex_ids.reserve(vertices);
+        self.vertex_pos.reserve(vertices);
+        self.delta.reserve_additions(edges);
     }
 
     /// Add an edge, rebuilding if threshold reached

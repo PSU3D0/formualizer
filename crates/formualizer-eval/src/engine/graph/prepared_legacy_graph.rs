@@ -21,6 +21,11 @@ pub(crate) enum PreparedLegacyGraphError {
         row: u32,
         col: u32,
     },
+    SpillTargetConflict {
+        sheet: SheetId,
+        row: u32,
+        col: u32,
+    },
     VertexIdExhausted,
     PlanSizeOverflow,
     Stale,
@@ -44,6 +49,12 @@ impl std::fmt::Display for PreparedLegacyGraphError {
                 write!(
                     f,
                     "legacy graph target is not a pristine placeholder {sheet}:{row}:{col}"
+                )
+            }
+            Self::SpillTargetConflict { sheet, row, col } => {
+                write!(
+                    f,
+                    "legacy graph target belongs to an active spill {sheet}:{row}:{col}"
                 )
             }
             Self::VertexIdExhausted => write!(f, "legacy graph vertex ids exhausted"),
@@ -119,6 +130,23 @@ struct SymbolBinding {
     metadata: SymbolMetadata,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct ExistingTargetState {
+    kind: VertexKind,
+    ast_id: Option<AstNodeId>,
+    value_ref: Option<ValueRef>,
+    dirty: bool,
+    volatile: bool,
+    dynamic: bool,
+    dependencies: Vec<VertexId>,
+    range_dependencies: Option<Vec<SharedRangeRef<'static>>>,
+    names: Option<Vec<VertexId>>,
+    pending_names: Option<FxHashSet<String>>,
+    ref_error: bool,
+    spill_cells: Option<Vec<CellRef>>,
+    spill_owner: Option<VertexId>,
+}
+
 #[derive(Debug)]
 struct PreparedFormula {
     current_sheet_id: SheetId,
@@ -144,7 +172,7 @@ pub(crate) struct PreparedLegacyGraphPlan {
     coordinates: BTreeMap<PackedSheetCell, VertexId>,
     new_vertices: Vec<(PackedSheetCell, VertexId)>,
     new_vertex_set: std::collections::BTreeSet<PackedSheetCell>,
-    existing_targets: Vec<VertexId>,
+    existing_targets: Vec<(VertexId, ExistingTargetState)>,
     symbols: Vec<SymbolBinding>,
     formulas: Vec<PreparedFormula>,
 }
@@ -152,6 +180,14 @@ pub(crate) struct PreparedLegacyGraphPlan {
 impl PreparedLegacyGraphPlan {
     pub(crate) fn new_vertex_count(&self) -> usize {
         self.new_vertices.len()
+    }
+
+    pub(crate) fn removed_edge_count(&self) -> Option<usize> {
+        self.existing_targets
+            .iter()
+            .try_fold(0usize, |total, (_, state)| {
+                total.checked_add(state.dependencies.len())
+            })
     }
 
     pub(crate) fn planned_edge_count(&self) -> Option<usize> {
@@ -186,6 +222,26 @@ impl PreparedLegacyGraphPlan {
 }
 
 impl DependencyGraph {
+    fn existing_target_state(&self, id: VertexId) -> ExistingTargetState {
+        ExistingTargetState {
+            kind: self.store.kind(id),
+            ast_id: self.vertex_formulas.get(&id).copied(),
+            value_ref: self.vertex_values.get(&id).copied(),
+            dirty: self.is_dirty(id),
+            volatile: self.store.is_volatile(id),
+            dynamic: self.store.is_dynamic(id),
+            dependencies: self.get_dependencies(id),
+            range_dependencies: self.formula_to_range_deps.get(&id).cloned(),
+            names: self.vertex_to_names.get(&id).cloned(),
+            pending_names: self.vertex_to_pending_names.get(&id).cloned(),
+            ref_error: self.ref_error_vertices.contains(&id),
+            spill_cells: self.spill_anchor_to_cells.get(&id).cloned(),
+            spill_owner: self
+                .get_cell_ref(id)
+                .and_then(|cell| self.spill_cell_to_anchor.get(&cell).copied()),
+        }
+    }
+
     fn checked_sheet_name(&self, id: SheetId) -> Result<String, PreparedLegacyGraphError> {
         let name = self.sheet_reg.name(id);
         if name.is_empty() || self.sheet_reg.get_id(name) != Some(id) {
@@ -397,15 +453,15 @@ impl DependencyGraph {
                 .get(target)
                 .copied()
                 .ok_or(PreparedLegacyGraphError::Stale)?;
-            if !self.is_pristine_legacy_graph_target(id) {
-                let (_, row, col) = target.to_excel_1based();
-                return Err(PreparedLegacyGraphError::TargetConflict {
+            let state = self.existing_target_state(id);
+            if state.spill_cells.is_some() || state.spill_owner.is_some() {
+                return Err(PreparedLegacyGraphError::SpillTargetConflict {
                     sheet: target.sheet_id(),
-                    row,
-                    col,
+                    row: target.row0() + 1,
+                    col: target.col0() + 1,
                 });
             }
-            existing_targets.push(id);
+            existing_targets.push((id, state));
         }
 
         let mut symbols = Vec::new();
@@ -499,23 +555,6 @@ impl DependencyGraph {
         })
     }
 
-    fn is_pristine_legacy_graph_target(&self, id: VertexId) -> bool {
-        self.store.vertex_exists_active(id)
-            && self.store.kind(id) == VertexKind::Empty
-            && self.store.value_ref(id) == 0
-            && !self.vertex_formulas.contains_key(&id)
-            && !self.vertex_values.contains_key(&id)
-            && !self.ref_error_vertices.contains(&id)
-            && !self.is_dirty(id)
-            && !self.store.is_volatile(id)
-            && !self.volatile_vertices.contains(&id)
-            && !self.store.is_dynamic(id)
-            && self.edges.out_edges(id).is_empty()
-            && !self.formula_to_range_deps.contains_key(&id)
-            && !self.vertex_to_names.contains_key(&id)
-            && !self.vertex_to_pending_names.contains_key(&id)
-    }
-
     pub(crate) fn validate_prepared_legacy_graph_plan(
         &self,
         plan: &PreparedLegacyGraphPlan,
@@ -553,7 +592,7 @@ impl DependencyGraph {
         if plan
             .existing_targets
             .iter()
-            .any(|&id| !self.is_pristine_legacy_graph_target(id))
+            .any(|(id, expected)| self.existing_target_state(*id) != *expected)
         {
             return Err(PreparedLegacyGraphError::Stale);
         }
@@ -577,6 +616,23 @@ impl DependencyGraph {
             }
         }
         Ok(())
+    }
+
+    /// Reserve the graph-owned collections touched by an already validated plan.
+    /// Allocation failure retains Rust's process-fatal policy; no semantic write
+    /// occurs before all ordinary prepared-plan destinations have capacity.
+    pub(crate) fn reserve_prepared_legacy_graph_plan(&mut self, plan: &PreparedLegacyGraphPlan) {
+        let vertices = plan.new_vertices.len();
+        let formulas = plan.formulas.len();
+        self.store.reserve(vertices);
+        self.cell_to_vertex.reserve(vertices);
+        self.vertex_formulas.reserve(formulas);
+        self.formula_to_range_deps.reserve(formulas);
+        self.vertex_to_names.reserve(formulas);
+        self.vertex_to_pending_names.reserve(formulas);
+        self.formula_dirty.legacy_reserve(formulas);
+        self.edges
+            .reserve_prepared_additions(vertices, plan.planned_edge_count().unwrap_or(0));
     }
 
     pub(crate) fn apply_prepared_legacy_graph_plan(
@@ -616,6 +672,14 @@ impl DependencyGraph {
                 Coord::new(packed.row0(), packed.col0(), true, true),
             );
             self.cell_to_vertex.insert(addr, id);
+        }
+        for (target, _) in &plan.existing_targets {
+            self.remove_dependent_edges(*target);
+            self.detach_vertex_from_names(*target);
+            self.clear_pending_name_references(*target);
+            self.vertex_formulas.remove(target);
+            self.vertex_values.remove(target);
+            self.ref_error_vertices.remove(target);
         }
         let targets: Vec<_> = plan.formulas.iter().map(|formula| formula.target).collect();
         for formula in &plan.formulas {
@@ -756,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_formula_target_is_rejected_before_mutation() {
+    fn existing_formula_target_is_replaced_only_at_commit() {
         let (mut graph, sheet) = graph();
         let existing = planned(&mut graph, sheet, 1, 1, "=1", &[]);
         let existing = graph
@@ -764,19 +828,18 @@ mod tests {
             .unwrap();
         graph.apply_prepared_legacy_graph_plan(existing).unwrap();
 
+        let target = CellRef::new(sheet, Coord::from_excel(1, 1, true, true));
+        let target = graph.get_vertex_for_cell(&target).unwrap();
+        let old_ast = graph.get_formula_id(target).unwrap();
         let replacement = planned(&mut graph, sheet, 1, 1, "=2", &[]);
         let before = graph.baseline_stats();
-        assert_eq!(
-            graph
-                .prepare_legacy_graph_plan(sheet, vec![replacement])
-                .unwrap_err(),
-            PreparedLegacyGraphError::TargetConflict {
-                sheet,
-                row: 1,
-                col: 1,
-            }
-        );
+        let replacement = graph
+            .prepare_legacy_graph_plan(sheet, vec![replacement])
+            .unwrap();
         assert_eq!(graph.baseline_stats(), before);
+        graph.apply_prepared_legacy_graph_plan(replacement).unwrap();
+        assert_ne!(graph.get_formula_id(target), Some(old_ast));
+        assert_eq!(graph.baseline_stats().graph_formula_vertex_count, 1);
     }
 
     #[test]
@@ -829,26 +892,13 @@ mod tests {
     }
 
     #[test]
-    fn dirty_placeholder_is_conflict_and_becomes_stale_after_prepare() {
+    fn dirty_placeholder_state_is_captured_and_becomes_stale_after_prepare() {
         let (mut graph, sheet) = graph();
         let owner = planned(&mut graph, sheet, 1, 1, "=B1", &[(1, 2)]);
         let owner = graph.prepare_legacy_graph_plan(sheet, vec![owner]).unwrap();
         graph.apply_prepared_legacy_graph_plan(owner).unwrap();
         let b1 = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
         let b1_id = graph.get_vertex_for_cell(&b1).unwrap();
-
-        graph.mark_vertex_dirty(b1_id);
-        let conflict = planned(&mut graph, sheet, 1, 2, "=C1", &[(1, 3)]);
-        assert_eq!(
-            graph
-                .prepare_legacy_graph_plan(sheet, vec![conflict])
-                .unwrap_err(),
-            PreparedLegacyGraphError::TargetConflict {
-                sheet,
-                row: 1,
-                col: 2,
-            }
-        );
 
         graph.clear_dirty_flags(&[b1_id]);
         let addition = planned(&mut graph, sheet, 1, 2, "=C1", &[(1, 3)]);

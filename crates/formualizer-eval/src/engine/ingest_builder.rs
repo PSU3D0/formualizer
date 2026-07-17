@@ -211,6 +211,7 @@ pub struct BulkIngestBuilder<'g> {
     g: &'g mut DependencyGraph,
     sheets: FxHashMap<SheetId, SheetStage>,
     cfg_saved: EvalConfig,
+    admission_preflighted: bool,
 }
 
 impl<'g> BulkIngestBuilder<'g> {
@@ -221,7 +222,12 @@ impl<'g> BulkIngestBuilder<'g> {
             g,
             sheets: FxHashMap::default(),
             cfg_saved,
+            admission_preflighted: false,
         }
+    }
+
+    pub(crate) fn mark_admission_preflighted(&mut self) {
+        self.admission_preflighted = true;
     }
 
     pub fn add_sheet(&mut self, name: &str) -> SheetId {
@@ -296,6 +302,55 @@ impl<'g> BulkIngestBuilder<'g> {
             || std::env::var("FZ_DEBUG_LOAD")
                 .ok()
                 .is_some_and(|v| v != "0");
+        let provider = RegistryFunctionProvider;
+        for stage in self.sheets.values_mut() {
+            let mut inputs = Vec::new();
+            let mut indices = Vec::new();
+            for (index, formula) in stage.formulas.iter().enumerate() {
+                let placement = crate::reference::CellRef::new(
+                    stage.id,
+                    crate::reference::Coord::from_excel(formula.row, formula.col, true, true),
+                );
+                match &formula.ast {
+                    FormulaAstSource::Owned(ast) => {
+                        indices.push(index);
+                        inputs.push((FormulaAstInput::Tree(ast.clone()), placement, None));
+                    }
+                    FormulaAstSource::Interned(ast_id) => {
+                        indices.push(index);
+                        inputs.push((FormulaAstInput::RawArena(*ast_id), placement, None));
+                    }
+                    FormulaAstSource::Planned { .. } => {}
+                }
+            }
+            if !inputs.is_empty() {
+                let ingested = self.g.ingest_pipeline(&provider).ingest_batch(inputs)?;
+                for (index, formula) in indices.into_iter().zip(ingested) {
+                    stage.formulas[index].ast = FormulaAstSource::Planned {
+                        ast_id: formula.ast_id,
+                        plan: formula.dep_plan,
+                    };
+                }
+            }
+        }
+        let budgets = self.cfg_saved.resolved_evaluation_budgets();
+        if !self.admission_preflighted
+            && crate::engine::resource_ledger::graph_admission_enabled(&budgets)
+        {
+            let mut admission_plans = Vec::new();
+            for stage in self.sheets.values() {
+                for formula in &stage.formulas {
+                    let FormulaAstSource::Planned { plan, .. } = &formula.ast else {
+                        unreachable!("bulk formulas are planned before admission")
+                    };
+                    admission_plans.push((stage.id, formula.row, formula.col, plan.clone()));
+                }
+            }
+            let admission = self.g.preview_formula_mutations(&admission_plans)?;
+            crate::engine::resource_ledger::preflight_graph_admission(&budgets, admission, None)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+
         let mut total_vertices = 0usize;
         let mut total_formulas = 0usize;
         let mut total_edges = 0usize;

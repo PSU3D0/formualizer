@@ -131,7 +131,7 @@ impl UndoEngine {
                             sheet_id,
                             kind.unwrap_or(crate::engine::vertex::VertexKind::Cell),
                         );
-                        editor.add_vertex(meta);
+                        editor.try_add_vertex(meta)?;
                     }
                     ChangeEvent::RemoveVertex {
                         coord, sheet_id, ..

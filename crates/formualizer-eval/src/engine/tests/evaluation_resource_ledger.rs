@@ -91,7 +91,7 @@ fn explicit_and_legacy_budgets_merge_at_field_level_deterministically() {
         diagnostic.max_eval_time,
         LegacyResourceConfigDisposition::Mapped
     );
-    assert!(diagnostic.graph_admission_activation_deferred_to_c2);
+    assert!(!diagnostic.graph_admission_activation_deferred_to_c2);
 }
 
 #[test]
@@ -396,77 +396,41 @@ fn structural_topology_incompleteness_is_not_mislabeled_as_a_cap() {
 }
 
 #[test]
-fn graph_caps_are_declarative_across_staged_and_generic_paths_in_all_modes() {
-    fn prepared(mode: FormulaPlaneMode, budgets: EvaluationBudgets) -> Engine<TestWorkbook> {
-        let mut config = EvalConfig::default()
-            .with_formula_plane_mode(mode)
-            .with_evaluation_budgets(budgets);
-        config.defer_graph_building = true;
-        let mut engine = Engine::new(TestWorkbook::default(), config);
-        let _ = engine.add_sheet("Sheet1");
-        let _ = engine.add_sheet("Other");
-        engine.stage_formula_text("Sheet1", 1, 2, "=A1+1".to_string());
-        engine.stage_formula_text("Other", 1, 2, "=A1+2".to_string());
-        engine
-            .build_graph_for_sheets(["Sheet1"])
-            .expect("C1a budgets must not change selected staged acceptance");
-        assert_eq!(engine.staged_formula_count(), 1);
-        engine
-            .build_graph_all()
-            .expect("C1a budgets must not change prepare-all acceptance");
-        engine
-            .evaluate_all()
-            .expect("generic evaluation checkpoints must not fail after staging");
-        engine
-    }
-
+fn graph_caps_are_authoritative_and_atomic_across_staged_modes() {
     for mode in [
         FormulaPlaneMode::Off,
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let baseline = prepared(mode, EvaluationBudgets::default());
-        let capped = prepared(
-            mode,
-            EvaluationBudgets {
+        let mut config = EvalConfig::default()
+            .with_formula_plane_mode(mode)
+            .with_evaluation_budgets(EvaluationBudgets {
                 admission: AdmissionResourceBudget {
                     graph_vertex_hard_limit: Some(0),
                     graph_edge_hard_limit: Some(0),
                     ..AdmissionResourceBudget::default()
                 },
                 ..EvaluationBudgets::default()
-            },
-        );
-        let baseline_stats = baseline.baseline_stats();
-        let capped_stats = capped.baseline_stats();
+            });
+        config.defer_graph_building = true;
+        let mut engine = Engine::new(TestWorkbook::default(), config);
+        let _ = engine.add_sheet("Sheet1");
+        engine.stage_formula_text("Sheet1", 1, 2, "=A1+1".to_string());
+        let before = engine.baseline_stats();
+        let error = engine.build_graph_all().unwrap_err();
         assert_eq!(
-            capped_stats.graph_vertex_count,
-            baseline_stats.graph_vertex_count
-        );
-        assert_eq!(
-            capped_stats.graph_edge_count,
-            baseline_stats.graph_edge_count
-        );
-        assert_eq!(
-            capped_stats.formula_plane_active_span_count,
-            baseline_stats.formula_plane_active_span_count
+            resource_reason(&error),
+            Some(ResourceExhaustionReason::GraphVertices)
         );
         assert_eq!(
-            capped.get_cell_value("Sheet1", 1, 2),
-            baseline.get_cell_value("Sheet1", 1, 2)
+            engine.baseline_stats().graph_vertex_count,
+            before.graph_vertex_count
         );
         assert_eq!(
-            capped.get_cell_value("Other", 1, 2),
-            baseline.get_cell_value("Other", 1, 2)
+            engine.baseline_stats().graph_edge_count,
+            before.graph_edge_count
         );
-        assert_eq!(
-            capped
-                .last_evaluation_resource_request_stats()
-                .unwrap()
-                .ledger
-                .exhaustion,
-            None
-        );
+        assert_eq!(engine.staged_formula_count(), 1);
     }
 }
 
@@ -687,15 +651,8 @@ fn cache_overflow_does_not_charge_existing_materialization_guard() {
 
 #[test]
 fn skipped_topology_is_typed_atomic_and_never_cached() {
-    let mut config = EvalConfig::default()
-        .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
-        .with_evaluation_budgets(EvaluationBudgets {
-            admission: AdmissionResourceBudget {
-                materialization_cells: Some(0),
-                ..AdmissionResourceBudget::default()
-            },
-            ..EvaluationBudgets::default()
-        });
+    let mut config =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
     config.max_formula_plane_cache_candidates = 0;
     let mut engine = Engine::new(TestWorkbook::default(), config);
     let mut records = Vec::new();
@@ -725,6 +682,13 @@ fn skipped_topology_is_typed_atomic_and_never_cached() {
         .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", records)])
         .unwrap();
     assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.set_evaluation_budgets_for_test(EvaluationBudgets {
+        admission: AdmissionResourceBudget {
+            materialization_cells: Some(0),
+            ..AdmissionResourceBudget::default()
+        },
+        ..EvaluationBudgets::default()
+    });
     engine.evaluate_all().unwrap();
     let request = engine.last_evaluation_resource_request_stats().unwrap();
     assert_eq!(

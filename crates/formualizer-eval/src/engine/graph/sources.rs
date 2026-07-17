@@ -75,6 +75,7 @@ impl DependencyGraph {
         };
         self.source_scalars.insert(name.to_string(), entry);
         self.resolve_pending_name_references(NameScope::Workbook, name);
+        self.bump_symbol_revision();
         Ok(())
     }
 
@@ -102,6 +103,7 @@ impl DependencyGraph {
             version,
         };
         self.source_tables.insert(name.to_string(), entry);
+        self.bump_symbol_revision();
         Ok(())
     }
 
@@ -126,6 +128,7 @@ impl DependencyGraph {
 
         self.mark_volatile(vertex, version.is_none());
         self.mark_dirty(vertex);
+        self.bump_symbol_revision();
         Ok(())
     }
 
@@ -150,16 +153,19 @@ impl DependencyGraph {
 
         self.mark_volatile(vertex, version.is_none());
         self.mark_dirty(vertex);
+        self.bump_symbol_revision();
         Ok(())
     }
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
         if let Some(s) = self.source_scalars.get(name) {
             self.mark_dirty(s.vertex);
+            self.bump_symbol_revision();
             return Ok(());
         }
         if let Some(t) = self.source_tables.get(name) {
             self.mark_dirty(t.vertex);
+            self.bump_symbol_revision();
             return Ok(());
         }
         Err(ExcelError::new(ExcelErrorKind::Name).with_message(format!("Unknown source: {name}")))

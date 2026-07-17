@@ -36,6 +36,7 @@ use std::collections::HashSet;
 /// 4. **Minimal undo/redo** - know exactly which vertices were touched
 #[derive(Debug, Default)]
 pub struct SheetIndex {
+    memberships: HashSet<VertexId>,
     /// Row interval tree: maps row ranges → vertices in those rows
     /// For a cell at (r,c), we store the point interval [r,r] → VertexId
     row_tree: IntervalTree<VertexId>,
@@ -49,6 +50,7 @@ impl SheetIndex {
     /// Create a new empty sheet index
     pub fn new() -> Self {
         Self {
+            memberships: HashSet::new(),
             row_tree: IntervalTree::new(),
             col_tree: IntervalTree::new(),
         }
@@ -66,6 +68,10 @@ impl SheetIndex {
     pub fn add_vertex(&mut self, coord: AbsCoord, vertex_id: VertexId) {
         let row = coord.row();
         let col = coord.col();
+
+        if !self.memberships.insert(vertex_id) {
+            return;
+        }
 
         // Add to row tree - point interval [row, row]
         self.row_tree
@@ -95,6 +101,9 @@ impl SheetIndex {
             let mut row_map: FxHashMap<u32, HashSet<VertexId>> = FxHashMap::default();
             let mut col_map: FxHashMap<u32, HashSet<VertexId>> = FxHashMap::default();
             for (coord, vid) in items {
+                if !self.memberships.insert(*vid) {
+                    continue;
+                }
                 row_map.entry(coord.row()).or_default().insert(*vid);
                 col_map.entry(coord.col()).or_default().insert(*vid);
             }
@@ -112,16 +121,7 @@ impl SheetIndex {
         }
         // Fallback: incremental for already populated index
         for (coord, vid) in items {
-            let row = coord.row();
-            let col = coord.col();
-            self.row_tree
-                .entry(row, row)
-                .or_insert_with(HashSet::new)
-                .insert(*vid);
-            self.col_tree
-                .entry(col, col)
-                .or_insert_with(HashSet::new)
-                .insert(*vid);
+            self.add_vertex(*coord, *vid);
         }
     }
 
@@ -133,11 +133,13 @@ impl SheetIndex {
         let row = coord.row();
         let col = coord.col();
 
+        if !self.memberships.remove(&vertex_id) {
+            return;
+        }
+
         // Remove from row tree
         if let Some(vertices) = self.row_tree.get_mut(row, row) {
             vertices.remove(&vertex_id);
-            // Note: We could remove empty intervals, but keeping them is fine
-            // as they take minimal space and may be reused
         }
 
         // Remove from column tree
@@ -210,25 +212,18 @@ impl SheetIndex {
         row_vertices.intersection(&col_vertices).copied().collect()
     }
 
-    /// Get the total number of indexed vertices (may count duplicates if vertex appears at multiple positions).
     pub fn len(&self) -> usize {
-        let mut unique: HashSet<VertexId> = HashSet::new();
-
-        // Collect all unique vertices from row tree
-        for (_low, _high, values) in self.row_tree.query(0, u32::MAX) {
-            unique.extend(values.iter());
-        }
-
-        unique.len()
+        self.memberships.len()
     }
 
     /// Check if the index is empty.
     pub fn is_empty(&self) -> bool {
-        self.row_tree.is_empty()
+        self.memberships.is_empty()
     }
 
     /// Clear all entries from the index.
     pub fn clear(&mut self) {
+        self.memberships.clear();
         self.row_tree = IntervalTree::new();
         self.col_tree = IntervalTree::new();
     }
@@ -257,6 +252,20 @@ mod tests {
         // Query range containing the vertex
         let row_results = index.vertices_in_row_range(3, 7);
         assert_eq!(row_results, vec![vertex_id]);
+    }
+
+    #[test]
+    fn vertex_count_is_unique_and_consistent_across_incremental_and_batch_builds() {
+        let vertex = VertexId(1024);
+        let items = [(AbsCoord::new(1, 1), vertex), (AbsCoord::new(1, 1), vertex)];
+        let mut incremental = SheetIndex::new();
+        for (coord, vertex) in items {
+            incremental.add_vertex(coord, vertex);
+        }
+        let mut batch = SheetIndex::new();
+        batch.add_vertices_batch(&items);
+        assert_eq!(incremental.len(), 1);
+        assert_eq!(batch.len(), incremental.len());
     }
 
     #[test]
