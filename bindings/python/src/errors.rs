@@ -42,6 +42,9 @@ fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject
             let _ = dict.set_item("observed", detail.observed);
             let _ = dict.set_item("request_id", detail.request_id);
         }
+        ExcelErrorExtra::PreparationStale { reason } => {
+            let _ = dict.set_item("preparation_stale_reason", reason.as_str());
+        }
     }
     Some(dict.into_any().unbind())
 }
@@ -78,6 +81,9 @@ pub(crate) fn excel_error_to_pyerr(error: RustExcelError) -> PyErr {
             let _ = value.setattr("limit", detail.limit);
             let _ = value.setattr("observed", detail.observed);
             let _ = value.setattr("request_id", detail.request_id);
+        }
+        if let ExcelErrorExtra::PreparationStale { reason } = &error.extra {
+            let _ = value.setattr("preparation_stale_reason", reason.as_str());
         }
     });
     pyerr
