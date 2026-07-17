@@ -21,6 +21,7 @@ use crate::formula_plane::region_index::Region;
 use crate::formula_plane::runtime::PlacementDomain;
 use crate::reference::{CellRef, Coord};
 use crate::traits::FunctionProvider;
+use formualizer_common::ExcelError;
 use formualizer_parse::parser::ASTNode;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -168,6 +169,14 @@ pub(crate) struct PreparedFragmentedSourceTransaction {
 }
 
 impl PreparedFragmentedSourceTransaction {
+    pub(crate) fn legacy_graph(&self) -> &PreparedLegacyGraphPlan {
+        &self.legacy_graph
+    }
+
+    pub(crate) fn materialization_cells(&self) -> u64 {
+        self.work.legacy_formulas_staged as u64
+    }
+
     #[cfg(test)]
     pub(crate) fn semantic_revisions_for_test(&self) -> (u64, Option<u64>) {
         (
@@ -190,6 +199,7 @@ pub(crate) enum FragmentedTransactionPrepareError {
     InvalidCoordinate(SourceCoord),
     LegacyGraph(PreparedLegacyGraphError),
     FormulaPlane(FormulaPlaneAppendError),
+    Admission(ExcelError),
 }
 
 impl FragmentedTransactionPrepareError {

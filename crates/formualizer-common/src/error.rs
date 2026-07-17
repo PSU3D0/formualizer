@@ -139,6 +139,31 @@ pub struct ResourceExhaustionDetail {
     pub request_id: Option<u64>,
 }
 
+/// Stable category for a target-preparation plan rejected at its final boundary.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PreparationStaleReason {
+    Graph,
+    Authority,
+    Staged,
+    Symbols,
+    Semantic,
+    Provider,
+}
+
+impl PreparationStaleReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Graph => "graph",
+            Self::Authority => "authority",
+            Self::Staged => "staged",
+            Self::Symbols => "symbols",
+            Self::Semantic => "semantic",
+            Self::Provider => "provider",
+        }
+    }
+}
+
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
@@ -159,6 +184,10 @@ pub enum ExcelErrorExtra {
     /// unchanged so existing bindings and formula error handling stay compatible.
     Resource {
         detail: Box<ResourceExhaustionDetail>,
+    },
+
+    PreparationStale {
+        reason: PreparationStaleReason,
     },
     // --- Add future custom payloads below -------------------------------
     // AnotherKind { … },
@@ -330,6 +359,9 @@ impl fmt::Display for ExcelError {
                     detail.limit
                 )?;
             }
+            ExcelErrorExtra::PreparationStale { reason } => {
+                write!(f, " [preparation stale {}]", reason.as_str())?;
+            }
         }
 
         Ok(())
@@ -382,5 +414,15 @@ mod tests {
         let err = ExcelError::from_error_string("#BOGUS!");
         assert_eq!(err.kind, ExcelErrorKind::Error);
         assert!(err.message.unwrap_or_default().contains("#BOGUS!"));
+    }
+
+    #[test]
+    fn preparation_stale_reason_has_stable_snake_case_names() {
+        assert_eq!(PreparationStaleReason::Graph.as_str(), "graph");
+        assert_eq!(PreparationStaleReason::Authority.as_str(), "authority");
+        assert_eq!(PreparationStaleReason::Staged.as_str(), "staged");
+        assert_eq!(PreparationStaleReason::Symbols.as_str(), "symbols");
+        assert_eq!(PreparationStaleReason::Semantic.as_str(), "semantic");
+        assert_eq!(PreparationStaleReason::Provider.as_str(), "provider");
     }
 }

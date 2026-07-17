@@ -23,7 +23,7 @@ pub(crate) fn workbook_error_ref_to_js(error: &formualizer::workbook::IoError) -
 mod tests {
     use super::*;
     use formualizer::common::error::{
-        ExcelErrorKind, ResourceExhaustionDetail, ResourceExhaustionReason,
+        ExcelErrorKind, PreparationStaleReason, ResourceExhaustionDetail, ResourceExhaustionReason,
     };
     use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -57,6 +57,24 @@ mod tests {
             "#N/IMPL!: resource message [resource graph_edges 9007199254740994/9007199254740993]"
         );
     }
+
+    #[wasm_bindgen_test]
+    fn preparation_stale_reason_is_exposed_as_a_stable_string() {
+        let error = ExcelError::new(ExcelErrorKind::Cancelled).with_extra(
+            ExcelErrorExtra::PreparationStale {
+                reason: PreparationStaleReason::Semantic,
+            },
+        );
+        let js_error: js_sys::Error = excel_error_to_js(error).unchecked_into();
+        let reason = js_sys::Reflect::get(
+            js_error.as_ref(),
+            &JsValue::from_str("preparation_stale_reason"),
+        )
+        .unwrap()
+        .as_string()
+        .unwrap();
+        assert_eq!(reason, "semantic");
+    }
 }
 
 fn set_string(object: &js_sys::Object, key: &str, value: &str) {
@@ -86,6 +104,9 @@ pub(crate) fn excel_error_to_js(error: ExcelError) -> JsValue {
                 .request_id
                 .map_or(JsValue::NULL, |id| JsValue::from_str(&id.to_string()));
             let _ = js_sys::Reflect::set(object, &JsValue::from_str("request_id"), &request_id);
+        }
+        ExcelErrorExtra::PreparationStale { reason } => {
+            set_string(object, "preparation_stale_reason", reason.as_str());
         }
     }
     js_error.into()

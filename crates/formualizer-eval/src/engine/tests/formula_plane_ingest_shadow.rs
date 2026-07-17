@@ -7,10 +7,10 @@ use crate::engine::{
     Engine, EvalConfig, EvaluationBudgets, ExplicitPartitionLegacyMembers,
     ExplicitSourceFamilyMembers, FormulaCompressedSourceBatch, FormulaCompressedSourceReport,
     FormulaIngestBatch, FormulaIngestRecord, FormulaParsePolicy, FormulaPlaneMode,
-    FormulaReplayDisposition, OptimizationResourceBudget, PartitionLegacyMember,
-    PartitionLegacyMemberKind, PartitionReconciliation, PartitionedSourceFormulaFamily,
-    PlacementDomainTransport, RetainedResourceBudget, RowVisibilitySource, ScratchResourceBudget,
-    SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily, SourceRect,
+    FormulaReplayDisposition, PartitionLegacyMember, PartitionLegacyMemberKind,
+    PartitionReconciliation, PartitionedSourceFormulaFamily, PlacementDomainTransport,
+    RowVisibilitySource, SourceCoord, SourceFamilyId, SourceFamilyMembers, SourceFormulaFamily,
+    SourceRect,
 };
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
@@ -228,18 +228,19 @@ fn record(
 }
 
 #[test]
-fn real_deferred_source_families_are_budget_invariant_in_every_mode() {
+fn real_deferred_source_families_use_actual_graph_admission_in_every_mode() {
     fn run(
         mode: FormulaPlaneMode,
         budgets: EvaluationBudgets,
-    ) -> (
-        crate::engine::eval::EngineBaselineStats,
-        crate::engine::FormulaIngestReport,
-        Vec<LiteralValue>,
-    ) {
-        let mut config = EvalConfig::default()
-            .with_formula_plane_mode(mode)
-            .with_evaluation_budgets(budgets);
+    ) -> Result<
+        (
+            crate::engine::eval::EngineBaselineStats,
+            crate::engine::FormulaIngestReport,
+            Vec<LiteralValue>,
+        ),
+        formualizer_common::ExcelError,
+    > {
+        let mut config = EvalConfig::default().with_formula_plane_mode(mode);
         config.defer_graph_building = true;
         let mut engine = Engine::new(TestWorkbook::default(), config);
         for row in 1..=8 {
@@ -247,45 +248,29 @@ fn real_deferred_source_families_are_budget_invariant_in_every_mode() {
                 .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
                 .unwrap();
         }
+        engine.set_evaluation_budgets_for_test(budgets);
         engine
             .source_formula_ingress()
             .stage_deferred(real_deferred_source_package());
-        engine.build_graph_all().unwrap();
-        engine.evaluate_all().unwrap();
+        engine.build_graph_all()?;
+        engine.evaluate_all()?;
         let values = [(1, 3), (4, 3), (8, 3)]
             .into_iter()
             .map(|(row, col)| engine.get_cell_value("Sheet1", row, col).unwrap())
             .collect();
-        (
+        Ok((
             engine.baseline_stats(),
             engine.last_formula_ingest_report().unwrap().clone(),
             values,
-        )
+        ))
     }
 
     let observational = EvaluationBudgets {
         admission: AdmissionResourceBudget {
-            graph_vertex_hard_limit: Some(0),
+            graph_vertex_hard_limit: Some(8),
             graph_edge_hard_limit: Some(0),
             materialization_cells: Some(0),
             materialized_graph_bytes: Some(0),
-        },
-        retained: RetainedResourceBudget {
-            total_bytes: Some(0),
-            mixed_cache_bytes: Some(0),
-            lookup_cache_bytes: Some(0),
-        },
-        scratch: ScratchResourceBudget {
-            total_bytes: Some(0),
-            schedule_discovery_bytes: Some(0),
-            graph_source_bytes: Some(0),
-            spill_overlay_bytes: Some(0),
-            disk_scratch_policy: None,
-        },
-        optimization: OptimizationResourceBudget {
-            mixed_cache_candidates: Some(0),
-            mixed_cache_edges: Some(0),
-            max_threads: Some(0),
         },
         ..EvaluationBudgets::default()
     };
@@ -295,8 +280,12 @@ fn real_deferred_source_families_are_budget_invariant_in_every_mode() {
         FormulaPlaneMode::Shadow,
         FormulaPlaneMode::AuthoritativeExperimental,
     ] {
-        let expected = run(mode, EvaluationBudgets::default());
-        assert_eq!(run(mode, observational.clone()), expected, "mode {mode:?}");
+        let expected = run(mode, EvaluationBudgets::default()).unwrap();
+        let error = run(mode, observational.clone()).unwrap_err();
+        assert!(matches!(
+            error.extra,
+            formualizer_common::ExcelErrorExtra::Resource { .. }
+        ));
         assert_eq!(
             expected.2,
             vec![

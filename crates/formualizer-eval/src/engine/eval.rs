@@ -17,6 +17,7 @@ use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::range_view::RangeView;
 use crate::engine::row_visibility::RowVisibilityState;
 use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
+use crate::engine::target_preparation::{StagedFormulaIndex, StagedFormulaLease};
 use crate::engine::virtual_deps::VirtualDepBuilder;
 use crate::engine::{
     CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
@@ -55,6 +56,7 @@ use crate::formula_plane::span_eval::SpanEvalReport;
 use crate::formula_plane::span_eval::{SpanComputedWriteSink, SpanEvalTask, SpanEvaluator};
 use crate::formula_plane::structural::relocate_ast_for_template_placement;
 use crate::formula_plane::structural_shift::{SpanShiftPlan, StructuralOp, classify_span_for_op};
+use crate::function::FnCaps;
 use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
@@ -153,9 +155,26 @@ impl StagedSheet {
         Some(text)
     }
 
+    fn get_ordinary(&self, row: u32, col: u32) -> Option<&str> {
+        self.index
+            .get(&(row, col))
+            .map(|&i| self.entries[i].2.as_str())
+    }
+
+    fn remove_ordinary(&mut self, row: u32, col: u32) -> Option<String> {
+        let idx = self.index.remove(&(row, col))?;
+        let (_, _, text) = self.entries.remove(idx);
+        for slot in self.index.values_mut() {
+            if *slot > idx {
+                *slot -= 1;
+            }
+        }
+        Some(text)
+    }
+
     fn get(&self, row: u32, col: u32) -> Option<String> {
-        if let Some(&i) = self.index.get(&(row, col)) {
-            return Some(self.entries[i].2.clone());
+        if let Some(text) = self.get_ordinary(row, col) {
+            return Some(text.to_string());
         }
         let package = self.deferred_package.as_ref()?;
         if package.suppressed.contains(&(row, col)) {
@@ -191,6 +210,25 @@ impl StagedSheet {
 }
 
 type StagedFormulaMap = std::collections::HashMap<String, StagedSheet>;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PreparationRegion {
+    sheet: String,
+    sheet_id: SheetId,
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+}
+
+#[derive(Debug)]
+struct PreparedOrdinaryStagedFormula {
+    sheet: String,
+    sheet_id: SheetId,
+    lease: StagedFormulaLease,
+    ast_id: Option<AstNodeId>,
+    plan: Option<DependencyPlanRow>,
+}
 
 fn producer_dirty_to_span_dirty(
     dirty: ProducerDirtyDomain,
@@ -730,6 +768,8 @@ pub struct Engine<R> {
     source_formula_token: Arc<()>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: StagedFormulaMap,
+    /// Presence and generation authority for ordinary staged formula discovery.
+    staged_formula_index: StagedFormulaIndex,
     /// Per-sheet row visibility sidecar state.
     row_visibility: FxHashMap<SheetId, RowVisibilityState>,
     /// Cached row visibility masks keyed by sheet/span/mode/version.
@@ -823,6 +863,9 @@ pub struct Engine<R> {
     #[cfg(test)]
     last_formula_plane_span_eval_report: Option<SpanEvalReport>,
     before_prepared_span_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
+    before_target_preparation_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
+    #[cfg(test)]
+    before_target_planning_snapshot_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     #[cfg(test)]
     force_source_family_fallback: bool,
     #[cfg(test)]
@@ -832,6 +875,9 @@ pub struct Engine<R> {
         Option<crate::engine::fragmented_transaction::FragmentedCommitFault>,
     #[cfg(test)]
     formula_span_demotion_fault_for_test: Option<FormulaSpanDemotionFault>,
+    #[cfg(test)]
+    target_preparation_fault_for_test:
+        Option<crate::engine::target_preparation::TargetPreparationFault>,
     #[cfg(test)]
     force_non_cycle_schedule_fallback_for_test: bool,
     #[cfg(test)]
@@ -910,6 +956,13 @@ where
                 None
             };
 
+            if self.engine.graph_admission_enabled() {
+                let admission =
+                    self.engine
+                        .graph
+                        .preview_value_mutation(addr.sheet_id, row, col)?;
+                self.engine.preflight_graph_admission(admission)?;
+            }
             self.engine.demote_span_containing_cell_for_write(
                 addr.sheet_id,
                 addr.coord.row(),
@@ -986,6 +1039,25 @@ where
                 });
             };
 
+            let admitted_formula = if self.engine.graph_admission_enabled() {
+                let placement =
+                    CellRef::new(addr.sheet_id, Coord::from_excel(row, col, true, true));
+                let ingested = self.engine.ingest_pipeline().ingest_formula(
+                    FormulaAstInput::Tree(ast.clone()),
+                    placement,
+                    None,
+                )?;
+                let admission = self.engine.graph.preview_formula_mutations(&[(
+                    addr.sheet_id,
+                    row,
+                    col,
+                    ingested.dep_plan.clone(),
+                )])?;
+                self.engine.preflight_graph_admission(admission)?;
+                Some((ingested.ast_id, ingested.dep_plan))
+            } else {
+                None
+            };
             self.engine.demote_span_containing_cell_for_write(
                 addr.sheet_id,
                 addr.coord.row(),
@@ -1008,7 +1080,23 @@ where
             // Safety: `log_ptr` comes from a unique `&mut ChangeLog` in `Engine::action_with_logger`.
             let log = unsafe { &mut *log_ptr };
             self.engine.edit_with_logger(log, |editor| {
-                editor.set_cell_formula_with_old_state(addr, ast.clone(), old_value, old_formula);
+                if let Some((ast_id, plan)) = admitted_formula {
+                    editor.set_cell_formula_with_prepared_plan(
+                        addr,
+                        ast.clone(),
+                        old_value,
+                        old_formula,
+                        ast_id,
+                        plan,
+                    );
+                } else {
+                    editor.set_cell_formula_with_old_state(
+                        addr,
+                        ast.clone(),
+                        old_value,
+                        old_formula,
+                    );
+                }
             })?;
             self.engine
                 .record_formula_plane_structural_change(StructuralScope::Cell {
@@ -1947,6 +2035,7 @@ where
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             source_formula_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
+            staged_formula_index: StagedFormulaIndex::default(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
@@ -1976,6 +2065,9 @@ where
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
             before_prepared_span_commit_hook: None,
+            before_target_preparation_commit_hook: None,
+            #[cfg(test)]
+            before_target_planning_snapshot_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
             #[cfg(test)]
@@ -1984,6 +2076,8 @@ where
             fragmented_commit_fault_for_test: None,
             #[cfg(test)]
             formula_span_demotion_fault_for_test: None,
+            #[cfg(test)]
+            target_preparation_fault_for_test: None,
             #[cfg(test)]
             force_non_cycle_schedule_fallback_for_test: false,
             #[cfg(test)]
@@ -2068,6 +2162,7 @@ where
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             source_formula_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
+            staged_formula_index: StagedFormulaIndex::default(),
             row_visibility: FxHashMap::default(),
             row_visibility_mask_cache: std::sync::RwLock::new(FxHashMap::default()),
             formula_parse_diagnostics: Vec::new(),
@@ -2097,6 +2192,9 @@ where
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
             before_prepared_span_commit_hook: None,
+            before_target_preparation_commit_hook: None,
+            #[cfg(test)]
+            before_target_planning_snapshot_hook: None,
             #[cfg(test)]
             force_source_family_fallback: false,
             #[cfg(test)]
@@ -2105,6 +2203,8 @@ where
             fragmented_commit_fault_for_test: None,
             #[cfg(test)]
             formula_span_demotion_fault_for_test: None,
+            #[cfg(test)]
+            target_preparation_fault_for_test: None,
             #[cfg(test)]
             force_non_cycle_schedule_fallback_for_test: false,
             #[cfg(test)]
@@ -2264,7 +2364,8 @@ where
         budgets: crate::engine::EvaluationBudgets,
     ) {
         self.evaluation_resource_budgets = budgets.clone();
-        self.config.evaluation_budgets = budgets;
+        self.config.evaluation_budgets = budgets.clone();
+        self.graph.set_evaluation_budgets_for_test(budgets);
     }
 
     fn resource_loop_checkpoint(
@@ -2335,6 +2436,13 @@ where
             .map_err(crate::engine::ResourceLedgerError::into_excel_error)
     }
 
+    fn reserve_graph_source_scratch(&mut self, bytes: u64) -> Result<(), ExcelError> {
+        self.active_resource_ledger
+            .as_mut()
+            .map_or(Ok(()), |ledger| ledger.reserve_graph_source(bytes))
+            .map_err(crate::engine::ResourceLedgerError::into_excel_error)
+    }
+
     fn with_request_scratch<T>(
         &mut self,
         bytes: u64,
@@ -2359,6 +2467,118 @@ where
                 .phases
                 .staged_prepare_ns
                 .saturating_add(Self::duration_ns(elapsed));
+        }
+    }
+
+    fn graph_admission_enabled(&self) -> bool {
+        crate::engine::resource_ledger::graph_admission_enabled(&self.evaluation_resource_budgets)
+    }
+
+    fn preflight_graph_admission(
+        &mut self,
+        usage: crate::engine::resource_ledger::GraphAdmission,
+    ) -> Result<(), ExcelError> {
+        let request_id = self
+            .active_evaluation_resource_request
+            .as_ref()
+            .map(|stats| stats.request_id);
+        crate::engine::resource_ledger::preflight_graph_admission(
+            &self.evaluation_resource_budgets,
+            usage,
+            request_id,
+        )
+        .map_err(crate::engine::ResourceLedgerError::into_excel_error)
+    }
+
+    fn prepared_legacy_admission(
+        &mut self,
+        plan: &PreparedLegacyGraphPlan,
+        materialization_cells: u64,
+    ) -> Result<(), ExcelError> {
+        if !self.graph_admission_enabled() {
+            return Ok(());
+        }
+        let stats = self.graph.baseline_stats();
+        let added_edges = plan.planned_edge_count().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::NImpl).with_message("graph edge count overflow")
+        })?;
+        let removed_edges = plan.removed_edge_count().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::NImpl).with_message("graph edge count overflow")
+        })?;
+        self.preflight_graph_admission(crate::engine::resource_ledger::GraphAdmission {
+            final_vertices: stats
+                .graph_vertex_count
+                .checked_add(plan.new_vertex_count())
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("graph vertex count overflow")
+                })?,
+            final_edges: stats
+                .graph_edge_count
+                .checked_sub(removed_edges)
+                .and_then(|count| count.checked_add(added_edges))
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::NImpl).with_message("graph edge count overflow")
+                })?,
+            materialization_cells,
+            added_vertices: plan.new_vertex_count(),
+            added_edges,
+        })
+    }
+
+    fn observe_target_admission_failure(
+        &mut self,
+        reason: formualizer_common::ResourceExhaustionReason,
+    ) {
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            stats.target_admission_failure = Some(reason);
+        }
+    }
+
+    fn observe_target_preparation_report(
+        &mut self,
+        report: &crate::engine::PreparedTargetGraphReport,
+    ) {
+        let reason_bit = |reason: crate::engine::OpaqueReason| -> u64 {
+            let index = match reason {
+                crate::engine::OpaqueReason::DynamicReference => 0,
+                crate::engine::OpaqueReason::RuntimeTextReference => 1,
+                crate::engine::OpaqueReason::UnknownFunction => 2,
+                crate::engine::OpaqueReason::UnknownCustomFunction => 3,
+                crate::engine::OpaqueReason::UnresolvedCrossSheetBinding => 4,
+                crate::engine::OpaqueReason::UnresolvedName => 5,
+                crate::engine::OpaqueReason::UnresolvedTable => 6,
+                crate::engine::OpaqueReason::FormulaName => 7,
+                crate::engine::OpaqueReason::DeferredSourcePackage => 8,
+                crate::engine::OpaqueReason::UnsupportedSourceSemantics => 9,
+                crate::engine::OpaqueReason::UncertainDefaultSheetBinding => 10,
+            };
+            1u64 << index
+        };
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            stats.staged_selected = report.selected_staged_cells as u64;
+            stats.staged_retained = report.retained_staged_cells as u64;
+            stats.target_requested = report.requested_targets as u64;
+            stats.target_normalized_regions = report.normalized_regions as u64;
+            stats.target_scope_level = match &report.widened_scope {
+                crate::engine::PrepareScope::Exact => 0,
+                crate::engine::PrepareScope::Sheets(_) => 1,
+                crate::engine::PrepareScope::Workbook => 2,
+            };
+            stats.target_widening_reason_bits = report
+                .widening_reasons
+                .iter()
+                .copied()
+                .fold(0, |bits, reason| bits | reason_bit(reason));
+            stats.graph_source_scratch_estimated = report.estimated_scratch_bytes;
+            stats.graph_source_scratch_observed = report.observed_scratch_bytes;
+            stats.target_commit_estimated_work = report.estimated_commit_work;
+            stats.target_commit_actual_work = report.actual_commit_work;
+            stats.target_commit_window_ns = Self::duration_ns(report.commit_window);
+            stats.phases.staged_prepare_ns = stats
+                .phases
+                .staged_prepare_ns
+                .saturating_add(Self::duration_ns(report.commit_window));
         }
     }
 
@@ -2987,7 +3207,7 @@ where
         // proof, retain the documented graph-owned global invalidation.
         self.clear_all_computed_overlays();
         self.mark_all_formula_vertices_dirty();
-        self.staged_formulas.remove(&name);
+        self.clear_staged_formulas_for_sheet(&name);
         if self.row_visibility.remove(&sheet_id).is_some() {
             self.invalidate_row_visibility_mask_cache();
         }
@@ -3815,6 +4035,108 @@ where
         Ok(ret)
     }
 
+    pub(crate) fn preflight_replay_admission(
+        &mut self,
+        events: &[ChangeEvent],
+        forward: bool,
+    ) -> Result<(), crate::engine::EditorError> {
+        if !self.graph_admission_enabled() {
+            return Ok(());
+        }
+        let mut vertex_delta = 0i128;
+        let mut edge_delta = 0i128;
+        let mut added_vertices = 0usize;
+        let mut added_edges = 0usize;
+        let mut formula_cells = BTreeSet::new();
+        for event in events {
+            match event {
+                ChangeEvent::AddVertex {
+                    formula,
+                    coord,
+                    sheet_id,
+                    ..
+                } => {
+                    let delta = if forward { 1 } else { -1 };
+                    vertex_delta += delta;
+                    if forward {
+                        added_vertices = added_vertices.saturating_add(1);
+                        if formula.is_some() {
+                            formula_cells.insert((*sheet_id, coord.row(), coord.col()));
+                        }
+                    }
+                }
+                ChangeEvent::RemoveVertex {
+                    old_formula,
+                    coord,
+                    sheet_id,
+                    ..
+                } => {
+                    let delta = if forward { -1 } else { 1 };
+                    vertex_delta += delta;
+                    if !forward {
+                        added_vertices = added_vertices.saturating_add(1);
+                        if old_formula.is_some()
+                            && let (Some(sheet_id), Some(coord)) = (sheet_id, coord)
+                        {
+                            formula_cells.insert((*sheet_id, coord.row(), coord.col()));
+                        }
+                    }
+                }
+                ChangeEvent::EdgeAdded { .. } => {
+                    let delta = if forward { 1 } else { -1 };
+                    edge_delta += delta;
+                    if forward {
+                        added_edges = added_edges.saturating_add(1);
+                    }
+                }
+                ChangeEvent::EdgeRemoved { .. } => {
+                    let delta = if forward { -1 } else { 1 };
+                    edge_delta += delta;
+                    if !forward {
+                        added_edges = added_edges.saturating_add(1);
+                    }
+                }
+                ChangeEvent::SetFormula {
+                    addr, old_formula, ..
+                } => {
+                    if forward || old_formula.is_some() {
+                        formula_cells.insert((addr.sheet_id, addr.coord.row(), addr.coord.col()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let stats = self.graph.baseline_stats();
+        let final_vertices = i128::try_from(stats.graph_vertex_count)
+            .ok()
+            .and_then(|count| count.checked_add(vertex_delta))
+            .and_then(|count| usize::try_from(count).ok())
+            .ok_or_else(|| {
+                crate::engine::EditorError::Excel(
+                    ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("replay vertex count overflow"),
+                )
+            })?;
+        let final_edges = i128::try_from(stats.graph_edge_count)
+            .ok()
+            .and_then(|count| count.checked_add(edge_delta))
+            .and_then(|count| usize::try_from(count).ok())
+            .ok_or_else(|| {
+                crate::engine::EditorError::Excel(
+                    ExcelError::new(ExcelErrorKind::NImpl)
+                        .with_message("replay edge count overflow"),
+                )
+            })?;
+        self.preflight_graph_admission(crate::engine::resource_ledger::GraphAdmission {
+            final_vertices,
+            final_edges,
+            materialization_cells: formula_cells.len() as u64,
+            added_vertices,
+            added_edges,
+        })
+        .map_err(crate::engine::EditorError::Excel)
+    }
+
     pub fn undo_logged(
         &mut self,
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
@@ -3825,6 +4147,7 @@ where
             .into_iter()
             .map(|index| log.events()[index].clone())
             .collect::<Vec<_>>();
+        self.preflight_replay_admission(&pending_events, false)?;
         let names = Self::name_event_names(&pending_events);
         let prepared =
             self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str))?;
@@ -3852,6 +4175,7 @@ where
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
         let pending_events = undo.pending_redo_events();
+        self.preflight_replay_admission(&pending_events, true)?;
         let names = Self::name_event_names(&pending_events);
         let prepared =
             self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str))?;
@@ -3883,6 +4207,10 @@ where
         let Some(journal) = undo.pop_undo_action() else {
             return Ok(());
         };
+        if let Err(error) = self.preflight_replay_admission(&journal.graph.events, false) {
+            undo.push_done_action(journal);
+            return Err(error);
+        }
         let names = Self::name_event_names(&journal.graph.events);
         let prepared =
             match self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str)) {
@@ -3928,6 +4256,10 @@ where
         let Some(journal) = undo.pop_redo_action() else {
             return Ok(());
         };
+        if let Err(error) = self.preflight_replay_admission(&journal.graph.events, true) {
+            undo.push_redo_action(journal);
+            return Err(error);
+        }
         let names = Self::name_event_names(&journal.graph.events);
         let prepared =
             match self.prepare_name_dependent_span_demotion(names.iter().map(String::as_str)) {
@@ -4185,6 +4517,20 @@ where
             .entry(sheet.to_string())
             .or_default()
             .stage(row, col, text);
+        self.staged_formula_index.stage(sheet, row, col);
+    }
+
+    fn index_removed_staged_sheet(&mut self, sheet: &str, staged: &StagedSheet) {
+        for (row, col, _) in &staged.entries {
+            self.staged_formula_index.remove(sheet, *row, *col);
+        }
+        if staged.deferred_package.is_some() {
+            self.staged_formula_index.set_package(sheet, false);
+        }
+    }
+
+    fn restore_staged_sheet(&mut self, sheet: String, staged: StagedSheet) {
+        self.staged_formulas.insert(sheet, staged);
     }
 
     #[doc(hidden)]
@@ -4200,34 +4546,53 @@ where
         self.before_prepared_span_commit_hook = Some(Box::new(hook));
     }
 
+    #[doc(hidden)]
+    pub fn set_before_target_preparation_commit_hook(
+        &mut self,
+        hook: impl FnOnce() + Send + Sync + 'static,
+    ) {
+        self.before_target_preparation_commit_hook = Some(Box::new(hook));
+    }
+
     fn stage_deferred_formula_package(&mut self, package: crate::engine::DeferredFormulaPackage) {
         let sheet = package.sheet_name.clone();
-        let staged = self.staged_formulas.entry(sheet).or_default();
+        let staged = self.staged_formulas.entry(sheet.clone()).or_default();
         debug_assert!(staged.deferred_package.is_none());
         staged.deferred_package = Some(package);
+        self.staged_formula_index.set_package(&sheet, true);
     }
 
     pub fn clear_staged_formula_text(&mut self, sheet: &str, row: u32, col: u32) -> Option<String> {
         let mut removed = None;
         let mut remove_sheet = false;
+        let mut had_package = false;
         if let Some(entries) = self.staged_formulas.get_mut(sheet) {
+            had_package = entries.deferred_package.is_some();
             removed = entries.remove(row, col);
             remove_sheet = entries.is_empty();
         }
+        let ordinary_removed = self.staged_formula_index.remove(sheet, row, col);
+        if !ordinary_removed && had_package {
+            self.staged_formula_index.touch_package(sheet);
+        }
         if remove_sheet {
             self.staged_formulas.remove(sheet);
+            self.staged_formula_index.set_package(sheet, false);
         }
         removed
     }
 
     pub fn clear_staged_formulas_for_sheet(&mut self, sheet: &str) {
-        self.staged_formulas.remove(sheet);
+        if self.staged_formulas.remove(sheet).is_some() {
+            self.staged_formula_index.clear_sheet(sheet);
+        }
     }
 
     pub fn rename_staged_formula_sheet(&mut self, old: &str, new: &str) {
         let Some(entries) = self.staged_formulas.remove(old) else {
             return;
         };
+        self.staged_formula_index.clear_sheet(old);
         let (formulas, mut package) = entries.into_parts();
         for (row, col, text) in formulas {
             self.stage_formula_text(new, row, col, text);
@@ -4265,6 +4630,45 @@ where
 
     pub fn formula_ingest_report_total(&self) -> &FormulaIngestReport {
         &self.formula_ingest_report_total
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_before_target_planning_snapshot_hook_for_test(
+        &mut self,
+        hook: impl FnOnce() + Send + Sync + 'static,
+    ) {
+        self.before_target_planning_snapshot_hook = Some(Box::new(hook));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_target_preparation_fault_for_test(
+        &mut self,
+        fault: crate::engine::target_preparation::TargetPreparationFault,
+    ) {
+        self.target_preparation_fault_for_test = Some(fault);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn staged_formula_index_revision_for_test(&self) -> u64 {
+        self.staged_formula_index.revision()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn staged_formula_index_is_consistent_for_test(&self) -> bool {
+        let ordinary_storage = self
+            .staged_formulas
+            .values()
+            .map(|sheet| sheet.entries.len())
+            .sum::<usize>();
+        ordinary_storage == self.staged_formula_index.ordinary_count()
+            && self.staged_formulas.iter().all(|(name, sheet)| {
+                sheet.entries.iter().all(|(row, col, _)| {
+                    let leases = self
+                        .staged_formula_index
+                        .leases_in_region(name, *row, *col, *row, *col);
+                    leases.len() == 1 && leases[0].row == *row && leases[0].col == *col
+                })
+            })
     }
 
     #[cfg(test)]
@@ -4485,7 +4889,7 @@ where
     }
 
     pub(crate) fn prepare_fragmented_source_transaction(
-        &self,
+        &mut self,
         source: &crate::engine::PartitionedSourceFormulaFamily,
         disposition: &crate::engine::FormulaReplayDisposition,
         prepared: crate::engine::fragmented_transaction::PreparedPartitionedSourceFamily,
@@ -4496,13 +4900,21 @@ where
         crate::engine::fragmented_transaction::PreparedFragmentedSourceTransaction,
         crate::engine::fragmented_transaction::FragmentedTransactionPrepareError,
     > {
-        self.graph.prepare_fragmented_source_transaction(
+        let transaction = self.graph.prepare_fragmented_source_transaction(
             &self.source_formula_token,
             source,
             disposition,
             prepared,
             legacy_formulas,
+        )?;
+        self.prepared_legacy_admission(
+            transaction.legacy_graph(),
+            transaction.materialization_cells(),
         )
+        .map_err(
+            crate::engine::fragmented_transaction::FragmentedTransactionPrepareError::Admission,
+        )?;
+        Ok(transaction)
     }
 
     pub(crate) fn commit_fragmented_source_transaction(
@@ -6573,6 +6985,12 @@ where
                                 return Err(ExcelError::new(ExcelErrorKind::Value)
                                     .with_message("prepared ordered fallback size overflow"));
                             };
+                            if let Err(error) = self.prepared_legacy_admission(&plan, formula_count)
+                            {
+                                drop(commit_guard);
+                                self.publish_compressed_partial_report(&report, &direct_report);
+                                return Err(error);
+                            }
                             if let Err(error) =
                                 self.graph.validate_prepared_legacy_graph_plan(&plan)
                             {
@@ -6619,6 +7037,16 @@ where
                             let commit_provider_revision =
                                 self.resolver.planning_semantic_revision();
                             let cells = prepared.member_count;
+                            let stats = self.graph.baseline_stats();
+                            self.preflight_graph_admission(
+                                crate::engine::resource_ledger::GraphAdmission {
+                                    final_vertices: stats.graph_vertex_count,
+                                    final_edges: stats.graph_edge_count,
+                                    materialization_cells: 0,
+                                    added_vertices: 0,
+                                    added_edges: 0,
+                                },
+                            )?;
                             let append = self
                                 .graph
                                 .formula_authority()
@@ -6630,11 +7058,6 @@ where
                                 .map_err(|error| error.to_string())
                                 .and_then(|append| {
                                     if preparation.function_semantics_used
-                                        && preparation.function_semantic_epoch != commit_epoch
-                                    {
-                                        return Err("FunctionSemanticEpochChanged".to_string());
-                                    }
-                                    if preparation.function_semantics_used
                                         && preparation.function_provider_revision
                                             != commit_provider_revision
                                     {
@@ -6645,6 +7068,11 @@ where
                                             != commit_provider_revision
                                     {
                                         return Err("FunctionProviderRevisionChanged".to_string());
+                                    }
+                                    if preparation.function_semantics_used
+                                        && preparation.function_semantic_epoch != commit_epoch
+                                    {
+                                        return Err("FunctionSemanticEpochChanged".to_string());
                                     }
                                     self.graph
                                         .formula_authority()
@@ -6804,6 +7232,16 @@ where
                                                 "prepared clean-family fallback size overflow",
                                             ));
                                     };
+                                    if let Err(error) =
+                                        self.prepared_legacy_admission(&plan, formula_count)
+                                    {
+                                        drop(commit_guard);
+                                        self.publish_compressed_partial_report(
+                                            &report,
+                                            &direct_report,
+                                        );
+                                        return Err(error);
+                                    }
                                     if let Err(error) =
                                         self.graph.validate_prepared_legacy_graph_plan(&plan)
                                     {
@@ -7044,6 +7482,13 @@ where
                                             "prepared whole-family fallback size overflow",
                                         ));
                                 };
+                                if let Err(error) =
+                                    self.prepared_legacy_admission(&plan, formula_count)
+                                {
+                                    drop(commit_guard);
+                                    self.publish_compressed_partial_report(&report, &direct_report);
+                                    return Err(error);
+                                }
                                 if let Err(error) =
                                     self.graph.validate_prepared_legacy_graph_plan(&plan)
                                 {
@@ -7360,21 +7805,62 @@ where
         if !materialize_batches.iter().all(FormulaIngestBatch::is_empty)
             || !planned_materialize.is_empty()
         {
-            let mut builder = self.begin_bulk_ingest();
+            let mut prepared_by_sheet = planned_materialize;
             for batch in materialize_batches {
                 if batch.is_empty() {
                     continue;
                 }
-                let sheet_id = builder.add_sheet(&batch.sheet_name);
-                builder.add_formula_ids(
-                    sheet_id,
-                    batch
-                        .formulas
-                        .into_iter()
-                        .map(|record| (record.row, record.col, record.ast_id)),
-                );
+                let sheet_id = self.graph.sheet_id(&batch.sheet_name).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("unknown ingest sheet: {}", batch.sheet_name))
+                })?;
+                let mut pipeline = self.ingest_pipeline();
+                let ingested = pipeline.ingest_batch(batch.formulas.into_iter().map(|record| {
+                    let placement = CellRef::new(
+                        sheet_id,
+                        Coord::from_excel(record.row, record.col, true, true),
+                    );
+                    (
+                        FormulaAstInput::RawArena(record.ast_id),
+                        placement,
+                        record.formula_text,
+                    )
+                }))?;
+                prepared_by_sheet
+                    .entry(batch.sheet_name)
+                    .or_default()
+                    .extend(ingested.into_iter().map(|formula| {
+                        (
+                            formula.placement.coord.row() + 1,
+                            formula.placement.coord.col() + 1,
+                            formula.ast_id,
+                            formula.dep_plan,
+                        )
+                    }));
             }
-            for (sheet_name, formulas) in planned_materialize {
+            let admission_preflighted = self.graph_admission_enabled();
+            if admission_preflighted {
+                let mut preview = Vec::new();
+                for (sheet_name, formulas) in &prepared_by_sheet {
+                    let sheet_id = self.graph.sheet_id(sheet_name).ok_or_else(|| {
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(format!("unknown ingest sheet: {sheet_name}"))
+                    })?;
+                    preview.extend(
+                        formulas
+                            .iter()
+                            .map(|(row, col, _, plan)| (sheet_id, *row, *col, plan.clone())),
+                    );
+                }
+                let admission = self.graph.preview_formula_mutations(&preview)?;
+                self.preflight_graph_admission(admission)?;
+            }
+
+            let mut builder = self.begin_bulk_ingest();
+            if admission_preflighted {
+                builder.mark_admission_preflighted();
+            }
+            for (sheet_name, formulas) in prepared_by_sheet {
                 if formulas.is_empty() {
                     continue;
                 }
@@ -7437,6 +7923,1460 @@ where
         }
     }
 
+    #[cfg(test)]
+    fn target_preparation_fault(
+        &mut self,
+        seam: crate::engine::target_preparation::TargetPreparationFault,
+    ) -> Result<(), ExcelError> {
+        if self.target_preparation_fault_for_test == Some(seam) {
+            self.target_preparation_fault_for_test = None;
+            Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("injected target preparation fault: {seam:?}")))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn preparation_stale(
+        reason: formualizer_common::PreparationStaleReason,
+        message: impl Into<String>,
+    ) -> ExcelError {
+        ExcelError::new(ExcelErrorKind::Value)
+            .with_message(message)
+            .with_extra(formualizer_common::ExcelErrorExtra::PreparationStale { reason })
+    }
+
+    fn preparation_revisions(&self) -> crate::engine::PreparationRevision {
+        let (authority, authority_indexes, authority_indexed_plane) =
+            self.graph.authority_revisions();
+        crate::engine::PreparationRevision {
+            graph: self.graph.topology_revision(),
+            authority,
+            authority_indexes,
+            authority_indexed_plane,
+            staged: self.staged_formula_index.revision(),
+            symbols: self.graph.symbol_revision(),
+            semantic: crate::function_registry::semantic_epoch(),
+            provider: self.resolver.planning_semantic_revision(),
+        }
+    }
+
+    fn target_preparation_checkpoint(
+        &mut self,
+        cancel: Option<&AtomicBool>,
+        deadline: Option<std::time::Instant>,
+        work: u64,
+    ) -> Result<(), ExcelError> {
+        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                .with_message("target graph preparation cancelled"));
+        }
+        if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline) {
+            return Err(crate::engine::ResourceLedgerError::Exhausted(
+                formualizer_common::ResourceExhaustionDetail {
+                    reason: formualizer_common::ResourceExhaustionReason::Deadline,
+                    limit: 0,
+                    observed: 1,
+                    request_id: self
+                        .active_evaluation_resource_request
+                        .as_ref()
+                        .map(|stats| stats.request_id),
+                },
+            )
+            .into_excel_error());
+        }
+        self.charge_bounded_work(work)
+    }
+
+    fn opaque_reason_in_ast(
+        &self,
+        ast: &ASTNode,
+        provider: &dyn crate::traits::FunctionProvider,
+    ) -> Option<crate::engine::OpaqueReason> {
+        match &ast.node_type {
+            ASTNodeType::Function { name, args } => {
+                let canonical = name.rsplit('.').next().unwrap_or(name).to_ascii_uppercase();
+                if canonical == "INDIRECT" {
+                    return Some(crate::engine::OpaqueReason::RuntimeTextReference);
+                }
+                let Some(function) = provider.get_function_for_planning("", name) else {
+                    return Some(crate::engine::OpaqueReason::UnknownFunction);
+                };
+                let caps = function.caps();
+                if caps.contains(FnCaps::DYNAMIC_DEPENDENCY)
+                    || caps.contains(FnCaps::RETURNS_REFERENCE)
+                {
+                    return Some(crate::engine::OpaqueReason::DynamicReference);
+                }
+                args.iter()
+                    .find_map(|arg| self.opaque_reason_in_ast(arg, provider))
+            }
+            ASTNodeType::Call { .. } => Some(crate::engine::OpaqueReason::UnknownCustomFunction),
+            ASTNodeType::UnaryOp { expr, .. } => self.opaque_reason_in_ast(expr, provider),
+            ASTNodeType::BinaryOp { left, right, .. } => self
+                .opaque_reason_in_ast(left, provider)
+                .or_else(|| self.opaque_reason_in_ast(right, provider)),
+            ASTNodeType::Array(rows) => rows
+                .iter()
+                .flat_map(|row| row.iter())
+                .find_map(|item| self.opaque_reason_in_ast(item, provider)),
+            ASTNodeType::Reference {
+                reference:
+                    ReferenceType::Cell {
+                        sheet: Some(sheet), ..
+                    }
+                    | ReferenceType::Range {
+                        sheet: Some(sheet), ..
+                    },
+                ..
+            } if self.graph.sheet_id(sheet).is_none() => {
+                Some(crate::engine::OpaqueReason::UnresolvedCrossSheetBinding)
+            }
+            ASTNodeType::Reference {
+                reference:
+                    ReferenceType::External(_)
+                    | ReferenceType::Cell3D { .. }
+                    | ReferenceType::Range3D { .. },
+                ..
+            } => Some(crate::engine::OpaqueReason::UnresolvedCrossSheetBinding),
+            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => None,
+        }
+    }
+
+    fn target_planning_snapshot(
+        &mut self,
+        ast: &ASTNode,
+    ) -> Result<crate::function_registry::RegistryPlanningSnapshot, ExcelError> {
+        #[cfg(test)]
+        if let Some(hook) = self.before_target_planning_snapshot_hook.take() {
+            hook();
+        }
+        let mut requests = Vec::new();
+        Self::collect_planning_function_requests(ast, &mut requests);
+        requests.sort();
+        requests.dedup();
+        crate::function_registry::RegistryPlanningSnapshot::capture_for_requests(
+            &self.resolver,
+            requests,
+        )
+        .map_err(|error| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message(format!("target planning snapshot unavailable: {error:?}"))
+        })
+    }
+
+    fn target_planning_snapshot_stale_reason(
+        snapshot: &crate::function_registry::RegistryPlanningSnapshot,
+        assumptions: &crate::engine::PreparationRevision,
+    ) -> Option<formualizer_common::PreparationStaleReason> {
+        if snapshot
+            .provider_revision()
+            .is_some_and(|revision| Some(revision) != assumptions.provider)
+        {
+            Some(formualizer_common::PreparationStaleReason::Provider)
+        } else if snapshot.epoch() != assumptions.semantic {
+            Some(formualizer_common::PreparationStaleReason::Semantic)
+        } else {
+            None
+        }
+    }
+
+    fn widen_target_preparation(
+        policy: crate::engine::OpaquePreparePolicy,
+        scope: &mut crate::engine::PrepareScope,
+        reasons: &mut Vec<crate::engine::OpaqueReason>,
+        reason: crate::engine::OpaqueReason,
+    ) -> Result<bool, ExcelError> {
+        if policy == crate::engine::OpaquePreparePolicy::Error {
+            return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message(format!("opaque target preparation semantics: {reason:?}")));
+        }
+        if !reasons.contains(&reason) {
+            reasons.push(reason);
+        }
+        if !matches!(scope, crate::engine::PrepareScope::Workbook) {
+            *scope = crate::engine::PrepareScope::Workbook;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn widen_target_preparation_to_sheet(
+        policy: crate::engine::OpaquePreparePolicy,
+        scope: &mut crate::engine::PrepareScope,
+        reasons: &mut Vec<crate::engine::OpaqueReason>,
+        reason: crate::engine::OpaqueReason,
+        sheet: &str,
+    ) -> Result<bool, ExcelError> {
+        if policy == crate::engine::OpaquePreparePolicy::Error {
+            return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message(format!("opaque target preparation semantics: {reason:?}")));
+        }
+        if !reasons.contains(&reason) {
+            reasons.push(reason);
+        }
+        match scope {
+            crate::engine::PrepareScope::Exact => {
+                *scope = crate::engine::PrepareScope::Sheets(vec![sheet.to_string()]);
+                Ok(true)
+            }
+            crate::engine::PrepareScope::Sheets(sheets) => {
+                if sheets.iter().any(|candidate| candidate == sheet) {
+                    Ok(false)
+                } else {
+                    sheets.push(sheet.to_string());
+                    sheets.sort();
+                    Ok(true)
+                }
+            }
+            crate::engine::PrepareScope::Workbook => Ok(false),
+        }
+    }
+
+    fn ast_has_proven_sheet_local_dynamic(
+        ast: &ASTNode,
+        provider: &dyn crate::traits::FunctionProvider,
+    ) -> bool {
+        fn classify(ast: &ASTNode, provider: &dyn crate::traits::FunctionProvider) -> (bool, bool) {
+            match &ast.node_type {
+                ASTNodeType::Function { name, args } => {
+                    let Some(function) = provider.get_function_for_planning("", name) else {
+                        return (false, false);
+                    };
+                    let caps = function.caps();
+                    let dynamic = caps.contains(FnCaps::DYNAMIC_DEPENDENCY)
+                        || caps.contains(FnCaps::RETURNS_REFERENCE);
+                    let canonical = name.rsplit('.').next().unwrap_or(name);
+                    if dynamic
+                        && !canonical.eq_ignore_ascii_case("OFFSET")
+                        && !canonical.eq_ignore_ascii_case("INDEX")
+                    {
+                        return (false, true);
+                    }
+                    let mut has_dynamic = dynamic;
+                    for arg in args {
+                        let (safe, child_dynamic) = classify(arg, provider);
+                        if !safe {
+                            return (false, has_dynamic || child_dynamic);
+                        }
+                        has_dynamic |= child_dynamic;
+                    }
+                    (true, has_dynamic)
+                }
+                ASTNodeType::UnaryOp { expr, .. } => classify(expr, provider),
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    let (left_safe, left_dynamic) = classify(left, provider);
+                    let (right_safe, right_dynamic) = classify(right, provider);
+                    (left_safe && right_safe, left_dynamic || right_dynamic)
+                }
+                ASTNodeType::Array(rows) => {
+                    let mut has_dynamic = false;
+                    for item in rows.iter().flatten() {
+                        let (safe, child_dynamic) = classify(item, provider);
+                        if !safe {
+                            return (false, has_dynamic || child_dynamic);
+                        }
+                        has_dynamic |= child_dynamic;
+                    }
+                    (true, has_dynamic)
+                }
+                ASTNodeType::Reference {
+                    reference:
+                        ReferenceType::Cell { sheet: None, .. }
+                        | ReferenceType::Range { sheet: None, .. },
+                    ..
+                }
+                | ASTNodeType::Literal(_) => (true, false),
+                ASTNodeType::Call { .. } | ASTNodeType::Reference { .. } => (false, false),
+            }
+        }
+
+        let (safe, dynamic) = classify(ast, provider);
+        safe && dynamic
+    }
+
+    fn table_selection_region(
+        &self,
+        entry: &crate::engine::graph::TableEntry,
+        selection: &crate::engine::TableSelection,
+    ) -> Result<PreparationRegion, ExcelError> {
+        let mut start_row = entry.range.start.coord.row() + 1;
+        let mut end_row = entry.range.end.coord.row() + 1;
+        let mut start_col = entry.range.start.coord.col() + 1;
+        let mut end_col = entry.range.end.coord.col() + 1;
+        match selection {
+            crate::engine::TableSelection::Whole => {}
+            crate::engine::TableSelection::Headers => {
+                if !entry.header_row {
+                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message(format!("table {} has no header row", entry.name)));
+                }
+                end_row = start_row;
+            }
+            crate::engine::TableSelection::Data => {
+                if entry.header_row {
+                    start_row = start_row.saturating_add(1);
+                }
+                if entry.totals_row {
+                    end_row = end_row.saturating_sub(1);
+                }
+            }
+            crate::engine::TableSelection::Totals => {
+                if !entry.totals_row {
+                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message(format!("table {} has no totals row", entry.name)));
+                }
+                start_row = end_row;
+            }
+            crate::engine::TableSelection::Column(column) => {
+                let index = entry.col_index(column).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("unknown table column: {column}"))
+                })?;
+                start_col = start_col.saturating_add(index as u32);
+                end_col = start_col;
+            }
+            crate::engine::TableSelection::Columns { start, end } => {
+                let first = entry.col_index(start).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("unknown table column: {start}"))
+                })?;
+                let last = entry.col_index(end).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Name)
+                        .with_message(format!("unknown table column: {end}"))
+                })?;
+                if first > last {
+                    return Err(ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("table column selection is reversed"));
+                }
+                start_col = start_col.saturating_add(first as u32);
+                end_col = entry
+                    .range
+                    .start
+                    .coord
+                    .col()
+                    .saturating_add(last as u32)
+                    .saturating_add(1);
+            }
+        }
+        if start_row > end_row || start_col > end_col {
+            return Err(
+                ExcelError::new(ExcelErrorKind::Value).with_message("table selection is empty")
+            );
+        }
+        Ok(PreparationRegion {
+            sheet: self.graph.sheet_name(entry.sheet_id()).to_string(),
+            sheet_id: entry.sheet_id(),
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+        })
+    }
+
+    /// Transactionally prepare the complete ordinary staged demand closure for typed targets.
+    ///
+    /// This method prepares graph topology only. It does not evaluate target values.
+    pub fn prepare_graph_for_targets(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        options: crate::engine::PrepareTargetsOptions<'_>,
+    ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
+        let previous_budgets = self.evaluation_resource_budgets.clone();
+        let diagnostics_len = self.formula_parse_diagnostics.len();
+        let previous_report = self.last_formula_ingest_report.clone();
+        if let Some(budgets) = options.budgets {
+            self.evaluation_resource_budgets = budgets.clone();
+        }
+        let previous_graph_budget_override = self
+            .graph
+            .set_admission_budget_override(Some(self.evaluation_resource_budgets.clone()));
+        let result = self.observe_evaluation_resource_request(
+            EvaluationRequestKind::TargetPreparation,
+            |engine| engine.prepare_graph_for_targets_unobserved(targets, &options),
+        );
+        self.graph
+            .set_admission_budget_override(previous_graph_budget_override);
+        self.evaluation_resource_budgets = previous_budgets;
+        if result.is_err() {
+            self.formula_parse_diagnostics.truncate(diagnostics_len);
+            self.last_formula_ingest_report = previous_report;
+        }
+        result
+    }
+
+    fn prepare_graph_for_targets_unobserved(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        options: &crate::engine::PrepareTargetsOptions<'_>,
+    ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
+        let scratch_checkpoint = self
+            .active_resource_ledger
+            .as_ref()
+            .map_or(0, crate::engine::ResourceLedger::scratch_checkpoint);
+        let result = self.prepare_graph_for_targets_transaction(targets, options);
+        let release = self
+            .active_resource_ledger
+            .as_mut()
+            .map_or(Ok(()), |ledger| {
+                ledger.release_scratch_to(scratch_checkpoint)
+            });
+        match (result, release) {
+            (result, Ok(())) => result,
+            (Ok(_), Err(error)) | (Err(_), Err(error)) => Err(error.into_excel_error()),
+        }
+    }
+
+    fn prepare_graph_for_targets_transaction(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        options: &crate::engine::PrepareTargetsOptions<'_>,
+    ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
+        use crate::engine::{
+            OpaqueReason, PreparationOutcome, PrepareScope, PreparedTargetGraphReport,
+            TableSelection,
+        };
+
+        self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+        self.observe_function_semantic_epoch()?;
+        let assumptions = self.preparation_revisions();
+        let ledger_at_start = self
+            .active_resource_ledger
+            .as_ref()
+            .map(|ledger| ledger.snapshot());
+        let diagnostics_len = self.formula_parse_diagnostics.len();
+        let report_len = self.last_formula_ingest_report.clone();
+        let request_id = options.request_id.or_else(|| {
+            self.active_evaluation_resource_request
+                .as_ref()
+                .map(|stats| stats.request_id)
+        });
+
+        let mut scope = PrepareScope::Exact;
+        let mut reasons = Vec::new();
+        let authoritative_compatibility =
+            self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental;
+        if authoritative_compatibility {
+            Self::widen_target_preparation(
+                options.opaque_policy,
+                &mut scope,
+                &mut reasons,
+                OpaqueReason::UnsupportedSourceSemantics,
+            )?;
+        }
+        let mut regions = VecDeque::new();
+        let mut normalized = Vec::with_capacity(targets.len());
+        let mut symbol_vertices = VecDeque::new();
+        for target in targets {
+            self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+            match target {
+                crate::engine::EvaluationTarget::Cell { sheet, row, col } => {
+                    if *row == 0 || *col == 0 {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("target cell coordinates are one-based"));
+                    }
+                    let sheet_id = self.graph.sheet_id(sheet).ok_or_else(|| {
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(format!("target sheet not found: {sheet}"))
+                    })?;
+                    regions.push_back(PreparationRegion {
+                        sheet: sheet.clone(),
+                        sheet_id,
+                        start_row: *row,
+                        start_col: *col,
+                        end_row: *row,
+                        end_col: *col,
+                    });
+                    normalized.push(target.clone());
+                }
+                crate::engine::EvaluationTarget::Range(range) => {
+                    if range.start_row == 0
+                        || range.start_col == 0
+                        || range.end_row < range.start_row
+                        || range.end_col < range.start_col
+                    {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("invalid target range"));
+                    }
+                    let sheet_id = self.graph.sheet_id(&range.sheet).ok_or_else(|| {
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message(format!("target sheet not found: {}", range.sheet))
+                    })?;
+                    regions.push_back(PreparationRegion {
+                        sheet: range.sheet.clone(),
+                        sheet_id,
+                        start_row: range.start_row,
+                        start_col: range.start_col,
+                        end_row: range.end_row,
+                        end_col: range.end_col,
+                    });
+                    normalized.push(target.clone());
+                }
+                crate::engine::EvaluationTarget::Name { name, scope_sheet } => {
+                    let current_sheet = match scope_sheet {
+                        Some(sheet) => self.graph.sheet_id(sheet).ok_or_else(|| {
+                            ExcelError::new(ExcelErrorKind::Ref)
+                                .with_message(format!("name scope sheet not found: {sheet}"))
+                        })?,
+                        None => self.graph.default_sheet_id(),
+                    };
+                    if let Some(entry) = self.graph.resolve_name_entry(name, current_sheet) {
+                        symbol_vertices.push_back(entry.vertex);
+                    } else {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnresolvedName,
+                        )?;
+                    }
+                    normalized.push(target.clone());
+                }
+                crate::engine::EvaluationTarget::Table { name, selection } => {
+                    if let Some(entry) = self.graph.resolve_table_entry(name) {
+                        let region = self.table_selection_region(entry, selection)?;
+                        symbol_vertices.push_back(entry.vertex);
+                        regions.push_back(region);
+                    } else {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnresolvedTable,
+                        )?;
+                    }
+                    normalized.push(target.clone());
+                }
+            }
+        }
+
+        let mut visited_regions = FxHashSet::default();
+        let mut visited_vertices = FxHashSet::default();
+        let mut selected = FxHashSet::default();
+        let mut prepared = Vec::new();
+        let mut pending_diagnostics = Vec::new();
+        let mut selected_cells = Vec::new();
+        let mut workbook_seeded = false;
+        let mut sheet_scope_seeded = BTreeSet::new();
+        let mut indexed_query_sheets = FxHashSet::default();
+        let mut discovery_scratch_reserved = 0u64;
+        let mut package_encountered = authoritative_compatibility;
+
+        loop {
+            if let PrepareScope::Sheets(sheets) = &scope {
+                for sheet in sheets.clone() {
+                    if !sheet_scope_seeded.insert(sheet.clone()) {
+                        continue;
+                    }
+                    let Some(sheet_id) = self.graph.sheet_id(&sheet) else {
+                        package_encountered = true;
+                        if !reasons.contains(&OpaqueReason::UnsupportedSourceSemantics) {
+                            reasons.push(OpaqueReason::UnsupportedSourceSemantics);
+                        }
+                        continue;
+                    };
+                    for lease in self.staged_formula_index.leases_for_sheet(&sheet) {
+                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        regions.push_back(PreparationRegion {
+                            sheet: sheet.clone(),
+                            sheet_id,
+                            start_row: lease.row,
+                            start_col: lease.col,
+                            end_row: lease.row,
+                            end_col: lease.col,
+                        });
+                    }
+                    package_encountered |= self
+                        .staged_formula_index
+                        .package_sheets()
+                        .any(|candidate| candidate == sheet);
+                }
+            }
+            if matches!(scope, PrepareScope::Workbook) && !workbook_seeded {
+                workbook_seeded = true;
+                for (sheet, lease) in self.staged_formula_index.all_leases() {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    let Some(sheet_id) = self.graph.sheet_id(&sheet) else {
+                        package_encountered = true;
+                        if !reasons.contains(&OpaqueReason::UnsupportedSourceSemantics) {
+                            reasons.push(OpaqueReason::UnsupportedSourceSemantics);
+                        }
+                        continue;
+                    };
+                    regions.push_back(PreparationRegion {
+                        sheet,
+                        sheet_id,
+                        start_row: lease.row,
+                        start_col: lease.col,
+                        end_row: lease.row,
+                        end_col: lease.col,
+                    });
+                }
+                package_encountered |= self.staged_formula_index.has_packages();
+            }
+
+            let Some(region) = regions.pop_front() else {
+                if let Some(vertex) = symbol_vertices.pop_front() {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    if !visited_vertices.insert(vertex) || !self.graph.vertex_exists(vertex) {
+                        continue;
+                    }
+                    let vertex_is_dynamic = self.graph.is_dynamic(vertex);
+                    if let Some(ast) = self.graph.get_formula(vertex) {
+                        let snapshot = self.target_planning_snapshot(&ast)?;
+                        if let Some(reason) =
+                            Self::target_planning_snapshot_stale_reason(&snapshot, &assumptions)
+                        {
+                            return Err(Self::preparation_stale(
+                                reason,
+                                "target planning snapshot became stale during discovery",
+                            ));
+                        }
+                        let opaque = self.opaque_reason_in_ast(&ast, &snapshot);
+                        if let Some(reason) =
+                            opaque.or(vertex_is_dynamic.then_some(OpaqueReason::DynamicReference))
+                        {
+                            if reason == OpaqueReason::DynamicReference
+                                && Self::ast_has_proven_sheet_local_dynamic(&ast, &snapshot)
+                            {
+                                let sheet = self.graph.get_vertex_sheet_id(vertex);
+                                let sheet = self.graph.sheet_name(sheet).to_string();
+                                Self::widen_target_preparation_to_sheet(
+                                    options.opaque_policy,
+                                    &mut scope,
+                                    &mut reasons,
+                                    reason,
+                                    &sheet,
+                                )?;
+                            } else {
+                                Self::widen_target_preparation(
+                                    options.opaque_policy,
+                                    &mut scope,
+                                    &mut reasons,
+                                    reason,
+                                )?;
+                            }
+                        }
+                    } else if vertex_is_dynamic {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::DynamicReference,
+                        )?;
+                    }
+                    if let Some(anchor) = self
+                        .graph
+                        .get_cell_ref(vertex)
+                        .and_then(|cell| self.graph.spill_registry_anchor_for_cell(cell))
+                    {
+                        symbol_vertices.push_back(anchor);
+                    }
+                    if let Some(cell) = self.graph.get_cell_ref(vertex) {
+                        let sheet = self.graph.sheet_name(cell.sheet_id).to_string();
+                        regions.push_back(PreparationRegion {
+                            sheet,
+                            sheet_id: cell.sheet_id,
+                            start_row: cell.coord.row() + 1,
+                            start_col: cell.coord.col() + 1,
+                            end_row: cell.coord.row() + 1,
+                            end_col: cell.coord.col() + 1,
+                        });
+                    }
+                    for dependency in self.graph.get_dependencies(vertex) {
+                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        symbol_vertices.push_back(dependency);
+                    }
+                    if let Some(range_dependencies) = self
+                        .graph
+                        .formula_range_dependencies(vertex)
+                        .map(<[_]>::to_vec)
+                    {
+                        for range in range_dependencies {
+                            self.target_preparation_checkpoint(
+                                options.cancel,
+                                options.deadline,
+                                1,
+                            )?;
+                            let sheet_id = match range.sheet {
+                                crate::reference::SharedSheetLocator::Id(id) => id,
+                                crate::reference::SharedSheetLocator::Current => {
+                                    self.graph.get_vertex_sheet_id(vertex)
+                                }
+                                crate::reference::SharedSheetLocator::Name(ref name) => {
+                                    let Some(id) = self.graph.sheet_id(name) else {
+                                        if Self::widen_target_preparation(
+                                            options.opaque_policy,
+                                            &mut scope,
+                                            &mut reasons,
+                                            OpaqueReason::UnresolvedCrossSheetBinding,
+                                        )? {
+                                            break;
+                                        }
+                                        continue;
+                                    };
+                                    id
+                                }
+                            };
+                            let sheet = self.graph.sheet_name(sheet_id).to_string();
+                            regions.push_back(PreparationRegion {
+                                sheet,
+                                sheet_id,
+                                start_row: range.start_row.map_or(1, |bound| bound.index + 1),
+                                start_col: range.start_col.map_or(1, |bound| bound.index + 1),
+                                end_row: range
+                                    .end_row
+                                    .map_or(self.workbook_load_limits.max_sheet_rows, |bound| {
+                                        bound.index + 1
+                                    }),
+                                end_col: range
+                                    .end_col
+                                    .map_or(self.workbook_load_limits.max_sheet_cols, |bound| {
+                                        bound.index + 1
+                                    }),
+                            });
+                        }
+                    }
+                    if let Some(name) = self.graph.named_range_by_vertex(vertex).cloned() {
+                        match &name.definition {
+                            NamedDefinition::Cell(cell) => regions.push_back(PreparationRegion {
+                                sheet: self.graph.sheet_name(cell.sheet_id).to_string(),
+                                sheet_id: cell.sheet_id,
+                                start_row: cell.coord.row() + 1,
+                                start_col: cell.coord.col() + 1,
+                                end_row: cell.coord.row() + 1,
+                                end_col: cell.coord.col() + 1,
+                            }),
+                            NamedDefinition::Range(range) => regions.push_back(PreparationRegion {
+                                sheet: self.graph.sheet_name(range.start.sheet_id).to_string(),
+                                sheet_id: range.start.sheet_id,
+                                start_row: range.start.coord.row() + 1,
+                                start_col: range.start.coord.col() + 1,
+                                end_row: range.end.coord.row() + 1,
+                                end_col: range.end.coord.col() + 1,
+                            }),
+                            NamedDefinition::Formula {
+                                ast,
+                                dependencies,
+                                range_deps,
+                            } => {
+                                let snapshot = self.target_planning_snapshot(ast)?;
+                                if let Some(reason) = Self::target_planning_snapshot_stale_reason(
+                                    &snapshot,
+                                    &assumptions,
+                                ) {
+                                    return Err(Self::preparation_stale(
+                                        reason,
+                                        "target planning snapshot became stale during discovery",
+                                    ));
+                                }
+                                if let Some(reason) = self.opaque_reason_in_ast(ast, &snapshot) {
+                                    Self::widen_target_preparation(
+                                        options.opaque_policy,
+                                        &mut scope,
+                                        &mut reasons,
+                                        reason,
+                                    )?;
+                                }
+                                for dependency in dependencies {
+                                    self.target_preparation_checkpoint(
+                                        options.cancel,
+                                        options.deadline,
+                                        1,
+                                    )?;
+                                    symbol_vertices.push_back(*dependency);
+                                }
+                                for range in range_deps {
+                                    self.target_preparation_checkpoint(
+                                        options.cancel,
+                                        options.deadline,
+                                        1,
+                                    )?;
+                                    let sheet_id = match range.sheet {
+                                        crate::reference::SharedSheetLocator::Id(id) => id,
+                                        _ => self.graph.default_sheet_id(),
+                                    };
+                                    regions.push_back(PreparationRegion {
+                                        sheet: self.graph.sheet_name(sheet_id).to_string(),
+                                        sheet_id,
+                                        start_row: range
+                                            .start_row
+                                            .map_or(1, |bound| bound.index + 1),
+                                        start_col: range
+                                            .start_col
+                                            .map_or(1, |bound| bound.index + 1),
+                                        end_row: range.end_row.map_or(
+                                            self.workbook_load_limits.max_sheet_rows,
+                                            |bound| bound.index + 1,
+                                        ),
+                                        end_col: range.end_col.map_or(
+                                            self.workbook_load_limits.max_sheet_cols,
+                                            |bound| bound.index + 1,
+                                        ),
+                                    });
+                                }
+                            }
+                            NamedDefinition::Literal(_) => {}
+                        }
+                    }
+                    if let Some(table) = self.graph.table_by_vertex(vertex) {
+                        regions
+                            .push_back(self.table_selection_region(table, &TableSelection::Whole)?);
+                    }
+                    continue;
+                }
+                break;
+            };
+
+            self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+            if !visited_regions.insert(region.clone()) {
+                continue;
+            }
+            if let PrepareScope::Sheets(sheets) = &mut scope
+                && !sheets.iter().any(|sheet| sheet == &region.sheet)
+            {
+                sheets.push(region.sheet.clone());
+                sheets.sort();
+            }
+            if self
+                .staged_formula_index
+                .package_sheets()
+                .any(|sheet| sheet == region.sheet)
+            {
+                package_encountered = true;
+                Self::widen_target_preparation(
+                    options.opaque_policy,
+                    &mut scope,
+                    &mut reasons,
+                    OpaqueReason::DeferredSourcePackage,
+                )?;
+                continue;
+            }
+            let leases = self.staged_formula_index.leases_in_region(
+                &region.sheet,
+                region.start_row,
+                region.start_col,
+                region.end_row,
+                region.end_col,
+            );
+            for lease in leases {
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                let sheet_id = self.graph.sheet_id(&region.sheet).ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("staged formula sheet not found: {}", region.sheet))
+                })?;
+                let key = (region.sheet.clone(), lease.row, lease.col, lease.generation);
+                if !selected.insert(key) {
+                    continue;
+                }
+                let text = self
+                    .staged_formulas
+                    .get(&region.sheet)
+                    .and_then(|sheet| sheet.get_ordinary(lease.row, lease.col))
+                    .ok_or_else(|| {
+                        ExcelError::new(ExcelErrorKind::Value)
+                            .with_message("staged formula index is stale")
+                    })?
+                    .to_string();
+                let formula = if text.starts_with('=') {
+                    text.clone()
+                } else {
+                    format!("={text}")
+                };
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                let ast = match formualizer_parse::parser::parse(&formula) {
+                    Ok(ast) => ast,
+                    Err(error) => {
+                        if self.config.formula_parse_policy == FormulaParsePolicy::Strict {
+                            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                                format!(
+                                    "Formula parse error at {}!{}{}: {error}",
+                                    region.sheet,
+                                    col_letters_from_1based(lease.col)
+                                        .unwrap_or_else(|_| "?".to_string()),
+                                    lease.row
+                                ),
+                            ));
+                        }
+                        pending_diagnostics.push(FormulaParseDiagnostic {
+                            sheet: region.sheet.clone(),
+                            row: lease.row,
+                            col: lease.col,
+                            formula: formula.clone(),
+                            message: error.to_string(),
+                            policy: self.config.formula_parse_policy,
+                        });
+                        match self.config.formula_parse_policy {
+                            FormulaParsePolicy::KeepCachedValue => {
+                                selected_cells.push(
+                                    formualizer_common::RangeAddress::new(
+                                        region.sheet.clone(),
+                                        lease.row,
+                                        lease.col,
+                                        lease.row,
+                                        lease.col,
+                                    )
+                                    .expect("selected staged coordinates are valid"),
+                                );
+                                prepared.push(PreparedOrdinaryStagedFormula {
+                                    sheet: region.sheet.clone(),
+                                    sheet_id,
+                                    lease,
+                                    ast_id: None,
+                                    plan: None,
+                                });
+                                continue;
+                            }
+                            FormulaParsePolicy::AsText => ASTNode::new(
+                                ASTNodeType::Literal(LiteralValue::Text(formula.clone())),
+                                None,
+                            ),
+                            FormulaParsePolicy::CoerceToError => ASTNode::new(
+                                ASTNodeType::Literal(LiteralValue::Error(
+                                    ExcelError::new(ExcelErrorKind::Error)
+                                        .with_message(format!("Malformed formula: {error}")),
+                                )),
+                                None,
+                            ),
+                            FormulaParsePolicy::Strict => unreachable!(),
+                        }
+                    }
+                };
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                let snapshot = self.target_planning_snapshot(&ast)?;
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                if let Some(reason) =
+                    Self::target_planning_snapshot_stale_reason(&snapshot, &assumptions)
+                {
+                    return Err(Self::preparation_stale(
+                        reason,
+                        "target planning snapshot became stale during discovery",
+                    ));
+                }
+                if let Some(reason) = self.opaque_reason_in_ast(&ast, &snapshot) {
+                    if reason == OpaqueReason::DynamicReference
+                        && Self::ast_has_proven_sheet_local_dynamic(&ast, &snapshot)
+                    {
+                        Self::widen_target_preparation_to_sheet(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            reason,
+                            &region.sheet,
+                        )?;
+                    } else {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            reason,
+                        )?;
+                    }
+                }
+                let proven_sheet_local_dynamic =
+                    Self::ast_has_proven_sheet_local_dynamic(&ast, &snapshot);
+                let placement = CellRef::new(
+                    sheet_id,
+                    Coord::from_excel(lease.row, lease.col, true, true),
+                );
+                let ingested = self.graph.ingest_pipeline(&snapshot).ingest_formula(
+                    FormulaAstInput::Tree(ast),
+                    placement,
+                    Some(Arc::from(formula)),
+                )?;
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                if ingested.dep_plan.dynamic {
+                    if proven_sheet_local_dynamic {
+                        Self::widen_target_preparation_to_sheet(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::DynamicReference,
+                            &region.sheet,
+                        )?;
+                    } else {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::DynamicReference,
+                        )?;
+                    }
+                }
+                for dep in &ingested.dep_plan.direct_cell_deps {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    regions.push_back(PreparationRegion {
+                        sheet: self.graph.sheet_name(dep.sheet_id).to_string(),
+                        sheet_id: dep.sheet_id,
+                        start_row: dep.coord.row() + 1,
+                        start_col: dep.coord.col() + 1,
+                        end_row: dep.coord.row() + 1,
+                        end_col: dep.coord.col() + 1,
+                    });
+                }
+                for range in &ingested.dep_plan.range_deps {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    let sheet_id = match range.sheet {
+                        crate::reference::SharedSheetLocator::Id(id) => id,
+                        crate::reference::SharedSheetLocator::Current => sheet_id,
+                        crate::reference::SharedSheetLocator::Name(ref name) => {
+                            let Some(id) = self.graph.sheet_id(name) else {
+                                Self::widen_target_preparation(
+                                    options.opaque_policy,
+                                    &mut scope,
+                                    &mut reasons,
+                                    OpaqueReason::UnresolvedCrossSheetBinding,
+                                )?;
+                                continue;
+                            };
+                            id
+                        }
+                    };
+                    regions.push_back(PreparationRegion {
+                        sheet: self.graph.sheet_name(sheet_id).to_string(),
+                        sheet_id,
+                        start_row: range.start_row.map_or(1, |bound| bound.index + 1),
+                        start_col: range.start_col.map_or(1, |bound| bound.index + 1),
+                        end_row: range
+                            .end_row
+                            .map_or(self.workbook_load_limits.max_sheet_rows, |bound| {
+                                bound.index + 1
+                            }),
+                        end_col: range
+                            .end_col
+                            .map_or(self.workbook_load_limits.max_sheet_cols, |bound| {
+                                bound.index + 1
+                            }),
+                    });
+                }
+                for name in ingested
+                    .dep_plan
+                    .resolved_named_refs
+                    .iter()
+                    .chain(&ingested.dep_plan.named_refs)
+                {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    if let Some(entry) = self.graph.resolve_name_entry(name, sheet_id) {
+                        symbol_vertices.push_back(entry.vertex);
+                    } else if self.graph.resolve_source_scalar_entry(name).is_none()
+                        && self.graph.resolve_source_table_entry(name).is_none()
+                    {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnresolvedName,
+                        )?;
+                    }
+                }
+                for table in &ingested.dep_plan.table_refs {
+                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    if let Some(entry) = self.graph.resolve_table_entry(table) {
+                        symbol_vertices.push_back(entry.vertex);
+                    } else if self.graph.resolve_source_table_entry(table).is_none() {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnresolvedTable,
+                        )?;
+                    }
+                }
+                selected_cells.push(
+                    formualizer_common::RangeAddress::new(
+                        region.sheet.clone(),
+                        lease.row,
+                        lease.col,
+                        lease.row,
+                        lease.col,
+                    )
+                    .expect("selected staged coordinates are valid"),
+                );
+                prepared.push(PreparedOrdinaryStagedFormula {
+                    sheet: region.sheet.clone(),
+                    sheet_id,
+                    lease,
+                    ast_id: Some(ingested.ast_id),
+                    plan: Some(ingested.dep_plan),
+                });
+            }
+
+            if indexed_query_sheets.insert(region.sheet_id) {
+                self.graph.prepare_sheet_index_for_query(region.sheet_id);
+                let bytes = (self.graph.sheet_index_vertex_count(region.sheet_id) as u64)
+                    .saturating_mul(32);
+                self.reserve_graph_source_scratch(bytes)?;
+                discovery_scratch_reserved = discovery_scratch_reserved.saturating_add(bytes);
+            }
+            let spill_anchors = self.graph.spill_anchors_in_region(
+                region.sheet_id,
+                region.start_row - 1,
+                region.start_col - 1,
+                region.end_row - 1,
+                region.end_col - 1,
+            );
+            for anchor in spill_anchors {
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                symbol_vertices.push_back(anchor);
+            }
+            let vertices = self.graph.vertices_in_region(
+                region.sheet_id,
+                region.start_row - 1,
+                region.end_row - 1,
+                region.start_col - 1,
+                region.end_col - 1,
+            );
+            for vertex in vertices {
+                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                symbol_vertices.push_back(vertex);
+            }
+        }
+
+        #[cfg(test)]
+        self.target_preparation_fault(
+            crate::engine::target_preparation::TargetPreparationFault::AfterDiscovery,
+        )?;
+
+        if package_encountered {
+            self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+            let selected_count = self.staged_formula_count();
+            let selected_packages = self
+                .staged_formulas
+                .values()
+                .filter_map(|staged| staged.deferred_package.as_ref())
+                .map(|package| package.families.len() + package.partitioned_families.len())
+                .sum();
+            self.formula_parse_diagnostics.truncate(diagnostics_len);
+            self.last_formula_ingest_report = report_len;
+            let commit_work_before = self
+                .active_resource_ledger
+                .as_ref()
+                .map_or(0, |ledger| ledger.snapshot().work_charged);
+            let commit_started = crate::instant::FzInstant::now();
+            self.build_graph_all_unobserved()?;
+            let commit_window = commit_started.elapsed();
+            let ledger_after = self
+                .active_resource_ledger
+                .as_ref()
+                .map(|ledger| ledger.snapshot());
+            let actual_commit_work = ledger_after
+                .map_or(0, |snapshot| snapshot.work_charged)
+                .saturating_sub(commit_work_before);
+            let observed_scratch_bytes = ledger_after
+                .map_or(0, |snapshot| snapshot.scratch_peak)
+                .saturating_sub(ledger_at_start.map_or(0, |snapshot| snapshot.scratch_current));
+            let revisions = assumptions.clone();
+            let report = PreparedTargetGraphReport {
+                request_id: request_id.unwrap_or_default(),
+                requested_targets: targets.len(),
+                normalized_regions: visited_regions.len(),
+                normalized_target_list: normalized,
+                selected_staged_cells: selected_count,
+                selected_source_families: selected_packages,
+                retained_staged_cells: self.staged_formula_count(),
+                selected_cells,
+                retained_cells: Vec::new(),
+                widened_scope: PrepareScope::Workbook,
+                widening_reasons: reasons,
+                revisions,
+                commit_window,
+                estimated_scratch_bytes: discovery_scratch_reserved
+                    .saturating_add((selected_count as u64).saturating_mul(256)),
+                observed_scratch_bytes,
+                estimated_commit_work: selected_count as u64,
+                actual_commit_work,
+                outcome: PreparationOutcome::CompatibilityPrepared,
+            };
+            self.observe_target_preparation_report(&report);
+            return Ok(report);
+        }
+
+        prepared.sort_by_key(|formula| formula.lease.insertion_order);
+        let planned = prepared
+            .iter()
+            .filter_map(|formula| {
+                formula
+                    .ast_id
+                    .zip(formula.plan.clone())
+                    .map(|(ast_id, plan)| {
+                        (
+                            formula.sheet_id,
+                            formula.lease.row,
+                            formula.lease.col,
+                            ast_id,
+                            plan,
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        let planned_formula_count = planned.len();
+        let legacy_graph = self
+            .graph
+            .prepare_legacy_graph_plan_multi_sheet(planned)
+            .map_err(|error| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message(format!("target graph preparation failed: {error}"))
+            })?;
+        let new_vertices = legacy_graph.new_vertex_count();
+        let new_edges = legacy_graph.planned_edge_count().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::NImpl).with_message("target graph edge count overflow")
+        })?;
+        let removed_edges = legacy_graph.removed_edge_count().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::NImpl).with_message("target graph edge count overflow")
+        })?;
+        let current = self.graph.baseline_stats();
+        let final_vertices = current
+            .graph_vertex_count
+            .checked_add(new_vertices)
+            .ok_or_else(|| {
+                crate::engine::ResourceLedgerError::Exhausted(
+                    formualizer_common::ResourceExhaustionDetail {
+                        reason: formualizer_common::ResourceExhaustionReason::ArithmeticOverflow,
+                        limit: u64::MAX,
+                        observed: u64::MAX,
+                        request_id,
+                    },
+                )
+                .into_excel_error()
+            })?;
+        let final_edges = current
+            .graph_edge_count
+            .checked_sub(removed_edges)
+            .and_then(|count| count.checked_add(new_edges))
+            .ok_or_else(|| {
+                crate::engine::ResourceLedgerError::Exhausted(
+                    formualizer_common::ResourceExhaustionDetail {
+                        reason: formualizer_common::ResourceExhaustionReason::ArithmeticOverflow,
+                        limit: u64::MAX,
+                        observed: u64::MAX,
+                        request_id,
+                    },
+                )
+                .into_excel_error()
+            })?;
+        #[cfg(test)]
+        self.target_preparation_fault(
+            crate::engine::target_preparation::TargetPreparationFault::Admission,
+        )?;
+        let resource = |reason, limit: u64, observed: u64| {
+            crate::engine::ResourceLedgerError::Exhausted(
+                formualizer_common::ResourceExhaustionDetail {
+                    reason,
+                    limit,
+                    observed,
+                    request_id,
+                },
+            )
+            .into_excel_error()
+        };
+        let admission = crate::engine::resource_ledger::GraphAdmission {
+            final_vertices,
+            final_edges,
+            materialization_cells: planned_formula_count as u64,
+            added_vertices: new_vertices,
+            added_edges: new_edges,
+        };
+        let materialized_bytes = admission
+            .materialized_graph_bytes()
+            .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        if let Err(error) = self.preflight_graph_admission(admission) {
+            if let formualizer_common::ExcelErrorExtra::Resource { detail } = &error.extra {
+                self.observe_target_admission_failure(detail.reason);
+            }
+            return Err(error);
+        }
+        let planned_working_bytes = (prepared.len() as u64)
+            .saturating_mul(256)
+            .saturating_add((visited_regions.len() as u64).saturating_mul(128))
+            .saturating_add((visited_vertices.len() as u64).saturating_mul(32))
+            .saturating_add((selected.len() as u64).saturating_mul(96))
+            .saturating_add(materialized_bytes);
+        let scratch_bytes = discovery_scratch_reserved.saturating_add(planned_working_bytes);
+        let remaining_scratch = scratch_bytes.saturating_sub(discovery_scratch_reserved);
+        if let Err(error) = self.reserve_graph_source_scratch(remaining_scratch) {
+            self.observe_target_admission_failure(
+                formualizer_common::ResourceExhaustionReason::ScratchMemory,
+            );
+            return Err(error);
+        }
+
+        let estimated_commit_duration = std::time::Duration::from_nanos(
+            (new_vertices as u64)
+                .saturating_add(new_edges as u64)
+                .saturating_add(prepared.len() as u64)
+                .max(1)
+                .saturating_mul(100),
+        );
+        if options.deadline.is_some_and(|deadline| {
+            std::time::Instant::now()
+                .checked_add(estimated_commit_duration)
+                .is_none_or(|finish| finish > deadline)
+        }) {
+            self.observe_target_admission_failure(
+                formualizer_common::ResourceExhaustionReason::Deadline,
+            );
+            return Err(resource(
+                formualizer_common::ResourceExhaustionReason::Deadline,
+                0,
+                1,
+            ));
+        }
+        if let Some(hook) = self.before_target_preparation_commit_hook.take() {
+            hook();
+        }
+        self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+        #[cfg(test)]
+        self.target_preparation_fault(
+            crate::engine::target_preparation::TargetPreparationFault::FinalRevisionValidation,
+        )?;
+        let current_revisions = self.preparation_revisions();
+        let stale_reason = if assumptions.graph != current_revisions.graph {
+            Some(formualizer_common::PreparationStaleReason::Graph)
+        } else if assumptions.authority != current_revisions.authority
+            || assumptions.authority_indexes != current_revisions.authority_indexes
+            || assumptions.authority_indexed_plane != current_revisions.authority_indexed_plane
+        {
+            Some(formualizer_common::PreparationStaleReason::Authority)
+        } else if assumptions.staged != current_revisions.staged
+            || prepared.iter().any(|formula| {
+                !self
+                    .staged_formula_index
+                    .lease_matches(&formula.sheet, formula.lease)
+            })
+        {
+            Some(formualizer_common::PreparationStaleReason::Staged)
+        } else if assumptions.symbols != current_revisions.symbols {
+            Some(formualizer_common::PreparationStaleReason::Symbols)
+        } else if assumptions.provider != current_revisions.provider {
+            Some(formualizer_common::PreparationStaleReason::Provider)
+        } else if assumptions.semantic != current_revisions.semantic {
+            Some(formualizer_common::PreparationStaleReason::Semantic)
+        } else {
+            None
+        };
+        if let Some(reason) = stale_reason {
+            return Err(Self::preparation_stale(
+                reason,
+                "target graph preparation plan is stale",
+            ));
+        }
+        #[cfg(test)]
+        self.target_preparation_fault(
+            crate::engine::target_preparation::TargetPreparationFault::FinalGraphValidation,
+        )?;
+        self.graph
+            .validate_prepared_legacy_graph_plan(&legacy_graph)
+            .map_err(|error| {
+                Self::preparation_stale(
+                    formualizer_common::PreparationStaleReason::Graph,
+                    format!("target graph preparation plan is stale: {error}"),
+                )
+            })?;
+        #[cfg(test)]
+        self.target_preparation_fault(
+            crate::engine::target_preparation::TargetPreparationFault::Reservation,
+        )?;
+        self.graph.reserve_prepared_legacy_graph_plan(&legacy_graph);
+        self.formula_parse_diagnostics
+            .try_reserve(pending_diagnostics.len())
+            .map_err(|_| {
+                resource(
+                    formualizer_common::ResourceExhaustionReason::Admission,
+                    pending_diagnostics.len() as u64,
+                    pending_diagnostics.len() as u64,
+                )
+            })?;
+        self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+        #[cfg(test)]
+        self.target_preparation_fault(
+            crate::engine::target_preparation::TargetPreparationFault::BeforeFirstMutation,
+        )?;
+
+        let commit_started = crate::instant::FzInstant::now();
+        let committed = self
+            .graph
+            .apply_prevalidated_legacy_graph_plan(legacy_graph);
+        for formula in &prepared {
+            let removed = self
+                .staged_formulas
+                .get_mut(&formula.sheet)
+                .and_then(|sheet| sheet.remove_ordinary(formula.lease.row, formula.lease.col));
+            debug_assert!(removed.is_some());
+            let index_removed = self.staged_formula_index.remove(
+                &formula.sheet,
+                formula.lease.row,
+                formula.lease.col,
+            );
+            debug_assert!(index_removed);
+        }
+        let empty_sheets = self
+            .staged_formulas
+            .iter()
+            .filter_map(|(sheet, staged)| staged.is_empty().then_some(sheet.clone()))
+            .collect::<Vec<_>>();
+        for sheet in empty_sheets {
+            self.staged_formulas.remove(&sheet);
+        }
+        if committed > 0 {
+            self.mark_topology_edited();
+        }
+        self.formula_parse_diagnostics.extend(pending_diagnostics);
+        if !prepared.is_empty() {
+            let mut ingest_delta = FormulaIngestReport::with_mode(self.config.formula_plane_mode);
+            ingest_delta.formula_cells_seen = prepared.len() as u64;
+            ingest_delta.graph_formula_cells_materialized = committed as u64;
+            ingest_delta.graph_vertices_created = new_vertices as u64;
+            ingest_delta.graph_edges_created = new_edges as u64;
+            self.record_formula_ingest_report(ingest_delta);
+        }
+        let commit_window = commit_started.elapsed();
+        let retained_cells = self
+            .staged_formula_index
+            .all_leases()
+            .into_iter()
+            .filter_map(|(sheet, lease)| {
+                formualizer_common::RangeAddress::new(
+                    sheet, lease.row, lease.col, lease.row, lease.col,
+                )
+                .ok()
+            })
+            .collect::<Vec<_>>();
+        let observed_scratch_bytes = self
+            .active_resource_ledger
+            .as_ref()
+            .map_or(0, |ledger| ledger.snapshot().scratch_peak)
+            .saturating_sub(ledger_at_start.map_or(0, |snapshot| snapshot.scratch_current));
+        let actual_commit_work = (new_vertices as u64)
+            .saturating_add(new_edges as u64)
+            .saturating_add(committed as u64)
+            .saturating_add(prepared.len() as u64);
+        let report = PreparedTargetGraphReport {
+            request_id: request_id.unwrap_or_default(),
+            requested_targets: targets.len(),
+            normalized_regions: visited_regions.len(),
+            normalized_target_list: normalized,
+            selected_staged_cells: prepared.len(),
+            selected_source_families: 0,
+            retained_staged_cells: self.staged_formula_count(),
+            selected_cells,
+            retained_cells,
+            widened_scope: scope,
+            widening_reasons: reasons,
+            revisions: assumptions,
+            commit_window,
+            estimated_scratch_bytes: scratch_bytes,
+            observed_scratch_bytes,
+            estimated_commit_work: (new_vertices as u64)
+                .saturating_add(new_edges as u64)
+                .saturating_add(prepared.len() as u64),
+            actual_commit_work,
+            outcome: PreparationOutcome::Prepared,
+        };
+        self.observe_target_preparation_report(&report);
+        Ok(report)
+    }
+
     /// Build graph for all staged formulas.
     pub fn build_graph_all(&mut self) -> Result<(), formualizer_parse::ExcelError> {
         self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
@@ -7450,10 +9390,12 @@ where
         self.resource_checkpoint(selected as u64)?;
         let scratch_bytes = (selected as u64).saturating_mul(256);
         let result = self.with_request_scratch(scratch_bytes, |engine| {
+            let index_snapshot = engine.staged_formula_index.clone();
             let collected = std::mem::take(&mut engine.staged_formulas)
                 .into_iter()
                 .collect();
-            engine.build_graph_from_staged_batches(collected, false)
+            engine.staged_formula_index.clear_all();
+            engine.build_graph_from_staged_batches(collected, false, index_snapshot)
         });
         self.observe_staged_preparation(selected, self.staged_formula_count(), started.elapsed());
         result
@@ -7490,13 +9432,15 @@ where
         self.resource_checkpoint(selected as u64)?;
         let scratch_bytes = (selected as u64).saturating_mul(256);
         self.reserve_request_scratch(scratch_bytes)?;
+        let index_snapshot = self.staged_formula_index.clone();
         let mut collected = Vec::new();
         for sheet in sheets {
             if let Some(staged) = self.staged_formulas.remove(&sheet) {
+                self.index_removed_staged_sheet(&sheet, &staged);
                 collected.push((sheet, staged));
             }
         }
-        let result = self.build_graph_from_staged_batches(collected, true);
+        let result = self.build_graph_from_staged_batches(collected, true, index_snapshot);
         self.release_request_scratch(scratch_bytes);
         self.observe_staged_preparation(selected, self.staged_formula_count(), started.elapsed());
         result
@@ -7506,6 +9450,7 @@ where
         &mut self,
         collected: StagedFormulaBatches,
         share_parse_cache_across_sheets: bool,
+        staged_index_snapshot: StagedFormulaIndex,
     ) -> Result<(), formualizer_parse::ExcelError> {
         if collected.is_empty() {
             return Ok(());
@@ -7523,8 +9468,9 @@ where
             Err(error) => {
                 self.formula_parse_diagnostics.truncate(diagnostics_len);
                 for (sheet, staged) in collected {
-                    self.staged_formulas.insert(sheet, staged);
+                    self.restore_staged_sheet(sheet, staged);
                 }
+                self.staged_formula_index = staged_index_snapshot;
                 return Err(error);
             }
         };
@@ -7532,8 +9478,15 @@ where
 
         // Deferred packages are consumed exactly once once authority commit starts.
         // Pre-commit lock, replay, and parse failures restore them above for retry.
-        if !ordinary.is_empty() {
-            let _ = self.ingest_formula_batches(ordinary)?;
+        if !ordinary.is_empty()
+            && let Err(error) = self.ingest_formula_batches(ordinary)
+        {
+            self.formula_parse_diagnostics.truncate(diagnostics_len);
+            for (sheet, staged) in collected {
+                self.restore_staged_sheet(sheet, staged);
+            }
+            self.staged_formula_index = staged_index_snapshot;
+            return Err(error);
         }
         if !compressed.is_empty() {
             let _ = self.ingest_compressed_formula_source_batches(compressed)?;
@@ -10243,28 +12196,8 @@ where
             .graph
             .prepare_legacy_graph_plan_multi_sheet(analyzed)
             .map_err(FormulaSpanDemotionError::LegacyGraph)?;
-        if self
-            .config
-            .evaluation_budgets
-            .admission
-            .graph_vertex_hard_limit
-            .is_none()
-            && let Some(max_vertices) = self.config.max_vertices
-        {
-            let projected = self
-                .graph
-                .baseline_stats()
-                .graph_vertex_count
-                .checked_add(legacy_graph.new_vertex_count())
-                .ok_or(FormulaSpanDemotionError::CountOverflow)?;
-            if projected > max_vertices {
-                return Err(resource_error(
-                    formualizer_common::ResourceExhaustionReason::GraphVertices,
-                    max_vertices as u64,
-                    projected as u64,
-                ));
-            }
-        }
+        self.prepared_legacy_admission(&legacy_graph, placement_count as u64)
+            .map_err(FormulaSpanDemotionError::Resource)?;
 
         Ok(PreparedFormulaSpanDemotion {
             span_refs: unique,
@@ -10306,6 +12239,8 @@ where
         &mut self,
         prepared: PreparedFormulaSpanDemotion,
     ) -> Result<FormulaSpanDemotionReport, FormulaSpanDemotionError> {
+        self.prepared_legacy_admission(&prepared.legacy_graph, prepared.placement_count as u64)
+            .map_err(FormulaSpanDemotionError::Resource)?;
         if prepared.fault == FormulaSpanDemotionFault::FinalLegacyGraphValidation {
             return Err(FormulaSpanDemotionError::Injected(prepared.fault));
         }
@@ -12705,7 +14640,7 @@ where
             });
             pipeline.ingest_batch(inputs)?
         };
-        let planned = ingested
+        let planned: Vec<(u32, u32, AstNodeId, DependencyPlanRow)> = ingested
             .into_iter()
             .map(|formula| {
                 (

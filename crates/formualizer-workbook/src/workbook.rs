@@ -2815,6 +2815,50 @@ impl Workbook {
             }
         })
     }
+
+    /// Transactionally prepare the transitive ordinary-formula closure for typed targets.
+    /// This does not evaluate the requested cells.
+    pub fn prepare_graph_for_targets(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+        options: formualizer_eval::engine::PrepareTargetsOptions<'_>,
+    ) -> Result<formualizer_eval::engine::PreparedTargetGraphReport, IoError> {
+        self.engine
+            .prepare_graph_for_targets(targets, options)
+            .map_err(IoError::Engine)
+    }
+
+    /// Cell-target convenience wrapper over `prepare_graph_for_targets`.
+    pub fn prepare_graph_for_cells(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<formualizer_eval::engine::PreparedTargetGraphReport, IoError> {
+        let targets = targets
+            .iter()
+            .map(
+                |(sheet, row, col)| formualizer_eval::engine::EvaluationTarget::Cell {
+                    sheet: (*sheet).to_string(),
+                    row: *row,
+                    col: *col,
+                },
+            )
+            .collect::<Vec<_>>();
+        self.prepare_graph_for_targets(&targets, Default::default())
+    }
+
+    /// Range-target convenience wrapper over `prepare_graph_for_targets`.
+    pub fn prepare_graph_for_ranges(
+        &mut self,
+        targets: &[RangeAddress],
+    ) -> Result<formualizer_eval::engine::PreparedTargetGraphReport, IoError> {
+        let targets = targets
+            .iter()
+            .cloned()
+            .map(formualizer_eval::engine::EvaluationTarget::Range)
+            .collect::<Vec<_>>();
+        self.prepare_graph_for_targets(&targets, Default::default())
+    }
+
     pub fn evaluate_cell(
         &mut self,
         sheet: &str,

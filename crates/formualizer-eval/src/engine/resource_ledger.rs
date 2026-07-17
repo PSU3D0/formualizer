@@ -43,13 +43,114 @@ pub struct SemanticResourceBudget {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AdmissionResourceBudget {
-    /// Declarative in C1a. C2 activates this in one composed graph transaction.
+    /// Hard cap on the exact final graph vertex count at common mutation preflight.
     pub graph_vertex_hard_limit: Option<usize>,
-    /// Declarative in C1a. C2 activates this in one composed graph transaction.
+    /// Hard cap on the exact final graph edge count at common mutation preflight.
     pub graph_edge_hard_limit: Option<usize>,
-    /// Declarative in C1a; existing workbook materialization guards remain authoritative.
+    /// Hard cap on formula cells actually materialized into the legacy graph.
     pub materialization_cells: Option<u64>,
+    /// Hard cap on bytes attributed to newly materialized graph vertices and edges.
     pub materialized_graph_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct GraphAdmission {
+    pub final_vertices: usize,
+    pub final_edges: usize,
+    pub materialization_cells: u64,
+    pub added_vertices: usize,
+    pub added_edges: usize,
+}
+
+impl GraphAdmission {
+    pub(crate) fn materialized_graph_bytes(self) -> Result<u64, ResourceLedgerError> {
+        let vertices = u64::try_from(self.added_vertices).map_err(|_| {
+            ResourceLedgerError::Exhausted(ResourceExhaustionDetail {
+                reason: ResourceExhaustionReason::ArithmeticOverflow,
+                limit: u64::MAX,
+                observed: u64::MAX,
+                request_id: None,
+            })
+        })?;
+        let edges = u64::try_from(self.added_edges).map_err(|_| {
+            ResourceLedgerError::Exhausted(ResourceExhaustionDetail {
+                reason: ResourceExhaustionReason::ArithmeticOverflow,
+                limit: u64::MAX,
+                observed: u64::MAX,
+                request_id: None,
+            })
+        })?;
+        vertices
+            .checked_mul(64)
+            .and_then(|bytes| {
+                edges
+                    .checked_mul(16)
+                    .and_then(|edge_bytes| bytes.checked_add(edge_bytes))
+            })
+            .ok_or(ResourceLedgerError::Exhausted(ResourceExhaustionDetail {
+                reason: ResourceExhaustionReason::ArithmeticOverflow,
+                limit: u64::MAX,
+                observed: u64::MAX,
+                request_id: None,
+            }))
+    }
+}
+
+pub(crate) fn graph_admission_enabled(budgets: &EvaluationBudgets) -> bool {
+    let admission = &budgets.admission;
+    admission.graph_vertex_hard_limit.is_some()
+        || admission.graph_edge_hard_limit.is_some()
+        || admission.materialization_cells.is_some()
+        || admission.materialized_graph_bytes.is_some()
+}
+
+pub(crate) fn preflight_graph_admission(
+    budgets: &EvaluationBudgets,
+    usage: GraphAdmission,
+    request_id: Option<u64>,
+) -> Result<(), ResourceLedgerError> {
+    let exhausted = |reason, limit, observed| {
+        ResourceLedgerError::Exhausted(ResourceExhaustionDetail {
+            reason,
+            limit,
+            observed,
+            request_id,
+        })
+    };
+    if let Some(limit) = budgets.admission.graph_vertex_hard_limit
+        && usage.final_vertices > limit
+    {
+        return Err(exhausted(
+            ResourceExhaustionReason::GraphVertices,
+            limit as u64,
+            usage.final_vertices as u64,
+        ));
+    }
+    if let Some(limit) = budgets.admission.graph_edge_hard_limit
+        && usage.final_edges > limit
+    {
+        return Err(exhausted(
+            ResourceExhaustionReason::GraphEdges,
+            limit as u64,
+            usage.final_edges as u64,
+        ));
+    }
+    if let Some(limit) = budgets.admission.materialization_cells
+        && usage.materialization_cells > limit
+    {
+        return Err(exhausted(
+            ResourceExhaustionReason::MaterializationCells,
+            limit,
+            usage.materialization_cells,
+        ));
+    }
+    let bytes = usage.materialized_graph_bytes()?;
+    if let Some(limit) = budgets.admission.materialized_graph_bytes
+        && bytes > limit
+    {
+        return Err(exhausted(ResourceExhaustionReason::Admission, limit, bytes));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -199,7 +300,7 @@ pub struct EvaluationResourceConfigDiagnostic {
     pub max_memory_mb_retained: LegacyResourceConfigDisposition,
     pub max_memory_mb_scratch: LegacyResourceConfigDisposition,
     pub max_eval_time: LegacyResourceConfigDisposition,
-    /// C1a does not enforce graph caps in any mutation path; composed activation is C2.
+    /// Compatibility diagnostic field. Always false now that common admission is active.
     pub graph_admission_activation_deferred_to_c2: bool,
 }
 
@@ -235,7 +336,7 @@ pub(crate) fn resolve_evaluation_budgets(
         max_memory_mb_retained: LegacyResourceConfigDisposition::NotPresent,
         max_memory_mb_scratch: LegacyResourceConfigDisposition::NotPresent,
         max_eval_time: LegacyResourceConfigDisposition::NotPresent,
-        graph_admission_activation_deferred_to_c2: true,
+        graph_admission_activation_deferred_to_c2: false,
     };
     if let Some(max_vertices) = max_vertices {
         if budgets.admission.graph_vertex_hard_limit.is_none() {
@@ -443,6 +544,13 @@ impl ResourceLedger {
         )
     }
 
+    pub(crate) fn graph_source_limit(&self) -> Option<u64> {
+        Self::minimum_limit(
+            self.budgets.scratch.total_bytes,
+            self.budgets.scratch.graph_source_bytes,
+        )
+    }
+
     pub(crate) fn disk_scratch_policy(&self) -> Option<DiskScratchPolicy> {
         self.budgets.scratch.disk_scratch_policy
     }
@@ -479,6 +587,24 @@ impl ResourceLedger {
         self.retained_current = next;
         self.mixed_cache_current = bytes;
         self.retained_peak = self.retained_peak.max(next);
+        Ok(())
+    }
+
+    pub(crate) fn reserve_graph_source(&mut self, bytes: u64) -> Result<(), ResourceLedgerError> {
+        let Some(next) = self.scratch_current.checked_add(bytes) else {
+            return Err(self.exhausted(
+                ResourceExhaustionReason::ArithmeticOverflow,
+                u64::MAX,
+                u64::MAX,
+            ));
+        };
+        if let Some(limit) = self.graph_source_limit()
+            && next > limit
+        {
+            return Err(self.exhausted(ResourceExhaustionReason::ScratchMemory, limit, next));
+        }
+        self.scratch_current = next;
+        self.scratch_peak = self.scratch_peak.max(next);
         Ok(())
     }
 
@@ -560,6 +686,25 @@ impl ResourceLedger {
             });
         };
         self.scratch_current = next;
+        Ok(())
+    }
+
+    pub(crate) fn scratch_checkpoint(&self) -> u64 {
+        self.scratch_current
+    }
+
+    pub(crate) fn release_scratch_to(
+        &mut self,
+        checkpoint: u64,
+    ) -> Result<(), ResourceLedgerError> {
+        if checkpoint > self.scratch_current {
+            return Err(ResourceLedgerError::ReleaseUnderflow {
+                reason: ResourceExhaustionReason::ScratchMemory,
+                reserved: self.scratch_current,
+                released: checkpoint,
+            });
+        }
+        self.scratch_current = checkpoint;
         Ok(())
     }
 

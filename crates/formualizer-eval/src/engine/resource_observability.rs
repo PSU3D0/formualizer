@@ -79,6 +79,7 @@ impl EvaluationResourceReason {
 pub enum EvaluationRequestKind {
     Vertex,
     Targeted,
+    TargetPreparation,
     RecalcPlan,
     #[default]
     Full,
@@ -143,6 +144,7 @@ impl EvaluationRequestKind {
         match self {
             Self::Vertex => "vertex",
             Self::Targeted => "targeted",
+            Self::TargetPreparation => "target_preparation",
             Self::RecalcPlan => "recalc_plan",
             Self::Full => "full",
             Self::FullWithDelta => "full_with_delta",
@@ -319,6 +321,18 @@ pub struct EvaluationResourceRequestStats {
     pub outcome: EvaluationRequestOutcome,
     pub staged_selected: u64,
     pub staged_retained: u64,
+    pub target_requested: u64,
+    pub target_normalized_regions: u64,
+    /// 0 = not used/exact, 1 = sheets, 2 = workbook.
+    pub target_scope_level: u8,
+    /// Stable bit set keyed by `OpaqueReason` discriminants.
+    pub target_widening_reason_bits: u64,
+    pub graph_source_scratch_estimated: u64,
+    pub graph_source_scratch_observed: u64,
+    pub target_commit_estimated_work: u64,
+    pub target_commit_actual_work: u64,
+    pub target_commit_window_ns: u64,
+    pub target_admission_failure: Option<ResourceExhaustionReason>,
     pub topology: FormulaPlaneTopologyRequestStats,
     pub fallback_materialized_cells: u64,
     pub cycle_materialized_cells: u64,
@@ -341,6 +355,16 @@ impl EvaluationResourceRequestStats {
             outcome: EvaluationRequestOutcome::InProgress,
             staged_selected: 0,
             staged_retained: staged_retained as u64,
+            target_requested: 0,
+            target_normalized_regions: 0,
+            target_scope_level: 0,
+            target_widening_reason_bits: 0,
+            graph_source_scratch_estimated: 0,
+            graph_source_scratch_observed: 0,
+            target_commit_estimated_work: 0,
+            target_commit_actual_work: 0,
+            target_commit_window_ns: 0,
+            target_admission_failure: None,
             topology: FormulaPlaneTopologyRequestStats {
                 strategy: if formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
                     FormulaPlaneTopologyStrategy::NotUsed

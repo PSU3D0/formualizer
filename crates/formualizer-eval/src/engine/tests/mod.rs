@@ -47,6 +47,7 @@ mod stripe_tests;
 mod striped_dirty_propagation;
 mod structural_op_clears_computed_values;
 mod tables;
+mod target_preparation;
 mod tarjan_differential;
 mod tarjan_scc;
 mod topo_layers;

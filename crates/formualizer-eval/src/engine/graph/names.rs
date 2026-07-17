@@ -259,6 +259,7 @@ impl DependencyGraph {
 
         self.name_vertex_lookup.insert(vertex_id, (scope, key));
         self.resolve_pending_name_references(scope, name);
+        self.bump_symbol_revision();
 
         Ok(())
     }
@@ -384,6 +385,7 @@ impl DependencyGraph {
                 }
             }
 
+            self.bump_symbol_revision();
             Ok(())
         } else {
             Err(ExcelError::new(ExcelErrorKind::Name)
@@ -433,6 +435,7 @@ impl DependencyGraph {
                 }
             }
             self.mark_named_vertex_deleted(&named_range);
+            self.bump_symbol_revision();
             Ok(())
         } else {
             Err(ExcelError::new(ExcelErrorKind::Name)
@@ -725,6 +728,7 @@ impl DependencyGraph {
     ) -> Result<(), ExcelError> {
         let adjuster = crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster::new();
 
+        let changed = !self.named_ranges.is_empty() || !self.sheet_named_ranges.is_empty();
         // Adjust workbook-scoped names
         for named_range in self.named_ranges.values_mut() {
             adjust_named_definition(&mut named_range.definition, &adjuster, operation)?;
@@ -733,6 +737,9 @@ impl DependencyGraph {
         // Adjust sheet-scoped names
         for named_range in self.sheet_named_ranges.values_mut() {
             adjust_named_definition(&mut named_range.definition, &adjuster, operation)?;
+        }
+        if changed {
+            self.bump_symbol_revision();
         }
 
         Ok(())
