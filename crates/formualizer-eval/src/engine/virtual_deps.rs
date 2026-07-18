@@ -1,6 +1,7 @@
 use crate::engine::VertexId;
 use crate::engine::VertexKind;
 use crate::engine::eval::Engine;
+use crate::formula_plane::region_index::Region;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
     ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,
@@ -15,7 +16,8 @@ use crate::interpreter::Interpreter;
 pub struct DynamicRefCollector<'a, R: EvaluationContext> {
     pub engine: &'a Engine<R>,
     pub current_sheet: &'a str,
-    pub collected: Mutex<FxHashSet<VertexId>>,
+    pub(crate) collected: Mutex<FxHashSet<VertexId>>,
+    pub(crate) collected_regions: Mutex<FxHashSet<Region>>,
 }
 
 impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
@@ -24,6 +26,7 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
             engine,
             current_sheet,
             collected: Mutex::new(FxHashSet::default()),
+            collected_regions: Mutex::new(FxHashSet::default()),
         }
     }
 
@@ -38,14 +41,17 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
         let Some(sheet_id) = self.engine.graph.sheet_id(sheet_name) else {
             return;
         };
-        let Some(index) = self.engine.graph.sheet_index(sheet_id) else {
-            return;
-        };
-
         let sr0 = sr.saturating_sub(1);
         let er0 = er.saturating_sub(1);
         let sc0 = sc.saturating_sub(1);
         let ec0 = ec.saturating_sub(1);
+        self.collected_regions
+            .lock()
+            .unwrap()
+            .insert(Region::rect(sheet_id, sr0, er0, sc0, ec0).normalized());
+        let Some(index) = self.engine.graph.sheet_index(sheet_id) else {
+            return;
+        };
 
         let mut out = self.collected.lock().unwrap();
         for u in index.vertices_in_col_range(sc0, ec0) {
@@ -142,6 +148,13 @@ impl<'a, R: EvaluationContext> ReferenceResolver for DynamicRefCollector<'a, R> 
         col: u32,
     ) -> Result<LiteralValue, ExcelError> {
         let sheet_name = sheet.unwrap_or(self.current_sheet);
+        if let Some(sheet_id) = self.engine.graph.sheet_id(sheet_name) {
+            self.collected_regions.lock().unwrap().insert(Region::point(
+                sheet_id,
+                row.saturating_sub(1),
+                col.saturating_sub(1),
+            ));
+        }
         if let Some(&vid) = self
             .engine
             .graph
@@ -426,46 +439,65 @@ impl<'a, R: EvaluationContext> VirtualDepBuilder<'a, R> {
 pub struct DynamicRefVirtualDepProvider;
 
 impl DynamicRefVirtualDepProvider {
+    fn collect<R: EvaluationContext>(
+        engine: &Engine<R>,
+        v: VertexId,
+    ) -> (Vec<VertexId>, Vec<Region>) {
+        if !engine.graph.is_dynamic(v) {
+            return (Vec::new(), Vec::new());
+        }
+        let Some(ast_id) = engine.graph.get_formula_id(v) else {
+            return (Vec::new(), Vec::new());
+        };
+        let sheet_id = engine.graph.get_vertex_sheet_id(v);
+        let sheet_name = engine.graph.sheet_name(sheet_id);
+        let collector = DynamicRefCollector::new(engine, sheet_name);
+        let cell_ref = engine
+            .graph
+            .get_cell_ref(v)
+            .unwrap_or_else(|| engine.graph.make_cell_ref(sheet_name, 0, 0));
+        let interpreter = Interpreter::new_with_cell(&collector, sheet_name, cell_ref);
+        let _ = interpreter.evaluate_arena_ast(
+            ast_id,
+            engine.graph.data_store(),
+            engine.graph.sheet_reg(),
+        );
+        let mut deps = collector
+            .collected
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .filter(|&dependency| dependency != v)
+            .collect::<Vec<_>>();
+        deps.sort_unstable();
+        deps.dedup();
+        let mut regions = collector
+            .collected_regions
+            .lock()
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        regions.sort_by_key(|region| {
+            let (rows, cols) = region.axis_ranges();
+            (region.sheet_id(), rows.query_bounds(), cols.query_bounds())
+        });
+        regions.dedup();
+        (deps, regions)
+    }
+
     pub fn get_virtual_deps<R: EvaluationContext>(
         engine: &Engine<R>,
         v: VertexId,
     ) -> Vec<VertexId> {
-        let mut deps = Vec::new();
+        Self::collect(engine, v).0
+    }
 
-        if engine.graph.is_dynamic(v) {
-            // Re-evaluating the dynamic formula reference side to find what it references.
-            if let Some(ast_id) = engine.graph.get_formula_id(v) {
-                let sheet_id = engine.graph.get_vertex_sheet_id(v);
-                let sheet_name = engine.graph.sheet_name(sheet_id);
-
-                let collector = DynamicRefCollector::new(engine, sheet_name);
-
-                let cell_ref = engine
-                    .graph
-                    .get_cell_ref(v)
-                    .unwrap_or_else(|| engine.graph.make_cell_ref(sheet_name, 0, 0));
-
-                let interpreter = Interpreter::new_with_cell(&collector, sheet_name, cell_ref);
-
-                // Evaluate the formula. We ignore the result, we only care about the collected vertices!
-                let _ = interpreter.evaluate_arena_ast(
-                    ast_id,
-                    engine.graph.data_store(),
-                    engine.graph.sheet_reg(),
-                );
-
-                deps.extend(
-                    collector
-                        .collected
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .copied()
-                        .filter(|&u| u != v),
-                );
-            }
-        }
-
-        deps
+    pub(crate) fn get_virtual_regions<R: EvaluationContext>(
+        engine: &Engine<R>,
+        v: VertexId,
+    ) -> Vec<Region> {
+        Self::collect(engine, v).1
     }
 }

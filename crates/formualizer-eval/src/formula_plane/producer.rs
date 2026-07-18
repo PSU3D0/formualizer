@@ -97,6 +97,36 @@ impl ProducerDirtyDomain {
             Self::Regions(regions) => regions.clone(),
         }
     }
+
+    pub(crate) fn intersect_demanded(
+        &self,
+        producer_result_region: Region,
+        demanded: &[Region],
+    ) -> Option<Self> {
+        if demanded.is_empty() {
+            return None;
+        }
+        let mut intersections = Vec::new();
+        for dirty in self.result_regions(producer_result_region) {
+            for demand in demanded {
+                if let Some(region) = dirty.intersection(*demand)
+                    && !intersections.contains(&region)
+                {
+                    intersections.push(region);
+                }
+            }
+        }
+        if intersections.is_empty() {
+            None
+        } else if matches!(self, Self::Whole)
+            && intersections.len() == 1
+            && intersections[0] == producer_result_region
+        {
+            Some(Self::Whole)
+        } else {
+            Some(Self::Regions(intersections))
+        }
+    }
 }
 
 fn append_unique<T, I>(existing: &mut Vec<T>, incoming: I)
@@ -385,6 +415,10 @@ impl FormulaConsumerReadIndex {
 
     pub(crate) fn entries(&self) -> impl Iterator<Item = &FormulaConsumerReadEntry> {
         self.entries.iter()
+    }
+
+    pub(crate) fn entry(&self, index: usize) -> Option<&FormulaConsumerReadEntry> {
+        self.entries.get(index)
     }
 
     pub(crate) fn entries_page(

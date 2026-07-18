@@ -106,6 +106,14 @@ impl SemanticEpochReadGuard {
     pub(crate) fn epoch(&self) -> u64 {
         self.0.semantic_epoch
     }
+
+    pub(crate) fn semantic_changes_affect_requests_since(
+        &self,
+        epoch: u64,
+        requests: impl IntoIterator<Item = (String, String, usize)>,
+    ) -> bool {
+        semantic_changes_affect_requests_in_state(&self.0, epoch, requests)
+    }
 }
 
 pub(crate) fn semantic_epoch_read_guard() -> SemanticEpochReadGuard {
@@ -137,6 +145,10 @@ pub(crate) fn semantic_changes_since(epoch: u64) -> SemanticChanges {
     let state = REGISTRY
         .read()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    semantic_changes_since_in_state(&state, epoch)
+}
+
+fn semantic_changes_since_in_state(state: &RegistryState, epoch: u64) -> SemanticChanges {
     let complete = state
         .semantic_changes
         .front()
@@ -663,6 +675,7 @@ struct PlanningRegistration {
 pub(crate) struct RegistryPlanningSnapshot {
     epoch: u64,
     provider_revision: Option<u64>,
+    requests: Arc<Vec<(String, String, usize)>>,
     functions: Arc<HashMap<RegistryKey, Arc<dyn Function>>>,
     capabilities: Arc<HashMap<RegistryKey, FnCaps>>,
     identities: Arc<HashMap<(String, String, usize), FunctionSemanticIdentity>>,
@@ -805,6 +818,7 @@ impl RegistryPlanningSnapshot {
                 return Ok(Self {
                     epoch,
                     provider_revision,
+                    requests: Arc::new(requests.to_vec()),
                     functions: Arc::new(runtime_functions),
                     capabilities: Arc::new(capabilities),
                     identities: Arc::new(identities),
@@ -821,6 +835,47 @@ impl RegistryPlanningSnapshot {
     pub(crate) fn provider_revision(&self) -> Option<u64> {
         self.provider_revision
     }
+
+    pub(crate) fn semantic_changes_affect_requests_since(&self, epoch: u64) -> bool {
+        semantic_changes_affect_requests_since(epoch, self.requests.iter().cloned())
+    }
+
+    pub(crate) fn semantic_changes_affect_requests_since_guarded(
+        &self,
+        guard: &SemanticEpochReadGuard,
+        epoch: u64,
+    ) -> bool {
+        guard.semantic_changes_affect_requests_since(epoch, self.requests.iter().cloned())
+    }
+}
+
+pub(crate) fn semantic_changes_affect_requests_since(
+    epoch: u64,
+    requests: impl IntoIterator<Item = (String, String, usize)>,
+) -> bool {
+    let state = REGISTRY
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    semantic_changes_affect_requests_in_state(&state, epoch, requests)
+}
+
+fn semantic_changes_affect_requests_in_state(
+    state: &RegistryState,
+    epoch: u64,
+    requests: impl IntoIterator<Item = (String, String, usize)>,
+) -> bool {
+    let changes = semantic_changes_since_in_state(state, epoch);
+    if changes.epoch == epoch {
+        return false;
+    }
+    if !changes.complete {
+        return true;
+    }
+    let requests = requests
+        .into_iter()
+        .map(|(namespace, name, _)| (norm(namespace), norm(name)))
+        .collect::<std::collections::BTreeSet<_>>();
+    changes.keys.into_iter().any(|key| requests.contains(&key))
 }
 
 impl crate::traits::FunctionProvider for RegistryPlanningSnapshot {
@@ -1117,6 +1172,35 @@ mod tests {
                 &snapshot.get_function(ns, "TARGET").unwrap(),
             ));
         }
+    }
+
+    #[test]
+    fn guarded_request_change_check_does_not_relock_behind_queued_writer() {
+        let ns = "__GUARDED_REQUEST_CHANGE__";
+        register_function(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+            &GlobalRegistryFunctionProvider,
+            [(ns.to_string(), "TARGET".to_string(), 1)],
+        )
+        .unwrap();
+        register_function(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+
+        let guard = semantic_epoch_read_guard();
+        let (queued_tx, queued_rx) = std::sync::mpsc::sync_channel(0);
+        let writer = std::thread::spawn(move || {
+            assert!(REGISTRY.try_write().is_err());
+            queued_tx.send(()).unwrap();
+            let mut state = REGISTRY
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            publish_semantic_change(&mut state, [(ns.to_string(), "QUEUED_WRITER".to_string())]);
+        });
+        queued_rx.recv().unwrap();
+        std::thread::yield_now();
+
+        assert!(snapshot.semantic_changes_affect_requests_since_guarded(&guard, snapshot.epoch(),));
+        drop(guard);
+        writer.join().unwrap();
     }
 
     #[test]

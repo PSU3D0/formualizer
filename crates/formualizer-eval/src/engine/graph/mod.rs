@@ -49,7 +49,10 @@ use crate::engine::topo::{
 use crate::reference::{CellRef, Coord, SharedRangeRef, SharedRef, SharedSheetLocator};
 use formualizer_common::Coord as AbsCoord;
 use formula_dirty::FormulaDirtyState;
-pub(crate) use formula_dirty::{FormulaDirtyLease, FormulaDirtyStats, WholeSpanDirtyReason};
+pub(crate) use formula_dirty::{
+    FormulaDirtyEventSnapshot, FormulaDirtyLease, FormulaDirtyStats, FormulaDirtySublease,
+    WholeSpanDirtyReason,
+};
 // topo::pk wiring will be integrated behind config.use_dynamic_topo in a follow-up step
 
 struct RegistryFunctionProvider;
@@ -388,6 +391,14 @@ impl DependencyGraph {
 
     pub(crate) fn ack_formula_dirty(&mut self, lease: FormulaDirtyLease) -> bool {
         self.formula_dirty.ack(lease)
+    }
+
+    pub(crate) fn ack_formula_dirty_sublease(&mut self, sublease: FormulaDirtySublease) -> bool {
+        self.formula_dirty.ack_sublease(sublease)
+    }
+
+    pub(crate) fn release_formula_dirty_lease(&mut self, lease: FormulaDirtyLease) -> bool {
+        self.formula_dirty.release(lease)
     }
 
     pub(crate) fn pending_formula_dirty_regions(

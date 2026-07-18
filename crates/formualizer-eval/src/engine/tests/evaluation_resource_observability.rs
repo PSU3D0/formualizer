@@ -146,8 +146,8 @@ fn deferred_preparation_records_selected_and_restored_staging() {
 
     engine.evaluate_cell("Sheet1", 1, 1).unwrap();
     let request = engine.last_evaluation_resource_request_stats().unwrap();
-    assert_eq!(request.staged_selected, 2);
-    assert_eq!(request.staged_retained, 0);
+    assert_eq!(request.staged_selected, 1);
+    assert_eq!(request.staged_retained, 1);
 
     let mut failed = Engine::new(
         TestWorkbook::default(),

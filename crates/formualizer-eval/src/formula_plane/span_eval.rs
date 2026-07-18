@@ -6,6 +6,7 @@
 //! single writeback mechanism.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
@@ -62,6 +63,7 @@ pub(crate) enum SpanEvalError {
     MissingTemplate,
     UnsupportedDirtyDomain,
     UnsupportedReferenceRelocation,
+    Cancelled,
 }
 
 pub(crate) struct SpanComputedWriteSink<'a> {
@@ -170,6 +172,7 @@ pub(crate) struct SpanEvaluator<'a> {
     current_sheet: &'a str,
     data_store: &'a DataStore,
     sheet_registry: &'a SheetRegistry,
+    cancel: Option<&'a AtomicBool>,
 }
 
 impl<'a> SpanEvaluator<'a> {
@@ -180,12 +183,40 @@ impl<'a> SpanEvaluator<'a> {
         data_store: &'a DataStore,
         sheet_registry: &'a SheetRegistry,
     ) -> Self {
+        Self::new_with_cancel(
+            plane,
+            context,
+            current_sheet,
+            data_store,
+            sheet_registry,
+            None,
+        )
+    }
+
+    pub(crate) fn new_with_cancel(
+        plane: &'a FormulaPlane,
+        context: &'a dyn EvaluationContext,
+        current_sheet: &'a str,
+        data_store: &'a DataStore,
+        sheet_registry: &'a SheetRegistry,
+        cancel: Option<&'a AtomicBool>,
+    ) -> Self {
         Self {
             plane,
             context,
             current_sheet,
             data_store,
             sheet_registry,
+            cancel,
+        }
+    }
+
+    fn cancellation_checkpoint(&self, index: usize) -> Result<(), SpanEvalError> {
+        if index.is_multiple_of(256) && self.cancel.is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            Err(SpanEvalError::Cancelled)
+        } else {
+            Ok(())
         }
     }
 
@@ -264,7 +295,8 @@ impl<'a> SpanEvaluator<'a> {
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             };
 
-            for placement in placements.iter() {
+            for (index, placement) in placements.iter().enumerate() {
+                self.cancellation_checkpoint(index)?;
                 if self.plane.formula_overlay.find_at(placement).is_some() {
                     report.skipped_overlay_punchout_count =
                         report.skipped_overlay_punchout_count.saturating_add(1);
@@ -279,7 +311,8 @@ impl<'a> SpanEvaluator<'a> {
             return Ok(report);
         }
 
-        if let Some(binding_set) = span_binding_set
+        if self.cancel.is_none()
+            && let Some(binding_set) = span_binding_set
             && self.should_try_memoization(span, binding_set, &placements, &mut report)
             && let Some(memo_report) = self.evaluate_memoized(
                 span,
@@ -297,7 +330,8 @@ impl<'a> SpanEvaluator<'a> {
         }
 
         let per_placement_binding_set = span_binding_set;
-        let (writable_placements, skipped_overlay) = self.collect_writable_placements(&placements);
+        let (writable_placements, skipped_overlay) =
+            self.collect_writable_placements(&placements)?;
         report.skipped_overlay_punchout_count = report
             .skipped_overlay_punchout_count
             .saturating_add(skipped_overlay);
@@ -344,17 +378,18 @@ impl<'a> SpanEvaluator<'a> {
     fn collect_writable_placements(
         &self,
         placements: &PlacementSelection<'_>,
-    ) -> (Vec<PlacementCoord>, u64) {
+    ) -> Result<(Vec<PlacementCoord>, u64), SpanEvalError> {
         let mut writable = Vec::with_capacity(placements.len());
         let mut skipped = 0u64;
-        for placement in placements.iter() {
+        for (index, placement) in placements.iter().enumerate() {
+            self.cancellation_checkpoint(index)?;
             if self.plane.formula_overlay.find_at(placement).is_some() {
                 skipped = skipped.saturating_add(1);
             } else {
                 writable.push(placement);
             }
         }
-        (writable, skipped)
+        Ok((writable, skipped))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -420,7 +455,8 @@ impl<'a> SpanEvaluator<'a> {
         report.sequential_per_placement_invocations = report
             .sequential_per_placement_invocations
             .saturating_add(1);
-        for placement in writable_placements.iter().copied() {
+        for (index, placement) in writable_placements.iter().copied().enumerate() {
+            self.cancellation_checkpoint(index)?;
             let value = self.evaluate_placement_value(
                 span,
                 ast_id,
@@ -458,6 +494,9 @@ impl<'a> SpanEvaluator<'a> {
             writable_placements
                 .par_iter()
                 .map(|placement| {
+                    if self.cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                        return Err(SpanEvalError::Cancelled);
+                    }
                     self.evaluate_placement_value(
                         span,
                         ast_id,

@@ -294,6 +294,31 @@ fn fake_clock_deadline_is_monotonic_and_typed() {
 }
 
 #[test]
+fn commit_window_preflight_rejects_before_deadline_is_reached() {
+    let now_ns = Arc::new(AtomicU64::new(7));
+    let clock_value = Arc::clone(&now_ns);
+    let budgets = EvaluationBudgets {
+        deadline: DeadlineResourceBudget {
+            max_elapsed: Some(Duration::from_nanos(10)),
+        },
+        ..EvaluationBudgets::default()
+    };
+    let mut ledger = ResourceLedger::with_test_elapsed_clock(
+        Some(10),
+        budgets,
+        Arc::new(move || Duration::from_nanos(clock_value.load(Ordering::SeqCst))),
+    );
+    let error = ledger
+        .preflight_commit_window(Duration::from_nanos(4))
+        .unwrap_err()
+        .into_excel_error();
+    assert_eq!(
+        resource_reason(&error),
+        Some(ResourceExhaustionReason::Deadline)
+    );
+}
+
+#[test]
 fn work_and_deadline_errors_are_common_across_modes() {
     for mode in [
         FormulaPlaneMode::Off,
