@@ -105,18 +105,12 @@ fn first_cell_of_cross_sheet_dn_range_resolves_via_evaluate_cell() {
 }
 
 #[test]
-fn cross_sheet_evaluate_cell_drains_all_staged_sheets() {
+fn cross_sheet_evaluate_cell_prepares_transitive_staged_formulas() {
     // ``defer_graph_building`` mode is what the xlsx loader uses
     // (``Workbook::interactive()``). Formulas land in a staging map and
-    // are promoted to the graph on first evaluate. Before the fix,
-    // ``evaluate_cell`` only promoted the *target* sheet's staged
-    // formulas — so a target cell whose formula referenced another
-    // sheet would read the still-unevaluated source and silently
-    // return ``None``. This test mirrors the xlsx-load path by staging
-    // formulas explicitly, then evaluating a single cross-sheet target
-    // cell. The fix in ``evaluate_cell`` calls ``build_graph_all`` so
-    // every staged sheet is materialized before the target's formula
-    // tries to read its dependencies.
+    // are prepared transactionally on first evaluation. This test mirrors
+    // the xlsx-load path and verifies target preparation discovers the
+    // complete cross-sheet precedent closure before evaluation.
     let cfg = EvalConfig {
         defer_graph_building: true,
         ..Default::default()
@@ -137,10 +131,8 @@ fn cross_sheet_evaluate_cell_drains_all_staged_sheets() {
     engine.stage_formula_text("Schedule", 6, 3, "=SUM(C2:C5)".to_string());
     engine.stage_formula_text("Model", 7, 4, "='Schedule'!C6".to_string());
 
-    // Target a cell on Model. Before the fix, only ``Model``'s staged
-    // formulas were promoted — so ``Schedule!C6`` remained unevaluated
-    // and the target read ``None``. After the fix, all staged sheets
-    // are promoted and the cross-sheet ref resolves cleanly.
+    // Target a cell on Model. The reachable Schedule formulas must be
+    // prepared before the cross-sheet reference is evaluated.
     let v = engine.evaluate_cell("Model", 7, 4).unwrap();
     assert_eq!(
         v,

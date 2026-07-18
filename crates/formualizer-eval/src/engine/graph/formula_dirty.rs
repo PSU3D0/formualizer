@@ -21,6 +21,29 @@ enum FormulaDirtyEvent {
     WholeSpan(FormulaSpanRef),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FormulaDirtyEventSnapshot {
+    Region(Region),
+    SpanRegion {
+        span_ref: FormulaSpanRef,
+        region: Region,
+    },
+    WholeSpan(FormulaSpanRef),
+}
+
+impl From<&FormulaDirtyEvent> for FormulaDirtyEventSnapshot {
+    fn from(event: &FormulaDirtyEvent) -> Self {
+        match event {
+            FormulaDirtyEvent::Region(region) => Self::Region(*region),
+            FormulaDirtyEvent::SpanRegion { span_ref, region } => Self::SpanRegion {
+                span_ref: *span_ref,
+                region: *region,
+            },
+            FormulaDirtyEvent::WholeSpan(span_ref) => Self::WholeSpan(*span_ref),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FormulaDirtyLease {
     generation: u64,
@@ -31,6 +54,34 @@ pub(crate) struct FormulaDirtyLease {
 impl FormulaDirtyLease {
     pub(crate) fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    pub(crate) fn events(&self) -> impl Iterator<Item = (usize, FormulaDirtyEventSnapshot)> + '_ {
+        self.events
+            .iter()
+            .enumerate()
+            .map(|(index, event)| (index, event.into()))
+    }
+
+    pub(crate) fn sublease(
+        &self,
+        owned_events: impl IntoIterator<Item = usize>,
+    ) -> FormulaDirtySublease {
+        let mut owned_events = owned_events
+            .into_iter()
+            .filter(|index| *index < self.prefix_len)
+            .collect::<Vec<_>>();
+        owned_events.sort_unstable();
+        owned_events.dedup();
+        FormulaDirtySublease {
+            generation: self.generation,
+            prefix_len: self.prefix_len,
+            owned_events,
+        }
     }
 
     pub(crate) fn regions(&self) -> impl Iterator<Item = Region> + '_ {
@@ -52,6 +103,19 @@ impl FormulaDirtyLease {
             FormulaDirtyEvent::Region(_) | FormulaDirtyEvent::SpanRegion { .. } => None,
             FormulaDirtyEvent::WholeSpan(span_ref) => Some(*span_ref),
         })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct FormulaDirtySublease {
+    generation: u64,
+    prefix_len: usize,
+    owned_events: Vec<usize>,
+}
+
+impl FormulaDirtySublease {
+    pub(crate) fn owned_len(&self) -> usize {
+        self.owned_events.len()
     }
 }
 
@@ -152,6 +216,10 @@ impl FormulaDirtyState {
     }
 
     pub(super) fn lease(&mut self) -> FormulaDirtyLease {
+        // Starting a new request releases any abandoned predecessor without
+        // collapsing its events with identical post-lease events.
+        self.active_lease = None;
+        self.rebuild_pending_dedup();
         self.lease_generation = self.lease_generation.wrapping_add(1);
         let generation = self.lease_generation;
         let prefix_len = self.events.len();
@@ -198,16 +266,61 @@ impl FormulaDirtyState {
     }
 
     pub(super) fn ack(&mut self, lease: FormulaDirtyLease) -> bool {
+        let sublease = lease.sublease(0..lease.prefix_len);
+        self.ack_sublease(sublease)
+    }
+
+    pub(super) fn ack_sublease(&mut self, sublease: FormulaDirtySublease) -> bool {
+        let Some(active) = self.active_lease else {
+            return false;
+        };
+        if active.generation != sublease.generation || active.prefix_len != sublease.prefix_len {
+            return false;
+        }
+        let owned = sublease.owned_events.into_iter().collect::<FxHashSet<_>>();
+        let prefix_len = sublease.prefix_len.min(self.events.len());
+        let events = std::mem::take(&mut self.events);
+        self.events
+            .reserve(events.len().saturating_sub(owned.len()));
+        for (index, event) in events.into_iter().enumerate() {
+            if index >= prefix_len || !owned.contains(&index) {
+                self.events.push(event);
+            }
+        }
+        self.active_lease = None;
+        self.rebuild_pending_dedup();
+        true
+    }
+
+    pub(super) fn release(&mut self, lease: FormulaDirtyLease) -> bool {
         let Some(active) = self.active_lease else {
             return false;
         };
         if active.generation != lease.generation || active.prefix_len != lease.prefix_len {
             return false;
         }
-        let prefix_len = lease.prefix_len.min(self.events.len());
-        self.events.drain(..prefix_len);
         self.active_lease = None;
+        self.rebuild_pending_dedup();
         true
+    }
+
+    fn rebuild_pending_dedup(&mut self) {
+        self.pending_regions_seen.clear();
+        self.pending_span_regions_seen.clear();
+        self.pending_spans_seen.clear();
+        for event in &self.events {
+            match event {
+                FormulaDirtyEvent::Region(region) => {
+                    self.pending_regions_seen.insert(*region);
+                }
+                FormulaDirtyEvent::SpanRegion { span_ref, region } => {
+                    self.pending_span_regions_seen.insert((*span_ref, *region));
+                }
+                FormulaDirtyEvent::WholeSpan(span_ref) => {
+                    self.pending_spans_seen.insert(*span_ref);
+                }
+            }
+        }
     }
 
     pub(super) fn pending_regions(&self) -> impl Iterator<Item = Region> + '_ {
@@ -354,6 +467,55 @@ mod tests {
             retry.whole_spans().collect::<Vec<_>>(),
             vec![span(1), span(1)]
         );
+    }
+
+    #[test]
+    fn sublease_acknowledges_only_owned_events_and_preserves_order() {
+        let mut dirty = FormulaDirtyState::default();
+        let first = Region::point(0, 1, 1);
+        let second = Region::point(0, 2, 2);
+        let third = Region::point(0, 3, 3);
+        dirty.record_region(first);
+        dirty.record_region(second);
+        dirty.record_region(third);
+        let lease = dirty.lease();
+        let sublease = lease.sublease([1]);
+        assert_eq!(sublease.owned_len(), 1);
+        assert!(dirty.ack_sublease(sublease));
+        assert_eq!(
+            dirty.pending_regions().collect::<Vec<_>>(),
+            vec![first, third]
+        );
+    }
+
+    #[test]
+    fn partial_span_region_can_remain_wholly_pending() {
+        let mut dirty = FormulaDirtyState::default();
+        let span_ref = span(7);
+        let whole_event = Region::rect(0, 10, 20, 1, 1);
+        dirty.record_span_region(span_ref, whole_event);
+        let lease = dirty.lease();
+        assert!(dirty.ack_sublease(lease.sublease(std::iter::empty())));
+        assert_eq!(
+            dirty.pending_span_regions().collect::<Vec<_>>(),
+            vec![(span_ref, whole_event)]
+        );
+    }
+
+    #[test]
+    fn failed_sublease_release_rebuilds_dedup_without_losing_identical_later_event() {
+        let mut dirty = FormulaDirtyState::default();
+        let region = Region::point(0, 4, 4);
+        dirty.record_region(region);
+        let lease = dirty.lease();
+        dirty.record_region(region);
+        assert!(dirty.release(lease));
+        assert_eq!(
+            dirty.pending_regions().collect::<Vec<_>>(),
+            vec![region, region]
+        );
+        dirty.record_region(region);
+        assert_eq!(dirty.pending_regions().count(), 2);
     }
 
     #[test]

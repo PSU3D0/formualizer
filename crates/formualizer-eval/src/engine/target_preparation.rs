@@ -4,7 +4,10 @@ use std::time::{Duration, Instant};
 
 use formualizer_common::RangeAddress;
 
-use super::EvaluationBudgets;
+use super::{EvaluationBudgets, VertexId};
+use crate::formula_plane::region_index::Region;
+use crate::formula_plane::runtime::FormulaSpanRef;
+use crate::reference::CellRef;
 
 pub type RequestId = u64;
 
@@ -37,6 +40,17 @@ pub enum EvaluationTarget {
         name: String,
         selection: TableSelection,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum TargetProducer {
+    Legacy(VertexId),
+    Span {
+        span_ref: FormulaSpanRef,
+        demanded: Region,
+    },
+    Symbol(VertexId),
+    ValueOnly(CellRef),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]

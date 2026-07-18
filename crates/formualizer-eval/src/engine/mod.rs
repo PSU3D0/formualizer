@@ -54,7 +54,10 @@ pub use eval::{
     CycleTelemetry, Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan,
     SourceFormulaIngress, VirtualDepTelemetry,
 };
-pub use eval_delta::{DeltaMode, EvalDelta};
+pub use eval_delta::{
+    DeltaMode, EvalDelta, EvalDeltaCompatibilityPolicy, EvalDeltaRecord, TARGET_EVAL_DELTA_VERSION,
+    TargetEvalDelta,
+};
 pub use formula_ingest::{FormulaIngestBatch, FormulaIngestRecord, FormulaIngestReport};
 #[doc(hidden)]
 pub use formula_source::{

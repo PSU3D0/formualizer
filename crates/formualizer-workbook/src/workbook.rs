@@ -2859,6 +2859,30 @@ impl Workbook {
         self.prepare_graph_for_targets(&targets, Default::default())
     }
 
+    pub fn evaluate_targets(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        self.engine
+            .evaluate_targets(targets)
+            .map_err(IoError::Engine)
+    }
+
+    pub fn evaluate_targets_with_delta(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+    ) -> Result<
+        (
+            formualizer_eval::engine::EvalResult,
+            formualizer_eval::engine::TargetEvalDelta,
+        ),
+        IoError,
+    > {
+        self.engine
+            .evaluate_targets_with_delta(targets)
+            .map_err(IoError::Engine)
+    }
+
     pub fn evaluate_cell(
         &mut self,
         sheet: &str,
@@ -2900,8 +2924,103 @@ impl Workbook {
                     .collect()
             })
     }
+    pub fn evaluate_cells_with_delta(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<(Vec<LiteralValue>, formualizer_eval::engine::EvalDelta), IoError> {
+        let (values, delta) = self
+            .engine
+            .evaluate_cells_with_delta(targets)
+            .map_err(IoError::Engine)?;
+        Ok((
+            values
+                .into_iter()
+                .map(|value| value.unwrap_or(LiteralValue::Empty))
+                .collect(),
+            delta,
+        ))
+    }
+
+    pub fn evaluate_cells_with_delta_policy(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+        policy: formualizer_eval::engine::EvalDeltaCompatibilityPolicy,
+    ) -> Result<(Vec<LiteralValue>, formualizer_eval::engine::EvalDelta), IoError> {
+        let (values, delta) = self
+            .engine
+            .evaluate_cells_with_delta_policy(targets, policy)
+            .map_err(IoError::Engine)?;
+        Ok((
+            values
+                .into_iter()
+                .map(|value| value.unwrap_or(LiteralValue::Empty))
+                .collect(),
+            delta,
+        ))
+    }
+
+    pub fn evaluate_cells_with_target_delta(
+        &mut self,
+        targets: &[(&str, u32, u32)],
+    ) -> Result<(Vec<LiteralValue>, formualizer_eval::engine::TargetEvalDelta), IoError> {
+        let (values, delta) = self
+            .engine
+            .evaluate_cells_with_target_delta(targets)
+            .map_err(IoError::Engine)?;
+        Ok((
+            values
+                .into_iter()
+                .map(|value| value.unwrap_or(LiteralValue::Empty))
+                .collect(),
+            delta,
+        ))
+    }
+
     pub fn evaluate_all(&mut self) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine.evaluate_all().map_err(IoError::Engine)
+    }
+
+    pub fn evaluate_all_with_delta(
+        &mut self,
+    ) -> Result<
+        (
+            formualizer_eval::engine::EvalResult,
+            formualizer_eval::engine::EvalDelta,
+        ),
+        IoError,
+    > {
+        self.engine
+            .evaluate_all_with_delta()
+            .map_err(IoError::Engine)
+    }
+
+    pub fn evaluate_all_with_delta_policy(
+        &mut self,
+        policy: formualizer_eval::engine::EvalDeltaCompatibilityPolicy,
+    ) -> Result<
+        (
+            formualizer_eval::engine::EvalResult,
+            formualizer_eval::engine::EvalDelta,
+        ),
+        IoError,
+    > {
+        self.engine
+            .evaluate_all_with_delta_policy(policy)
+            .map_err(IoError::Engine)
+    }
+
+    pub fn evaluate_all_with_target_delta(
+        &mut self,
+    ) -> Result<
+        (
+            formualizer_eval::engine::EvalResult,
+            formualizer_eval::engine::TargetEvalDelta,
+        ),
+        IoError,
+    > {
+        self.engine
+            .evaluate_all_with_target_delta()
+            .map_err(IoError::Engine)
     }
 
     pub fn evaluate_all_cancellable(

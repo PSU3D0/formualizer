@@ -130,8 +130,17 @@ struct CompiledRelationship {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct CompiledPrecedent {
+    source: FormulaProducerId,
+    read_region: Region,
+    consumer_result_region: Region,
+    projection: DirtyProjectionRule,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MixedTopology {
     relationships: BTreeMap<FormulaProducerId, Vec<CompiledRelationship>>,
+    precedents: BTreeMap<FormulaProducerId, Vec<CompiledPrecedent>>,
     pub(crate) stats: MixedTopologyCompileStats,
     pub(crate) fallbacks: Vec<MixedScheduleFallback>,
     complete: bool,
@@ -162,6 +171,7 @@ impl MixedTopology {
 
     fn estimated_memory_bytes(
         relationships: &BTreeMap<FormulaProducerId, Vec<CompiledRelationship>>,
+        precedents: &BTreeMap<FormulaProducerId, Vec<CompiledPrecedent>>,
         fallback_capacity: usize,
         retained_memory_bytes: usize,
     ) -> Option<usize> {
@@ -177,6 +187,18 @@ impl MixedTopology {
                 compiled
                     .capacity()
                     .checked_mul(std::mem::size_of::<CompiledRelationship>())?,
+            )?;
+        }
+        for compiled in precedents.values() {
+            bytes = bytes.checked_add(
+                std::mem::size_of::<FormulaProducerId>()
+                    .checked_add(std::mem::size_of::<Vec<CompiledPrecedent>>())?
+                    .checked_add(TREE_ENTRY_OVERHEAD)?,
+            )?;
+            bytes = bytes.checked_add(
+                compiled
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<CompiledPrecedent>())?,
             )?;
         }
         bytes = bytes.checked_add(
@@ -227,10 +249,12 @@ pub(crate) fn compile_mixed_topology(
         ..MixedTopologyCompileStats::default()
     };
     let mut relationships = BTreeMap::new();
+    let mut precedents = BTreeMap::new();
     let mut fallbacks = Vec::new();
     let mut complete = true;
     let initial_memory = MixedTopology::estimated_memory_bytes(
         &relationships,
+        &precedents,
         fallbacks.capacity(),
         config.retained_memory_bytes,
     );
@@ -319,8 +343,28 @@ pub(crate) fn compile_mixed_topology(
                 consumer_result_region: candidate.consumer_result_region,
                 projection: candidate.projection,
             });
+            let precedent = precedents
+                .entry(candidate.consumer)
+                .or_insert_with(Vec::new);
+            if precedent.try_reserve(1).is_err() {
+                stats.estimated_memory_bytes = usize::MAX;
+                stats.memory_overflow_count = stats.memory_overflow_count.saturating_add(1);
+                complete = false;
+                fallbacks.push(MixedScheduleFallback {
+                    producer,
+                    reason: MixedScheduleFallbackReason::CacheMemoryExceeded,
+                });
+                break;
+            }
+            precedent.push(CompiledPrecedent {
+                source: producer,
+                read_region: candidate.read_region,
+                consumer_result_region: candidate.consumer_result_region,
+                projection: candidate.projection,
+            });
             let estimated = MixedTopology::estimated_memory_bytes(
                 &relationships,
+                &precedents,
                 fallbacks.capacity(),
                 config.retained_memory_bytes,
             );
@@ -343,6 +387,7 @@ pub(crate) fn compile_mixed_topology(
     if complete {
         MixedTopologyCompileResult::Cached(MixedTopology {
             relationships,
+            precedents,
             stats,
             fallbacks,
             complete: true,
@@ -370,6 +415,517 @@ fn memory_overflow_result(
     MixedTopologyCompileResult::CacheSkipped {
         reason: MixedScheduleFallbackReason::CacheMemoryExceeded,
         observed: stats,
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MixedDemandClosure {
+    demanded: BTreeMap<FormulaProducerId, Vec<Region>>,
+    pub(crate) producer_visits: usize,
+    pub(crate) relationship_visits: usize,
+}
+
+impl MixedDemandClosure {
+    pub(crate) fn contains(&self, producer: FormulaProducerId) -> bool {
+        self.demanded.contains_key(&producer)
+    }
+
+    pub(crate) fn regions(&self, producer: FormulaProducerId) -> &[Region] {
+        self.demanded
+            .get(&producer)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn producers(&self) -> impl Iterator<Item = FormulaProducerId> + '_ {
+        self.demanded.keys().copied()
+    }
+
+    pub(crate) fn estimated_memory_bytes(&self) -> u64 {
+        const TREE_ENTRY_OVERHEAD: usize = 4 * std::mem::size_of::<usize>();
+        self.demanded.values().fold(0usize, |bytes, regions| {
+            bytes
+                .saturating_add(std::mem::size_of::<FormulaProducerId>())
+                .saturating_add(std::mem::size_of::<Vec<Region>>())
+                .saturating_add(TREE_ENTRY_OVERHEAD)
+                .saturating_add(
+                    regions
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<Region>()),
+                )
+        }) as u64
+    }
+}
+
+fn insert_demand_region(
+    demanded: &mut BTreeMap<FormulaProducerId, Vec<Region>>,
+    queue: &mut VecDeque<(FormulaProducerId, Region)>,
+    producer: FormulaProducerId,
+    region: Region,
+) {
+    let regions = demanded.entry(producer).or_default();
+    if regions.contains(&region) {
+        return;
+    }
+    regions.push(region);
+    queue.push_back((producer, region));
+}
+
+fn demanded_read_regions(
+    demanded_result: Region,
+    declared_read: Region,
+    consumer_result: Region,
+    projection: DirtyProjectionRule,
+) -> Vec<Region> {
+    let Some(demanded_result) = demanded_result.intersection(consumer_result) else {
+        return Vec::new();
+    };
+    let projected = match projection {
+        DirtyProjectionRule::WholeResult => vec![declared_read],
+        _ => projection
+            .read_regions_for_result(declared_read.sheet_id(), demanded_result)
+            .unwrap_or_else(|_| vec![declared_read]),
+    };
+    projected
+        .into_iter()
+        .filter_map(|region| region.intersection(declared_read))
+        .collect()
+}
+
+pub(crate) fn build_demand_closure_cached(
+    roots: impl IntoIterator<Item = (FormulaProducerId, Region)>,
+    producer_results: &FormulaProducerResultIndex,
+    topology: &MixedTopology,
+) -> MixedDemandClosure {
+    debug_assert!(
+        topology.complete,
+        "partial retained topology is never demand authority"
+    );
+    let mut closure = MixedDemandClosure::default();
+    let mut queue = VecDeque::new();
+    for (producer, demanded) in roots {
+        if let Some(result) = producer_results.producer_result_region(producer)
+            && let Some(region) = demanded.intersection(result)
+        {
+            insert_demand_region(&mut closure.demanded, &mut queue, producer, region);
+        }
+    }
+    while let Some((consumer, demanded_result)) = queue.pop_front() {
+        closure.producer_visits = closure.producer_visits.saturating_add(1);
+        for precedent in topology.precedents.get(&consumer).into_iter().flatten() {
+            closure.relationship_visits = closure.relationship_visits.saturating_add(1);
+            let Some(source_result) = producer_results.producer_result_region(precedent.source)
+            else {
+                continue;
+            };
+            for read in demanded_read_regions(
+                demanded_result,
+                precedent.read_region,
+                precedent.consumer_result_region,
+                precedent.projection,
+            ) {
+                if let Some(source_demand) = source_result.intersection(read) {
+                    insert_demand_region(
+                        &mut closure.demanded,
+                        &mut queue,
+                        precedent.source,
+                        source_demand,
+                    );
+                }
+            }
+        }
+    }
+    closure
+}
+
+fn initialize_exact_demand(
+    roots: impl IntoIterator<Item = (FormulaProducerId, Region)>,
+    producer_results: &FormulaProducerResultIndex,
+) -> (MixedDemandClosure, VecDeque<(FormulaProducerId, Region)>) {
+    let mut closure = MixedDemandClosure::default();
+    let mut queue = VecDeque::new();
+    for (producer, demanded) in roots {
+        if let Some(result) = producer_results.producer_result_region(producer)
+            && let Some(region) = demanded.intersection(result)
+        {
+            insert_demand_region(&mut closure.demanded, &mut queue, producer, region);
+        }
+    }
+    (closure, queue)
+}
+
+pub(crate) fn build_demand_closure_paged<E>(
+    roots: impl IntoIterator<Item = (FormulaProducerId, Region)>,
+    producer_results: &FormulaProducerResultIndex,
+    consumer_reads: &FormulaConsumerReadIndex,
+    mut checkpoint: impl FnMut(u64) -> Result<(), E>,
+) -> Result<(MixedDemandClosure, u64), E> {
+    let mut indexed_pages = Vec::new();
+    for start in (0..consumer_reads.len()).step_by(EXACT_PAGE_SIZE) {
+        let page = consumer_reads.entries_page(start, EXACT_PAGE_SIZE);
+        checkpoint(u64::try_from(page.len()).unwrap_or(u64::MAX))?;
+        let mut by_consumer: BTreeMap<FormulaProducerId, Vec<_>> = BTreeMap::new();
+        for read in page {
+            by_consumer.entry(read.consumer).or_default().push(read);
+        }
+        indexed_pages.push(by_consumer);
+    }
+
+    let (mut closure, mut queue) = initialize_exact_demand(roots, producer_results);
+    let mut page_visits = 0_u64;
+    while let Some((consumer, demanded_result)) = queue.pop_front() {
+        closure.producer_visits = closure.producer_visits.saturating_add(1);
+        for page in &indexed_pages {
+            let reads = page.get(&consumer).map(Vec::as_slice).unwrap_or_default();
+            checkpoint(u64::try_from(reads.len()).unwrap_or(u64::MAX))?;
+            page_visits = page_visits.saturating_add(1);
+            inspect_exact_demand_reads(
+                reads.iter().copied(),
+                consumer,
+                demanded_result,
+                producer_results,
+                &mut closure,
+                &mut queue,
+            );
+        }
+    }
+    Ok((closure, page_visits))
+}
+
+pub(crate) fn build_demand_closure_in_memory_runs<E>(
+    roots: impl IntoIterator<Item = (FormulaProducerId, Region)>,
+    producer_results: &FormulaProducerResultIndex,
+    consumer_reads: &FormulaConsumerReadIndex,
+    mut checkpoint: impl FnMut(u64) -> Result<(), E>,
+) -> Result<(MixedDemandClosure, u64), E> {
+    let mut runs = Vec::new();
+    for start in (0..consumer_reads.len()).step_by(EXACT_RUN_SIZE) {
+        let mut run = consumer_reads
+            .entries_page(start, EXACT_RUN_SIZE)
+            .iter()
+            .collect::<Vec<_>>();
+        checkpoint(u64::try_from(run.len()).unwrap_or(u64::MAX))?;
+        run.sort_unstable_by_key(|read| read.consumer);
+        runs.push(run);
+    }
+
+    let (mut closure, mut queue) = initialize_exact_demand(roots, producer_results);
+    let mut passes = 0_u64;
+    while let Some((consumer, demanded_result)) = queue.pop_front() {
+        closure.producer_visits = closure.producer_visits.saturating_add(1);
+        for run in &runs {
+            let start = run.partition_point(|read| read.consumer < consumer);
+            let end = run.partition_point(|read| read.consumer <= consumer);
+            checkpoint(u64::try_from(end.saturating_sub(start)).unwrap_or(u64::MAX))?;
+            passes = passes.saturating_add(1);
+            inspect_exact_demand_reads(
+                run[start..end].iter().copied(),
+                consumer,
+                demanded_result,
+                producer_results,
+                &mut closure,
+                &mut queue,
+            );
+        }
+    }
+    Ok((closure, passes))
+}
+
+pub(crate) fn build_demand_closure_repeated_passes<E>(
+    roots: impl IntoIterator<Item = (FormulaProducerId, Region)>,
+    producer_results: &FormulaProducerResultIndex,
+    consumer_reads: &FormulaConsumerReadIndex,
+    mut checkpoint: impl FnMut(u64) -> Result<(), E>,
+) -> Result<(MixedDemandClosure, u64), E> {
+    let (mut closure, mut queue) = initialize_exact_demand(roots, producer_results);
+    let mut passes = 0_u64;
+    while let Some((consumer, demanded_result)) = queue.pop_front() {
+        closure.producer_visits = closure.producer_visits.saturating_add(1);
+        for start in (0..consumer_reads.len()).step_by(EXACT_PAGE_SIZE) {
+            let page = consumer_reads.entries_page(start, EXACT_PAGE_SIZE);
+            checkpoint(u64::try_from(page.len()).unwrap_or(u64::MAX))?;
+            passes = passes.saturating_add(1);
+            inspect_exact_demand_reads(
+                page.iter(),
+                consumer,
+                demanded_result,
+                producer_results,
+                &mut closure,
+                &mut queue,
+            );
+        }
+    }
+    Ok((closure, passes))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+pub(crate) enum NativeExactDemandError<E> {
+    Work(E),
+    Io(std::io::Error),
+}
+
+const NATIVE_CONSUMER_RECORD_BYTES: u64 = 16;
+const NATIVE_CONSUMER_RUN_RECORDS: usize = 256;
+// Includes the bounded sort run plus request-owned paths, handles, and merge buffers.
+pub(crate) const NATIVE_EXACT_DEMAND_SCRATCH_BYTES: u64 = (NATIVE_CONSUMER_RUN_RECORDS as u64)
+    * NATIVE_CONSUMER_RECORD_BYTES
+    + std::mem::size_of::<Vec<(u64, u64)>>() as u64
+    + 4 * NATIVE_CONSUMER_RECORD_BYTES
+    + 1024;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct NativeConsumerRecord {
+    consumer_key: u64,
+    entry_index: u64,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_consumer_key(consumer: FormulaProducerId) -> u64 {
+    match consumer {
+        FormulaProducerId::Legacy(vertex) => u64::from(vertex.0),
+        FormulaProducerId::Span(span) => (1_u64 << 32) | u64::from(span.0),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_native_consumer_record(
+    file: &mut std::fs::File,
+    record: NativeConsumerRecord,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    file.write_all(&record.consumer_key.to_le_bytes())?;
+    file.write_all(&record.entry_index.to_le_bytes())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn read_native_consumer_record_at(
+    file: &mut std::fs::File,
+    index: u64,
+) -> std::io::Result<NativeConsumerRecord> {
+    use std::io::{Read, Seek, SeekFrom};
+    let offset = index
+        .checked_mul(NATIVE_CONSUMER_RECORD_BYTES)
+        .ok_or_else(|| std::io::Error::other("native consumer index offset overflow"))?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = [0_u8; NATIVE_CONSUMER_RECORD_BYTES as usize];
+    file.read_exact(&mut bytes)?;
+    Ok(NativeConsumerRecord {
+        consumer_key: u64::from_le_bytes(bytes[..8].try_into().expect("fixed consumer key")),
+        entry_index: u64::from_le_bytes(bytes[8..].try_into().expect("fixed entry index")),
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn merge_native_consumer_runs(
+    source: &mut std::fs::File,
+    destination: &mut std::fs::File,
+    record_count: u64,
+    run_width: u64,
+) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    destination.set_len(0)?;
+    destination.seek(SeekFrom::Start(0))?;
+    let pair_width = run_width
+        .checked_mul(2)
+        .ok_or_else(|| std::io::Error::other("native consumer run width overflow"))?;
+    let mut pair_start = 0_u64;
+    while pair_start < record_count {
+        let left_end = pair_start.saturating_add(run_width).min(record_count);
+        let right_end = pair_start.saturating_add(pair_width).min(record_count);
+        let mut left = pair_start;
+        let mut right = left_end;
+        let mut left_record = (left < left_end)
+            .then(|| read_native_consumer_record_at(source, left))
+            .transpose()?;
+        let mut right_record = (right < right_end)
+            .then(|| read_native_consumer_record_at(source, right))
+            .transpose()?;
+        while left_record.is_some() || right_record.is_some() {
+            let take_left = match (left_record, right_record) {
+                (Some(left), Some(right)) => left <= right,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => break,
+            };
+            let record = if take_left {
+                let record = left_record.take().expect("left merge record");
+                left = left.saturating_add(1);
+                left_record = (left < left_end)
+                    .then(|| read_native_consumer_record_at(source, left))
+                    .transpose()?;
+                record
+            } else {
+                let record = right_record.take().expect("right merge record");
+                right = right.saturating_add(1);
+                right_record = (right < right_end)
+                    .then(|| read_native_consumer_record_at(source, right))
+                    .transpose()?;
+                record
+            };
+            write_native_consumer_record(destination, record)?;
+        }
+        pair_start = pair_start.saturating_add(pair_width);
+    }
+    destination.flush()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn build_demand_closure_native<E>(
+    roots: impl IntoIterator<Item = (FormulaProducerId, Region)>,
+    producer_results: &FormulaProducerResultIndex,
+    consumer_reads: &FormulaConsumerReadIndex,
+    file: &mut std::fs::File,
+    auxiliary_file: &mut std::fs::File,
+    mut checkpoint: impl FnMut(u64) -> Result<(), E>,
+) -> Result<(MixedDemandClosure, u64, u64), NativeExactDemandError<E>> {
+    use std::io::{Seek, SeekFrom, Write};
+
+    file.set_len(0).map_err(NativeExactDemandError::Io)?;
+    auxiliary_file
+        .set_len(0)
+        .map_err(NativeExactDemandError::Io)?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(NativeExactDemandError::Io)?;
+    let mut run = Vec::new();
+    run.try_reserve_exact(NATIVE_CONSUMER_RUN_RECORDS)
+        .map_err(|_| {
+            NativeExactDemandError::Io(std::io::Error::other(
+                "native consumer run reservation failed",
+            ))
+        })?;
+    for start in (0..consumer_reads.len()).step_by(NATIVE_CONSUMER_RUN_RECORDS) {
+        let page = consumer_reads.entries_page(start, NATIVE_CONSUMER_RUN_RECORDS);
+        run.clear();
+        run.extend(
+            page.iter()
+                .enumerate()
+                .map(|(offset, read)| NativeConsumerRecord {
+                    consumer_key: native_consumer_key(read.consumer),
+                    entry_index: start.saturating_add(offset) as u64,
+                }),
+        );
+        run.sort_unstable();
+        checkpoint(run.len() as u64).map_err(NativeExactDemandError::Work)?;
+        for record in run.iter().copied() {
+            write_native_consumer_record(file, record).map_err(NativeExactDemandError::Io)?;
+        }
+    }
+    file.flush().map_err(NativeExactDemandError::Io)?;
+
+    let record_count = consumer_reads.len() as u64;
+    let record_bytes = record_count.saturating_mul(NATIVE_CONSUMER_RECORD_BYTES);
+    let mut peak_disk_bytes = record_bytes;
+    let mut run_width = NATIVE_CONSUMER_RUN_RECORDS as u64;
+    let mut index_in_primary = true;
+    while run_width < record_count {
+        checkpoint(record_count).map_err(NativeExactDemandError::Work)?;
+        if index_in_primary {
+            merge_native_consumer_runs(file, auxiliary_file, record_count, run_width)
+                .map_err(NativeExactDemandError::Io)?;
+        } else {
+            merge_native_consumer_runs(auxiliary_file, file, record_count, run_width)
+                .map_err(NativeExactDemandError::Io)?;
+        }
+        peak_disk_bytes = peak_disk_bytes.max(record_bytes.saturating_mul(2));
+        index_in_primary = !index_in_primary;
+        run_width = run_width.saturating_mul(2);
+    }
+    let (index_file, obsolete_file) = if index_in_primary {
+        (&mut *file, &mut *auxiliary_file)
+    } else {
+        (&mut *auxiliary_file, &mut *file)
+    };
+    obsolete_file
+        .set_len(0)
+        .map_err(NativeExactDemandError::Io)?;
+
+    let (mut closure, mut queue) = initialize_exact_demand(roots, producer_results);
+    let mut searches = 0_u64;
+    while let Some((consumer, demanded_result)) = queue.pop_front() {
+        closure.producer_visits = closure.producer_visits.saturating_add(1);
+        let consumer_key = native_consumer_key(consumer);
+        let mut lower = 0_u64;
+        let mut upper = record_count;
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2;
+            checkpoint(1).map_err(NativeExactDemandError::Work)?;
+            let record = read_native_consumer_record_at(index_file, middle)
+                .map_err(NativeExactDemandError::Io)?;
+            if record.consumer_key < consumer_key {
+                lower = middle.saturating_add(1);
+            } else {
+                upper = middle;
+            }
+        }
+        let first = lower;
+        upper = record_count;
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2;
+            checkpoint(1).map_err(NativeExactDemandError::Work)?;
+            let record = read_native_consumer_record_at(index_file, middle)
+                .map_err(NativeExactDemandError::Io)?;
+            if record.consumer_key <= consumer_key {
+                lower = middle.saturating_add(1);
+            } else {
+                upper = middle;
+            }
+        }
+        for index in first..lower {
+            checkpoint(1).map_err(NativeExactDemandError::Work)?;
+            let record = read_native_consumer_record_at(index_file, index)
+                .map_err(NativeExactDemandError::Io)?;
+            let Some(read) = usize::try_from(record.entry_index)
+                .ok()
+                .and_then(|entry| consumer_reads.entry(entry))
+            else {
+                continue;
+            };
+            inspect_exact_demand_reads(
+                std::iter::once(read),
+                consumer,
+                demanded_result,
+                producer_results,
+                &mut closure,
+                &mut queue,
+            );
+        }
+        searches = searches.saturating_add(1);
+    }
+    Ok((closure, searches, peak_disk_bytes))
+}
+
+fn inspect_exact_demand_reads<'a>(
+    reads: impl IntoIterator<Item = &'a super::producer::FormulaConsumerReadEntry>,
+    consumer: FormulaProducerId,
+    demanded_result: Region,
+    producer_results: &FormulaProducerResultIndex,
+    closure: &mut MixedDemandClosure,
+    queue: &mut VecDeque<(FormulaProducerId, Region)>,
+) {
+    for read in reads {
+        if read.consumer != consumer {
+            continue;
+        }
+        closure.relationship_visits = closure.relationship_visits.saturating_add(1);
+        for demanded_read in demanded_read_regions(
+            demanded_result,
+            read.read_region,
+            read.consumer_result_region,
+            read.projection,
+        ) {
+            for matched in producer_results.query(demanded_read).matches {
+                let source = matched.value.producer;
+                if source == consumer {
+                    continue;
+                }
+                if let Some(source_demand) = matched.value.result_region.intersection(demanded_read)
+                {
+                    insert_demand_region(&mut closure.demanded, queue, source, source_demand);
+                }
+            }
+        }
     }
 }
 
@@ -1944,6 +2500,35 @@ mod tests {
         assert!(observed.estimated_memory_bytes >= retained_memory_bytes);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn native_test_files(
+        label: &str,
+    ) -> (
+        std::path::PathBuf,
+        std::fs::File,
+        std::path::PathBuf,
+        std::fs::File,
+    ) {
+        let path = std::env::temp_dir().join(format!(
+            "formualizer-native-{label}-{}.tmp",
+            std::process::id()
+        ));
+        let auxiliary_path = path.with_extension("aux.tmp");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&auxiliary_path);
+        let open = |path: &std::path::Path| {
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap()
+        };
+        let file = open(&path);
+        let auxiliary_file = open(&auxiliary_path);
+        (path, file, auxiliary_path, auxiliary_file)
+    }
+
     fn exact_strategy_inputs(
         duplicate_reads: usize,
     ) -> (
@@ -2032,6 +2617,309 @@ mod tests {
         assert_eq!(schedule.layers.len(), 2);
         drop(file);
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cached_and_exact_demand_builders_match_full_closure_oracle() {
+        let mut results = FormulaProducerResultIndex::default();
+        let mut reads = FormulaConsumerReadIndex::default();
+        let a = Region::col_interval(0, 0, 0, 99);
+        let b = Region::col_interval(0, 1, 0, 99);
+        let c = Region::col_interval(0, 2, 0, 99);
+        results.insert_producer(span(1), a);
+        results.insert_producer(span(2), b);
+        results.insert_producer(span(3), c);
+        reads.insert_read(span(2), a, b, left_projection());
+        reads.insert_read(span(3), b, c, left_projection());
+        let MixedTopologyCompileResult::Cached(topology) =
+            compile_mixed_topology(&results, &reads, &MixedTopologyConfig::default())
+        else {
+            panic!("topology must cache");
+        };
+        let roots = vec![(span(3), Region::point(0, 42, 2))];
+        let cached = build_demand_closure_cached(roots.clone(), &results, &topology);
+        let paged =
+            build_demand_closure_paged(roots.clone(), &results, &reads, |_| Ok::<_, ()>(()))
+                .unwrap()
+                .0;
+        let runs = build_demand_closure_in_memory_runs(roots.clone(), &results, &reads, |_| {
+            Ok::<_, ()>(())
+        })
+        .unwrap()
+        .0;
+        #[cfg(not(target_arch = "wasm32"))]
+        let native = {
+            let path = std::env::temp_dir().join(format!(
+                "formualizer-native-demand-test-{}.tmp",
+                std::process::id()
+            ));
+            let auxiliary_path = path.with_extension("aux.tmp");
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::remove_file(&auxiliary_path);
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap();
+            let mut auxiliary_file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&auxiliary_path)
+                .unwrap();
+            let result = build_demand_closure_native(
+                roots.clone(),
+                &results,
+                &reads,
+                &mut file,
+                &mut auxiliary_file,
+                |_| Ok::<_, ()>(()),
+            )
+            .unwrap()
+            .0;
+            drop(file);
+            drop(auxiliary_file);
+            std::fs::remove_file(path).unwrap();
+            std::fs::remove_file(auxiliary_path).unwrap();
+            result
+        };
+        #[cfg(target_arch = "wasm32")]
+        let native = build_demand_closure_repeated_passes(roots.clone(), &results, &reads, |_| {
+            Ok::<_, ()>(())
+        })
+        .unwrap()
+        .0;
+        let repeated =
+            build_demand_closure_repeated_passes(roots, &results, &reads, |_| Ok::<_, ()>(()))
+                .unwrap()
+                .0;
+        let oracle = BTreeMap::from([
+            (span(1), vec![Region::point(0, 42, 0)]),
+            (span(2), vec![Region::point(0, 42, 1)]),
+            (span(3), vec![Region::point(0, 42, 2)]),
+        ]);
+        for closure in [&cached, &paged, &runs, &native, &repeated] {
+            assert_eq!(closure.demanded, oracle);
+        }
+    }
+
+    #[test]
+    fn paged_demand_builds_ephemeral_consumer_pages_while_repeated_rescans() {
+        let mut results = FormulaProducerResultIndex::default();
+        let mut reads = FormulaConsumerReadIndex::default();
+        let a = Region::point(0, 0, 0);
+        let b = Region::point(0, 0, 1);
+        let c = Region::point(0, 0, 2);
+        results.insert_producer(span(1), a);
+        results.insert_producer(span(2), b);
+        results.insert_producer(span(3), c);
+        reads.insert_read(span(2), a, b, left_projection());
+        reads.insert_read(span(3), b, c, left_projection());
+        for index in 0..1_000 {
+            reads.insert_read(
+                span(100 + index),
+                Region::point(0, index, 10),
+                Region::point(0, index, 11),
+                left_projection(),
+            );
+        }
+        let roots = vec![(span(3), c)];
+        let mut paged_work = 0_u64;
+        let paged = build_demand_closure_paged(roots.clone(), &results, &reads, |units| {
+            paged_work = paged_work.saturating_add(units);
+            Ok::<_, ()>(())
+        })
+        .unwrap()
+        .0;
+        let mut repeated_work = 0_u64;
+        let repeated = build_demand_closure_repeated_passes(roots, &results, &reads, |units| {
+            repeated_work = repeated_work.saturating_add(units);
+            Ok::<_, ()>(())
+        })
+        .unwrap()
+        .0;
+
+        assert_eq!(paged, repeated);
+        assert!(
+            paged_work < repeated_work / 2,
+            "{paged_work} vs {repeated_work}"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_demand_index_is_consumer_sorted_and_avoids_irrelevant_rescans() {
+        let mut results = FormulaProducerResultIndex::default();
+        let mut reads = FormulaConsumerReadIndex::default();
+        let chain_len = 96_u32;
+        for id in 1..=chain_len {
+            let result = Region::point(0, id, 0);
+            results.insert_producer(span(id), result);
+            if id > 1 {
+                reads.insert_read(
+                    span(id),
+                    Region::point(0, id - 1, 0),
+                    result,
+                    DirtyProjectionRule::WholeResult,
+                );
+            }
+        }
+        for id in 10_000..20_000_u32 {
+            reads.insert_read(
+                span(id),
+                Region::point(1, id, 0),
+                Region::point(1, id, 1),
+                DirtyProjectionRule::WholeResult,
+            );
+        }
+        let roots = vec![(span(chain_len), Region::point(0, chain_len, 0))];
+        let (path, mut file, auxiliary_path, mut auxiliary_file) =
+            native_test_files("demand-index");
+        let mut native_work = 0_u64;
+        let (native, searches, disk_bytes) = build_demand_closure_native(
+            roots.clone(),
+            &results,
+            &reads,
+            &mut file,
+            &mut auxiliary_file,
+            |units| {
+                native_work = native_work.saturating_add(units);
+                Ok::<_, ()>(())
+            },
+        )
+        .unwrap();
+        let mut repeated_work = 0_u64;
+        let repeated = build_demand_closure_repeated_passes(roots, &results, &reads, |units| {
+            repeated_work = repeated_work.saturating_add(units);
+            Ok::<_, ()>(())
+        })
+        .unwrap()
+        .0;
+
+        assert_eq!(native, repeated);
+        assert_eq!(searches, u64::from(chain_len));
+        assert!(
+            native_work < repeated_work / 4,
+            "{native_work} vs {repeated_work}"
+        );
+        assert_eq!(
+            disk_bytes,
+            (reads.len() as u64)
+                .saturating_mul(NATIVE_CONSUMER_RECORD_BYTES)
+                .saturating_mul(2),
+        );
+
+        let record_count = reads.len() as u64;
+        let index_file = if file.metadata().unwrap().len() == 0 {
+            &mut auxiliary_file
+        } else {
+            &mut file
+        };
+        assert_eq!(
+            index_file.metadata().unwrap().len(),
+            record_count.saturating_mul(NATIVE_CONSUMER_RECORD_BYTES),
+        );
+        let records = (0..record_count)
+            .map(|index| read_native_consumer_record_at(index_file, index).unwrap())
+            .collect::<Vec<_>>();
+        assert!(records.windows(2).all(|window| window[0] <= window[1]));
+        for record in records {
+            let read = reads.entry(record.entry_index as usize).unwrap();
+            assert_eq!(record.consumer_key, native_consumer_key(read.consumer));
+        }
+
+        drop(file);
+        drop(auxiliary_file);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(auxiliary_path).unwrap();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn native_demand_index_io_failure_is_reported_for_safe_fallback() {
+        let (results, reads, _) = exact_strategy_inputs(1);
+        let roots = vec![(span(2), Region::point(0, 0, 1))];
+        let (path, file, auxiliary_path, mut auxiliary_file) = native_test_files("demand-io");
+        drop(file);
+        let mut read_only = std::fs::File::open(&path).unwrap();
+        let result = build_demand_closure_native(
+            roots.clone(),
+            &results,
+            &reads,
+            &mut read_only,
+            &mut auxiliary_file,
+            |_| Ok::<_, ()>(()),
+        );
+        assert!(matches!(result, Err(NativeExactDemandError::Io(_))));
+        let fallback =
+            build_demand_closure_repeated_passes(roots, &results, &reads, |_| Ok::<_, ()>(()))
+                .unwrap()
+                .0;
+        assert_eq!(
+            fallback.producers().collect::<Vec<_>>(),
+            vec![span(1), span(2)]
+        );
+        drop(read_only);
+        drop(auxiliary_file);
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(auxiliary_path).unwrap();
+    }
+
+    #[test]
+    fn demanded_member_includes_complete_mixed_scc_before_scheduling() {
+        let mut results = FormulaProducerResultIndex::default();
+        let mut reads = FormulaConsumerReadIndex::default();
+        let first = cell(0, 0, 0);
+        let second = cell(0, 0, 1);
+        results.insert_producer(span(1), first);
+        results.insert_producer(legacy(2), second);
+        reads.insert_read(legacy(2), first, second, DirtyProjectionRule::WholeResult);
+        reads.insert_read(span(1), second, first, DirtyProjectionRule::WholeResult);
+        let MixedTopologyCompileResult::Cached(topology) =
+            compile_mixed_topology(&results, &reads, &MixedTopologyConfig::default())
+        else {
+            panic!("topology must cache");
+        };
+        let closure = build_demand_closure_cached([(span(1), first)], &results, &topology);
+        assert_eq!(
+            closure.producers().collect::<Vec<_>>(),
+            vec![legacy(2), span(1)]
+        );
+        let schedule = schedule_dirty_work(
+            closure
+                .producers()
+                .map(|producer| work(producer, ProducerDirtyDomain::Whole)),
+            &results,
+            &topology,
+            256,
+        );
+        assert_eq!(schedule.stats.cycle_count, 2);
+        assert!(schedule.layers.is_empty());
+    }
+
+    #[test]
+    fn precedent_adjacency_is_included_in_retained_cache_cap() {
+        let (results, reads) = two_producer_topology_inputs();
+        let unrestricted =
+            compile_mixed_topology(&results, &reads, &MixedTopologyConfig::default());
+        let bytes = unrestricted.observed().estimated_memory_bytes;
+        assert!(bytes > std::mem::size_of::<MixedTopology>());
+        let skipped = compile_mixed_topology(
+            &results,
+            &reads,
+            &MixedTopologyConfig {
+                max_memory_bytes: bytes.saturating_sub(1),
+                ..MixedTopologyConfig::default()
+            },
+        );
+        assert!(matches!(
+            skipped,
+            MixedTopologyCompileResult::CacheSkipped {
+                reason: MixedScheduleFallbackReason::CacheMemoryExceeded,
+                ..
+            }
+        ));
     }
 
     #[test]

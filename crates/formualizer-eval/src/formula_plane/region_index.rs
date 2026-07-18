@@ -104,6 +104,25 @@ impl Region {
     }
 
     #[inline]
+    pub(crate) fn intersection(self, other: Self) -> Option<Self> {
+        if self.sheet_id != other.sheet_id {
+            return None;
+        }
+        Some(Self {
+            sheet_id: self.sheet_id,
+            rows: self.rows.intersection(other.rows)?,
+            cols: self.cols.intersection(other.cols)?,
+        })
+    }
+
+    #[inline]
+    pub(crate) fn contains_region(self, other: Self) -> bool {
+        self.sheet_id == other.sheet_id
+            && self.rows.contains_range(other.rows)
+            && self.cols.contains_range(other.cols)
+    }
+
+    #[inline]
     pub(crate) fn contains_key(&self, key: RegionKey) -> bool {
         self.sheet_id == key.sheet_id && self.rows.contains(key.row) && self.cols.contains(key.col)
     }
@@ -307,6 +326,35 @@ impl AxisRange {
             Self::To(end) => coord <= end,
             Self::All => true,
         }
+    }
+
+    #[inline]
+    pub(crate) fn intersection(self, other: Self) -> Option<Self> {
+        let (left_low, left_high) = self.query_bounds();
+        let (right_low, right_high) = other.query_bounds();
+        let low = left_low.max(right_low);
+        let high = left_high.min(right_high);
+        if low > high {
+            return None;
+        }
+        let bounded_low =
+            !matches!(self, Self::To(_) | Self::All) || !matches!(other, Self::To(_) | Self::All);
+        let bounded_high = !matches!(self, Self::From(_) | Self::All)
+            || !matches!(other, Self::From(_) | Self::All);
+        Some(match (bounded_low, bounded_high) {
+            (false, false) => Self::All,
+            (true, false) => Self::From(low),
+            (false, true) => Self::To(high),
+            (true, true) if low == high => Self::Point(low),
+            (true, true) => Self::Span(low, high),
+        })
+    }
+
+    #[inline]
+    pub(crate) fn contains_range(self, other: Self) -> bool {
+        let (self_low, self_high) = self.query_bounds();
+        let (other_low, other_high) = other.query_bounds();
+        self_low <= other_low && self_high >= other_high
     }
 
     #[inline]

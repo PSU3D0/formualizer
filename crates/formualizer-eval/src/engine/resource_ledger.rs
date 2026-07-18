@@ -730,14 +730,22 @@ impl ResourceLedger {
     }
 
     pub fn checkpoint_deadline(&mut self) -> Result<(), ResourceLedgerError> {
+        self.preflight_commit_window(Duration::ZERO)
+    }
+
+    pub(crate) fn preflight_commit_window(
+        &mut self,
+        estimate: Duration,
+    ) -> Result<(), ResourceLedgerError> {
         self.deadline_checkpoints = self.deadline_checkpoints.saturating_add(1);
         let Some(limit) = self.budgets.deadline.max_elapsed else {
             return Ok(());
         };
         let elapsed = (self.elapsed)();
-        if elapsed >= limit {
+        let projected = elapsed.checked_add(estimate).unwrap_or(Duration::MAX);
+        if projected >= limit {
             let limit_ns = u64::try_from(limit.as_nanos()).unwrap_or(u64::MAX);
-            let observed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+            let observed_ns = u64::try_from(projected.as_nanos()).unwrap_or(u64::MAX);
             return Err(self.exhausted(ResourceExhaustionReason::Deadline, limit_ns, observed_ns));
         }
         Ok(())

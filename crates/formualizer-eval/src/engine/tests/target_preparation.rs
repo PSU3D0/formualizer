@@ -190,6 +190,67 @@ fn name_and_table_targets_resolve_to_concrete_regions() {
 }
 
 #[test]
+fn typed_target_evaluation_covers_ranges_names_and_tables_end_to_end() {
+    let mut engine = engine(FormulaPlaneMode::Off);
+    let inputs = engine.sheet_id("Inputs").unwrap();
+    engine.stage_formula_text("Inputs", 1, 2, "=20+1".into());
+    engine.stage_formula_text("Inputs", 4, 2, "=40+2".into());
+    engine.stage_formula_text("Inputs", 11, 2, "=6*7".into());
+    engine
+        .define_name(
+            "ChosenEval",
+            NamedDefinition::Cell(CellRef::new(inputs, Coord::from_excel(4, 2, true, true))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_table(
+            "SalesEval",
+            RangeRef::new(
+                CellRef::new(inputs, Coord::from_excel(10, 1, true, true)),
+                CellRef::new(inputs, Coord::from_excel(12, 2, true, true)),
+            ),
+            true,
+            vec!["Region".into(), "Amount".into()],
+            false,
+        )
+        .unwrap();
+
+    engine
+        .evaluate_targets(&[EvaluationTarget::Range(
+            RangeAddress::new("Inputs", 1, 2, 1, 2).unwrap(),
+        )])
+        .unwrap();
+    assert_eq!(
+        engine.get_cell_value("Inputs", 1, 2),
+        Some(LiteralValue::Number(21.0))
+    );
+
+    engine
+        .evaluate_targets(&[EvaluationTarget::Name {
+            name: "ChosenEval".into(),
+            scope_sheet: None,
+        }])
+        .unwrap();
+    assert_eq!(
+        engine.get_cell_value("Inputs", 4, 2),
+        Some(LiteralValue::Number(42.0))
+    );
+
+    let (_, delta) = engine
+        .evaluate_targets_with_delta(&[EvaluationTarget::Table {
+            name: "SalesEval".into(),
+            selection: TableSelection::Data,
+        }])
+        .unwrap();
+    assert_eq!(
+        engine.get_cell_value("Inputs", 11, 2),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert!(!delta.is_empty());
+}
+
+#[test]
 fn opaque_dynamic_formula_widens_once_to_workbook_and_retains_reason() {
     let mut engine = engine(FormulaPlaneMode::Off);
     engine.stage_formula_text("Outputs", 1, 1, "=INDIRECT(\"Inputs!A1\")".into());

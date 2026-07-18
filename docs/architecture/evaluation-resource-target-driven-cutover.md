@@ -1,6 +1,6 @@
 # Evaluation Resources and Target-Driven Cutover
 
-Status: Approved implementation contract; C1a, C1b, C2, and C3 implemented; C4 next
+Status: Approved implementation contract; C1a through C4 implemented; C5 next
 
 This document defines the staged cutover from workbook-wide preparation and mixed evaluation to
 resource-accounted, target-driven preparation and evaluation. It complements
@@ -65,9 +65,9 @@ staged formulas on any other sheet. Existing cell, cell-list, and cancellable ev
 drain all staged sheets before evaluation.
 
 C0-pre, shipped as PR #189, applies the same rule to `evaluate_cells_with_delta`: deferred delta
-evaluation drains every staged sheet and has cross-sheet value/delta parity plus parse-failure state
-coverage. Until C4, the separate active-FormulaPlane shortcut still returns an empty delta; C4
-replaces that shortcut with mixed target delta collection.
+evaluation drained every staged sheet and had cross-sheet value/delta parity plus parse-failure state
+coverage. C4 removes the former active-FormulaPlane empty-delta shortcut and feeds legacy, span, and
+spill writes into mixed target delta collection.
 
 ### 2.2 Evaluation entry points before cutover
 
@@ -669,8 +669,8 @@ units correctly.
 ### C0-pre - correctness hotfix
 
 PR #189 makes deferred `evaluate_cells_with_delta` drain all staged sheets, matching sibling APIs. It
-includes cross-sheet transitive value/delta parity and strict parse-failure restoration. The active
-span empty-delta limitation remains documented until C4.
+includes cross-sheet transitive value/delta parity and strict parse-failure restoration. Its former
+active-span empty-delta limitation is removed by the C4 mixed collector.
 
 ### C0 - contract, telemetry, and cold harness
 
@@ -786,13 +786,33 @@ workbook tests pass. No C3 benchmark result is claimed.
 
 ### C4 - unified mixed target coordinator
 
-- Add target producer roots, mixed demand closure, demanded span regions, cycle-unit inclusion,
-  request-scoped retry ledger, and exact successful dirty sublease acknowledgement.
-- Route cell(s), until, cancellable, and delta entry points through one coordinator.
-- Add run/region deltas, volatile epoch contract, and commit-window deadline feasibility check.
+Status: Complete. Retained mixed topology now stores and accounts both consumer and precedent
+adjacency. Cache skips retain FormulaPlane authority and use precedent-oriented paged, in-memory-run,
+native-policy, or repeated-pass demand closure with parity against the retained closure. Cell, range,
+cancellable, until, and delta adapters prepare typed targets and enter one mixed coordinator under the
+outer request ledger. Roots preserve legacy and symbol graph scheduling, demanded span regions,
+spill-child anchors, and value-only proof after preparation.
 
-Gate: unrelated dirty branches stay pending; target values/deltas match full evaluation; cancellation
-acknowledges nothing and retry converges; widening reaches workbook exact at most once.
+Dirty ownership is event scoped. Successful requests acknowledge only events whose complete consumer
+closure was demanded, scheduled, evaluated, and flushed; partial span-region events remain whole and
+pending. Release and acknowledgement rebuild dedup state while preserving post-lease identical events.
+Full evaluation uses the same sublease substrate. Mixed SCCs retain exact prepared demotion and the
+existing 64-round/cycle policy, while retry seeds remain closure scoped. Cache overflow never demotes.
+
+Mixed layers retain `ComputedWriteBuffer` visibility, one volatile epoch, cancellation-before-flush,
+and five-round virtual dependency replanning. Dynamic FormulaPlane references contribute runtime
+regions to mixed precedent topology; scope widening is monotone and telemetry limits the final
+workbook-exact attempt to one. Each bounded buffer flush performs deadline commit-window feasibility
+preflight before its non-cancellable write phase.
+
+`TargetEvalDelta` version 1 and `EvalDeltaRecord::{Run, Region}` collect legacy, span, and spill
+changes without per-placement report expansion. Existing `EvalDelta` remains field compatible and
+unbounded by default; callers may opt into an explicit cell limit that returns typed common resource
+overflow without truncation. Zero-span and warm no-dirty requests retain their topology-free sparse
+paths. These additive Rust APIs are not yet projected into every language binding.
+
+Gate complete: focused topology-oracle, target-root, SCC, sublease, cancellation, dynamic-replan,
+volatile, span/spill delta, cache-overflow, sparse/warm, same-ledger, and commit-window tests pass.
 
 ### C5 - target recalc plans and SheetPort
 

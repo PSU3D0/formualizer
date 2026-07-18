@@ -125,6 +125,7 @@ pub enum FormulaPlaneTopologyCacheOutcome {
     Hit,
     Built,
     SkippedOverflow,
+    SkippedDynamicLegacy,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -134,6 +135,7 @@ pub enum FormulaDirtyLeaseOutcome {
     Acquired,
     Empty,
     Acknowledged,
+    AcknowledgedPartial,
     AcknowledgedEmpty,
     RetainedOnCancellation,
     RetainedOnError,
@@ -211,6 +213,7 @@ impl FormulaPlaneTopologyCacheOutcome {
             Self::Hit => "hit",
             Self::Built => "built",
             Self::SkippedOverflow => "skipped_overflow",
+            Self::SkippedDynamicLegacy => "skipped_dynamic_legacy",
         }
     }
 
@@ -220,6 +223,7 @@ impl FormulaPlaneTopologyCacheOutcome {
             Self::Hit => 1,
             Self::Built => 2,
             Self::SkippedOverflow => 3,
+            Self::SkippedDynamicLegacy => 4,
         }
     }
 }
@@ -231,6 +235,7 @@ impl FormulaDirtyLeaseOutcome {
             Self::Acquired => "acquired",
             Self::Empty => "empty",
             Self::Acknowledged => "acknowledged",
+            Self::AcknowledgedPartial => "acknowledged_partial",
             Self::AcknowledgedEmpty => "acknowledged_empty",
             Self::RetainedOnCancellation => "retained_on_cancellation",
             Self::RetainedOnError => "retained_on_error",
@@ -333,6 +338,12 @@ pub struct EvaluationResourceRequestStats {
     pub target_commit_actual_work: u64,
     pub target_commit_window_ns: u64,
     pub target_admission_failure: Option<ResourceExhaustionReason>,
+    pub evaluation_commit_preflight_count: u64,
+    pub evaluation_commit_estimated_ns: u64,
+    pub evaluation_commit_actual_ns: u64,
+    pub runtime_replan_rounds: u64,
+    pub runtime_widening_rounds: u64,
+    pub workbook_exact_attempts: u64,
     pub topology: FormulaPlaneTopologyRequestStats,
     pub fallback_materialized_cells: u64,
     pub cycle_materialized_cells: u64,
@@ -365,6 +376,12 @@ impl EvaluationResourceRequestStats {
             target_commit_actual_work: 0,
             target_commit_window_ns: 0,
             target_admission_failure: None,
+            evaluation_commit_preflight_count: 0,
+            evaluation_commit_estimated_ns: 0,
+            evaluation_commit_actual_ns: 0,
+            runtime_replan_rounds: 0,
+            runtime_widening_rounds: 0,
+            workbook_exact_attempts: 0,
             topology: FormulaPlaneTopologyRequestStats {
                 strategy: if formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental {
                     FormulaPlaneTopologyStrategy::NotUsed
@@ -490,6 +507,7 @@ impl EvaluationResourceBaselineStats {
             .saturating_add(stats.cycle_materialized_cells);
         match stats.dirty_lease {
             FormulaDirtyLeaseOutcome::Acknowledged
+            | FormulaDirtyLeaseOutcome::AcknowledgedPartial
             | FormulaDirtyLeaseOutcome::AcknowledgedEmpty => {
                 self.dirty_leases_acknowledged = self.dirty_leases_acknowledged.saturating_add(1)
             }
