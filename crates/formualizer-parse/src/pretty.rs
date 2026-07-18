@@ -322,6 +322,45 @@ mod tests {
     }
 
     #[test]
+    fn test_pretty_print_ref_error_sentinel() {
+        use crate::parser::ReferenceType;
+        // A reference invalidated by a structural delete carries the "#REF"
+        // sheet sentinel and must render as the Excel #REF! literal (it used to
+        // render as '#REF'!0 / '#REF'!$$0).
+        let cell = ReferenceType::Cell {
+            sheet: Some("#REF".to_string()),
+            row: 0,
+            col: 0,
+            row_abs: false,
+            col_abs: false,
+        };
+        assert_eq!(cell.normalise(), "#REF!");
+
+        // Absolute flags on the sentinel must not leak into the rendering.
+        let cell_abs = ReferenceType::Cell {
+            sheet: Some("#REF".to_string()),
+            row: 0,
+            col: 0,
+            row_abs: true,
+            col_abs: true,
+        };
+        assert_eq!(cell_abs.normalise(), "#REF!");
+
+        let range = ReferenceType::Range {
+            sheet: Some("#REF".to_string()),
+            start_row: Some(0),
+            start_col: Some(0),
+            end_row: Some(0),
+            end_col: Some(0),
+            start_row_abs: false,
+            start_col_abs: false,
+            end_row_abs: false,
+            end_col_abs: false,
+        };
+        assert_eq!(range.normalise(), "#REF!");
+    }
+
+    #[test]
     fn test_pretty_print_text_literals_in_functions() {
         // Should preserve quotes around text literals
         let formula = "=SUMIFS(A:A, B:B, \"*Parking*\")";

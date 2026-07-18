@@ -1008,6 +1008,13 @@ impl Display for ReferenceType {
                     row_abs,
                     col_abs,
                 } => {
+                    // A reference invalidated by a structural delete carries the
+                    // "#REF" sheet sentinel; render it as the Excel #REF! literal
+                    // rather than a quoted sheet with a bogus address.
+                    if sheet.as_deref() == Some("#REF") {
+                        return write!(f, "#REF!");
+                    }
+
                     let col_str = Self::format_col(*col, *col_abs);
                     let row_str = Self::format_row(*row, *row_abs);
 
@@ -1034,6 +1041,12 @@ impl Display for ReferenceType {
                     end_row_abs,
                     end_col_abs,
                 } => {
+                    // A range invalidated by a structural delete carries the
+                    // "#REF" sheet sentinel; render it as the Excel #REF! literal.
+                    if sheet.as_deref() == Some("#REF") {
+                        return write!(f, "#REF!");
+                    }
+
                     // Format start reference
                     let start_ref = match (start_col, start_row) {
                         (Some(col), Some(row)) => format!(
