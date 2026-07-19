@@ -2536,7 +2536,6 @@ fn semantic_epoch_guard_covers_public_formula_plane_flows() {
         "pub fn prepare_families(",
         "pub fn evaluate_vertex(",
         "pub fn evaluate_until(",
-        "pub fn evaluate_recalc_plan(",
         "pub fn evaluate_all(",
         "pub fn evaluate_all_with_delta(",
         "pub fn evaluate_cells(",
@@ -2557,6 +2556,14 @@ fn semantic_epoch_guard_covers_public_formula_plane_flows() {
             "{signature} bypasses the common semantic epoch guard"
         );
     }
+
+    let plan_start = source.find("pub fn evaluate_recalc_plan(").unwrap();
+    let plan_body = &source[plan_start..source.len().min(plan_start + 1_200)];
+    assert!(plan_body.contains("evaluate_recalc_plan_unobserved"));
+    let executor_start = source.find("fn evaluate_recalc_plan_unobserved(").unwrap();
+    let executor_body = &source[executor_start..source.len().min(executor_start + 1_200)];
+    assert!(executor_body.contains("validate_recalc_plan_key"));
+    assert!(!executor_body.contains("observe_function_semantic_epoch"));
 }
 
 #[test]

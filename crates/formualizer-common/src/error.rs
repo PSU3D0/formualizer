@@ -164,6 +164,37 @@ impl PreparationStaleReason {
     }
 }
 
+/// Stable category for a reusable recalculation plan rejected before execution.
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum PlanStaleReason {
+    Engine,
+    Provider,
+    Semantic,
+    Budget,
+    Staged,
+    Symbols,
+    Authority,
+    SpanGeneration,
+    Graph,
+}
+
+impl PlanStaleReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Engine => "engine",
+            Self::Provider => "provider",
+            Self::Semantic => "semantic",
+            Self::Budget => "budget",
+            Self::Staged => "staged",
+            Self::Symbols => "symbols",
+            Self::Authority => "authority",
+            Self::SpanGeneration => "span_generation",
+            Self::Graph => "graph",
+        }
+    }
+}
+
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
@@ -188,6 +219,10 @@ pub enum ExcelErrorExtra {
 
     PreparationStale {
         reason: PreparationStaleReason,
+    },
+
+    PlanStale {
+        reason: PlanStaleReason,
     },
     // --- Add future custom payloads below -------------------------------
     // AnotherKind { … },
@@ -362,6 +397,9 @@ impl fmt::Display for ExcelError {
             ExcelErrorExtra::PreparationStale { reason } => {
                 write!(f, " [preparation stale {}]", reason.as_str())?;
             }
+            ExcelErrorExtra::PlanStale { reason } => {
+                write!(f, " [plan stale {}]", reason.as_str())?;
+            }
         }
 
         Ok(())
@@ -424,5 +462,18 @@ mod tests {
         assert_eq!(PreparationStaleReason::Symbols.as_str(), "symbols");
         assert_eq!(PreparationStaleReason::Semantic.as_str(), "semantic");
         assert_eq!(PreparationStaleReason::Provider.as_str(), "provider");
+    }
+
+    #[test]
+    fn plan_stale_reason_has_stable_snake_case_names() {
+        assert_eq!(PlanStaleReason::Engine.as_str(), "engine");
+        assert_eq!(PlanStaleReason::Provider.as_str(), "provider");
+        assert_eq!(PlanStaleReason::Semantic.as_str(), "semantic");
+        assert_eq!(PlanStaleReason::Budget.as_str(), "budget");
+        assert_eq!(PlanStaleReason::Staged.as_str(), "staged");
+        assert_eq!(PlanStaleReason::Symbols.as_str(), "symbols");
+        assert_eq!(PlanStaleReason::Authority.as_str(), "authority");
+        assert_eq!(PlanStaleReason::SpanGeneration.as_str(), "span_generation");
+        assert_eq!(PlanStaleReason::Graph.as_str(), "graph");
     }
 }

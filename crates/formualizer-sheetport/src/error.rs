@@ -26,10 +26,31 @@ pub enum SheetPortError {
     /// Structural invariant could not be satisfied.
     #[error("invariant violation for port `{port}`: {message}")]
     InvariantViolation { port: String, message: String },
+    /// A bounded layout selector did not observe its configured terminator.
+    #[error(
+        "layout selector for port `{port}` on sheet `{sheet}` exhausted {limit} rows from {scan_start} using `{termination}`"
+    )]
+    LayoutExhausted {
+        port: String,
+        sheet: String,
+        termination: String,
+        scan_start: u32,
+        limit: u32,
+        observed: u32,
+    },
+    /// A selector could not be proven safe inside its evaluation envelope.
+    #[error("selector safety error for port `{port}`: {reason}")]
+    SelectorSafety { port: String, reason: String },
     /// Input or resolved data violated manifest constraints.
     #[error("value did not satisfy manifest constraints")]
     ConstraintViolation {
         violations: Vec<ConstraintViolation>,
+    },
+    /// Baseline restoration failed after a scenario failure.
+    #[error("batch failed ({primary}); baseline restoration also failed ({restoration})")]
+    BatchRestoration {
+        primary: Box<SheetPortError>,
+        restoration: Box<SheetPortError>,
     },
     /// Underlying engine reported an evaluation error.
     #[error("engine error: {source}")]

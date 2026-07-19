@@ -159,6 +159,7 @@ pub(crate) enum ErrorExtraAtom {
     },
     Resource(Box<formualizer_common::ResourceExhaustionDetail>),
     PreparationStale(formualizer_common::PreparationStaleReason),
+    PlanStale(formualizer_common::PlanStaleReason),
 }
 
 struct MemoGroup {
@@ -911,6 +912,7 @@ fn parameter_atom_from_literal(value: &LiteralValue) -> ParameterAtom {
                 ExcelErrorExtra::PreparationStale { reason } => {
                     ErrorExtraAtom::PreparationStale(*reason)
                 }
+                ExcelErrorExtra::PlanStale { reason } => ErrorExtraAtom::PlanStale(*reason),
             },
         },
         LiteralValue::Array(rows) => ParameterAtom::Text(Arc::from(format!("{rows:?}"))),

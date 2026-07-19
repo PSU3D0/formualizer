@@ -34,19 +34,16 @@ impl<'a> WorkbookContext<'a> {
     ) -> Result<(), SheetPortError> {
         match &binding.location {
             ScalarLocation::Cell(addr) => self.ensure_sheet(port_id, &addr.sheet),
-            ScalarLocation::Name(name) => match self.workbook.named_range_address(name) {
-                Some(addr) if addr.height() == 1 && addr.width() == 1 => Ok(()),
-                Some(_) => Err(SheetPortError::InvariantViolation {
-                    port: port_id.to_string(),
-                    message: format!(
-                        "named range `{name}` must resolve to exactly one cell for scalar ports"
-                    ),
-                }),
-                None => Err(SheetPortError::InvariantViolation {
-                    port: port_id.to_string(),
-                    message: format!("named range `{name}` was not found in the workbook"),
-                }),
-            },
+            ScalarLocation::Name(name) => {
+                if self.workbook.has_name(name, None) {
+                    Ok(())
+                } else {
+                    Err(SheetPortError::InvariantViolation {
+                        port: port_id.to_string(),
+                        message: format!("name `{name}` was not found in the workbook"),
+                    })
+                }
+            }
             ScalarLocation::StructRef(struct_ref) => Err(SheetPortError::UnsupportedSelector {
                 port: port_id.to_string(),
                 reason: format!("structured reference `{struct_ref}` is not yet supported"),
@@ -63,25 +60,16 @@ impl<'a> WorkbookContext<'a> {
         for (field_name, field) in &binding.fields {
             match &field.location {
                 FieldLocation::Cell(addr) => self.ensure_sheet(port_id, &addr.sheet)?,
-                FieldLocation::Name(name) => match self.workbook.named_range_address(name) {
-                    Some(addr) if addr.height() == 1 && addr.width() == 1 => {}
-                    Some(_) => {
+                FieldLocation::Name(name) => {
+                    if !self.workbook.has_name(name, None) {
                         return Err(SheetPortError::InvariantViolation {
                             port: port_id.to_string(),
                             message: format!(
-                                "record field `{field_name}` named range `{name}` must resolve to a single cell"
+                                "record field `{field_name}` references missing name `{name}`"
                             ),
                         });
                     }
-                    None => {
-                        return Err(SheetPortError::InvariantViolation {
-                            port: port_id.to_string(),
-                            message: format!(
-                                "record field `{field_name}` references missing named range `{name}`"
-                            ),
-                        });
-                    }
-                },
+                }
                 FieldLocation::StructRef(struct_ref) => {
                     return Err(SheetPortError::UnsupportedSelector {
                         port: port_id.to_string(),
@@ -99,12 +87,12 @@ impl<'a> WorkbookContext<'a> {
         match location {
             AreaLocation::Range(addr) => self.ensure_sheet(port_id, &addr.sheet),
             AreaLocation::Name(name) => {
-                if self.workbook.named_range_address(name).is_some() {
+                if self.workbook.has_name(name, None) {
                     Ok(())
                 } else {
                     Err(SheetPortError::InvariantViolation {
                         port: port_id.to_string(),
-                        message: format!("named range `{name}` was not found in the workbook"),
+                        message: format!("name `{name}` was not found in the workbook"),
                     })
                 }
             }
@@ -118,13 +106,16 @@ impl<'a> WorkbookContext<'a> {
 
     fn validate_table(&self, port_id: &str, binding: &TableBinding) -> Result<(), SheetPortError> {
         match &binding.location {
-            TableLocation::Table(table) => Err(SheetPortError::UnsupportedSelector {
-                port: port_id.to_string(),
-                reason: format!(
-                    "workbook table `{}` is not yet supported for table ports",
-                    table.name
-                ),
-            }),
+            TableLocation::Table(table) => {
+                if self.workbook.table_metadata(&table.name).is_some() {
+                    Ok(())
+                } else {
+                    Err(SheetPortError::UnsupportedSelector {
+                        port: port_id.to_string(),
+                        reason: format!("workbook table `{}` was not found", table.name),
+                    })
+                }
+            }
             TableLocation::Layout(layout) => self.ensure_sheet(port_id, &layout.sheet),
         }
     }

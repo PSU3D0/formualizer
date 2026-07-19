@@ -45,6 +45,27 @@ fn out_port_default_rejected() {
 }
 
 #[test]
+fn layout_scan_limit_must_be_nonzero() {
+    let mut manifest = load_fixture("inventory_until_marker");
+    let layout = manifest
+        .ports
+        .iter_mut()
+        .find_map(|port| match &mut port.location {
+            sheetport_spec::Selector::Layout(selector) => Some(&mut selector.layout),
+            _ => None,
+        })
+        .expect("fixture has a layout");
+    layout.max_scan_rows = 0;
+    let error = manifest.validate().expect_err("zero scan limit is invalid");
+    assert!(
+        error
+            .issues()
+            .iter()
+            .any(|issue| issue.path.ends_with("max_scan_rows"))
+    );
+}
+
+#[test]
 fn schema_json_is_well_formed() {
     let schema_str = schema_json();
     let value: serde_json::Value =

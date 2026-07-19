@@ -625,6 +625,9 @@ fn sheetport_error_to_js(err: formualizer::SheetPortError) -> JsValue {
         formualizer::SheetPortError::InvalidReference { .. } => "InvalidReference",
         formualizer::SheetPortError::MissingSheet { .. } => "MissingSheet",
         formualizer::SheetPortError::InvariantViolation { .. } => "InvariantViolation",
+        formualizer::SheetPortError::LayoutExhausted { .. } => "LayoutExhausted",
+        formualizer::SheetPortError::SelectorSafety { .. } => "SelectorSafety",
+        formualizer::SheetPortError::BatchRestoration { .. } => "BatchRestoration",
         formualizer::SheetPortError::ConstraintViolation { .. } => "ConstraintViolation",
         formualizer::SheetPortError::Engine { .. } => "Engine",
         formualizer::SheetPortError::Workbook { .. } => "Workbook",
@@ -711,6 +714,52 @@ fn sheetport_error_to_js(err: formualizer::SheetPortError) -> JsValue {
                 object,
                 &JsValue::from_str("details"),
                 &JsValue::from_str(&message),
+            );
+        }
+        formualizer::SheetPortError::LayoutExhausted {
+            port,
+            sheet,
+            termination,
+            scan_start,
+            limit,
+            observed,
+        } => {
+            for (key, value) in [
+                ("port", JsValue::from_str(&port)),
+                ("sheet", JsValue::from_str(&sheet)),
+                ("termination", JsValue::from_str(&termination)),
+                ("scan_start", JsValue::from_f64(scan_start as f64)),
+                ("limit", JsValue::from_f64(limit as f64)),
+                ("observed", JsValue::from_f64(observed as f64)),
+            ] {
+                let _ = js_sys::Reflect::set(object, &JsValue::from_str(key), &value);
+            }
+        }
+        formualizer::SheetPortError::SelectorSafety { port, reason } => {
+            let _ = js_sys::Reflect::set(
+                object,
+                &JsValue::from_str("port"),
+                &JsValue::from_str(&port),
+            );
+            let _ = js_sys::Reflect::set(
+                object,
+                &JsValue::from_str("reason"),
+                &JsValue::from_str(&reason),
+            );
+        }
+        formualizer::SheetPortError::BatchRestoration {
+            primary,
+            restoration,
+        } => {
+            let _ = js_sys::Reflect::set(
+                object,
+                &JsValue::from_str("primary"),
+                &JsValue::from_str(&primary.to_string()),
+            );
+            let _ = js_sys::Reflect::set(
+                object,
+                &JsValue::from_str("restoration"),
+                &JsValue::from_str(&restoration.to_string()),
             );
         }
         formualizer::SheetPortError::Engine { source } => {

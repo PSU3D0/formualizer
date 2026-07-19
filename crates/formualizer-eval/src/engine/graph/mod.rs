@@ -1112,11 +1112,7 @@ impl DependencyGraph {
         self.config.sheet_index_mode = mode;
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_evaluation_budgets_for_test(
-        &mut self,
-        budgets: crate::engine::EvaluationBudgets,
-    ) {
+    pub(crate) fn set_evaluation_budgets(&mut self, budgets: crate::engine::EvaluationBudgets) {
         self.config.evaluation_budgets = budgets;
     }
 
