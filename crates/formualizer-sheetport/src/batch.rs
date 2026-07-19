@@ -256,6 +256,13 @@ impl<'a> BatchExecutor<'a> {
         }
     }
 
+    #[cfg(feature = "benchmark_internal")]
+    #[doc(hidden)]
+    /// Read-only access used to snapshot engine telemetry without affecting batch execution.
+    pub fn workbook_for_benchmark(&self) -> &formualizer_workbook::Workbook {
+        self.sheetport.workbook()
+    }
+
     fn is_plan_stale(error: &SheetPortError) -> bool {
         let excel = match error {
             SheetPortError::Engine { source } => Some(source),

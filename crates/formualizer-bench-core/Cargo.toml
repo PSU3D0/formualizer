@@ -13,6 +13,11 @@ publish = false
 default = []
 xlsx = ["dep:formualizer-testkit", "dep:umya-spreadsheet"]
 formualizer_runner = ["xlsx", "dep:formualizer-workbook", "formualizer-workbook/benchmark_internal"]
+c6_calibration = [
+  "formualizer_runner",
+  "dep:formualizer-sheetport",
+  "dep:sheetport-spec",
+]
 dhat-heap = ["dep:dhat"]
 perf_instrumentation = ["formualizer-workbook/perf_instrumentation"]
 ironcalc_runner = ["dep:ironcalc"]
@@ -29,6 +34,8 @@ sha2 = "0.10"
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
 formualizer-testkit = { path = "../formualizer-testkit", optional = true }
 formualizer-workbook = { path = "../formualizer-workbook", optional = true, default-features = false, features = ["umya", "calamine"] }
+formualizer-sheetport = { path = "../formualizer-sheetport", optional = true, features = ["benchmark_internal"] }
+sheetport-spec = { path = "../sheetport-spec", optional = true }
 umya-spreadsheet = { version = "=2.3.2", optional = true }
 formualizer-parse = { workspace = true }
 formualizer-common = { workspace = true }
