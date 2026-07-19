@@ -367,6 +367,100 @@ fn target_plan_layer_count_documents_run_local_recipe() -> Result<(), ExcelError
 }
 
 #[test]
+fn prepared_chain_cells_and_rebuilt_target_plans_have_bounded_exact_index_visits()
+-> Result<(), ExcelError> {
+    const FORMULAS: u32 = 256;
+    const REPEATS: usize = 3;
+
+    fn setup() -> Result<Engine<TestWorkbook>, ExcelError> {
+        let mut engine = make_engine();
+        engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))?;
+        engine.set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())?;
+        for row in 2..=FORMULAS {
+            engine.set_cell_formula(
+                "Sheet1",
+                row,
+                2,
+                parse(format!("=B{}+1", row - 1)).unwrap(),
+            )?;
+        }
+        engine.set_cell_formula("Sheet1", 1, 3, parse("=1/0").unwrap())?;
+        engine.set_cell_value("Sheet1", 1, 5, LiteralValue::Int(10))?;
+        engine.set_cell_formula("Sheet1", 1, 4, parse("=E1*2").unwrap())?;
+        engine.evaluate_all()?;
+        Ok(engine)
+    }
+
+    let mut cells = setup()?;
+    let mut plans = setup()?;
+    let cell_targets = [("Sheet1", FORMULAS, 2), ("Sheet1", 1, 3)];
+    let typed_targets = [
+        EvaluationTarget::Cell {
+            sheet: "Sheet1".to_string(),
+            row: FORMULAS,
+            col: 2,
+        },
+        EvaluationTarget::Cell {
+            sheet: "Sheet1".to_string(),
+            row: 1,
+            col: 3,
+        },
+    ];
+
+    cells.graph.reset_sheet_index_query_stats();
+    plans.graph.reset_sheet_index_query_stats();
+    for value in 2..2 + REPEATS as i64 {
+        for engine in [&mut cells, &mut plans] {
+            engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(value))?;
+            engine.set_cell_value("Sheet1", 1, 5, LiteralValue::Int(value + 10))?;
+        }
+        assert_eq!(
+            cells.baseline_stats().dirty_vertex_count,
+            plans.baseline_stats().dirty_vertex_count
+        );
+
+        let cell_values = cells.evaluate_cells(&cell_targets)?;
+        let plan = plans.build_recalc_plan_for_targets(&typed_targets)?;
+        plans.evaluate_recalc_plan(&plan)?;
+        let plan_values = cell_targets
+            .iter()
+            .map(|(sheet, row, col)| plans.get_cell_value(sheet, *row, *col))
+            .collect::<Vec<_>>();
+
+        assert_eq!(cell_values, plan_values);
+        assert!(matches!(cell_values[1], Some(LiteralValue::Error(_))));
+        assert_eq!(
+            cells.baseline_stats().dirty_vertex_count,
+            plans.baseline_stats().dirty_vertex_count
+        );
+        assert_eq!(
+            cells.get_cell_value("Sheet1", 1, 4),
+            Some(LiteralValue::Number(20.0))
+        );
+        assert_eq!(
+            plans.get_cell_value("Sheet1", 1, 4),
+            Some(LiteralValue::Number(20.0))
+        );
+    }
+
+    let linear_visit_bound = (FORMULAS as usize + 4) * REPEATS * 4;
+    for stats in [
+        cells.graph.sheet_index_query_stats(),
+        plans.graph.sheet_index_query_stats(),
+    ] {
+        assert!(
+            stats.coordinate_nodes_visited <= linear_visit_bound,
+            "exact target discovery visited too many coordinate nodes: {stats:?}"
+        );
+        assert!(
+            stats.values_visited <= linear_visit_bound,
+            "exact target discovery visited too many values: {stats:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn recalc_plan_reused_for_multiple_runs() -> Result<(), ExcelError> {
     let mut engine = make_engine();
     engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))?;

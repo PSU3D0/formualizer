@@ -1804,6 +1804,30 @@ impl DependencyGraph {
             })
     }
 
+    #[cfg(test)]
+    pub(crate) fn reset_sheet_index_query_stats(&self) {
+        for index in self.sheet_indexes.values() {
+            index.reset_query_stats();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sheet_index_query_stats(
+        &self,
+    ) -> crate::engine::sheet_index::SheetIndexQueryStats {
+        self.sheet_indexes.values().fold(
+            crate::engine::sheet_index::SheetIndexQueryStats::default(),
+            |mut total, index| {
+                let stats = index.query_stats();
+                total.coordinate_nodes_visited = total
+                    .coordinate_nodes_visited
+                    .saturating_add(stats.coordinate_nodes_visited);
+                total.values_visited = total.values_visited.saturating_add(stats.values_visited);
+                total
+            },
+        )
+    }
+
     /// Set a value in a cell, returns affected vertex IDs
     pub fn set_cell_value(
         &mut self,
