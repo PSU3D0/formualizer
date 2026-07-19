@@ -93,6 +93,67 @@ impl<T: Clone + Eq + std::hash::Hash> IntervalTree<T> {
         results
     }
 
+    /// Returns the values stored at the exact point interval `[point, point]`.
+    ///
+    /// Unlike [`Self::query`], this performs a direct B-tree lookup and therefore
+    /// does not inspect intervals whose lower bound precedes `point`.
+    pub(crate) fn point_values(&self, point: u32) -> Option<&HashSet<T>> {
+        self.map.get(&point).and_then(|nodes| {
+            nodes
+                .iter()
+                .find(|node| node.high == point)
+                .map(|node| &node.values)
+        })
+    }
+
+    /// Visits point intervals whose coordinate is in the inclusive query range.
+    ///
+    /// This is a specialized path for indexes that contain only `[x, x]`
+    /// intervals. General overlapping-range callers must continue to use
+    /// [`Self::query`] or [`Self::visit_query`]. `None` is emitted once for each
+    /// point-interval node inspected so callers can account deterministic visits.
+    pub(crate) fn visit_point_intervals(
+        &self,
+        q_low: u32,
+        q_high: u32,
+        mut visitor: impl FnMut(Option<&T>) -> ControlFlow<()>,
+    ) -> ControlFlow<()> {
+        if q_low > q_high {
+            return ControlFlow::Continue(());
+        }
+        for (&low, nodes) in self.map.range(q_low..=q_high) {
+            for node in nodes {
+                if node.high != low {
+                    continue;
+                }
+                visitor(None)?;
+                for value in &node.values {
+                    visitor(Some(value))?;
+                }
+            }
+        }
+        ControlFlow::Continue(())
+    }
+
+    /// Counts point-interval nodes and values in an inclusive coordinate range.
+    /// This has the same point-only caller contract as [`Self::visit_point_intervals`].
+    pub(crate) fn point_interval_stats(&self, q_low: u32, q_high: u32) -> (usize, usize) {
+        if q_low > q_high {
+            return (0, 0);
+        }
+        let mut node_count = 0usize;
+        let mut value_count = 0usize;
+        for (&low, nodes) in self.map.range(q_low..=q_high) {
+            for node in nodes {
+                if node.high == low {
+                    node_count = node_count.saturating_add(1);
+                    value_count = value_count.saturating_add(node.values.len());
+                }
+            }
+        }
+        (node_count, value_count)
+    }
+
     /// Visits matching values without cloning or materializing the query.
     /// Returning `Break` from the visitor stops traversal immediately.
     pub(crate) fn visit_query(
@@ -256,6 +317,49 @@ mod tests {
         let results = tree.query(35, 45);
         assert_eq!(results.len(), 1);
         assert!(results[0].2.contains(&3));
+    }
+
+    #[test]
+    fn point_interval_visit_does_not_scan_coordinate_prefixes() {
+        let mut tree = IntervalTree::new();
+        for coordinate in 0..10_000 {
+            tree.insert(coordinate, coordinate, coordinate);
+        }
+
+        let mut nodes = 0;
+        let mut values = Vec::new();
+        let result = tree.visit_point_intervals(9_999, 9_999, |entry| {
+            match entry {
+                None => nodes += 1,
+                Some(value) => values.push(*value),
+            }
+            ControlFlow::Continue(())
+        });
+
+        assert_eq!(result, ControlFlow::Continue(()));
+        assert_eq!(nodes, 1);
+        assert_eq!(values, vec![9_999]);
+    }
+
+    #[test]
+    fn point_interval_path_does_not_change_general_overlap_queries() {
+        let mut tree = IntervalTree::new();
+        tree.insert(1, 100, "range");
+        tree.insert(75, 75, "point");
+
+        let general = tree.query(75, 75);
+        assert_eq!(general.len(), 2);
+        assert!(general.iter().any(|entry| entry.2.contains("range")));
+        assert!(general.iter().any(|entry| entry.2.contains("point")));
+
+        let mut point_values = Vec::new();
+        let _ = tree.visit_point_intervals(75, 75, |entry| {
+            if let Some(value) = entry {
+                point_values.push(*value);
+            }
+            ControlFlow::Continue(())
+        });
+        assert_eq!(point_values, vec!["point"]);
     }
 
     #[test]

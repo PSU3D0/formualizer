@@ -2,6 +2,16 @@ use super::interval_tree::IntervalTree;
 use super::vertex::VertexId;
 use formualizer_common::Coord as AbsCoord;
 use std::collections::HashSet;
+use std::ops::ControlFlow;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct SheetIndexQueryStats {
+    pub coordinate_nodes_visited: usize,
+    pub values_visited: usize,
+}
 
 /// Sheet-level sparse index for efficient range queries on vertex positions.
 ///
@@ -44,6 +54,11 @@ pub struct SheetIndex {
     /// Column interval tree: maps column ranges → vertices in those columns  
     /// For a cell at (r,c), we store the point interval [c,c] → VertexId
     col_tree: IntervalTree<VertexId>,
+
+    #[cfg(test)]
+    query_coordinate_nodes_visited: AtomicUsize,
+    #[cfg(test)]
+    query_values_visited: AtomicUsize,
 }
 
 impl SheetIndex {
@@ -53,6 +68,10 @@ impl SheetIndex {
             memberships: HashSet::new(),
             row_tree: IntervalTree::new(),
             col_tree: IntervalTree::new(),
+            #[cfg(test)]
+            query_coordinate_nodes_visited: AtomicUsize::new(0),
+            #[cfg(test)]
+            query_values_visited: AtomicUsize::new(0),
         }
     }
 
@@ -137,15 +156,8 @@ impl SheetIndex {
             return;
         }
 
-        // Remove from row tree
-        if let Some(vertices) = self.row_tree.get_mut(row, row) {
-            vertices.remove(&vertex_id);
-        }
-
-        // Remove from column tree
-        if let Some(vertices) = self.col_tree.get_mut(col, col) {
-            vertices.remove(&vertex_id);
-        }
+        self.row_tree.remove(row, row, &vertex_id);
+        self.col_tree.remove(col, col, &vertex_id);
     }
 
     /// Update a vertex's position in the index (move operation).
@@ -157,18 +169,65 @@ impl SheetIndex {
         self.add_vertex(new_coord, vertex_id);
     }
 
+    fn record_coordinate_visits(&self, count: usize) {
+        #[cfg(test)]
+        self.query_coordinate_nodes_visited
+            .fetch_add(count, Ordering::Relaxed);
+        #[cfg(not(test))]
+        let _ = count;
+    }
+
+    fn record_value_visit(&self) {
+        #[cfg(test)]
+        self.query_values_visited.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn visit_axis_range(
+        &self,
+        tree: &IntervalTree<VertexId>,
+        start: u32,
+        end: u32,
+        mut visitor: impl FnMut(VertexId),
+    ) {
+        let _ = tree.visit_point_intervals(start, end, |entry| {
+            match entry {
+                None => self.record_coordinate_visits(1),
+                Some(vertex) => {
+                    self.record_value_visit();
+                    visitor(*vertex);
+                }
+            }
+            ControlFlow::Continue(())
+        });
+    }
+
+    fn axis_range_value_count(&self, tree: &IntervalTree<VertexId>, start: u32, end: u32) -> usize {
+        let (nodes, values) = tree.point_interval_stats(start, end);
+        self.record_coordinate_visits(nodes);
+        values
+    }
+
+    fn collect_axis_range(
+        &self,
+        tree: &IntervalTree<VertexId>,
+        start: u32,
+        end: u32,
+    ) -> HashSet<VertexId> {
+        let mut result = HashSet::new();
+        self.visit_axis_range(tree, start, end, |vertex| {
+            result.insert(vertex);
+        });
+        result
+    }
+
     /// Query all vertices in the given row range.
     ///
     /// ## Complexity
     /// O(log n + k) where k is the number of vertices in the range
     pub fn vertices_in_row_range(&self, start: u32, end: u32) -> Vec<VertexId> {
-        let mut result = HashSet::new();
-
-        for (_low, _high, values) in self.row_tree.query(start, end) {
-            result.extend(values.iter());
-        }
-
-        result.into_iter().collect()
+        self.collect_axis_range(&self.row_tree, start, end)
+            .into_iter()
+            .collect()
     }
 
     /// Query all vertices in the given column range.
@@ -176,19 +235,16 @@ impl SheetIndex {
     /// ## Complexity
     /// O(log n + k) where k is the number of vertices in the range
     pub fn vertices_in_col_range(&self, start: u32, end: u32) -> Vec<VertexId> {
-        let mut result = HashSet::new();
-
-        for (_low, _high, values) in self.col_tree.query(start, end) {
-            result.extend(values.iter());
-        }
-
-        result.into_iter().collect()
+        self.collect_axis_range(&self.col_tree, start, end)
+            .into_iter()
+            .collect()
     }
 
     /// Query all vertices in a rectangular range.
     ///
-    /// ## Complexity
-    /// O(log n + k) where k is the number of vertices in the range
+    /// Sheet indexes contain point intervals only, so exact-cell queries use two
+    /// direct B-tree lookups. Wider rectangles materialize only the cheaper axis
+    /// set and stream the other axis while intersecting it.
     pub fn vertices_in_rect(
         &self,
         start_row: u32,
@@ -196,20 +252,71 @@ impl SheetIndex {
         start_col: u32,
         end_col: u32,
     ) -> Vec<VertexId> {
-        // Get vertices in row range
-        let row_vertices: HashSet<_> = self
-            .vertices_in_row_range(start_row, end_row)
-            .into_iter()
-            .collect();
+        if start_row > end_row || start_col > end_col {
+            return Vec::new();
+        }
 
-        // Get vertices in column range
-        let col_vertices: HashSet<_> = self
-            .vertices_in_col_range(start_col, end_col)
-            .into_iter()
-            .collect();
+        if start_row == end_row && start_col == end_col {
+            self.record_coordinate_visits(2);
+            let Some(row_vertices) = self.row_tree.point_values(start_row) else {
+                return Vec::new();
+            };
+            let Some(col_vertices) = self.col_tree.point_values(start_col) else {
+                return Vec::new();
+            };
+            let (candidates, membership) = if row_vertices.len() <= col_vertices.len() {
+                (row_vertices, col_vertices)
+            } else {
+                (col_vertices, row_vertices)
+            };
+            return candidates
+                .iter()
+                .filter_map(|vertex| {
+                    self.record_value_visit();
+                    membership.contains(vertex).then_some(*vertex)
+                })
+                .collect();
+        }
 
-        // Return intersection - vertices that are in both ranges
-        row_vertices.intersection(&col_vertices).copied().collect()
+        let row_count = self.axis_range_value_count(&self.row_tree, start_row, end_row);
+        let col_count = self.axis_range_value_count(&self.col_tree, start_col, end_col);
+        let (candidates, other_tree, other_start, other_end) = if row_count <= col_count {
+            (
+                self.collect_axis_range(&self.row_tree, start_row, end_row),
+                &self.col_tree,
+                start_col,
+                end_col,
+            )
+        } else {
+            (
+                self.collect_axis_range(&self.col_tree, start_col, end_col),
+                &self.row_tree,
+                start_row,
+                end_row,
+            )
+        };
+        let mut result = Vec::with_capacity(candidates.len().min(row_count).min(col_count));
+        self.visit_axis_range(other_tree, other_start, other_end, |vertex| {
+            if candidates.contains(&vertex) {
+                result.push(vertex);
+            }
+        });
+        result
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reset_query_stats(&self) {
+        self.query_coordinate_nodes_visited
+            .store(0, Ordering::Relaxed);
+        self.query_values_visited.store(0, Ordering::Relaxed);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn query_stats(&self) -> SheetIndexQueryStats {
+        SheetIndexQueryStats {
+            coordinate_nodes_visited: self.query_coordinate_nodes_visited.load(Ordering::Relaxed),
+            values_visited: self.query_values_visited.load(Ordering::Relaxed),
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -393,5 +500,149 @@ mod tests {
 
         // Should find 11 rows (500, 600, ..., 1500) × 6 columns (2-7) = 66 vertices
         assert_eq!(viewport.len(), 66);
+    }
+
+    #[test]
+    fn exact_cell_query_visits_only_exact_coordinate_buckets() {
+        let mut index = SheetIndex::new();
+        for row in 0..10_000 {
+            index.add_vertex(AbsCoord::new(row, 7), VertexId(1024 + row));
+        }
+
+        index.reset_query_stats();
+        assert_eq!(
+            index.vertices_in_rect(9_999, 9_999, 7, 7),
+            vec![VertexId(11_023)]
+        );
+        assert_eq!(
+            index.query_stats(),
+            SheetIndexQueryStats {
+                coordinate_nodes_visited: 2,
+                values_visited: 1,
+            }
+        );
+    }
+
+    fn sorted(mut vertices: Vec<VertexId>) -> Vec<VertexId> {
+        vertices.sort_unstable();
+        vertices
+    }
+
+    fn assert_query_parity(
+        index: &SheetIndex,
+        model: &[(AbsCoord, VertexId)],
+        start_row: u32,
+        end_row: u32,
+        start_col: u32,
+        end_col: u32,
+    ) {
+        let naive_rect = model
+            .iter()
+            .filter_map(|(coord, vertex)| {
+                (coord.row() >= start_row
+                    && coord.row() <= end_row
+                    && coord.col() >= start_col
+                    && coord.col() <= end_col)
+                    .then_some(*vertex)
+            })
+            .collect::<Vec<_>>();
+        let naive_rows = model
+            .iter()
+            .filter_map(|(coord, vertex)| {
+                (coord.row() >= start_row && coord.row() <= end_row).then_some(*vertex)
+            })
+            .collect::<Vec<_>>();
+        let naive_cols = model
+            .iter()
+            .filter_map(|(coord, vertex)| {
+                (coord.col() >= start_col && coord.col() <= end_col).then_some(*vertex)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sorted(index.vertices_in_rect(start_row, end_row, start_col, end_col)),
+            sorted(naive_rect)
+        );
+        assert_eq!(
+            sorted(index.vertices_in_row_range(start_row, end_row)),
+            sorted(naive_rows)
+        );
+        assert_eq!(
+            sorted(index.vertices_in_col_range(start_col, end_col)),
+            sorted(naive_cols)
+        );
+    }
+
+    #[test]
+    fn point_range_rectangle_sparse_move_remove_and_randomized_queries_match_naive_filtering() {
+        let mut state = 0x5eed_cafe_u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            (state >> 32) as u32
+        };
+        let mut model = (0..300)
+            .map(|offset| {
+                let row = if offset < 5 {
+                    offset * 200_000
+                } else {
+                    next() % 2_000
+                };
+                let col = if offset < 5 { offset * 20 } else { next() % 80 };
+                (AbsCoord::new(row, col), VertexId(1024 + offset))
+            })
+            .collect::<Vec<_>>();
+
+        let mut incremental = SheetIndex::new();
+        for &(coord, vertex) in &model {
+            incremental.add_vertex(coord, vertex);
+        }
+        let mut bulk_items = model.clone();
+        bulk_items.sort_unstable_by_key(|(coord, _)| (coord.row(), coord.col()));
+        let mut bulk = SheetIndex::new();
+        bulk.build_from_sorted(&bulk_items);
+
+        for index in [&incremental, &bulk] {
+            assert_query_parity(index, &model, 1_500, 1_500, 40, 40);
+            assert_query_parity(index, &model, 500, 1_500, 0, 79);
+            assert_query_parity(index, &model, 0, u32::MAX, 20, 40);
+            assert_query_parity(index, &model, 0, 800_000, 0, 80);
+        }
+
+        for (offset, entry) in model.iter_mut().take(40).enumerate() {
+            let (old_coord, vertex) = *entry;
+            let new_coord = AbsCoord::new(3_000 + offset as u32, 100 + offset as u32 % 7);
+            incremental.update_vertex(old_coord, new_coord, vertex);
+            bulk.update_vertex(old_coord, new_coord, vertex);
+            entry.0 = new_coord;
+        }
+        for _ in 0..30 {
+            let index = (next() as usize) % model.len();
+            let (coord, vertex) = model.swap_remove(index);
+            incremental.remove_vertex(coord, vertex);
+            bulk.remove_vertex(coord, vertex);
+        }
+        let point = model[0].0;
+        for index in [&incremental, &bulk] {
+            assert_query_parity(
+                index,
+                &model,
+                point.row(),
+                point.row(),
+                point.col(),
+                point.col(),
+            );
+        }
+
+        for _ in 0..200 {
+            let row_a = next() % 4_000;
+            let row_b = next() % 4_000;
+            let col_a = next() % 120;
+            let col_b = next() % 120;
+            let (start_row, end_row) = (row_a.min(row_b), row_a.max(row_b));
+            let (start_col, end_col) = (col_a.min(col_b), col_a.max(col_b));
+            assert_query_parity(&incremental, &model, start_row, end_row, start_col, end_col);
+            assert_query_parity(&bulk, &model, start_row, end_row, start_col, end_col);
+        }
     }
 }
