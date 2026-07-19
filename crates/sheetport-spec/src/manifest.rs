@@ -218,6 +218,18 @@ impl Manifest {
             }
 
             if let Selector::Layout(layout) = &port.location {
+                if layout.layout.header_row == 0 || layout.layout.header_row > 1_048_576 {
+                    issues.push(ManifestIssue::new(
+                        format!("ports[{}].location.layout.header_row", idx),
+                        "header_row must be within the Excel row bounds".to_string(),
+                    ));
+                }
+                if layout.layout.max_scan_rows == 0 {
+                    issues.push(ManifestIssue::new(
+                        format!("ports[{}].location.layout.max_scan_rows", idx),
+                        "max_scan_rows must be greater than zero".to_string(),
+                    ));
+                }
                 if matches!(layout.layout.terminate, LayoutTermination::UntilMarker)
                     && layout
                         .layout
@@ -525,6 +537,13 @@ pub struct LayoutDescriptor {
     #[serde(default)]
     /// Marker text required when `terminate` equals `until_marker`.
     pub marker_text: Option<String>,
+    #[serde(default = "default_layout_max_scan_rows")]
+    /// Maximum candidate rows inspected by bounded layout termination rules.
+    pub max_scan_rows: u32,
+}
+
+const fn default_layout_max_scan_rows() -> u32 {
+    100_000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

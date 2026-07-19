@@ -2868,6 +2868,27 @@ impl Workbook {
             .map_err(IoError::Engine)
     }
 
+    pub fn evaluate_targets_with_options(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+        options: formualizer_eval::engine::PrepareTargetsOptions<'_>,
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        self.engine
+            .evaluate_targets_with_options(targets, options, cancel_flag)
+            .map_err(IoError::Engine)
+    }
+
+    pub fn evaluate_targets_cancellable(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        self.engine
+            .evaluate_targets_cancellable(targets, cancel_flag)
+            .map_err(IoError::Engine)
+    }
+
     pub fn evaluate_targets_with_delta(
         &mut self,
         targets: &[formualizer_eval::engine::EvaluationTarget],
@@ -3036,12 +3057,52 @@ impl Workbook {
         self.engine.build_recalc_plan().map_err(IoError::Engine)
     }
 
+    pub fn build_recalc_plan_for_targets(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+    ) -> Result<formualizer_eval::engine::RecalcPlan, IoError> {
+        self.engine
+            .build_recalc_plan_for_targets(targets)
+            .map_err(IoError::Engine)
+    }
+
+    pub fn build_recalc_plan_for_targets_with_options(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+        options: formualizer_eval::engine::PrepareTargetsOptions<'_>,
+    ) -> Result<formualizer_eval::engine::RecalcPlan, IoError> {
+        self.engine
+            .build_recalc_plan_for_targets_with_options(targets, options)
+            .map_err(IoError::Engine)
+    }
+
     pub fn evaluate_with_plan(
         &mut self,
         plan: &formualizer_eval::engine::RecalcPlan,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine
             .evaluate_recalc_plan(plan)
+            .map_err(IoError::Engine)
+    }
+
+    pub fn evaluate_with_plan_controls(
+        &mut self,
+        plan: &formualizer_eval::engine::RecalcPlan,
+        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        self.engine
+            .evaluate_recalc_plan_with_controls(plan, cancel_flag, deadline)
+            .map_err(IoError::Engine)
+    }
+
+    pub fn evaluate_with_plan_cancellable(
+        &mut self,
+        plan: &formualizer_eval::engine::RecalcPlan,
+        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        self.engine
+            .evaluate_recalc_plan_cancellable(plan, cancel_flag)
             .map_err(IoError::Engine)
     }
 
@@ -3113,6 +3174,22 @@ impl Workbook {
                 .delete_name(name, scope)
                 .map_err(IoError::Engine)
         }
+    }
+
+    pub fn has_name(&self, name: &str, scope_sheet: Option<&str>) -> bool {
+        self.engine.has_name(name, scope_sheet)
+    }
+
+    pub fn resolved_name_value(
+        &self,
+        name: &str,
+        scope_sheet: Option<&str>,
+    ) -> Option<LiteralValue> {
+        self.engine.resolved_name_value(name, scope_sheet)
+    }
+
+    pub fn table_metadata(&self, name: &str) -> Option<formualizer_eval::engine::TableMetadata> {
+        self.engine.table_metadata(name)
     }
 
     /// Resolve a named range (workbook-scoped or unique sheet-scoped) to an absolute address.

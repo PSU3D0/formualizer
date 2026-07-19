@@ -19,7 +19,9 @@ mod session;
 mod validation;
 mod value;
 
-pub use batch::{BatchExecutor, BatchInput, BatchOptions, BatchProgress, BatchResult};
+pub use batch::{
+    BatchExecutor, BatchInput, BatchOptions, BatchPlanStalePolicy, BatchProgress, BatchResult,
+};
 pub use binding::{
     BoundPort, ManifestBindings, PortBinding, RangeBinding, RecordBinding, RecordFieldBinding,
     ScalarBinding, TableBinding, TableColumnBinding,

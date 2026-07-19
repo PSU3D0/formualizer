@@ -705,6 +705,36 @@ fn map_sheetport_err(py: Python<'_>, err: RuntimeSheetPortError) -> PyErr {
         RuntimeSheetPortError::InvariantViolation { port, message } => {
             SheetPortError::new_err(format!("port `{port}` invariant violation: {message}"))
         }
+        RuntimeSheetPortError::LayoutExhausted {
+            port,
+            sheet,
+            termination,
+            scan_start,
+            limit,
+            observed,
+        } => {
+            let error = SheetPortError::new_err(format!(
+                "layout `{termination}` exhausted for port `{port}` on `{sheet}`"
+            ));
+            let value = error.value(py);
+            let _ = value.setattr("kind", "LayoutExhausted");
+            let _ = value.setattr("port", port);
+            let _ = value.setattr("sheet", sheet);
+            let _ = value.setattr("termination", termination);
+            let _ = value.setattr("scan_start", scan_start);
+            let _ = value.setattr("limit", limit);
+            let _ = value.setattr("observed", observed);
+            error
+        }
+        RuntimeSheetPortError::SelectorSafety { port, reason } => {
+            SheetPortError::new_err(format!("port `{port}` selector safety error: {reason}"))
+        }
+        RuntimeSheetPortError::BatchRestoration {
+            primary,
+            restoration,
+        } => SheetPortError::new_err(format!(
+            "batch failed ({primary}); baseline restoration also failed ({restoration})"
+        )),
     }
 }
 

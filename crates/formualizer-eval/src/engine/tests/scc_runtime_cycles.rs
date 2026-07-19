@@ -949,7 +949,7 @@ fn recalc_plan_skips_clean_cycles_and_evaluates_dirty_ones_whole() {
     build_99_pair(&mut engine, true);
     set_formula(&mut engine, "Sheet1", 1, 5, "=1+1"); // unrelated formula E1
 
-    let plan = engine.build_recalc_plan().unwrap();
+    let mut plan = engine.build_recalc_plan().unwrap();
     engine.evaluate_recalc_plan(&plan).unwrap();
     assert_eq!(num(&engine, "Sheet1", 2, 1), 555.0);
     assert_eq!(engine.last_cycle_telemetry().static_sccs, 1);
@@ -957,6 +957,14 @@ fn recalc_plan_skips_clean_cycles_and_evaluates_dirty_ones_whole() {
     // Dirty only the unrelated formula: the clean SCC must be skipped
     // entirely (values stand, no task runs).
     set_formula(&mut engine, "Sheet1", 1, 5, "=2+2");
+    let stale = engine.evaluate_recalc_plan(&plan).unwrap_err();
+    assert!(matches!(
+        stale.extra,
+        formualizer_common::ExcelErrorExtra::PlanStale {
+            reason: formualizer_common::PlanStaleReason::Graph
+        }
+    ));
+    plan = engine.build_recalc_plan().unwrap();
     engine.evaluate_recalc_plan(&plan).unwrap();
     assert_eq!(engine.last_cycle_telemetry().static_sccs, 0);
     assert_eq!(num(&engine, "Sheet1", 2, 1), 555.0);

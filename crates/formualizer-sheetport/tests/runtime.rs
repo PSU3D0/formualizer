@@ -1,6 +1,8 @@
 use chrono::TimeZone;
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::DeterministicMode;
+use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
+use formualizer_eval::reference::{CellRef, Coord, RangeRef};
 use formualizer_eval::timezone::TimeZoneSpec;
 use formualizer_eval::traits::VolatileLevel;
 use formualizer_sheetport::{EvalOptions, InputUpdate, PortValue, SheetPort, SheetPortSession};
@@ -239,7 +241,7 @@ ports:
 }
 
 #[test]
-fn sheetport_rejects_unsupported_profile() {
+fn sheetport_accepts_full_profile_for_supported_selectors() {
     let manifest_yaml = r#"
  spec: fio
  spec_version: "0.3.0"
@@ -259,21 +261,222 @@ fn sheetport_rejects_unsupported_profile() {
     let mut workbook = Workbook::new();
     workbook.add_sheet("Sheet").unwrap();
 
-    let err = match SheetPort::new(&mut workbook, manifest) {
-        Ok(_) => panic!("expected unsupported profile error"),
-        Err(err) => err,
-    };
-    match err {
-        formualizer_sheetport::SheetPortError::InvalidManifest { issues } => {
-            assert!(
-                issues
-                    .iter()
-                    .any(|issue| issue.path == "capabilities.profile"),
-                "expected profile issue, got {issues:#?}"
-            );
-        }
-        other => panic!("unexpected error: {other:?}"),
+    SheetPort::new(&mut workbook, manifest).expect("supported full-v0 subset binds");
+}
+
+#[test]
+fn symbolic_literal_name_output_is_not_normalized_to_an_address() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: literal-name, name: Literal Name }
+ports:
+  - id: rate
+    dir: out
+    shape: scalar
+    location: { name: Rate }
+    schema: { type: number }
+"#,
+    )
+    .unwrap();
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    workbook
+        .engine_mut()
+        .define_name(
+            "Rate",
+            NamedDefinition::Literal(LiteralValue::Int(42)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
+    let output = sheetport.evaluate_once(EvalOptions::default()).unwrap();
+    assert_eq!(
+        output.get("rate"),
+        Some(&PortValue::Scalar(LiteralValue::Number(42.0)))
+    );
+}
+
+#[test]
+fn full_profile_native_table_output_uses_manifest_column_order() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+capabilities: { profile: full-v0 }
+manifest: { id: native-table, name: Native Table }
+ports:
+  - id: rows
+    dir: out
+    shape: table
+    location:
+      table: { name: Sales, area: body }
+    schema:
+      kind: table
+      columns:
+        - { name: Qty, type: number }
+        - { name: Price, type: number }
+"#,
+    )
+    .unwrap();
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    for (row, col, value) in [
+        (1, 1, LiteralValue::Text("Qty".to_string())),
+        (1, 2, LiteralValue::Text("Price".to_string())),
+        (2, 1, LiteralValue::Int(3)),
+        (2, 2, LiteralValue::Int(7)),
+    ] {
+        workbook.set_value("Sheet", row, col, value).unwrap();
     }
+    let sheet = workbook.engine().sheet_id("Sheet").unwrap();
+    workbook
+        .engine_mut()
+        .define_table(
+            "Sales",
+            RangeRef::new(
+                CellRef::new(sheet, Coord::from_excel(1, 1, true, true)),
+                CellRef::new(sheet, Coord::from_excel(2, 2, true, true)),
+            ),
+            true,
+            vec!["Qty".to_string(), "Price".to_string()],
+            false,
+        )
+        .unwrap();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
+    let output = sheetport.evaluate_once(EvalOptions::default()).unwrap();
+    let PortValue::Table(table) = output.get("rows").unwrap() else {
+        panic!("expected table output")
+    };
+    assert_eq!(table.rows.len(), 1);
+    assert_eq!(table.rows[0].values["Qty"], LiteralValue::Number(3.0));
+    assert_eq!(table.rows[0].values["Price"], LiteralValue::Number(7.0));
+}
+
+#[test]
+fn full_profile_empty_native_table_body_returns_zero_rows() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+capabilities: { profile: full-v0 }
+manifest: { id: empty-native-table, name: Empty Native Table }
+ports:
+  - id: rows
+    dir: out
+    shape: table
+    location:
+      table: { name: Empty, area: body }
+    schema:
+      kind: table
+      columns:
+        - { name: Qty, type: number }
+"#,
+    )
+    .unwrap();
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    workbook
+        .set_value("Sheet", 1, 1, LiteralValue::Text("Qty".to_string()))
+        .unwrap();
+    let sheet = workbook.engine().sheet_id("Sheet").unwrap();
+    workbook
+        .engine_mut()
+        .define_table(
+            "Empty",
+            RangeRef::new(
+                CellRef::new(sheet, Coord::from_excel(1, 1, true, true)),
+                CellRef::new(sheet, Coord::from_excel(1, 1, true, true)),
+            ),
+            true,
+            vec!["Qty".to_string()],
+            false,
+        )
+        .unwrap();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
+    let output = sheetport.evaluate_once(EvalOptions::default()).unwrap();
+    assert!(
+        output
+            .get("rows")
+            .unwrap()
+            .as_table()
+            .unwrap()
+            .rows
+            .is_empty()
+    );
+}
+
+#[test]
+fn symbolic_named_range_preserves_range_shape() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: named-range, name: Named Range }
+ports:
+  - id: values
+    dir: out
+    shape: range
+    location: { name: Values }
+    schema: { kind: range, cell_type: number }
+"#,
+    )
+    .unwrap();
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    workbook
+        .set_value("Sheet", 1, 1, LiteralValue::Int(1))
+        .unwrap();
+    workbook
+        .set_value("Sheet", 2, 1, LiteralValue::Int(2))
+        .unwrap();
+    let sheet = workbook.engine().sheet_id("Sheet").unwrap();
+    workbook
+        .engine_mut()
+        .define_name(
+            "Values",
+            NamedDefinition::Range(RangeRef::new(
+                CellRef::new(sheet, Coord::from_excel(1, 1, true, true)),
+                CellRef::new(sheet, Coord::from_excel(2, 1, true, true)),
+            )),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
+    let output = sheetport.evaluate_once(EvalOptions::default()).unwrap();
+    assert_eq!(
+        output.get("values"),
+        Some(&PortValue::Range(vec![
+            vec![LiteralValue::Number(1.0)],
+            vec![LiteralValue::Number(2.0)],
+        ]))
+    );
+}
+
+#[test]
+fn full_v0_unsupported_free_form_selector_fails_typed() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+capabilities: { profile: full-v0 }
+manifest: { id: full-unsupported, name: Full Unsupported }
+ports:
+  - id: value
+    dir: out
+    shape: scalar
+    location: { struct_ref: "Tbl[Col]" }
+    schema: { type: number }
+"#,
+    )
+    .unwrap();
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    assert!(matches!(
+        SheetPort::new(&mut workbook, manifest),
+        Err(formualizer_sheetport::SheetPortError::UnsupportedSelector { .. })
+    ));
 }
 
 #[test]
@@ -345,6 +548,51 @@ ports:
         }
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn bounded_layout_exhaustion_is_typed() {
+    let manifest: Manifest = Manifest::from_yaml_str(
+        r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: bounded-layout, name: Bounded Layout }
+ports:
+  - id: rows
+    dir: out
+    shape: range
+    location:
+      layout:
+        sheet: Sheet
+        header_row: 1
+        anchor_col: A
+        terminate: first_blank_row
+        max_scan_rows: 2
+    schema: { kind: range, cell_type: string }
+"#,
+    )
+    .unwrap();
+    let mut workbook = Workbook::new();
+    workbook.add_sheet("Sheet").unwrap();
+    workbook
+        .set_value("Sheet", 1, 1, LiteralValue::Text("Header".to_string()))
+        .unwrap();
+    workbook
+        .set_value("Sheet", 2, 1, LiteralValue::Text("Value".to_string()))
+        .unwrap();
+    workbook
+        .set_value("Sheet", 3, 1, LiteralValue::Text("Still data".to_string()))
+        .unwrap();
+    let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
+    let error = sheetport.evaluate_once(EvalOptions::default()).unwrap_err();
+    assert!(matches!(
+        error,
+        formualizer_sheetport::SheetPortError::LayoutExhausted {
+            limit: 2,
+            observed: 2,
+            ..
+        }
+    ));
 }
 
 #[test]

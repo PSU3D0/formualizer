@@ -133,6 +133,7 @@
               "header_row": 1,
               "kind": "header_contiguous_v1",
               "marker_text": null,
+              "max_scan_rows": 100000,
               "sheet": "Inventory",
               "terminate": "first_blank_row"
             }
@@ -374,6 +375,13 @@
             "null"
           ],
           "default": null
+        },
+        "max_scan_rows": {
+          "description": "Maximum candidate rows inspected by bounded layout termination rules.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100000,
+          "minimum": 0
         },
         "sheet": {
           "description": "Sheet containing the layout.",

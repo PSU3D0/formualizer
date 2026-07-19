@@ -80,6 +80,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 type StagedFormulaEntry = (u32, u32, String);
 type StagedSheetParts = (
@@ -929,6 +930,8 @@ pub struct Engine<R> {
     source_cache: Arc<std::sync::RwLock<SourceCache>>,
     /// Identity binding for opaque source-family preparations.
     source_formula_token: Arc<()>,
+    /// Dedicated identity binding for reusable recalculation plans.
+    recalc_plan_token: Arc<()>,
     /// Staged formulas by sheet when `defer_graph_building` is enabled.
     staged_formulas: StagedFormulaMap,
     /// Presence and generation authority for ordinary staged formula discovery.
@@ -964,6 +967,8 @@ pub struct Engine<R> {
     formula_plane_structural_span_candidates: u64,
     /// Transient cancellation flag used during evaluation
     active_cancel_flag: Option<Arc<AtomicBool>>,
+    /// Transient absolute deadline used by composed target and plan requests.
+    active_evaluation_deadline: Option<Instant>,
 
     /// Engine-level action depth.
     ///
@@ -1615,6 +1620,19 @@ pub struct EvalResult {
     pub elapsed: std::time::Duration,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableMetadata {
+    pub name: String,
+    pub sheet: String,
+    pub start_row: u32,
+    pub start_col: u32,
+    pub end_row: u32,
+    pub end_col: u32,
+    pub header_row: bool,
+    pub headers: Vec<String>,
+    pub totals_row: bool,
+}
+
 /// Read-only engine counters used by benchmark/instrumentation tooling.
 ///
 /// These counters are deliberately observational: collecting them must not mutate engine state or
@@ -2003,20 +2021,130 @@ type ScheduleBuildOutput = (
     ScheduleBuildMeta,
 );
 
-/// Cached evaluation schedule that can be replayed across multiple recalculations.
+/// Opaque, revision-bound recalculation recipe.
 #[derive(Debug)]
 pub struct RecalcPlan {
-    schedule: crate::engine::Schedule,
-    has_dynamic_refs: bool,
+    key: RecalcPlanKey,
+    kind: RecalcPlanKind,
+}
+
+#[derive(Debug)]
+struct RecalcPlanKey {
+    engine_token: Arc<()>,
+    revisions: PlanningRevisionSnapshot,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlanningRevisionSnapshot {
+    engine_topology_epoch: u64,
+    graph_topology_revision: u64,
+    authority: u64,
+    authority_indexes: u64,
+    authority_indexed_plane: u64,
+    staged: u64,
+    symbols: u64,
+    semantic: u64,
+    provider: Option<u64>,
+    formula_plane_mode: FormulaPlaneMode,
+    deterministic_mode: crate::engine::DeterministicMode,
+    budgets: crate::engine::EvaluationBudgets,
+    span_refs: Vec<FormulaSpanRef>,
+}
+
+#[derive(Debug)]
+enum RecalcPlanKind {
+    CompatibilityFull {
+        schedule: crate::engine::Schedule,
+        has_dynamic_refs: bool,
+    },
+    Target {
+        targets: Vec<crate::engine::EvaluationTarget>,
+        scope: crate::engine::PrepareScope,
+        topology: RecalcTopology,
+        dynamic_policy: DynamicPlanPolicy,
+    },
+}
+
+#[derive(Debug)]
+enum RecalcTopology {
+    RunLocalRecipe,
+    Workbook,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DynamicPlanPolicy {
+    BoundedTargetReplan,
 }
 
 impl RecalcPlan {
+    /// Returns the retained compatibility schedule depth. Target plans retain a
+    /// run-local recipe rather than a schedule, so their layer count is zero.
     pub fn layer_count(&self) -> usize {
-        self.schedule.layers.len()
+        match &self.kind {
+            RecalcPlanKind::CompatibilityFull { schedule, .. } => schedule.layers.len(),
+            RecalcPlanKind::Target { .. } => 0,
+        }
     }
 
     pub fn has_dynamic_refs(&self) -> bool {
-        self.has_dynamic_refs
+        match &self.kind {
+            RecalcPlanKind::CompatibilityFull {
+                has_dynamic_refs, ..
+            } => *has_dynamic_refs,
+            RecalcPlanKind::Target { .. } => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn force_stale_reasons_for_test(
+        &mut self,
+        reasons: &[formualizer_common::PlanStaleReason],
+    ) {
+        use formualizer_common::PlanStaleReason;
+        for reason in reasons {
+            match reason {
+                PlanStaleReason::Engine => {
+                    self.key.engine_token = Arc::new(());
+                }
+                PlanStaleReason::Provider => {
+                    self.key.revisions.provider = Some(
+                        self.key
+                            .revisions
+                            .provider
+                            .unwrap_or_default()
+                            .wrapping_add(1),
+                    );
+                }
+                PlanStaleReason::Semantic => {
+                    self.key.revisions.semantic = self.key.revisions.semantic.wrapping_add(1);
+                }
+                PlanStaleReason::Budget => {
+                    let current = self.key.revisions.budgets.work.max_work_units;
+                    self.key.revisions.budgets.work.max_work_units =
+                        Some(current.unwrap_or_default().wrapping_add(1));
+                }
+                PlanStaleReason::Staged => {
+                    self.key.revisions.staged = self.key.revisions.staged.wrapping_add(1);
+                }
+                PlanStaleReason::Symbols => {
+                    self.key.revisions.symbols = self.key.revisions.symbols.wrapping_add(1);
+                }
+                PlanStaleReason::Authority => {
+                    self.key.revisions.authority = self.key.revisions.authority.wrapping_add(1);
+                }
+                PlanStaleReason::SpanGeneration => {
+                    self.key.revisions.span_refs.push(FormulaSpanRef {
+                        id: crate::formula_plane::runtime::FormulaSpanId(u32::MAX),
+                        generation: u32::MAX,
+                        version: u32::MAX,
+                    });
+                }
+                PlanStaleReason::Graph => {
+                    self.key.revisions.graph_topology_revision =
+                        self.key.revisions.graph_topology_revision.wrapping_add(1);
+                }
+            }
+        }
     }
 }
 
@@ -2384,6 +2512,7 @@ where
             lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             source_formula_token: Arc::new(()),
+            recalc_plan_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
             row_visibility: FxHashMap::default(),
@@ -2395,6 +2524,7 @@ where
             formula_plane_capacity_bailouts: 0,
             formula_plane_structural_span_candidates: 0,
             active_cancel_flag: None,
+            active_evaluation_deadline: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
@@ -2517,6 +2647,7 @@ where
             lookup_index_cache: LookupIndexCache::new(lookup_cache_max_bytes),
             source_cache: Arc::new(std::sync::RwLock::new(SourceCache::default())),
             source_formula_token: Arc::new(()),
+            recalc_plan_token: Arc::new(()),
             staged_formulas: std::collections::HashMap::new(),
             staged_formula_index: StagedFormulaIndex::default(),
             row_visibility: FxHashMap::default(),
@@ -2528,6 +2659,7 @@ where
             formula_plane_capacity_bailouts: 0,
             formula_plane_structural_span_candidates: 0,
             active_cancel_flag: None,
+            active_evaluation_deadline: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
@@ -2720,14 +2852,18 @@ where
         result
     }
 
+    pub fn set_evaluation_resource_budgets(&mut self, budgets: crate::engine::EvaluationBudgets) {
+        self.evaluation_resource_budgets = budgets.clone();
+        self.config.evaluation_budgets = budgets.clone();
+        self.graph.set_evaluation_budgets(budgets);
+    }
+
     #[cfg(test)]
     pub(crate) fn set_evaluation_budgets_for_test(
         &mut self,
         budgets: crate::engine::EvaluationBudgets,
     ) {
-        self.evaluation_resource_budgets = budgets.clone();
-        self.config.evaluation_budgets = budgets.clone();
-        self.graph.set_evaluation_budgets_for_test(budgets);
+        self.set_evaluation_resource_budgets(budgets);
     }
 
     fn resource_loop_checkpoint(
@@ -2798,6 +2934,24 @@ where
             .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
         {
             return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(message));
+        }
+        if self
+            .active_evaluation_deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(crate::engine::ResourceLedgerError::Exhausted(
+                formualizer_common::ResourceExhaustionDetail {
+                    reason: formualizer_common::ResourceExhaustionReason::Deadline,
+                    limit: 0,
+                    observed: 1,
+                    request_id: self
+                        .active_evaluation_resource_request
+                        .as_ref()
+                        .map(|request| request.request_id),
+                },
+            )
+            .into_excel_error()
+            .with_message(message));
         }
         Ok(())
     }
@@ -3726,6 +3880,40 @@ where
         self.graph.resolve_name_entry(name, current_sheet)
     }
 
+    pub fn has_name(&self, name: &str, scope_sheet: Option<&str>) -> bool {
+        let current_sheet = scope_sheet
+            .and_then(|sheet| self.graph.sheet_id(sheet))
+            .unwrap_or_else(|| self.graph.default_sheet_id());
+        self.graph.resolve_name_entry(name, current_sheet).is_some()
+    }
+
+    pub fn resolved_name_value(
+        &self,
+        name: &str,
+        scope_sheet: Option<&str>,
+    ) -> Option<LiteralValue> {
+        let current_sheet = scope_sheet
+            .and_then(|sheet| self.graph.sheet_id(sheet))
+            .unwrap_or_else(|| self.graph.default_sheet_id());
+        let entry = self.graph.resolve_name_entry(name, current_sheet)?;
+        self.graph.get_value(entry.vertex)
+    }
+
+    pub fn table_metadata(&self, name: &str) -> Option<TableMetadata> {
+        let entry = self.graph.resolve_table_entry(name)?;
+        Some(TableMetadata {
+            name: entry.name.clone(),
+            sheet: self.graph.sheet_name(entry.sheet_id()).to_string(),
+            start_row: entry.range.start.coord.row() + 1,
+            start_col: entry.range.start.coord.col() + 1,
+            end_row: entry.range.end.coord.row() + 1,
+            end_col: entry.range.end.coord.col() + 1,
+            header_row: entry.header_row,
+            headers: entry.headers.clone(),
+            totals_row: entry.totals_row,
+        })
+    }
+
     pub fn named_ranges_snapshot(&self) -> Vec<crate::engine::named_range::NamedRangeSnapshot> {
         let mut out: Vec<crate::engine::named_range::NamedRangeSnapshot> = Vec::new();
 
@@ -3981,7 +4169,10 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_scalar_version(name, version)?;
-        self.record_formula_plane_structural_change(StructuralScope::OpaqueGlobal);
+        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+            self.graph
+                .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
+        }
         Ok(())
     }
 
@@ -3991,13 +4182,19 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_table_version(name, version)?;
-        self.record_formula_plane_structural_change(StructuralScope::OpaqueGlobal);
+        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+            self.graph
+                .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
+        }
         Ok(())
     }
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
         self.graph.invalidate_source(name)?;
-        self.record_formula_plane_structural_change(StructuralScope::OpaqueGlobal);
+        if self.config.formula_plane_mode != FormulaPlaneMode::Off {
+            self.graph
+                .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
+        }
         Ok(())
     }
 
@@ -8805,6 +9002,85 @@ where
         }
     }
 
+    fn planning_revision_snapshot(&self) -> PlanningRevisionSnapshot {
+        let registry_guard = crate::function_registry::semantic_epoch_read_guard();
+        let provider = self.resolver.planning_semantic_revision();
+        let semantic = registry_guard.epoch();
+        let (authority, authority_indexes, authority_indexed_plane) =
+            self.graph.authority_revisions();
+        let mut span_refs = self.graph.formula_authority().active_span_refs();
+        span_refs.sort_unstable_by_key(|span_ref| {
+            (span_ref.id.0, span_ref.generation, span_ref.version)
+        });
+        PlanningRevisionSnapshot {
+            engine_topology_epoch: self.topology_epoch,
+            graph_topology_revision: self.graph.topology_revision(),
+            authority,
+            authority_indexes,
+            authority_indexed_plane,
+            staged: self.staged_formula_index.revision(),
+            symbols: self.graph.symbol_revision(),
+            semantic,
+            provider,
+            formula_plane_mode: self.config.formula_plane_mode,
+            deterministic_mode: self.config.deterministic_mode.clone(),
+            budgets: self.evaluation_resource_budgets.clone(),
+            span_refs,
+        }
+    }
+
+    fn recalc_plan_key(&self) -> RecalcPlanKey {
+        RecalcPlanKey {
+            engine_token: Arc::clone(&self.recalc_plan_token),
+            revisions: self.planning_revision_snapshot(),
+        }
+    }
+
+    fn plan_stale(reason: formualizer_common::PlanStaleReason) -> ExcelError {
+        ExcelError::new(ExcelErrorKind::Value)
+            .with_message(format!("recalculation plan is stale: {}", reason.as_str()))
+            .with_extra(formualizer_common::ExcelErrorExtra::PlanStale { reason })
+    }
+
+    fn validate_recalc_plan_key(&self, key: &RecalcPlanKey) -> Result<(), ExcelError> {
+        use formualizer_common::PlanStaleReason;
+
+        if !Arc::ptr_eq(&key.engine_token, &self.recalc_plan_token) {
+            return Err(Self::plan_stale(PlanStaleReason::Engine));
+        }
+
+        let current = self.planning_revision_snapshot();
+        let expected = &key.revisions;
+        let stale = if expected.provider != current.provider {
+            Some(PlanStaleReason::Provider)
+        } else if expected.semantic != current.semantic {
+            Some(PlanStaleReason::Semantic)
+        } else if expected.budgets != current.budgets
+            || expected.deterministic_mode != current.deterministic_mode
+        {
+            Some(PlanStaleReason::Budget)
+        } else if expected.staged != current.staged {
+            Some(PlanStaleReason::Staged)
+        } else if expected.symbols != current.symbols {
+            Some(PlanStaleReason::Symbols)
+        } else if expected.formula_plane_mode != current.formula_plane_mode
+            || expected.authority != current.authority
+            || expected.authority_indexes != current.authority_indexes
+            || expected.authority_indexed_plane != current.authority_indexed_plane
+        {
+            Some(PlanStaleReason::Authority)
+        } else if expected.span_refs != current.span_refs {
+            Some(PlanStaleReason::SpanGeneration)
+        } else if expected.graph_topology_revision != current.graph_topology_revision
+            || expected.engine_topology_epoch != current.engine_topology_epoch
+        {
+            Some(PlanStaleReason::Graph)
+        } else {
+            None
+        };
+        stale.map_or(Ok(()), |reason| Err(Self::plan_stale(reason)))
+    }
+
     fn target_preparation_checkpoint(
         &mut self,
         cancel: Option<&AtomicBool>,
@@ -9114,6 +9390,10 @@ where
                     .saturating_add(last as u32)
                     .saturating_add(1);
             }
+        }
+        if start_row > end_row && matches!(selection, crate::engine::TableSelection::Data) {
+            start_row = entry.range.start.coord.row() + 1;
+            end_row = start_row;
         }
         if start_row > end_row || start_col > end_col {
             return Err(
@@ -15988,7 +16268,18 @@ where
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
         self.observe_function_semantic_epoch()?;
+        let sheet_existed = self.graph.sheet_id(sheet).is_some();
         let sheet_id = self.graph.sheet_id_mut(sheet);
+        let cell_ref = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let replaced_formula =
+            self.graph
+                .get_vertex_id_for_address(&cell_ref)
+                .is_some_and(|vertex| {
+                    matches!(
+                        self.graph.get_vertex_kind(*vertex),
+                        VertexKind::FormulaScalar | VertexKind::FormulaArray
+                    )
+                });
         self.demote_span_containing_cell_for_write(
             sheet_id,
             row.saturating_sub(1),
@@ -15997,6 +16288,9 @@ where
         .map_err(Self::editor_error_to_excel)?;
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
         self.record_formula_plane_changed_cell(sheet, row, col);
+        if !sheet_existed || replaced_formula {
+            self.mark_topology_edited();
+        }
         // Mirror into Arrow overlay when enabled
         self.mirror_value_to_overlay(sheet, row, col, &value);
         // Advance snapshot to reflect external mutation
@@ -17263,18 +17557,32 @@ where
             budgets: None,
             opaque_policy: crate::engine::OpaquePreparePolicy::Widen,
         };
-        let preparation = self.prepare_graph_for_routed_evaluation(targets, &options)?;
-        if matches!(
-            preparation.widened_scope,
-            crate::engine::PrepareScope::Workbook
-        ) && let Some(stats) = self.active_evaluation_resource_request.as_mut()
+        self.prepare_and_execute_target_recipe(targets, &options, delta)
+    }
+
+    fn prepare_and_execute_target_recipe(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        options: &crate::engine::PrepareTargetsOptions<'_>,
+        delta: Option<&mut DeltaCollector>,
+    ) -> Result<EvalResult, ExcelError> {
+        let preparation = self.prepare_graph_for_routed_evaluation(targets, options)?;
+        self.execute_prepared_target_recipe(targets, &preparation.widened_scope, delta)
+    }
+
+    fn execute_prepared_target_recipe(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        scope: &crate::engine::PrepareScope,
+        delta: Option<&mut DeltaCollector>,
+    ) -> Result<EvalResult, ExcelError> {
+        if matches!(scope, crate::engine::PrepareScope::Workbook)
+            && let Some(stats) = self.active_evaluation_resource_request.as_mut()
         {
-            // Scope is monotone for the request. Preparation may select the
-            // single final workbook-exact attempt; runtime never resets it.
             stats.workbook_exact_attempts = stats.workbook_exact_attempts.max(1);
         }
         let mut roots = self.resolve_target_producers(targets)?;
-        if let crate::engine::PrepareScope::Sheets(sheets) = &preparation.widened_scope {
+        if let crate::engine::PrepareScope::Sheets(sheets) = scope {
             let request_id = self
                 .active_evaluation_resource_request
                 .as_ref()
@@ -17318,10 +17626,7 @@ where
         }
         self.begin_evaluation_request();
         self.graph.flush_pending_edge_deltas();
-        let workbook_scope = matches!(
-            preparation.widened_scope,
-            crate::engine::PrepareScope::Workbook
-        );
+        let workbook_scope = matches!(scope, crate::engine::PrepareScope::Workbook);
         if self.config.formula_plane_mode == FormulaPlaneMode::AuthoritativeExperimental
             && self.graph.formula_authority().active_span_count() > 0
         {
@@ -17375,6 +17680,48 @@ where
             engine.validate_deterministic_mode()?;
             engine.evaluate_mixed_targets(targets, None)
         })
+    }
+
+    /// Evaluate typed targets with explicit preparation policy and request controls.
+    pub fn evaluate_targets_with_options(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        options: crate::engine::PrepareTargetsOptions<'_>,
+        cancel_flag: Option<Arc<AtomicBool>>,
+    ) -> Result<EvalResult, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::Targeted, |engine| {
+            engine.active_cancel_flag = cancel_flag;
+            engine.active_evaluation_deadline = options.deadline;
+            let result = (|| {
+                engine.cancellation_checkpoint("Evaluation cancelled before target preparation")?;
+                engine.observe_function_semantic_epoch()?;
+                engine.validate_deterministic_mode()?;
+                let _source_cache = engine.source_cache_session();
+                engine.prepare_and_execute_target_recipe(targets, &options, None)
+            })();
+            engine.active_cancel_flag = None;
+            engine.active_evaluation_deadline = None;
+            result
+        })
+    }
+
+    /// Evaluate typed targets with request-wide cancellation.
+    pub fn evaluate_targets_cancellable(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<EvalResult, ExcelError> {
+        self.observe_evaluation_resource_request(
+            EvaluationRequestKind::TargetedCancellable,
+            |engine| {
+                engine.observe_function_semantic_epoch()?;
+                engine.validate_deterministic_mode()?;
+                engine.active_cancel_flag = Some(cancel_flag);
+                let result = engine.evaluate_mixed_targets(targets, None);
+                engine.active_cancel_flag = None;
+                result
+            },
+        )
     }
 
     /// Evaluate typed targets and return the versioned run/region delta for the request.
@@ -17501,123 +17848,210 @@ where
         })
     }
 
-    /// Build a reusable evaluation plan that covers every formula vertex in the workbook.
+    /// Build a revision-bound compatibility plan covering every prepared formula vertex.
     pub fn build_recalc_plan(&self) -> Result<RecalcPlan, ExcelError> {
+        if self.has_staged_formulas() || self.staged_formula_index.has_packages() {
+            return Err(
+                Self::plan_stale(formualizer_common::PlanStaleReason::Staged).with_message(
+                    "compatibility recalculation plans require all staged formulas to be prepared",
+                ),
+            );
+        }
+        let key = self.recalc_plan_key();
         let mut vertices: Vec<VertexId> = self.graph.vertices_with_formulas().collect();
         vertices.sort_unstable();
-        if vertices.is_empty() {
-            return Ok(RecalcPlan {
-                schedule: crate::engine::Schedule {
-                    units: Vec::new(),
-                    layers: Vec::new(),
-                    cycles: Vec::new(),
-                },
-                has_dynamic_refs: false,
-            });
-        }
-
         let has_dynamic_refs = vertices.iter().copied().any(|v| self.graph.is_dynamic(v));
-        let (schedule, _, _) = self.create_evaluation_schedule_uncached(&vertices)?;
+        let schedule = if vertices.is_empty() {
+            crate::engine::Schedule {
+                units: Vec::new(),
+                layers: Vec::new(),
+                cycles: Vec::new(),
+            }
+        } else {
+            self.create_evaluation_schedule_uncached(&vertices)?.0
+        };
+        self.validate_recalc_plan_key(&key)?;
         Ok(RecalcPlan {
-            schedule,
-            has_dynamic_refs,
+            key,
+            kind: RecalcPlanKind::CompatibilityFull {
+                schedule,
+                has_dynamic_refs,
+            },
         })
     }
 
-    /// Evaluate using a previously constructed plan. This avoids rebuilding layer schedules for each run.
+    /// Prepare stable typed targets and retain a revision-bound run-local recipe.
+    pub fn build_recalc_plan_for_targets(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+    ) -> Result<RecalcPlan, ExcelError> {
+        self.build_recalc_plan_for_targets_with_options(
+            targets,
+            crate::engine::PrepareTargetsOptions::default(),
+        )
+    }
+
+    pub fn build_recalc_plan_for_targets_with_options(
+        &mut self,
+        targets: &[crate::engine::EvaluationTarget],
+        options: crate::engine::PrepareTargetsOptions<'_>,
+    ) -> Result<RecalcPlan, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
+            engine.observe_function_semantic_epoch()?;
+            engine.validate_deterministic_mode()?;
+            let _source_cache = engine.source_cache_session();
+            let preparation = engine.prepare_graph_for_routed_evaluation(targets, &options)?;
+            engine.graph.flush_pending_edge_deltas();
+            let topology = if matches!(
+                preparation.widened_scope,
+                crate::engine::PrepareScope::Workbook
+            ) {
+                RecalcTopology::Workbook
+            } else {
+                RecalcTopology::RunLocalRecipe
+            };
+            Ok(RecalcPlan {
+                key: engine.recalc_plan_key(),
+                kind: RecalcPlanKind::Target {
+                    targets: targets.to_vec(),
+                    scope: preparation.widened_scope,
+                    topology,
+                    dynamic_policy: DynamicPlanPolicy::BoundedTargetReplan,
+                },
+            })
+        })
+    }
+
+    /// Evaluate using a previously constructed compatibility or target plan.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
         self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
             engine.evaluate_recalc_plan_unobserved(plan)
         })
     }
 
+    pub fn evaluate_recalc_plan_with_controls(
+        &mut self,
+        plan: &RecalcPlan,
+        cancel_flag: Option<Arc<AtomicBool>>,
+        deadline: Option<Instant>,
+    ) -> Result<EvalResult, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
+            engine.active_cancel_flag = cancel_flag;
+            engine.active_evaluation_deadline = deadline;
+            let result = engine.evaluate_recalc_plan_unobserved(plan);
+            engine.active_cancel_flag = None;
+            engine.active_evaluation_deadline = None;
+            result
+        })
+    }
+
+    pub fn evaluate_recalc_plan_cancellable(
+        &mut self,
+        plan: &RecalcPlan,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<EvalResult, ExcelError> {
+        self.evaluate_recalc_plan_with_controls(plan, Some(cancel_flag), None)
+    }
+
     fn evaluate_recalc_plan_unobserved(
         &mut self,
         plan: &RecalcPlan,
     ) -> Result<EvalResult, ExcelError> {
-        if self.observe_function_semantic_epoch()? {
-            return self.evaluate_all();
-        }
-        self.begin_evaluation_request();
-        let _source_cache = self.source_cache_session();
+        self.graph.flush_pending_edge_deltas();
+        self.validate_recalc_plan_key(&plan.key)?;
+        self.cancellation_checkpoint("Evaluation cancelled before recalculation plan execution")?;
         self.validate_deterministic_mode()?;
-        if self.config.defer_graph_building {
-            self.build_graph_all()?;
-        }
-        if self.graph.formula_authority().active_span_count() > 0 {
-            return self.evaluate_authoritative_formula_plane_all();
-        }
 
-        let start = crate::instant::FzInstant::now();
-        let dirty_vertices = self.graph.get_evaluation_vertices();
-        if dirty_vertices.is_empty() {
-            return Ok(EvalResult {
-                computed_vertices: 0,
-                cycle_errors: 0,
-                elapsed: start.elapsed(),
-            });
-        }
+        match &plan.kind {
+            RecalcPlanKind::Target {
+                targets,
+                scope,
+                topology,
+                dynamic_policy,
+            } => {
+                debug_assert_eq!(*dynamic_policy, DynamicPlanPolicy::BoundedTargetReplan);
+                debug_assert_eq!(
+                    matches!(topology, RecalcTopology::Workbook),
+                    matches!(scope, crate::engine::PrepareScope::Workbook)
+                );
+                let _source_cache = self.source_cache_session();
+                self.execute_prepared_target_recipe(targets, scope, None)
+            }
+            RecalcPlanKind::CompatibilityFull {
+                schedule,
+                has_dynamic_refs,
+            } => {
+                let _source_cache = self.source_cache_session();
+                self.begin_evaluation_request();
+                if self.graph.formula_authority().active_span_count() > 0 {
+                    return self.evaluate_authoritative_formula_plane_all();
+                }
+                if *has_dynamic_refs {
+                    self.virtual_dep_fallback_activations =
+                        self.virtual_dep_fallback_activations.saturating_add(1);
+                    return self.evaluate_all_coordinator();
+                }
 
-        // Dynamic-reference formulas (INDIRECT/OFFSET-class) require per-pass virtual-dep
-        // augmentation. Reuse the direct recalc flow to preserve semantic parity.
-        if plan.has_dynamic_refs {
-            self.virtual_dep_fallback_activations =
-                self.virtual_dep_fallback_activations.saturating_add(1);
-            return self.evaluate_all();
-        }
+                let start = crate::instant::FzInstant::now();
+                let dirty_vertices = self.graph.get_evaluation_vertices();
+                if dirty_vertices.is_empty() {
+                    return Ok(EvalResult {
+                        computed_vertices: 0,
+                        cycle_errors: 0,
+                        elapsed: start.elapsed(),
+                    });
+                }
 
-        let dirty_set: FxHashSet<VertexId> = dirty_vertices.iter().copied().collect();
-        let mut computed_vertices = 0;
-        let mut cycle_errors = 0;
-
-        for &unit in &plan.schedule.units {
-            match unit {
-                ScheduleUnit::Cycle(i) => {
-                    // Recalc-plan quirk (Static): stamp only the DIRTY members
-                    // of the cycle, and count the cycle only when it had any.
-                    // Under Runtime the filter means: skip when no member is
-                    // dirty, evaluate the whole SCC when any is.
-                    let stamped = self.handle_cycle_unit(
-                        plan.schedule.unit_cycle(i),
-                        None,
-                        Some(&dirty_set),
-                        None,
+                let dirty_set: FxHashSet<VertexId> = dirty_vertices.iter().copied().collect();
+                let mut computed_vertices = 0;
+                let mut cycle_errors = 0;
+                for &unit in &schedule.units {
+                    self.cancellation_checkpoint(
+                        "Evaluation cancelled before recalculation plan schedule unit",
                     )?;
-                    if stamped > 0 {
-                        cycle_errors += 1;
+                    match unit {
+                        ScheduleUnit::Cycle(i) => {
+                            let stamped = self.handle_cycle_unit(
+                                schedule.unit_cycle(i),
+                                None,
+                                Some(&dirty_set),
+                                None,
+                            )?;
+                            if stamped > 0 {
+                                cycle_errors += 1;
+                            }
+                        }
+                        ScheduleUnit::Layer(i) => {
+                            let work: Vec<VertexId> = schedule
+                                .unit_layer(i)
+                                .vertices
+                                .iter()
+                                .copied()
+                                .filter(|v| dirty_set.contains(v))
+                                .collect();
+                            if work.is_empty() {
+                                continue;
+                            }
+                            let temp_layer = crate::engine::scheduler::Layer { vertices: work };
+                            if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
+                                computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
+                            } else {
+                                computed_vertices += self.evaluate_layer_sequential(&temp_layer)?;
+                            }
+                        }
                     }
                 }
-                ScheduleUnit::Layer(i) => {
-                    let work: Vec<VertexId> = plan
-                        .schedule
-                        .unit_layer(i)
-                        .vertices
-                        .iter()
-                        .copied()
-                        .filter(|v| dirty_set.contains(v))
-                        .collect();
-                    if work.is_empty() {
-                        continue;
-                    }
-                    let temp_layer = crate::engine::scheduler::Layer { vertices: work };
-                    if self.thread_pool.is_some() && temp_layer.vertices.len() > 1 {
-                        computed_vertices += self.evaluate_layer_parallel(&temp_layer)?;
-                    } else {
-                        computed_vertices += self.evaluate_layer_sequential(&temp_layer)?;
-                    }
-                }
+
+                self.resource_checkpoint(0)?;
+                self.graph.clear_dirty_flags(&dirty_vertices);
+                self.redirty_for_next_recalc();
+                Ok(EvalResult {
+                    computed_vertices,
+                    cycle_errors,
+                    elapsed: start.elapsed(),
+                })
             }
         }
-
-        self.resource_checkpoint(0)?;
-        self.graph.clear_dirty_flags(&dirty_vertices);
-        self.redirty_for_next_recalc();
-
-        Ok(EvalResult {
-            computed_vertices,
-            cycle_errors,
-            elapsed: start.elapsed(),
-        })
     }
     fn evaluate_all_legacy_and_ack_dirty(
         &mut self,

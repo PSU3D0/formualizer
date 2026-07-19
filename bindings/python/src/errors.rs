@@ -45,6 +45,9 @@ fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject
         ExcelErrorExtra::PreparationStale { reason } => {
             let _ = dict.set_item("preparation_stale_reason", reason.as_str());
         }
+        ExcelErrorExtra::PlanStale { reason } => {
+            let _ = dict.set_item("plan_stale_reason", reason.as_str());
+        }
     }
     Some(dict.into_any().unbind())
 }
@@ -84,6 +87,9 @@ pub(crate) fn excel_error_to_pyerr(error: RustExcelError) -> PyErr {
         }
         if let ExcelErrorExtra::PreparationStale { reason } = &error.extra {
             let _ = value.setattr("preparation_stale_reason", reason.as_str());
+        }
+        if let ExcelErrorExtra::PlanStale { reason } = &error.extra {
+            let _ = value.setattr("plan_stale_reason", reason.as_str());
         }
     });
     pyerr
