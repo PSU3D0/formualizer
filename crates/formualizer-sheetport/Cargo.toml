@@ -21,6 +21,8 @@ system-clock = ["formualizer-eval/system-clock", "formualizer-workbook/system-cl
 js-runtime = ["formualizer-eval/js-runtime", "formualizer-workbook/js-runtime"]
 # umya: opt-in umya-spreadsheet I/O adapters in the workbook layer.
 umya = ["formualizer-workbook/umya_integration"]
+# Internal telemetry access for repository benchmarks; not a supported public API.
+benchmark_internal = []
 
 [dependencies]
 sheetport-spec = { path = "../sheetport-spec", version = "0.3.0" }

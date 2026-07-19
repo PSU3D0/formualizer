@@ -1419,6 +1419,7 @@ dependencies = [
  "formualizer-common",
  "formualizer-eval",
  "formualizer-parse",
+ "formualizer-sheetport",
  "formualizer-testkit",
  "formualizer-workbook",
  "ironcalc",
@@ -1427,6 +1428,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "sheetport-spec",
  "umya-spreadsheet",
  "zip 7.2.0",
 ]
