@@ -40,7 +40,7 @@ use formualizer_eval::engine::{CycleConfig, CyclePolicy};
 /// Returns `None` when there is no `<calcPr>` element at all (so callers leave
 /// the engine config untouched). A present-but-empty `<calcPr/>` yields a
 /// default [`CalcSettings`] (`iterate = false`).
-#[cfg(any(feature = "calamine", feature = "umya"))]
+#[cfg(any(feature = "calamine", feature = "umya", feature = "experimental-fzcp"))]
 pub fn parse_calc_pr(workbook_xml: &[u8]) -> Option<CalcSettings> {
     use quick_xml::Reader as XmlReader;
     use quick_xml::events::Event;

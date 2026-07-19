@@ -65,6 +65,11 @@ impl DependencyGraph {
             .and_then(|name| self.tables.get(name))
     }
 
+    #[cfg(feature = "experimental-fzcp")]
+    pub(crate) fn tables_iter(&self) -> impl Iterator<Item = &TableEntry> {
+        self.tables.values()
+    }
+
     pub fn define_table(
         &mut self,
         name: &str,

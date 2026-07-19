@@ -830,6 +830,41 @@ pub enum OverlayValue {
     Pending,
 }
 
+/// Lossless projection of the distinctions retained by the Arrow value store.
+///
+/// This intentionally exposes numeric payloads as IEEE-754 bits. Integers and
+/// the original Date/Time/DateTime variant are already normalized by ingest and
+/// therefore cannot be recovered here. `None` from the accessor means empty;
+/// the store does not retain an explicit-empty-versus-absent distinction.
+#[cfg(feature = "experimental-fzcp")]
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredCellValue {
+    NumberBits(u64),
+    DateTimeBits(u64),
+    DurationBits(u64),
+    Boolean(bool),
+    Text(String),
+    ErrorCode(u8),
+    Pending,
+}
+
+#[cfg(feature = "experimental-fzcp")]
+impl StoredCellValue {
+    fn from_overlay(value: &OverlayValue) -> Option<Self> {
+        match value {
+            OverlayValue::Empty => None,
+            OverlayValue::Number(value) => Some(Self::NumberBits(value.to_bits())),
+            OverlayValue::DateTime(value) => Some(Self::DateTimeBits(value.to_bits())),
+            OverlayValue::Duration(value) => Some(Self::DurationBits(value.to_bits())),
+            OverlayValue::Boolean(value) => Some(Self::Boolean(*value)),
+            OverlayValue::Text(value) => Some(Self::Text(value.to_string())),
+            OverlayValue::Error(code) => Some(Self::ErrorCode(*code)),
+            OverlayValue::Pending => Some(Self::Pending),
+        }
+    }
+}
+
 impl OverlayValue {
     pub fn from_literal_value(
         value: &LiteralValue,
@@ -3442,6 +3477,60 @@ impl ArrowSheet {
         )
     }
 
+    /// Return the stored source/user value without consulting formula-result overlays.
+    ///
+    /// This is a serialization accessor, not an evaluation read. It deliberately
+    /// excludes the computed overlay so cached/recalculated formula results cannot
+    /// leak into a calculation package.
+    #[cfg(feature = "experimental-fzcp")]
+    #[doc(hidden)]
+    pub fn export_stored_cell(&self, abs_row: usize, abs_col: usize) -> Option<StoredCellValue> {
+        if abs_row >= self.nrows as usize || abs_col >= self.columns.len() {
+            return None;
+        }
+        let (chunk_idx, in_off) = self.chunk_of_row(abs_row)?;
+        let chunk = self.columns[abs_col].chunk(chunk_idx)?;
+
+        if let Some(value) = chunk.overlay.get_scalar(in_off) {
+            return StoredCellValue::from_overlay(value.as_value());
+        }
+
+        match TypeTag::from_u8(chunk.type_tag.value(in_off)) {
+            TypeTag::Empty => None,
+            TypeTag::Number => chunk
+                .numbers
+                .as_ref()
+                .filter(|array| !array.is_null(in_off))
+                .map(|array| StoredCellValue::NumberBits(array.value(in_off).to_bits())),
+            TypeTag::DateTime => chunk
+                .numbers
+                .as_ref()
+                .filter(|array| !array.is_null(in_off))
+                .map(|array| StoredCellValue::DateTimeBits(array.value(in_off).to_bits())),
+            TypeTag::Duration => chunk
+                .numbers
+                .as_ref()
+                .filter(|array| !array.is_null(in_off))
+                .map(|array| StoredCellValue::DurationBits(array.value(in_off).to_bits())),
+            TypeTag::Boolean => chunk
+                .booleans
+                .as_ref()
+                .filter(|array| !array.is_null(in_off))
+                .map(|array| StoredCellValue::Boolean(array.value(in_off))),
+            TypeTag::Text => chunk.text.as_ref().and_then(|array| {
+                let array = array.as_any().downcast_ref::<StringArray>()?;
+                (!array.is_null(in_off))
+                    .then(|| StoredCellValue::Text(array.value(in_off).to_string()))
+            }),
+            TypeTag::Error => chunk
+                .errors
+                .as_ref()
+                .filter(|array| !array.is_null(in_off))
+                .map(|array| StoredCellValue::ErrorCode(array.value(in_off))),
+            TypeTag::Pending => Some(StoredCellValue::Pending),
+        }
+    }
+
     /// Fast single-cell read (0-based row/col) with overlay precedence.
     ///
     /// This avoids constructing a 1x1 RangeView and is intended for tight read loops.
@@ -3965,7 +4054,11 @@ impl ArrowSheet {
     /// user-edit overlays). The read cascade is `overlay → computed_overlay → base`, so
     /// folding computed overlay entries into base arrays is transparent: the `overlay` layer
     /// (user edits) is left untouched and still takes precedence on reads.
-    pub fn compact_computed_overlay_chunk(&mut self, col_idx: usize, ch_idx: usize) -> usize {
+    pub(crate) fn compact_computed_overlay_chunk(
+        &mut self,
+        col_idx: usize,
+        ch_idx: usize,
+    ) -> usize {
         if col_idx >= self.columns.len() {
             return 0;
         }
@@ -4152,14 +4245,11 @@ impl ArrowSheet {
     }
 
     /// Compact a sparse chunk's computed overlay into its base arrays.
-    /// Equivalent to `compact_computed_overlay_chunk` but for sparse chunks.
-    pub fn compact_computed_overlay_sparse_chunk(
+    pub(crate) fn compact_computed_overlay_sparse_chunk(
         &mut self,
         col_idx: usize,
         ch_idx: usize,
     ) -> usize {
-        // Sparse chunks are accessed via the same chunk/chunk_mut API,
-        // so we delegate to the dense method which already handles both.
         self.compact_computed_overlay_chunk(col_idx, ch_idx)
     }
 

@@ -111,6 +111,9 @@ perf_instrumentation = []
 formula_plane_diagnostics = []
 # Private benchmark-only forced-replay seam; not a product configuration surface.
 benchmark_internal = []
+# Internal serialization seams used only by the opt-in FZCP feasibility spike.
+# This feature is intentionally empty by default and is not a stable API promise.
+experimental-fzcp = []
 
 [[example]]
 name = "recalc_quadratic"
