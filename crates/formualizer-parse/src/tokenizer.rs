@@ -662,7 +662,7 @@ fn is_reference_operand_value(value: &str) -> bool {
 
 fn next_starts_reference_expression(formula: &str, mut offset: usize) -> bool {
     let bytes = formula.as_bytes();
-    while offset < bytes.len() && matches!(bytes[offset], b' ' | b'\n') {
+    while offset < bytes.len() && matches!(bytes[offset], b' ' | b'\t' | b'\r' | b'\n') {
         offset += 1;
     }
     if offset >= bytes.len() {
@@ -674,7 +674,7 @@ fn next_starts_reference_expression(formula: &str, mut offset: usize) -> bool {
 
 fn next_reference_has_sheet_qualifier(formula: &str, mut offset: usize) -> bool {
     let bytes = formula.as_bytes();
-    while offset < bytes.len() && matches!(bytes[offset], b' ' | b'\n') {
+    while offset < bytes.len() && matches!(bytes[offset], b' ' | b'\t' | b'\r' | b'\n') {
         offset += 1;
     }
 
@@ -690,7 +690,7 @@ fn next_reference_has_sheet_qualifier(formula: &str, mut offset: usize) -> bool 
             }
             b'!' => return true,
             b':' if !in_quote => return false,
-            b',' | b';' | b'}' | b')' | b' ' | b'\n' | b'+' | b'-' | b'*' | b'/' | b'^' | b'&'
+            b',' | b';' | b'}' | b')' | b' ' | b'\t' | b'\r' | b'\n' | b'+' | b'-' | b'*' | b'/' | b'^' | b'&'
             | b'=' | b'>' | b'<' | b'%' | b'@'
                 if !in_quote =>
             {
@@ -878,7 +878,7 @@ impl<'a> SpanTokenizer<'a> {
                         self.parse_error()
                     }
                 }
-                b' ' | b'\n' => self.parse_whitespace(),
+                b' ' | b'\t' | b'\r' | b'\n' => self.parse_whitespace(),
                 b':' => {
                     if self.should_emit_colon_infix() {
                         self.emit_infix_operator(self.offset, self.offset + 1);
@@ -1212,6 +1212,8 @@ impl<'a> SpanTokenizer<'a> {
             let ch = self.formula.as_bytes()[end];
             if is_token_ender(ch)
                 || ch == b' '
+                || ch == b'\t'
+                || ch == b'\r'
                 || ch == b'\n'
                 || ch == b'('
                 || ch == b'{'
@@ -1239,7 +1241,7 @@ impl<'a> SpanTokenizer<'a> {
         let ws_start = self.offset;
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
-                b' ' | b'\n' => self.offset += 1,
+                b' ' | b'\t' | b'\r' | b'\n' => self.offset += 1,
                 _ => break,
             }
         }
@@ -1650,7 +1652,7 @@ impl Tokenizer {
                         self.parse_error()?
                     }
                 }
-                b' ' | b'\n' => self.parse_whitespace()?,
+                b' ' | b'\t' | b'\r' | b'\n' => self.parse_whitespace()?,
                 b':' => {
                     if self.should_emit_colon_infix() {
                         self.emit_infix_operator(self.offset, self.offset + 1);
@@ -1987,7 +1989,7 @@ impl Tokenizer {
         let ws_start = self.offset;
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
-                b' ' | b'\n' => self.offset += 1,
+                b' ' | b'\t' | b'\r' | b'\n' => self.offset += 1,
                 _ => break,
             }
         }

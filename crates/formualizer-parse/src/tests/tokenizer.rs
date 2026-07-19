@@ -2138,5 +2138,27 @@ mod tests {
                         .any(|t| t.0 == TokenType::OpInfix && t.2 == " ")
             );
         }
+
+        #[test]
+        fn crlf_and_tabs_are_whitespace() {
+            // Regression: the tokenizer treated only ' ' and '\n' as whitespace,
+            // so the Windows CRLF sequence "\r\n" (Alt+Enter line breaks) and tabs
+            // broke parsing — even though '\r' and '\n' individually did not.
+            for f in [
+                "=SUM(\r\n1,2\r\n)", // Apache POI test-data case
+                "=A1 +\r\n B1",
+                "=IF(A1,\r\nB1)",
+                "=SUM(A1,\tA2)",
+                "=\tSUM(A1,A2)\t",
+            ] {
+                assert!(Tokenizer::new(f).is_ok(), "failed to tokenize {f:?}");
+            }
+            // CRLF/tab whitespace is filtered out, leaving the real tokens intact.
+            let toks = classic_non_ws("=SUM(\r\n1,2\r\n)");
+            assert!(
+                toks.iter().any(|t| t.2.starts_with("SUM")),
+                "expected SUM token, got {toks:?}"
+            );
+        }
     }
 }
