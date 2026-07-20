@@ -3,6 +3,7 @@ use crate::engine::graph::DependencyGraph;
 use crate::reference::{CellRef, Coord};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
+use formualizer_parse::pretty::canonical_formula;
 
 fn lit_num(value: f64) -> LiteralValue {
     LiteralValue::Number(value)
@@ -355,7 +356,52 @@ fn test_delete_columns_with_dependencies() {
 
     drop(editor);
 
-    // C1 -> B1, should have #REF! since it referenced deleted B1
-    // Check that the formula that was at C1 (now at B1) has been marked as #REF!
-    assert!(graph.is_ref_error(c1_id));
+    // C1 -> B1. Its deleted B1 operand is now an ordinary #REF! literal;
+    // the graph-global forced-error marker is reserved for errors without an AST expression.
+    let ast = graph
+        .get_formula(c1_id)
+        .expect("the moved formula should still exist");
+    assert_eq!(canonical_formula(&ast), "=#REF! + 5");
+    assert!(!graph.is_ref_error(c1_id));
+}
+
+#[test]
+fn structural_ref_literal_survives_undo_and_redo() {
+    use crate::engine::ChangeLog;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+
+    let mut graph = super::common::graph_truth_graph();
+    graph.set_cell_value("Sheet1", 1, 2, lit_num(10.0)).unwrap();
+    let formula_id = graph
+        .set_cell_formula("Sheet1", 1, 3, parse("=B1+5").unwrap())
+        .unwrap()
+        .affected_vertices[0];
+
+    let mut log = ChangeLog::new();
+    {
+        let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+        editor.delete_columns(0, 1, 1).unwrap();
+    }
+    assert_eq!(
+        canonical_formula(&graph.get_formula(formula_id).expect("formula after delete")),
+        "=#REF! + 5"
+    );
+
+    let mut undo = UndoEngine::new();
+    undo.undo(&mut graph, &mut log).unwrap();
+    assert_eq!(
+        canonical_formula(&graph.get_formula(formula_id).expect("formula after undo")),
+        "=B1 + 5"
+    );
+    assert!(
+        graph
+            .get_vertex_id_for_address(&sheet1_cell(&graph, 1, 2))
+            .is_some()
+    );
+
+    undo.redo(&mut graph, &mut log).unwrap();
+    assert_eq!(
+        canonical_formula(&graph.get_formula(formula_id).expect("formula after redo")),
+        "=#REF! + 5"
+    );
 }

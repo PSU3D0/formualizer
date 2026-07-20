@@ -13283,7 +13283,12 @@ where
                         let shift_op = shift_operation_for(op);
                         let adjuster =
                             crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster::new();
-                        let Some(adjusted_ast) = adjuster.adjust_ast_if_changed(&ast, &shift_op)
+                        let context = crate::engine::graph::editor::reference_adjuster::ReferenceContext::new(
+                            span.sheet_id,
+                            self.graph.sheet_reg(),
+                        );
+                        let Some(adjusted_ast) =
+                            adjuster.adjust_ast_if_changed_in_context(&ast, &shift_op, &context)
                         else {
                             // The classifier saw a displaced absolute read,
                             // so an unchanged AST is a contract violation;

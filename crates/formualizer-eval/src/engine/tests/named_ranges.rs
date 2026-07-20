@@ -6,6 +6,7 @@ use crate::reference::{CellRef, Coord, RangeRef};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
+use formualizer_parse::pretty::canonical_formula;
 use rustc_hash::FxHashSet;
 
 /// Helper to create a literal number value
@@ -1728,6 +1729,58 @@ fn test_named_formula_adjustment() {
             ));
         }
         _ => panic!("Expected Formula definition"),
+    }
+}
+
+#[test]
+fn named_formula_adjustment_is_scope_and_sheet_aware() {
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
+
+    let mut graph = DependencyGraph::new();
+    let other_id = graph.add_sheet("Other").unwrap();
+
+    graph
+        .define_name(
+            "WorkbookFormula",
+            NamedDefinition::Formula {
+                ast: parse("=A1+Other!A1").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    graph
+        .define_name(
+            "SheetFormula",
+            NamedDefinition::Formula {
+                ast: parse("=A1+Sheet1!A1").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Sheet(other_id),
+        )
+        .unwrap();
+
+    graph
+        .adjust_named_ranges(&ShiftOperation::DeleteRows {
+            sheet_id: 0,
+            start: 0,
+            count: 1,
+        })
+        .unwrap();
+
+    match graph.resolve_name("WorkbookFormula", other_id).unwrap() {
+        NamedDefinition::Formula { ast, .. } => {
+            assert_eq!(canonical_formula(ast), "=#REF! + Other!A1");
+        }
+        other => panic!("expected workbook formula, got {other:?}"),
+    }
+    match graph.resolve_name("SheetFormula", other_id).unwrap() {
+        NamedDefinition::Formula { ast, .. } => {
+            assert_eq!(canonical_formula(ast), "=A1 + #REF!");
+        }
+        other => panic!("expected sheet formula, got {other:?}"),
     }
 }
 

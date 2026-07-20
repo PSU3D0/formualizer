@@ -1,7 +1,8 @@
 use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::reference_adjuster::{
-    MoveReferenceAdjuster, ReferenceAdjuster, RelativeReferenceAdjuster, ShiftOperation,
+    MoveReferenceAdjuster, ReferenceAdjuster, ReferenceContext, RelativeReferenceAdjuster,
+    ShiftOperation,
 };
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::{ChangeEvent, ChangeLogger, VertexId, VertexKind};
@@ -925,7 +926,11 @@ impl<'g> VertexEditor<'g> {
 
         for id in formula_vertices {
             if let Some(ast) = self.get_formula_ast(id)
-                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed_in_context(
+                    &ast,
+                    &op,
+                    &ReferenceContext::new(self.graph.get_sheet_id(id), self.graph.sheet_reg()),
+                )
             {
                 if self.has_logger() {
                     self.log_change(ChangeEvent::FormulaAdjusted {
@@ -1049,7 +1054,11 @@ impl<'g> VertexEditor<'g> {
 
         for id in formula_vertices {
             if let Some(ast) = self.get_formula_ast(id)
-                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed_in_context(
+                    &ast,
+                    &op,
+                    &ReferenceContext::new(self.graph.get_sheet_id(id), self.graph.sheet_reg()),
+                )
             {
                 if self.has_logger() {
                     self.log_change(ChangeEvent::FormulaAdjusted {
@@ -1161,7 +1170,11 @@ impl<'g> VertexEditor<'g> {
 
         for id in formula_vertices {
             if let Some(ast) = self.get_formula_ast(id)
-                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed_in_context(
+                    &ast,
+                    &op,
+                    &ReferenceContext::new(self.graph.get_sheet_id(id), self.graph.sheet_reg()),
+                )
             {
                 if self.has_logger() {
                     self.log_change(ChangeEvent::FormulaAdjusted {
@@ -1285,7 +1298,11 @@ impl<'g> VertexEditor<'g> {
 
         for id in formula_vertices {
             if let Some(ast) = self.get_formula_ast(id)
-                && let Some(adjusted) = adjuster.adjust_ast_if_changed(&ast, &op)
+                && let Some(adjusted) = adjuster.adjust_ast_if_changed_in_context(
+                    &ast,
+                    &op,
+                    &ReferenceContext::new(self.graph.get_sheet_id(id), self.graph.sheet_reg()),
+                )
             {
                 if self.has_logger() {
                     self.log_change(ChangeEvent::FormulaAdjusted {

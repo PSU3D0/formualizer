@@ -55,6 +55,7 @@ fn adjust_named_definition(
     definition: &mut NamedDefinition,
     adjuster: &crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster,
     operation: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+    context: &crate::engine::graph::editor::reference_adjuster::ReferenceContext<'_>,
 ) -> Result<(), ExcelError> {
     use crate::engine::graph::editor::reference_adjuster::AbsShiftPolicy;
     match definition {
@@ -94,7 +95,12 @@ fn adjust_named_definition(
             dependencies,
             range_deps,
         } => {
-            let adjusted_ast = adjuster.adjust_ast_with_policy(ast, operation, AbsShiftPolicy::Pin);
+            let adjusted_ast = adjuster.adjust_ast_with_policy_in_context(
+                ast,
+                operation,
+                AbsShiftPolicy::Pin,
+                context,
+            );
             *ast = adjusted_ast;
 
             dependencies.clear();
@@ -729,14 +735,28 @@ impl DependencyGraph {
         let adjuster = crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster::new();
 
         let changed = !self.named_ranges.is_empty() || !self.sheet_named_ranges.is_empty();
-        // Adjust workbook-scoped names
+        // Workbook-scoped formulas bind unqualified references to the default sheet.
+        let workbook_context =
+            crate::engine::graph::editor::reference_adjuster::ReferenceContext::new(
+                self.default_sheet_id,
+                &self.sheet_reg,
+            );
         for named_range in self.named_ranges.values_mut() {
-            adjust_named_definition(&mut named_range.definition, &adjuster, operation)?;
+            adjust_named_definition(
+                &mut named_range.definition,
+                &adjuster,
+                operation,
+                &workbook_context,
+            )?;
         }
 
-        // Adjust sheet-scoped names
-        for named_range in self.sheet_named_ranges.values_mut() {
-            adjust_named_definition(&mut named_range.definition, &adjuster, operation)?;
+        // Sheet-scoped formulas bind unqualified references to their scope sheet.
+        for ((scope_sheet_id, _), named_range) in self.sheet_named_ranges.iter_mut() {
+            let context = crate::engine::graph::editor::reference_adjuster::ReferenceContext::new(
+                *scope_sheet_id,
+                &self.sheet_reg,
+            );
+            adjust_named_definition(&mut named_range.definition, &adjuster, operation, &context)?;
         }
         if changed {
             self.bump_symbol_revision();
