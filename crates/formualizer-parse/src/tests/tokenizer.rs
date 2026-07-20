@@ -1969,6 +1969,7 @@ mod tests {
     }
 
     mod reference_operators {
+        use crate::parser::{ASTNodeType, parse};
         use crate::tokenizer::{TokenStream, TokenSubType, TokenType, Tokenizer};
 
         fn classic_non_ws(formula: &str) -> Vec<(TokenType, TokenSubType, String)> {
@@ -2125,40 +2126,102 @@ mod tests {
         }
 
         #[test]
-        fn space_with_newline_between_refs_is_intersection_op() {
-            // Whitespace runs (including \n) collapse to OpInfix(" ") when both
-            // sides are reference-producing.
-            let classic = classic_non_ws("=A1:A3\n B1:B3");
-            assert!(
-                classic
-                    .iter()
-                    .any(|t| t.0 == TokenType::OpInfix && t.2.contains(' '))
-                    || classic
-                        .iter()
-                        .any(|t| t.0 == TokenType::OpInfix && t.2 == " ")
-            );
+        fn mixed_whitespace_with_space_is_canonical_intersection() {
+            let formula = "=A1:A3\r\n \tB1:B3";
+            let classic = Tokenizer::new(formula).expect("classic tokenize");
+            let classic_op = classic
+                .items
+                .iter()
+                .find(|token| token.token_type == TokenType::OpInfix)
+                .expect("classic intersection token");
+            assert_eq!(classic_op.value, " ");
+            assert_eq!(&formula[classic_op.start..classic_op.end], "\r\n \t");
+
+            let stream = TokenStream::new(formula).expect("span tokenize");
+            let span = stream
+                .spans
+                .iter()
+                .find(|span| span.token_type == TokenType::OpInfix)
+                .expect("span intersection token");
+            assert_eq!(&formula[span.start..span.end], "\r\n \t");
+            let owned = stream.to_tokens();
+            let owned_op = owned
+                .iter()
+                .find(|token| token.token_type == TokenType::OpInfix)
+                .expect("owned span intersection token");
+            assert_eq!(owned_op.value, " ");
+            assert_eq!(stream.render_formula(), formula);
+
+            let ast = parse(formula).expect("intersection parse");
+            assert!(matches!(
+                ast.node_type,
+                ASTNodeType::BinaryOp { ref op, .. } if op == " "
+            ));
         }
 
         #[test]
-        fn crlf_and_tabs_are_whitespace() {
+        fn crlf_and_tabs_are_ordinary_whitespace_without_space() {
             // Regression: the tokenizer treated only ' ' and '\n' as whitespace,
-            // so the Windows CRLF sequence "\r\n" (Alt+Enter line breaks) and tabs
-            // broke parsing — even though '\r' and '\n' individually did not.
-            for f in [
-                "=SUM(\r\n1,2\r\n)", // Apache POI test-data case
-                "=A1 +\r\n B1",
+            // so Windows CRLF and tabs could be absorbed into operands.
+            for formula in [
+                "=SUM(\r\n1,2\r\n)",
+                "=A1 +\r\nB1",
                 "=IF(A1,\r\nB1)",
                 "=SUM(A1,\tA2)",
                 "=\tSUM(A1,A2)\t",
             ] {
-                assert!(Tokenizer::new(f).is_ok(), "failed to tokenize {f:?}");
+                let classic = Tokenizer::new(formula).expect("classic tokenize");
+                let stream = TokenStream::new(formula).expect("span tokenize");
+                assert!(parse(formula).is_ok(), "failed to parse {formula:?}");
+                assert_eq!(stream.render_formula(), formula);
+                assert!(
+                    classic.items.iter().all(|token| {
+                        !matches!(token.token_type, TokenType::Operand)
+                            || !token
+                                .value
+                                .bytes()
+                                .any(|byte| matches!(byte, b'\t' | b'\r' | b'\n'))
+                    }),
+                    "control whitespace leaked into an operand: {:?}",
+                    classic.items
+                );
+                assert_eq!(classic.items.len(), stream.spans.len());
             }
-            // CRLF/tab whitespace is filtered out, leaving the real tokens intact.
-            let toks = classic_non_ws("=SUM(\r\n1,2\r\n)");
-            assert!(
-                toks.iter().any(|t| t.2.starts_with("SUM")),
-                "expected SUM token, got {toks:?}"
-            );
+
+            // Only ASCII space spells intersection. Other whitespace between
+            // adjacent references remains ordinary whitespace, so the formula
+            // is rejected rather than creating a raw CR/LF/TAB operator.
+            for formula in ["=A1\tB1", "=A1\rB1", "=A1\nB1", "=A1\r\nB1"] {
+                let classic = Tokenizer::new(formula).expect("classic tokenize");
+                let stream = TokenStream::new(formula).expect("span tokenize");
+                assert!(
+                    classic
+                        .items
+                        .iter()
+                        .all(|token| token.token_type != TokenType::OpInfix)
+                );
+                assert!(
+                    stream
+                        .spans
+                        .iter()
+                        .all(|span| span.token_type != TokenType::OpInfix)
+                );
+                assert!(parse(formula).is_err(), "unexpectedly parsed {formula:?}");
+            }
+        }
+
+        #[test]
+        fn control_whitespace_inside_quotes_is_preserved() {
+            for formula in ["=\"a\tb\r\nc\"", "='Sheet\tOne'!A1"] {
+                let classic = Tokenizer::new(formula).expect("classic tokenize");
+                let stream = TokenStream::new(formula).expect("span tokenize");
+                assert_eq!(stream.render_formula(), formula);
+                assert!(parse(formula).is_ok(), "failed to parse {formula:?}");
+                assert!(classic.items.iter().any(|token| {
+                    token.value.contains('\t')
+                        && !matches!(token.token_type, TokenType::Whitespace | TokenType::OpInfix)
+                }));
+            }
         }
     }
 }

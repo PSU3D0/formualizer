@@ -27,6 +27,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Formula tokenization now accepts TAB, CR, LF, and CRLF as lexical whitespace in both tokenizer frontends while preserving raw source spans. Only an ASCII space can spell the range-intersection operator, whose semantic token/AST value is canonicalized to `" "` even when its source run also contains line breaks or tabs.
 - Structural row and column deletes now rewrite invalidated reference leaves to ordinary `#REF!` error literals instead of magic `#REF` sheet sentinels. This preserves lazy `IF`/`IFERROR` semantics, dependency rewiring, formula display/reparse, undo/redo, whole-axis adjustment, cross-sheet locality, and legitimate worksheets named `#REF` across legacy and FormulaPlane structural paths.
 - Fixed deferred `evaluate_cells_with_delta` requests missing transitive formula precedents staged on non-target sheets.
 - Fixed experimental FormulaPlane capacity fallbacks evaluating legacy readers before required span results were available. Unsafe requests now transactionally demote exactly their scheduled spans, retain pending dirty regions across failed attempts, and fail closed behind a finite materialization limit.

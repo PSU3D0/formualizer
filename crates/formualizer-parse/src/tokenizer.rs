@@ -472,6 +472,20 @@ pub struct TokenStream {
     diagnostics: Vec<TokenDiagnostic>,
 }
 
+fn is_whitespace_intersection_span(source: &str, span: &TokenSpan) -> bool {
+    if span.token_type != TokenType::OpInfix {
+        return false;
+    }
+    let Some(value) = source.get(span.start..span.end) else {
+        return false;
+    };
+    value.as_bytes().contains(&b' ')
+        && value
+            .as_bytes()
+            .iter()
+            .all(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+}
+
 impl TokenStream {
     pub fn new(formula: &str) -> Result<Self, TokenizerError> {
         Self::new_with_dialect(formula, FormulaDialect::Excel)
@@ -560,11 +574,14 @@ impl TokenStream {
         self.spans
             .iter()
             .map(|s| {
-                let value = self
-                    .source
-                    .get(s.start..s.end)
-                    .unwrap_or_default()
-                    .to_string();
+                let value = if is_whitespace_intersection_span(&self.source, s) {
+                    " ".to_string()
+                } else {
+                    self.source
+                        .get(s.start..s.end)
+                        .unwrap_or_default()
+                        .to_string()
+                };
                 Token::new_with_span(value, s.token_type, s.subtype, s.start, s.end)
             })
             .collect()
@@ -690,8 +707,8 @@ fn next_reference_has_sheet_qualifier(formula: &str, mut offset: usize) -> bool 
             }
             b'!' => return true,
             b':' if !in_quote => return false,
-            b',' | b';' | b'}' | b')' | b' ' | b'\t' | b'\r' | b'\n' | b'+' | b'-' | b'*' | b'/' | b'^' | b'&'
-            | b'=' | b'>' | b'<' | b'%' | b'@'
+            b',' | b';' | b'}' | b')' | b' ' | b'\t' | b'\r' | b'\n' | b'+' | b'-' | b'*'
+            | b'/' | b'^' | b'&' | b'=' | b'>' | b'<' | b'%' | b'@'
                 if !in_quote =>
             {
                 return false;
@@ -1239,14 +1256,22 @@ impl<'a> SpanTokenizer<'a> {
         self.save_token();
 
         let ws_start = self.offset;
+        let mut contains_intersection_space = false;
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
-                b' ' | b'\t' | b'\r' | b'\n' => self.offset += 1,
+                b' ' => {
+                    contains_intersection_space = true;
+                    self.offset += 1;
+                }
+                b'\t' | b'\r' | b'\n' => self.offset += 1,
                 _ => break,
             }
         }
 
-        let token_type = if self.prev_is_reference_producing()
+        // Excel accepts TAB/CR/LF as lexical whitespace, but only an ASCII
+        // space in the run can spell the range-intersection operator.
+        let token_type = if contains_intersection_space
+            && self.prev_is_reference_producing()
             && next_starts_reference_expression(self.formula, self.offset)
         {
             TokenType::OpInfix
@@ -1987,14 +2012,22 @@ impl Tokenizer {
         self.save_token();
 
         let ws_start = self.offset;
+        let mut contains_intersection_space = false;
         while self.offset < self.formula.len() {
             match self.formula.as_bytes()[self.offset] {
-                b' ' | b'\t' | b'\r' | b'\n' => self.offset += 1,
+                b' ' => {
+                    contains_intersection_space = true;
+                    self.offset += 1;
+                }
+                b'\t' | b'\r' | b'\n' => self.offset += 1,
                 _ => break,
             }
         }
 
-        let token_type = if self.prev_is_reference_producing()
+        // Excel accepts TAB/CR/LF as lexical whitespace, but only an ASCII
+        // space in the run can spell the range-intersection operator.
+        let token_type = if contains_intersection_space
+            && self.prev_is_reference_producing()
             && next_starts_reference_expression(&self.formula, self.offset)
         {
             TokenType::OpInfix
@@ -2002,13 +2035,24 @@ impl Tokenizer {
             TokenType::Whitespace
         };
 
-        self.items.push(Token::from_slice(
-            &self.formula,
-            token_type,
-            TokenSubType::None,
-            ws_start,
-            self.offset,
-        ));
+        let token = if token_type == TokenType::OpInfix {
+            Token::new_with_span(
+                " ".to_string(),
+                token_type,
+                TokenSubType::None,
+                ws_start,
+                self.offset,
+            )
+        } else {
+            Token::from_slice(
+                &self.formula,
+                token_type,
+                TokenSubType::None,
+                ws_start,
+                self.offset,
+            )
+        };
+        self.items.push(token);
         self.start_token();
         Ok(())
     }
