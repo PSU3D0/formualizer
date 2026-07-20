@@ -167,6 +167,8 @@ jobs:
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
+        # Avoid maturin-action's broken automatic range resolution on Node 24.
+        maturin-version: v1.11.5
         working-directory: bindings/python
         # Build a single abi3 wheel (not one per Python interpreter)
         # In `act` (local CI), avoid nested manylinux Docker to keep things working.

@@ -398,6 +398,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.11.5
           target: ${{ matrix.platform.target }}
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -427,6 +428,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.11.5
           target: ${{ matrix.platform.target }}
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -449,6 +451,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.11.5
           target: x64
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -477,6 +480,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.11.5
           target: ${{ matrix.platform.target }}
           args: --release --out dist --manifest-path bindings/python/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -495,6 +499,7 @@ jobs:
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
+          maturin-version: v1.11.5
           command: sdist
           args: --out dist --manifest-path bindings/python/Cargo.toml
       - name: Upload sdist
