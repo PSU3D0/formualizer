@@ -5,6 +5,7 @@ use crate::tokenizer::PyTokenizer;
 use formualizer::parse::parser::parse_with_dialect;
 use formualizer::parse::types::FormulaDialect;
 use pyo3::prelude::*;
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pymethods};
 
 /// Stateful formula parser.
@@ -20,8 +21,8 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyfunction, gen_stub_pyme
 ///     ast = p.parse_string("=1+2")
 ///     print(ast.pretty())
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "Parser", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "Parser", module = "formualizer.formualizer_py")]
 pub struct PyParser {
     _phantom: std::marker::PhantomData<()>,
 }
@@ -32,7 +33,7 @@ impl Default for PyParser {
     }
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyParser {
     #[new]
@@ -72,7 +73,10 @@ impl PyParser {
 }
 
 /// Convenience function to parse a formula string directly
-#[gen_stub_pyfunction(module = "formualizer")]
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
 #[pyfunction]
 #[pyo3(signature = (formula, dialect = None))]
 pub fn parse_formula(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode> {

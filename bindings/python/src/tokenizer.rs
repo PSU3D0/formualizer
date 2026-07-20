@@ -2,6 +2,7 @@ use crate::{enums::PyFormulaDialect, errors::TokenizerError, token::PyToken};
 use formualizer::parse::tokenizer::Tokenizer;
 use formualizer::parse::types::FormulaDialect;
 use pyo3::prelude::*;
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 /// Tokenize a formula string into a sequence of [`Token`] objects.
@@ -17,8 +18,8 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 ///     print(t.render())
 ///     print([tok.value for tok in t.tokens()])
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "Tokenizer", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "Tokenizer", module = "formualizer.formualizer_py")]
 pub struct PyTokenizer {
     inner: Tokenizer,
 }
@@ -33,7 +34,7 @@ impl PyTokenizer {
     }
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyTokenizer {
     #[new]
@@ -95,14 +96,14 @@ impl PyTokenizer {
 /// Iterator returned from `iter(Tokenizer)`.
 ///
 /// Most users won't instantiate this directly.
-#[gen_stub_pyclass]
-#[pyclass(name = "TokenizerIter", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "TokenizerIter", module = "formualizer.formualizer_py")]
 pub struct PyTokenizerIter {
     tokens: Vec<PyToken>,
     index: usize,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyTokenizerIter {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

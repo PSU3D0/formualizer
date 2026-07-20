@@ -58,7 +58,9 @@ jobs:
       working-directory: bindings/python
       run: |
         cargo run --bin stub_gen
-        git diff --exit-code -- formualizer/__init__.pyi
+        git diff --exit-code -- \
+          formualizer/__init__.pyi \
+          formualizer/formualizer_py.pyi
 
     - name: Build Python extension
       working-directory: bindings/python
@@ -78,6 +80,7 @@ jobs:
       run: |
         source .venv/bin/activate
         mypy formualizer
+        python -m mypy.stubtest formualizer --allowlist stubtest_allowlist.txt
 
     - name: Run Python tests with coverage
       working-directory: bindings/python

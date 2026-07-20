@@ -6,7 +6,9 @@
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3::wrap_pyfunction;
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::define_stub_info_gatherer;
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::gen_stub_pyfunction;
 
 // Swap the wheel's global allocator to jemalloc to avoid glibc per-thread
@@ -65,7 +67,10 @@ use tokenizer::PyTokenizer;
 ///     for tok in t:
 ///         print(tok.value, tok.token_type, tok.subtype, tok.start, tok.end)
 /// ```
-#[gen_stub_pyfunction(module = "formualizer")]
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
 #[pyfunction]
 #[pyo3(signature = (formula, dialect = None))]
 fn tokenize(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyTokenizer> {
@@ -92,7 +97,10 @@ fn tokenize(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyToke
 ///     print(collect_references(ast))
 ///     print(collect_function_names(ast))
 /// ```
-#[gen_stub_pyfunction(module = "formualizer")]
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
 #[pyfunction]
 #[pyo3(signature = (formula, dialect = None))]
 fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode> {
@@ -115,7 +123,10 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 ///     wb = fz.load_workbook("financial_model.xlsx")
 ///     print(wb.evaluate_cell("Summary", 1, 2))
 /// ```
-#[gen_stub_pyfunction(module = "formualizer")]
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
 #[pyfunction]
 #[pyo3(signature = (path, strategy=None, *, span_evaluation=None))]
 fn load_workbook(
@@ -141,7 +152,10 @@ fn load_workbook(
 /// This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
 /// builds default to `calamine`; Pyodide defaults to `umya` because Calamine is
 /// not currently compiled into that target.
-#[gen_stub_pyfunction(module = "formualizer")]
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
 #[pyfunction]
 #[pyo3(signature = (data, strategy=None, backend=None, *, span_evaluation=None))]
 fn load_workbook_bytes<'py>(
@@ -174,7 +188,10 @@ fn load_workbook_bytes<'py>(
 /// Note:
 ///     Formula text is preserved. Cached-value typing follows the active
 ///     `umya-spreadsheet` implementation.
-#[gen_stub_pyfunction(module = "formualizer")]
+#[cfg_attr(
+    not(target_os = "emscripten"),
+    gen_stub_pyfunction(module = "formualizer.formualizer_py")
+)]
 #[pyfunction]
 #[pyo3(signature = (path, output=None))]
 fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResult<Py<PyAny>> {
@@ -273,4 +290,5 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 // Define a function to gather stub information.
 // The function name `stub_info` is used by `src/bin/stub_gen.rs`.
+#[cfg(not(target_os = "emscripten"))]
 define_stub_info_gatherer!(stub_info);

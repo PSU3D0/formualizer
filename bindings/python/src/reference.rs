@@ -1,7 +1,9 @@
 use formualizer::parse::parser::ReferenceType;
 use pyo3::conversion::IntoPyObject;
 use pyo3::{prelude::*, types::PyType};
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::impl_stub_type;
 
 use crate::errors::ParserError;
@@ -12,10 +14,17 @@ enum NumericOrStringColumn {
     String(String),
 }
 
+#[cfg(not(target_os = "emscripten"))]
 impl_stub_type!(NumericOrStringColumn = u32 | String);
 
-#[gen_stub_pyclass]
-#[pyclass(frozen, eq, hash, module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    frozen,
+    eq,
+    hash,
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CellRef {
     #[pyo3(get)]
@@ -30,7 +39,7 @@ pub struct CellRef {
     pub abs_col: bool,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl CellRef {
     #[new]
@@ -137,8 +146,14 @@ impl CellRef {
     }
 }
 
-#[gen_stub_pyclass]
-#[pyclass(frozen, eq, hash, module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    frozen,
+    eq,
+    hash,
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RangeRef {
     #[pyo3(get)]
@@ -149,7 +164,7 @@ pub struct RangeRef {
     pub end: Option<CellRef>,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl RangeRef {
     #[new]
@@ -181,8 +196,14 @@ impl RangeRef {
     }
 }
 
-#[gen_stub_pyclass]
-#[pyclass(frozen, eq, hash, module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    frozen,
+    eq,
+    hash,
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct TableRef {
     #[pyo3(get)]
@@ -191,7 +212,7 @@ pub struct TableRef {
     pub spec: Option<String>,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl TableRef {
     #[new]
@@ -217,15 +238,21 @@ impl TableRef {
     }
 }
 
-#[gen_stub_pyclass]
-#[pyclass(frozen, eq, hash, module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    frozen,
+    eq,
+    hash,
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct NamedRangeRef {
     #[pyo3(get)]
     pub name: String,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl NamedRangeRef {
     #[new]
@@ -243,15 +270,21 @@ impl NamedRangeRef {
     }
 }
 
-#[gen_stub_pyclass]
-#[pyclass(frozen, eq, hash, module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    frozen,
+    eq,
+    hash,
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct UnknownRef {
     #[pyo3(get)]
     pub raw: String,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl UnknownRef {
     #[new]
@@ -280,6 +313,7 @@ pub enum ReferenceLike {
     Unknown(UnknownRef),
 }
 
+#[cfg(not(target_os = "emscripten"))]
 impl_stub_type!(ReferenceLike = CellRef | RangeRef | TableRef | NamedRangeRef | UnknownRef);
 
 impl<'py> IntoPyObject<'py> for ReferenceLike {

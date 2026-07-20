@@ -5,6 +5,7 @@ use formualizer::parse::parser::{ASTNode, ASTNodeType};
 use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
@@ -23,8 +24,12 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 ///     for ref in ast.walk_refs():
 ///         print(ref)
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(module = "formualizer", name = "ASTNode")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    module = "formualizer.formualizer_py",
+    name = "ASTNode",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyASTNode {
     inner: ASTNode,
@@ -36,7 +41,7 @@ impl PyASTNode {
     }
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyASTNode {
     /// Get the pretty-printed representation of this AST
@@ -417,14 +422,14 @@ impl PyASTNode {
 ///     for r in ast.walk_refs():
 ///         print(r)
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "RefWalker", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "RefWalker", module = "formualizer.formualizer_py")]
 pub struct PyRefWalker {
     refs: Vec<ReferenceLike>,
     index: usize,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyRefWalker {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

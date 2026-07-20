@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyList};
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
@@ -25,8 +26,8 @@ use formualizer::workbook::WorksheetHandle;
 ///     s.set_formula(3, 1, "=SUM(A1:A2)")
 ///     print(wb.evaluate_cell("Data", 3, 1))
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "Sheet", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "Sheet", module = "formualizer.formualizer_py", from_py_object)]
 #[derive(Clone)]
 pub struct PySheet {
     pub(crate) workbook: PyWorkbook,
@@ -35,7 +36,7 @@ pub struct PySheet {
     pub(crate) handle: WorksheetHandle,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PySheet {
     /// Set a single value (stores in workbook, doesn't evaluate).
