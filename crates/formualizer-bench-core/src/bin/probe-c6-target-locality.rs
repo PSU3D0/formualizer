@@ -13,9 +13,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 #[cfg(feature = "c6_calibration")]
 use formualizer_bench_core::c6_calibration::{
-    CalibrationPath, ChildReport, EngineTelemetry, FixtureShape, GraphSnapshot, PhaseTimings,
-    TargetScope, TimedPhase, allowed_oracle, analytical_expected_outputs, checksum_values,
-    generate_fixture, manifest_yaml, sha256_file,
+    CalibrationPath, ChildReport, EngineTelemetry, FixtureFamily, FixtureShape, GraphSnapshot,
+    PhaseTimings, TargetScope, TimedPhase, allowed_oracle, analytical_expected_outputs,
+    checksum_values, manifest_yaml, path_supported, sha256_file,
 };
 #[cfg(feature = "c6_calibration")]
 use formualizer_common::LiteralValue;
@@ -29,6 +29,10 @@ use formualizer_workbook::{
 };
 #[cfg(feature = "c6_calibration")]
 use sheetport_spec::Manifest;
+
+#[cfg(feature = "c6_calibration")]
+#[path = "probe-c6-target-locality/family_runner.rs"]
+mod family_runner;
 
 #[cfg(not(feature = "c6_calibration"))]
 fn main() {
@@ -52,12 +56,16 @@ enum Command {
         fixture: PathBuf,
         #[arg(long)]
         formulas: u32,
+        #[arg(long, value_enum, default_value_t = FixtureFamily::Scalar)]
+        family: FixtureFamily,
     },
     Sample {
         #[arg(long)]
         fixture: PathBuf,
         #[arg(long)]
         formulas: u32,
+        #[arg(long, value_enum, default_value_t = FixtureFamily::Scalar)]
+        family: FixtureFamily,
         #[arg(long, value_enum)]
         path: CalibrationPath,
         #[arg(long, value_enum)]
@@ -70,8 +78,14 @@ enum Command {
 #[cfg(feature = "c6_calibration")]
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Generate { fixture, formulas } => {
-            let shape = generate_fixture(&fixture, formulas)?;
+        Command::Generate {
+            fixture,
+            formulas,
+            family,
+        } => {
+            let shape = formualizer_bench_core::c6_calibration::families::generate_family_fixture(
+                &fixture, family, formulas,
+            )?;
             println!(
                 "{}",
                 serde_json::to_string(&serde_json::json!({
@@ -84,12 +98,20 @@ fn main() -> Result<()> {
         Command::Sample {
             fixture,
             formulas,
+            family,
             path,
             scope,
             warm_repeats,
         } => println!(
             "{}",
-            serde_json::to_string(&run_sample(&fixture, formulas, path, scope, warm_repeats)?)?
+            serde_json::to_string(&run_sample(
+                &fixture,
+                formulas,
+                family,
+                path,
+                scope,
+                warm_repeats,
+            )?)?
         ),
     }
     Ok(())
@@ -104,10 +126,27 @@ fn elapsed_ms(started: Instant) -> f64 {
 fn run_sample(
     fixture: &std::path::Path,
     formulas: u32,
+    family: FixtureFamily,
     path: CalibrationPath,
     scope: TargetScope,
     warm_repeats: usize,
 ) -> Result<ChildReport> {
+    anyhow::ensure!(
+        path_supported(family, path),
+        "unsupported family/path combination: {}/{}",
+        family.label(),
+        path.label()
+    );
+    if family != FixtureFamily::Scalar {
+        return family_runner::run_family_sample(
+            fixture,
+            formulas,
+            family,
+            path,
+            scope,
+            warm_repeats,
+        );
+    }
     let shape = FixtureShape::new(formulas)?;
     let fixture_sha256 = sha256_file(fixture)?;
     let mut phases = PhaseTimings::default();
@@ -170,6 +209,7 @@ fn run_sample(
             &mut telemetry,
             &mut outputs,
         ),
+        CalibrationPath::Targets => unreachable!("targets is not a scalar-v2 path"),
         CalibrationPath::Plan => run_plan(
             &mut workbook,
             shape,
@@ -266,7 +306,10 @@ fn run_sample(
     let (current_rss_bytes, peak_rss_bytes) = process_memory_bytes();
 
     Ok(ChildReport {
-        schema_version: 2,
+        schema_version: 3,
+        family: FixtureFamily::Scalar,
+        path_schema_version: 3,
+        selector_set: "scalar_terminals".to_string(),
         path,
         scope,
         formulas,
@@ -285,6 +328,11 @@ fn run_sample(
         outputs,
         analytical_expected_outputs,
         analytical_output_oracle_passed,
+        typed_outputs: Vec::new(),
+        typed_expected_outputs: Vec::new(),
+        family_gates: BTreeMap::new(),
+        structural_oracles: BTreeMap::new(),
+        plan_stale_reason: None,
         typed_error,
         telemetry,
         graph_after_load: Some(graph_after_load),
@@ -797,20 +845,225 @@ mod tests {
     fn fixture_bytes_are_deterministic() {
         let first = temp_fixture("determinism-a");
         let second = temp_fixture("determinism-b");
-        generate_fixture(&first, 200).unwrap();
-        generate_fixture(&second, 200).unwrap();
+        formualizer_bench_core::c6_calibration::generate_fixture(&first, 200).unwrap();
+        formualizer_bench_core::c6_calibration::generate_fixture(&second, 200).unwrap();
         assert_eq!(sha256_file(&first).unwrap(), sha256_file(&second).unwrap());
         let _ = std::fs::remove_file(first);
         let _ = std::fs::remove_file(second);
     }
 
     #[test]
+    fn native_family_supported_paths_pass_exact_gates() {
+        for family in FixtureFamily::BREADTH {
+            let fixture = temp_fixture(family.label());
+            formualizer_bench_core::c6_calibration::families::generate_family_fixture(
+                &fixture, family, 64,
+            )
+            .unwrap();
+            for path in CalibrationPath::ALL
+                .into_iter()
+                .filter(|path| path_supported(family, *path))
+            {
+                let report = run_sample(&fixture, 64, family, path, TargetScope::Full, 2).unwrap();
+                assert_eq!(
+                    report.status,
+                    "ok",
+                    "{}/{}: {:?}",
+                    family.label(),
+                    path.label(),
+                    report.typed_error
+                );
+                assert!(report.family_gates.values().all(|passed| *passed));
+            }
+            let _ = std::fs::remove_file(fixture);
+        }
+    }
+
+    #[test]
+    fn all_family_full_controls_match_exact_oracles_at_zero_and_three_warms() {
+        for family in FixtureFamily::ALL {
+            let fixture = temp_fixture(&format!("full-dirty-oracle-{}", family.label()));
+            formualizer_bench_core::c6_calibration::families::generate_family_fixture(
+                &fixture, family, 200,
+            )
+            .unwrap();
+            let warm_counts: &[usize] = if family == FixtureFamily::Scalar {
+                &[3]
+            } else {
+                &[0, 3]
+            };
+            for &warm_repeats in warm_counts {
+                let report = run_sample(
+                    &fixture,
+                    200,
+                    family,
+                    CalibrationPath::Full,
+                    TargetScope::Full,
+                    warm_repeats,
+                )
+                .unwrap();
+                assert_eq!(
+                    report.status,
+                    "ok",
+                    "{}/warm={warm_repeats}: {:?}",
+                    family.label(),
+                    report.typed_error
+                );
+                assert_eq!(report.exact_locality_counts_passed, Some(true));
+                if family != FixtureFamily::Scalar {
+                    assert_eq!(
+                        report.family_gates.get("full_control_dirty_residual_exact"),
+                        Some(&true)
+                    );
+                    assert!(
+                        report
+                            .structural_oracles
+                            .contains_key("full_control_dirty_residual")
+                    );
+                }
+            }
+            let _ = std::fs::remove_file(fixture);
+        }
+    }
+
+    #[test]
+    fn zero_warm_plan_samples_omit_reuse_gate_and_keep_name_staleness_probe() {
+        for family in FixtureFamily::BREADTH
+            .into_iter()
+            .filter(|family| path_supported(*family, CalibrationPath::Plan))
+        {
+            let fixture = temp_fixture(&format!("zero-warm-plan-{}", family.label()));
+            formualizer_bench_core::c6_calibration::families::generate_family_fixture(
+                &fixture, family, 64,
+            )
+            .unwrap();
+            let report = run_sample(
+                &fixture,
+                64,
+                family,
+                CalibrationPath::Plan,
+                TargetScope::Full,
+                0,
+            )
+            .unwrap();
+            assert_eq!(
+                report.status,
+                "ok",
+                "{}: {:?}",
+                family.label(),
+                report.typed_error
+            );
+            assert!(
+                !report
+                    .family_gates
+                    .contains_key("retained_plan_reused_across_value_edits")
+            );
+            if family == FixtureFamily::Names {
+                assert_eq!(report.plan_stale_reason.as_deref(), Some("symbols"));
+                assert_eq!(
+                    report.family_gates.get("deterministic_plan_stale_symbols"),
+                    Some(&true)
+                );
+            }
+            let _ = std::fs::remove_file(fixture);
+        }
+    }
+
+    #[test]
+    fn layout_separates_returned_bounds_package_commit_and_scheduled_evaluation() {
+        let fixture = temp_fixture("layout-honest-package-envelope");
+        formualizer_bench_core::c6_calibration::families::generate_family_fixture(
+            &fixture,
+            FixtureFamily::Layout,
+            64,
+        )
+        .unwrap();
+        let report = run_sample(
+            &fixture,
+            64,
+            FixtureFamily::Layout,
+            CalibrationPath::Sheetport,
+            TargetScope::Full,
+            1,
+        )
+        .unwrap();
+        assert_eq!(report.status, "ok", "{:?}", report.typed_error);
+        for gate in [
+            "layout_exact_resolved_bounds_A2_D2",
+            "layout_preparation_envelope_A2_D9",
+            "layout_below_guard_inside_envelope_evaluated",
+            "layout_below_envelope_committed_but_unevaluated",
+            "layout_package_commit_selected_chain_c4_c10",
+            "layout_six_retained_sheet_formulas_staged",
+        ] {
+            assert_eq!(report.family_gates.get(gate), Some(&true), "{gate}");
+        }
+        assert_eq!(report.typed_outputs[0].len(), 5);
+        assert_eq!(report.graph_after_run.unwrap().staged_formulas, 6);
+        assert!(
+            report.structural_oracles["resolved_layout_bounds"]
+                .contains("conservative preparation envelope A2:D9")
+        );
+        let _ = std::fs::remove_file(fixture);
+    }
+
+    #[test]
+    fn dynamic_initial_preparation_requires_exact_widening_mask() {
+        let fixture = temp_fixture("dynamic-exact-mask");
+        formualizer_bench_core::c6_calibration::families::generate_family_fixture(
+            &fixture,
+            FixtureFamily::Dynamic,
+            64,
+        )
+        .unwrap();
+        let report = run_sample(
+            &fixture,
+            64,
+            FixtureFamily::Dynamic,
+            CalibrationPath::Targets,
+            TargetScope::Full,
+            1,
+        )
+        .unwrap();
+        assert_eq!(report.status, "ok", "{:?}", report.typed_error);
+        assert_eq!(
+            report.family_gates.get("workbook_widening_observed"),
+            Some(&true)
+        );
+        assert_eq!(
+            report
+                .structural_oracles
+                .get("dynamic_widening_reason_mask_expected")
+                .map(String::as_str),
+            Some("3 (0b11): DynamicReference | RuntimeTextReference")
+        );
+        assert_eq!(
+            report
+                .structural_oracles
+                .get("dynamic_widening_reason_mask_observed")
+                .map(String::as_str),
+            Some("3 (0b11) at first_evaluation")
+        );
+        let _ = std::fs::remove_file(fixture);
+    }
+
+    #[test]
     fn smoke_paths_have_output_parity_and_target_locality() {
         let fixture = temp_fixture("path-parity");
-        generate_fixture(&fixture, 200).unwrap();
-        let reports = CalibrationPath::ALL
+        formualizer_bench_core::c6_calibration::generate_fixture(&fixture, 200).unwrap();
+        let reports = CalibrationPath::SCALAR_V2
             .into_iter()
-            .map(|path| run_sample(&fixture, 200, path, TargetScope::Tiny, 1).unwrap())
+            .map(|path| {
+                run_sample(
+                    &fixture,
+                    200,
+                    FixtureFamily::Scalar,
+                    path,
+                    TargetScope::Tiny,
+                    1,
+                )
+                .unwrap()
+            })
             .collect::<Vec<_>>();
         let expected = &reports[0].outputs;
         assert!(reports.iter().all(|report| report.outputs == *expected));

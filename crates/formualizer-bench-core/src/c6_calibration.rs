@@ -10,26 +10,138 @@ use sha2::{Digest, Sha256};
 use formualizer_eval::engine::EvaluationTarget;
 use formualizer_testkit::write_workbook;
 
+pub mod families;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum FixtureFamily {
+    Scalar,
+    CrossSheet,
+    Names,
+    Layout,
+    NativeTable,
+    Dynamic,
+}
+
+impl FixtureFamily {
+    pub const ALL: [Self; 6] = [
+        Self::Scalar,
+        Self::CrossSheet,
+        Self::Names,
+        Self::Layout,
+        Self::NativeTable,
+        Self::Dynamic,
+    ];
+
+    pub const BREADTH: [Self; 5] = [
+        Self::CrossSheet,
+        Self::Names,
+        Self::Layout,
+        Self::NativeTable,
+        Self::Dynamic,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Scalar => "scalar",
+            Self::CrossSheet => "cross_sheet",
+            Self::Names => "names",
+            Self::Layout => "layout",
+            Self::NativeTable => "native_table",
+            Self::Dynamic => "dynamic",
+        }
+    }
+
+    pub const fn cli_label(self) -> &'static str {
+        match self {
+            Self::CrossSheet => "cross-sheet",
+            Self::NativeTable => "native-table",
+            _ => self.label(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum CalibrationPath {
     Full,
     Cells,
+    Targets,
     Plan,
     Sheetport,
 }
 
 impl CalibrationPath {
-    pub const ALL: [Self; 4] = [Self::Full, Self::Cells, Self::Plan, Self::Sheetport];
+    /// The original scalar matrix. Keep this stable for CLI/default compatibility.
+    pub const SCALAR_V2: [Self; 4] = [Self::Full, Self::Cells, Self::Plan, Self::Sheetport];
+    pub const ALL: [Self; 5] = [
+        Self::Full,
+        Self::Cells,
+        Self::Targets,
+        Self::Plan,
+        Self::Sheetport,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Full => "full",
             Self::Cells => "cells",
+            Self::Targets => "targets",
             Self::Plan => "plan",
             Self::Sheetport => "sheetport",
         }
     }
+}
+
+/// The hard-coded Phase-A native family/path contract. Unsupported selectors are
+/// deliberately absent instead of being emulated through a less specific API.
+pub const fn path_supported(family: FixtureFamily, path: CalibrationPath) -> bool {
+    match family {
+        FixtureFamily::Scalar => matches!(
+            path,
+            CalibrationPath::Full
+                | CalibrationPath::Cells
+                | CalibrationPath::Plan
+                | CalibrationPath::Sheetport
+        ),
+        FixtureFamily::CrossSheet | FixtureFamily::Dynamic => matches!(
+            path,
+            CalibrationPath::Full
+                | CalibrationPath::Cells
+                | CalibrationPath::Targets
+                | CalibrationPath::Plan
+                | CalibrationPath::Sheetport
+        ),
+        FixtureFamily::Names => matches!(
+            path,
+            CalibrationPath::Full
+                | CalibrationPath::Targets
+                | CalibrationPath::Plan
+                | CalibrationPath::Sheetport
+        ),
+        FixtureFamily::Layout => {
+            matches!(path, CalibrationPath::Full | CalibrationPath::Sheetport)
+        }
+        FixtureFamily::NativeTable => matches!(
+            path,
+            CalibrationPath::Full
+                | CalibrationPath::Targets
+                | CalibrationPath::Plan
+                | CalibrationPath::Sheetport
+        ),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum TypedOracleValue {
+    String(String),
+    Integer(i64),
+    Number(f64),
+    Date(String),
+    Boolean(bool),
+    Empty,
+    Error(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ValueEnum)]
@@ -256,6 +368,10 @@ impl TimedPhase {
 pub struct PhaseTimings {
     pub load: Option<TimedPhase>,
     pub unrelated_dirty_setup: Option<TimedPhase>,
+    #[serde(default)]
+    pub selector_setup: Option<TimedPhase>,
+    #[serde(default)]
+    pub name_binding_probe: Option<TimedPhase>,
     pub bind_target_resolution: Option<TimedPhase>,
     pub preparation_plan_build: Option<TimedPhase>,
     pub first_evaluation: Option<TimedPhase>,
@@ -324,6 +440,12 @@ pub struct GraphSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChildReport {
     pub schema_version: u32,
+    #[serde(default = "default_scalar_family")]
+    pub family: FixtureFamily,
+    #[serde(default = "default_path_schema_version")]
+    pub path_schema_version: u32,
+    #[serde(default)]
+    pub selector_set: String,
     pub path: CalibrationPath,
     pub scope: TargetScope,
     pub formulas: u32,
@@ -334,6 +456,16 @@ pub struct ChildReport {
     pub outputs: Vec<Vec<String>>,
     pub analytical_expected_outputs: Vec<Vec<f64>>,
     pub analytical_output_oracle_passed: Option<bool>,
+    #[serde(default)]
+    pub typed_outputs: Vec<Vec<TypedOracleValue>>,
+    #[serde(default)]
+    pub typed_expected_outputs: Vec<Vec<TypedOracleValue>>,
+    #[serde(default)]
+    pub family_gates: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub structural_oracles: BTreeMap<String, String>,
+    #[serde(default)]
+    pub plan_stale_reason: Option<String>,
     pub output_checksum: Option<String>,
     pub typed_error: Option<String>,
     pub telemetry: BTreeMap<String, EngineTelemetry>,
@@ -355,6 +487,14 @@ pub struct Distribution {
     pub p95: f64,
     pub mad: f64,
     pub max: f64,
+}
+
+const fn default_scalar_family() -> FixtureFamily {
+    FixtureFamily::Scalar
+}
+
+const fn default_path_schema_version() -> u32 {
+    2
 }
 
 pub fn distribution(values: &[f64]) -> Option<Distribution> {
@@ -413,6 +553,72 @@ mod tests {
                 + shape.dirty_formulas,
             shape.formulas
         );
+    }
+
+    #[test]
+    fn supported_family_path_matrix_is_explicit() {
+        let expected = [
+            (
+                FixtureFamily::Scalar,
+                vec![
+                    CalibrationPath::Full,
+                    CalibrationPath::Cells,
+                    CalibrationPath::Plan,
+                    CalibrationPath::Sheetport,
+                ],
+            ),
+            (
+                FixtureFamily::CrossSheet,
+                vec![
+                    CalibrationPath::Full,
+                    CalibrationPath::Cells,
+                    CalibrationPath::Targets,
+                    CalibrationPath::Plan,
+                    CalibrationPath::Sheetport,
+                ],
+            ),
+            (
+                FixtureFamily::Names,
+                vec![
+                    CalibrationPath::Full,
+                    CalibrationPath::Targets,
+                    CalibrationPath::Plan,
+                    CalibrationPath::Sheetport,
+                ],
+            ),
+            (
+                FixtureFamily::Layout,
+                vec![CalibrationPath::Full, CalibrationPath::Sheetport],
+            ),
+            (
+                FixtureFamily::NativeTable,
+                vec![
+                    CalibrationPath::Full,
+                    CalibrationPath::Targets,
+                    CalibrationPath::Plan,
+                    CalibrationPath::Sheetport,
+                ],
+            ),
+            (
+                FixtureFamily::Dynamic,
+                vec![
+                    CalibrationPath::Full,
+                    CalibrationPath::Cells,
+                    CalibrationPath::Targets,
+                    CalibrationPath::Plan,
+                    CalibrationPath::Sheetport,
+                ],
+            ),
+        ];
+        for (family, supported) in expected {
+            assert_eq!(
+                CalibrationPath::ALL
+                    .into_iter()
+                    .filter(|path| path_supported(family, *path))
+                    .collect::<Vec<_>>(),
+                supported
+            );
+        }
     }
 
     #[test]

@@ -16,13 +16,14 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "c6_calibration")]
 use anyhow::{Context, Result, bail};
 #[cfg(feature = "c6_calibration")]
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 #[cfg(feature = "c6_calibration")]
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "c6_calibration")]
 use formualizer_bench_core::c6_calibration::{
-    CalibrationPath, ChildReport, Distribution, TargetScope, distribution, sha256_file,
+    CalibrationPath, ChildReport, Distribution, FixtureFamily, TargetScope, distribution,
+    path_supported, sha256_file,
 };
 
 #[cfg(not(feature = "c6_calibration"))]
@@ -32,9 +33,30 @@ fn main() {
 }
 
 #[cfg(feature = "c6_calibration")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum CalibrationTier {
+    AllFamilySmoke,
+    Breadth50k,
+    Scalar250k,
+    LargestSafe,
+}
+
+#[cfg(feature = "c6_calibration")]
 #[derive(Debug, Clone, Parser)]
 #[command(about = "Run randomized fresh-process C6 target-locality samples")]
 struct Cli {
+    /// Named acceptance tier. Tier values intentionally override matrix sizing.
+    #[arg(long, value_enum)]
+    tier: Option<CalibrationTier>,
+
+    /// Fixture families. The default remains the original scalar matrix.
+    #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        default_values_t = [FixtureFamily::Scalar]
+    )]
+    families: Vec<FixtureFamily>,
     /// Total formula count across the deterministic independent branches.
     #[arg(long, default_value_t = 50_000)]
     formulas: u32,
@@ -92,9 +114,18 @@ struct RunIdentity {
 #[cfg(feature = "c6_calibration")]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct Job {
+    family: FixtureFamily,
     path: CalibrationPath,
     scope: TargetScope,
     sample: usize,
+}
+
+#[cfg(feature = "c6_calibration")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FixtureIdentity {
+    family: FixtureFamily,
+    path: String,
+    sha256: String,
 }
 
 #[cfg(feature = "c6_calibration")]
@@ -112,11 +143,15 @@ struct SampleResult {
 #[cfg(feature = "c6_calibration")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CaseSummary {
+    family: FixtureFamily,
+    selector_set: String,
     path: CalibrationPath,
     scope: TargetScope,
     successful_samples: usize,
     cold_total_ms: Option<Distribution>,
     load_ms: Option<Distribution>,
+    selector_setup_ms: Option<Distribution>,
+    name_binding_probe_ms: Option<Distribution>,
     bind_resolution_ms: Option<Distribution>,
     preparation_plan_ms: Option<Distribution>,
     first_evaluation_ms: Option<Distribution>,
@@ -136,6 +171,7 @@ struct CaseSummary {
     exact_locality_counts_all_passed: bool,
     unrelated_staged_all_retained: bool,
     unrelated_dirty_all_retained: bool,
+    family_gates_all_passed: bool,
 }
 
 #[cfg(feature = "c6_calibration")]
@@ -143,6 +179,7 @@ struct CaseSummary {
 struct MatrixReport {
     schema_version: u32,
     identity: RunIdentity,
+    families: Vec<FixtureFamily>,
     formulas: u32,
     samples_per_case: usize,
     warm_repeats: usize,
@@ -150,6 +187,7 @@ struct MatrixReport {
     random_seed: u64,
     fixture_path: String,
     fixture_sha256: String,
+    fixtures: Vec<FixtureIdentity>,
     randomized_jobs: Vec<Job>,
     results: Vec<SampleResult>,
     summaries: Vec<CaseSummary>,
@@ -164,14 +202,34 @@ fn main() -> Result<()> {
 
 #[cfg(feature = "c6_calibration")]
 fn run(mut cli: Cli) -> Result<()> {
+    apply_tier(&mut cli)?;
     if cli.formulas >= 50_000 {
         cli.timeout_seconds = cli.timeout_seconds.max(600);
+    }
+    if cli.formulas >= 250_000 {
+        cli.timeout_seconds = cli.timeout_seconds.max(1_800);
     }
     if cli.samples == 0 {
         bail!("--samples must be greater than zero");
     }
-    if cli.paths.is_empty() || cli.scopes.is_empty() {
-        bail!("--paths and --scopes must not be empty");
+    if cli.families.is_empty() || cli.paths.is_empty() || cli.scopes.is_empty() {
+        bail!("--families, --paths, and --scopes must not be empty");
+    }
+    if cli.tier.is_none() {
+        for &family in &cli.families {
+            for &scope in &cli.scopes {
+                for &path in &cli.paths {
+                    if !job_supported(family, path, scope) {
+                        bail!(
+                            "unsupported family/path/scope combination: {}/{}/{}",
+                            family.label(),
+                            path.label(),
+                            scope.label()
+                        );
+                    }
+                }
+            }
+        }
     }
     let root = repo_root();
     fs::create_dir_all(&cli.output_dir)?;
@@ -186,29 +244,53 @@ fn run(mut cli: Cli) -> Result<()> {
         );
     }
 
-    let fixture = cli
-        .output_dir
-        .join(format!("fixture-{}.xlsx", cli.formulas));
-    let generation_log = cli.output_dir.join("fixture-generation.stderr.log");
-    let generation = run_process(
-        command_for_generate(&probe, &fixture, cli.formulas),
-        Duration::from_secs(cli.timeout_seconds),
-        &generation_log,
-    )?;
-    if !generation.success {
-        bail!("fixture generation failed: {}", generation.error);
+    let mut fixture_paths = BTreeMap::new();
+    let mut fixtures = Vec::new();
+    for &family in &cli.families {
+        let fixture =
+            cli.output_dir
+                .join(format!("fixture-{}-{}.xlsx", family.label(), cli.formulas));
+        let generation_log = cli
+            .output_dir
+            .join(format!("fixture-{}-generation.stderr.log", family.label()));
+        let generation = run_process(
+            command_for_generate(&probe, &fixture, cli.formulas, family),
+            Duration::from_secs(cli.timeout_seconds),
+            &generation_log,
+        )?;
+        if !generation.success {
+            bail!(
+                "{} fixture generation failed: {}",
+                family.label(),
+                generation.error
+            );
+        }
+        let sha256 = sha256_file(&fixture)?;
+        fixtures.push(FixtureIdentity {
+            family,
+            path: fixture.display().to_string(),
+            sha256,
+        });
+        fixture_paths.insert(family, fixture);
     }
-    let fixture_sha256 = sha256_file(&fixture)?;
+    let legacy_fixture = fixtures.first().context("at least one fixture")?;
+    let fixture_path = legacy_fixture.path.clone();
+    let fixture_sha256 = legacy_fixture.sha256.clone();
 
     let mut jobs = Vec::new();
     for sample in 1..=cli.samples {
-        for &scope in &cli.scopes {
-            for &path in &cli.paths {
-                jobs.push(Job {
-                    path,
-                    scope,
-                    sample,
-                });
+        for &family in &cli.families {
+            for &scope in &cli.scopes {
+                for &path in &cli.paths {
+                    if job_supported(family, path, scope) {
+                        jobs.push(Job {
+                            family,
+                            path,
+                            scope,
+                            sample,
+                        });
+                    }
+                }
             }
         }
     }
@@ -217,42 +299,50 @@ fn run(mut cli: Cli) -> Result<()> {
     let mut results = Vec::with_capacity(jobs.len());
     for (order, job) in jobs.iter().copied().enumerate() {
         eprintln!(
-            "[c6] {}/{} path={} scope={} sample={}",
+            "[c6] {}/{} family={} path={} scope={} sample={}",
             order + 1,
             jobs.len(),
+            job.family.label(),
             job.path.label(),
             job.scope.label(),
             job.sample
         );
         let stderr_log = cli.output_dir.join(format!(
-            "{:03}-{}-{}-sample{}.stderr.log",
+            "{:03}-{}-{}-{}-sample{}.stderr.log",
             order + 1,
+            job.family.label(),
             job.path.label(),
             job.scope.label(),
             job.sample
         ));
         let time_log = cli.output_dir.join(format!(
-            "{:03}-{}-{}-sample{}.time.log",
+            "{:03}-{}-{}-{}-sample{}.time.log",
             order + 1,
+            job.family.label(),
             job.path.label(),
             job.scope.label(),
             job.sample
         ));
-        results.push(run_job(&probe, &fixture, job, &cli, &stderr_log, &time_log));
+        let fixture = fixture_paths
+            .get(&job.family)
+            .expect("fixture generated for every family");
+        results.push(run_job(&probe, fixture, job, &cli, &stderr_log, &time_log));
     }
 
     let summaries = summarize(&results, &cli);
-    let parity_by_scope = parity(&results, &cli.scopes);
+    let parity_by_scope = parity(&results);
     let report = MatrixReport {
-        schema_version: 1,
+        schema_version: 3,
         identity: identity(&root),
+        families: cli.families.clone(),
         formulas: cli.formulas,
         samples_per_case: cli.samples,
         warm_repeats: cli.warm_repeats,
         timeout_seconds: cli.timeout_seconds,
         random_seed: cli.seed,
-        fixture_path: fixture.display().to_string(),
+        fixture_path,
         fixture_sha256,
+        fixtures,
         randomized_jobs: jobs,
         results,
         summaries,
@@ -276,6 +366,50 @@ fn run(mut cli: Cli) -> Result<()> {
         bail!("output/error parity failed");
     }
     Ok(())
+}
+
+#[cfg(feature = "c6_calibration")]
+fn apply_tier(cli: &mut Cli) -> Result<()> {
+    match cli.tier {
+        None => {}
+        Some(CalibrationTier::AllFamilySmoke) => {
+            cli.formulas = 1_000;
+            cli.samples = 1;
+            cli.warm_repeats = 1;
+            cli.timeout_seconds = cli.timeout_seconds.max(120);
+            cli.families = FixtureFamily::ALL.to_vec();
+            cli.paths = CalibrationPath::ALL.to_vec();
+            cli.scopes = TargetScope::ALL.to_vec();
+        }
+        Some(CalibrationTier::Breadth50k) => {
+            cli.formulas = 50_000;
+            cli.samples = 7;
+            cli.warm_repeats = 3;
+            cli.timeout_seconds = cli.timeout_seconds.max(600);
+            cli.families = FixtureFamily::BREADTH.to_vec();
+            cli.paths = CalibrationPath::ALL.to_vec();
+            cli.scopes = vec![TargetScope::Full];
+        }
+        Some(CalibrationTier::Scalar250k) => {
+            cli.formulas = 250_000;
+            cli.samples = 7;
+            cli.warm_repeats = 3;
+            cli.timeout_seconds = cli.timeout_seconds.max(1_800);
+            cli.families = vec![FixtureFamily::Scalar];
+            cli.paths = CalibrationPath::SCALAR_V2.to_vec();
+            cli.scopes = TargetScope::ALL.to_vec();
+        }
+        Some(CalibrationTier::LargestSafe) => {
+            bail!("largest-safe is intentionally unsupported in Phase A")
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "c6_calibration")]
+const fn job_supported(family: FixtureFamily, path: CalibrationPath, scope: TargetScope) -> bool {
+    path_supported(family, path)
+        && (matches!(family, FixtureFamily::Scalar) || matches!(scope, TargetScope::Full))
 }
 
 #[cfg(feature = "c6_calibration")]
@@ -326,14 +460,21 @@ fn build_child(root: &Path) -> Result<()> {
 }
 
 #[cfg(feature = "c6_calibration")]
-fn command_for_generate(probe: &Path, fixture: &Path, formulas: u32) -> Command {
+fn command_for_generate(
+    probe: &Path,
+    fixture: &Path,
+    formulas: u32,
+    family: FixtureFamily,
+) -> Command {
     let mut command = Command::new(probe);
     command
         .arg("generate")
         .arg("--fixture")
         .arg(fixture)
         .arg("--formulas")
-        .arg(formulas.to_string());
+        .arg(formulas.to_string())
+        .arg("--family")
+        .arg(family.cli_label());
     command
 }
 
@@ -345,6 +486,8 @@ fn sample_args(fixture: &Path, job: Job, cli: &Cli) -> Vec<String> {
         fixture.display().to_string(),
         "--formulas".to_string(),
         cli.formulas.to_string(),
+        "--family".to_string(),
+        job.family.cli_label().to_string(),
         "--path".to_string(),
         job.path.label().to_string(),
         "--scope".to_string(),
@@ -544,197 +687,235 @@ fn shuffle<T>(values: &mut [T], seed: u64) {
 #[cfg(feature = "c6_calibration")]
 fn summarize(results: &[SampleResult], cli: &Cli) -> Vec<CaseSummary> {
     let mut summaries = Vec::new();
-    for &scope in &cli.scopes {
-        for &path in &cli.paths {
-            let children = results
-                .iter()
-                .filter(|result| result.job.path == path && result.job.scope == scope)
-                .filter_map(|result| result.child.as_ref())
-                .filter(|child| child.status == "ok")
-                .collect::<Vec<_>>();
-            let phase = |extract: fn(&ChildReport) -> Option<f64>| {
-                distribution(
-                    &children
-                        .iter()
-                        .filter_map(|child| extract(child))
-                        .collect::<Vec<_>>(),
-                )
-            };
-            let flattened = |extract: fn(&ChildReport) -> Vec<f64>| {
-                distribution(
-                    &children
-                        .iter()
-                        .flat_map(|child| extract(child))
-                        .collect::<Vec<_>>(),
-                )
-            };
-            let cold_total_ms = distribution(
-                &children
+    for &family in &cli.families {
+        for &scope in &cli.scopes {
+            for &path in &cli.paths {
+                if !job_supported(family, path, scope) {
+                    continue;
+                }
+                let children = results
                     .iter()
-                    .map(|child| {
-                        [
-                            child.phases.load.as_ref(),
-                            child.phases.unrelated_dirty_setup.as_ref(),
-                            child.phases.bind_target_resolution.as_ref(),
-                            if path == CalibrationPath::Sheetport {
-                                None
-                            } else {
-                                child.phases.preparation_plan_build.as_ref()
-                            },
-                            child.phases.first_evaluation.as_ref(),
-                            child.phases.output_read.as_ref(),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .map(|phase| phase.milliseconds)
-                        .sum()
+                    .filter(|result| {
+                        result.job.family == family
+                            && result.job.path == path
+                            && result.job.scope == scope
                     })
-                    .collect::<Vec<_>>(),
-            );
-            let rss = results
-                .iter()
-                .filter(|result| {
-                    result.job.path == path
-                        && result.job.scope == scope
-                        && result.status == "ok"
-                        && result
-                            .child
-                            .as_ref()
-                            .is_some_and(|child| child.status == "ok")
-                })
-                .filter_map(|result| {
-                    result
-                        .external_max_rss_bytes
-                        .or_else(|| result.child.as_ref()?.peak_rss_bytes)
-                })
-                .map(|bytes| bytes as f64)
-                .collect::<Vec<_>>();
-            let prepared = children
-                .iter()
-                .filter_map(|child| {
-                    Some(
-                        child
-                            .graph_after_run
-                            .as_ref()?
-                            .graph_formula_vertices
-                            .saturating_sub(
-                                child.graph_after_setup.as_ref()?.graph_formula_vertices,
-                            ) as u64,
+                    .filter_map(|result| result.child.as_ref())
+                    .filter(|child| child.status == "ok")
+                    .collect::<Vec<_>>();
+                let phase = |extract: fn(&ChildReport) -> Option<f64>| {
+                    distribution(
+                        &children
+                            .iter()
+                            .filter_map(|child| extract(child))
+                            .collect::<Vec<_>>(),
                     )
-                })
-                .max();
-            let max_telemetry =
-                |extract: fn(&formualizer_bench_core::c6_calibration::EngineTelemetry) -> u64| {
+                };
+                let flattened = |extract: fn(&ChildReport) -> Vec<f64>| {
+                    distribution(
+                        &children
+                            .iter()
+                            .flat_map(|child| extract(child))
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                let cold_total_ms = distribution(
+                    &children
+                        .iter()
+                        .map(|child| {
+                            [
+                                child.phases.load.as_ref(),
+                                child.phases.unrelated_dirty_setup.as_ref(),
+                                child.phases.selector_setup.as_ref(),
+                                child.phases.bind_target_resolution.as_ref(),
+                                if path == CalibrationPath::Sheetport {
+                                    None
+                                } else {
+                                    child.phases.preparation_plan_build.as_ref()
+                                },
+                                child.phases.first_evaluation.as_ref(),
+                                child.phases.output_read.as_ref(),
+                            ]
+                            .into_iter()
+                            .flatten()
+                            .map(|phase| phase.milliseconds)
+                            .sum()
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                let rss = results
+                    .iter()
+                    .filter(|result| {
+                        result.job.family == family
+                            && result.job.path == path
+                            && result.job.scope == scope
+                            && result.status == "ok"
+                            && result
+                                .child
+                                .as_ref()
+                                .is_some_and(|child| child.status == "ok")
+                    })
+                    .filter_map(|result| {
+                        result
+                            .external_max_rss_bytes
+                            .or_else(|| result.child.as_ref()?.peak_rss_bytes)
+                    })
+                    .map(|bytes| bytes as f64)
+                    .collect::<Vec<_>>();
+                let prepared = children
+                    .iter()
+                    .filter_map(|child| {
+                        Some(
+                            child
+                                .graph_after_run
+                                .as_ref()?
+                                .graph_formula_vertices
+                                .saturating_sub(
+                                    child.graph_after_setup.as_ref()?.graph_formula_vertices,
+                                ) as u64,
+                        )
+                    })
+                    .max();
+                let max_telemetry = |extract: fn(
+                    &formualizer_bench_core::c6_calibration::EngineTelemetry,
+                ) -> u64| {
                     children
                         .iter()
                         .flat_map(|child| child.telemetry.values())
                         .map(extract)
                         .max()
                 };
-            let telemetry_phase = |key: &str| {
-                distribution(
-                    &children
+                let telemetry_phase = |key: &str| {
+                    distribution(
+                        &children
+                            .iter()
+                            .filter_map(|child| child.telemetry.get(key))
+                            .map(|telemetry| telemetry.request_total_ms)
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                summaries.push(CaseSummary {
+                    family,
+                    selector_set: children
+                        .first()
+                        .map_or_else(String::new, |child| child.selector_set.clone()),
+                    path,
+                    scope,
+                    successful_samples: children.len(),
+                    cold_total_ms,
+                    load_ms: phase(|child| child.phases.load.as_ref().map(|p| p.milliseconds)),
+                    selector_setup_ms: phase(|child| {
+                        child.phases.selector_setup.as_ref().map(|p| p.milliseconds)
+                    }),
+                    name_binding_probe_ms: phase(|child| {
+                        child
+                            .phases
+                            .name_binding_probe
+                            .as_ref()
+                            .map(|p| p.milliseconds)
+                    }),
+                    bind_resolution_ms: phase(|child| {
+                        child
+                            .phases
+                            .bind_target_resolution
+                            .as_ref()
+                            .map(|p| p.milliseconds)
+                    }),
+                    preparation_plan_ms: phase(|child| {
+                        child
+                            .phases
+                            .preparation_plan_build
+                            .as_ref()
+                            .map(|p| p.milliseconds)
+                    }),
+                    first_evaluation_ms: phase(|child| {
+                        child
+                            .phases
+                            .first_evaluation
+                            .as_ref()
+                            .map(|p| p.milliseconds)
+                    }),
+                    output_read_ms: phase(|child| {
+                        child.phases.output_read.as_ref().map(|p| p.milliseconds)
+                    }),
+                    edit_ms: flattened(|child| {
+                        child.phases.edit.iter().map(|p| p.milliseconds).collect()
+                    }),
+                    warm_evaluation_ms: flattened(|child| {
+                        child
+                            .phases
+                            .warm_evaluation
+                            .iter()
+                            .map(|p| p.milliseconds)
+                            .collect()
+                    }),
+                    batch_restore_ms: phase(|child| {
+                        child.phases.batch_restore.as_ref().map(|p| p.milliseconds)
+                    }),
+                    sheetport_batch_plan_telemetry_ms: telemetry_phase(
+                        "sheetport_batch_plan_build",
+                    ),
+                    sheetport_batch_execution_telemetry_ms: telemetry_phase(
+                        "sheetport_batch_execution",
+                    ),
+                    peak_rss_bytes: distribution(&rss),
+                    max_prepared_formula_delta: prepared,
+                    max_staged_selected: max_telemetry(|stats| stats.staged_selected),
+                    max_target_actual_work: max_telemetry(|stats| stats.target_commit_actual_work),
+                    locality_oracle_all_passed: children
                         .iter()
-                        .filter_map(|child| child.telemetry.get(key))
-                        .map(|telemetry| telemetry.request_total_ms)
-                        .collect::<Vec<_>>(),
-                )
-            };
-            summaries.push(CaseSummary {
-                path,
-                scope,
-                successful_samples: children.len(),
-                cold_total_ms,
-                load_ms: phase(|child| child.phases.load.as_ref().map(|p| p.milliseconds)),
-                bind_resolution_ms: phase(|child| {
-                    child
-                        .phases
-                        .bind_target_resolution
-                        .as_ref()
-                        .map(|p| p.milliseconds)
-                }),
-                preparation_plan_ms: phase(|child| {
-                    child
-                        .phases
-                        .preparation_plan_build
-                        .as_ref()
-                        .map(|p| p.milliseconds)
-                }),
-                first_evaluation_ms: phase(|child| {
-                    child
-                        .phases
-                        .first_evaluation
-                        .as_ref()
-                        .map(|p| p.milliseconds)
-                }),
-                output_read_ms: phase(|child| {
-                    child.phases.output_read.as_ref().map(|p| p.milliseconds)
-                }),
-                edit_ms: flattened(|child| {
-                    child.phases.edit.iter().map(|p| p.milliseconds).collect()
-                }),
-                warm_evaluation_ms: flattened(|child| {
-                    child
-                        .phases
-                        .warm_evaluation
+                        .all(|child| child.oracle_within_one_percent.unwrap_or(true)),
+                    analytical_output_oracle_all_passed: children
                         .iter()
-                        .map(|p| p.milliseconds)
-                        .collect()
-                }),
-                batch_restore_ms: phase(|child| {
-                    child.phases.batch_restore.as_ref().map(|p| p.milliseconds)
-                }),
-                sheetport_batch_plan_telemetry_ms: telemetry_phase("sheetport_batch_plan_build"),
-                sheetport_batch_execution_telemetry_ms: telemetry_phase(
-                    "sheetport_batch_execution",
-                ),
-                peak_rss_bytes: distribution(&rss),
-                max_prepared_formula_delta: prepared,
-                max_staged_selected: max_telemetry(|stats| stats.staged_selected),
-                max_target_actual_work: max_telemetry(|stats| stats.target_commit_actual_work),
-                locality_oracle_all_passed: children
-                    .iter()
-                    .all(|child| child.oracle_within_one_percent.unwrap_or(true)),
-                analytical_output_oracle_all_passed: children
-                    .iter()
-                    .all(|child| child.analytical_output_oracle_passed.unwrap_or(false)),
-                exact_fixture_counts_all_passed: children
-                    .iter()
-                    .all(|child| child.exact_fixture_counts_passed.unwrap_or(false)),
-                exact_locality_counts_all_passed: children
-                    .iter()
-                    .all(|child| child.exact_locality_counts_passed.unwrap_or(false)),
-                unrelated_staged_all_retained: children
-                    .iter()
-                    .all(|child| child.unrelated_staged_retained.unwrap_or(true)),
-                unrelated_dirty_all_retained: children
-                    .iter()
-                    .all(|child| child.unrelated_dirty_retained.unwrap_or(true)),
-            });
+                        .all(|child| child.analytical_output_oracle_passed.unwrap_or(false)),
+                    exact_fixture_counts_all_passed: children
+                        .iter()
+                        .all(|child| child.exact_fixture_counts_passed.unwrap_or(false)),
+                    exact_locality_counts_all_passed: children
+                        .iter()
+                        .all(|child| child.exact_locality_counts_passed.unwrap_or(false)),
+                    unrelated_staged_all_retained: children
+                        .iter()
+                        .all(|child| child.unrelated_staged_retained.unwrap_or(true)),
+                    unrelated_dirty_all_retained: children
+                        .iter()
+                        .all(|child| child.unrelated_dirty_retained.unwrap_or(true)),
+                    family_gates_all_passed: children
+                        .iter()
+                        .all(|child| child.family_gates.values().all(|passed| *passed)),
+                });
+            }
         }
     }
     summaries
 }
 
 #[cfg(feature = "c6_calibration")]
-fn parity(results: &[SampleResult], scopes: &[TargetScope]) -> BTreeMap<String, bool> {
-    let mut parity = BTreeMap::new();
-    for &scope in scopes {
-        let outcomes = results
-            .iter()
-            .filter(|result| result.job.scope == scope && result.status == "ok")
-            .filter_map(|result| result.child.as_ref())
-            .filter(|child| child.status == "ok")
-            .map(|child| {
-                child
-                    .typed_error
-                    .clone()
-                    .unwrap_or_else(|| child.output_checksum.clone().unwrap_or_default())
-            })
-            .collect::<BTreeSet<_>>();
-        parity.insert(scope.label().to_string(), outcomes.len() == 1);
+fn parity(results: &[SampleResult]) -> BTreeMap<String, bool> {
+    let mut grouped = BTreeMap::<String, BTreeSet<String>>::new();
+    for child in results
+        .iter()
+        .filter(|result| result.status == "ok")
+        .filter_map(|result| result.child.as_ref())
+        .filter(|child| child.status == "ok")
+    {
+        let key = format!(
+            "{}/{}/{}",
+            child.family.label(),
+            child.scope.label(),
+            child.selector_set
+        );
+        grouped.entry(key).or_default().insert(
+            child
+                .typed_error
+                .clone()
+                .unwrap_or_else(|| child.output_checksum.clone().unwrap_or_default()),
+        );
     }
-    parity
+    grouped
+        .into_iter()
+        .map(|(key, outcomes)| (key, outcomes.len() == 1))
+        .collect()
 }
 
 #[cfg(feature = "c6_calibration")]
@@ -792,9 +973,23 @@ fn render_markdown(report: &MatrixReport) -> String {
         report.identity.os,
         report.identity.architecture,
     );
-    out.push_str("All timing cells are `median / p95 / MAD / max` in milliseconds, using nearest-rank p95. With seven per-child samples, per-child p95 is the maximum; pooled warm calls contain 21 observations. `cold` is process-cold but normally OS-page-cache-warm and includes load, the explicitly reported unrelated-dirty setup, binding/resolution, first evaluation, and preparation/plan plus separate output read where those precede the first evaluation. SheetPort cold is its one-shot path; its subsequent batch-plan build is shown only in `prepare/plan`. Cells and SheetPort retain combined phases when their public APIs do not expose a split.\n\n");
-    out.push_str("| scope | path | n | cold | prepare/plan | first eval | warm API cost | batch restore | peak RSS MiB | prepared formulas | staged selected | actual target work | gates |\n");
-    out.push_str("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n");
+    out.push_str("Immutable family fixtures:\n");
+    for fixture in &report.fixtures {
+        out.push_str(&format!(
+            "- `{}`: SHA-256 `{}`\n",
+            fixture.family.label(),
+            fixture.sha256
+        ));
+    }
+    out.push_str(&format!(
+        "\nAll timing cells are `median / p95 / MAD / max` in milliseconds, using nearest-rank p95. Per-child distributions contain {} samples; pooled warm calls contain {} observations. `cold` is process-cold but normally OS-page-cache-warm and includes load, the explicitly reported unrelated-dirty setup, binding/resolution, first evaluation, and preparation/plan plus separate output read where those precede the first evaluation. SheetPort cold is its one-shot path; its subsequent batch-plan build is shown only in `prepare/plan`. Cells and SheetPort retain combined phases when their public APIs do not expose a split. The names `name binding probe` is post-warm and excluded from both cold and ordinary warm distributions.\n\n",
+        report.samples_per_case,
+        report.samples_per_case.saturating_mul(report.warm_repeats),
+    ));
+    out.push_str("| family | selector set | scope | path | n | cold | selector setup | name binding probe | prepare/plan | first eval | warm API cost | batch restore | peak RSS MiB | prepared formulas | staged selected | actual target work | gates |\n");
+    out.push_str(
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n",
+    );
     for summary in &report.summaries {
         let rss = summary.peak_rss_bytes.map(|mut stats| {
             stats.median /= 1_048_576.0;
@@ -809,17 +1004,22 @@ fn render_markdown(report: &MatrixReport) -> String {
             && summary.exact_locality_counts_all_passed
             && summary.unrelated_staged_all_retained
             && summary.unrelated_dirty_all_retained
+            && summary.family_gates_all_passed
         {
             "pass"
         } else {
             "FAIL"
         };
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            summary.family.label(),
+            summary.selector_set,
             summary.scope.label(),
             summary.path.label(),
             summary.successful_samples,
             fmt_stat(summary.cold_total_ms),
+            fmt_stat(summary.selector_setup_ms),
+            fmt_stat(summary.name_binding_probe_ms),
             fmt_stat(summary.preparation_plan_ms),
             fmt_stat(summary.first_evaluation_ms),
             fmt_stat(summary.warm_evaluation_ms),
@@ -838,14 +1038,15 @@ fn render_markdown(report: &MatrixReport) -> String {
         ));
     }
     out.push_str("\n## SheetPort telemetry snapshots\n\nThe raw telemetry keys `first_evaluation`, `sheetport_batch_plan_build`, and `sheetport_batch_execution` are distinct and never overwrite one another. The last key is captured after `batch.run`, so its request ledger describes the final baseline-restoration evaluation. Values are engine request-total milliseconds.\n\n");
-    out.push_str("| scope | after batch-plan construction | after batch execution/restoration |\n|---|---:|---:|\n");
+    out.push_str("| family | scope | after batch-plan construction | after batch execution/restoration |\n|---|---|---:|---:|\n");
     for summary in report
         .summaries
         .iter()
         .filter(|summary| summary.path == CalibrationPath::Sheetport)
     {
         out.push_str(&format!(
-            "| {} | {} | {} |\n",
+            "| {} | {} | {} | {} |\n",
+            summary.family.label(),
             summary.scope.label(),
             fmt_stat(summary.sheetport_batch_plan_telemetry_ms),
             fmt_stat(summary.sheetport_batch_execution_telemetry_ms),
@@ -860,7 +1061,7 @@ fn render_markdown(report: &MatrixReport) -> String {
             if *passed { "pass" } else { "FAIL" }
         ));
     }
-    out.push_str("\n## Interpretation limits\n\n- `warm API cost` means the public API latency after one selected-branch input edit; it is not a claim that 100% of formulas are dirty or recomputed. In `full_100pct`, the fixed edit is `Tiny!A1`, a 0.5% branch, while all terminal outputs are requested.\n- `cells` first/warm timings combine target preparation, ephemeral plan construction, evaluation, and returned output because `evaluate_cells` exposes one public call.\n- SheetPort one-shot combines selector resolution, target preparation, evaluation, and runtime output read; batch iterations combine input edit, plan evaluation, and runtime output read. Checked baseline-restoration accounting is reported separately.\n- SheetPort batch creation follows its one-shot evaluation on the already prepared workbook. Its separately reported batch-plan build is not a second cold latency and is not setup-equivalent to the direct plan build on deferred staging.\n- Prepared formula deltas and public request telemetry prove locality; no allocator-specific counter is available, so RSS/HWM and ledger retained/scratch accounting are reported instead.\n");
+    out.push_str("\n## Interpretation limits\n\n- `warm API cost` means public API latency after one input edit; it is not a claim that every requested formula is dirty or recomputed. In the scalar `full_100pct` case, the fixed edit remains the 0.5% `Tiny` branch while all terminals are requested. Breadth families edit the local chain source.\n- `cells` first/warm timings combine target preparation, ephemeral plan construction, evaluation, and returned output because `evaluate_cells` exposes one public call.\n- SheetPort one-shot combines selector resolution, target preparation, evaluation, and runtime output read; batch iterations combine input edit, plan evaluation, and runtime output read. Checked baseline-restoration accounting is reported separately.\n- SheetPort batch creation follows its one-shot evaluation on the already prepared workbook. Its separately reported batch-plan build is not a second cold latency and is not setup-equivalent to the direct plan build on deferred staging.\n- Prepared formula deltas and public request telemetry prove locality; no allocator-specific counter is available, so RSS/HWM and ledger retained/scratch accounting are reported instead.\n");
     out
 }
 
@@ -891,6 +1092,35 @@ mod tests {
             vec![CalibrationPath::Full, CalibrationPath::Cells]
         );
         assert_eq!(cli.scopes, vec![TargetScope::Tiny, TargetScope::Full]);
+    }
+
+    #[test]
+    fn named_tiers_are_exact_and_largest_safe_is_rejected() {
+        let mut smoke = Cli::try_parse_from(["matrix", "--tier", "all-family-smoke"]).unwrap();
+        apply_tier(&mut smoke).unwrap();
+        assert_eq!(smoke.formulas, 1_000);
+        assert_eq!(smoke.samples, 1);
+        assert_eq!(smoke.families, FixtureFamily::ALL);
+        assert!(job_supported(
+            FixtureFamily::Layout,
+            CalibrationPath::Sheetport,
+            TargetScope::Full
+        ));
+        assert!(!job_supported(
+            FixtureFamily::Layout,
+            CalibrationPath::Targets,
+            TargetScope::Full
+        ));
+
+        let mut scalar = Cli::try_parse_from(["matrix", "--tier", "scalar250k"]).unwrap();
+        apply_tier(&mut scalar).unwrap();
+        assert_eq!(scalar.formulas, 250_000);
+        assert_eq!(scalar.samples, 7);
+        assert_eq!(scalar.timeout_seconds, 1_800);
+        assert_eq!(scalar.paths, CalibrationPath::SCALAR_V2);
+
+        let mut largest = Cli::try_parse_from(["matrix", "--tier", "largest-safe"]).unwrap();
+        assert!(apply_tier(&mut largest).is_err());
     }
 
     #[test]
