@@ -5,8 +5,9 @@ use crate::engine::{
     Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
 };
 use crate::test_workbook::TestWorkbook;
-use formualizer_common::LiteralValue;
+use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
+use formualizer_parse::pretty::canonical_formula;
 
 fn record(
     engine: &mut Engine<TestWorkbook>,
@@ -726,6 +727,40 @@ fn formula_plane_delete_on_read_range_sheet_straddles_and_demotes() {
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
         Some(LiteralValue::Number(50.0))
+    );
+}
+
+#[test]
+fn formula_plane_full_read_delete_demotes_to_ref_error_literals() {
+    let mut engine = authoritative_engine();
+    engine.add_sheet("Data").unwrap();
+    engine
+        .set_cell_value("Data", 1, 1, LiteralValue::Number(10.0))
+        .unwrap();
+    let mut formulas = Vec::new();
+    for row in 1..=100 {
+        formulas.push(record(&mut engine, row, 1, "=SUM(Data!$A$1:$A$1)"));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new("Sheet1", formulas)])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+    engine.evaluate_all().unwrap();
+
+    engine.delete_rows("Data", 1, 1).unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 0);
+    engine.evaluate_all().unwrap();
+
+    match engine.get_cell_value("Sheet1", 50, 1) {
+        Some(LiteralValue::Error(error)) => assert_eq!(error.kind, ExcelErrorKind::Ref),
+        other => panic!("expected demoted formula to evaluate to #REF!, got {other:?}"),
+    }
+    let (ast, _) = engine
+        .get_cell("Sheet1", 50, 1)
+        .expect("demoted formula cell exists");
+    assert_eq!(
+        canonical_formula(&ast.expect("demoted formula AST exists")),
+        "=SUM(#REF!)"
     );
 }
 
