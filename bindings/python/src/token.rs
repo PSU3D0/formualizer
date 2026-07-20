@@ -2,6 +2,7 @@ use crate::enums::{PyTokenSubType, PyTokenType};
 use formualizer::parse::tokenizer::Token;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
@@ -20,8 +21,8 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 ///     print(tok.token_type, tok.subtype)
 ///     print(tok.start, tok.end)
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "Token", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "Token", module = "formualizer.formualizer_py", from_py_object)]
 #[derive(Clone)]
 pub struct PyToken {
     inner: Token,
@@ -33,7 +34,7 @@ impl PyToken {
     }
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyToken {
     #[getter]

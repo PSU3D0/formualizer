@@ -32,6 +32,10 @@ All notable changes to Formualizer will be documented in this file.
 - Fixed deferred `evaluate_cells_with_delta` requests missing transitive formula precedents staged on non-target sheets.
 - Fixed experimental FormulaPlane capacity fallbacks evaluating legacy readers before required span results were available. Unsafe requests now transactionally demote exactly their scheduled spans, retain pending dirty regions across failed attempts, and fail closed behind a finite materialization limit.
 
+### Security and hardening
+
+- Upgraded PyO3 and NumPy bindings to 0.29.0, resolving the PyO3 out-of-bounds iterator and missing closure `Sync` advisories. Upgraded `pyo3-stub-gen` to 0.23.0, made existing clone-based Python extraction explicit, and aligned generated stubs with the private maturin extension-module path while preserving the public `formualizer` package API.
+
 ### Performance
 
 - Experimental authoritative FormulaPlane evaluation now caches accounted consumer and precedent topology across warm and value-only evaluations. Exact graph, authority, semantic, provider, and dynamic-reference revisions invalidate or bypass stale cache generations; candidate, edge, and retained-byte cache overflow selects exact paged/run/native/repeated-pass request topology without span demotion, while span-free and warm no-dirty requests retain topology-free sparse paths.

@@ -13,6 +13,8 @@ from . import visitor
 from ._types import ReferenceLike
 from .formualizer_py import *  # noqa: F403
 
+__all__ = [*_py.__all__, "ReferenceLike", "visitor"]
+
 # ---------------------------------------------------------------------------
 # Backwards compatible aliases
 # ---------------------------------------------------------------------------

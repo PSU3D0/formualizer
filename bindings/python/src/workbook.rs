@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use formualizer::common::LiteralValue;
@@ -108,8 +109,12 @@ impl formualizer::workbook::CustomFnHandler for PyCustomFnHandler {
 ///     )
 ///     wb = fz.Workbook(config=cfg)
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "WorkbookConfig", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    name = "WorkbookConfig",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyWorkbookConfig {
     mode: PyWorkbookMode,
@@ -118,7 +123,7 @@ pub struct PyWorkbookConfig {
     span_evaluation: Option<bool>,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyWorkbookConfig {
     #[new]
@@ -170,8 +175,12 @@ impl PyWorkbookConfig {
 ///     s.set_formula(1, 2, "=PMT(A2/12, A3, -A1)")
 ///     print(wb.evaluate_cell("Sheet1", 1, 2))
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "Workbook", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    name = "Workbook",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyWorkbook {
     inner: std::sync::Arc<std::sync::RwLock<formualizer::workbook::Workbook>>,
@@ -180,7 +189,7 @@ pub struct PyWorkbook {
     cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyWorkbook {
     #[new]
@@ -1099,6 +1108,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWorkbookConfig>()?;
     m.add_class::<PyRangeAddress>()?;
     m.add_class::<PyCycleTelemetry>()?;
+    m.add_class::<PyCell>()?;
     Ok(())
 }
 
@@ -1107,8 +1117,12 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// Read-only snapshot of the engine's `CycleTelemetry`, taken by
 /// `Workbook.last_cycle_telemetry()`. Counters reset at the start of every
 /// evaluation request.
-#[gen_stub_pyclass]
-#[pyclass(name = "CycleTelemetry", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    name = "CycleTelemetry",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, Debug)]
 pub struct PyCycleTelemetry {
     /// SCC tasks executed (static SCCs that reached Runtime evaluation).
@@ -1168,7 +1182,7 @@ impl PyCycleTelemetry {
     }
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyCycleTelemetry {
     fn __repr__(&self) -> String {
@@ -1200,8 +1214,8 @@ pub struct CellData {
     pub formula: Option<String>,
 }
 
-#[gen_stub_pyclass]
-#[pyclass(name = "Cell", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "Cell", module = "formualizer.formualizer_py")]
 pub struct PyCell {
     value: LiteralValue,
     formula: Option<String>,
@@ -1213,7 +1227,7 @@ impl PyCell {
     }
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyCell {
     #[getter]
@@ -1227,8 +1241,12 @@ impl PyCell {
     }
 }
 
-#[gen_stub_pyclass]
-#[pyclass(name = "RangeAddress", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    name = "RangeAddress",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, Debug)]
 pub struct PyRangeAddress {
     #[pyo3(get)]
@@ -1243,7 +1261,7 @@ pub struct PyRangeAddress {
     pub end_col: u32,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyRangeAddress {
     #[new]

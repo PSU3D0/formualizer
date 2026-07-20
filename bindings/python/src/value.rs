@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::{
     PyAny, PyBool, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyList, PyString, PyTime,
 };
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
@@ -27,14 +28,18 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 ///     s.set_value(1, 1, v1)
 ///     s.set_value(1, 2, v2)
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "LiteralValue", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    name = "LiteralValue",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone, Debug)]
 pub struct PyLiteralValue {
     pub(crate) inner: LiteralValue,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyLiteralValue {
     /// Extract as Python int; errors if not an Int

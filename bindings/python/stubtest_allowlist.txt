@@ -1,0 +1,4 @@
+# pyo3-stub-gen emits valid Enum-member declarations (`Member = ...`), but
+# mypy.stubtest compares their inferred Ellipsis type against the PyO3 runtime
+# singleton type. Keep this narrow exception until upstream handles PyO3 enums.
+formualizer(\.formualizer_py)?\.(Py)?(FormulaDialect|TokenSubType|TokenType|WorkbookMode)\..*

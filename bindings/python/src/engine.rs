@@ -2,6 +2,7 @@ use formualizer::eval::engine::{
     CycleConfig, CycleDetection, CyclePolicy, DateSystem, EvalConfig, FormulaPlaneMode,
 };
 use pyo3::prelude::*;
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use std::time::Duration;
 
@@ -18,8 +19,12 @@ use std::time::Duration;
 ///
 ///     wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=eval_cfg))
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "EvaluationConfig", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    name = "EvaluationConfig",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyEvaluationConfig {
     pub(crate) inner: EvalConfig,
@@ -57,7 +62,7 @@ pub(crate) fn merge_python_eval_config(base: &mut EvalConfig, python_config: &Ev
     base.cycle = python_config.cycle;
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyEvaluationConfig {
     /// Create a new evaluation configuration
@@ -412,8 +417,12 @@ impl PyEvaluationConfig {
 }
 
 /// Information about a single evaluation layer
-#[gen_stub_pyclass]
-#[pyclass(name = "LayerInfo", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(
+    name = "LayerInfo",
+    module = "formualizer.formualizer_py",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyLayerInfo {
     #[pyo3(get)]
@@ -424,7 +433,7 @@ pub struct PyLayerInfo {
     pub sample_cells: Vec<String>,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyLayerInfo {
     fn __repr__(&self) -> String {
@@ -436,8 +445,8 @@ impl PyLayerInfo {
 }
 
 /// Evaluation plan showing how cells would be evaluated
-#[gen_stub_pyclass]
-#[pyclass(name = "EvaluationPlan", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "EvaluationPlan", module = "formualizer.formualizer_py")]
 pub struct PyEvaluationPlan {
     #[pyo3(get)]
     pub total_vertices_to_evaluate: usize,
@@ -457,7 +466,7 @@ pub struct PyEvaluationPlan {
     pub target_cells: Vec<String>,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyEvaluationPlan {
     fn __repr__(&self) -> String {

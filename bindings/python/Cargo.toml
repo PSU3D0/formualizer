@@ -34,10 +34,10 @@ allocator-jemalloc = ["dep:tikv-jemallocator"]
 pyo3 = { workspace = true, features = ["chrono", "abi3-py310"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }
-pyo3-stub-gen = "0.18.0"
 
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya"] }
+pyo3-stub-gen = "0.23.0"
 
 # Pyodide 0.29's wasm-EH sysroot is pinned to Rust 1.86, while Calamine 0.36
 # requires Rust 1.88. Pyodide retains the Umya byte-oriented XLSX path and

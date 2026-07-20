@@ -17,6 +17,7 @@ use pyo3::conversion::IntoPyObjectExt;
 use pyo3::exceptions::{PyException, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList};
+#[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use serde_json::Value as JsonValue;
 
@@ -77,14 +78,14 @@ type RuntimeResult<T> = Result<T, RuntimeSheetPortError>;
 ///     out = session.evaluate_once(freeze_volatile=True)
 ///     print(out["final_price"])
 /// ```
-#[gen_stub_pyclass]
-#[pyclass(name = "SheetPortSession", module = "formualizer")]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
+#[pyclass(name = "SheetPortSession", module = "formualizer.formualizer_py")]
 pub struct PySheetPortSession {
     workbook: PyWorkbook,
     bindings: ManifestBindings,
 }
 
-#[gen_stub_pymethods]
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PySheetPortSession {
     #[classmethod]
