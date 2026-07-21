@@ -15,8 +15,33 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
     })
 }
 
+/// Expands an argument into the values it contributes: a scalar contributes one
+/// value, a range contributes every cell in row-major order.
+///
+/// `CONCAT` and `TEXTJOIN` iterate over range arguments rather than collapsing
+/// them to their top-left cell, so they cannot use [`scalar_like_value`].
+fn value_parts(arg: &ArgumentHandle<'_, '_>) -> Result<Vec<LiteralValue>, ExcelError> {
+    Ok(match arg.value()? {
+        crate::traits::CalcValue::Scalar(v) => vec![v],
+        crate::traits::CalcValue::Range(rv) => {
+            let mut out = Vec::new();
+            rv.for_each_cell(&mut |cell| {
+                out.push(cell.clone());
+                Ok(())
+            })?;
+            out
+        }
+        crate::traits::CalcValue::Callable(_) => vec![LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        )],
+    })
+}
+
 fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    let v = scalar_like_value(a)?;
+    literal_to_text(scalar_like_value(a)?)
+}
+
+fn literal_to_text(v: LiteralValue) -> Result<String, ExcelError> {
     Ok(match v {
         LiteralValue::Text(s) => s,
         LiteralValue::Empty => String::new(),
@@ -394,7 +419,9 @@ impl Function for ConcatFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut out = String::new();
         for a in args {
-            out.push_str(&to_text(a)?);
+            for v in value_parts(a)? {
+                out.push_str(&literal_to_text(v)?);
+            }
         }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(out)))
     }
@@ -556,31 +583,33 @@ impl Function for TextJoinFn {
         // Collect text values
         let mut parts = Vec::new();
         for arg in args.iter().skip(2) {
-            match scalar_like_value(arg)? {
-                LiteralValue::Error(e) => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-                }
-                LiteralValue::Empty => {
-                    if !ignore_empty {
-                        parts.push(String::new());
+            for value in value_parts(arg)? {
+                match value {
+                    LiteralValue::Error(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
-                }
-                v => {
-                    let s = match v {
-                        LiteralValue::Text(t) => t,
-                        LiteralValue::Boolean(b) => {
-                            if b {
-                                "TRUE".to_string()
-                            } else {
-                                "FALSE".to_string()
-                            }
+                    LiteralValue::Empty => {
+                        if !ignore_empty {
+                            parts.push(String::new());
                         }
-                        LiteralValue::Int(i) => i.to_string(),
-                        LiteralValue::Number(f) => f.to_string(),
-                        _ => v.to_string(),
-                    };
-                    if !ignore_empty || !s.is_empty() {
-                        parts.push(s);
+                    }
+                    v => {
+                        let s = match v {
+                            LiteralValue::Text(t) => t,
+                            LiteralValue::Boolean(b) => {
+                                if b {
+                                    "TRUE".to_string()
+                                } else {
+                                    "FALSE".to_string()
+                                }
+                            }
+                            LiteralValue::Int(i) => i.to_string(),
+                            LiteralValue::Number(f) => f.to_string(),
+                            _ => v.to_string(),
+                        };
+                        if !ignore_empty || !s.is_empty() {
+                            parts.push(s);
+                        }
                     }
                 }
             }
@@ -609,7 +638,7 @@ mod tests {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::ArgumentHandle;
     use formualizer_common::LiteralValue;
-    use formualizer_parse::parser::{ASTNode, ASTNodeType};
+    use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)
     }
@@ -682,6 +711,122 @@ mod tests {
             )
             .unwrap();
         assert_eq!(out, LiteralValue::Text("a,b,d".into()));
+    }
+
+    fn range_ref(original: &str, sr: u32, sc: u32, er: u32, ec: u32) -> ASTNode {
+        ASTNode::new(
+            ASTNodeType::Reference {
+                original: original.into(),
+                reference: ReferenceType::range(None, Some(sr), Some(sc), Some(er), Some(ec)),
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn concat_expands_range_arguments() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(ConcatFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("b".into()))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Text("c".into()));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "CONCAT").unwrap();
+        let r = range_ref("A1:A3", 1, 1, 3, 1);
+        let out = f
+            .dispatch(
+                &[ArgumentHandle::new(&r, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("abc".into()));
+    }
+
+    #[test]
+    fn textjoin_expands_range_arguments() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(TextJoinFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("b".into()))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Text("c".into()));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXTJOIN").unwrap();
+        let delim = lit(LiteralValue::Text("-".into()));
+        let ignore = lit(LiteralValue::Boolean(true));
+        let r = range_ref("A1:A3", 1, 1, 3, 1);
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&delim, &ctx),
+                    ArgumentHandle::new(&ignore, &ctx),
+                    ArgumentHandle::new(&r, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("a-b-c".into()));
+    }
+
+    /// Each range argument must expand independently, and literals must still
+    /// interleave correctly alongside them.
+    #[test]
+    fn textjoin_expands_each_range_and_keeps_literals() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(TextJoinFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Text("b".into()))
+            .with_cell_a1("Sheet1", "C1", LiteralValue::Text("x".into()))
+            .with_cell_a1("Sheet1", "D1", LiteralValue::Text("y".into()));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXTJOIN").unwrap();
+        let delim = lit(LiteralValue::Text("|".into()));
+        let ignore = lit(LiteralValue::Boolean(true));
+        let vertical = range_ref("A1:A2", 1, 1, 2, 1);
+        let horizontal = range_ref("C1:D1", 1, 3, 1, 4);
+        let tail = lit(LiteralValue::Text("z".into()));
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&delim, &ctx),
+                    ArgumentHandle::new(&ignore, &ctx),
+                    ArgumentHandle::new(&vertical, &ctx),
+                    ArgumentHandle::new(&horizontal, &ctx),
+                    ArgumentHandle::new(&tail, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("a|b|x|y|z".into()));
+    }
+
+    /// `ignore_empty = FALSE` must keep blank cells inside a range.
+    #[test]
+    fn textjoin_range_keeps_empties_when_not_ignoring() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(TextJoinFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Empty)
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Text("c".into()));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXTJOIN").unwrap();
+        let delim = lit(LiteralValue::Text("-".into()));
+        let ignore = lit(LiteralValue::Boolean(false));
+        let r = range_ref("A1:A3", 1, 1, 3, 1);
+        let out = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&delim, &ctx),
+                    ArgumentHandle::new(&ignore, &ctx),
+                    ArgumentHandle::new(&r, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("a--c".into()));
     }
 
     #[test]
