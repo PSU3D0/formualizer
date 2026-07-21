@@ -518,6 +518,44 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// Resolve a function/operator argument that did not yield a reference.
+    ///
+    /// `OFFSET`/`INDIRECT` return a reference that `reference_for_eval` can
+    /// resolve, but dynamic-array functions (`SEQUENCE`, `UNIQUE`, `SORT`,
+    /// `FILTER`, `TRANSPOSE`) return a computed array instead. Materialise that
+    /// array so aggregates — which all gate on `range_view()` — can consume it.
+    fn range_view_from_computed_value(&self) -> Result<RangeView<'b>, ExcelError> {
+        match self.value()? {
+            CalcValue::Range(rv) => {
+                let (rows, cols) = rv.dims();
+                let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows);
+                for r in 0..rows {
+                    let mut row_vals = Vec::with_capacity(cols);
+                    for c in 0..cols {
+                        row_vals.push(rv.get_cell(r, c));
+                    }
+                    out.push(row_vals);
+                }
+                Ok(
+                    RangeView::from_owned_rows(out, self.interp.context.date_system())
+                        .with_cancel_token(self.interp.context.cancellation_token()),
+                )
+            }
+            // An array-valued scalar is what a range comparison or elementwise
+            // operation produces (`B2:B5="Jakarta"`, `(B2:B5="x")*1`). It is an
+            // array, not a single value, so it belongs in a RangeView too.
+            CalcValue::Scalar(LiteralValue::Array(rows)) => Ok(RangeView::from_owned_rows(
+                rows,
+                self.interp.context.date_system(),
+            )
+            .with_cancel_token(self.interp.context.cancellation_token())),
+            // A genuine scalar stays an error: widening it to a 1x1 range here
+            // would change the meaning of existing formulas.
+            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Argument cannot be interpreted as a range.")),
+        }
+    }
+
     /// Resolve as a RangeView (Phase 2 API). Only supports reference arguments.
     pub fn range_view(&self) -> Result<RangeView<'b>, ExcelError> {
         match &self.expr {
@@ -549,11 +587,14 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     )
                 }
                 ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
-                    let reference = self.reference_for_eval()?;
-                    self.interp
-                        .context
-                        .resolve_range_view(&reference, self.interp.current_sheet())
-                        .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
+                    match self.reference_for_eval() {
+                        Ok(reference) => self
+                            .interp
+                            .context
+                            .resolve_range_view(&reference, self.interp.current_sheet())
+                            .map(|v| v.with_cancel_token(self.interp.context.cancellation_token())),
+                        Err(_) => self.range_view_from_computed_value(),
+                    }
                 }
                 _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                     .with_message("Argument cannot be interpreted as a range.")),
@@ -571,11 +612,16 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     crate::engine::arena::AstNodeData::Reference { .. }
                     | crate::engine::arena::AstNodeData::Function { .. }
                     | crate::engine::arena::AstNodeData::BinaryOp { .. } => {
-                        let reference = self.reference_for_eval()?;
-                        self.interp
-                            .context
-                            .resolve_range_view(&reference, self.interp.current_sheet())
-                            .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
+                        match self.reference_for_eval() {
+                            Ok(reference) => self
+                                .interp
+                                .context
+                                .resolve_range_view(&reference, self.interp.current_sheet())
+                                .map(|v| {
+                                    v.with_cancel_token(self.interp.context.cancellation_token())
+                                }),
+                            Err(_) => self.range_view_from_computed_value(),
+                        }
                     }
                     crate::engine::arena::AstNodeData::Literal(vref) => {
                         match data_store.retrieve_value(*vref) {

@@ -730,6 +730,109 @@ mod tests {
         wb.interpreter()
     }
 
+    /// Aggregates gate on `arg.range_view()`, which previously resolved a
+    /// function-call argument only as a *reference*. A dynamic-array function
+    /// returns a computed array instead, so the values never reached the
+    /// aggregate and SUM silently produced an error rather than a total.
+    #[test]
+    fn sum_consumes_a_computed_array_argument() {
+        use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(SumFn))
+            .with_function(std::sync::Arc::new(crate::builtins::lookup::SortFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Number(10.0))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Number(20.0))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Number(30.0));
+        let ctx = interp(&wb);
+        let fctx = ctx.function_context(None);
+
+        // SORT(A1:A3) returns a computed array rather than a reference
+        let range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A3".into(),
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1)),
+            },
+            None,
+        );
+        let sort_call = ASTNode::new(
+            ASTNodeType::Function {
+                name: "SORT".to_string(),
+                args: vec![range],
+            },
+            None,
+        );
+
+        let sum = ctx.context.get_function("", "SUM").unwrap();
+        let out = sum
+            .dispatch(
+                &[crate::traits::ArgumentHandle::new(&sort_call, &ctx)],
+                &fctx,
+            )
+            .unwrap()
+            .into_literal();
+
+        assert_eq!(out, LiteralValue::Number(60.0));
+    }
+
+    /// A range comparison evaluates to `Scalar(LiteralValue::Array)` rather
+    /// than `Range`, so it needs the same materialisation. This is the
+    /// `SUM((A1:A3=10)*1)` boolean-math idiom.
+    #[test]
+    fn sum_consumes_an_array_valued_scalar_argument() {
+        use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(SumFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Number(10.0))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Number(20.0))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Number(10.0));
+        let ctx = interp(&wb);
+        let fctx = ctx.function_context(None);
+
+        let range = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:A3".into(),
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1)),
+            },
+            None,
+        );
+        // (A1:A3=10)*1 -> {1;0;1}, so SUM is 2
+        let comparison = ASTNode::new(
+            ASTNodeType::BinaryOp {
+                op: "=".to_string(),
+                left: Box::new(range),
+                right: Box::new(ASTNode::new(
+                    ASTNodeType::Literal(LiteralValue::Number(10.0)),
+                    None,
+                )),
+            },
+            None,
+        );
+        let times_one = ASTNode::new(
+            ASTNodeType::BinaryOp {
+                op: "*".to_string(),
+                left: Box::new(comparison),
+                right: Box::new(ASTNode::new(
+                    ASTNodeType::Literal(LiteralValue::Number(1.0)),
+                    None,
+                )),
+            },
+            None,
+        );
+
+        let sum = ctx.context.get_function("", "SUM").unwrap();
+        let out = sum
+            .dispatch(
+                &[crate::traits::ArgumentHandle::new(&times_one, &ctx)],
+                &fctx,
+            )
+            .unwrap()
+            .into_literal();
+
+        assert_eq!(out, LiteralValue::Number(2.0));
+    }
+
     #[test]
     fn test_sum_caps() {
         let sum_fn = SumFn;
