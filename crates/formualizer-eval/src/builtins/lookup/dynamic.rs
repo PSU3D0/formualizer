@@ -2529,7 +2529,7 @@ pub struct FilterFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: FILTER(arg1: range@range, arg2: range@range, arg3?...: any@scalar)
-/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=true,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=false,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for FilterFn {
@@ -2559,10 +2559,15 @@ impl Function for FilterFn {
                     default: None,
                 },
                 // include
+                //
+                // Not `by_ref`: in practice this argument is a computed boolean
+                // array (`B2:B5="Jakarta"`) rather than a bare reference, and a
+                // by-ref argument that does not resolve to a reference is
+                // rejected with #REF! during argument preparation.
                 ArgSchema {
                     kinds: smallvec::smallvec![ArgKind::Range],
                     required: true,
-                    by_ref: true,
+                    by_ref: false,
                     shape: ShapeKind::Range,
                     coercion: CoercionPolicy::None,
                     max: None,
@@ -3948,6 +3953,52 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v_empty, LiteralValue::Text("EMPTY".into()));
+    }
+
+    /// `include` is usually a computed boolean array (`B2:B5="Jakarta"`) rather
+    /// than a bare reference. The existing coverage only ever passed a
+    /// reference, so a `by_ref` schema on that argument went unnoticed while
+    /// rejecting every idiomatic call with #REF!.
+    #[test]
+    fn filter_accepts_computed_include() {
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(FilterFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "FILTER").unwrap();
+
+        let array_range = range("A1:A3", 1, 1, 3, 1);
+        // {TRUE;FALSE;TRUE} as an inline array rather than a reference
+        let include_array = ASTNode::new(
+            ASTNodeType::Array(vec![
+                vec![lit(LiteralValue::Boolean(true))],
+                vec![lit(LiteralValue::Boolean(false))],
+                vec![lit(LiteralValue::Boolean(true))],
+            ]),
+            None,
+        );
+
+        let v = f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&array_range, &ctx),
+                    ArgumentHandle::new(&include_array, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+
+        match v {
+            LiteralValue::Array(a) => {
+                assert_eq!(a.len(), 2, "expected the two included rows, got {a:?}");
+                assert_eq!(a[0], vec![LiteralValue::Number(10.0)]);
+                assert_eq!(a[1], vec![LiteralValue::Number(30.0)]);
+            }
+            other => panic!("expected array got {other:?}"),
+        }
     }
 
     #[test]
