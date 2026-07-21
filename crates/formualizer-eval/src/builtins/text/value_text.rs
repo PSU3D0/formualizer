@@ -349,7 +349,17 @@ impl Function for TextFn {
         } else {
             // date tokens naive from serial
             if fmt.contains("yyyy") || fmt.contains("dd") || fmt.contains("mm") {
-                format_serial_date(num, &fmt)
+                match format_serial_date(num, &fmt) {
+                    Some(s) => s,
+                    // A serial with no corresponding date cannot be rendered with a
+                    // date format, so fall in with how this function already reports
+                    // input it cannot format.
+                    None => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new_value(),
+                        )));
+                    }
+                }
             } else {
                 num.to_string()
             }
@@ -423,16 +433,15 @@ fn format_with_thousands(n: f64, fmt: &str) -> String {
     }
 }
 
-fn format_serial_date(n: f64, fmt: &str) -> String {
+/// Returns `None` for a serial that has no date at all — negative, or beyond the
+/// calendar `serial_to_date` can build.
+fn format_serial_date(n: f64, fmt: &str) -> Option<String> {
     use crate::builtins::datetime::serial_to_date;
     use chrono::Datelike;
     // Use the shared Excel serial mapping so TEXT agrees with DATE/DAY/MONTH/YEAR.
     // Adding the truncated serial to 1899-12-31 directly would skip Excel's phantom
     // 1900-02-29, shifting every date after serial 59 one day late.
-    let date = match serial_to_date(n) {
-        Ok(d) => d,
-        Err(_) => return fmt.to_string(),
-    };
+    let date = serial_to_date(n).ok()?;
     let mut out = fmt.to_string();
     out = out.replace("yyyy", &format!("{:04}", date.year()));
     out = out.replace("mm", &format!("{:02}", date.month()));
@@ -444,7 +453,7 @@ fn format_serial_date(n: f64, fmt: &str) -> String {
         let mm = total_minutes % 60;
         out = out.replace("hh:mm", &format!("{hh:02}:{mm:02}"));
     }
-    out
+    Some(out)
 }
 
 pub fn register_builtins() {

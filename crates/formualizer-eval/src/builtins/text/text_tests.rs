@@ -475,6 +475,32 @@ mod tests {
         }
     }
 
+    /// A negative serial has no date behind it, so a date format has nothing to
+    /// render. Previously this produced a pre-epoch date such as `1899-12-30`.
+    #[test]
+    fn test_text_date_format_rejects_serial_without_a_date() {
+        let wb = TestWorkbook::new().with_function(Arc::new(TextFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXT").unwrap();
+
+        let n = lit(LiteralValue::Number(-1.0));
+        let f_arg = lit(LiteralValue::Text("yyyy-mm-dd".into()));
+        match f
+            .dispatch(
+                &[
+                    ArgumentHandle::new(&n, &ctx),
+                    ArgumentHandle::new(&f_arg, &ctx),
+                ],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal()
+        {
+            LiteralValue::Error(e) => assert_eq!(e.to_string(), "#VALUE!"),
+            other => panic!("Expected #VALUE! error, got {other:?}"),
+        }
+    }
+
     #[test]
     fn test_text_formatting() {
         let wb = TestWorkbook::new().with_function(Arc::new(TextFn));
