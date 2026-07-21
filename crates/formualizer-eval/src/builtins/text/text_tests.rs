@@ -437,6 +437,44 @@ mod tests {
         }
     }
 
+    /// TEXT must use the same Excel serial mapping as DATE/DAY/MONTH/YEAR.
+    /// Adding the serial to 1899-12-31 directly skips Excel's phantom
+    /// 1900-02-29, which shifted every date after serial 59 one day late.
+    #[test]
+    fn test_text_date_serial_matches_excel_epoch() {
+        let wb = TestWorkbook::new().with_function(Arc::new(TextFn));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "TEXT").unwrap();
+
+        let cases = [
+            (1.0, "yyyy-mm-dd", "1900-01-01"),
+            (59.0, "yyyy-mm-dd", "1900-02-28"),
+            (61.0, "yyyy-mm-dd", "1900-03-01"),
+            (100.0, "yyyy-mm-dd", "1900-04-09"),
+            (1000.0, "yyyy-mm-dd", "1902-09-26"),
+            (40000.0, "yyyy-mm-dd", "2009-07-06"),
+            (45306.0, "yyyy-mm-dd", "2024-01-15"),
+            (45306.0, "dd/mm/yyyy", "15/01/2024"),
+        ];
+
+        for (serial, fmt, expected) in cases {
+            let n = lit(LiteralValue::Number(serial));
+            let f_arg = lit(LiteralValue::Text(fmt.into()));
+            assert_eq!(
+                f.dispatch(
+                    &[
+                        ArgumentHandle::new(&n, &ctx),
+                        ArgumentHandle::new(&f_arg, &ctx)
+                    ],
+                    &ctx.function_context(None)
+                )
+                .unwrap(),
+                LiteralValue::Text(expected.into()),
+                "TEXT({serial}, {fmt:?})"
+            );
+        }
+    }
+
     #[test]
     fn test_text_formatting() {
         let wb = TestWorkbook::new().with_function(Arc::new(TextFn));

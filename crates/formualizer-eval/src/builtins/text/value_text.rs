@@ -423,14 +423,16 @@ fn format_with_thousands(n: f64, fmt: &str) -> String {
     }
 }
 
-// very naive: treat integer part as days since 1899-12-31 ignoring leap bug for now
 fn format_serial_date(n: f64, fmt: &str) -> String {
+    use crate::builtins::datetime::serial_to_date;
     use chrono::Datelike;
-    let days = n.trunc() as i64;
-    let base = chrono::NaiveDate::from_ymd_opt(1899, 12, 31).unwrap();
-    let date = base
-        .checked_add_signed(chrono::TimeDelta::days(days))
-        .unwrap_or(base);
+    // Use the shared Excel serial mapping so TEXT agrees with DATE/DAY/MONTH/YEAR.
+    // Adding the truncated serial to 1899-12-31 directly would skip Excel's phantom
+    // 1900-02-29, shifting every date after serial 59 one day late.
+    let date = match serial_to_date(n) {
+        Ok(d) => d,
+        Err(_) => return fmt.to_string(),
+    };
     let mut out = fmt.to_string();
     out = out.replace("yyyy", &format!("{:04}", date.year()));
     out = out.replace("mm", &format!("{:02}", date.month()));
