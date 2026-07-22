@@ -163,3 +163,34 @@ fn recalculate_numeric_formula_cache_rewrites_string_typed_cache_to_numeric_type
         "numeric cached value must be written, got: {after}"
     );
 }
+
+/// Regression: a shared formula whose relative reference points ABOVE the master row must be
+/// translated for every consumer, not frozen. Fixture: master `B2 = A2-A1` (range `B2:B7`), with
+/// `A1..A7 = 10,20,...,70`. Every previous-row gap is 10, so `B2..B7` must all be 10. The pre-fix
+/// umya expander left the above-master reference `A1` unshifted, yielding `A(row)-A1` =
+/// 10,20,30,40,50,60 (a cumulative gap).
+///
+/// Ignored until the `umya-spreadsheet` dependency is bumped to include the fix
+/// (`adjustment_shared_formula_coordinate`); against the currently pinned rev this test fails,
+/// which demonstrates the bug. Un-ignore once the dependency carries the fix.
+#[test]
+#[ignore = "requires umya-spreadsheet shared-formula fix (PSU3D0/umya-spreadsheet#1); un-ignore after bumping the dependency"]
+fn recalculate_expands_shared_formula_reference_above_master() {
+    const FIXTURE: &[u8] = include_bytes!("../fixtures/shared_formula_above_master.xlsx");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("shared_formula_above_master.xlsx");
+    std::fs::write(&path, FIXTURE).expect("write fixture");
+
+    let summary = recalculate_file(&path, None).expect("recalculate");
+    assert_eq!(summary.status.as_str(), "success");
+
+    let mut adapter = UmyaAdapter::open_path(&path).expect("reopen output");
+    let sheet = adapter.read_sheet("Sheet").expect("read sheet");
+    for row in 2..=7u32 {
+        let cell = sheet
+            .cells
+            .get(&(row, 2)) // column B
+            .unwrap_or_else(|| panic!("B{row} missing after recalculate"));
+        assert_number_or_text_number(cell.value.clone(), 10.0);
+    }
+}
