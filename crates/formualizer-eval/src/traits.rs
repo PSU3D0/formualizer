@@ -672,111 +672,35 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
-    /// Resolve as a RangeView (Phase 2 API). Only supports reference arguments.
+    /// Resolve this argument to a [`RangeView`].
+    ///
+    /// Delegates to [`Self::resolve_once`] so reference-shaped and computed
+    /// arguments share one cached resolution path. A reference keeps its lazy
+    /// view, while a computed argument (`B1:B3="x"`, `SEQUENCE(3)`, `{1,2}`)
+    /// resolves through the same single evaluation the rest of argument
+    /// preparation uses instead of being rejected for not being a reference.
     pub fn range_view(&self) -> Result<RangeView<'b>, ExcelError> {
-        match &self.expr {
-            ArgumentExpr::Ast(node) => match &node.node_type {
-                ASTNodeType::Reference { reference, .. } => {
-                    let reference = self.interp.reference_for_current_offset(reference)?;
-                    self.interp
-                        .context
-                        .resolve_range_view(&reference, self.interp.current_sheet())
-                        .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
-                }
-                // Treat array literals (LiteralValue::Array) as ranges for RangeView APIs
-                ASTNodeType::Literal(formualizer_common::LiteralValue::Array(arr)) => Ok(
-                    RangeView::from_owned_rows(arr.clone(), self.interp.context.date_system())
-                        .with_cancel_token(self.interp.context.cancellation_token()),
-                ),
-                ASTNodeType::Array(rows) => {
-                    let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows.len());
-                    for r in rows {
-                        let mut row_vals = Vec::with_capacity(r.len());
-                        for cell in r {
-                            row_vals.push(self.interp.evaluate_ast(cell)?.into_literal());
-                        }
-                        out.push(row_vals);
-                    }
-                    Ok(
-                        RangeView::from_owned_rows(out, self.interp.context.date_system())
-                            .with_cancel_token(self.interp.context.cancellation_token()),
-                    )
-                }
-                ASTNodeType::Function { .. } | ASTNodeType::BinaryOp { .. } => {
-                    let reference = self.reference_for_eval()?;
-                    self.interp
-                        .context
-                        .resolve_range_view(&reference, self.interp.current_sheet())
-                        .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
-                }
-                _ => Err(ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message("Argument cannot be interpreted as a range.")),
-            },
-            ArgumentExpr::Arena {
-                id,
-                data_store,
-                sheet_registry,
-            } => {
-                let node = data_store.get_node(*id).ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
-                })?;
-
-                match node {
-                    crate::engine::arena::AstNodeData::Reference { .. }
-                    | crate::engine::arena::AstNodeData::Function { .. }
-                    | crate::engine::arena::AstNodeData::BinaryOp { .. } => {
-                        let reference = self.reference_for_eval()?;
-                        self.interp
-                            .context
-                            .resolve_range_view(&reference, self.interp.current_sheet())
-                            .map(|v| v.with_cancel_token(self.interp.context.cancellation_token()))
-                    }
-                    crate::engine::arena::AstNodeData::Literal(vref) => {
-                        match data_store.retrieve_value(*vref) {
-                            LiteralValue::Array(arr) => Ok(RangeView::from_owned_rows(
-                                arr,
-                                self.interp.context.date_system(),
-                            )
-                            .with_cancel_token(self.interp.context.cancellation_token())),
-                            _ => Err(ExcelError::new(ExcelErrorKind::Ref)
-                                .with_message("Argument cannot be interpreted as a range.")),
-                        }
-                    }
-                    crate::engine::arena::AstNodeData::Array { .. } => {
-                        let (rows, cols, elements) =
-                            data_store.get_array_elems(*id).ok_or_else(|| {
-                                ExcelError::new(ExcelErrorKind::Value).with_message("Invalid array")
-                            })?;
-
-                        let rows_usize = rows as usize;
-                        let cols_usize = cols as usize;
-                        let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(rows_usize);
-                        for r in 0..rows_usize {
-                            let mut row = Vec::with_capacity(cols_usize);
-                            for c in 0..cols_usize {
-                                let idx = r * cols_usize + c;
-                                let elem_id = elements.get(idx).copied().ok_or_else(|| {
-                                    ExcelError::new(ExcelErrorKind::Value)
-                                        .with_message("Invalid array")
-                                })?;
-                                let v = self.interp.evaluate_arena_ast(
-                                    elem_id,
-                                    data_store,
-                                    sheet_registry,
-                                )?;
-                                row.push(v.into_literal());
-                            }
-                            out.push(row);
-                        }
-                        Ok(
-                            RangeView::from_owned_rows(out, self.interp.context.date_system())
-                                .with_cancel_token(self.interp.context.cancellation_token()),
-                        )
-                    }
-                    _ => Err(ExcelError::new(ExcelErrorKind::Ref)
-                        .with_message("Argument cannot be interpreted as a range.")),
-                }
+        match self.resolve_once()? {
+            ResolvedArgument::Range(view) => Ok(view),
+            // A genuine reference failure (`OFFSET(A1,-1,0)`) stays an error
+            // rather than being masked by re-evaluating the node as a value.
+            ResolvedArgument::ReferenceError(error) => Err(error),
+            // `resolve_once` already folds range-shaped and array values into
+            // `Range`, so these two arms are defensive. They still apply the
+            // cancellation token so the invariant changing could never silently
+            // drop cancellation on this path.
+            ResolvedArgument::Value(CalcValue::Range(view)) => {
+                Ok(self.with_context_cancel_token(view))
             }
+            ResolvedArgument::Value(CalcValue::Scalar(LiteralValue::Array(rows))) => {
+                RangeView::try_from_owned_rows(
+                    rows,
+                    self.interp.context.date_system(),
+                    self.interp.context.cancellation_token(),
+                )
+            }
+            ResolvedArgument::Value(_) => Err(ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Argument cannot be interpreted as a range.")),
         }
     }
 
