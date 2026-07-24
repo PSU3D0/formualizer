@@ -2132,6 +2132,7 @@ impl Function for SumsqFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
         let mut total = 0.0;
         for arg in args {
             match resolve_aggregate_argument(arg, ctx)? {
@@ -2144,11 +2145,11 @@ impl Function for SumsqFn {
                             total += n * n;
                         }
                         LiteralValue::Date(d) => {
-                            let n = crate::builtins::datetime::date_to_serial(d);
+                            let n = formualizer_common::date_to_serial_for(date_system, d);
                             total += n * n;
                         }
                         LiteralValue::DateTime(dt) => {
-                            let n = crate::builtins::datetime::datetime_to_serial(dt);
+                            let n = formualizer_common::datetime_to_serial_for(date_system, dt);
                             total += n * n;
                         }
                         LiteralValue::Time(t) => {

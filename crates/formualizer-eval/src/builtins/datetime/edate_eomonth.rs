@@ -1,19 +1,20 @@
 //! EDATE and EOMONTH functions for date arithmetic
 
-use super::serial::{date_to_serial, serial_to_date};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::{Datelike, NaiveDate};
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::{
+    DateSystem, ExcelError, LiteralValue, date_to_serial_for, try_serial_to_date_for,
+};
 use formualizer_macros::func_caps;
 
-fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
+fn coerce_to_serial(arg: &ArgumentHandle, system: DateSystem) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
     if let LiteralValue::Error(e) = v {
         return Err(e);
     }
-    crate::coercion::to_number_lenient(&v).map_err(|_| {
+    crate::coercion::to_serial_lenient(&v, system).map_err(|_| {
         ExcelError::new_value()
             .with_message("EDATE/EOMONTH expects numeric, date, or text-numeric arguments")
     })
@@ -37,7 +38,7 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
 /// # Remarks
 /// - `months` is truncated to an integer before calculation.
 /// - If the target month has fewer days, the day is clamped to that month's last valid day.
-/// - Serials are interpreted and emitted with Excel 1900 date mapping (not workbook-specific `1904` mode).
+/// - Serials are interpreted and emitted with the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -101,12 +102,13 @@ impl Function for EdateFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let start_serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let start_serial = coerce_to_serial(&args[0], system)?;
         let months = coerce_to_int(&args[1])?;
 
-        let start_date = serial_to_date(start_serial)?;
+        let start_date = try_serial_to_date_for(system, start_serial)?;
 
         // Calculate target year and month using Euclidean division
         let total_months =
@@ -123,7 +125,7 @@ impl Function for EdateFn {
             .ok_or_else(ExcelError::new_num)?;
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            date_to_serial(&target_date),
+            date_to_serial_for(system, &target_date),
         )))
     }
 }
@@ -133,7 +135,7 @@ impl Function for EdateFn {
 /// # Remarks
 /// - `months` is truncated to an integer before offset calculation.
 /// - The returned date is always the month-end date for the target month.
-/// - Serials are interpreted and returned using Excel 1900 mapping rather than workbook `1904` mode.
+/// - Serials are interpreted and returned using the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -195,12 +197,13 @@ impl Function for EomonthFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let start_serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let start_serial = coerce_to_serial(&args[0], system)?;
         let months = coerce_to_int(&args[1])?;
 
-        let start_date = serial_to_date(start_serial)?;
+        let start_date = try_serial_to_date_for(system, start_serial)?;
 
         // Calculate target year and month using Euclidean division
         let total_months =
@@ -216,7 +219,7 @@ impl Function for EomonthFn {
             .ok_or_else(ExcelError::new_num)?;
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            date_to_serial(&target_date),
+            date_to_serial_for(system, &target_date),
         )))
     }
 }
@@ -348,5 +351,61 @@ mod tests {
 
         // Should return Feb 28, 2023 (not a leap year)
         assert!(matches!(result, LiteralValue::Number(_)));
+    }
+
+    fn eval_month_offset_formula(system: crate::engine::DateSystem, formula: &str) -> LiteralValue {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::interpreter::Interpreter;
+        use formualizer_parse::parser::parse;
+
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(EdateFn))
+            .with_function(Arc::new(EomonthFn));
+        let engine = Engine::new(wb, EvalConfig::default().with_date_system(system));
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+        interpreter
+            .evaluate_ast(&parse(formula).expect("formula should parse"))
+            .expect("formula should evaluate")
+            .into_literal()
+    }
+
+    /// EDATE round-trips serial -> date -> shifted date -> serial, so the
+    /// workbook date system must be used on both ends.
+    #[test]
+    fn edate_follows_workbook_date_system_1900_and_1904() {
+        use crate::engine::DateSystem;
+        use formualizer_common::date_to_serial_for;
+
+        // 2023-01-31 + 1 month clamps to 2023-02-28 in either date system.
+        let start = chrono::NaiveDate::from_ymd_opt(2023, 1, 31).unwrap();
+        let expected_date = chrono::NaiveDate::from_ymd_opt(2023, 2, 28).unwrap();
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let start_serial = date_to_serial_for(system, &start);
+            assert_eq!(
+                eval_month_offset_formula(system, &format!("=EDATE({start_serial},1)")),
+                LiteralValue::Number(date_to_serial_for(system, &expected_date)),
+                "EDATE under {system:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn eomonth_follows_workbook_date_system_1900_and_1904() {
+        use crate::engine::DateSystem;
+        use formualizer_common::date_to_serial_for;
+
+        // 2024-02-15 with a zero offset is the leap-year month end 2024-02-29.
+        let start = chrono::NaiveDate::from_ymd_opt(2024, 2, 15).unwrap();
+        let expected_date = chrono::NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let start_serial = date_to_serial_for(system, &start);
+            assert_eq!(
+                eval_month_offset_formula(system, &format!("=EOMONTH({start_serial},0)")),
+                LiteralValue::Number(date_to_serial_for(system, &expected_date)),
+                "EOMONTH under {system:?}"
+            );
+        }
     }
 }

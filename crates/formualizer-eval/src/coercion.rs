@@ -1,4 +1,4 @@
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 
 /// Centralized coercion and error policy utilities (Milestone 7).
 /// These functions implement invariant, Excel-compatible coercions and
@@ -32,6 +32,24 @@ pub fn to_number_lenient(value: &LiteralValue) -> Result<f64, ExcelError> {
                     .with_message(format!("Cannot convert '{s}' to number"))
             }),
         _ => to_number_strict(value),
+    }
+}
+
+/// Lenient numeric coercion that resolves temporal values in a date system.
+///
+/// Identical to [`to_number_lenient`] except that date-bearing literals are
+/// converted to serials using the workbook's date system instead of the
+/// implicit Excel-1900 default.
+pub fn to_serial_lenient(value: &LiteralValue, system: DateSystem) -> Result<f64, ExcelError> {
+    match value {
+        LiteralValue::Date(_)
+        | LiteralValue::DateTime(_)
+        | LiteralValue::Time(_)
+        | LiteralValue::Duration(_) => value.as_serial_number_for(system).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("Cannot convert to date/time serial")
+        }),
+        _ => to_number_lenient(value),
     }
 }
 
