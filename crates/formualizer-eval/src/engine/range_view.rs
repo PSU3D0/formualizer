@@ -412,7 +412,7 @@ impl<'a> RangeView<'a> {
         // Overlay takes precedence: user edits over computed over base.
         let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
         if let Some(ov) = cascade.get_scalar(in_off) {
-            return ov.to_literal();
+            return ov.to_literal_for(sheet.date_system);
         }
         // Read tag and route to lane
         let tag_u8 = ch.type_tag.value(in_off);
@@ -433,7 +433,8 @@ impl<'a> RangeView<'a> {
                     if arr.is_null(in_off) {
                         return LiteralValue::Empty;
                     }
-                    LiteralValue::from_serial_number(arr.value(in_off))
+                    LiteralValue::try_from_serial_number_for(sheet.date_system, arr.value(in_off))
+                        .unwrap_or_else(LiteralValue::Error)
                 } else {
                     LiteralValue::Empty
                 }

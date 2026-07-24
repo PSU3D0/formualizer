@@ -436,7 +436,7 @@ fn format_serial_date(
     n: f64,
     fmt: &str,
 ) -> Result<String, ExcelError> {
-    use crate::builtins::datetime::serial_to_display_date_parts_for;
+    use formualizer_common::try_serial_to_display_date_parts_for;
 
     let mut out = fmt.to_string();
 
@@ -452,7 +452,7 @@ fn format_serial_date(
     } else {
         (n, None)
     };
-    let (year, month, day) = serial_to_display_date_parts_for(system, display_serial)?;
+    let parts = try_serial_to_display_date_parts_for(system, display_serial)?;
 
     if let Some(total_minutes) = rounded_minutes {
         let hours = total_minutes / 60;
@@ -460,9 +460,9 @@ fn format_serial_date(
         out = out.replace("hh:mm", &format!("{hours:02}:{minutes:02}"));
     }
 
-    out = out.replace("yyyy", &format!("{year:04}"));
-    out = out.replace("mm", &format!("{month:02}"));
-    out = out.replace("dd", &format!("{day:02}"));
+    out = out.replace("yyyy", &format!("{:04}", parts.year));
+    out = out.replace("mm", &format!("{:02}", parts.month));
+    out = out.replace("dd", &format!("{:02}", parts.day));
     Ok(out)
 }
 

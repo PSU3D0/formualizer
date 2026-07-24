@@ -739,7 +739,11 @@ where
             );
             let asheet = if sparse_initial {
                 let mut asheet = formualizer_eval::arrow_store::ArrowSheet::new_sparse(
-                    name, cols, rows, chunk_rows,
+                    name,
+                    cols,
+                    rows,
+                    chunk_rows,
+                    engine.config.date_system,
                 );
                 for cell in &sheet.cells {
                     if cell.formula.is_some() {

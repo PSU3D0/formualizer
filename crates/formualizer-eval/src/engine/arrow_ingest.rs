@@ -1,7 +1,6 @@
 use crate::arrow_store::{ArrowSheet, IngestBuilder};
 use crate::engine::Engine;
 use crate::traits::EvaluationContext;
-use chrono::Timelike;
 use formualizer_common::{ExcelError, LiteralValue};
 use rustc_hash::FxHashMap;
 
@@ -146,21 +145,21 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                 ),
                                 LiteralValue::Date(d) => {
                                     let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                                    let serial = crate::builtins::datetime::datetime_to_serial_for(
+                                    let serial = formualizer_common::datetime_to_serial_for(
                                         date_system,
                                         &dt,
                                     );
                                     crate::arrow_store::OverlayValue::DateTime(serial)
                                 }
                                 LiteralValue::DateTime(dt) => {
-                                    let serial = crate::builtins::datetime::datetime_to_serial_for(
+                                    let serial = formualizer_common::datetime_to_serial_for(
                                         date_system,
                                         &dt,
                                     );
                                     crate::arrow_store::OverlayValue::DateTime(serial)
                                 }
                                 LiteralValue::Time(t) => {
-                                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                                    let serial = formualizer_common::time_to_fraction(&t);
                                     crate::arrow_store::OverlayValue::DateTime(serial)
                                 }
                                 LiteralValue::Duration(d) => {
@@ -230,7 +229,11 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                             if fa.is_null(i) {
                                                 LiteralValue::Empty
                                             } else {
-                                                LiteralValue::from_serial_number(fa.value(i))
+                                                LiteralValue::try_from_serial_number_for(
+                                                    date_system,
+                                                    fa.value(i),
+                                                )
+                                                .unwrap_or_else(LiteralValue::Error)
                                             }
                                         } else {
                                             LiteralValue::Empty
@@ -362,7 +365,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                 LiteralValue::Date(d) => {
                                     tag_b.append_value(crate::arrow_store::TypeTag::Number as u8);
                                     let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                                    let serial = crate::builtins::datetime::datetime_to_serial_for(
+                                    let serial = formualizer_common::datetime_to_serial_for(
                                         date_system,
                                         &dt,
                                     );
@@ -374,7 +377,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                 }
                                 LiteralValue::DateTime(dt) => {
                                     tag_b.append_value(crate::arrow_store::TypeTag::Number as u8);
-                                    let serial = crate::builtins::datetime::datetime_to_serial_for(
+                                    let serial = formualizer_common::datetime_to_serial_for(
                                         date_system,
                                         &dt,
                                     );
@@ -386,7 +389,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                 }
                                 LiteralValue::Time(t) => {
                                     tag_b.append_value(crate::arrow_store::TypeTag::Number as u8);
-                                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                                    let serial = formualizer_common::time_to_fraction(&t);
                                     nb.append_value(serial);
                                     non_num += 1;
                                     bb.append_null();

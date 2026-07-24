@@ -1206,7 +1206,7 @@ impl Function for NFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 1 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -1224,7 +1224,7 @@ impl Function for NFn {
             | LiteralValue::Time(_)
             | LiteralValue::Duration(_) => {
                 // Convert via serial number helper
-                if let Some(serial) = v.as_serial_number() {
+                if let Some(serial) = v.as_serial_number_for(ctx.date_system()) {
                     Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
                         serial,
                     )))
