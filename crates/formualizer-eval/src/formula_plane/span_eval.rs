@@ -292,7 +292,7 @@ impl<'a> SpanEvaluator<'a> {
                 first_writable_placement.col,
             ));
             let value = match interpreter.evaluate_ast(&ast_tree) {
-                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             };
 
@@ -423,7 +423,7 @@ impl<'a> SpanEvaluator<'a> {
                 self.data_store,
                 self.sheet_registry,
             ) {
-                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             }
         } else {
@@ -434,7 +434,7 @@ impl<'a> SpanEvaluator<'a> {
                 self.data_store,
                 self.sheet_registry,
             ) {
-                Ok(calc) => literal_to_overlay(calc.into_literal()),
+                Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             }
         };
@@ -707,7 +707,7 @@ impl<'a> SpanEvaluator<'a> {
             self.data_store,
             self.sheet_registry,
         ) {
-            Ok(calc) => literal_to_overlay(calc.into_literal()),
+            Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
             Err(err) => OverlayValue::Error(map_error_code(err.kind)),
         };
         Ok(value)
@@ -1092,7 +1092,10 @@ fn validate_relocatable_compact_reference(reference: &CompactRefType) -> Result<
     }
 }
 
-fn literal_to_overlay(value: LiteralValue) -> OverlayValue {
+fn literal_to_overlay(
+    value: LiteralValue,
+    date_system: formualizer_common::DateSystem,
+) -> OverlayValue {
     match value {
         LiteralValue::Int(i) => OverlayValue::Number(i as f64),
         LiteralValue::Number(n) => OverlayValue::Number(n),
@@ -1102,14 +1105,14 @@ fn literal_to_overlay(value: LiteralValue) -> OverlayValue {
             .get_mut(0)
             .and_then(|row| row.get_mut(0))
             .cloned()
-            .map(literal_to_overlay)
+            .map(|value| literal_to_overlay(value, date_system))
             .unwrap_or(OverlayValue::Empty),
         LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => value
-            .as_serial_number()
+            .as_serial_number_for(date_system)
             .map(OverlayValue::DateTime)
             .unwrap_or(OverlayValue::Empty),
         LiteralValue::Duration(_) => value
-            .as_serial_number()
+            .as_serial_number_for(date_system)
             .map(OverlayValue::Duration)
             .unwrap_or(OverlayValue::Empty),
         LiteralValue::Empty => OverlayValue::Empty,
@@ -1137,6 +1140,34 @@ mod tests {
         FormulaOverlayEntryKind, NewFormulaSpan, PlacementDomain, ResultRegion,
     };
     use super::*;
+
+    #[test]
+    fn temporal_overlay_conversion_uses_the_workbook_date_system() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let datetime = date.and_hms_opt(12, 0, 0).unwrap();
+
+        for (system, date_serial, datetime_serial) in [
+            (
+                formualizer_common::DateSystem::Excel1900,
+                45_306.0,
+                45_306.5,
+            ),
+            (
+                formualizer_common::DateSystem::Excel1904,
+                43_844.0,
+                43_844.5,
+            ),
+        ] {
+            assert_eq!(
+                literal_to_overlay(LiteralValue::Date(date), system),
+                OverlayValue::DateTime(date_serial)
+            );
+            assert_eq!(
+                literal_to_overlay(LiteralValue::DateTime(datetime), system),
+                OverlayValue::DateTime(datetime_serial)
+            );
+        }
+    }
 
     fn candidate(
         data_store: &mut DataStore,

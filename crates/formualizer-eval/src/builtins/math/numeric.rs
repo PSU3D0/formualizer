@@ -2152,7 +2152,7 @@ impl Function for SumsqFn {
                             total += n * n;
                         }
                         LiteralValue::Time(t) => {
-                            let n = crate::builtins::datetime::time_to_fraction(t);
+                            let n = formualizer_common::time_to_fraction(t);
                             total += n * n;
                         }
                         LiteralValue::Duration(d) => {

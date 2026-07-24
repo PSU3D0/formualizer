@@ -3,7 +3,7 @@ use crate::traits::{
     AccessGranularity, AdapterLoadStats, BackendCaps, CalcSettings, CellData, DefinedName,
     DefinedNameDefinition, DefinedNameScope, MergedRange, SheetData, SpreadsheetReader,
 };
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 use parking_lot::RwLock;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::File;
@@ -129,7 +129,7 @@ struct StreamedSheet {
 }
 
 #[inline]
-fn data_ref_to_literal(value: &DataRef<'_>) -> Option<LiteralValue> {
+fn data_ref_to_literal(value: &DataRef<'_>, date_system: DateSystem) -> Option<LiteralValue> {
     match value {
         DataRef::Empty => None,
         DataRef::String(s) if s.is_empty() => None,
@@ -151,7 +151,10 @@ fn data_ref_to_literal(value: &DataRef<'_>) -> Option<LiteralValue> {
                 _ => ExcelErrorKind::Error,
             },
         ))),
-        DataRef::DateTime(dt) => Some(LiteralValue::from_serial_number(dt.as_f64())),
+        DataRef::DateTime(dt) => Some(
+            LiteralValue::try_from_serial_number_for(date_system, dt.as_f64())
+                .unwrap_or_else(LiteralValue::Error),
+        ),
         DataRef::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
         DataRef::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
     }
@@ -347,7 +350,11 @@ impl CalamineAdapter {
         });
         let mut sparse = force_sparse_from_start.then(|| {
             formualizer_eval::arrow_store::ArrowSheet::new_sparse(
-                sheet, dims_cols, dims_rows, chunk_rows,
+                sheet,
+                dims_cols,
+                dims_rows,
+                chunk_rows,
+                engine.config.date_system,
             )
         });
         let mut used_sparse_fallback = force_sparse_from_start;
@@ -528,7 +535,8 @@ impl CalamineAdapter {
             if has_formula {
                 continue;
             }
-            let Some(literal) = data_ref_to_literal(&record.value) else {
+            let Some(literal) = data_ref_to_literal(&record.value, engine.config.date_system)
+            else {
                 continue;
             };
             value_cells_observed += 1;
@@ -1186,6 +1194,7 @@ impl CalamineAdapter {
     fn range_to_cells(
         range: &Range<Data>,
         formulas: Option<&Range<String>>,
+        date_system: DateSystem,
     ) -> BTreeMap<(u32, u32), CellData> {
         let mut cells = BTreeMap::new();
 
@@ -1222,7 +1231,10 @@ impl CalamineAdapter {
                     };
                     Some(LiteralValue::Error(ExcelError::new(kind)))
                 }
-                Data::DateTime(dt) => Some(LiteralValue::from_serial_number(dt.as_f64())),
+                Data::DateTime(dt) => Some(
+                    LiteralValue::try_from_serial_number_for(date_system, dt.as_f64())
+                        .unwrap_or_else(LiteralValue::Error),
+                ),
                 Data::DateTimeIso(s) => Some(LiteralValue::Text(s.clone())),
                 Data::DurationIso(s) => Some(LiteralValue::Text(s.clone())),
             };
@@ -1423,7 +1435,10 @@ impl SpreadsheetReader for CalamineAdapter {
         let formulas = wb.worksheet_formula(sheet).ok();
 
         let dims = (range.height() as u32, range.width() as u32);
-        let cells = Self::range_to_cells(&range, formulas.as_ref());
+        // Calamine's ordinary reader API does not currently expose the
+        // workbook date system at this boundary. Keep that policy explicit so
+        // future metadata support only changes this selection point.
+        let cells = Self::range_to_cells(&range, formulas.as_ref(), DateSystem::Excel1900);
 
         self.loaded_sheets.insert(sheet.to_string());
 
@@ -1789,7 +1804,7 @@ mod tests {
     fn new_calamine_error_variants_preserve_generic_error_semantics() {
         let error = calamine::CellErrorType::GettingData;
         assert!(matches!(
-            data_ref_to_literal(&DataRef::Error(error.clone())),
+            data_ref_to_literal(&DataRef::Error(error.clone()), DateSystem::Excel1900),
             Some(LiteralValue::Error(ref value)) if value.kind == ExcelErrorKind::Error
         ));
         assert!(matches!(

@@ -1,6 +1,5 @@
 use crate::error::IoError;
 use crate::traits::{AdapterLoadStats, LoadStrategy, SpreadsheetReader, SpreadsheetWriter};
-use chrono::Timelike;
 use formualizer_common::{
     LiteralValue, RangeAddress,
     error::{ExcelError, ExcelErrorKind},
@@ -2001,8 +2000,10 @@ impl Workbook {
         use formualizer_eval::arrow_store::ArrowSheet;
 
         if self.engine.sheet_store().sheet(sheet).is_none() {
+            let date_system = self.engine.config.date_system;
             self.engine.sheet_store_mut().sheets.push(ArrowSheet {
                 name: std::sync::Arc::<str>::from(sheet),
+                date_system,
                 columns: Vec::new(),
                 nrows: 0,
                 chunk_starts: Vec::new(),
@@ -2054,21 +2055,15 @@ impl Workbook {
                 }
                 LiteralValue::Date(d) => {
                     let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                    let serial = formualizer_eval::builtins::datetime::datetime_to_serial_for(
-                        date_system,
-                        &dt,
-                    );
+                    let serial = formualizer_common::datetime_to_serial_for(date_system, &dt);
                     OverlayValue::DateTime(serial)
                 }
                 LiteralValue::DateTime(dt) => {
-                    let serial = formualizer_eval::builtins::datetime::datetime_to_serial_for(
-                        date_system,
-                        dt,
-                    );
+                    let serial = formualizer_common::datetime_to_serial_for(date_system, dt);
                     OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Time(t) => {
-                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                    let serial = formualizer_common::time_to_fraction(t);
                     OverlayValue::DateTime(serial)
                 }
                 LiteralValue::Duration(d) => {

@@ -1,9 +1,8 @@
 //! TODAY and NOW volatile functions
 
-use super::serial::{date_to_serial_for, datetime_to_serial_for};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::{ExcelError, LiteralValue, date_to_serial_for, datetime_to_serial_for};
 use formualizer_macros::func_caps;
 
 /// Returns the current date as a volatile serial value.

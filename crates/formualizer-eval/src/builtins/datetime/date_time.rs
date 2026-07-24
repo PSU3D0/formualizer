@@ -1,12 +1,24 @@
 //! DATE and TIME functions
 
-use super::serial::{create_date_normalized, time_to_fraction};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
-use chrono::NaiveTime;
-use formualizer_common::{ExcelError, LiteralValue};
+use chrono::{NaiveDate, NaiveTime};
+use formualizer_common::{ExcelError, LiteralValue, date_to_serial_for, time_to_fraction};
 use formualizer_macros::func_caps;
+
+/// Create a date from year, month, and day using Excel normalization.
+fn create_date_normalized(year: i32, month: i32, day: i32) -> Result<NaiveDate, ExcelError> {
+    let total_months = (year * 12) + month - 1;
+    let normalized_year = total_months / 12;
+    let normalized_month = (total_months % 12) + 1;
+    let first_of_month = NaiveDate::from_ymd_opt(normalized_year, normalized_month as u32, 1)
+        .ok_or_else(ExcelError::new_num)?;
+
+    first_of_month
+        .checked_add_signed(chrono::TimeDelta::days((day - 1) as i64))
+        .ok_or_else(ExcelError::new_num)
+}
 
 fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
     let v = arg.value()?.into_literal();
@@ -109,7 +121,7 @@ impl Function for DateFn {
         };
 
         let date = create_date_normalized(adjusted_year, month, day)?;
-        let serial = super::serial::date_to_serial_for(ctx.date_system(), &date);
+        let serial = date_to_serial_for(ctx.date_system(), &date);
 
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             serial,
