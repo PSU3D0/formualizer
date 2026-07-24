@@ -1,13 +1,32 @@
 //! WEEKDAY, WEEKNUM, DATEDIF, NETWORKDAYS, WORKDAY functions
 
-use super::serial::{date_to_serial, serial_to_date};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use arrow_array::Array;
 use chrono::{Datelike, NaiveDate, Weekday};
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::{
+    DateSystem, ExcelError, LiteralValue, date_to_serial_for, try_serial_to_date_for,
+};
 use formualizer_macros::func_caps;
+
+/// Number of days between the Excel 1900 and Excel 1904 epochs.
+///
+/// `1462 % 7 == 6`, so the two systems disagree on the weekday a given serial
+/// denotes; weekday-dependent builtins are therefore not epoch-invariant.
+const EXCEL_1904_EPOCH_OFFSET: i64 = 1462;
+
+/// Excel weekday index for a whole-day serial: `0`=Sat, `1`=Sun, `2`=Mon, ... `6`=Fri.
+///
+/// The index is derived from the serial rather than from the calendar date so
+/// that the Excel 1900 system stays aligned with Excel's phantom 1900-02-29.
+/// Excel 1904 serials are rebased onto the 1900 epoch first.
+fn weekday_index_from_serial(system: DateSystem, serial: i64) -> i64 {
+    match system {
+        DateSystem::Excel1900 => serial.rem_euclid(7),
+        DateSystem::Excel1904 => (serial + EXCEL_1904_EPOCH_OFFSET).rem_euclid(7),
+    }
+}
 
 /// Day of year in a standard 365-day (non-leap) year.
 /// Feb 29 dates are clamped to Feb 28 (day 59).
@@ -18,12 +37,12 @@ fn non_leap_day_of_year(month: u32, day: u32) -> i64 {
     CUM[(month - 1) as usize] + capped as i64
 }
 
-fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
+fn coerce_to_serial(arg: &ArgumentHandle, system: DateSystem) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
     if let LiteralValue::Error(e) = v {
         return Err(e);
     }
-    crate::coercion::to_number_lenient(&v).map_err(|_| ExcelError::new_value())
+    crate::coercion::to_serial_lenient(&v, system).map_err(|_| ExcelError::new_value())
 }
 
 fn coerce_to_int(arg: &ArgumentHandle) -> Result<i64, ExcelError> {
@@ -41,7 +60,9 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i64, ExcelError> {
 /// # Remarks
 /// - Default `return_type` is `1` (`Sunday=1` through `Saturday=7`).
 /// - Supported `return_type` values are `1`, `2`, `3`, `11`-`17`; unsupported values return `#NUM!`.
-/// - Input serials are interpreted with Excel 1900 date mapping, including its historical leap-year quirk.
+/// - Input serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
+///   Because the epochs are 1462 days apart (`1462 % 7 == 6`), the same serial denotes a different
+///   weekday in each system.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -101,9 +122,10 @@ impl Function for WeekdayFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
         let serial_int = serial.trunc() as i64;
         if serial_int < 0 {
             return Ok(CalcValue::Scalar(
@@ -117,8 +139,8 @@ impl Function for WeekdayFn {
         };
 
         // Compute weekday directly from serial number (not chrono) to correctly
-        // handle Excel's phantom Feb 29. serial % 7: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
-        let d = serial_int % 7;
+        // handle Excel's phantom Feb 29: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
+        let d = weekday_index_from_serial(system, serial_int);
 
         // Map return_type to the d-value of its starting day and whether 0-based
         let (start_d, zero_based) = match return_type {
@@ -153,7 +175,8 @@ impl Function for WeekdayFn {
 /// - Default `return_type` is `1` (week starts on Sunday).
 /// - Supported `return_type` values are `1`, `2`, `11`-`17`, and `21` (ISO week numbering).
 /// - Unsupported `return_type` values return `#NUM!`.
-/// - Input serials are interpreted using Excel 1900 date mapping rather than workbook `1904` interpretation.
+/// - Input serials are interpreted using the workbook's date system (Excel 1900 or Excel 1904);
+///   week boundaries differ between the systems because their epochs are 1462 days apart.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -213,9 +236,10 @@ impl Function for WeeknumFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
         let serial_int = serial.trunc() as i64;
         if serial_int < 0 {
             return Ok(CalcValue::Scalar(
@@ -228,33 +252,40 @@ impl Function for WeeknumFn {
             1
         };
 
-        // Serial 0 ("January 0, 1900") is before the first week of any year
-        if serial_int == 0 {
+        // Serial 0 in the 1900 system is "January 0, 1900", before the first week
+        // of any year. In the 1904 system serial 0 is the real date 1904-01-01.
+        if system == DateSystem::Excel1900 && serial_int == 0 {
             return Ok(CalcValue::Scalar(LiteralValue::Int(0)));
         }
 
         if return_type == 21 {
             // ISO week number: computed from serial-based weekday
-            // serial % 7: 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
-            let d = serial_int % 7;
+            // 0=Sat, 1=Sun, 2=Mon, ..., 6=Fri
+            let d = weekday_index_from_serial(system, serial_int);
             // ISO weekday: Mon=1, ..., Sun=7
             let iso_wd = if d < 2 { d + 6 } else { d - 1 };
 
             // Thursday of this ISO week
             let thu_serial = serial_int - iso_wd + 4;
 
-            if thu_serial < 1 {
-                // Falls in last week of previous year (only for first days of 1900)
-                return Ok(CalcValue::Scalar(LiteralValue::Int(52)));
+            // The ISO week of the first days of the epoch year reaches back before
+            // the first representable serial, so the answer is fixed per system:
+            // 1899-12-31 falls in ISO week 52 of 1899, 1903-12-31 in week 53 of 1903.
+            let (first_serial, week_before_epoch) = match system {
+                DateSystem::Excel1900 => (1i64, 52i64),
+                DateSystem::Excel1904 => (0i64, 53i64),
+            };
+            if thu_serial < first_serial {
+                return Ok(CalcValue::Scalar(LiteralValue::Int(week_before_epoch)));
             }
 
             // Get year of the Thursday
-            let thu_date = serial_to_date(thu_serial as f64)?;
+            let thu_date = try_serial_to_date_for(system, thu_serial as f64)?;
             let thu_year = thu_date.year();
 
             // Serial for Jan 1 of that year
             let jan1 = NaiveDate::from_ymd_opt(thu_year, 1, 1).unwrap();
-            let jan1_serial = date_to_serial(&jan1) as i64;
+            let jan1_serial = date_to_serial_for(system, &jan1) as i64;
 
             let week = (thu_serial - jan1_serial) / 7 + 1;
             return Ok(CalcValue::Scalar(LiteralValue::Int(week)));
@@ -278,15 +309,15 @@ impl Function for WeeknumFn {
         };
 
         // Get the year for this serial
-        let date = serial_to_date(serial)?;
+        let date = try_serial_to_date_for(system, serial)?;
         let year = date.year();
 
         // Serial for Jan 1 of the year
         let jan1 = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
-        let jan1_serial = date_to_serial(&jan1) as i64;
+        let jan1_serial = date_to_serial_for(system, &jan1) as i64;
 
         // Jan 1's weekday (d-value from serial)
-        let jan1_d = jan1_serial % 7;
+        let jan1_d = weekday_index_from_serial(system, jan1_serial);
 
         // Offset: how many days from week_starts to Jan 1
         let offset = (jan1_d - week_starts_d + 7) % 7;
@@ -308,7 +339,7 @@ impl Function for WeeknumFn {
 /// - If `start_date > end_date`, the function returns `#NUM!`.
 /// - Unit matching is case-insensitive.
 /// - `"YD"` uses a Feb-29 normalization strategy that can differ slightly from Excel in edge cases.
-/// - Input serials are interpreted with Excel 1900 date mapping.
+/// - Both endpoints are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -366,10 +397,11 @@ impl Function for DatedifFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let start_serial = coerce_to_serial(&args[0])?;
-        let end_serial = coerce_to_serial(&args[1])?;
+        let system = ctx.date_system();
+        let start_serial = coerce_to_serial(&args[0], system)?;
+        let end_serial = coerce_to_serial(&args[1], system)?;
 
         let unit = match args[2].value()?.into_literal() {
             LiteralValue::Text(s) => s.to_uppercase(),
@@ -387,8 +419,8 @@ impl Function for DatedifFn {
             ));
         }
 
-        let start_date = serial_to_date(start_serial)?;
-        let end_date = serial_to_date(end_serial)?;
+        let start_date = try_serial_to_date_for(system, start_serial)?;
+        let end_date = try_serial_to_date_for(system, end_serial)?;
 
         let result = match unit.as_str() {
             "Y" => {
@@ -578,11 +610,17 @@ fn is_weekend_masked(date: &NaiveDate, mask: &WeekendMask) -> bool {
 /// Collect holiday dates from argument(s) starting at `arg_start`.
 /// Handles scalars, inline arrays, and range references.
 /// Silently skips non-numeric / empty cells (matching Excel behavior).
-fn collect_holidays(args: &[ArgumentHandle], arg_start: usize) -> Vec<NaiveDate> {
+fn collect_holidays(
+    args: &[ArgumentHandle],
+    arg_start: usize,
+    system: DateSystem,
+) -> Vec<NaiveDate> {
     let mut holidays = Vec::new();
     for arg in args.iter().skip(arg_start) {
         match arg.value() {
-            Ok(CalcValue::Scalar(lit)) => collect_holidays_from_literal(&lit, &mut holidays),
+            Ok(CalcValue::Scalar(lit)) => {
+                collect_holidays_from_literal(&lit, &mut holidays, system)
+            }
             Ok(CalcValue::Range(rv)) => {
                 if let Ok(slices) = rv.numbers_slices().collect::<Result<Vec<_>, _>>() {
                     for (_row_start, _row_len, cols) in slices {
@@ -591,7 +629,7 @@ fn collect_holidays(args: &[ArgumentHandle], arg_start: usize) -> Vec<NaiveDate>
                             let values = col.values();
                             for i in 0..len {
                                 if !col.is_null(i)
-                                    && let Ok(d) = serial_to_date(values[i])
+                                    && let Ok(d) = try_serial_to_date_for(system, values[i])
                                 {
                                     holidays.push(d);
                                 }
@@ -608,27 +646,27 @@ fn collect_holidays(args: &[ArgumentHandle], arg_start: usize) -> Vec<NaiveDate>
     holidays
 }
 
-fn collect_holidays_from_literal(lit: &LiteralValue, out: &mut Vec<NaiveDate>) {
+fn collect_holidays_from_literal(lit: &LiteralValue, out: &mut Vec<NaiveDate>, system: DateSystem) {
     match lit {
         LiteralValue::Array(rows) => {
             for row in rows {
                 for cell in row {
-                    collect_holidays_from_literal(cell, out);
+                    collect_holidays_from_literal(cell, out, system);
                 }
             }
         }
         _ => {
-            if let Some(d) = literal_to_date(lit) {
+            if let Some(d) = literal_to_date(lit, system) {
                 out.push(d);
             }
         }
     }
 }
 
-fn literal_to_date(lit: &LiteralValue) -> Option<NaiveDate> {
+fn literal_to_date(lit: &LiteralValue, system: DateSystem) -> Option<NaiveDate> {
     match lit {
-        LiteralValue::Number(f) => serial_to_date(*f).ok(),
-        LiteralValue::Int(i) => serial_to_date(*i as f64).ok(),
+        LiteralValue::Number(f) => try_serial_to_date_for(system, *f).ok(),
+        LiteralValue::Int(i) => try_serial_to_date_for(system, *i as f64).ok(),
         LiteralValue::Date(d) => Some(*d),
         LiteralValue::DateTime(dt) => Some(dt.date()),
         _ => None,
@@ -642,7 +680,8 @@ fn literal_to_date(lit: &LiteralValue) -> Option<NaiveDate> {
 /// - If `start_date > end_date`, the result is negative.
 /// - Optional `holidays` arguments are excluded from the count and may be provided as scalars,
 ///   inline arrays, or ranges.
-/// - Input serials are interpreted with Excel 1900 date mapping.
+/// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904); the
+///   weekend days depend on the calendar dates the serials denote, which differ per system.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -703,15 +742,16 @@ impl Function for NetworkdaysFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let start_serial = coerce_to_serial(&args[0])?;
-        let end_serial = coerce_to_serial(&args[1])?;
+        let system = ctx.date_system();
+        let start_serial = coerce_to_serial(&args[0], system)?;
+        let end_serial = coerce_to_serial(&args[1], system)?;
 
-        let start_date = serial_to_date(start_serial)?;
-        let end_date = serial_to_date(end_serial)?;
+        let start_date = try_serial_to_date_for(system, start_serial)?;
+        let end_date = try_serial_to_date_for(system, end_serial)?;
 
-        let holidays = collect_holidays(args, 2);
+        let holidays = collect_holidays(args, 2, system);
 
         let (start, end, sign) = if start_date <= end_date {
             (start_date, end_date, 1i64)
@@ -739,7 +779,7 @@ impl Function for NetworkdaysFn {
 /// - Weekends are fixed to Saturday and Sunday.
 /// - Optional `holidays` arguments are excluded and may be provided as scalars, inline arrays,
 ///   or ranges.
-/// - Input and output serials use Excel 1900 date mapping.
+/// - Input and output serials use the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -800,14 +840,15 @@ impl Function for WorkdayFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let start_serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let start_serial = coerce_to_serial(&args[0], system)?;
         let days = coerce_to_int(&args[1])?;
 
-        let start_date = serial_to_date(start_serial)?;
+        let start_date = try_serial_to_date_for(system, start_serial)?;
 
-        let holidays = collect_holidays(args, 2);
+        let holidays = collect_holidays(args, 2, system);
 
         let mut current = start_date;
         let mut remaining = days.abs();
@@ -825,8 +866,8 @@ impl Function for WorkdayFn {
             }
         }
 
-        Ok(CalcValue::Scalar(LiteralValue::Number(date_to_serial(
-            &current,
+        Ok(CalcValue::Scalar(LiteralValue::Number(date_to_serial_for(
+            system, &current,
         ))))
     }
 }
@@ -910,13 +951,14 @@ impl Function for NetworkdaysIntlFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let start_serial = coerce_to_serial(&args[0])?;
-        let end_serial = coerce_to_serial(&args[1])?;
+        let system = ctx.date_system();
+        let start_serial = coerce_to_serial(&args[0], system)?;
+        let end_serial = coerce_to_serial(&args[1], system)?;
 
-        let start_date = serial_to_date(start_serial)?;
-        let end_date = serial_to_date(end_serial)?;
+        let start_date = try_serial_to_date_for(system, start_serial)?;
+        let end_date = try_serial_to_date_for(system, end_serial)?;
 
         let mask = if args.len() > 2 {
             match parse_weekend_mask(&args[2]) {
@@ -932,7 +974,7 @@ impl Function for NetworkdaysIntlFn {
             DEFAULT_WEEKEND_MASK
         };
 
-        let holidays = collect_holidays(args, 3);
+        let holidays = collect_holidays(args, 3, system);
 
         let (start, end, sign) = if start_date <= end_date {
             (start_date, end_date, 1i64)
@@ -1033,12 +1075,13 @@ impl Function for WorkdayIntlFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let start_serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let start_serial = coerce_to_serial(&args[0], system)?;
         let days = coerce_to_int(&args[1])?;
 
-        let start_date = serial_to_date(start_serial)?;
+        let start_date = try_serial_to_date_for(system, start_serial)?;
 
         let mask = if args.len() > 2 {
             match parse_weekend_mask(&args[2]) {
@@ -1054,7 +1097,7 @@ impl Function for WorkdayIntlFn {
             DEFAULT_WEEKEND_MASK
         };
 
-        let holidays = collect_holidays(args, 3);
+        let holidays = collect_holidays(args, 3, system);
 
         let mut current = start_date;
         let mut remaining = days.abs();
@@ -1072,8 +1115,8 @@ impl Function for WorkdayIntlFn {
             }
         }
 
-        Ok(CalcValue::Scalar(LiteralValue::Number(date_to_serial(
-            &current,
+        Ok(CalcValue::Scalar(LiteralValue::Number(date_to_serial_for(
+            system, &current,
         ))))
     }
 }
@@ -1101,6 +1144,11 @@ mod tests {
     }
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)
+    }
+
+    /// Serial for the default (Excel 1900) workbook date system.
+    fn date_to_serial(date: &NaiveDate) -> f64 {
+        date_to_serial_for(DateSystem::Excel1900, date)
     }
 
     #[test]
@@ -1494,5 +1542,153 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(result, LiteralValue::Int(2)); // Mon(1), Fri(5) are the only active workdays
+    }
+
+    fn eval_weekday_formula(system: crate::engine::DateSystem, formula: &str) -> LiteralValue {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::interpreter::Interpreter;
+        use formualizer_parse::parser::parse;
+
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(WeekdayFn))
+            .with_function(std::sync::Arc::new(WeeknumFn))
+            .with_function(std::sync::Arc::new(WorkdayFn))
+            .with_function(std::sync::Arc::new(NetworkdaysFn));
+        let engine = Engine::new(wb, EvalConfig::default().with_date_system(system));
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+        interpreter
+            .evaluate_ast(&parse(formula).expect("formula should parse"))
+            .expect("formula should evaluate")
+            .into_literal()
+    }
+
+    /// The epochs are 1462 days apart and `1462 % 7 == 6`, so a serial denotes a
+    /// different weekday in each system. The same calendar date must not.
+    #[test]
+    fn weekday_follows_workbook_date_system_1900_and_1904() {
+        use formualizer_common::date_to_serial_for;
+
+        // 2024-01-15 is a Monday => WEEKDAY default numbering is 2.
+        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        assert_eq!(
+            (date_to_serial_for(DateSystem::Excel1900, &date) as i64) % 7,
+            (date_to_serial_for(DateSystem::Excel1904, &date) as i64 + 6) % 7,
+            "the raw serial parities differ between systems"
+        );
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let serial = date_to_serial_for(system, &date);
+            assert_eq!(
+                eval_weekday_formula(system, &format!("=WEEKDAY({serial})")),
+                LiteralValue::Int(2),
+                "WEEKDAY({serial}) under {system:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn workday_follows_workbook_date_system_1900_and_1904() {
+        use formualizer_common::date_to_serial_for;
+
+        // Deliberately weekday-sensitive: ten workdays is exactly two calendar
+        // weeks from *any* weekday, so it cannot distinguish the two epochs.
+        // One workday from a Friday skips the weekend (+3 days); from any other
+        // weekday it is +1. Misreading the epoch shifts the weekday by six days
+        // (1462 % 7 == 6) and therefore changes the answer.
+        let friday = NaiveDate::from_ymd_opt(2024, 1, 5).unwrap();
+        let monday = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let start_serial = date_to_serial_for(system, &friday);
+            assert_eq!(
+                eval_weekday_formula(system, &format!("=WORKDAY({start_serial},1)")),
+                LiteralValue::Number(date_to_serial_for(system, &monday)),
+                "WORKDAY over a weekend under {system:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn networkdays_follows_workbook_date_system_1900_and_1904() {
+        use formualizer_common::date_to_serial_for;
+
+        // A weekend-only span is weekday-sensitive: it contains zero working
+        // days, but under a misread epoch the same serials denote weekdays.
+        // (A whole-month span is a poor probe -- several start weekdays yield
+        // the same 23.)
+        let saturday = NaiveDate::from_ymd_opt(2024, 1, 6).unwrap();
+        let sunday = NaiveDate::from_ymd_opt(2024, 1, 7).unwrap();
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let s = date_to_serial_for(system, &saturday);
+            let e = date_to_serial_for(system, &sunday);
+            assert_eq!(
+                eval_weekday_formula(system, &format!("=NETWORKDAYS({s},{e})")),
+                LiteralValue::Int(0),
+                "NETWORKDAYS across a weekend under {system:?}"
+            );
+        }
+
+        // 2024-01-01 .. 2024-01-31 contains 23 Mon-Fri days.
+        let start = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let s = date_to_serial_for(system, &start);
+            let e = date_to_serial_for(system, &end);
+            assert_eq!(
+                eval_weekday_formula(system, &format!("=NETWORKDAYS({s},{e})")),
+                LiteralValue::Int(23),
+                "NETWORKDAYS under {system:?}"
+            );
+        }
+    }
+
+    /// WEEKNUM's epoch-relative edge cases differ per system (serial 0 is a
+    /// display-only date only in the 1900 system), but a real calendar date must
+    /// land in the same week under both.
+    #[test]
+    fn weeknum_follows_workbook_date_system_1900_and_1904() {
+        use formualizer_common::date_to_serial_for;
+
+        // 2024-01-01 is a Monday, so 2024-01-15 is in the third Sunday-start week
+        // and in ISO week 3 of 2024.
+        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let serial = date_to_serial_for(system, &date);
+            assert_eq!(
+                eval_weekday_formula(system, &format!("=WEEKNUM({serial})")),
+                LiteralValue::Int(3),
+                "WEEKNUM({serial}) under {system:?}"
+            );
+            assert_eq!(
+                eval_weekday_formula(system, &format!("=WEEKNUM({serial},21)")),
+                LiteralValue::Int(3),
+                "WEEKNUM({serial},21) under {system:?}"
+            );
+        }
+
+        // A week boundary is far more discriminating than a mid-week date:
+        // 2024-01-07 is the Sunday that starts the second Sunday-based week.
+        let boundary = NaiveDate::from_ymd_opt(2024, 1, 7).unwrap();
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let serial = date_to_serial_for(system, &boundary);
+            assert_eq!(
+                eval_weekday_formula(system, &format!("=WEEKNUM({serial})")),
+                LiteralValue::Int(2),
+                "WEEKNUM({serial}) on a week boundary under {system:?}"
+            );
+        }
+
+        // Serial 0 is the display-only "January 0, 1900" in the 1900 system, but the
+        // real date 1904-01-01, which falls in ISO week 53 of 1903, in the 1904 system.
+        assert_eq!(
+            eval_weekday_formula(DateSystem::Excel1900, "=WEEKNUM(0,21)"),
+            LiteralValue::Int(0)
+        );
+        assert_eq!(
+            eval_weekday_formula(DateSystem::Excel1904, "=WEEKNUM(0,21)"),
+            LiteralValue::Int(53)
+        );
     }
 }

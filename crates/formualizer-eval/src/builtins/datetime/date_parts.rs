@@ -1,26 +1,28 @@
 //! Date and time component extraction functions
 
-use super::serial::{serial_to_date, serial_to_datetime};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::{Datelike, NaiveDate, Timelike};
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{
+    DateSystem, ExcelError, ExcelErrorKind, LiteralValue, try_serial_to_date_for,
+    try_serial_to_datetime_for,
+};
 use formualizer_macros::func_caps;
 
-fn coerce_to_serial(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
+fn coerce_to_serial(arg: &ArgumentHandle, system: DateSystem) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
     if let LiteralValue::Error(e) = v {
         return Err(e);
     }
-    crate::coercion::to_number_lenient(&v).map_err(|_| {
+    crate::coercion::to_serial_lenient(&v, system).map_err(|_| {
         ExcelError::new_value().with_message("Date/time functions expect a numeric serial value")
     })
 }
 
-fn coerce_to_date(arg: &ArgumentHandle) -> Result<NaiveDate, ExcelError> {
-    let serial = coerce_to_serial(arg)?;
-    serial_to_date(serial)
+fn coerce_to_date(arg: &ArgumentHandle, system: DateSystem) -> Result<NaiveDate, ExcelError> {
+    let serial = coerce_to_serial(arg, system)?;
+    try_serial_to_date_for(system, serial)
 }
 
 fn days_in_year(year: i32) -> f64 {
@@ -86,8 +88,9 @@ fn days_360_between(start: NaiveDate, end: NaiveDate, european: bool) -> i64 {
 /// # Remarks
 /// - Result is `end_date - start_date`; negative results are allowed.
 /// - Fractional serial inputs are truncated to their date portion.
-/// - Serials are interpreted with the Excel 1900 mapping (including the 1900 leap-year bug behavior).
-/// - This function currently does not switch interpretation based on workbook `1900`/`1904` mode.
+/// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
+/// - In the Excel 1900 system the historical leap-year quirk applies; the Excel 1904 system has no
+///   phantom leap day.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -149,10 +152,11 @@ impl Function for DaysFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let end = coerce_to_date(&args[0])?;
-        let start = coerce_to_date(&args[1])?;
+        let system = ctx.date_system();
+        let end = coerce_to_date(&args[0], system)?;
+        let start = coerce_to_date(&args[1], system)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             (end - start).num_days() as f64,
         )))
@@ -164,7 +168,7 @@ impl Function for DaysFn {
 /// # Remarks
 /// - `method` omitted or `FALSE` uses U.S. (NASD) rules; `TRUE` uses the European 30E/360 method.
 /// - Inputs are coerced to dates by truncating serials to integer days.
-/// - Serials are interpreted with the Excel 1900 date mapping, not a workbook-specific date system.
+/// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -231,10 +235,11 @@ impl Function for Days360Fn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let start = coerce_to_date(&args[0])?;
-        let end = coerce_to_date(&args[1])?;
+        let system = ctx.date_system();
+        let start = coerce_to_date(&args[0], system)?;
+        let end = coerce_to_date(&args[1], system)?;
 
         let european = if args.len() >= 3 {
             match args[2].value()?.into_literal() {
@@ -267,7 +272,7 @@ impl Function for Days360Fn {
 /// - Supported `basis` values: `0` (US 30/360), `1` (actual/actual), `2` (actual/360), `3` (actual/365), `4` (European 30/360).
 /// - If `start_date > end_date`, the result is negative.
 /// - Invalid `basis` values return `#NUM!`.
-/// - Serial dates are interpreted with the Excel 1900 mapping rather than workbook `1900`/`1904` context.
+/// - Serial dates are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -334,10 +339,11 @@ impl Function for YearFracFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let start = coerce_to_date(&args[0])?;
-        let end = coerce_to_date(&args[1])?;
+        let system = ctx.date_system();
+        let start = coerce_to_date(&args[0], system)?;
+        let end = coerce_to_date(&args[1], system)?;
 
         let basis = if args.len() >= 3 {
             match args[2].value()?.into_literal() {
@@ -414,7 +420,7 @@ impl Function for YearFracFn {
 /// # Remarks
 /// - Weeks start on Monday and week 1 is the week containing the first Thursday of the year.
 /// - Input serials are truncated to whole dates before evaluation.
-/// - Serials are read using the Excel 1900 date mapping.
+/// - Serials are read using the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -472,9 +478,9 @@ impl Function for IsoWeekNumFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let d = coerce_to_date(&args[0])?;
+        let d = coerce_to_date(&args[0], ctx.date_system())?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             d.iso_week().week() as i64,
         )))
@@ -485,7 +491,7 @@ impl Function for IsoWeekNumFn {
 ///
 /// # Remarks
 /// - Fractional time is ignored; only the integer date portion is used.
-/// - Input serials are interpreted with Excel 1900 date semantics.
+/// - Input serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 /// - Results are Gregorian calendar years.
 ///
 /// # Examples
@@ -544,10 +550,11 @@ impl Function for YearFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
-        let date = serial_to_date(serial)?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
+        let date = try_serial_to_date_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             date.year() as i64,
         )))
@@ -558,7 +565,7 @@ impl Function for YearFn {
 ///
 /// # Remarks
 /// - Fractional time is ignored; only the date portion contributes.
-/// - Serials are interpreted with Excel 1900 date semantics.
+/// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 /// - The result always uses January=`1` through December=`12`.
 ///
 /// # Examples
@@ -617,10 +624,11 @@ impl Function for MonthFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
-        let date = serial_to_date(serial)?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
+        let date = try_serial_to_date_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             date.month() as i64,
         )))
@@ -631,7 +639,7 @@ impl Function for MonthFn {
 ///
 /// # Remarks
 /// - Fractional time is ignored; only the integer serial portion is used.
-/// - Serials are interpreted with Excel 1900 date semantics.
+/// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 /// - Output is the day within the month, not day-of-year.
 ///
 /// # Examples
@@ -690,10 +698,11 @@ impl Function for DayFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
-        let date = serial_to_date(serial)?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
+        let date = try_serial_to_date_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             date.day() as i64,
         )))
@@ -763,9 +772,9 @@ impl Function for HourFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
+        let serial = coerce_to_serial(&args[0], ctx.date_system())?;
 
         // For time values < 1, we just use the fractional part
         let time_fraction = if serial < 1.0 { serial } else { serial.fract() };
@@ -780,7 +789,7 @@ impl Function for HourFn {
 ///
 /// # Remarks
 /// - The integer date portion is ignored for minute extraction.
-/// - Conversion uses Excel 1900 serial interpretation for the date portion when present.
+/// - The date portion, when present, is resolved with the workbook's date system.
 /// - Time is derived from the fractional serial component.
 ///
 /// # Examples
@@ -839,12 +848,13 @@ impl Function for MinuteFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
 
         // Extract time component
-        let datetime = serial_to_datetime(serial)?;
+        let datetime = try_serial_to_datetime_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             datetime.minute() as i64,
         )))
@@ -855,7 +865,7 @@ impl Function for MinuteFn {
 ///
 /// # Remarks
 /// - The integer date portion is ignored for second extraction.
-/// - Conversion uses Excel 1900 serial interpretation when resolving datetime values.
+/// - The date portion, when present, is resolved with the workbook's date system.
 /// - Time is computed from the serial fraction and rounded to whole seconds.
 ///
 /// # Examples
@@ -914,12 +924,13 @@ impl Function for SecondFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let serial = coerce_to_serial(&args[0])?;
+        let system = ctx.date_system();
+        let serial = coerce_to_serial(&args[0], system)?;
 
         // Extract time component
-        let datetime = serial_to_datetime(serial)?;
+        let datetime = try_serial_to_datetime_for(system, serial)?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
             datetime.second() as i64,
         )))
@@ -1198,5 +1209,56 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(iso, LiteralValue::Int(53));
+    }
+
+    fn eval_date_part_formula(system: crate::engine::DateSystem, formula: &str) -> LiteralValue {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::interpreter::Interpreter;
+        use formualizer_parse::parser::parse;
+
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(YearFn))
+            .with_function(Arc::new(MonthFn))
+            .with_function(Arc::new(DayFn));
+        let engine = Engine::new(wb, EvalConfig::default().with_date_system(system));
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+        interpreter
+            .evaluate_ast(&parse(formula).expect("formula should parse"))
+            .expect("formula should evaluate")
+            .into_literal()
+    }
+
+    /// The same calendar date is stored 1462 days apart in the two date systems,
+    /// but YEAR/MONTH/DAY must report the same calendar fields in both.
+    #[test]
+    fn year_month_day_follow_workbook_date_system_1900_and_1904() {
+        use crate::engine::DateSystem;
+        use formualizer_common::date_to_serial_for;
+
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        assert_eq!(
+            date_to_serial_for(DateSystem::Excel1900, &date)
+                - date_to_serial_for(DateSystem::Excel1904, &date),
+            1462.0
+        );
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let serial = date_to_serial_for(system, &date);
+            assert_eq!(
+                eval_date_part_formula(system, &format!("=YEAR({serial})")),
+                LiteralValue::Int(2024),
+                "YEAR({serial}) under {system:?}"
+            );
+            assert_eq!(
+                eval_date_part_formula(system, &format!("=MONTH({serial})")),
+                LiteralValue::Int(1),
+                "MONTH({serial}) under {system:?}"
+            );
+            assert_eq!(
+                eval_date_part_formula(system, &format!("=DAY({serial})")),
+                LiteralValue::Int(15),
+                "DAY({serial}) under {system:?}"
+            );
+        }
     }
 }
