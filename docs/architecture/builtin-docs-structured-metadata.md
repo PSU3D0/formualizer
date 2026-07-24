@@ -8,7 +8,7 @@ Define a single, colocated source of truth in Rust docstrings for function-level
 - **related functions**
 - **FAQ entries**
 
-This keeps content near implementation while allowing deterministic docs generation via `xtask docs-ref`.
+This keeps content near implementation while allowing deterministic docs generation via `xtask ref`.
 
 ---
 
@@ -70,7 +70,7 @@ faq:             # optional list (max 3 recommended)
 
 ---
 
-## Generation behavior (`xtask docs-ref`)
+## Generation behavior (`xtask ref`)
 
 ### Related functions
 

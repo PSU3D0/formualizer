@@ -18,6 +18,7 @@ const DOCGEN_SCHEMA_START: &str = "[formualizer-docgen:schema:start]";
 const DOCGEN_SCHEMA_END: &str = "[formualizer-docgen:schema:end]";
 const DOCGEN_FUNC_META_START: &str = "{/* [formualizer-docgen:function-meta:start] */}";
 const DOCGEN_FUNC_META_END: &str = "{/* [formualizer-docgen:function-meta:end] */}";
+const EXPLICIT_FILTER_ZERO_MATCHES: &str = "no matches for explicit filters";
 
 #[derive(Parser, Debug)]
 #[command(name = "xtask", about = "Workspace developer tasks")]
@@ -115,6 +116,9 @@ struct FunctionAuditFinding {
 
 #[derive(Debug, Serialize)]
 struct DocsAuditReport {
+    raw_registration_sites: usize,
+    canonical_functions: usize,
+    duplicate_registration_sites: usize,
     total_registered_functions: usize,
     audited_functions: usize,
     passing_functions: usize,
@@ -224,6 +228,171 @@ struct FileFacts {
     registrations: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct RegistrationSite {
+    registration_file: String,
+    type_name: String,
+}
+
+#[derive(Debug, Clone)]
+struct CanonicalBuiltin {
+    function_name: String,
+    type_name: String,
+    registration_file: String,
+    registration_sites: Vec<RegistrationSite>,
+}
+
+impl CanonicalBuiltin {
+    fn matches_file_filter(&self, filter: Option<&GlobSet>) -> bool {
+        filter.is_none_or(|filter| {
+            self.registration_sites
+                .iter()
+                .any(|site| filter.is_match(&site.registration_file))
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct BuiltinInventory {
+    source_file_count: usize,
+    struct_docs_by_type: BTreeMap<String, Vec<(String, String)>>,
+    impls_by_type: BTreeMap<String, Vec<ImplInfo>>,
+    registration_sites: Vec<RegistrationSite>,
+    canonical_functions: Vec<CanonicalBuiltin>,
+}
+
+impl BuiltinInventory {
+    fn discover(dir: &Path) -> Result<Self> {
+        let builtins_files = collect_builtin_files(dir)?;
+        let source_file_count = builtins_files.len();
+        if source_file_count == 0 {
+            bail!(
+                "builtin discovery found no Rust source files under {}",
+                dir.display()
+            );
+        }
+        let mut struct_docs_by_type: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+        let mut impls_by_type: BTreeMap<String, Vec<ImplInfo>> = BTreeMap::new();
+        let mut registration_sites = Vec::new();
+
+        for file in &builtins_files {
+            let file_rel = path_to_repo_string(file)?;
+            let facts = parse_file_facts(file, &file_rel)
+                .with_context(|| format!("failed to parse builtin file: {file_rel}"))?;
+
+            for (type_name, doc) in facts.struct_docs {
+                struct_docs_by_type
+                    .entry(type_name)
+                    .or_default()
+                    .push((file_rel.clone(), doc));
+            }
+
+            for (type_name, impl_info) in facts.impls {
+                impls_by_type.entry(type_name).or_default().push(impl_info);
+            }
+
+            for type_name in facts.registrations {
+                registration_sites.push(RegistrationSite {
+                    registration_file: file_rel.clone(),
+                    type_name,
+                });
+            }
+        }
+
+        if registration_sites.is_empty() {
+            bail!(
+                "builtin discovery found no register_builtin calls in {source_file_count} source file(s) under {}",
+                dir.display()
+            );
+        }
+
+        registration_sites.sort();
+        let canonical_functions = normalize_registration_sites(&registration_sites, &impls_by_type);
+
+        Ok(Self {
+            source_file_count,
+            struct_docs_by_type,
+            impls_by_type,
+            registration_sites,
+            canonical_functions,
+        })
+    }
+
+    fn raw_registration_site_count(&self) -> usize {
+        self.registration_sites.len()
+    }
+
+    fn canonical_function_count(&self) -> usize {
+        self.canonical_functions.len()
+    }
+
+    fn duplicate_registration_site_count(&self) -> usize {
+        self.raw_registration_site_count()
+            .saturating_sub(self.canonical_function_count())
+    }
+
+    fn duplicate_functions(&self) -> impl Iterator<Item = &CanonicalBuiltin> {
+        self.canonical_functions
+            .iter()
+            .filter(|builtin| builtin.registration_sites.len() > 1)
+    }
+}
+
+fn normalize_registration_sites(
+    registration_sites: &[RegistrationSite],
+    impls_by_type: &BTreeMap<String, Vec<ImplInfo>>,
+) -> Vec<CanonicalBuiltin> {
+    let mut grouped: BTreeMap<String, Vec<RegistrationSite>> = BTreeMap::new();
+
+    for site in registration_sites {
+        let function_name =
+            select_impl_for_registration(impls_by_type, &site.type_name, &site.registration_file)
+                .and_then(|info| info.function_name)
+                .unwrap_or_else(|| site.type_name.clone());
+        grouped
+            .entry(function_name.trim().to_uppercase())
+            .or_default()
+            .push(site.clone());
+    }
+
+    grouped
+        .into_iter()
+        .map(|(canonical_name, mut sites)| {
+            sites.sort_by_key(|site| {
+                let implementation_is_local = select_impl_for_registration(
+                    impls_by_type,
+                    &site.type_name,
+                    &site.registration_file,
+                )
+                .is_some_and(|info| info.file == site.registration_file);
+                (
+                    !implementation_is_local,
+                    site.registration_file.clone(),
+                    site.type_name.clone(),
+                )
+            });
+
+            let primary = sites
+                .first()
+                .expect("registration groups are always non-empty");
+            let function_name = select_impl_for_registration(
+                impls_by_type,
+                &primary.type_name,
+                &primary.registration_file,
+            )
+            .and_then(|info| info.function_name)
+            .unwrap_or(canonical_name);
+
+            CanonicalBuiltin {
+                function_name,
+                type_name: primary.type_name.clone(),
+                registration_file: primary.registration_file.clone(),
+                registration_sites: sites,
+            }
+        })
+        .collect()
+}
+
 #[derive(Default)]
 struct RegistrationVisitor {
     registered_types: Vec<String>,
@@ -231,7 +400,7 @@ struct RegistrationVisitor {
 
 impl<'ast> Visit<'ast> for RegistrationVisitor {
     fn visit_expr_call(&mut self, node: &'ast ExprCall) {
-        if path_ends_with_ident(&node.func, "register_function")
+        if path_ends_with_ident(&node.func, "register_builtin")
             && let Some(first_arg) = node.args.first()
             && let Some(type_name) = extract_arc_new_type_name(first_arg)
         {
@@ -252,60 +421,25 @@ fn main() -> Result<()> {
 }
 
 fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
-    let builtins_files = collect_builtin_files(Path::new(BUILTINS_DIR))?;
+    let inventory = BuiltinInventory::discover(Path::new(BUILTINS_DIR))?;
+    run_docs_audit_with_inventory(args, &inventory)
+}
 
+fn run_docs_audit_with_inventory(args: DocsAuditArgs, inventory: &BuiltinInventory) -> Result<()> {
     let file_filter = build_glob_filter(&args.paths)?;
-    let function_filter: Option<BTreeSet<String>> = if args.functions.is_empty() {
-        None
-    } else {
-        Some(
-            args.functions
-                .iter()
-                .map(|name| name.trim().to_uppercase())
-                .filter(|name| !name.is_empty())
-                .collect(),
-        )
-    };
-
-    let mut struct_docs_by_type: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    let mut impls_by_type: BTreeMap<String, Vec<ImplInfo>> = BTreeMap::new();
-    let mut registrations: Vec<(String, String)> = Vec::new();
-
-    for file in &builtins_files {
-        let file_rel = path_to_repo_string(file)?;
-        let facts = parse_file_facts(file, &file_rel)
-            .with_context(|| format!("failed to parse builtin file: {file_rel}"))?;
-
-        for (type_name, doc) in facts.struct_docs {
-            struct_docs_by_type
-                .entry(type_name)
-                .or_default()
-                .push((file_rel.clone(), doc));
-        }
-
-        for (type_name, impl_info) in facts.impls {
-            impls_by_type.entry(type_name).or_default().push(impl_info);
-        }
-
-        for type_name in facts.registrations {
-            registrations.push((file_rel.clone(), type_name));
-        }
-    }
-
+    let function_filter = build_function_filter(&args.functions);
+    let explicitly_filtered = filters_requested(&args.paths, &args.functions);
     let mut findings = Vec::new();
 
-    for (reg_file, type_name) in registrations {
-        if let Some(filter) = &file_filter
-            && !filter.is_match(&reg_file)
-        {
+    for builtin in &inventory.canonical_functions {
+        if !builtin.matches_file_filter(file_filter.as_ref()) {
             continue;
         }
 
-        let impl_info = select_impl_for_registration(&impls_by_type, &type_name, &reg_file);
-        let function_name = impl_info
-            .as_ref()
-            .and_then(|info| info.function_name.clone())
-            .unwrap_or_else(|| type_name.clone());
+        let reg_file = &builtin.registration_file;
+        let type_name = &builtin.type_name;
+        let impl_info = select_impl_for_registration(&inventory.impls_by_type, type_name, reg_file);
+        let function_name = builtin.function_name.clone();
 
         if let Some(filter) = &function_filter
             && !filter.contains(&function_name.to_uppercase())
@@ -314,7 +448,7 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
         }
 
         let struct_doc =
-            select_struct_doc_for_registration(&struct_docs_by_type, &type_name, &reg_file)
+            select_struct_doc_for_registration(&inventory.struct_docs_by_type, type_name, reg_file)
                 .unwrap_or_default();
         let impl_doc = impl_info
             .as_ref()
@@ -360,9 +494,9 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
 
         findings.push(FunctionAuditFinding {
             function_name,
-            type_name,
+            type_name: type_name.clone(),
             category,
-            registration_file: reg_file,
+            registration_file: reg_file.clone(),
             impl_file: impl_info.as_ref().map(|info| info.file.clone()),
             issues,
             rust_example_blocks: rust_blocks,
@@ -373,6 +507,8 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
 
     findings.sort_by(|a, b| a.function_name.cmp(&b.function_name));
 
+    ensure_matches_or_filtered(findings.len(), explicitly_filtered, "auditable functions")?;
+
     let failing_functions = findings
         .iter()
         .filter(|finding| !finding.issues.is_empty())
@@ -381,7 +517,10 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
     let total_issues = findings.iter().map(|finding| finding.issues.len()).sum();
 
     let report = DocsAuditReport {
-        total_registered_functions: findings.len(),
+        raw_registration_sites: inventory.raw_registration_site_count(),
+        canonical_functions: inventory.canonical_function_count(),
+        duplicate_registration_sites: inventory.duplicate_registration_site_count(),
+        total_registered_functions: inventory.canonical_function_count(),
         audited_functions: findings.len(),
         passing_functions,
         failing_functions,
@@ -389,7 +528,7 @@ fn run_docs_audit(args: DocsAuditArgs) -> Result<()> {
         findings,
     };
 
-    print_report_summary(&report);
+    print_report_summary(&report, inventory, explicitly_filtered);
 
     if let Some(path) = args.json_out {
         let json = serde_json::to_string_pretty(&report)?;
@@ -413,58 +552,36 @@ fn run_docs_schema(args: DocsSchemaArgs) -> Result<()> {
         ensure_git_clean()?;
     }
 
-    let builtins_files = collect_builtin_files(Path::new(BUILTINS_DIR))?;
-    let file_filter = build_glob_filter(&args.paths)?;
-    let function_filter: Option<BTreeSet<String>> = if args.functions.is_empty() {
-        None
-    } else {
-        Some(
-            args.functions
-                .iter()
-                .map(|name| name.trim().to_uppercase())
-                .filter(|name| !name.is_empty())
-                .collect(),
-        )
-    };
-
-    let mut impls_by_type: BTreeMap<String, Vec<ImplInfo>> = BTreeMap::new();
-    let mut registrations: Vec<(String, String)> = Vec::new();
-
-    for file in &builtins_files {
-        let file_rel = path_to_repo_string(file)?;
-        let facts = parse_file_facts(file, &file_rel)
-            .with_context(|| format!("failed to parse builtin file: {file_rel}"))?;
-
-        for (type_name, impl_info) in facts.impls {
-            impls_by_type.entry(type_name).or_default().push(impl_info);
-        }
-
-        for type_name in facts.registrations {
-            registrations.push((file_rel.clone(), type_name));
-        }
-    }
-
+    let inventory = BuiltinInventory::discover(Path::new(BUILTINS_DIR))?;
     let runtime_meta = collect_runtime_function_meta()?;
+    run_docs_schema_with_inventory(args, &inventory, &runtime_meta)
+}
+
+fn run_docs_schema_with_inventory(
+    args: DocsSchemaArgs,
+    inventory: &BuiltinInventory,
+    runtime_meta: &BTreeMap<String, RuntimeFunctionMeta>,
+) -> Result<()> {
+    let file_filter = build_glob_filter(&args.paths)?;
+    let function_filter = build_function_filter(&args.functions);
+    let explicitly_filtered = filters_requested(&args.paths, &args.functions);
 
     let mut entries_by_file: BTreeMap<String, Vec<DocsSchemaEntry>> = BTreeMap::new();
 
-    for (registration_file, type_name) in registrations {
-        if let Some(filter) = &file_filter
-            && !filter.is_match(&registration_file)
-        {
+    for builtin in &inventory.canonical_functions {
+        if !builtin.matches_file_filter(file_filter.as_ref()) {
             continue;
         }
 
+        let registration_file = &builtin.registration_file;
+        let type_name = &builtin.type_name;
         let Some(impl_info) =
-            select_impl_for_registration(&impls_by_type, &type_name, &registration_file)
+            select_impl_for_registration(&inventory.impls_by_type, type_name, registration_file)
         else {
             continue;
         };
 
-        let function_name = impl_info
-            .function_name
-            .clone()
-            .unwrap_or_else(|| type_name.clone());
+        let function_name = builtin.function_name.clone();
 
         if let Some(filter) = &function_filter
             && !filter.contains(&function_name.to_uppercase())
@@ -478,7 +595,7 @@ fn run_docs_schema(args: DocsSchemaArgs) -> Result<()> {
             .entry(impl_info.file.clone())
             .or_default()
             .push(DocsSchemaEntry {
-                type_name,
+                type_name: type_name.clone(),
                 function_name: function_name.clone(),
                 min_args: runtime.map(|meta| meta.min_args).or(impl_info.min_args),
                 max_args: runtime
@@ -494,6 +611,9 @@ fn run_docs_schema(args: DocsSchemaArgs) -> Result<()> {
                     .unwrap_or_else(|| impl_info.caps.clone()),
             });
     }
+
+    let matched_entries = entries_by_file.values().map(Vec::len).sum::<usize>();
+    ensure_matches_or_filtered(matched_entries, explicitly_filtered, "schema entries")?;
 
     let mut touched_entries = 0usize;
     let mut scanned_files = 0usize;
@@ -520,6 +640,11 @@ fn run_docs_schema(args: DocsSchemaArgs) -> Result<()> {
     let stale_count = stale_files.len();
 
     println!("docs-schema summary");
+    print_inventory_summary(inventory);
+    println!("  matched canonical functions: {matched_entries}");
+    if let Some(note) = explicit_filter_zero_match_note(matched_entries, explicitly_filtered) {
+        println!("  {note}");
+    }
     println!("  files scanned: {}", scanned_files);
     println!("  entries touched: {touched_entries}");
     println!("  stale files: {stale_count}");
@@ -548,11 +673,36 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
         ensure_git_clean()?;
     }
 
-    let entries = collect_function_ref_entries(&args.paths, &args.functions)?;
+    let inventory = BuiltinInventory::discover(Path::new(BUILTINS_DIR))?;
+    let runtime_meta = collect_runtime_function_meta()?;
+    run_docs_ref_with_inventory(
+        args,
+        &inventory,
+        &runtime_meta,
+        Path::new("docs-site/src/generated/functions-meta.json"),
+    )
+}
+
+fn run_docs_ref_with_inventory(
+    args: DocsRefArgs,
+    inventory: &BuiltinInventory,
+    runtime_meta: &BTreeMap<String, RuntimeFunctionMeta>,
+    metadata_path: &Path,
+) -> Result<()> {
+    let explicitly_filtered = filters_requested(&args.paths, &args.functions);
+    let entries =
+        collect_function_ref_entries(inventory, &args.paths, &args.functions, runtime_meta)?;
+    let matched_entries = entries.len();
+    ensure_matches_or_filtered(matched_entries, explicitly_filtered, "reference entries")?;
     if entries.is_empty() {
         println!("docs-ref summary");
+        print_inventory_summary(inventory);
+        println!("  matched canonical functions: 0");
         println!("  functions: 0");
         println!("  stale files: 0");
+        if let Some(note) = explicit_filter_zero_match_note(0, explicitly_filtered) {
+            println!("  {note}");
+        }
         return Ok(());
     }
 
@@ -666,7 +816,7 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
 
     let functions_meta_json = render_functions_meta_json(&all_entries)?;
     apply_or_check_file(
-        Path::new("docs-site/src/generated/functions-meta.json"),
+        metadata_path,
         &(functions_meta_json + "\n"),
         args.apply,
         &mut stale_files,
@@ -677,6 +827,8 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
     stale_files.dedup();
 
     println!("docs-ref summary");
+    print_inventory_summary(inventory);
+    println!("  matched canonical functions: {matched_entries}");
     println!("  functions: {generated_pages}");
     println!("  categories: {}", by_category.len());
     println!("  stale files: {}", stale_files.len());
@@ -702,68 +854,29 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
 }
 
 fn collect_function_ref_entries(
+    inventory: &BuiltinInventory,
     paths: &[String],
     functions: &[String],
+    runtime_meta: &BTreeMap<String, RuntimeFunctionMeta>,
 ) -> Result<Vec<FunctionRefEntry>> {
-    let builtins_files = collect_builtin_files(Path::new(BUILTINS_DIR))?;
     let file_filter = build_glob_filter(paths)?;
-    let function_filter: Option<BTreeSet<String>> = if functions.is_empty() {
-        None
-    } else {
-        Some(
-            functions
-                .iter()
-                .map(|name| name.trim().to_uppercase())
-                .filter(|name| !name.is_empty())
-                .collect(),
-        )
-    };
-
-    let mut struct_docs_by_type: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    let mut impls_by_type: BTreeMap<String, Vec<ImplInfo>> = BTreeMap::new();
-    let mut registrations: Vec<(String, String)> = Vec::new();
-
-    for file in &builtins_files {
-        let file_rel = path_to_repo_string(file)?;
-        let facts = parse_file_facts(file, &file_rel)
-            .with_context(|| format!("failed to parse builtin file: {file_rel}"))?;
-
-        for (type_name, doc) in facts.struct_docs {
-            struct_docs_by_type
-                .entry(type_name)
-                .or_default()
-                .push((file_rel.clone(), doc));
-        }
-
-        for (type_name, impl_info) in facts.impls {
-            impls_by_type.entry(type_name).or_default().push(impl_info);
-        }
-
-        for type_name in facts.registrations {
-            registrations.push((file_rel.clone(), type_name));
-        }
-    }
-
-    let runtime_meta = collect_runtime_function_meta()?;
+    let function_filter = build_function_filter(functions);
     let mut entries = Vec::new();
 
-    for (registration_file, type_name) in registrations {
-        if let Some(filter) = &file_filter
-            && !filter.is_match(&registration_file)
-        {
+    for builtin in &inventory.canonical_functions {
+        if !builtin.matches_file_filter(file_filter.as_ref()) {
             continue;
         }
 
+        let registration_file = &builtin.registration_file;
+        let type_name = &builtin.type_name;
         let Some(impl_info) =
-            select_impl_for_registration(&impls_by_type, &type_name, &registration_file)
+            select_impl_for_registration(&inventory.impls_by_type, type_name, registration_file)
         else {
             continue;
         };
 
-        let function_name = impl_info
-            .function_name
-            .clone()
-            .unwrap_or_else(|| type_name.clone());
+        let function_name = builtin.function_name.clone();
 
         if let Some(filter) = &function_filter
             && !filter.contains(&function_name.to_uppercase())
@@ -772,9 +885,9 @@ fn collect_function_ref_entries(
         }
 
         let struct_doc = select_struct_doc_for_registration(
-            &struct_docs_by_type,
-            &type_name,
-            &registration_file,
+            &inventory.struct_docs_by_type,
+            type_name,
+            registration_file,
         )
         .unwrap_or_default();
         let combined_doc = [struct_doc.trim(), impl_info.doc_text.trim()]
@@ -784,7 +897,7 @@ fn collect_function_ref_entries(
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let category = derive_category(&registration_file);
+        let category = derive_category(registration_file);
         let category_slug = slugify_for_docs(&category);
         let function_slug = sanitize_function_slug(slugify_for_docs(&function_name));
         let runtime = runtime_meta.get(&function_name.to_uppercase());
@@ -796,8 +909,8 @@ fn collect_function_ref_entries(
             function_slug,
             category,
             category_slug,
-            type_name,
-            registration_file,
+            type_name: type_name.clone(),
+            registration_file: registration_file.clone(),
             impl_file: impl_info.file.clone(),
             min_args: runtime.map(|meta| meta.min_args).or(impl_info.min_args),
             max_args: runtime
@@ -828,20 +941,8 @@ fn collect_function_ref_entries(
             .then_with(|| a.function_name.cmp(&b.function_name))
     });
 
-    let mut deduped = Vec::with_capacity(entries.len());
-    let mut seen_function_keys: BTreeSet<(String, String)> = BTreeSet::new();
-    for entry in entries {
-        let key = (
-            entry.category_slug.clone(),
-            entry.function_name.to_uppercase(),
-        );
-        if seen_function_keys.insert(key) {
-            deduped.push(entry);
-        }
-    }
-
     let mut used_slugs_by_category: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for entry in &mut deduped {
+    for entry in &mut entries {
         let used = used_slugs_by_category
             .entry(entry.category_slug.clone())
             .or_default();
@@ -859,9 +960,9 @@ fn collect_function_ref_entries(
         entry.function_slug = candidate;
     }
 
-    populate_related_functions(&mut deduped);
+    populate_related_functions(&mut entries);
 
-    Ok(deduped)
+    Ok(entries)
 }
 
 fn known_related_pairs(name: &str) -> &'static [&'static str] {
@@ -1710,12 +1811,59 @@ fn prune_generated_function_pages(
     Ok(())
 }
 
-fn print_report_summary(report: &DocsAuditReport) {
+fn inventory_summary_lines(inventory: &BuiltinInventory) -> Vec<String> {
+    let mut lines = vec![
+        format!("  source files discovered: {}", inventory.source_file_count),
+        format!(
+            "  raw registration sites: {}",
+            inventory.raw_registration_site_count()
+        ),
+        format!(
+            "  canonical builtin functions: {}",
+            inventory.canonical_function_count()
+        ),
+        format!(
+            "  duplicate registration sites: {}",
+            inventory.duplicate_registration_site_count()
+        ),
+    ];
+
+    for builtin in inventory.duplicate_functions() {
+        let sites = builtin
+            .registration_sites
+            .iter()
+            .map(|site| format!("{} ({})", site.registration_file, site.type_name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("  duplicate {}: {sites}", builtin.function_name));
+    }
+
+    lines
+}
+
+fn print_inventory_summary(inventory: &BuiltinInventory) {
+    for line in inventory_summary_lines(inventory) {
+        println!("{line}");
+    }
+}
+
+fn print_report_summary(
+    report: &DocsAuditReport,
+    inventory: &BuiltinInventory,
+    explicitly_filtered: bool,
+) {
     println!("docs-audit summary");
-    println!("  total registered: {}", report.total_registered_functions);
+    print_inventory_summary(inventory);
+    println!("  audited functions: {}", report.audited_functions);
     println!("  passing: {}", report.passing_functions);
     println!("  failing: {}", report.failing_functions);
     println!("  total issues: {}", report.total_issues);
+
+    if let Some(note) =
+        explicit_filter_zero_match_note(report.audited_functions, explicitly_filtered)
+    {
+        println!("  {note}");
+    }
 
     if report.failing_functions == 0 {
         return;
@@ -1747,10 +1895,9 @@ fn collect_builtin_files(dir: &Path) -> Result<Vec<PathBuf>> {
     }
 
     let mut files = Vec::new();
-    for entry in walkdir::WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|entry| entry.ok())
-    {
+    for entry in walkdir::WalkDir::new(dir) {
+        let entry =
+            entry.with_context(|| format!("failed to walk builtins dir: {}", dir.display()))?;
         let path = entry.path();
         if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
             files.push(path.to_path_buf());
@@ -2589,6 +2736,38 @@ fn path_to_repo_string(path: &Path) -> Result<String> {
     Ok(path.replace('\\', "/"))
 }
 
+fn build_function_filter(functions: &[String]) -> Option<BTreeSet<String>> {
+    let names = functions
+        .iter()
+        .map(|name| name.trim().to_uppercase())
+        .filter(|name| !name.is_empty())
+        .collect::<BTreeSet<_>>();
+
+    (!names.is_empty()).then_some(names)
+}
+
+fn filters_requested(paths: &[String], functions: &[String]) -> bool {
+    !paths.is_empty() || build_function_filter(functions).is_some()
+}
+
+fn ensure_matches_or_filtered(
+    match_count: usize,
+    explicitly_filtered: bool,
+    inventory_kind: &str,
+) -> Result<()> {
+    if match_count == 0 && !explicitly_filtered {
+        bail!("builtin docs inventory unexpectedly produced no {inventory_kind}");
+    }
+    Ok(())
+}
+
+fn explicit_filter_zero_match_note(
+    match_count: usize,
+    explicitly_filtered: bool,
+) -> Option<&'static str> {
+    (match_count == 0 && explicitly_filtered).then_some(EXPLICIT_FILTER_ZERO_MATCHES)
+}
+
 fn build_glob_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
     if patterns.is_empty() {
         return Ok(None);
@@ -2607,9 +2786,291 @@ fn build_glob_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DOCGEN_SCHEMA_END, DOCGEN_SCHEMA_START, DocsSchemaEntry, apply_schema_sections_to_source,
-        count_fenced_blocks_by_lang, count_formula_example_blocks, parse_fenced_blocks,
+        BuiltinInventory, DOCGEN_SCHEMA_END, DOCGEN_SCHEMA_START, DocsAuditArgs, DocsRefArgs,
+        DocsSchemaArgs, DocsSchemaEntry, RegistrationVisitor, apply_schema_sections_to_source,
+        count_fenced_blocks_by_lang, count_formula_example_blocks, ensure_matches_or_filtered,
+        explicit_filter_zero_match_note, inventory_summary_lines, parse_fenced_blocks,
+        run_docs_audit_with_inventory, run_docs_ref_with_inventory, run_docs_schema_with_inventory,
     };
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::Path;
+
+    fn write_builtin_fixture(dir: &Path, name: &str, source: &str) {
+        fs::write(dir.join(name), source).unwrap();
+    }
+
+    fn discover_single_builtin(source: &str) -> (tempfile::TempDir, BuiltinInventory) {
+        let temp = tempfile::tempdir().unwrap();
+        write_builtin_fixture(temp.path(), "fixture.rs", source);
+        let inventory = BuiltinInventory::discover(temp.path()).unwrap();
+        (temp, inventory)
+    }
+
+    #[test]
+    fn registration_visitor_tracks_register_builtin_after_registry_rename() {
+        let source = r#"
+fn register() {
+    crate::function_registry::register_builtin(std::sync::Arc::new(foo::BuiltinFn));
+    crate::function_registry::register_function(std::sync::Arc::new(LegacyFn));
+}
+"#;
+        let syntax = syn::parse_file(source).unwrap();
+        let mut visitor = RegistrationVisitor::default();
+        syn::visit::Visit::visit_file(&mut visitor, &syntax);
+
+        assert_eq!(visitor.registered_types, vec!["BuiltinFn"]);
+    }
+
+    #[test]
+    fn fixture_discovery_counts_raw_sites_and_canonical_functions() {
+        let temp = tempfile::tempdir().unwrap();
+        write_builtin_fixture(
+            temp.path(),
+            "a.rs",
+            r#"
+pub struct AlphaFn;
+impl Function for AlphaFn {
+    fn name(&self) -> &'static str { "ALPHA" }
+}
+pub struct BetaFn;
+impl Function for BetaFn {
+    fn name(&self) -> &'static str { "BETA" }
+}
+fn register() {
+    register_builtin(Arc::new(AlphaFn));
+    register_builtin(Arc::new(BetaFn));
+}
+"#,
+        );
+        write_builtin_fixture(
+            temp.path(),
+            "b.rs",
+            r#"
+fn register() {
+    register_builtin(Arc::new(AlphaFn));
+    register_function(Arc::new(CustomFn));
+}
+"#,
+        );
+
+        let inventory = BuiltinInventory::discover(temp.path()).unwrap();
+        assert_eq!(inventory.source_file_count, 2);
+        assert_eq!(inventory.raw_registration_site_count(), 3);
+        assert_eq!(inventory.canonical_function_count(), 2);
+        assert_eq!(inventory.duplicate_registration_site_count(), 1);
+
+        let duplicate = inventory.duplicate_functions().next().unwrap();
+        assert_eq!(duplicate.function_name, "ALPHA");
+        assert!(duplicate.registration_file.ends_with("a.rs"));
+        assert_eq!(duplicate.registration_sites.len(), 2);
+
+        let diagnostics = inventory_summary_lines(&inventory).join("\n");
+        let a_site = temp.path().join("a.rs").display().to_string();
+        let b_site = temp.path().join("b.rs").display().to_string();
+        assert!(diagnostics.contains(&format!(
+            "duplicate ALPHA: {a_site} (AlphaFn), {b_site} (AlphaFn)"
+        )));
+        assert!(!diagnostics.contains("CustomFn"));
+    }
+
+    #[test]
+    fn duplicate_normalization_is_case_insensitive_and_deterministic() {
+        let temp = tempfile::tempdir().unwrap();
+        write_builtin_fixture(
+            temp.path(),
+            "z.rs",
+            r#"
+pub struct LowerFn;
+impl Function for LowerFn {
+    fn name(&self) -> &'static str { "dupe" }
+}
+fn register() { register_builtin(Arc::new(LowerFn)); }
+"#,
+        );
+        write_builtin_fixture(
+            temp.path(),
+            "a.rs",
+            r#"
+pub struct UpperFn;
+impl Function for UpperFn {
+    fn name(&self) -> &'static str { "DUPE" }
+}
+fn register() { register_builtin(Arc::new(UpperFn)); }
+"#,
+        );
+
+        let inventory = BuiltinInventory::discover(temp.path()).unwrap();
+        assert_eq!(inventory.raw_registration_site_count(), 2);
+        assert_eq!(inventory.canonical_function_count(), 1);
+        let builtin = &inventory.canonical_functions[0];
+        assert_eq!(builtin.function_name, "DUPE");
+        assert_eq!(builtin.type_name, "UpperFn");
+        assert!(builtin.registration_file.ends_with("a.rs"));
+    }
+
+    #[test]
+    fn zero_inventory_matches_fail_without_filters() {
+        let error = ensure_matches_or_filtered(0, false, "test entries").unwrap_err();
+        assert!(error.to_string().contains("no test entries"));
+    }
+
+    #[test]
+    fn zero_inventory_matches_are_allowed_with_explicit_filters() {
+        ensure_matches_or_filtered(0, true, "test entries").unwrap();
+        assert_eq!(
+            explicit_filter_zero_match_note(0, true),
+            Some("no matches for explicit filters")
+        );
+    }
+
+    #[test]
+    fn audit_command_rejects_unfiltered_zero_discovery() {
+        let inventory = BuiltinInventory {
+            source_file_count: 1,
+            struct_docs_by_type: BTreeMap::new(),
+            impls_by_type: BTreeMap::new(),
+            registration_sites: Vec::new(),
+            canonical_functions: Vec::new(),
+        };
+        let error = run_docs_audit_with_inventory(
+            DocsAuditArgs {
+                paths: Vec::new(),
+                functions: Vec::new(),
+                json_out: None,
+                strict: false,
+            },
+            &inventory,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("no auditable functions"));
+    }
+
+    #[test]
+    fn audit_command_allows_an_explicit_zero_match() {
+        let (_temp, inventory) = discover_single_builtin(
+            r#"
+pub struct PresentFn;
+impl Function for PresentFn {
+    fn name(&self) -> &'static str { "PRESENT" }
+}
+fn register() { register_builtin(Arc::new(PresentFn)); }
+"#,
+        );
+
+        run_docs_audit_with_inventory(
+            DocsAuditArgs {
+                paths: Vec::new(),
+                functions: vec!["ABSENT".to_string()],
+                json_out: None,
+                strict: true,
+            },
+            &inventory,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn strict_audit_command_detects_missing_docs() {
+        let (_temp, inventory) = discover_single_builtin(
+            r#"
+pub struct UndocumentedFn;
+impl Function for UndocumentedFn {
+    fn name(&self) -> &'static str { "UNDOCUMENTED" }
+}
+fn register() { register_builtin(Arc::new(UndocumentedFn)); }
+"#,
+        );
+
+        let error = run_docs_audit_with_inventory(
+            DocsAuditArgs {
+                paths: Vec::new(),
+                functions: Vec::new(),
+                json_out: None,
+                strict: true,
+            },
+            &inventory,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("1 function(s) with issues"));
+    }
+
+    #[test]
+    fn schema_command_detects_stale_schema() {
+        let (_temp, inventory) = discover_single_builtin(
+            r#"
+/// A documented function.
+pub struct SchemaFn;
+impl Function for SchemaFn {
+    fn name(&self) -> &'static str { "SCHEMA.TEST" }
+    fn min_args(&self) -> usize { 1 }
+}
+fn register() { register_builtin(Arc::new(SchemaFn)); }
+"#,
+        );
+
+        let error = run_docs_schema_with_inventory(
+            DocsSchemaArgs {
+                paths: Vec::new(),
+                functions: Vec::new(),
+                apply: false,
+                allow_dirty: true,
+            },
+            &inventory,
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("1 file(s) have stale or missing schema blocks")
+        );
+    }
+
+    #[test]
+    fn ref_command_detects_stale_page_and_metadata() {
+        let (temp, inventory) = discover_single_builtin(
+            r#"
+/// A documented function.
+///
+/// ```excel
+/// =REF.TEST(1)
+/// ```
+pub struct RefFn;
+impl Function for RefFn {
+    fn name(&self) -> &'static str { "REF.TEST" }
+    fn min_args(&self) -> usize { 1 }
+}
+fn register() { register_builtin(Arc::new(RefFn)); }
+"#,
+        );
+        let out_dir = temp.path().join("reference");
+        let metadata_path = temp.path().join("generated/functions-meta.json");
+        let args = || DocsRefArgs {
+            paths: Vec::new(),
+            functions: Vec::new(),
+            out_dir: out_dir.clone(),
+            apply: true,
+            allow_dirty: true,
+        };
+
+        run_docs_ref_with_inventory(args(), &inventory, &BTreeMap::new(), &metadata_path).unwrap();
+
+        let page_path = out_dir.join("function/ref-test.mdx");
+        fs::write(&page_path, "stale page\n").unwrap();
+        fs::write(&metadata_path, "{}\n").unwrap();
+
+        let mut check_args = args();
+        check_args.apply = false;
+        let error =
+            run_docs_ref_with_inventory(check_args, &inventory, &BTreeMap::new(), &metadata_path)
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("2 file(s) have stale or missing generated content")
+        );
+    }
 
     #[test]
     fn rust_fence_with_modifiers_counts_as_rust() {
