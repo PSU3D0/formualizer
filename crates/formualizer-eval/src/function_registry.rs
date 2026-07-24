@@ -807,13 +807,33 @@ impl RegistryPlanningSnapshot {
             let provider_unchanged = provider_revision.is_none_or(|revision| {
                 runtime_provider.planning_semantic_revision() == Some(revision)
             });
-            let unchanged = start_epoch == epoch
-                && REGISTRY
+            // Validate the capture against the functions this snapshot actually
+            // requested, not against the global registry epoch.
+            //
+            // Registering any function anywhere bumps `semantic_epoch`, so a
+            // global equality check treated a completely unrelated registration
+            // -- a different namespace, a different name -- as "the registry
+            // changed underneath us". Under concurrent registration that
+            // produced spurious `RegistryChangedDuringCapture` results and, in
+            // authoritative mode, spurious FormulaPlane family fallbacks whose
+            // reported reason blamed the provider.
+            //
+            // `semantic_changes_affect_requests_in_state` consults the change
+            // log across the whole capture window [start_epoch, now] and only
+            // reports a conflict when a *requested* key changed. It stays
+            // conservative when the bounded change log has been truncated past
+            // `start_epoch`, so precision never costs correctness.
+            let requests_unchanged = {
+                let state = REGISTRY
                     .read()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .semantic_epoch
-                    == epoch
-                && provider_unchanged;
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                !semantic_changes_affect_requests_in_state(
+                    &state,
+                    start_epoch,
+                    requests.iter().cloned(),
+                )
+            };
+            let unchanged = requests_unchanged && provider_unchanged;
             if unchanged {
                 return Ok(Self {
                     epoch,
@@ -1388,6 +1408,54 @@ mod tests {
                 .function_semantic_identity(ns, "TARGET", 1)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn planning_snapshot_capture_tolerates_unrelated_concurrent_registrations() {
+        // Regression test for the flake in the provider-revision test family.
+        //
+        // A capture used to be validated against the global `semantic_epoch`,
+        // so registering *any* function on another thread invalidated it. In
+        // the test suite that surfaced as an intermittent failure that moved
+        // between tests depending on which happened to be running in parallel;
+        // in production it would surface as spurious FormulaPlane fallbacks in
+        // any application that registers custom functions while evaluating.
+        //
+        // The churn below never touches the requested key, so a correct capture
+        // must succeed even with the tightest useful attempt budget.
+        // The capture hook fires between the registry copy and the validation
+        // step -- exactly where a concurrent registration would land -- so this
+        // reproduces the race deterministically rather than relying on thread
+        // interleaving.
+        let ns = "__PLANNING_UNRELATED_CHURN__";
+        register_builtin(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        let requests = [(ns.to_string(), "TARGET".to_string(), 1)];
+
+        let mut unrelated_registrations = 0usize;
+        let snapshot = RegistryPlanningSnapshot::capture_with_hook(
+            &GlobalRegistryFunctionProvider,
+            &requests,
+            2,
+            |_| {
+                // `register_function` is untrusted, so unlike a repeated builtin
+                // registration it always publishes a semantic change. Firing on
+                // every attempt means a global-epoch check can never converge.
+                register_function(planning_fn(
+                    "__PLANNING_UNRELATED_CHURN_OTHER__",
+                    "OTHER",
+                    &[],
+                    FnCaps::empty(),
+                ));
+                unrelated_registrations += 1;
+            },
+        )
+        .expect("unrelated registrations must not invalidate a planning snapshot capture");
+
+        assert!(unrelated_registrations > 0, "hook must have registered");
+        assert!(Arc::ptr_eq(
+            &snapshot.get_function(ns, "TARGET").unwrap(),
+            &get(ns, "TARGET").unwrap(),
+        ));
     }
 
     #[test]
