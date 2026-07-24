@@ -107,6 +107,7 @@ mod criteria_mask_text_chunked;
 mod criteria_ne_blank_extra;
 mod criteria_overlay_parity;
 mod custom_function_registry_compat;
+mod dynamic_array_computed_arguments;
 mod dynamic_lookup_arrow;
 mod eval_delta;
 mod eval_flush_recalc_probe;
