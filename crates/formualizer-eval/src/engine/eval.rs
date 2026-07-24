@@ -914,6 +914,8 @@ pub struct Engine<R> {
     has_edited: bool,
     /// Overlay compaction counter (Phase C instrumentation)
     overlay_compactions: u64,
+    /// Computed-lane compactions make source/computed provenance unrecoverable.
+    computed_overlay_compactions: u64,
 
     // Overlay memory observability / budget (ticket 503)
     computed_overlay_bytes_estimate: usize,
@@ -2503,6 +2505,7 @@ where
             arrow_sheets: SheetStore::default(),
             has_edited: false,
             overlay_compactions: 0,
+            computed_overlay_compactions: 0,
             computed_overlay_bytes_estimate: 0,
             computed_overlay_mirroring_disabled: false,
             force_materialize_range_views: false,
@@ -2638,6 +2641,7 @@ where
             arrow_sheets: SheetStore::default(),
             has_edited: false,
             overlay_compactions: 0,
+            computed_overlay_compactions: 0,
             computed_overlay_bytes_estimate: 0,
             computed_overlay_mirroring_disabled: false,
             force_materialize_range_views: false,
@@ -3912,6 +3916,28 @@ where
             headers: entry.headers.clone(),
             totals_row: entry.totals_row,
         })
+    }
+
+    #[cfg(feature = "experimental-fzcp")]
+    #[doc(hidden)]
+    pub fn table_metadata_snapshot(&self) -> Vec<TableMetadata> {
+        let mut tables = self
+            .graph
+            .tables_iter()
+            .map(|entry| TableMetadata {
+                name: entry.name.clone(),
+                sheet: self.graph.sheet_name(entry.sheet_id()).to_string(),
+                start_row: entry.range.start.coord.row() + 1,
+                start_col: entry.range.start.coord.col() + 1,
+                end_row: entry.range.end.coord.row() + 1,
+                end_col: entry.range.end.coord.col() + 1,
+                header_row: entry.header_row,
+                headers: entry.headers.clone(),
+                totals_row: entry.totals_row,
+            })
+            .collect::<Vec<_>>();
+        tables.sort_by(|a, b| a.name.cmp(&b.name));
+        tables
     }
 
     pub fn named_ranges_snapshot(&self) -> Vec<crate::engine::named_range::NamedRangeSnapshot> {
@@ -16098,6 +16124,7 @@ where
             .computed_overlay_bytes_estimate
             .saturating_sub(freed_total);
         self.overlay_compactions = self.overlay_compactions.saturating_add(1);
+        self.computed_overlay_compactions = self.computed_overlay_compactions.saturating_add(1);
     }
 
     fn mirror_vertex_value_to_overlay(&mut self, vertex_id: VertexId, value: &LiteralValue) {
@@ -16162,6 +16189,13 @@ where
     /// Estimated memory usage for computed overlays (formula/spill mirroring).
     pub fn overlay_memory_usage(&self) -> usize {
         self.computed_overlay_bytes_estimate
+    }
+
+    /// Number of compactions that folded formula/spill results into base lanes.
+    #[cfg(feature = "experimental-fzcp")]
+    #[doc(hidden)]
+    pub fn computed_overlay_compactions(&self) -> u64 {
+        self.computed_overlay_compactions
     }
 
     #[cfg(test)]

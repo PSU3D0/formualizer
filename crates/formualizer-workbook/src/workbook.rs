@@ -1573,6 +1573,26 @@ impl Workbook {
         &self.engine.config
     }
 
+    #[cfg(feature = "experimental-fzcp")]
+    pub(crate) fn fzcp_engine(&self) -> &formualizer_eval::engine::Engine<WBResolver> {
+        &self.engine
+    }
+
+    #[cfg(feature = "experimental-fzcp")]
+    pub(crate) fn fzcp_engine_mut(&mut self) -> &mut formualizer_eval::engine::Engine<WBResolver> {
+        &mut self.engine
+    }
+
+    #[cfg(feature = "experimental-fzcp")]
+    pub(crate) fn fzcp_set_calc_settings(&mut self, settings: Option<crate::traits::CalcSettings>) {
+        self.calc_settings = settings;
+    }
+
+    #[cfg(feature = "experimental-fzcp")]
+    pub(crate) fn fzcp_ensure_dimensions(&mut self, sheet: &str, rows: u32, cols: u32) {
+        self.ensure_arrow_sheet_capacity(sheet, rows as usize, cols as usize);
+    }
+
     pub fn last_formula_ingest_report(
         &self,
     ) -> Option<formualizer_eval::engine::FormulaIngestReport> {
@@ -2341,6 +2361,91 @@ impl Workbook {
     pub fn get_value(&self, sheet: &str, row: u32, col: u32) -> Option<LiteralValue> {
         self.engine.get_cell_value(sheet, row, col)
     }
+
+    /// Lossless Arrow-store projection for experimental persistence tooling.
+    ///
+    /// Formula-result overlays are excluded. See [`crate::StoredCellValue`] for
+    /// the distinctions that the current store has already normalized away.
+    #[cfg(feature = "experimental-fzcp")]
+    pub fn export_stored_cell(
+        &self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> Option<formualizer_eval::arrow_store::StoredCellValue> {
+        let row = row.checked_sub(1)? as usize;
+        let col = col.checked_sub(1)? as usize;
+        let sheet = self.engine.sheet_store().sheet(sheet)?;
+        sheet.export_stored_cell(row, col)
+    }
+
+    #[cfg(feature = "experimental-fzcp")]
+    pub(crate) fn fzcp_restore_stored_cell(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: &formualizer_eval::arrow_store::StoredCellValue,
+    ) -> Result<(), IoError> {
+        use formualizer_eval::arrow_store::{OverlayValue, StoredCellValue, unmap_error_code};
+
+        let (literal, overlay) = match value {
+            StoredCellValue::NumberBits(bits) => {
+                let value = f64::from_bits(*bits);
+                (LiteralValue::Number(value), OverlayValue::Number(value))
+            }
+            StoredCellValue::DateTimeBits(bits) => {
+                let value = f64::from_bits(*bits);
+                (LiteralValue::Number(value), OverlayValue::DateTime(value))
+            }
+            StoredCellValue::DurationBits(bits) => {
+                let value = f64::from_bits(*bits);
+                (LiteralValue::Number(value), OverlayValue::Duration(value))
+            }
+            StoredCellValue::Boolean(value) => {
+                (LiteralValue::Boolean(*value), OverlayValue::Boolean(*value))
+            }
+            StoredCellValue::Text(value) => (
+                LiteralValue::Text(value.clone()),
+                OverlayValue::Text(std::sync::Arc::from(value.as_str())),
+            ),
+            StoredCellValue::ErrorCode(code) => (
+                LiteralValue::Error(ExcelError::new(unmap_error_code(*code))),
+                OverlayValue::Error(*code),
+            ),
+            StoredCellValue::Pending => {
+                return Err(IoError::Backend {
+                    backend: "experimental-fzcp".to_string(),
+                    message: "pending values are runtime state and cannot be restored".to_string(),
+                });
+            }
+        };
+
+        let row0 = row.checked_sub(1).ok_or_else(|| IoError::Backend {
+            backend: "experimental-fzcp".to_string(),
+            message: "cell rows are 1-based".to_string(),
+        })? as usize;
+        let col0 = col.checked_sub(1).ok_or_else(|| IoError::Backend {
+            backend: "experimental-fzcp".to_string(),
+            message: "cell columns are 1-based".to_string(),
+        })? as usize;
+        self.set_value(sheet, row, col, literal)?;
+        let arrow_sheet = self
+            .engine
+            .sheet_store_mut()
+            .sheet_mut(sheet)
+            .expect("set_value creates the Arrow sheet");
+        let (chunk, offset) = arrow_sheet
+            .chunk_of_row(row0)
+            .expect("set_value creates the Arrow row");
+        arrow_sheet
+            .ensure_column_chunk_mut(col0, chunk)
+            .expect("set_value creates the Arrow column")
+            .overlay
+            .set(offset, overlay);
+        Ok(())
+    }
+
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> Option<String> {
         if let Some(s) = self.engine.get_staged_formula_text(sheet, row, col) {
             return Some(s);

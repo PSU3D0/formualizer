@@ -4,6 +4,8 @@ pub mod backends;
 pub mod builtins;
 pub mod calc_pr;
 pub mod error;
+#[cfg(feature = "experimental-fzcp")]
+pub mod experimental_fzcp;
 #[cfg(any(feature = "calamine", feature = "json", feature = "umya"))]
 pub(crate) mod load_limits;
 #[cfg(feature = "umya")]
@@ -60,6 +62,8 @@ pub use workbook::{
     validate_wasm_manifest,
 };
 
+#[cfg(feature = "experimental-fzcp")]
+pub use formualizer_eval::arrow_store::StoredCellValue;
 #[cfg(feature = "wasm_plugins")]
 pub use workbook::{extract_wasm_manifest_json_from_module, parse_wasm_manifest_json};
 pub use worksheet::WorksheetHandle;
