@@ -65,14 +65,10 @@ fn now_and_today_use_injected_fixed_clock() {
         v => panic!("Expected number, got {v:?}"),
     };
 
-    let expected_now = crate::builtins::datetime::datetime_to_serial_for(
-        engine.config.date_system,
-        &fixed.naive_utc(),
-    );
-    let expected_today = crate::builtins::datetime::date_to_serial_for(
-        engine.config.date_system,
-        &fixed.date_naive(),
-    );
+    let expected_now =
+        formualizer_common::datetime_to_serial_for(engine.config.date_system, &fixed.naive_utc());
+    let expected_today =
+        formualizer_common::date_to_serial_for(engine.config.date_system, &fixed.date_naive());
     assert_eq!(now_serial, expected_now);
     assert_eq!(today_serial, expected_today);
 

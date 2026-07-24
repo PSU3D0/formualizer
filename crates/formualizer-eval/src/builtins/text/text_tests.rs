@@ -437,6 +437,158 @@ mod tests {
         }
     }
 
+    fn eval_text_formula(system: crate::engine::DateSystem, formula: &str) -> LiteralValue {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::interpreter::Interpreter;
+        use formualizer_parse::parser::parse;
+
+        let wb = TestWorkbook::new().with_function(Arc::new(TextFn));
+        let engine = Engine::new(wb, EvalConfig::default().with_date_system(system));
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+        interpreter
+            .evaluate_ast(&parse(formula).expect("formula should parse"))
+            .expect("formula should evaluate")
+            .into_literal()
+    }
+
+    fn assert_value_error(value: LiteralValue) {
+        match value {
+            LiteralValue::Error(error) => assert_eq!(error.to_string(), "#VALUE!"),
+            other => panic!("expected #VALUE!, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_text_date_serial_boundaries_1900_formula_level() {
+        use crate::engine::DateSystem;
+
+        let cases = [
+            (0.0, "1900-01-00"),
+            (59.0, "1900-02-28"),
+            (60.0, "1900-02-29"),
+            (61.0, "1900-03-01"),
+            (45306.0, "2024-01-15"),
+            (2958465.0, "9999-12-31"),
+        ];
+        for (serial, expected) in cases {
+            assert_eq!(
+                eval_text_formula(
+                    DateSystem::Excel1900,
+                    &format!("=TEXT({serial},\"yyyy-mm-dd\")")
+                ),
+                LiteralValue::Text(expected.into()),
+                "serial {serial}"
+            );
+        }
+
+        for serial in [-1.0, -0.25, 2958466.0, 1.0e20] {
+            assert_value_error(eval_text_formula(
+                DateSystem::Excel1900,
+                &format!("=TEXT({serial},\"yyyy-mm-dd\")"),
+            ));
+        }
+        assert_value_error(eval_text_formula(
+            DateSystem::Excel1900,
+            "=TEXT(1E309,\"yyyy-mm-dd\")",
+        ));
+    }
+
+    #[test]
+    fn test_text_date_serial_boundaries_1904_formula_level() {
+        use crate::engine::DateSystem;
+
+        let cases = [
+            (0.0, "1904-01-01"),
+            (59.0, "1904-02-29"),
+            (60.0, "1904-03-01"),
+            (61.0, "1904-03-02"),
+            (43844.0, "2024-01-15"),
+            (2957003.0, "9999-12-31"),
+        ];
+        for (serial, expected) in cases {
+            assert_eq!(
+                eval_text_formula(
+                    DateSystem::Excel1904,
+                    &format!("=TEXT({serial},\"yyyy-mm-dd\")")
+                ),
+                LiteralValue::Text(expected.into()),
+                "serial {serial}"
+            );
+        }
+
+        for serial in [-1.0, -0.25, 2957004.0, 1.0e20] {
+            assert_value_error(eval_text_formula(
+                DateSystem::Excel1904,
+                &format!("=TEXT({serial},\"yyyy-mm-dd\")"),
+            ));
+        }
+        assert_value_error(eval_text_formula(
+            DateSystem::Excel1904,
+            "=TEXT(1E309,\"yyyy-mm-dd\")",
+        ));
+    }
+
+    #[test]
+    fn test_text_date_fraction_for_direct_modern_serials() {
+        use crate::engine::DateSystem;
+
+        for (system, serial) in [
+            (DateSystem::Excel1900, 45306.5),
+            (DateSystem::Excel1904, 43844.5),
+        ] {
+            assert_eq!(
+                eval_text_formula(system, &format!("=TEXT({serial},\"yyyy-mm-dd hh:mm\")")),
+                LiteralValue::Text("2024-01-15 12:00".into())
+            );
+        }
+    }
+
+    #[test]
+    fn test_text_hh_mm_rounding_carries_the_displayed_day() {
+        use crate::engine::DateSystem;
+
+        let cases_1900 = [
+            (59.9997, "1900-02-29 00:00"),
+            (60.9997, "1900-03-01 00:00"),
+            (61.9997, "1900-03-02 00:00"),
+        ];
+        for (serial, expected) in cases_1900 {
+            assert_eq!(
+                eval_text_formula(
+                    DateSystem::Excel1900,
+                    &format!("=TEXT({serial},\"yyyy-mm-dd hh:mm\")")
+                ),
+                LiteralValue::Text(expected.into()),
+                "serial {serial}"
+            );
+        }
+
+        let cases_1904 = [
+            (59.9997, "1904-03-01 00:00"),
+            (60.9997, "1904-03-02 00:00"),
+            (61.9997, "1904-03-03 00:00"),
+        ];
+        for (serial, expected) in cases_1904 {
+            assert_eq!(
+                eval_text_formula(
+                    DateSystem::Excel1904,
+                    &format!("=TEXT({serial},\"yyyy-mm-dd hh:mm\")")
+                ),
+                LiteralValue::Text(expected.into()),
+                "serial {serial}"
+            );
+        }
+
+        assert_value_error(eval_text_formula(
+            DateSystem::Excel1900,
+            "=TEXT(2958465.9997,\"yyyy-mm-dd hh:mm\")",
+        ));
+        assert_value_error(eval_text_formula(
+            DateSystem::Excel1904,
+            "=TEXT(2957003.9997,\"yyyy-mm-dd hh:mm\")",
+        ));
+    }
+
     #[test]
     fn test_text_formatting() {
         let wb = TestWorkbook::new().with_function(Arc::new(TextFn));

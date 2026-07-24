@@ -262,6 +262,28 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    pub(crate) fn try_evaluate_ast_as_reference(
+        &self,
+        node: &ASTNode,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        let ASTNodeType::Function { name, args } = &node.node_type else {
+            return Some(self.evaluate_ast_as_reference(node));
+        };
+        let fun = match self.context.get_function("", name) {
+            Some(fun) => fun,
+            None => {
+                return Some(Err(ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Unknown function: {name}"))));
+            }
+        };
+        let handles: Vec<ArgumentHandle> = args
+            .iter()
+            .map(|arg| ArgumentHandle::new(arg, self))
+            .collect();
+        let fctx = DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
+        fun.eval_reference(&handles, &fctx)
+    }
+
     pub(crate) fn evaluate_arena_ast_as_reference(
         &self,
         node_id: AstNodeId,
@@ -324,6 +346,48 @@ impl<'a> Interpreter<'a> {
             _ => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Expression cannot be used as a reference")),
         }
+    }
+
+    pub(crate) fn try_evaluate_arena_ast_as_reference(
+        &self,
+        node_id: AstNodeId,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Option<Result<ReferenceType, ExcelError>> {
+        let node = match data_store.get_node(node_id) {
+            Some(node) => node,
+            None => {
+                return Some(Err(
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                ));
+            }
+        };
+        let AstNodeData::Function { name_id, .. } = node else {
+            return Some(self.evaluate_arena_ast_as_reference(node_id, data_store, sheet_registry));
+        };
+        let name = data_store.resolve_ast_string(*name_id);
+        let fun = match self.context.get_function("", name) {
+            Some(fun) => fun,
+            None => {
+                return Some(Err(ExcelError::new(ExcelErrorKind::Name)
+                    .with_message(format!("Unknown function: {name}"))));
+            }
+        };
+        let args = match data_store.get_args(node_id) {
+            Some(args) => args,
+            None => {
+                return Some(Err(
+                    ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
+                ));
+            }
+        };
+        let handles: Vec<ArgumentHandle> = args
+            .iter()
+            .copied()
+            .map(|arg_id| ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry))
+            .collect();
+        let fctx = DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
+        fun.eval_reference(&handles, &fctx)
     }
 
     /* ===================  public  =================== */
@@ -1146,14 +1210,10 @@ impl<'a> Interpreter<'a> {
 
             let date_like_serial = |v: &LiteralValue| -> Option<f64> {
                 match v {
-                    Date(d) => Some(crate::builtins::datetime::date_to_serial_for(
-                        date_system,
-                        d,
-                    )),
-                    DateTime(dt) => Some(crate::builtins::datetime::datetime_to_serial_for(
-                        date_system,
-                        dt,
-                    )),
+                    Date(d) => Some(formualizer_common::date_to_serial_for(date_system, d)),
+                    DateTime(dt) => {
+                        Some(formualizer_common::datetime_to_serial_for(date_system, dt))
+                    }
                     _ => None,
                 }
             };
@@ -1165,8 +1225,7 @@ impl<'a> Interpreter<'a> {
             let serial_to_literal = |serial: f64| -> LiteralValue {
                 match crate::coercion::sanitize_numeric(serial) {
                     Ok(serial) => {
-                        match crate::builtins::datetime::serial_to_datetime_for(date_system, serial)
-                        {
+                        match formualizer_common::try_serial_to_datetime_for(date_system, serial) {
                             Ok(dt) => {
                                 if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
                                     Date(dt.date())

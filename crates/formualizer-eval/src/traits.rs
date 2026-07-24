@@ -111,6 +111,28 @@ pub enum CalcValue<'a> {
     Callable(Arc<dyn CustomCallable>),
 }
 
+/// The result of resolving an argument where either a reference or a value is accepted.
+///
+/// Reference-shaped syntax is resolved without first evaluating it as a value.
+/// All other syntax is evaluated through [`ArgumentHandle::value`] and retains
+/// its `CalcValue` discriminant.
+#[derive(Clone)]
+pub(crate) enum ResolvedArgument<'a> {
+    Range(RangeView<'a>),
+    ReferenceError(ExcelError),
+    Value(CalcValue<'a>),
+}
+
+impl std::fmt::Debug for ResolvedArgument<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Range(view) => f.debug_tuple("Range").field(view).finish(),
+            Self::ReferenceError(error) => f.debug_tuple("ReferenceError").field(error).finish(),
+            Self::Value(value) => f.debug_tuple("Value").field(value).finish(),
+        }
+    }
+}
+
 impl<'a> std::fmt::Debug for CalcValue<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -238,6 +260,7 @@ pub struct ArgumentHandle<'a, 'b> {
     interp: &'a Interpreter<'b>,
     cached_ast: std::cell::OnceCell<ASTNode>,
     cached_ref: std::cell::OnceCell<ReferenceType>,
+    cached_resolved: std::cell::OnceCell<Result<ResolvedArgument<'b>, ExcelError>>,
     /// Memoized result of [`Self::value`]. `Function::dispatch` evaluates
     /// every argument once during schema validation and the function's `eval`
     /// evaluates it again — without this cache that re-entry compounds to
@@ -256,6 +279,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             interp,
             cached_ast: std::cell::OnceCell::new(),
             cached_ref: std::cell::OnceCell::new(),
+            cached_resolved: std::cell::OnceCell::new(),
             cached_value: std::cell::OnceCell::new(),
         }
     }
@@ -275,6 +299,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             interp,
             cached_ast: std::cell::OnceCell::new(),
             cached_ref: std::cell::OnceCell::new(),
+            cached_resolved: std::cell::OnceCell::new(),
             cached_value: std::cell::OnceCell::new(),
         }
     }
@@ -393,6 +418,135 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         .with_message("Expected a reference (by-ref argument)")),
                 }
             }
+        }
+    }
+
+    fn reference_attempt(&self) -> Option<Result<ReferenceType, ExcelError>> {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference { reference, .. } => {
+                    Some(self.interp.reference_for_current_offset(reference))
+                }
+                ASTNodeType::BinaryOp { op, .. } if op == ":" => {
+                    Some(self.interp.evaluate_ast_as_reference(node))
+                }
+                ASTNodeType::Function { name, .. }
+                    if self
+                        .interp
+                        .context
+                        .function_capabilities("", name)
+                        .is_some_and(|caps| {
+                            caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)
+                        }) =>
+                {
+                    self.interp.try_evaluate_ast_as_reference(node)
+                }
+                _ => None,
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let node = match data_store.get_node(*id) {
+                    Some(node) => node,
+                    None => {
+                        return Some(Err(
+                            ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
+                        ));
+                    }
+                };
+                match node {
+                    crate::engine::arena::AstNodeData::Reference { ref_type, .. } => {
+                        let reference = data_store
+                            .reconstruct_reference_type_for_eval(ref_type, sheet_registry);
+                        Some(self.interp.reference_for_current_offset(&reference))
+                    }
+                    crate::engine::arena::AstNodeData::BinaryOp { op_id, .. }
+                        if data_store.resolve_ast_string(*op_id) == ":" =>
+                    {
+                        Some(self.interp.evaluate_arena_ast_as_reference(
+                            *id,
+                            data_store,
+                            sheet_registry,
+                        ))
+                    }
+                    crate::engine::arena::AstNodeData::Function { name_id, .. } => {
+                        let name = data_store.resolve_ast_string(*name_id);
+                        if self
+                            .interp
+                            .context
+                            .function_capabilities("", name)
+                            .is_some_and(|caps| {
+                                caps.contains(crate::function::FnCaps::RETURNS_REFERENCE)
+                            })
+                        {
+                            self.interp.try_evaluate_arena_ast_as_reference(
+                                *id,
+                                data_store,
+                                sheet_registry,
+                            )
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            }
+        }
+    }
+
+    /// Resolve this argument once without using a failed range conversion as type dispatch.
+    ///
+    /// Direct references and the `:` operator take the reference path. Functions
+    /// with `RETURNS_REFERENCE` first attempt reference evaluation, but fall back
+    /// to their cached value when `eval_reference` returns `None`.
+    pub(crate) fn resolve_once(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
+        self.cached_resolved
+            .get_or_init(|| self.compute_resolved_argument())
+            .clone()
+    }
+
+    fn with_context_cancel_token(&self, view: RangeView<'b>) -> RangeView<'b> {
+        match self.interp.context.cancellation_token() {
+            Some(token) => view.with_cancel_token(Some(token)),
+            None => view,
+        }
+    }
+
+    fn compute_resolved_argument(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
+        if let Some(attempt) = self.reference_attempt() {
+            let reference = match attempt {
+                Ok(reference) => reference,
+                Err(error) if error.kind == ExcelErrorKind::Cancelled => return Err(error),
+                Err(error) => return Ok(ResolvedArgument::ReferenceError(error)),
+            };
+            return match self
+                .interp
+                .context
+                .resolve_range_view(&reference, self.interp.current_sheet())
+            {
+                Ok(view) => Ok(ResolvedArgument::Range(
+                    self.with_context_cancel_token(view),
+                )),
+                Err(error) if error.kind == ExcelErrorKind::Cancelled => Err(error),
+                Err(error) => Ok(ResolvedArgument::ReferenceError(error)),
+            };
+        }
+
+        match self.value()? {
+            CalcValue::Range(view) => Ok(ResolvedArgument::Range(
+                self.with_context_cancel_token(view),
+            )),
+            CalcValue::Scalar(LiteralValue::Array(rows)) => {
+                let view = RangeView::try_from_owned_rows(
+                    rows,
+                    self.interp.context.date_system(),
+                    self.interp.context.cancellation_token(),
+                )?;
+                Ok(ResolvedArgument::Range(view))
+            }
+            other => Ok(ResolvedArgument::Value(other)),
         }
     }
 

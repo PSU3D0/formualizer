@@ -2,7 +2,6 @@ use super::common::arrow_eval_config;
 use crate::engine::EvalConfig;
 use crate::engine::eval::Engine;
 use crate::test_workbook::TestWorkbook;
-use chrono::Timelike;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
 
@@ -96,12 +95,12 @@ fn temporal_tags_preserved_across_computed_overlay_compaction() {
     let expected_dt_serial = match engine.get_cell_value("Sheet1", 1, 2).unwrap() {
         LiteralValue::Date(d) => {
             let dt = d.and_hms_opt(0, 0, 0).unwrap();
-            crate::builtins::datetime::datetime_to_serial_for(cfg.date_system, &dt)
+            formualizer_common::datetime_to_serial_for(cfg.date_system, &dt)
         }
         LiteralValue::DateTime(dt) => {
-            crate::builtins::datetime::datetime_to_serial_for(cfg.date_system, &dt)
+            formualizer_common::datetime_to_serial_for(cfg.date_system, &dt)
         }
-        LiteralValue::Time(t) => t.num_seconds_from_midnight() as f64 / 86_400.0,
+        LiteralValue::Time(t) => formualizer_common::time_to_fraction(&t),
         other => panic!("expected a temporal at B1, got {other:?}"),
     };
     let dt_serial = rv_dt.numbers_slices().next().unwrap().unwrap().2[0].value(0);
@@ -163,8 +162,7 @@ fn temporal_tags_preserved_across_delta_overlay_compaction() {
     assert_eq!(tag_dur, crate::arrow_store::TypeTag::Duration as u8);
 
     // Serial in numeric lane.
-    let expected_dt_serial =
-        crate::builtins::datetime::datetime_to_serial_for(cfg.date_system, &dt);
+    let expected_dt_serial = formualizer_common::datetime_to_serial_for(cfg.date_system, &dt);
     let dt_serial = rv_dt.numbers_slices().next().unwrap().unwrap().2[0].value(0);
     assert!((dt_serial - expected_dt_serial).abs() < 1e-10);
 

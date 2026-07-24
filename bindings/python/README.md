@@ -45,9 +45,9 @@ import formualizer as fz
 wb = fz.Workbook()
 s = wb.sheet("Sheet1")
 
-s.set_value(1, 1, fz.LiteralValue.number(1000.0))   # A1: principal
-s.set_value(2, 1, fz.LiteralValue.number(0.05))      # A2: annual rate
-s.set_value(3, 1, fz.LiteralValue.number(12.0))       # A3: periods
+s.set_value(1, 1, fz.LiteralValue.number(1000.0))  # A1: principal
+s.set_value(2, 1, fz.LiteralValue.number(0.05))  # A2: annual rate
+s.set_value(3, 1, fz.LiteralValue.number(12.0))  # A3: periods
 
 s.set_formula(1, 2, "=PMT(A2/12, A3, -A1)")
 print(wb.evaluate_cell("Sheet1", 1, 2))  # ~85.61
@@ -86,7 +86,9 @@ summary = fz.recalculate_file("financial_model.xlsx")
 print(summary["status"], summary["evaluated"], summary["errors"])
 
 # write to a new file
-summary = fz.recalculate_file("financial_model.xlsx", output="financial_model.recalc.xlsx")
+summary = fz.recalculate_file(
+    "financial_model.xlsx", output="financial_model.recalc.xlsx"
+)
 ```
 
 > Formula text is preserved. Cached-value typing follows the active
@@ -99,10 +101,10 @@ from formualizer import parse
 from formualizer.visitor import collect_references, collect_function_names
 
 ast = parse("=SUMIFS(Revenue,Region,A1,Year,B1)")
-print(ast.pretty())                          # indented AST tree
-print(ast.to_formula())                      # canonical Excel string
-print(collect_references(ast))               # [Revenue, Region, A1, Year, B1]
-print(collect_function_names(ast))           # ['SUMIFS']
+print(ast.pretty())  # indented AST tree
+print(ast.to_formula())  # canonical Excel string
+print(collect_references(ast))  # [Revenue, Region, A1, Year, B1]
+print(collect_function_names(ast))  # ['SUMIFS']
 ```
 
 ---
@@ -183,11 +185,17 @@ Runnable example: `python bindings/python/examples/custom_function_registration.
 
 ```python
 # Bulk-set values (auto-grouped as one undo step when changelog is enabled)
-s.set_values_batch(1, 1, 3, 2, [
-    [fz.LiteralValue.number(10.0), fz.LiteralValue.number(20.0)],
-    [fz.LiteralValue.number(30.0), fz.LiteralValue.number(40.0)],
-    [fz.LiteralValue.number(50.0), fz.LiteralValue.number(60.0)],
-])
+s.set_values_batch(
+    1,
+    1,
+    3,
+    2,
+    [
+        [fz.LiteralValue.number(10.0), fz.LiteralValue.number(20.0)],
+        [fz.LiteralValue.number(30.0), fz.LiteralValue.number(40.0)],
+        [fz.LiteralValue.number(50.0), fz.LiteralValue.number(60.0)],
+    ],
+)
 ```
 
 ## Undo / redo
@@ -296,10 +304,10 @@ recalculate_file(path: str, output: str | None = None) -> dict
 ### Visitor helpers (`formualizer.visitor`)
 
 ```python
-walk_ast(node, visitor_fn)              # DFS with VisitControl (CONTINUE/SKIP/STOP)
-collect_references(node)                # -> list[ReferenceLike]
-collect_function_names(node)            # -> list[str]
-collect_nodes_by_type(node, "Function") # -> list[ASTNode]
+walk_ast(node, visitor_fn)  # DFS with VisitControl (CONTINUE/SKIP/STOP)
+collect_references(node)  # -> list[ReferenceLike]
+collect_function_names(node)  # -> list[str]
+collect_nodes_by_type(node, "Function")  # -> list[ASTNode]
 ```
 
 Full type stubs are included in the package (`.pyi` files) for IDE autocompletion and mypy.
@@ -323,9 +331,11 @@ maturin develop --release  # optimized build
 
 ```python
 import micropip
+
 await micropip.install("formualizer")
 
 import formualizer as fz
+
 wb = fz.Workbook()
 wb.add_sheet("Sheet1")
 wb.set_value("Sheet1", 1, 1, 20)

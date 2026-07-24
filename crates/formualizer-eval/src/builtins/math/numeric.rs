@@ -1,6 +1,7 @@
 use super::super::utils::{
     ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, ARG_RANGE_NUM_LENIENT_ONE, coerce_num,
 };
+use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::function_contract::FunctionDependencyContract;
@@ -2017,7 +2018,7 @@ impl Function for SeriesSumFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let x = match args[0].value()?.into_literal() {
             LiteralValue::Error(e) => {
@@ -2039,35 +2040,23 @@ impl Function for SeriesSumFn {
         };
 
         let mut coeffs: Vec<f64> = Vec::new();
-        if let Ok(view) = args[3].range_view() {
-            view.for_each_cell(&mut |cell| {
+        match resolve_aggregate_argument(&args[3], ctx)? {
+            AggregateArgument::Range(view) => view.for_each_cell(&mut |cell| {
                 match cell {
                     LiteralValue::Error(e) => return Err(e.clone()),
                     other => coeffs.push(coerce_num(other)?),
                 }
                 Ok(())
-            })?;
-        } else {
-            match args[3].value()?.into_literal() {
-                LiteralValue::Array(rows) => {
-                    for row in rows {
-                        for cell in row {
-                            match cell {
-                                LiteralValue::Error(e) => {
-                                    return Ok(crate::traits::CalcValue::Scalar(
-                                        LiteralValue::Error(e),
-                                    ));
-                                }
-                                other => coeffs.push(coerce_num(&other)?),
-                            }
-                        }
-                    }
-                }
+            })?,
+            AggregateArgument::ReferenceError(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
+            AggregateArgument::Scalar(value) => match value {
                 LiteralValue::Error(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                 }
                 other => coeffs.push(coerce_num(&other)?),
-            }
+            },
         }
 
         let mut sum = 0.0;
@@ -2141,12 +2130,12 @@ impl Function for SumsqFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut total = 0.0;
         for arg in args {
-            if let Ok(view) = arg.range_view() {
-                view.for_each_cell(&mut |cell| {
+            match resolve_aggregate_argument(arg, ctx)? {
+                AggregateArgument::Range(view) => view.for_each_cell(&mut |cell| {
                     match cell {
                         LiteralValue::Error(e) => return Err(e.clone()),
                         LiteralValue::Number(n) => total += n * n,
@@ -2163,7 +2152,7 @@ impl Function for SumsqFn {
                             total += n * n;
                         }
                         LiteralValue::Time(t) => {
-                            let n = crate::builtins::datetime::time_to_fraction(t);
+                            let n = formualizer_common::time_to_fraction(t);
                             total += n * n;
                         }
                         LiteralValue::Duration(d) => {
@@ -2173,10 +2162,11 @@ impl Function for SumsqFn {
                         _ => {}
                     }
                     Ok(())
-                })?;
-            } else {
-                let v = arg.value()?.into_literal();
-                match v {
+                })?,
+                AggregateArgument::ReferenceError(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                AggregateArgument::Scalar(v) => match v {
                     LiteralValue::Error(e) => {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
@@ -2184,7 +2174,7 @@ impl Function for SumsqFn {
                         let n = coerce_num(&other)?;
                         total += n * n;
                     }
-                }
+                },
             }
         }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
@@ -3064,10 +3054,11 @@ impl Function for IsoCeilingFn {
 
 fn collect_nums_from_arg<'a, 'b>(
     arg: &'a crate::traits::ArgumentHandle<'a, 'b>,
+    ctx: &dyn FunctionContext<'b>,
 ) -> Result<Vec<f64>, ExcelError> {
     let mut out = Vec::new();
-    if let Ok(view) = arg.range_view() {
-        view.for_each_cell(&mut |cell| {
+    match resolve_aggregate_argument(arg, ctx)? {
+        AggregateArgument::Range(view) => view.for_each_cell(&mut |cell| {
             match cell {
                 LiteralValue::Error(e) => return Err(e.clone()),
                 LiteralValue::Number(n) => out.push(*n),
@@ -3076,27 +3067,12 @@ fn collect_nums_from_arg<'a, 'b>(
                 _ => out.push(0.0),
             }
             Ok(())
-        })?;
-    } else {
-        match arg.value()?.into_literal() {
+        })?,
+        AggregateArgument::ReferenceError(error) => return Err(error),
+        AggregateArgument::Scalar(value) => match value {
             LiteralValue::Error(e) => return Err(e),
-            LiteralValue::Array(rows) => {
-                for row in rows {
-                    for cell in row {
-                        match cell {
-                            LiteralValue::Error(e) => return Err(e),
-                            LiteralValue::Number(n) => out.push(n),
-                            LiteralValue::Int(i) => out.push(i as f64),
-                            LiteralValue::Boolean(b) => out.push(if b { 1.0 } else { 0.0 }),
-                            _ => out.push(0.0),
-                        }
-                    }
-                }
-            }
-            other => {
-                out.push(coerce_num(&other)?);
-            }
-        }
+            other => out.push(coerce_num(&other)?),
+        },
     }
     Ok(out)
 }
@@ -3150,15 +3126,15 @@ impl Function for SumX2MY2Fn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
-        let xs = collect_nums_from_arg(&args[0])?;
-        let ys = collect_nums_from_arg(&args[1])?;
+        let xs = collect_nums_from_arg(&args[0], ctx)?;
+        let ys = collect_nums_from_arg(&args[1], ctx)?;
         if xs.len() != ys.len() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_na(),
@@ -3220,15 +3196,15 @@ impl Function for SumX2PY2Fn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
-        let xs = collect_nums_from_arg(&args[0])?;
-        let ys = collect_nums_from_arg(&args[1])?;
+        let xs = collect_nums_from_arg(&args[0], ctx)?;
+        let ys = collect_nums_from_arg(&args[1], ctx)?;
         if xs.len() != ys.len() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_na(),
@@ -3290,15 +3266,15 @@ impl Function for SumXMY2Fn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() != 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
-        let xs = collect_nums_from_arg(&args[0])?;
-        let ys = collect_nums_from_arg(&args[1])?;
+        let xs = collect_nums_from_arg(&args[0], ctx)?;
+        let ys = collect_nums_from_arg(&args[1], ctx)?;
         if xs.len() != ys.len() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_na(),

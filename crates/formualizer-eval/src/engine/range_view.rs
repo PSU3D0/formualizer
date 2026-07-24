@@ -219,6 +219,15 @@ impl<'a> RangeView<'a> {
         rows: Vec<Vec<LiteralValue>>,
         date_system: DateSystem,
     ) -> RangeView<'static> {
+        Self::try_from_owned_rows(rows, date_system, None)
+            .expect("uncancelled RangeView conversion")
+    }
+
+    pub(crate) fn try_from_owned_rows(
+        rows: Vec<Vec<LiteralValue>>,
+        date_system: DateSystem,
+        cancel_token: Option<Arc<AtomicBool>>,
+    ) -> Result<RangeView<'static>, ExcelError> {
         let nrows = rows.len();
         let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
 
@@ -226,6 +235,14 @@ impl<'a> RangeView<'a> {
         let mut ib = IngestBuilder::new("__tmp", ncols, chunk_rows, date_system);
 
         for mut r in rows {
+            if cancel_token
+                .as_ref()
+                .is_some_and(|token| token.load(Ordering::Relaxed))
+            {
+                return Err(ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Cancelled,
+                ));
+            }
             r.resize(ncols, LiteralValue::Empty);
             ib.append_row(&r).expect("append_row for RangeView");
         }
@@ -233,7 +250,7 @@ impl<'a> RangeView<'a> {
         let sheet = Arc::new(ib.finish());
 
         if nrows == 0 || ncols == 0 {
-            return RangeView {
+            return Ok(RangeView {
                 backing: RangeBacking::Owned(sheet),
                 sr: 1,
                 sc: 1,
@@ -241,11 +258,11 @@ impl<'a> RangeView<'a> {
                 ec: 0,
                 rows: 0,
                 cols: 0,
-                cancel_token: None,
-            };
+                cancel_token,
+            });
         }
 
-        RangeView {
+        Ok(RangeView {
             backing: RangeBacking::Owned(sheet),
             sr: 0,
             sc: 0,
@@ -253,8 +270,8 @@ impl<'a> RangeView<'a> {
             ec: ncols - 1,
             rows: nrows,
             cols: ncols,
-            cancel_token: None,
-        }
+            cancel_token,
+        })
     }
 
     pub fn dims(&self) -> (usize, usize) {
@@ -395,7 +412,7 @@ impl<'a> RangeView<'a> {
         // Overlay takes precedence: user edits over computed over base.
         let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
         if let Some(ov) = cascade.get_scalar(in_off) {
-            return ov.to_literal();
+            return ov.to_literal_for(sheet.date_system);
         }
         // Read tag and route to lane
         let tag_u8 = ch.type_tag.value(in_off);
@@ -416,7 +433,8 @@ impl<'a> RangeView<'a> {
                     if arr.is_null(in_off) {
                         return LiteralValue::Empty;
                     }
-                    LiteralValue::from_serial_number(arr.value(in_off))
+                    LiteralValue::try_from_serial_number_for(sheet.date_system, arr.value(in_off))
+                        .unwrap_or_else(LiteralValue::Error)
                 } else {
                     LiteralValue::Empty
                 }

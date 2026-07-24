@@ -69,7 +69,6 @@ use crate::interpreter::Interpreter;
 use crate::reference::{CellRef, Coord, RangeRef};
 use crate::traits::FunctionProvider;
 use crate::traits::{EvaluationContext, ReferenceInfo, Resolver};
-use chrono::Timelike;
 use formualizer_common::{
     CoordBuildHasher, LiteralValue, col_letters_from_1based, parse_a1_1based,
 };
@@ -3787,6 +3786,7 @@ where
             .sheets
             .push(crate::arrow_store::ArrowSheet {
                 name: std::sync::Arc::<str>::from(name),
+                date_system: self.config.date_system,
                 columns: Vec::new(),
                 nrows: 0,
                 chunk_starts: Vec::new(),
@@ -14906,6 +14906,7 @@ where
                 .sheets
                 .push(crate::arrow_store::ArrowSheet {
                     name: std::sync::Arc::<str>::from(sheet),
+                    date_system: self.config.date_system,
                     columns: Vec::new(),
                     nrows: 0,
                     chunk_starts: Vec::new(),
@@ -14933,44 +14934,8 @@ where
             asheet.ensure_row_capacity(row0 + 1);
         }
         if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
-            use crate::arrow_store::OverlayValue;
-            let ov = match value {
-                LiteralValue::Empty => OverlayValue::Empty,
-                LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
-                LiteralValue::Number(n) => OverlayValue::Number(*n),
-                LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
-                LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
-                LiteralValue::Error(e) => {
-                    OverlayValue::Error(crate::arrow_store::map_error_code(e.kind))
-                }
-                LiteralValue::Date(d) => {
-                    let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                    let serial = crate::builtins::datetime::datetime_to_serial_for(
-                        self.config.date_system,
-                        &dt,
-                    );
-                    OverlayValue::DateTime(serial)
-                }
-                LiteralValue::DateTime(dt) => {
-                    let serial = crate::builtins::datetime::datetime_to_serial_for(
-                        self.config.date_system,
-                        dt,
-                    );
-                    OverlayValue::DateTime(serial)
-                }
-                LiteralValue::Time(t) => {
-                    let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                    OverlayValue::DateTime(serial)
-                }
-                LiteralValue::Duration(d) => {
-                    let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Duration(serial)
-                }
-                LiteralValue::Pending => OverlayValue::Pending,
-                LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
-                    formualizer_common::ExcelErrorKind::Value,
-                )),
-            };
+            let ov =
+                crate::arrow_store::OverlayValue::from_literal_value(value, asheet.date_system);
             let computed_delta = if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
                 let _ = ch.overlay.set(in_off, ov);
                 // A user edit must invalidate any computed (formula/spill) overlay entry at
@@ -15236,41 +15201,18 @@ where
     }
 
     #[inline]
-    fn literal_to_overlay_value(&self, value: &LiteralValue) -> crate::arrow_store::OverlayValue {
-        use crate::arrow_store::OverlayValue;
-        match value {
-            LiteralValue::Empty => OverlayValue::Empty,
-            LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
-            LiteralValue::Number(n) => OverlayValue::Number(*n),
-            LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
-            LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
-            LiteralValue::Error(e) => {
-                OverlayValue::Error(crate::arrow_store::map_error_code(e.kind))
-            }
-            LiteralValue::Date(d) => {
-                let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                let serial =
-                    crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, &dt);
-                OverlayValue::DateTime(serial)
-            }
-            LiteralValue::DateTime(dt) => {
-                let serial =
-                    crate::builtins::datetime::datetime_to_serial_for(self.config.date_system, dt);
-                OverlayValue::DateTime(serial)
-            }
-            LiteralValue::Time(t) => {
-                let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
-                OverlayValue::DateTime(serial)
-            }
-            LiteralValue::Duration(d) => {
-                let serial = d.num_seconds() as f64 / 86_400.0;
-                OverlayValue::Duration(serial)
-            }
-            LiteralValue::Pending => OverlayValue::Pending,
-            LiteralValue::Array(_) => OverlayValue::Error(crate::arrow_store::map_error_code(
-                formualizer_common::ExcelErrorKind::Value,
-            )),
-        }
+    fn literal_to_overlay_value(
+        value: &LiteralValue,
+        date_system: crate::engine::DateSystem,
+    ) -> crate::arrow_store::OverlayValue {
+        crate::arrow_store::OverlayValue::from_literal_value(value, date_system)
+    }
+
+    fn arrow_sheet_date_system(&self, sheet: &str) -> crate::engine::DateSystem {
+        self.arrow_sheets
+            .sheet(sheet)
+            .map(|sheet| sheet.date_system)
+            .unwrap_or(self.config.date_system)
     }
 
     /// Read a single cell's delta overlay entry (if present), preserving the distinction between
@@ -15287,7 +15229,9 @@ where
         }
         let (ch_idx, in_off) = asheet.chunk_of_row(row0)?;
         let ch = asheet.columns[col0].chunk(ch_idx)?;
-        ch.overlay.get_scalar(in_off).map(|ov| ov.to_literal())
+        ch.overlay
+            .get_scalar(in_off)
+            .map(|ov| ov.to_literal_for(asheet.date_system))
     }
 
     /// Read a single cell's computed overlay entry (if present), preserving the distinction
@@ -15309,7 +15253,7 @@ where
         let ch = asheet.columns[col0].chunk(ch_idx)?;
         ch.computed_overlay
             .get_scalar(in_off)
-            .map(|ov| ov.to_literal())
+            .map(|ov| ov.to_literal_for(asheet.date_system))
     }
 
     fn set_delta_overlay_cell_raw(
@@ -15324,7 +15268,10 @@ where
         }
 
         self.ensure_arrow_sheet(sheet);
-        let ov_opt = value.as_ref().map(|v| self.literal_to_overlay_value(v));
+        let date_system = self.arrow_sheet_date_system(sheet);
+        let ov_opt = value
+            .as_ref()
+            .map(|value| Self::literal_to_overlay_value(value, date_system));
         let row0 = row.saturating_sub(1) as usize;
         let col0 = col.saturating_sub(1) as usize;
         let asheet = self
@@ -15372,7 +15319,10 @@ where
         }
 
         self.ensure_arrow_sheet(sheet);
-        let ov_opt = value.as_ref().map(|v| self.literal_to_overlay_value(v));
+        let date_system = self.arrow_sheet_date_system(sheet);
+        let ov_opt = value
+            .as_ref()
+            .map(|value| Self::literal_to_overlay_value(value, date_system));
         let row0 = row.saturating_sub(1) as usize;
         let col0 = col.saturating_sub(1) as usize;
         let asheet = self
@@ -15586,7 +15536,8 @@ where
             return;
         }
 
-        let ov = self.literal_to_overlay_value(value);
+        let date_system = self.arrow_sheet_date_system(sheet);
+        let ov = Self::literal_to_overlay_value(value, date_system);
         self.write_computed_overlay_value_0based(
             sheet,
             row.saturating_sub(1),
@@ -15868,7 +15819,7 @@ where
             let old = self
                 .read_cell_value(self.graph.sheet_name(sheet_id), row0 + 1, col0 + 1)
                 .unwrap_or(LiteralValue::Empty);
-            if old != value.to_literal() {
+            if old != value.to_literal_for(self.config.date_system) {
                 delta.record_cell(sheet_id, row0, col0);
             }
         }
@@ -16177,14 +16128,15 @@ where
         let Some(cell) = self.graph.get_cell_ref(vertex_id) else {
             return Ok(());
         };
-        let ov = self.literal_to_overlay_value(value);
+        let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+        let date_system = self.arrow_sheet_date_system(&sheet_name);
+        let ov = Self::literal_to_overlay_value(value, date_system);
         if let Some(buffer) = computed_writes {
             buffer.push_cell(cell.sheet_id, cell.coord.row(), cell.coord.col(), ov);
             if self.should_flush_computed_write_buffer(buffer) {
                 self.flush_computed_write_buffer(buffer)?;
             }
         } else {
-            let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
             self.write_computed_overlay_value_0based(
                 &sheet_name,
                 cell.coord.row(),
