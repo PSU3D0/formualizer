@@ -486,7 +486,7 @@ fn run_docs_audit_with_inventory(args: DocsAuditArgs, inventory: &BuiltinInvento
             issues.push("missing-formula-example".to_string());
         }
 
-        let category = derive_category(&reg_file);
+        let category = derive_category(reg_file);
         let doc_lines = doc_text
             .lines()
             .filter(|line| !line.trim().is_empty())
