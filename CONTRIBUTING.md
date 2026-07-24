@@ -26,14 +26,14 @@ cargo test -p formualizer-workbook
 Use workspace tasks to keep builtin docs structured:
 
 ```bash
-cargo run -p xtask -- docs-audit
+cargo run -p xtask -- audit
 # strict CI-style mode:
-cargo run -p xtask -- docs-audit --strict
+cargo run -p xtask -- audit --strict
 
 # check generated schema sections are up to date:
-cargo run -p xtask -- docs-schema
+cargo run -p xtask -- schema
 # apply updates in place:
-cargo run -p xtask -- docs-schema --apply --allow-dirty
+cargo run -p xtask -- schema --apply --allow-dirty
 ```
 
 For builtin doc comments:
