@@ -17,3 +17,6 @@ walkdir = "2.5"
 formualizer-eval = { path = "../formualizer-eval" }
 formualizer-common = { path = "../formualizer-common" }
 serde_yaml = "0.9"
+
+[dev-dependencies]
+tempfile = { workspace = true }
