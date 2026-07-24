@@ -81,10 +81,13 @@ pub use graph::{
 pub use resource_ledger::{
     AdmissionResourceBudget, DeadlineResourceBudget, DiskScratchPolicy, EvaluationBudgets,
     EvaluationIncompleteReason, EvaluationResourceConfigDiagnostic,
-    LegacyResourceConfigDisposition, OptimizationResourceBudget, ResourceEnvelope, ResourceLedger,
+    LegacyResourceConfigDisposition, OptimizationResourceBudget, ResourceEnvelope,
     ResourceLedgerError, ResourceLedgerSnapshot, RetainedResourceBudget, ScratchResourceBudget,
     SemanticResourceBudget, WorkResourceBudget,
 };
+// Internal accounting mechanism: reachable inside the crate, deliberately not
+// part of the published surface. See the type's documentation.
+pub(crate) use resource_ledger::ResourceLedger;
 pub use resource_observability::{
     EvaluationRequestKind, EvaluationRequestOutcome, EvaluationRequestPhaseTimings,
     EvaluationResourceBaselineStats, EvaluationResourceClass, EvaluationResourceLedgerRequestStats,

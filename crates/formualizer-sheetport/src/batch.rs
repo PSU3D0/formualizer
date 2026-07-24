@@ -259,6 +259,9 @@ impl<'a> BatchExecutor<'a> {
     #[cfg(feature = "benchmark_internal")]
     #[doc(hidden)]
     /// Read-only access used to snapshot engine telemetry without affecting batch execution.
+    /// Benchmark-only accessor used by the unpublished `formualizer-bench-core`
+    /// probes. Not part of the supported SheetPort API.
+    #[doc(hidden)]
     pub fn workbook_for_benchmark(&self) -> &formualizer_workbook::Workbook {
         self.sheetport.workbook()
     }
