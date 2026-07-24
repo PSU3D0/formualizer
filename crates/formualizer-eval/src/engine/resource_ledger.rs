@@ -436,7 +436,13 @@ pub struct ResourceLedgerSnapshot {
 
 type ElapsedClock = Arc<dyn Fn() -> Duration + Send + Sync>;
 
-pub struct ResourceLedger {
+/// Internal accounting mechanism for a single evaluation request.
+///
+/// The budget and snapshot *data* types in this module are public so callers can
+/// configure limits and read outcomes. The ledger itself drives reserve/release
+/// pairing and work charging inside the engine, and publishing that protocol would
+/// freeze an internal contract that no external caller can meaningfully use.
+pub(crate) struct ResourceLedger {
     request_id: Option<u64>,
     budgets: EvaluationBudgets,
     retained_current: u64,

@@ -5183,6 +5183,9 @@ where
     }
 
     #[doc(hidden)]
+    /// Test-only fault-injection seam. Not part of the supported API; it exists so
+    /// integration tests in sibling crates can fail a commit at an exact point.
+    #[doc(hidden)]
     pub fn set_before_prepared_span_commit_hook(
         &mut self,
         hook: impl FnOnce() + Send + Sync + 'static,
@@ -5191,7 +5194,8 @@ where
     }
 
     #[doc(hidden)]
-    pub fn set_before_target_preparation_commit_hook(
+    /// Test-only fault-injection seam, matching `set_after_eager_proposal_commit_hook`.
+    pub(crate) fn set_before_target_preparation_commit_hook(
         &mut self,
         hook: impl FnOnce() + Send + Sync + 'static,
     ) {
