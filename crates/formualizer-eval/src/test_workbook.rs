@@ -31,6 +31,7 @@ pub struct TestWorkbook {
     fns: HashMap<(String, String), Arc<dyn Function>>,
     aliases: HashMap<(String, String), (String, String)>,
     planning_revision: Option<Arc<std::sync::atomic::AtomicU64>>,
+    cancellation_token: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for TestWorkbook {
@@ -42,6 +43,7 @@ impl Default for TestWorkbook {
             fns: HashMap::new(),
             aliases: HashMap::new(),
             planning_revision: Some(Arc::new(std::sync::atomic::AtomicU64::new(0))),
+            cancellation_token: None,
         }
     }
 }
@@ -76,6 +78,15 @@ impl TestWorkbook {
     #[cfg(test)]
     pub(crate) fn without_planning_revision(mut self) -> Self {
         self.planning_revision = None;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_cancellation_token(
+        mut self,
+        token: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        self.cancellation_token = Some(token);
         self
     }
 
@@ -251,7 +262,7 @@ impl TestWorkbook {
 /* ─────────────────────── trait impls ─────────────────────── */
 impl EvaluationContext for TestWorkbook {
     fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-        None
+        self.cancellation_token.clone()
     }
 
     fn resolve_range_view<'c>(

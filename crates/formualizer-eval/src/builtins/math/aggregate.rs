@@ -1,4 +1,5 @@
 use super::super::utils::{ARG_RANGE_NUM_LENIENT_ONE, coerce_num};
+use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::engine::VisibilityMaskMode;
 use crate::function::Function;
@@ -89,40 +90,43 @@ impl Function for SumFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut total = 0.0;
         for arg in args {
-            if let Ok(view) = arg.range_view() {
-                // Propagate errors from range first
-                for res in view.errors_slices() {
-                    let (_, _, err_cols) = res?;
-                    for col in err_cols {
-                        if col.null_count() < col.len() {
-                            for i in 0..col.len() {
-                                if !col.is_null(i) {
-                                    return Ok(crate::traits::CalcValue::Scalar(
-                                        LiteralValue::Error(ExcelError::new(
-                                            crate::arrow_store::unmap_error_code(col.value(i)),
-                                        )),
-                                    ));
+            match resolve_aggregate_argument(arg, ctx)? {
+                AggregateArgument::Range(view) => {
+                    // Propagate errors from range first
+                    for res in view.errors_slices() {
+                        let (_, _, err_cols) = res?;
+                        for col in err_cols {
+                            if col.null_count() < col.len() {
+                                for i in 0..col.len() {
+                                    if !col.is_null(i) {
+                                        return Ok(crate::traits::CalcValue::Scalar(
+                                            LiteralValue::Error(ExcelError::new(
+                                                crate::arrow_store::unmap_error_code(col.value(i)),
+                                            )),
+                                        ));
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                for res in view.numbers_slices() {
-                    let (_, _, num_cols) = res?;
-                    for col in num_cols {
-                        total +=
-                            arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0);
+                    for res in view.numbers_slices() {
+                        let (_, _, num_cols) = res?;
+                        for col in num_cols {
+                            total += arrow::compute::kernels::aggregate::sum(col.as_ref())
+                                .unwrap_or(0.0);
+                        }
                     }
                 }
-            } else {
-                let v = arg.value()?.into_literal();
-                match v {
+                AggregateArgument::ReferenceError(e) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                AggregateArgument::Scalar(v) => match v {
                     LiteralValue::Error(e) => {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
                     v => total += coerce_num(&v)?,
-                }
+                },
             }
         }
         Ok(crate::traits::CalcValue::Scalar(
@@ -208,24 +212,29 @@ impl Function for CountFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut count: i64 = 0;
         for arg in args {
-            if let Ok(view) = arg.range_view() {
-                for res in view.numbers_slices() {
-                    let (_, _, num_cols) = res?;
-                    for col in num_cols {
-                        count += (col.len() - col.null_count()) as i64;
+            match resolve_aggregate_argument(arg, ctx)? {
+                AggregateArgument::Range(view) => {
+                    for res in view.numbers_slices() {
+                        let (_, _, num_cols) = res?;
+                        for col in num_cols {
+                            count += (col.len() - col.null_count()) as i64;
+                        }
                     }
                 }
-            } else {
-                let v = arg.value()?.into_literal();
-                if let LiteralValue::Error(e) = v {
+                AggregateArgument::ReferenceError(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                 }
-                if !matches!(v, LiteralValue::Empty) && coerce_num(&v).is_ok() {
-                    count += 1;
+                AggregateArgument::Scalar(v) => {
+                    if let LiteralValue::Error(e) = v {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    if !matches!(v, LiteralValue::Empty) && coerce_num(&v).is_ok() {
+                        count += 1;
+                    }
                 }
             }
         }
@@ -324,40 +333,47 @@ impl Function for AverageFn {
         let mut sum = 0.0f64;
         let mut cnt: i64 = 0;
         for arg in args {
-            if let Ok(view) = arg.range_view() {
-                // Propagate errors from range first
-                for res in view.errors_slices() {
-                    let (_, _, err_cols) = res?;
-                    for col in err_cols {
-                        if col.null_count() < col.len() {
-                            for i in 0..col.len() {
-                                if !col.is_null(i) {
-                                    return Ok(crate::traits::CalcValue::Scalar(
-                                        LiteralValue::Error(ExcelError::new(
-                                            crate::arrow_store::unmap_error_code(col.value(i)),
-                                        )),
-                                    ));
+            match resolve_aggregate_argument(arg, ctx)? {
+                AggregateArgument::Range(view) => {
+                    // Propagate errors from range first
+                    for res in view.errors_slices() {
+                        let (_, _, err_cols) = res?;
+                        for col in err_cols {
+                            if col.null_count() < col.len() {
+                                for i in 0..col.len() {
+                                    if !col.is_null(i) {
+                                        return Ok(crate::traits::CalcValue::Scalar(
+                                            LiteralValue::Error(ExcelError::new(
+                                                crate::arrow_store::unmap_error_code(col.value(i)),
+                                            )),
+                                        ));
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                for res in view.numbers_slices() {
-                    let (_, _, num_cols) = res?;
-                    for col in num_cols {
-                        sum += arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0);
-                        cnt += (col.len() - col.null_count()) as i64;
+                    for res in view.numbers_slices() {
+                        let (_, _, num_cols) = res?;
+                        for col in num_cols {
+                            sum += arrow::compute::kernels::aggregate::sum(col.as_ref())
+                                .unwrap_or(0.0);
+                            cnt += (col.len() - col.null_count()) as i64;
+                        }
                     }
                 }
-            } else {
-                let v = arg.value()?.into_literal();
-                if let LiteralValue::Error(e) = v {
+                AggregateArgument::ReferenceError(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                 }
-                if let Ok(n) = crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale()) {
-                    sum += n;
-                    cnt += 1;
+                AggregateArgument::Scalar(v) => {
+                    if let LiteralValue::Error(e) = v {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                    if let Ok(n) = crate::coercion::to_number_lenient_with_locale(&v, &ctx.locale())
+                    {
+                        sum += n;
+                        cnt += 1;
+                    }
                 }
             }
         }
@@ -458,7 +474,7 @@ impl Function for SumProductFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         use crate::broadcast::{broadcast_shape, project_index};
 
@@ -467,20 +483,21 @@ impl Function for SumProductFn {
         }
 
         // Helper: materialize an argument to a 2D array of LiteralValue
-        let to_array = |ah: &ArgumentHandle| -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
-            if let Ok(rv) = ah.range_view() {
-                let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
-                rv.for_each_row(&mut |row| {
-                    rows.push(row.to_vec());
-                    Ok(())
-                })?;
-                Ok(rows)
-            } else {
-                let v = ah.value()?.into_literal();
-                Ok(match v {
+        let to_array = |ah: &ArgumentHandle<'_, 'b>| -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
+            match resolve_aggregate_argument(ah, ctx)? {
+                AggregateArgument::Range(rv) => {
+                    let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
+                    rv.for_each_row(&mut |row| {
+                        rows.push(row.to_vec());
+                        Ok(())
+                    })?;
+                    Ok(rows)
+                }
+                AggregateArgument::ReferenceError(error) => Err(error),
+                AggregateArgument::Scalar(v) => Ok(match v {
                     LiteralValue::Array(arr) => arr,
                     other => vec![vec![other]],
-                })
+                }),
             }
         };
 
@@ -730,109 +747,6 @@ mod tests {
         wb.interpreter()
     }
 
-    /// Aggregates gate on `arg.range_view()`, which previously resolved a
-    /// function-call argument only as a *reference*. A dynamic-array function
-    /// returns a computed array instead, so the values never reached the
-    /// aggregate and SUM silently produced an error rather than a total.
-    #[test]
-    fn sum_consumes_a_computed_array_argument() {
-        use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
-
-        let wb = TestWorkbook::new()
-            .with_function(std::sync::Arc::new(SumFn))
-            .with_function(std::sync::Arc::new(crate::builtins::lookup::SortFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Number(10.0))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Number(20.0))
-            .with_cell_a1("Sheet1", "A3", LiteralValue::Number(30.0));
-        let ctx = interp(&wb);
-        let fctx = ctx.function_context(None);
-
-        // SORT(A1:A3) returns a computed array rather than a reference
-        let range = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:A3".into(),
-                reference: ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1)),
-            },
-            None,
-        );
-        let sort_call = ASTNode::new(
-            ASTNodeType::Function {
-                name: "SORT".to_string(),
-                args: vec![range],
-            },
-            None,
-        );
-
-        let sum = ctx.context.get_function("", "SUM").unwrap();
-        let out = sum
-            .dispatch(
-                &[crate::traits::ArgumentHandle::new(&sort_call, &ctx)],
-                &fctx,
-            )
-            .unwrap()
-            .into_literal();
-
-        assert_eq!(out, LiteralValue::Number(60.0));
-    }
-
-    /// A range comparison evaluates to `Scalar(LiteralValue::Array)` rather
-    /// than `Range`, so it needs the same materialisation. This is the
-    /// `SUM((A1:A3=10)*1)` boolean-math idiom.
-    #[test]
-    fn sum_consumes_an_array_valued_scalar_argument() {
-        use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
-
-        let wb = TestWorkbook::new()
-            .with_function(std::sync::Arc::new(SumFn))
-            .with_cell_a1("Sheet1", "A1", LiteralValue::Number(10.0))
-            .with_cell_a1("Sheet1", "A2", LiteralValue::Number(20.0))
-            .with_cell_a1("Sheet1", "A3", LiteralValue::Number(10.0));
-        let ctx = interp(&wb);
-        let fctx = ctx.function_context(None);
-
-        let range = ASTNode::new(
-            ASTNodeType::Reference {
-                original: "A1:A3".into(),
-                reference: ReferenceType::range(None, Some(1), Some(1), Some(3), Some(1)),
-            },
-            None,
-        );
-        // (A1:A3=10)*1 -> {1;0;1}, so SUM is 2
-        let comparison = ASTNode::new(
-            ASTNodeType::BinaryOp {
-                op: "=".to_string(),
-                left: Box::new(range),
-                right: Box::new(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Number(10.0)),
-                    None,
-                )),
-            },
-            None,
-        );
-        let times_one = ASTNode::new(
-            ASTNodeType::BinaryOp {
-                op: "*".to_string(),
-                left: Box::new(comparison),
-                right: Box::new(ASTNode::new(
-                    ASTNodeType::Literal(LiteralValue::Number(1.0)),
-                    None,
-                )),
-            },
-            None,
-        );
-
-        let sum = ctx.context.get_function("", "SUM").unwrap();
-        let out = sum
-            .dispatch(
-                &[crate::traits::ArgumentHandle::new(&times_one, &ctx)],
-                &fctx,
-            )
-            .unwrap()
-            .into_literal();
-
-        assert_eq!(out, LiteralValue::Number(2.0));
-    }
-
     #[test]
     fn test_sum_caps() {
         let sum_fn = SumFn;
@@ -878,6 +792,363 @@ mod tests {
         let sum_fn = ctx.context.get_function("", "SUM").unwrap();
         let result = sum_fn.dispatch(&args, &fctx).unwrap().into_literal();
         assert_eq!(result, LiteralValue::Number(6.0));
+    }
+}
+
+#[cfg(test)]
+mod computed_array_tests {
+    use super::*;
+    use crate::builtins::lookup::ChooseFn;
+    use crate::builtins::math::criteria_aggregates::{
+        AverageIfFn, AverageIfsFn, CountAFn, CountIfFn, CountIfsFn, SumIfFn, SumIfsFn,
+    };
+    use crate::builtins::math::numeric::{SeriesSumFn, SumXMY2Fn, SumsqFn};
+    use crate::builtins::math::reduction::MaxFn;
+    use crate::builtins::reference_fns::{IndexFn, IndirectFn, OffsetFn};
+    use crate::test_workbook::TestWorkbook;
+    use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    fn workbook() -> TestWorkbook {
+        crate::builtins::lookup::register_builtins();
+        TestWorkbook::new()
+            .with_function(Arc::new(SumFn))
+            .with_function(Arc::new(CountFn))
+            .with_function(Arc::new(CountAFn))
+            .with_function(Arc::new(AverageFn))
+            .with_function(Arc::new(MaxFn))
+            .with_function(Arc::new(SeriesSumFn))
+            .with_function(Arc::new(SumsqFn))
+            .with_function(Arc::new(SumXMY2Fn))
+            .with_function(Arc::new(ChooseFn))
+            .with_function(Arc::new(IndexFn))
+            .with_function(Arc::new(OffsetFn))
+            .with_function(Arc::new(IndirectFn))
+            .with_function(Arc::new(CountIfFn))
+            .with_function(Arc::new(SumIfFn))
+            .with_function(Arc::new(AverageIfFn))
+            .with_function(Arc::new(CountIfsFn))
+            .with_function(Arc::new(SumIfsFn))
+            .with_function(Arc::new(AverageIfsFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Number(10.0))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Number(20.0))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Number(10.0))
+    }
+
+    fn evaluate(wb: &TestWorkbook, formula: &str) -> Result<LiteralValue, ExcelError> {
+        wb.interpreter()
+            .evaluate_ast(&formualizer_parse::parser::parse(formula).unwrap())
+            .map(CalcValue::into_literal)
+    }
+
+    #[test]
+    fn ast_aggregates_consume_computed_arrays() {
+        let wb = workbook();
+        let cases = [
+            ("=SUM(SEQUENCE(3))", LiteralValue::Number(6.0)),
+            ("=COUNT(UNIQUE(A1:A3))", LiteralValue::Number(2.0)),
+            ("=COUNTA(SORT(A1:A3))", LiteralValue::Number(3.0)),
+            (
+                "=AVERAGE(TRANSPOSE(A1:A3))",
+                LiteralValue::Number(40.0 / 3.0),
+            ),
+            ("=MAX((A1:A3=10)*A1:A3)", LiteralValue::Number(10.0)),
+            ("=SUM(OFFSET(A1,0,0,3,1))", LiteralValue::Number(40.0)),
+            ("=SUM(INDIRECT(\"A1:A3\"))", LiteralValue::Number(40.0)),
+        ];
+
+        for (formula, expected) in cases {
+            assert_eq!(evaluate(&wb, formula).unwrap(), expected, "{formula}");
+        }
+    }
+
+    #[test]
+    fn capability_functions_fall_back_to_scalar_and_array_values() {
+        let wb = workbook();
+        let cases = [
+            ("=SUM(CHOOSE(1,5,6))", LiteralValue::Number(5.0)),
+            ("=SERIESSUM(2,0,1,CHOOSE(1,3,4))", LiteralValue::Number(3.0)),
+            ("=SUMSQ(CHOOSE(1,3,4))", LiteralValue::Number(9.0)),
+            (
+                "=SUMXMY2(CHOOSE(1,3,4),CHOOSE(1,2,5))",
+                LiteralValue::Number(1.0),
+            ),
+            (
+                "=SUM(CHOOSE(1,SEQUENCE(3),SEQUENCE(2)))",
+                LiteralValue::Number(6.0),
+            ),
+            ("=SUM(INDEX(SEQUENCE(3),0))", LiteralValue::Number(6.0)),
+        ];
+
+        for (formula, expected) in cases {
+            assert_eq!(evaluate(&wb, formula).unwrap(), expected, "{formula}");
+        }
+    }
+
+    #[test]
+    fn if_family_preserves_reference_errors_in_criteria_and_targets() {
+        let wb = workbook();
+        let formulas = [
+            "=COUNTIF(OFFSET(A1,-1,0),1)",
+            "=SUMIF(OFFSET(A1,-1,0),1)",
+            "=AVERAGEIF(OFFSET(A1,-1,0),1)",
+            "=COUNTIFS(OFFSET(A1,-1,0),1)",
+            "=SUMIFS(A1,OFFSET(A1,-1,0),1)",
+            "=AVERAGEIFS(A1,OFFSET(A1,-1,0),1)",
+            "=SUMIF(A1,10,OFFSET(A1,-1,0))",
+            "=AVERAGEIF(A1,10,OFFSET(A1,-1,0))",
+            "=SUMIFS(OFFSET(A1,-1,0),A1,10)",
+            "=AVERAGEIFS(OFFSET(A1,-1,0),A1,10)",
+        ];
+
+        for formula in formulas {
+            assert_exact_error_value(evaluate(&wb, formula), ExcelErrorKind::Ref, None);
+        }
+    }
+
+    #[test]
+    fn colon_operator_keeps_reference_semantics() {
+        use formualizer_parse::parser::{ASTNode, ASTNodeType};
+
+        let wb = workbook();
+        let colon = ASTNode::new(
+            ASTNodeType::BinaryOp {
+                op: ":".to_string(),
+                left: Box::new(formualizer_parse::parser::parse("=A1").unwrap()),
+                right: Box::new(formualizer_parse::parser::parse("=A3").unwrap()),
+            },
+            None,
+        );
+        let sum = ASTNode::new(
+            ASTNodeType::Function {
+                name: "SUM".to_string(),
+                args: vec![colon],
+            },
+            None,
+        );
+        assert_eq!(
+            wb.interpreter().evaluate_ast(&sum).unwrap().into_literal(),
+            LiteralValue::Number(40.0)
+        );
+    }
+
+    #[derive(Debug)]
+    struct CountedArrayFn(Arc<AtomicUsize>);
+
+    impl Function for CountedArrayFn {
+        fn caps(&self) -> crate::function::FnCaps {
+            crate::function::FnCaps::VOLATILE | crate::function::FnCaps::MAY_SPILL
+        }
+
+        fn name(&self) -> &'static str {
+            "COUNTED_ARRAY"
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(CalcValue::Scalar(LiteralValue::Array(vec![vec![
+                LiteralValue::Number(2.0),
+                LiteralValue::Number(3.0),
+            ]])))
+        }
+    }
+
+    #[derive(Debug)]
+    struct PretokenizedRangeFn(Arc<AtomicBool>);
+
+    impl Function for PretokenizedRangeFn {
+        fn name(&self) -> &'static str {
+            "PRETOKENIZED_RANGE"
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            ctx: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            Ok(CalcValue::Range(
+                crate::engine::range_view::RangeView::from_owned_rows(
+                    vec![vec![LiteralValue::Number(1.0)]],
+                    ctx.date_system(),
+                )
+                .with_cancel_token(Some(Arc::clone(&self.0))),
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct CountedScalarFn(Arc<AtomicUsize>);
+
+    impl Function for CountedScalarFn {
+        fn name(&self) -> &'static str {
+            "COUNTED_SCALAR"
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(CalcValue::Scalar(LiteralValue::Number(4.0)))
+        }
+    }
+
+    #[derive(Debug)]
+    struct ComputedFailureFn(Arc<AtomicUsize>);
+
+    impl Function for ComputedFailureFn {
+        fn name(&self) -> &'static str {
+            "COMPUTED_FAILURE"
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(ExcelError::new(ExcelErrorKind::Num).with_message("computed failure sentinel"))
+        }
+    }
+
+    #[derive(Debug)]
+    struct ReferenceFailureFn {
+        reference_calls: Arc<AtomicUsize>,
+        value_calls: Arc<AtomicUsize>,
+    }
+
+    impl Function for ReferenceFailureFn {
+        fn caps(&self) -> crate::function::FnCaps {
+            crate::function::FnCaps::RETURNS_REFERENCE
+        }
+
+        fn name(&self) -> &'static str {
+            "REFERENCE_FAILURE"
+        }
+
+        fn eval_reference<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>> {
+            self.reference_calls.fetch_add(1, Ordering::SeqCst);
+            Some(Err(
+                ExcelError::new(ExcelErrorKind::Ref).with_message("reference failure sentinel")
+            ))
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [ArgumentHandle<'a, 'b>],
+            _ctx: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            self.value_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(CalcValue::Scalar(LiteralValue::Number(999.0)))
+        }
+    }
+
+    fn assert_exact_error_value(
+        actual: Result<LiteralValue, ExcelError>,
+        kind: ExcelErrorKind,
+        message: Option<&str>,
+    ) {
+        let LiteralValue::Error(error) = actual.expect("reference failures are formula values")
+        else {
+            panic!("expected an error value");
+        };
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.message.as_deref(), message);
+    }
+
+    #[test]
+    fn computed_array_is_evaluated_once_and_errors_remain_exact() {
+        let array_calls = Arc::new(AtomicUsize::new(0));
+        let scalar_calls = Arc::new(AtomicUsize::new(0));
+        let failure_calls = Arc::new(AtomicUsize::new(0));
+        let reference_calls = Arc::new(AtomicUsize::new(0));
+        let reference_value_calls = Arc::new(AtomicUsize::new(0));
+        let wb = workbook()
+            .with_function(Arc::new(CountedArrayFn(Arc::clone(&array_calls))))
+            .with_function(Arc::new(CountedScalarFn(Arc::clone(&scalar_calls))))
+            .with_function(Arc::new(ComputedFailureFn(Arc::clone(&failure_calls))))
+            .with_function(Arc::new(ReferenceFailureFn {
+                reference_calls: Arc::clone(&reference_calls),
+                value_calls: Arc::clone(&reference_value_calls),
+            }));
+
+        assert_eq!(
+            evaluate(&wb, "=SUM(COUNTED_ARRAY())").unwrap(),
+            LiteralValue::Number(5.0)
+        );
+        assert_eq!(array_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            evaluate(&wb, "=SUM(COUNTED_ARRAY()*1)").unwrap(),
+            LiteralValue::Number(5.0)
+        );
+        assert_eq!(array_calls.load(Ordering::SeqCst), 2);
+
+        assert_eq!(
+            evaluate(&wb, "=SUM(COUNTED_SCALAR())").unwrap(),
+            LiteralValue::Number(4.0)
+        );
+        assert_eq!(scalar_calls.load(Ordering::SeqCst), 1);
+
+        let computed = evaluate(&wb, "=SUM(COMPUTED_FAILURE())").unwrap_err();
+        assert_eq!(computed.kind, ExcelErrorKind::Num);
+        assert_eq!(
+            computed.message.as_deref(),
+            Some("computed failure sentinel")
+        );
+        assert_eq!(failure_calls.load(Ordering::SeqCst), 1);
+
+        assert_exact_error_value(
+            evaluate(&wb, "=SUM(REFERENCE_FAILURE())"),
+            ExcelErrorKind::Ref,
+            Some("reference failure sentinel"),
+        );
+        assert_eq!(reference_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(reference_value_calls.load(Ordering::SeqCst), 0);
+
+        assert_exact_error_value(
+            evaluate(&wb, "=SUM(OFFSET(A1,-1,0))"),
+            ExcelErrorKind::Ref,
+            None,
+        );
+        assert_exact_error_value(
+            evaluate(&wb, "=SUM(INDIRECT(\"not a reference\"))"),
+            ExcelErrorKind::Name,
+            None,
+        );
+    }
+
+    #[test]
+    fn pretokenized_range_keeps_cancellation_without_context_token() {
+        let token = Arc::new(AtomicBool::new(true));
+        let wb = workbook().with_function(Arc::new(PretokenizedRangeFn(token)));
+
+        let error = evaluate(&wb, "=SUM(PRETOKENIZED_RANGE())").unwrap_err();
+        assert_eq!(error.kind, ExcelErrorKind::Cancelled);
+        assert_eq!(error.message, None);
+    }
+
+    #[test]
+    fn computed_array_range_walk_propagates_cancellation() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let token = Arc::new(AtomicBool::new(true));
+        let wb = workbook()
+            .with_cancellation_token(token)
+            .with_function(Arc::new(CountedArrayFn(Arc::clone(&calls))));
+
+        let error = evaluate(&wb, "=SUM(COUNTED_ARRAY())").unwrap_err();
+        assert_eq!(error.kind, ExcelErrorKind::Cancelled);
+        assert_eq!(error.message, None);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
 
@@ -1158,10 +1429,16 @@ impl AggregateCollector {
         let mut out = Self::default();
 
         for arg in args.iter().skip(start_idx) {
-            if let Ok(view) = arg.range_view() {
-                out.collect_range_arg(&view, ctx, op, visibility_policy, error_policy)?;
-            } else {
-                out.consume_scalar_value(arg.value()?.into_literal(), op, error_policy)?;
+            match resolve_aggregate_argument(arg, ctx)? {
+                AggregateArgument::Range(view) => {
+                    out.collect_range_arg(&view, ctx, op, visibility_policy, error_policy)?;
+                }
+                AggregateArgument::ReferenceError(error) => {
+                    out.consume_scalar_value(LiteralValue::Error(error), op, error_policy)?;
+                }
+                AggregateArgument::Scalar(value) => {
+                    out.consume_scalar_value(value, op, error_policy)?;
+                }
             }
         }
 
