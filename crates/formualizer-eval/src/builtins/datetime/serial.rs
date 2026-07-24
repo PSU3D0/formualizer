@@ -1,6 +1,6 @@
 //! Excel serial date system with 1900 leap year bug compatibility
 
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
 use formualizer_common::ExcelError;
 
 use crate::engine::DateSystem;
@@ -27,11 +27,8 @@ const EXCEL_BASE_DAY: u32 = 31;
 /// Convert Excel serial number to date
 /// Handles the 1900 leap year bug where Excel incorrectly treats 1900 as a leap year
 pub fn serial_to_date(serial: f64) -> Result<NaiveDate, ExcelError> {
-    let serial_int = serial.trunc();
-    if serial_int < 0.0 {
-        return Err(ExcelError::new_num());
-    }
-    let serial_int = serial_int as i64; // safe now
+    validate_excel_serial(DateSystem::Excel1900, serial)?;
+    let serial_int = serial.trunc() as i64;
 
     // Handle phantom day (serial 60) explicitly
     if serial_int == 60 {
@@ -66,21 +63,32 @@ pub fn date_to_serial(date: &NaiveDate) -> f64 {
     serial as f64
 }
 
+fn normalized_serial_parts(
+    system: DateSystem,
+    serial: f64,
+) -> Result<(i64, NaiveTime), ExcelError> {
+    validate_excel_serial(system, serial)?;
+
+    let mut whole_days = serial.trunc() as i64;
+    let mut total_seconds = (serial.fract() * 86_400.0).round() as u32;
+    if total_seconds == 86_400 {
+        whole_days = whole_days.checked_add(1).ok_or_else(ExcelError::new_num)?;
+        if whole_days as f64 > max_excel_serial_for(system) {
+            return Err(ExcelError::new_num());
+        }
+        total_seconds = 0;
+    }
+
+    let time = NaiveTime::from_num_seconds_from_midnight_opt(total_seconds, 0)
+        .ok_or_else(ExcelError::new_num)?;
+    Ok((whole_days, time))
+}
+
 /// Convert Excel serial number to datetime
 /// The fractional part represents time of day
 pub fn serial_to_datetime(serial: f64) -> Result<NaiveDateTime, ExcelError> {
-    let date = serial_to_date(serial)?;
-    let time_fraction = serial.fract();
-
-    // Convert fraction to seconds (24 hours * 60 minutes * 60 seconds = 86400 seconds)
-    let total_seconds = (time_fraction * 86400.0).round() as u32;
-    let hours = total_seconds / 3600;
-    let minutes = (total_seconds % 3600) / 60;
-    let seconds = total_seconds % 60;
-
-    let time = NaiveTime::from_hms_opt(hours.min(23), minutes.min(59), seconds.min(59))
-        .ok_or_else(ExcelError::new_num)?;
-
+    let (whole_days, time) = normalized_serial_parts(DateSystem::Excel1900, serial)?;
+    let date = serial_to_date(whole_days as f64)?;
     Ok(NaiveDateTime::new(date, time))
 }
 
@@ -94,6 +102,48 @@ pub fn datetime_to_serial(datetime: &NaiveDateTime) -> f64 {
 // ───────── Date-system aware variants (1900 vs 1904) ─────────
 
 const EXCEL_1904_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1904, 1, 1).unwrap();
+const EXCEL_MAX_DATE: NaiveDate = NaiveDate::from_ymd_opt(9999, 12, 31).unwrap();
+
+/// Return the last whole-day serial supported by Excel's calendar.
+pub fn max_excel_serial_for(system: DateSystem) -> f64 {
+    date_to_serial_for(system, &EXCEL_MAX_DATE)
+}
+
+/// Validate a serial before converting it to a calendar value.
+///
+/// Excel date serials cannot be negative or extend past 9999-12-31. Checking
+/// finite values and bounds before any float-to-integer cast also keeps extreme
+/// inputs from silently saturating.
+pub fn validate_excel_serial(system: DateSystem, serial: f64) -> Result<(), ExcelError> {
+    if !serial.is_finite() || serial < 0.0 || serial.trunc() > max_excel_serial_for(system) {
+        return Err(ExcelError::new_num());
+    }
+    Ok(())
+}
+
+/// Return date fields using Excel's display semantics.
+///
+/// The 1900 system has two display-only values that cannot be represented by
+/// `chrono::NaiveDate`: serial 0 is 1900-01-00 and serial 60 is the phantom
+/// 1900-02-29. All real dates continue through the shared serial converter.
+pub fn serial_to_display_date_parts_for(
+    system: DateSystem,
+    serial: f64,
+) -> Result<(i32, u32, u32), ExcelError> {
+    validate_excel_serial(system, serial)?;
+    let whole_days = serial.trunc();
+    if system == DateSystem::Excel1900 {
+        if whole_days == 0.0 {
+            return Ok((1900, 1, 0));
+        }
+        if whole_days == 60.0 {
+            return Ok((1900, 2, 29));
+        }
+    }
+
+    let date = serial_to_datetime_for(system, whole_days)?.date();
+    Ok((date.year(), date.month(), date.day()))
+}
 
 /// Convert a date to Excel serial according to the provided date system.
 pub fn date_to_serial_for(system: DateSystem, date: &NaiveDate) -> f64 {
@@ -123,19 +173,9 @@ pub fn serial_to_datetime_for(
     match system {
         DateSystem::Excel1900 => serial_to_datetime(serial),
         DateSystem::Excel1904 => {
-            if serial.is_nan() || serial.is_infinite() {
-                return Err(ExcelError::new_num());
-            }
-            let days = serial.trunc() as i64;
+            let (whole_days, time) = normalized_serial_parts(system, serial)?;
             let date = EXCEL_1904_EPOCH
-                .checked_add_signed(chrono::TimeDelta::days(days))
-                .ok_or_else(ExcelError::new_num)?;
-            let time_fraction = serial.fract();
-            let total_seconds = (time_fraction * 86400.0).round() as u32;
-            let hours = total_seconds / 3600;
-            let minutes = (total_seconds % 3600) / 60;
-            let seconds = total_seconds % 60;
-            let time = NaiveTime::from_hms_opt(hours.min(23), minutes.min(59), seconds.min(59))
+                .checked_add_signed(chrono::TimeDelta::days(whole_days))
                 .ok_or_else(ExcelError::new_num)?;
             Ok(NaiveDateTime::new(date, time))
         }
@@ -195,6 +235,53 @@ mod tests {
         // Serial 61 = 1900-03-01
         let date = serial_to_date(61.0).unwrap();
         assert_eq!(date, NaiveDate::from_ymd_opt(1900, 3, 1).unwrap());
+    }
+
+    #[test]
+    fn test_serial_to_datetime_rounding_carries_across_1900_phantom_day() {
+        let rounds_up = 86_399.6 / 86_400.0;
+
+        assert_eq!(
+            serial_to_datetime(59.0 + rounds_up).unwrap(),
+            serial_to_datetime(60.0).unwrap()
+        );
+        assert_eq!(
+            serial_to_datetime(60.0 + rounds_up).unwrap(),
+            NaiveDate::from_ymd_opt(1900, 3, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+        );
+        assert_eq!(
+            serial_to_datetime(61.0 + rounds_up).unwrap(),
+            NaiveDate::from_ymd_opt(1900, 3, 2)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_serial_to_datetime_rounding_carries_in_1904_system() {
+        let rounds_up = 86_399.6 / 86_400.0;
+
+        assert_eq!(
+            serial_to_datetime_for(DateSystem::Excel1904, 59.0 + rounds_up).unwrap(),
+            NaiveDate::from_ymd_opt(1904, 3, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_serial_to_datetime_rejects_rounded_carry_past_max_date() {
+        let rounds_up = 86_399.6 / 86_400.0;
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let serial = max_excel_serial_for(system) + rounds_up;
+            assert!(serial_to_datetime_for(system, serial).is_err());
+        }
     }
 
     #[test]
