@@ -16018,7 +16018,7 @@
     "variadic": false
   },
   "text/concat": {
-    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "argSchema": "arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
     "args": [
       {
         "by_ref": false,
@@ -16031,7 +16031,7 @@
         "name": "arg1",
         "repeating": null,
         "required": true,
-        "shape": "scalar"
+        "shape": "range"
       }
     ],
     "caps": [
@@ -16044,7 +16044,7 @@
     "name": "CONCAT",
     "registrationSource": "crates/formualizer-eval/src/builtins/text/trim_case_concat.rs",
     "shortSummary": "Concatenates multiple values into one text string.",
-    "signature": "CONCAT(arg1...: any@scalar)",
+    "signature": "CONCAT(arg1...: any@range)",
     "typeName": "ConcatFn",
     "variadic": true
   },
@@ -16074,7 +16074,7 @@
     "minArgs": 1,
     "name": "CONCATENATE",
     "registrationSource": "crates/formualizer-eval/src/builtins/text/trim_case_concat.rs",
-    "shortSummary": "Legacy alias for `CONCAT` that joins multiple values as text.",
+    "shortSummary": "Legacy function that joins multiple scalar values as text.",
     "signature": "CONCATENATE(arg1...: any@scalar)",
     "typeName": "ConcatenateFn",
     "variadic": true
@@ -16959,7 +16959,7 @@
     "variadic": false
   },
   "text/textjoin": {
-    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}",
+    "argSchema": "arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}",
     "args": [
       {
         "by_ref": false,
@@ -16973,6 +16973,32 @@
         "repeating": null,
         "required": true,
         "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg2",
+        "repeating": null,
+        "required": true,
+        "shape": "scalar"
+      },
+      {
+        "by_ref": false,
+        "coercion": "None",
+        "has_default": false,
+        "kinds": [
+          "any"
+        ],
+        "max": null,
+        "name": "arg3",
+        "repeating": "1",
+        "required": true,
+        "shape": "range"
       }
     ],
     "caps": [
@@ -16985,7 +17011,7 @@
     "name": "TEXTJOIN",
     "registrationSource": "crates/formualizer-eval/src/builtins/text/trim_case_concat.rs",
     "shortSummary": "Joins text values using a delimiter, with optional empty-value filtering.",
-    "signature": "TEXTJOIN(arg1...: any@scalar)",
+    "signature": "TEXTJOIN(arg1: any@scalar, arg2: any@scalar, arg3...: any@range)",
     "typeName": "TextJoinFn",
     "variadic": true
   },
