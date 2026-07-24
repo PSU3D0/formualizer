@@ -1,12 +1,11 @@
 //! DATEVALUE and TIMEVALUE functions for parsing date/time strings
 
-use super::serial::date_to_serial;
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::NaiveDate;
 use formualizer_common::time_to_fraction;
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::{ExcelError, LiteralValue, date_to_serial_for};
 use formualizer_macros::func_caps;
 
 /// Parses a date string and returns its date serial number.
@@ -14,7 +13,7 @@ use formualizer_macros::func_caps;
 /// # Remarks
 /// - Accepted formats are a fixed supported subset (for example `YYYY-MM-DD`, `MM/DD/YYYY`, and month-name forms).
 /// - Parsing is not locale-driven; ambiguous text may parse differently than Excel locales.
-/// - Output uses Excel 1900 serial mapping and does not currently switch to workbook `1904` mode.
+/// - The returned serial uses the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -72,8 +71,9 @@ impl Function for DateValueFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let system = ctx.date_system();
         let date_text = match args[0].value()?.into_literal() {
             LiteralValue::Text(s) => s,
             LiteralValue::Error(e) => {
@@ -101,7 +101,7 @@ impl Function for DateValueFn {
         for fmt in &formats {
             if let Ok(date) = NaiveDate::parse_from_str(&date_text, fmt) {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-                    date_to_serial(&date),
+                    date_to_serial_for(system, &date),
                 )));
             }
         }
@@ -290,6 +290,36 @@ mod tests {
                 assert!((n - 0.6041666667).abs() < 1e-9);
             }
             _ => panic!("TIMEVALUE should return a number"),
+        }
+    }
+
+    fn eval_datevalue_formula(system: crate::engine::DateSystem, formula: &str) -> LiteralValue {
+        use crate::engine::{Engine, EvalConfig};
+        use crate::interpreter::Interpreter;
+        use formualizer_parse::parser::parse;
+
+        let wb = TestWorkbook::new().with_function(Arc::new(DateValueFn));
+        let engine = Engine::new(wb, EvalConfig::default().with_date_system(system));
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+        interpreter
+            .evaluate_ast(&parse(formula).expect("formula should parse"))
+            .expect("formula should evaluate")
+            .into_literal()
+    }
+
+    /// DATEVALUE emits a serial, so the workbook date system decides the epoch.
+    #[test]
+    fn datevalue_follows_workbook_date_system_1900_and_1904() {
+        use crate::engine::DateSystem;
+        use formualizer_common::date_to_serial_for;
+
+        let parsed = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            assert_eq!(
+                eval_datevalue_formula(system, "=DATEVALUE(\"2024-01-15\")"),
+                LiteralValue::Number(date_to_serial_for(system, &parsed)),
+                "DATEVALUE under {system:?}"
+            );
         }
     }
 }
