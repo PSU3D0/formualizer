@@ -12,8 +12,10 @@ description: "TEXTJOIN: Joins text values using a delimiter, with optional empty
 ## Remarks
  - `ignore_empty=TRUE` skips empty strings and empty cells.
  - `ignore_empty=FALSE` includes empty items, which can produce adjacent delimiters.
+ - Text ranges and arrays are flattened in row-major order.
  - Delimiter and values are coerced to text.
  - Any error in inputs propagates immediately.
+ - Results longer than 32,767 characters return `#VALUE!`.
 
 ## Examples
 

@@ -1,16 +1,16 @@
 ---
 title: "CONCATENATE"
-description: "CONCATENATE: Legacy alias for `CONCAT` that joins multiple values as text."
+description: "CONCATENATE: Legacy function that joins multiple scalar values as text."
 ---
 
 <FunctionPageSchema id="text/concatenate" />
 
 ## Summary
 
-Legacy alias for `CONCAT` that joins multiple values as text.
+Legacy function that joins multiple scalar values as text.
 
 ## Remarks
- - Semantics match `CONCAT` in this implementation.
+ - Range and array arguments use only their top-left value.
  - Blank values contribute an empty string.
  - Numbers and booleans are coerced to text.
  - Errors are propagated as soon as encountered.
@@ -50,7 +50,7 @@ Legacy alias for `CONCAT` that joins multiple values as text.
 ## FAQ
 
 ### Is CONCATENATE behavior different from CONCAT here?
-No. In this engine CONCATENATE uses the same join semantics as CONCAT.
+Yes. CONCAT expands ranges and arrays, while legacy CONCATENATE uses only the top-left value.
 
 ## Runtime metadata
 

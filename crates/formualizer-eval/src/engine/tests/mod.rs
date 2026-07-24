@@ -97,6 +97,7 @@ mod arrow_sparse_used_bounds;
 mod compressed_range_scheduler;
 mod computed_array_aggregates;
 mod computed_flush;
+mod concat_textjoin;
 mod config_defaults;
 mod context_default_noops;
 mod countifs_arrow_overlay;

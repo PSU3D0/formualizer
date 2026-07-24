@@ -11,9 +11,11 @@ Concatenates multiple values into one text string.
 
 ## Remarks
  - Accepts one or more arguments.
+ - Ranges and arrays are flattened in row-major order.
  - Blank values contribute an empty string.
  - Numbers and booleans are coerced to text.
  - Errors are propagated as soon as encountered.
+ - Results longer than 32,767 characters return `#VALUE!`.
 
 ## Examples
 
