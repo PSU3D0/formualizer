@@ -14,13 +14,16 @@ impl SheetRegistry {
     }
 
     pub fn id_for(&mut self, name: &str) -> SheetId {
-        if let Some(&id) = self.id_by_name.get(name) {
+        // Sheet names are CASE-INSENSITIVE (Excel behavior): index by the lowercased name, but
+        // keep the original casing in name_by_id for display.
+        let key = name.to_lowercase();
+        if let Some(&id) = self.id_by_name.get(&key) {
             return id;
         }
 
         let id = self.name_by_id.len() as SheetId;
         self.name_by_id.push(name.to_string());
-        self.id_by_name.insert(name.to_string(), id);
+        self.id_by_name.insert(key, id);
         id
     }
 
@@ -33,7 +36,8 @@ impl SheetRegistry {
     }
 
     pub fn get_id(&self, name: &str) -> Option<SheetId> {
-        self.id_by_name.get(name).copied()
+        // Case-insensitive (Excel): e.g. INDIRECT("Config!B8") must find the sheet named "CONFIG".
+        self.id_by_name.get(&name.to_lowercase()).copied()
     }
 
     /// Count active sheets without cloning sheet names.
@@ -101,8 +105,8 @@ impl SheetRegistry {
             return Ok(());
         }
 
-        // Remove from id_by_name mapping
-        self.id_by_name.remove(&name);
+        // Remove from id_by_name mapping (case-insensitive key)
+        self.id_by_name.remove(&name.to_lowercase());
 
         // Mark as removed in name_by_id (we can't actually remove it to preserve IDs)
         self.name_by_id[id as usize] = String::new();
@@ -128,8 +132,8 @@ impl SheetRegistry {
         // Get the old name
         let old_name = self.name_by_id[id as usize].clone();
 
-        // Check if new name is already taken by another sheet
-        if let Some(&existing_id) = self.id_by_name.get(new_name)
+        // Check if new name is already taken by another sheet (case-insensitive)
+        if let Some(&existing_id) = self.id_by_name.get(&new_name.to_lowercase())
             && existing_id != id
         {
             return Err(ExcelError::new(ExcelErrorKind::Value)
@@ -137,12 +141,31 @@ impl SheetRegistry {
         }
 
         // Remove old name mapping
-        self.id_by_name.remove(&old_name);
+        self.id_by_name.remove(&old_name.to_lowercase());
 
         // Update to new name
         self.name_by_id[id as usize] = new_name.to_string();
-        self.id_by_name.insert(new_name.to_string(), id);
+        self.id_by_name.insert(new_name.to_lowercase(), id);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sheet_names_are_case_insensitive() {
+        let mut reg = SheetRegistry::new();
+        let id = reg.id_for("CONFIG");
+        // Excel resolves sheet names case-insensitively: all casings map to the same sheet.
+        assert_eq!(reg.get_id("CONFIG"), Some(id));
+        assert_eq!(reg.get_id("Config"), Some(id));
+        assert_eq!(reg.get_id("config"), Some(id));
+        // id_for must reuse the same sheet regardless of casing (no duplicate sheet created).
+        assert_eq!(reg.id_for("Config"), id);
+        // Original casing is preserved for display.
+        assert_eq!(reg.name(id), "CONFIG");
     }
 }
