@@ -347,9 +347,17 @@ impl Function for TextFn {
                 format_number_basic(num)
             }
         } else {
-            // date tokens naive from serial
+            // Date-token parsing is intentionally limited here; conversion still
+            // follows the workbook's shared Excel serial semantics.
             if fmt.contains("yyyy") || fmt.contains("dd") || fmt.contains("mm") {
-                format_serial_date(num, &fmt)
+                match format_serial_date(ctx.date_system(), num, &fmt) {
+                    Ok(text) => text,
+                    Err(_) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new_value(),
+                        )));
+                    }
+                }
             } else {
                 num.to_string()
             }
@@ -423,26 +431,39 @@ fn format_with_thousands(n: f64, fmt: &str) -> String {
     }
 }
 
-// very naive: treat integer part as days since 1899-12-31 ignoring leap bug for now
-fn format_serial_date(n: f64, fmt: &str) -> String {
-    use chrono::Datelike;
-    let days = n.trunc() as i64;
-    let base = chrono::NaiveDate::from_ymd_opt(1899, 12, 31).unwrap();
-    let date = base
-        .checked_add_signed(chrono::TimeDelta::days(days))
-        .unwrap_or(base);
+fn format_serial_date(
+    system: crate::engine::DateSystem,
+    n: f64,
+    fmt: &str,
+) -> Result<String, ExcelError> {
+    use crate::builtins::datetime::serial_to_display_date_parts_for;
+
     let mut out = fmt.to_string();
-    out = out.replace("yyyy", &format!("{:04}", date.year()));
-    out = out.replace("mm", &format!("{:02}", date.month()));
-    out = out.replace("dd", &format!("{:02}", date.day()));
-    if out.contains("hh:mm") {
-        let frac = n.fract();
-        let total_minutes = (frac * 24.0 * 60.0).round() as i64;
-        let hh = (total_minutes / 60) % 24;
-        let mm = total_minutes % 60;
-        out = out.replace("hh:mm", &format!("{hh:02}:{mm:02}"));
+
+    // Resolve the already-supported time token before `mm` is interpreted as
+    // the month token. Minute rounding can advance the displayed calendar day.
+    let (display_serial, rounded_minutes) = if out.contains("hh:mm") {
+        let total_minutes = (n.fract() * 1_440.0).round() as i64;
+        if total_minutes == 1_440 {
+            (n.trunc() + 1.0, Some(0))
+        } else {
+            (n, Some(total_minutes))
+        }
+    } else {
+        (n, None)
+    };
+    let (year, month, day) = serial_to_display_date_parts_for(system, display_serial)?;
+
+    if let Some(total_minutes) = rounded_minutes {
+        let hours = total_minutes / 60;
+        let minutes = total_minutes % 60;
+        out = out.replace("hh:mm", &format!("{hours:02}:{minutes:02}"));
     }
-    out
+
+    out = out.replace("yyyy", &format!("{year:04}"));
+    out = out.replace("mm", &format!("{month:02}"));
+    out = out.replace("dd", &format!("{day:02}"));
+    Ok(out)
 }
 
 pub fn register_builtins() {
