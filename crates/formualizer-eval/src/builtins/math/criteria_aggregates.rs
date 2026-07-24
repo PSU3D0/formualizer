@@ -1,4 +1,5 @@
 use super::super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
+use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::compute_prelude::{boolean, cmp, filter_array};
 use crate::function::Function;
@@ -67,6 +68,23 @@ enum AggregationType {
     Average,
 }
 
+enum RangeOrScalar<'a> {
+    Range(crate::engine::range_view::RangeView<'a>),
+    Scalar(LiteralValue),
+    ReferenceError(ExcelError),
+}
+
+fn range_or_scalar<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+    ctx: &dyn FunctionContext<'b>,
+) -> Result<RangeOrScalar<'b>, ExcelError> {
+    Ok(match resolve_aggregate_argument(arg, ctx)? {
+        AggregateArgument::Range(view) => RangeOrScalar::Range(view),
+        AggregateArgument::Scalar(value) => RangeOrScalar::Scalar(value),
+        AggregateArgument::ReferenceError(error) => RangeOrScalar::ReferenceError(error),
+    })
+}
+
 fn eval_if_family<'a, 'b>(
     args: &[ArgumentHandle<'a, 'b>],
     ctx: &dyn FunctionContext<'b>,
@@ -76,6 +94,18 @@ fn eval_if_family<'a, 'b>(
     let mut sum_view: Option<crate::engine::range_view::RangeView<'_>> = None;
     let mut sum_scalar: Option<LiteralValue> = None;
     let mut crit_specs = Vec::new();
+
+    macro_rules! resolve_range_or_scalar {
+        ($arg:expr) => {
+            match range_or_scalar($arg, ctx)? {
+                RangeOrScalar::Range(view) => (Some(view), None),
+                RangeOrScalar::Scalar(value) => (None, Some(value)),
+                RangeOrScalar::ReferenceError(error) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+            }
+        };
+    }
 
     if !multi {
         // Single criterion: IF(range, criteria, [target_range])
@@ -88,29 +118,22 @@ fn eval_if_family<'a, 'b>(
             )));
         }
         let pred = crate::args::parse_criteria(&args[1].value()?.into_literal())?;
-        let crit_rv = args[0].range_view().ok();
-        let crit_val = if crit_rv.is_none() {
-            Some(args[0].value()?.into_literal())
-        } else {
-            None
-        };
+        let (crit_rv, crit_val) = resolve_range_or_scalar!(&args[0]);
         crit_specs.push((crit_rv, pred, crit_val));
 
         if agg_type != AggregationType::Count {
             if args.len() == 3 {
-                if let Ok(v) = args[2].range_view() {
+                let (view, scalar) = resolve_range_or_scalar!(&args[2]);
+                if let Some(view) = view {
                     let crit_dims = crit_specs[0].0.as_ref().map(|v| v.dims()).unwrap_or((1, 1));
-                    sum_view = Some(v.expand_to(crit_dims.0, crit_dims.1));
+                    sum_view = Some(view.expand_to(crit_dims.0, crit_dims.1));
                 } else {
-                    sum_scalar = Some(args[2].value()?.into_literal());
+                    sum_scalar = scalar;
                 }
             } else {
-                // Default target is criteria range
-                if let Ok(v) = args[0].range_view() {
-                    sum_view = Some(v);
-                } else {
-                    sum_scalar = Some(args[0].value()?.into_literal());
-                }
+                // Default target is criteria range. The cached resolution is shared
+                // with the criteria side above, so the argument cannot execute again.
+                (sum_view, sum_scalar) = resolve_range_or_scalar!(&args[0]);
             }
         }
     } else {
@@ -125,8 +148,7 @@ fn eval_if_family<'a, 'b>(
                 )));
             }
             for i in (0..args.len()).step_by(2) {
-                let mut rv = args[i].range_view().ok();
-                let mut val: Option<LiteralValue> = None;
+                let (mut rv, mut val) = resolve_range_or_scalar!(&args[i]);
 
                 // Broadcast semantics: treat 1x1 criteria ranges as scalar criteria.
                 if let Some(ref view) = rv {
@@ -135,10 +157,6 @@ fn eval_if_family<'a, 'b>(
                         val = Some(view.as_1x1().unwrap_or(LiteralValue::Empty));
                         rv = None;
                     }
-                }
-
-                if val.is_none() && rv.is_none() {
-                    val = Some(args[i].value()?.into_literal());
                 }
 
                 let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
@@ -153,14 +171,9 @@ fn eval_if_family<'a, 'b>(
                     )),
                 )));
             }
-            if let Ok(v) = args[0].range_view() {
-                sum_view = Some(v);
-            } else {
-                sum_scalar = Some(args[0].value()?.into_literal());
-            }
+            (sum_view, sum_scalar) = resolve_range_or_scalar!(&args[0]);
             for i in (1..args.len()).step_by(2) {
-                let mut rv = args[i].range_view().ok();
-                let mut val: Option<LiteralValue> = None;
+                let (mut rv, mut val) = resolve_range_or_scalar!(&args[i]);
 
                 // Broadcast semantics: treat 1x1 criteria ranges as scalar criteria.
                 if let Some(ref view) = rv {
@@ -169,10 +182,6 @@ fn eval_if_family<'a, 'b>(
                         val = Some(view.as_1x1().unwrap_or(LiteralValue::Empty));
                         rv = None;
                     }
-                }
-
-                if val.is_none() && rv.is_none() {
-                    val = Some(args[i].value()?.into_literal());
                 }
 
                 let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
@@ -1372,25 +1381,30 @@ impl Function for CountAFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            if let Ok(view) = a.range_view() {
-                for res in view.type_tags_slices() {
-                    let (_, _, tag_cols) = res?;
-                    for col in tag_cols {
-                        for i in 0..col.len() {
-                            if col.value(i) != crate::arrow_store::TypeTag::Empty as u8 {
-                                cnt += 1;
+            match resolve_aggregate_argument(a, ctx)? {
+                AggregateArgument::Range(view) => {
+                    for res in view.type_tags_slices() {
+                        let (_, _, tag_cols) = res?;
+                        for col in tag_cols {
+                            for i in 0..col.len() {
+                                if col.value(i) != crate::arrow_store::TypeTag::Empty as u8 {
+                                    cnt += 1;
+                                }
                             }
                         }
                     }
                 }
-            } else {
-                let v = a.value()?.into_literal();
-                if !matches!(v, LiteralValue::Empty) {
-                    cnt += 1;
+                AggregateArgument::ReferenceError(error) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+                AggregateArgument::Scalar(v) => {
+                    if !matches!(v, LiteralValue::Empty) {
+                        cnt += 1;
+                    }
                 }
             }
         }
@@ -1474,41 +1488,45 @@ impl Function for CountBlankFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut cnt = 0i64;
         for a in args {
-            if let Ok(view) = a.range_view() {
-                let mut tag_it = view.type_tags_slices();
-                let mut text_it = view.text_slices();
+            match resolve_aggregate_argument(a, ctx)? {
+                AggregateArgument::Range(view) => {
+                    let mut tag_it = view.type_tags_slices();
+                    let mut text_it = view.text_slices();
 
-                while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next()) {
-                    let (_, _, tag_cols) = tag_res?;
-                    let (_, _, text_cols) = text_res?;
+                    while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next()) {
+                        let (_, _, tag_cols) = tag_res?;
+                        let (_, _, text_cols) = text_res?;
 
-                    for (tc, xc) in tag_cols.into_iter().zip(text_cols.into_iter()) {
-                        let text_arr = xc
-                            .as_any()
-                            .downcast_ref::<arrow_array::StringArray>()
-                            .unwrap();
-                        for i in 0..tc.len() {
-                            let is_blank = tc.value(i) == crate::arrow_store::TypeTag::Empty as u8
-                                || (tc.value(i) == crate::arrow_store::TypeTag::Text as u8
-                                    && !text_arr.is_null(i)
-                                    && text_arr.value(i).is_empty());
-                            if is_blank {
-                                cnt += 1;
+                        for (tc, xc) in tag_cols.into_iter().zip(text_cols.into_iter()) {
+                            let text_arr = xc
+                                .as_any()
+                                .downcast_ref::<arrow_array::StringArray>()
+                                .unwrap();
+                            for i in 0..tc.len() {
+                                let is_blank = tc.value(i)
+                                    == crate::arrow_store::TypeTag::Empty as u8
+                                    || (tc.value(i) == crate::arrow_store::TypeTag::Text as u8
+                                        && !text_arr.is_null(i)
+                                        && text_arr.value(i).is_empty());
+                                if is_blank {
+                                    cnt += 1;
+                                }
                             }
                         }
                     }
                 }
-            } else {
-                let v = a.value()?.into_literal();
-                match v {
+                AggregateArgument::ReferenceError(error) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+                AggregateArgument::Scalar(v) => match v {
                     LiteralValue::Empty => cnt += 1,
                     LiteralValue::Text(s) if s.is_empty() => cnt += 1,
                     _ => {}
-                }
+                },
             }
         }
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
