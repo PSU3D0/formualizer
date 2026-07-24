@@ -348,8 +348,14 @@ fn sumifs_text_and_date_window_parity() {
         .unwrap()
         .and_hms_opt(0, 0, 0)
         .unwrap();
-    let start_serial = formualizer_common::datetime_to_serial(&start);
-    let next_serial = formualizer_common::datetime_to_serial(&next);
+    let start_serial = formualizer_common::datetime_to_serial_for(
+        formualizer_common::DateSystem::Excel1900,
+        &start,
+    );
+    let next_serial = formualizer_common::datetime_to_serial_for(
+        formualizer_common::DateSystem::Excel1900,
+        &next,
+    );
 
     let empty_row = vec![LiteralValue::Empty; ncols];
     // Row 1: non-match (before window)
@@ -377,7 +383,10 @@ fn sumifs_text_and_date_window_parity() {
         .unwrap()
         .and_hms_opt(12, 0, 0)
         .unwrap();
-    r3[(r_col - 1) as usize] = LiteralValue::Number(formualizer_common::datetime_to_serial(&noon));
+    r3[(r_col - 1) as usize] = LiteralValue::Number(formualizer_common::datetime_to_serial_for(
+        formualizer_common::DateSystem::Excel1900,
+        &noon,
+    ));
     ab.append_row(sheet, &r3).unwrap();
 
     // Row 4: outside window

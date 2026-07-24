@@ -3,7 +3,6 @@ use crate::traits::{
     AccessGranularity, AdapterLoadStats, BackendCaps, CellData, NamedRange, NamedRangeScope,
     SheetData, SpreadsheetReader, SpreadsheetWriter,
 };
-use chrono::Timelike;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, RangeAddress};
 use formualizer_eval::engine::{FormulaIngestBatch, FormulaIngestRecord};
 use formualizer_parse::parser::ReferenceType;
@@ -369,17 +368,15 @@ impl UmyaAdapter {
             }
             LiteralValue::Date(d) => {
                 let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                let serial =
-                    formualizer_eval::builtins::datetime::datetime_to_serial_for(date_system, &dt);
+                let serial = formualizer_common::datetime_to_serial_for(date_system, &dt);
                 cv.set_value_number(serial);
             }
             LiteralValue::DateTime(dt) => {
-                let serial =
-                    formualizer_eval::builtins::datetime::datetime_to_serial_for(date_system, dt);
+                let serial = formualizer_common::datetime_to_serial_for(date_system, dt);
                 cv.set_value_number(serial);
             }
             LiteralValue::Time(t) => {
-                let serial = t.num_seconds_from_midnight() as f64 / 86_400.0;
+                let serial = formualizer_common::time_to_fraction(t);
                 cv.set_value_number(serial);
             }
             LiteralValue::Duration(d) => {
@@ -1270,7 +1267,8 @@ where
                 engine.workbook_load_limits(),
             );
             let asheet = if sparse_initial {
-                let mut asheet = ArrowSheet::new_sparse(n, cols, rows, chunk_rows);
+                let mut asheet =
+                    ArrowSheet::new_sparse(n, cols, rows, chunk_rows, engine.config.date_system);
                 for ((row, col), cd) in &sheet_data.cells {
                     if cd.formula.is_some() {
                         continue;

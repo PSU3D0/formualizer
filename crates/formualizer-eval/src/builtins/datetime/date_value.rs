@@ -1,10 +1,11 @@
 //! DATEVALUE and TIMEVALUE functions for parsing date/time strings
 
-use super::serial::{date_to_serial, time_to_fraction};
+use super::serial::date_to_serial;
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use chrono::NaiveDate;
+use formualizer_common::time_to_fraction;
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 

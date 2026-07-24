@@ -1,4 +1,4 @@
-use chrono::{Duration as ChronoDur, NaiveDate, NaiveDateTime, NaiveTime, Timelike};
+use chrono::NaiveTime;
 use std::{
     fmt::{self, Display},
     hash::{Hash, Hasher},
@@ -8,60 +8,6 @@ use crate::ExcelError;
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-
-/* ───────────────────── Excel date-serial utilities ───────────────────
-Excel 1900 system with the leap-year bug.
-
-Serial 1  = 1900-01-01
-Serial 59 = 1900-02-28
-Serial 60 = 1900-02-29 (phantom day; does not exist)
-Serial 61 = 1900-03-01
-
-Time is stored as fractional days (no timezone).
-
-Implementation notes:
-- For date -> serial: compute days since base 1899-12-31. If date >= 1900-03-01, add 1.
-- For serial -> date: if serial == 60, map to 1900-02-28. If serial > 60, subtract 1 day.
--------------------------------------------------------------------- */
-
-pub fn datetime_to_serial(dt: &NaiveDateTime) -> f64 {
-    let base = NaiveDate::from_ymd_opt(1899, 12, 31).unwrap();
-    let mut days = (dt.date() - base).num_days();
-
-    // Account for Excel's phantom 1900-02-29.
-    if dt.date() >= NaiveDate::from_ymd_opt(1900, 3, 1).unwrap() {
-        days += 1;
-    }
-
-    let secs_in_day = dt.time().num_seconds_from_midnight() as f64;
-    days as f64 + secs_in_day / 86_400.0
-}
-
-pub fn serial_to_datetime(serial: f64) -> NaiveDateTime {
-    let days = serial.trunc() as i64;
-    let frac_secs = (serial.fract() * 86_400.0).round() as i64;
-
-    // Excel base: serial 1 = 1900-01-01
-    let base = NaiveDate::from_ymd_opt(1899, 12, 31).unwrap();
-
-    // Handle phantom day explicitly.
-    let offset_days = if days == 60 {
-        59
-    } else if days < 60 {
-        days
-    } else {
-        days - 1
-    };
-
-    let date = base + ChronoDur::days(offset_days);
-    let time =
-        NaiveTime::from_num_seconds_from_midnight_opt((frac_secs.rem_euclid(86_400)) as u32, 0)
-            .unwrap();
-    date.and_time(time)
-}
-
-// Historical: EXCEL_EPOCH previously used 1899-12-30 in this crate. Keep all conversions going
-// through the functions above, which are aligned with `formualizer-eval`'s Excel1900 mapping.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DateSystem {
@@ -164,14 +110,12 @@ impl LiteralValue {
         }
     }
 
-    pub fn as_serial_number(&self) -> Option<f64> {
+    /// Convert this value to a serial number in the selected date system.
+    pub fn as_serial_number_for(&self, system: DateSystem) -> Option<f64> {
         match self {
-            LiteralValue::Date(d) => {
-                let dt = d.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-                Some(datetime_to_serial(&dt))
-            }
-            LiteralValue::DateTime(dt) => Some(datetime_to_serial(dt)),
-            LiteralValue::Time(t) => Some(t.num_seconds_from_midnight() as f64 / 86_400.0),
+            LiteralValue::Date(d) => Some(crate::date_to_serial_for(system, d)),
+            LiteralValue::DateTime(dt) => Some(crate::datetime_to_serial_for(system, dt)),
+            LiteralValue::Time(t) => Some(crate::time_to_fraction(t)),
             LiteralValue::Duration(d) => Some(d.num_seconds() as f64 / 86_400.0),
             LiteralValue::Int(i) => Some(*i as f64),
             LiteralValue::Number(n) => Some(*n),
@@ -180,10 +124,38 @@ impl LiteralValue {
         }
     }
 
-    /// Build the appropriate `LiteralValue` from an Excel serial number.
-    /// (Useful when a function returns a date/time).
+    /// Compatibility wrapper using the historical implicit Excel-1900 system.
+    pub fn as_serial_number(&self) -> Option<f64> {
+        self.as_serial_number_for(DateSystem::Excel1900)
+    }
+
+    /// Build the appropriate temporal value from an Excel serial number.
+    ///
+    /// This conversion uses representable `chrono` calendar values. In the
+    /// Excel-1900 system, phantom serial 60 therefore becomes 1900-02-28 and
+    /// re-encodes as serial 59. Use the display-parts API when the fictitious
+    /// 1900-02-29 must remain distinguishable.
+    pub fn try_from_serial_number_for(system: DateSystem, serial: f64) -> Result<Self, ExcelError> {
+        let dt = crate::try_serial_to_datetime_for(system, serial)?;
+        if dt.time() == NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
+            Ok(LiteralValue::Date(dt.date()))
+        } else {
+            Ok(LiteralValue::DateTime(dt))
+        }
+    }
+
+    /// Checked convenience wrapper using the implicit Excel-1900 system.
+    pub fn try_from_serial_number(serial: f64) -> Result<Self, ExcelError> {
+        Self::try_from_serial_number_for(DateSystem::Excel1900, serial)
+    }
+
+    /// Compatibility wrapper using the historical implicit Excel-1900 system.
+    ///
+    /// Inputs outside Excel's calendar domain retain the legacy common
+    /// behavior. New code should use [`Self::try_from_serial_number`] or
+    /// [`Self::try_from_serial_number_for`] for checked conversion.
     pub fn from_serial_number(serial: f64) -> Self {
-        let dt = serial_to_datetime(serial);
+        let dt = crate::serial_to_datetime(serial);
         if dt.time() == NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
             LiteralValue::Date(dt.date())
         } else {
@@ -212,30 +184,44 @@ impl LiteralValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
 
     #[test]
-    fn excel_1900_serial_roundtrip_basic() {
-        let base = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
-        let dt = base.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-        assert!((datetime_to_serial(&dt) - 1.0).abs() < 1e-12);
-        assert_eq!(serial_to_datetime(1.0).date(), base);
+    fn literal_temporal_values_use_the_selected_date_system() {
+        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let value = LiteralValue::Date(date);
+        assert_eq!(
+            value.as_serial_number_for(DateSystem::Excel1900),
+            Some(45_306.0)
+        );
+        assert_eq!(
+            value.as_serial_number_for(DateSystem::Excel1904),
+            Some(43_844.0)
+        );
+        assert_eq!(value.as_serial_number(), Some(45_306.0));
     }
 
     #[test]
-    fn excel_1900_phantom_day_behavior() {
-        // Excel treats serial 60 as 1900-02-29. We map it to 1900-02-28.
-        let d59 = serial_to_datetime(59.0).date();
-        let d60 = serial_to_datetime(60.0).date();
-        let d61 = serial_to_datetime(61.0).date();
-        assert_eq!(d59, NaiveDate::from_ymd_opt(1900, 2, 28).unwrap());
-        assert_eq!(d60, NaiveDate::from_ymd_opt(1900, 2, 28).unwrap());
-        assert_eq!(d61, NaiveDate::from_ymd_opt(1900, 3, 1).unwrap());
-    }
-
-    #[test]
-    fn excel_1900_modern_date_regression() {
-        // Regression: Excel serial for 2023-03-01 should decode to 2023-03-01.
-        let d = serial_to_datetime(44986.0).date();
-        assert_eq!(d, NaiveDate::from_ymd_opt(2023, 3, 1).unwrap());
+    fn literal_serial_construction_is_checked_and_system_aware() {
+        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        for (system, serial) in [
+            (DateSystem::Excel1900, 45_306.0),
+            (DateSystem::Excel1904, 43_844.0),
+        ] {
+            assert_eq!(
+                LiteralValue::try_from_serial_number_for(system, serial).unwrap(),
+                LiteralValue::Date(date)
+            );
+        }
+        assert!(LiteralValue::try_from_serial_number_for(DateSystem::Excel1900, -1.0).is_err());
+        assert_eq!(
+            LiteralValue::from_serial_number(45_306.0),
+            LiteralValue::Date(date)
+        );
+        assert!(LiteralValue::try_from_serial_number(-1.0).is_err());
+        assert_eq!(
+            LiteralValue::from_serial_number(-1.0),
+            LiteralValue::Date(NaiveDate::from_ymd_opt(1899, 12, 30).unwrap())
+        );
     }
 }
