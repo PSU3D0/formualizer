@@ -3189,6 +3189,84 @@ impl Workbook {
         self.engine.resolved_name_value(name, scope_sheet)
     }
 
+    /// Define a native table over an existing region.
+    ///
+    /// `range` is `(first_row, first_col, last_row, last_col)`, 1-based and
+    /// inclusive, and covers the header row when `header_row` is true -- the same
+    /// convention as the `tables` entry in the JSON workbook format.
+    ///
+    /// Tables are metadata over cells that already exist, so populate the region
+    /// first with [`Workbook::set_value`] / [`Workbook::set_formula`]. Structured
+    /// references such as `=SUM(Sales[Amount])` resolve immediately afterwards,
+    /// and later edits inside the region propagate to formulas that read it.
+    ///
+    /// Tables do not auto-expand: writing below or beside a table does not grow
+    /// it.
+    pub fn define_table(
+        &mut self,
+        name: &str,
+        sheet: &str,
+        range: (u32, u32, u32, u32),
+        headers: Vec<String>,
+        header_row: bool,
+        totals_row: bool,
+    ) -> Result<(), ExcelError> {
+        let (first_row, first_col, last_row, last_col) = range;
+        let invalid = |message: String| {
+            Err(ExcelError::new(formualizer_common::ExcelErrorKind::Value).with_message(message))
+        };
+        if first_row == 0 || first_col == 0 || last_row == 0 || last_col == 0 {
+            return invalid(
+                "table range is 1-based; rows and columns must be greater than zero".to_string(),
+            );
+        }
+        if first_row > last_row || first_col > last_col {
+            return invalid(format!(
+                "table range ({first_row},{first_col},{last_row},{last_col}) is inverted; \
+                 expected (first_row, first_col, last_row, last_col)"
+            ));
+        }
+        let Some(sheet_id) = self.engine.sheet_id(sheet) else {
+            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
+                .with_message(format!("Unknown sheet: {sheet}")));
+        };
+        let width = (last_col - first_col + 1) as usize;
+        if headers.len() != width {
+            return invalid(format!(
+                "table `{name}` spans {width} column(s) but {} header(s) were supplied; \
+                 headers name the table's columns and must match its width",
+                headers.len()
+            ));
+        }
+        if header_row && first_row == last_row {
+            return invalid(format!(
+                "table `{name}` declares a header row but its range is a single row, \
+                 leaving no data rows"
+            ));
+        }
+
+        let start = formualizer_eval::reference::CellRef::new(
+            sheet_id,
+            formualizer_eval::reference::Coord::new(first_row - 1, first_col - 1, true, true),
+        );
+        let end = formualizer_eval::reference::CellRef::new(
+            sheet_id,
+            formualizer_eval::reference::Coord::new(last_row - 1, last_col - 1, true, true),
+        );
+        self.engine.define_table(
+            name,
+            formualizer_eval::reference::RangeRef::new(start, end),
+            header_row,
+            headers,
+            totals_row,
+        )
+    }
+
+    /// Metadata for every defined table, ordered by name.
+    pub fn tables(&self) -> Vec<formualizer_eval::engine::TableMetadata> {
+        self.engine.tables()
+    }
+
     pub fn table_metadata(&self, name: &str) -> Option<formualizer_eval::engine::TableMetadata> {
         self.engine.table_metadata(name)
     }

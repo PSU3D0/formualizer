@@ -411,6 +411,82 @@ fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
         .map_err(|err| js_error_with_cause(format!("failed to set `{key}`"), err))
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const TABLE_TYPESCRIPT: &'static str = r#"
+/** Shape accepted by `Workbook.addTable`. */
+export interface TableDefinition {
+  /** Table name used by structured references, e.g. `Table1[Amount]`. */
+  name: string;
+  /** Sheet containing the table. */
+  sheet: string;
+  /** `[firstRow, firstCol, lastRow, lastCol]`, 1-based and inclusive, covering
+   *  the header row when `headerRow` is true. */
+  range: [number, number, number, number];
+  /** Column names; must match the width of `range`. */
+  headers: string[];
+  /** Whether the first row of `range` is a header row. Defaults to `true`. */
+  headerRow?: boolean;
+  /** Whether the last row of `range` is a totals row. Defaults to `false`. */
+  totalsRow?: boolean;
+}
+
+/** Shape returned by `Workbook.getTables`. */
+export interface TableMetadata {
+  name: string;
+  sheet: string;
+  range: [number, number, number, number];
+  headers: string[];
+  headerRow: boolean;
+  totalsRow: boolean;
+}
+"#;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(typescript_type = "TableDefinition")]
+    pub type TableDefinitionValue;
+
+    #[wasm_bindgen(typescript_type = "TableMetadata[]")]
+    pub type TableMetadataArray;
+}
+
+/// Reject own enumerable keys that are not in `allowed`.
+fn reject_unknown_keys(value: &JsValue, context: &str, allowed: &[&str]) -> Result<(), JsValue> {
+    if !value.is_object() {
+        return Err(js_error(format!("{context}: expected an object")));
+    }
+    let object: &js_sys::Object = value.unchecked_ref();
+    for key in js_sys::Object::keys(object).iter() {
+        let Some(key) = key.as_string() else { continue };
+        if !allowed.contains(&key.as_str()) {
+            return Err(js_error(format!(
+                "{context}: unknown field `{key}`; expected one of {}",
+                allowed.join(", ")
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Shape accepted by `Workbook.addTable`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsTableDefinition {
+    name: String,
+    sheet: String,
+    /// `[firstRow, firstCol, lastRow, lastCol]`, 1-based and inclusive.
+    range: (u32, u32, u32, u32),
+    headers: Vec<String>,
+    #[serde(default = "js_table_header_row_default")]
+    header_row: bool,
+    #[serde(default)]
+    totals_row: bool,
+}
+
+fn js_table_header_row_default() -> bool {
+    true
+}
+
 fn parse_eval_plan_options(raw: Option<JsValue>) -> Result<JsEvalPlanOptions, JsValue> {
     if let Some(value) = raw {
         if value.is_null() || value.is_undefined() {
@@ -762,6 +838,79 @@ impl Workbook {
         }
 
         Ok(out)
+    }
+
+    /// Define a native table over cells that already exist.
+    ///
+    /// `definition` is `{ name, sheet, range: [firstRow, firstCol, lastRow,
+    /// lastCol], headers: string[], headerRow?: boolean, totalsRow?: boolean }`.
+    /// `range` is 1-based and inclusive, and covers the header row when
+    /// `headerRow` is true (default `true`); `totalsRow` defaults to `false`.
+    ///
+    /// Tables are metadata over existing cells, so populate the region first.
+    /// Unknown keys are rejected rather than ignored.
+    #[wasm_bindgen(js_name = "addTable")]
+    pub fn add_table(&self, definition: TableDefinitionValue) -> Result<(), JsValue> {
+        let definition: JsValue = definition.into();
+        // serde's `deny_unknown_fields` does not fire through serde_wasm_bindgen,
+        // and a silently ignored key is exactly the failure this API is meant to
+        // avoid, so the keys are checked explicitly.
+        reject_unknown_keys(
+            &definition,
+            "addTable",
+            &[
+                "name",
+                "sheet",
+                "range",
+                "headers",
+                "headerRow",
+                "totalsRow",
+            ],
+        )?;
+        let definition: JsTableDefinition = serde_wasm_bindgen::from_value(definition)
+            .map_err(|err| js_error(format!("invalid table definition: {err}")))?;
+        self.inner
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?
+            .define_table(
+                &definition.name,
+                &definition.sheet,
+                definition.range,
+                definition.headers,
+                definition.header_row,
+                definition.totals_row,
+            )
+            .map_err(|e| js_error(format!("addTable failed: {e}")))
+    }
+
+    /// Metadata for every defined table, ordered by name.
+    #[wasm_bindgen(js_name = "getTables")]
+    pub fn get_tables(&self) -> Result<TableMetadataArray, JsValue> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let out = js_sys::Array::new();
+        for table in wb.tables() {
+            let obj = js_sys::Object::new();
+            set(&obj, "name", JsValue::from_str(&table.name))?;
+            set(&obj, "sheet", JsValue::from_str(&table.sheet))?;
+            let range = js_sys::Array::new();
+            range.push(&JsValue::from_f64(table.start_row as f64));
+            range.push(&JsValue::from_f64(table.start_col as f64));
+            range.push(&JsValue::from_f64(table.end_row as f64));
+            range.push(&JsValue::from_f64(table.end_col as f64));
+            set(&obj, "range", range.into())?;
+            let headers = js_sys::Array::new();
+            for header in &table.headers {
+                headers.push(&JsValue::from_str(header));
+            }
+            set(&obj, "headers", headers.into())?;
+            set(&obj, "headerRow", JsValue::from_bool(table.header_row))?;
+            set(&obj, "totalsRow", JsValue::from_bool(table.totals_row))?;
+            out.push(&obj);
+        }
+        Ok(out.unchecked_into())
     }
 
     #[wasm_bindgen(js_name = "getNamedRanges")]
