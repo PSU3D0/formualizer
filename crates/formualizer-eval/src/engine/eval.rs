@@ -17666,25 +17666,6 @@ where
         })
     }
 
-    /// Evaluate typed targets with request-wide cancellation.
-    pub fn evaluate_targets_cancellable(
-        &mut self,
-        targets: &[crate::engine::EvaluationTarget],
-        cancel_flag: Arc<AtomicBool>,
-    ) -> Result<EvalResult, ExcelError> {
-        self.observe_evaluation_resource_request(
-            EvaluationRequestKind::TargetedCancellable,
-            |engine| {
-                engine.observe_function_semantic_epoch()?;
-                engine.validate_deterministic_mode()?;
-                engine.active_cancel_flag = Some(cancel_flag);
-                let result = engine.evaluate_mixed_targets(targets, None);
-                engine.active_cancel_flag = None;
-                result
-            },
-        )
-    }
-
     /// Evaluate typed targets and return the versioned run/region delta for the request.
     pub fn evaluate_targets_with_delta(
         &mut self,
@@ -17904,14 +17885,6 @@ where
             engine.active_evaluation_deadline = None;
             result
         })
-    }
-
-    pub fn evaluate_recalc_plan_cancellable(
-        &mut self,
-        plan: &RecalcPlan,
-        cancel_flag: Arc<AtomicBool>,
-    ) -> Result<EvalResult, ExcelError> {
-        self.evaluate_recalc_plan_with_controls(plan, Some(cancel_flag), None)
     }
 
     fn evaluate_recalc_plan_unobserved(

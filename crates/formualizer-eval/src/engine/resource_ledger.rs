@@ -9,6 +9,7 @@ use formualizer_common::{
 use crate::instant::FzInstant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EvaluationIncompleteReason {
     FormulaPlaneTopologyCandidates,
     FormulaPlaneTopologyEdges,
@@ -272,6 +273,7 @@ impl ResourceEnvelope {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum LegacyResourceConfigDisposition {
     #[default]
     NotPresent,
@@ -381,6 +383,7 @@ pub(crate) fn resolve_evaluation_budgets(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ResourceLedgerError {
     Exhausted(ResourceExhaustionDetail),
     ReleaseUnderflow {

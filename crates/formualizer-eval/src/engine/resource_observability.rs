@@ -6,6 +6,7 @@ use formualizer_common::ResourceExhaustionReason;
 /// Stable classification for evaluation limits. C0 is observational only: these classes do not
 /// alter limit enforcement or fallback selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EvaluationResourceClass {
     SemanticFormat,
     Admission,
@@ -17,6 +18,7 @@ pub enum EvaluationResourceClass {
 
 /// Stable reason vocabulary for observed evaluation-resource boundaries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EvaluationResourceReason {
     FormulaPlaneTopologyCandidates,
     FormulaPlaneTopologyEdges,
@@ -76,6 +78,7 @@ impl EvaluationResourceReason {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EvaluationRequestKind {
     Vertex,
     Targeted,
@@ -94,6 +97,7 @@ pub enum EvaluationRequestKind {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EvaluationRequestOutcome {
     #[default]
     InProgress,
@@ -103,6 +107,7 @@ pub enum EvaluationRequestOutcome {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum FormulaPlaneTopologyStrategy {
     #[default]
     NotUsed,
@@ -119,6 +124,7 @@ pub enum FormulaPlaneTopologyStrategy {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum FormulaPlaneTopologyCacheOutcome {
     #[default]
     NotUsed,
@@ -129,6 +135,7 @@ pub enum FormulaPlaneTopologyCacheOutcome {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum FormulaDirtyLeaseOutcome {
     #[default]
     NotAcquired,

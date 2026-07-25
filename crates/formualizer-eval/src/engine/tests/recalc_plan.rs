@@ -316,7 +316,7 @@ fn cancelled_or_expired_plan_acknowledges_nothing_and_retry_converges() -> Resul
     let dirty_before = engine.baseline_stats().dirty_vertex_count;
 
     let error = engine
-        .evaluate_recalc_plan_cancellable(&plan, Arc::new(AtomicBool::new(true)))
+        .evaluate_recalc_plan_with_controls(&plan, Some(Arc::new(AtomicBool::new(true))), None)
         .unwrap_err();
     assert_eq!(error.kind, ExcelErrorKind::Cancelled);
     assert_eq!(engine.baseline_stats().dirty_vertex_count, dirty_before);

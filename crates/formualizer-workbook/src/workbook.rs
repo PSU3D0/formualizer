@@ -2880,7 +2880,11 @@ impl Workbook {
         cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine
-            .evaluate_targets_cancellable(targets, cancel_flag)
+            .evaluate_targets_with_options(
+                targets,
+                formualizer_eval::engine::PrepareTargetsOptions::default(),
+                Some(cancel_flag),
+            )
             .map_err(IoError::Engine)
     }
 
@@ -3097,7 +3101,7 @@ impl Workbook {
         cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine
-            .evaluate_recalc_plan_cancellable(plan, cancel_flag)
+            .evaluate_recalc_plan_with_controls(plan, Some(cancel_flag), None)
             .map_err(IoError::Engine)
     }
 
