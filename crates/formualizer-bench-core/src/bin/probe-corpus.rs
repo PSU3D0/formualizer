@@ -296,7 +296,9 @@ mod enabled {
                 }
             })
         };
-        let result = workbook.evaluate_all_cancellable(cancel.clone());
+        let result = workbook.evaluate_all_cancellable(
+            formualizer_eval::engine::CancelToken::from_flag(cancel.clone()),
+        );
         // Wake the watchdog so it exits promptly.
         {
             let (lock, cvar) = &*signal;

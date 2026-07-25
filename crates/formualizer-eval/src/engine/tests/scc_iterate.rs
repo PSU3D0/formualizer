@@ -944,7 +944,9 @@ fn cancellation_is_honored_between_iteration_passes() {
     let mut engine = Engine::new(wb, iterate_cfg(1000, 0.001));
     set_formula(&mut engine, "Sheet1", 1, 1, "=A2+1+TRIPCANCEL()");
     set_formula(&mut engine, "Sheet1", 2, 1, "=A1+1");
-    let err = engine.evaluate_all_cancellable(flag).unwrap_err();
+    let err = engine
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(flag))
+        .unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Cancelled);
     assert!(
         err.message.as_deref().unwrap_or("").contains("SCC"),

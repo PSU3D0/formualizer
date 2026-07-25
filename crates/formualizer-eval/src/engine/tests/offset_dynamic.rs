@@ -133,7 +133,9 @@ fn offset_entrypoint_parity() {
         .set_cell_value("Sheet1", 1, 3, LiteralValue::Number(20.0))
         .unwrap();
     let cancel = Arc::new(AtomicBool::new(false));
-    engine.evaluate_all_cancellable(cancel).unwrap();
+    engine
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(cancel))
+        .unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 2),
         Some(LiteralValue::Number(21.0))

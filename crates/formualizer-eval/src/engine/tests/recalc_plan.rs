@@ -3,8 +3,6 @@ use crate::engine::{Engine, EvalConfig, EvaluationTarget};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue, PlanStaleReason};
 use formualizer_parse::parser::parse;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 fn make_engine() -> Engine<TestWorkbook> {
@@ -316,7 +314,15 @@ fn cancelled_or_expired_plan_acknowledges_nothing_and_retry_converges() -> Resul
     let dirty_before = engine.baseline_stats().dirty_vertex_count;
 
     let error = engine
-        .evaluate_recalc_plan_with_controls(&plan, Some(Arc::new(AtomicBool::new(true))), None)
+        .evaluate_recalc_plan_with_controls(
+            &plan,
+            Some({
+                let t = crate::engine::CancelToken::new();
+                t.cancel();
+                t
+            }),
+            None,
+        )
         .unwrap_err();
     assert_eq!(error.kind, ExcelErrorKind::Cancelled);
     assert_eq!(engine.baseline_stats().dirty_vertex_count, dirty_before);

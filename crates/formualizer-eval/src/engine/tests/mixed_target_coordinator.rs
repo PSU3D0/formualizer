@@ -131,7 +131,7 @@ fn assert_mid_span_cancellation_is_transactional(name: &'static str, enable_para
     cancel.store(false, Ordering::Release);
 
     let error = engine
-        .evaluate_all_cancellable(cancel.clone())
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(cancel.clone()))
         .expect_err("mid-span cancellation must abort the request");
     assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Cancelled);
     assert_eq!(engine.get_cell_value("Sheet1", 1, 2), old_first);
@@ -140,7 +140,9 @@ fn assert_mid_span_cancellation_is_transactional(name: &'static str, enable_para
 
     trip_at.store(usize::MAX, Ordering::Release);
     cancel.store(false, Ordering::Release);
-    engine.evaluate_all_cancellable(cancel).unwrap();
+    engine
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(cancel))
+        .unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 2),
         Some(LiteralValue::Number(1_001.0))
@@ -425,7 +427,10 @@ fn cancellation_acknowledges_no_dirty_sublease_and_retry_converges() {
     let cancelled = Arc::new(AtomicBool::new(true));
     assert!(
         engine
-            .evaluate_cells_cancellable(&[("Sheet1", 50, 2)], cancelled)
+            .evaluate_cells_cancellable(
+                &[("Sheet1", 50, 2)],
+                crate::engine::CancelToken::from_flag(cancelled)
+            )
             .is_err()
     );
     assert_eq!(engine.graph.pending_formula_dirty_event_count(), pending);
@@ -595,7 +600,7 @@ fn cancellable_a1_routing_preserves_quoted_bang_and_apostrophe_sheet_names() {
     }
     let targets = ["'Bang! Sheet'!B1", "'O''Brien'!B1"];
     engine
-        .evaluate_until_cancellable(&targets, Arc::new(AtomicBool::new(false)))
+        .evaluate_until_cancellable(&targets, crate::engine::CancelToken::new())
         .unwrap();
     assert_eq!(
         engine.get_cell_value("Bang! Sheet", 1, 2),
@@ -630,7 +635,7 @@ fn legacy_cell_routes_preserve_unknown_sheet_interning_and_empty_outputs() {
     engine
         .evaluate_until_cancellable(
             &["'Cancellable Unknown Legacy Target'!A1"],
-            Arc::new(AtomicBool::new(false)),
+            crate::engine::CancelToken::new(),
         )
         .unwrap();
     assert!(

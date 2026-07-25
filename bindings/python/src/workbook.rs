@@ -727,8 +727,10 @@ impl PyWorkbook {
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        wb.evaluate_all_cancellable(self.cancel_flag.clone())
-            .map_err(workbook_error_to_pyerr)?;
+        wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
+            self.cancel_flag.clone(),
+        ))
+        .map_err(workbook_error_to_pyerr)?;
         Ok(())
     }
 
@@ -795,7 +797,10 @@ impl PyWorkbook {
             .collect();
 
         let results = wb
-            .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
+            .evaluate_cells_cancellable(
+                &refs,
+                formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+            )
             .map_err(workbook_error_to_pyerr)?;
 
         let py_results = pyo3::types::PyList::empty(py);

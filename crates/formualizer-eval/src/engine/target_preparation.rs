@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use formualizer_common::RangeAddress;
@@ -97,16 +96,19 @@ pub enum OpaqueReason {
     UncertainDefaultSheetBinding,
 }
 
+/// Controls that apply to a whole target evaluation: preparation *and*
+/// evaluation. Cancellation and the deadline are hoisted onto the engine for the
+/// duration of the call, so every checkpoint in both phases observes them.
 #[derive(Clone, Debug)]
-pub struct PrepareTargetsOptions<'a> {
+pub struct TargetEvalOptions<'a> {
     pub request_id: Option<RequestId>,
-    pub cancel: Option<&'a AtomicBool>,
+    pub cancel: Option<crate::engine::CancelToken>,
     pub deadline: Option<Instant>,
     pub budgets: Option<&'a EvaluationBudgets>,
     pub opaque_policy: OpaquePreparePolicy,
 }
 
-impl Default for PrepareTargetsOptions<'_> {
+impl Default for TargetEvalOptions<'_> {
     fn default() -> Self {
         Self {
             request_id: None,
@@ -490,3 +492,8 @@ impl StagedFormulaIndex {
         self.packages.len()
     }
 }
+
+/// Former name of [`TargetEvalOptions`]. The struct governs the whole call, not
+/// only preparation, so it was renamed before the name was frozen by a release.
+#[deprecated(since = "0.8.0", note = "renamed to TargetEvalOptions")]
+pub type PrepareTargetsOptions<'a> = TargetEvalOptions<'a>;

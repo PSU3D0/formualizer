@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use crate::engine::{
     ChangeLog, Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
@@ -87,7 +86,7 @@ fn evaluate_all_cancellable_flushes_active_spans() {
     assert_active_spans(&engine);
 
     engine
-        .evaluate_all_cancellable(Arc::new(AtomicBool::new(false)))
+        .evaluate_all_cancellable(crate::engine::CancelToken::new())
         .unwrap();
 
     assert_target_fresh(&engine);
@@ -138,7 +137,7 @@ fn evaluate_cells_cancellable_flushes_active_spans() {
     let values = engine
         .evaluate_cells_cancellable(
             &[("Sheet1", TARGET_ROW, TARGET_COL)],
-            Arc::new(AtomicBool::new(false)),
+            crate::engine::CancelToken::new(),
         )
         .unwrap();
 
@@ -177,7 +176,7 @@ fn evaluate_until_cancellable_flushes_active_spans() {
     assert_active_spans(&engine);
 
     engine
-        .evaluate_until_cancellable(&["Sheet1!B100"], Arc::new(AtomicBool::new(false)))
+        .evaluate_until_cancellable(&["Sheet1!B100"], crate::engine::CancelToken::new())
         .unwrap();
 
     assert_target_fresh(&engine);

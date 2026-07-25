@@ -117,7 +117,9 @@ fn cancellation_and_error_outcomes_accumulate_deterministically() {
         .unwrap();
 
     let cancel = Arc::new(AtomicBool::new(true));
-    let error = engine.evaluate_all_cancellable(cancel).unwrap_err();
+    let error = engine
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(cancel))
+        .unwrap_err();
     assert_eq!(error.kind, ExcelErrorKind::Cancelled);
     let cancelled = engine.last_evaluation_resource_request_stats().unwrap();
     assert_eq!(cancelled.outcome, EvaluationRequestOutcome::Cancelled);

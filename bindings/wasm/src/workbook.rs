@@ -942,8 +942,10 @@ impl Workbook {
             .map_err(|_| js_error("failed to lock workbook for write"))?;
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        wb.evaluate_all_cancellable(self.cancel_flag.clone())
-            .map_err(workbook_error_to_js)?;
+        wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
+            self.cancel_flag.clone(),
+        ))
+        .map_err(workbook_error_to_js)?;
         Ok(())
     }
 
@@ -976,7 +978,10 @@ impl Workbook {
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
         let results = wb
-            .evaluate_cells_cancellable(&refs, self.cancel_flag.clone())
+            .evaluate_cells_cancellable(
+                &refs,
+                formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+            )
             .map_err(workbook_error_to_js)?;
 
         let out = js_sys::Array::new();

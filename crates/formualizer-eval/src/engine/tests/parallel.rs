@@ -442,7 +442,8 @@ fn test_parallel_cancellation() {
     // Set cancellation flag immediately (simulating early cancellation)
     cancel_flag.store(true, Ordering::Relaxed);
 
-    let result = engine.evaluate_all_cancellable(cancel_flag);
+    let result =
+        engine.evaluate_all_cancellable(crate::engine::CancelToken::from_flag(cancel_flag));
 
     // Should get a cancellation error
     match result {
@@ -629,7 +630,8 @@ fn test_parallel_with_cancellation_timing() {
     let cancel_flag = Arc::new(AtomicBool::new(false));
     cancel_flag.store(true, Ordering::Relaxed);
 
-    let result = engine.evaluate_all_cancellable(cancel_flag);
+    let result =
+        engine.evaluate_all_cancellable(crate::engine::CancelToken::from_flag(cancel_flag));
 
     // Should get a cancellation error since flag is set immediately
     match result {

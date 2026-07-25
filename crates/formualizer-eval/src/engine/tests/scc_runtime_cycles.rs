@@ -877,7 +877,9 @@ fn cancellation_is_honored_at_settle_pass_boundaries() {
     // trips the flag.
     set_formula(&mut engine, "Sheet1", 1, 1, "=IF(TRUE,A2,0)");
     set_formula(&mut engine, "Sheet1", 2, 1, "=IF(TRUE,7+TRIPCANCEL(),A1)");
-    let err = engine.evaluate_all_cancellable(flag).unwrap_err();
+    let err = engine
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(flag))
+        .unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Cancelled);
     assert!(
         err.message.as_deref().unwrap_or("").contains("SCC"),
