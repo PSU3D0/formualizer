@@ -42,3 +42,8 @@ formualizer-common = { workspace = true }
 formualizer-eval = { workspace = true, features = ["formula_plane_diagnostics"] }
 dhat = { version = "0.3", optional = true }
 ironcalc = { version = "0.7.1", optional = true }
+
+[[bin]]
+name = "probe-layout-envelope"
+path = "src/bin/probe-layout-envelope.rs"
+required-features = ["c6_calibration"]

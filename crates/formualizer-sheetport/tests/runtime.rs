@@ -551,7 +551,7 @@ ports:
 }
 
 #[test]
-fn bounded_layout_exhaustion_is_typed() {
+fn bounded_layout_resolves_to_the_end_of_data_without_a_declared_cap() {
     let manifest: Manifest = Manifest::from_yaml_str(
         r#"
 spec: fio
@@ -567,7 +567,6 @@ ports:
         header_row: 1
         anchor_col: A
         terminate: first_blank_row
-        max_scan_rows: 2
     schema: { kind: range, cell_type: string }
 "#,
     )
@@ -584,15 +583,18 @@ ports:
         .set_value("Sheet", 3, 1, LiteralValue::Text("Still data".to_string()))
         .unwrap();
     let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
-    let error = sheetport.evaluate_once(EvalOptions::default()).unwrap_err();
-    assert!(matches!(
-        error,
-        formualizer_sheetport::SheetPortError::LayoutExhausted {
-            limit: 2,
-            observed: 2,
-            ..
-        }
-    ));
+    // Previously this manifest declared `max_scan_rows: 2`, so a third populated
+    // row exhausted the scan and produced a typed LayoutExhausted error. The scan
+    // bound now follows the sheet's used range, so the layout simply resolves to
+    // the end of the data. `LayoutExhausted` survives only as a defensive guard
+    // for stores that cannot report dimensions, where the scan falls back to the
+    // format bound.
+    let outputs = sheetport.evaluate_once(EvalOptions::default()).unwrap();
+    let rows = match outputs.0.get("rows").expect("rows port") {
+        formualizer_sheetport::PortValue::Range(values) => values.len(),
+        other => panic!("expected a range port, got {other:?}"),
+    };
+    assert_eq!(rows, 3, "header plus both populated data rows");
 }
 
 #[test]

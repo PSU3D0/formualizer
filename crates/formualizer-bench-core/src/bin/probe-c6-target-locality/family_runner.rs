@@ -6,9 +6,9 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use formualizer_bench_core::c6_calibration::TypedOracleValue;
 use formualizer_bench_core::c6_calibration::families::{
-    DIRTY_FORMULAS, FamilyFixtureShape, LAYOUT_BELOW_ENVELOPE_ROW, LAYOUT_BLANK_GUARD_ROW,
-    LAYOUT_MAX_SCAN_ROWS, LAYOUT_PREPARATION_ENVELOPE_END_ROW, expected_typed_outputs,
-    layout_manifest, scalar_manifest, table_manifest,
+    DIRTY_FORMULAS, FamilyFixtureShape, LAYOUT_BLANK_GUARD_ROW, LAYOUT_FAR_FORMULA_ROW,
+    LAYOUT_PREPARATION_ENVELOPE_END_ROW, expected_typed_outputs, layout_manifest, scalar_manifest,
+    table_manifest,
 };
 use formualizer_common::{ExcelErrorExtra, LiteralValue, PlanStaleReason, RangeAddress};
 use formualizer_eval::engine::{EvaluationTarget, TableSelection};
@@ -1025,12 +1025,21 @@ fn run_sheetport_family(
                 Some(LiteralValue::Int(999))
             )
         });
-    let below_envelope_committed_but_unevaluated =
+    // The envelope now reaches the sheet's used range, so the furthest formula is
+    // scheduled rather than left committed-but-unevaluated below a declared cap.
+    let far_formula_within_envelope_evaluated =
         (shape.family == FixtureFamily::Layout).then(|| {
-            batch
-                .workbook_for_benchmark()
-                .get_value("Layout", LAYOUT_BELOW_ENVELOPE_ROW, 3)
-                .is_none_or(|value| value == LiteralValue::Empty)
+            matches!(
+                batch
+                    .workbook_for_benchmark()
+                    .get_value("Layout", LAYOUT_FAR_FORMULA_ROW, 3),
+                Some(LiteralValue::Number(value)) if (value - 1000.0).abs() < f64::EPSILON
+            ) || matches!(
+                batch
+                    .workbook_for_benchmark()
+                    .get_value("Layout", LAYOUT_FAR_FORMULA_ROW, 3),
+                Some(LiteralValue::Int(1000))
+            )
         });
     let samples = completion_ms.lock().expect("progress samples lock").clone();
     anyhow::ensure!(
@@ -1075,8 +1084,8 @@ fn run_sheetport_family(
             below_guard_inside_envelope_evaluated.unwrap_or(false),
         );
         gates.insert(
-            "layout_below_envelope_committed_but_unevaluated".to_string(),
-            below_envelope_committed_but_unevaluated.unwrap_or(false),
+            "layout_far_formula_within_envelope_evaluated".to_string(),
+            far_formula_within_envelope_evaluated.unwrap_or(false),
         );
     }
     Ok(())
@@ -1087,7 +1096,7 @@ fn record_layout_bounds_gates(
     gates: &mut BTreeMap<String, bool>,
     structural: &mut BTreeMap<String, String>,
 ) {
-    let envelope_extends_past_guard = LAYOUT_MAX_SCAN_ROWS > LAYOUT_BLANK_GUARD_ROW;
+    let envelope_extends_past_guard = LAYOUT_PREPARATION_ENVELOPE_END_ROW > LAYOUT_BLANK_GUARD_ROW;
     gates.insert(
         "layout_exact_resolved_bounds_A2_D2".to_string(),
         exact_bounds,
@@ -1097,8 +1106,8 @@ fn record_layout_bounds_gates(
         envelope_extends_past_guard,
     );
     gates.insert(
-        "layout_preparation_envelope_A2_D9".to_string(),
-        LAYOUT_PREPARATION_ENVELOPE_END_ROW == 1 + LAYOUT_MAX_SCAN_ROWS,
+        "layout_preparation_envelope_tracks_used_range".to_string(),
+        LAYOUT_PREPARATION_ENVELOPE_END_ROW == LAYOUT_FAR_FORMULA_ROW,
     );
     gates.insert(
         "layout_blank_guard_terminated_before_envelope".to_string(),
@@ -1107,7 +1116,7 @@ fn record_layout_bounds_gates(
     structural.insert(
         "resolved_layout_bounds".to_string(),
         format!(
-            "Layout!A2:D2: blank guard row {LAYOUT_BLANK_GUARD_ROW} terminated output resolution before max_scan_rows={LAYOUT_MAX_SCAN_ROWS}; conservative preparation envelope A2:D{LAYOUT_PREPARATION_ENVELOPE_END_ROW} evaluates below-guard C4; Layout-sheet package fallback also commits C{LAYOUT_BELOW_ENVELOPE_ROW}, which remains Empty, while six separate Retained-sheet formulas remain staged"
+            "Layout!A2:D2: blank guard row {LAYOUT_BLANK_GUARD_ROW} terminated output resolution; the preparation envelope A2:D{LAYOUT_PREPARATION_ENVELOPE_END_ROW} tracks the sheet used range and so evaluates both below-guard formulas C4 and C{LAYOUT_FAR_FORMULA_ROW}, while six separate Retained-sheet formulas remain staged"
         ),
     );
 }

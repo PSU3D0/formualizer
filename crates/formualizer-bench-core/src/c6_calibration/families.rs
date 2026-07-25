@@ -10,9 +10,12 @@ use super::{CalibrationPath, FixtureFamily, TypedOracleValue, generate_fixture};
 pub const DIRTY_FORMULAS: u32 = 8;
 pub const RETAINED_FORMULAS: u32 = 8;
 pub const LAYOUT_BLANK_GUARD_ROW: u32 = 3;
-pub const LAYOUT_MAX_SCAN_ROWS: u32 = 8;
-pub const LAYOUT_PREPARATION_ENVELOPE_END_ROW: u32 = 9;
-pub const LAYOUT_BELOW_ENVELOPE_ROW: u32 = 10;
+/// Furthest populated row on the Layout sheet, and therefore its used range.
+///
+/// The preparation envelope is derived from `sheet_dimensions()`, so this row is
+/// both the last populated cell and the envelope end.
+pub const LAYOUT_FAR_FORMULA_ROW: u32 = 10;
+pub const LAYOUT_PREPARATION_ENVELOPE_END_ROW: u32 = LAYOUT_FAR_FORMULA_ROW;
 pub const LAYOUT_RETAINED_FORMULAS: u32 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,12 +241,14 @@ fn generate_layout(path: &Path, formulas: u32) -> Result<FamilyFixtureShape> {
             .get_style_mut("D2")
             .get_number_format_mut()
             .set_format_code(umya_spreadsheet::NumberingFormat::FORMAT_DATE_XLSX14);
-        // Row 3 is the blank guard. C4 is inside the conservative preparation
-        // envelope and C10 is below it; neither belongs to the resolved output.
-        // Deferred Calamine preparation commits their whole worksheet package,
-        // but only C4 is scheduled by the A2:D9 target envelope.
+        // Row 3 is the blank guard: it terminates output resolution at row 2, so
+        // neither C4 nor C10 belongs to the resolved output. Both still sit inside
+        // the preparation envelope, which now tracks the sheet's used range rather
+        // than a declared row cap, so both are scheduled rather than only C4.
         layout.get_cell_mut((3, 4)).set_formula("=999");
-        layout.get_cell_mut((3, 10)).set_formula("=1000");
+        layout
+            .get_cell_mut((3, LAYOUT_FAR_FORMULA_ROW))
+            .set_formula("=1000");
         populate_dirty_and_retained(book, LAYOUT_RETAINED_FORMULAS);
     });
     Ok(FamilyFixtureShape {
@@ -442,7 +447,6 @@ ports:
         header_row: 1
         anchor_col: A
         terminate: first_blank_row
-        max_scan_rows: {max_scan_rows}
     schema:
       kind: table
       columns:
@@ -457,7 +461,6 @@ ports:
     schema: { type: number }
 "#
     .replace("{terminal_row}", &terminal_row.to_string())
-    .replace("{max_scan_rows}", &LAYOUT_MAX_SCAN_ROWS.to_string())
 }
 
 pub fn table_manifest() -> String {
@@ -553,6 +556,6 @@ mod tests {
     fn layout_scan_envelope_extends_beyond_blank_guard() {
         let manifest = layout_manifest(64);
         assert!(manifest.contains("terminate: first_blank_row"));
-        assert!(manifest.contains(&format!("max_scan_rows: {LAYOUT_MAX_SCAN_ROWS}")));
+        assert!(!manifest.contains("max_scan_rows"));
     }
 }

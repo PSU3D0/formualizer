@@ -5,6 +5,21 @@ use sheetport_spec::{LayoutDescriptor, LayoutTermination};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(crate) const EXCEL_MAX_ROWS: u32 = 1_048_576;
+
+/// Last row that can hold data on `sheet`, falling back to the format bound.
+///
+/// A layout scan can never need to look past this: every row beyond the used
+/// range is empty, so both bounded termination rules stop there. Deriving the
+/// bound from the workbook keeps it deterministic for a given workbook while
+/// removing the need for a caller-declared row cap.
+pub(crate) fn used_row_bound(workbook: &Workbook, sheet: &str) -> u32 {
+    workbook
+        .sheet_dimensions(sheet)
+        .map(|(rows, _)| rows.min(EXCEL_MAX_ROWS))
+        // Bound workbooks have an Arrow sheet. The format-bound fallback keeps
+        // alternate stores from silently under-reading a live sheet.
+        .unwrap_or(EXCEL_MAX_ROWS)
+}
 pub(crate) const EXCEL_MAX_COLUMNS: u32 = 16_384;
 
 #[derive(Debug, Clone)]
@@ -85,7 +100,6 @@ pub(crate) fn resolve_range_layout_with_cancel(
         columns: &columns,
         terminate: &layout.terminate,
         marker_text: layout.marker_text.as_deref(),
-        max_scan_rows: layout.max_scan_rows,
         cancel,
     })?;
 
@@ -168,7 +182,6 @@ pub(crate) fn resolve_table_layout_with_cancel(
         columns: &column_indices,
         terminate: &layout.terminate,
         marker_text: layout.marker_text.as_deref(),
-        max_scan_rows: layout.max_scan_rows,
         cancel,
     })?;
 
@@ -221,7 +234,6 @@ struct EndRowParams<'a> {
     columns: &'a [u32],
     terminate: &'a LayoutTermination,
     marker_text: Option<&'a str>,
-    max_scan_rows: u32,
     cancel: Option<&'a AtomicBool>,
 }
 
@@ -234,7 +246,6 @@ fn determine_end_row(params: EndRowParams<'_>) -> Result<u32, SheetPortError> {
         columns,
         terminate,
         marker_text,
-        max_scan_rows,
         cancel,
     } = params;
     if start_row == 0 || start_row > EXCEL_MAX_ROWS {
@@ -244,13 +255,8 @@ fn determine_end_row(params: EndRowParams<'_>) -> Result<u32, SheetPortError> {
         });
     }
 
+    let used_end = used_row_bound(workbook, sheet);
     if matches!(terminate, LayoutTermination::SheetEnd) {
-        let used_end = workbook
-            .sheet_dimensions(sheet)
-            .map(|(rows, _)| rows.min(EXCEL_MAX_ROWS))
-            // Bound workbooks have an Arrow sheet. The format-bound fallback
-            // keeps alternate stores from silently under-reading a live sheet.
-            .unwrap_or(EXCEL_MAX_ROWS);
         return Ok(used_end.max(start_row.saturating_sub(1)));
     }
 
@@ -274,7 +280,14 @@ fn determine_end_row(params: EndRowParams<'_>) -> Result<u32, SheetPortError> {
             })?;
 
     let available = EXCEL_MAX_ROWS - start_row + 1;
-    let candidate_count = max_scan_rows.min(available);
+    // Scan one row past the used range: that row is empty by construction, so
+    // both bounded termination rules resolve there at the latest.
+    let scan_bound = used_end
+        .saturating_add(1)
+        .min(EXCEL_MAX_ROWS)
+        .saturating_sub(start_row)
+        .saturating_add(1);
+    let candidate_count = scan_bound.min(available);
     let mut last_row = start_row.saturating_sub(1);
     for offset in 0..candidate_count {
         cancellation_checkpoint(cancel, port_id)?;
@@ -308,7 +321,7 @@ fn determine_end_row(params: EndRowParams<'_>) -> Result<u32, SheetPortError> {
         }
         .to_string(),
         scan_start: start_row,
-        limit: max_scan_rows,
+        limit: candidate_count,
         observed: candidate_count,
     })
 }
@@ -350,7 +363,7 @@ mod tests {
     use super::*;
     use sheetport_spec::LayoutKind;
 
-    fn layout(terminate: LayoutTermination, max_scan_rows: u32) -> LayoutDescriptor {
+    fn layout(terminate: LayoutTermination) -> LayoutDescriptor {
         LayoutDescriptor {
             kind: LayoutKind::HeaderContiguousV1,
             sheet: "Sheet".to_string(),
@@ -358,7 +371,6 @@ mod tests {
             anchor_col: "A".to_string(),
             terminate,
             marker_text: None,
-            max_scan_rows,
         }
     }
 
@@ -374,33 +386,25 @@ mod tests {
     }
 
     #[test]
-    fn range_budget_counts_data_rows_after_header() {
+    fn range_bounds_span_the_header_through_the_last_data_row() {
         let workbook = make_workbook(&[(1, "Header"), (2, "one"), (3, "two")]);
-        let bounds = resolve_range_layout(
-            "rows",
-            &workbook,
-            &layout(LayoutTermination::FirstBlankRow, 3),
-        )
-        .unwrap();
+        let bounds =
+            resolve_range_layout("rows", &workbook, &layout(LayoutTermination::FirstBlankRow))
+                .unwrap();
         assert_eq!((bounds.start_row, bounds.end_row), (1, 3));
-        assert!(matches!(
-            resolve_range_layout(
-                "rows",
-                &workbook,
-                &layout(LayoutTermination::FirstBlankRow, 2)
-            ),
-            Err(SheetPortError::LayoutExhausted {
-                limit: 2,
-                observed: 2,
-                ..
-            })
-        ));
+
+        // An interior blank still terminates; only the trailing bound is derived.
+        let workbook = make_workbook(&[(1, "Header"), (2, "one"), (4, "detached")]);
+        let bounds =
+            resolve_range_layout("rows", &workbook, &layout(LayoutTermination::FirstBlankRow))
+                .unwrap();
+        assert_eq!((bounds.start_row, bounds.end_row), (1, 2));
     }
 
     #[test]
     fn until_marker_stops_at_marker_or_an_earlier_blank() {
         let workbook = make_workbook(&[(1, "Header"), (2, "row"), (4, "END")]);
-        let mut descriptor = layout(LayoutTermination::UntilMarker, 10);
+        let mut descriptor = layout(LayoutTermination::UntilMarker);
         descriptor.marker_text = Some("END".to_string());
         assert_eq!(
             resolve_range_layout("rows", &workbook, &descriptor)
@@ -417,25 +421,41 @@ mod tests {
             2
         );
 
+        // A missing marker is not an error: the scan is bounded by the used
+        // range, so it resolves at the last data row instead of exhausting
+        // against a declared cap.
         let workbook = make_workbook(&[(1, "Header"), (2, "one"), (3, "two")]);
-        descriptor.max_scan_rows = 2;
-        assert!(matches!(
-            resolve_range_layout("rows", &workbook, &descriptor),
-            Err(SheetPortError::LayoutExhausted {
-                termination,
-                limit: 2,
-                observed: 2,
-                ..
-            }) if termination == "until_marker"
-        ));
+        assert_eq!(
+            resolve_range_layout("rows", &workbook, &descriptor)
+                .unwrap()
+                .end_row,
+            3
+        );
+    }
+
+    /// The scan bound follows the workbook rather than a declared row cap.
+    ///
+    /// `max_scan_rows` used to cap this scan, which made a table longer than the
+    /// cap fail even though the sheet plainly ended earlier, and made a short
+    /// table on a large sheet over-declare its preparation envelope. The bound is
+    /// now the used range, so a contiguous table of any length resolves exactly.
+    #[test]
+    fn contiguous_table_longer_than_the_old_default_cap_resolves() {
+        let mut rows: Vec<(u32, String)> = vec![(1, "Header".to_string())];
+        rows.extend((2..=1_500u32).map(|row| (row, format!("row{row}"))));
+        let borrowed: Vec<(u32, &str)> = rows.iter().map(|(r, t)| (*r, t.as_str())).collect();
+        let workbook = make_workbook(&borrowed);
+        let bounds =
+            resolve_range_layout("rows", &workbook, &layout(LayoutTermination::FirstBlankRow))
+                .unwrap();
+        assert_eq!(bounds.end_row, 1_500);
     }
 
     #[test]
     fn sheet_end_uses_total_dimensions_across_interior_blanks() {
         let workbook = make_workbook(&[(1, "Header"), (2, "row"), (5, "tail")]);
         let bounds =
-            resolve_range_layout("rows", &workbook, &layout(LayoutTermination::SheetEnd, 1))
-                .unwrap();
+            resolve_range_layout("rows", &workbook, &layout(LayoutTermination::SheetEnd)).unwrap();
         assert_eq!(bounds.end_row, 5);
         assert!(workbook.sheet_dimensions("Sheet").is_some());
     }
@@ -443,7 +463,7 @@ mod tests {
     #[test]
     fn range_header_at_format_limit_is_rejected() {
         let workbook = make_workbook(&[]);
-        let mut descriptor = layout(LayoutTermination::FirstBlankRow, 1);
+        let mut descriptor = layout(LayoutTermination::FirstBlankRow);
         descriptor.header_row = EXCEL_MAX_ROWS;
         assert!(matches!(
             resolve_range_layout("rows", &workbook, &descriptor),
