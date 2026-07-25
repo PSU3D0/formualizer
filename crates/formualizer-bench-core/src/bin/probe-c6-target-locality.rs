@@ -990,9 +990,9 @@ mod tests {
         assert_eq!(report.status, "ok", "{:?}", report.typed_error);
         for gate in [
             "layout_exact_resolved_bounds_A2_D2",
-            "layout_preparation_envelope_A2_D9",
+            "layout_preparation_envelope_tracks_used_range",
             "layout_below_guard_inside_envelope_evaluated",
-            "layout_below_envelope_committed_but_unevaluated",
+            "layout_far_formula_within_envelope_evaluated",
             "layout_package_commit_selected_chain_c4_c10",
             "layout_six_retained_sheet_formulas_staged",
         ] {
@@ -1002,7 +1002,7 @@ mod tests {
         assert_eq!(report.graph_after_run.unwrap().staged_formulas, 6);
         assert!(
             report.structural_oracles["resolved_layout_bounds"]
-                .contains("conservative preparation envelope A2:D9")
+                .contains("preparation envelope A2:D10")
         );
         let _ = std::fs::remove_file(fixture);
     }

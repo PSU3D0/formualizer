@@ -18,7 +18,7 @@ use formualizer_eval::engine::{
 };
 use formualizer_eval::traits::VolatileLevel;
 use formualizer_workbook::Workbook;
-use sheetport_spec::{Direction, LayoutTermination, Manifest, TableArea};
+use sheetport_spec::{Direction, Manifest, TableArea};
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -370,14 +370,16 @@ impl<'a> SheetPort<'a> {
         Ok(())
     }
 
-    fn layout_envelope_end(layout: &sheetport_spec::LayoutDescriptor, scan_start: u32) -> u32 {
-        if matches!(layout.terminate, LayoutTermination::SheetEnd) {
-            EXCEL_MAX_ROWS
-        } else {
-            scan_start
-                .saturating_add(layout.max_scan_rows.saturating_sub(1))
-                .min(EXCEL_MAX_ROWS)
-        }
+    /// Preparation envelope for a layout port.
+    ///
+    /// Target ranges must be declared before evaluation, but a layout's extent is
+    /// only known after reading values. The envelope therefore covers every row a
+    /// scan could reach, which is the sheet's used range: rows beyond it hold no
+    /// cells to evaluate, and both bounded termination rules stop there.
+    fn layout_envelope_end(&self, sheet: &str, scan_start: u32) -> u32 {
+        crate::layout::used_row_bound(&*self.workbook, sheet)
+            .min(EXCEL_MAX_ROWS)
+            .max(scan_start.saturating_sub(1))
     }
 
     fn collect_binding_evaluation_targets(
@@ -452,7 +454,10 @@ impl<'a> SheetPort<'a> {
                         layout.sheet.clone(),
                         layout.header_row,
                         start_col,
-                        Self::layout_envelope_end(layout, layout.header_row.saturating_add(1)),
+                        self.layout_envelope_end(
+                            &layout.sheet,
+                            layout.header_row.saturating_add(1),
+                        ),
                         EXCEL_MAX_COLUMNS,
                     )?;
                 }
@@ -487,7 +492,7 @@ impl<'a> SheetPort<'a> {
                         layout.sheet.clone(),
                         layout.header_row,
                         start_col,
-                        Self::layout_envelope_end(layout, data_start),
+                        self.layout_envelope_end(&layout.sheet, data_start),
                         end_col,
                     )?;
                 }
