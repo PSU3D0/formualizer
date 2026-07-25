@@ -3914,6 +3914,15 @@ where
         })
     }
 
+    /// Metadata for every defined table, ordered by name.
+    pub fn tables(&self) -> Vec<TableMetadata> {
+        self.graph
+            .table_names()
+            .into_iter()
+            .filter_map(|name| self.table_metadata(&name))
+            .collect()
+    }
+
     pub fn named_ranges_snapshot(&self) -> Vec<crate::engine::named_range::NamedRangeSnapshot> {
         let mut out: Vec<crate::engine::named_range::NamedRangeSnapshot> = Vec::new();
 

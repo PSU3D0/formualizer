@@ -65,6 +65,13 @@ impl DependencyGraph {
             .and_then(|name| self.tables.get(name))
     }
 
+    /// Canonical names of every defined table, sorted for deterministic output.
+    pub fn table_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.tables.values().map(|t| t.name.clone()).collect();
+        names.sort();
+        names
+    }
+
     pub fn define_table(
         &mut self,
         name: &str,

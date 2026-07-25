@@ -421,6 +421,75 @@ impl PyWorkbook {
         Ok(())
     }
 
+    /// Define a native table over cells that already exist.
+    ///
+    /// `cell_range` is `(first_row, first_col, last_row, last_col)`, 1-based and
+    /// inclusive, covering the header row when `header_row` is true. Tables are
+    /// metadata over existing cells, so populate the region first; structured
+    /// references such as `=SUM(Sales[Amount])` resolve immediately afterwards.
+    ///
+    /// ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     wb.add_sheet("S")
+    ///     wb.set_value("S", 1, 1, "Name")
+    ///     wb.set_value("S", 1, 2, "Score")
+    ///     wb.set_value("S", 2, 1, "Ani")
+    ///     wb.set_value("S", 2, 2, 10)
+    ///     wb.add_table("Scores", "S", (1, 1, 2, 2), ["Name", "Score"])
+    ///     wb.set_formula("S", 4, 2, "=SUM(Scores[Score])")
+    ///     wb.evaluate_all()
+    /// ```
+    #[pyo3(signature = (name, sheet, cell_range, headers, *, header_row = true, totals_row = false))]
+    pub fn add_table(
+        &self,
+        name: &str,
+        sheet: &str,
+        cell_range: (u32, u32, u32, u32),
+        headers: Vec<String>,
+        header_row: bool,
+        totals_row: bool,
+    ) -> PyResult<()> {
+        self.inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?
+            .define_table(name, sheet, cell_range, headers, header_row, totals_row)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
+    }
+
+    /// Metadata for every defined table, ordered by name.
+    ///
+    /// Each entry is a dict with `name`, `sheet`, `range` (a 1-based inclusive
+    /// `(first_row, first_col, last_row, last_col)` tuple), `headers`,
+    /// `header_row` and `totals_row`.
+    pub fn tables(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut out = Vec::new();
+        for table in wb.tables() {
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("name", &table.name)?;
+            dict.set_item("sheet", &table.sheet)?;
+            dict.set_item(
+                "range",
+                (
+                    table.start_row,
+                    table.start_col,
+                    table.end_row,
+                    table.end_col,
+                ),
+            )?;
+            dict.set_item("headers", &table.headers)?;
+            dict.set_item("header_row", table.header_row)?;
+            dict.set_item("totals_row", table.totals_row)?;
+            out.push(dict.into());
+        }
+        Ok(out)
+    }
+
     #[getter]
     pub fn sheet_names(&self) -> PyResult<Vec<String>> {
         let wb = self

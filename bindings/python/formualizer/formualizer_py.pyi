@@ -1183,6 +1183,37 @@ class Workbook:
             wb.add_sheet("Outputs")
         ```
         """
+    def add_table(self, name: builtins.str, sheet: builtins.str, cell_range: tuple[builtins.int, builtins.int, builtins.int, builtins.int], headers: typing.Sequence[builtins.str], *, header_row: builtins.bool = True, totals_row: builtins.bool = False) -> None:
+        r"""
+        Define a native table over cells that already exist.
+        
+        `cell_range` is `(first_row, first_col, last_row, last_col)`, 1-based and
+        inclusive, covering the header row when `header_row` is true. Tables are
+        metadata over existing cells, so populate the region first; structured
+        references such as `=SUM(Sales[Amount])` resolve immediately afterwards.
+        
+        ```python
+            import formualizer as fz
+        
+            wb = fz.Workbook()
+            wb.add_sheet("S")
+            wb.set_value("S", 1, 1, "Name")
+            wb.set_value("S", 1, 2, "Score")
+            wb.set_value("S", 2, 1, "Ani")
+            wb.set_value("S", 2, 2, 10)
+            wb.add_table("Scores", "S", (1, 1, 2, 2), ["Name", "Score"])
+            wb.set_formula("S", 4, 2, "=SUM(Scores[Score])")
+            wb.evaluate_all()
+        ```
+        """
+    def tables(self) -> builtins.list[typing.Any]:
+        r"""
+        Metadata for every defined table, ordered by name.
+        
+        Each entry is a dict with `name`, `sheet`, `range` (a 1-based inclusive
+        `(first_row, first_col, last_row, last_col)` tuple), `headers`,
+        `header_row` and `totals_row`.
+        """
     def register_function(self, name: builtins.str, callback: typing.Any, *, min_args: builtins.int = 0, max_args: typing.Optional[builtins.int] = None, volatile: builtins.bool = False, thread_safe: builtins.bool = False, deterministic: builtins.bool = True, allow_override_builtin: builtins.bool = False) -> None:
         r"""
         Register a workbook-local custom function backed by a Python callable.
