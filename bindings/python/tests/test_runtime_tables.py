@@ -14,7 +14,9 @@ def workbook_with_data() -> "fz.Workbook":
     wb.add_sheet("S")
     wb.set_value("S", 1, 1, "Nama")
     wb.set_value("S", 1, 2, "Nilai")
-    for row, (name, score) in enumerate([("Ani", 10), ("Budi", 20), ("Cici", 30)], start=2):
+    for row, (name, score) in enumerate(
+        [("Ani", 10), ("Budi", 20), ("Cici", 30)], start=2
+    ):
         wb.set_value("S", row, 1, name)
         wb.set_value("S", row, 2, score)
     return wb
@@ -30,7 +32,7 @@ def test_structured_references_resolve_after_add_table():
         ("=COUNTA(Table1[#All])", 8),
         ('=SUMIF(Table1[Nama],"Budi",Table1[Nilai])', 20),
     ]
-    for row, (formula, expected) in enumerate(formulas, start=10):
+    for row, (formula, _expected) in enumerate(formulas, start=10):
         wb.set_formula("S", row, 4, formula)
     wb.evaluate_all()
     for row, (formula, expected) in enumerate(formulas, start=10):
@@ -67,11 +69,51 @@ def test_tables_lists_metadata():
 @pytest.mark.parametrize(
     "kwargs,fragment",
     [
-        (dict(name="T", sheet="S", cell_range=(1, 1, 4, 2), headers=["only-one"]), "2 column"),
-        (dict(name="T", sheet="Nope", cell_range=(1, 1, 4, 2), headers=["a", "b"]), "Nope"),
-        (dict(name="T", sheet="S", cell_range=(0, 1, 4, 2), headers=["a", "b"]), "1-based"),
-        (dict(name="T", sheet="S", cell_range=(4, 1, 1, 2), headers=["a", "b"]), "inverted"),
-        (dict(name="T", sheet="S", cell_range=(1, 1, 1, 2), headers=["a", "b"]), "no data rows"),
+        (
+            {
+                "name": "T",
+                "sheet": "S",
+                "cell_range": (1, 1, 4, 2),
+                "headers": ["only-one"],
+            },
+            "2 column",
+        ),
+        (
+            {
+                "name": "T",
+                "sheet": "Nope",
+                "cell_range": (1, 1, 4, 2),
+                "headers": ["a", "b"],
+            },
+            "Nope",
+        ),
+        (
+            {
+                "name": "T",
+                "sheet": "S",
+                "cell_range": (0, 1, 4, 2),
+                "headers": ["a", "b"],
+            },
+            "1-based",
+        ),
+        (
+            {
+                "name": "T",
+                "sheet": "S",
+                "cell_range": (4, 1, 1, 2),
+                "headers": ["a", "b"],
+            },
+            "inverted",
+        ),
+        (
+            {
+                "name": "T",
+                "sheet": "S",
+                "cell_range": (1, 1, 1, 2),
+                "headers": ["a", "b"],
+            },
+            "no data rows",
+        ),
     ],
 )
 def test_invalid_definitions_raise_actionable_errors(kwargs, fragment):
