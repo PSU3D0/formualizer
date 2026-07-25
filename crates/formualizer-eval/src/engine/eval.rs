@@ -965,7 +965,7 @@ pub struct Engine<R> {
     /// Exact span candidates classified across structural mutations.
     formula_plane_structural_span_candidates: u64,
     /// Transient cancellation flag used during evaluation
-    active_cancel_flag: Option<Arc<AtomicBool>>,
+    active_cancel_flag: Option<crate::engine::CancelToken>,
     /// Transient absolute deadline used by composed target and plan requests.
     active_evaluation_deadline: Option<Instant>,
 
@@ -2930,7 +2930,7 @@ where
         if self
             .active_cancel_flag
             .as_ref()
-            .is_some_and(|cancel| cancel.load(Ordering::Relaxed))
+            .is_some_and(|cancel| cancel.is_cancelled())
         {
             return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(message));
         }
@@ -7210,7 +7210,6 @@ where
         package: &mut PreparedTargetSourcePackage,
         assumptions: &crate::engine::PreparationRevision,
         planning_requests: &mut BTreeSet<(String, String, usize)>,
-        cancel: Option<&AtomicBool>,
         deadline: Option<std::time::Instant>,
     ) -> Result<(), ExcelError> {
         let existing = package
@@ -7226,7 +7225,7 @@ where
         }
         let batch = self.formula_batch_from_exact_replay(&package.sheet, missing.into_values())?;
         for record in batch.formulas {
-            self.target_preparation_checkpoint(cancel, deadline, 1)?;
+            self.target_preparation_checkpoint(deadline, 1)?;
             let ast = self
                 .graph
                 .data_store()
@@ -7275,7 +7274,6 @@ where
         &mut self,
         sheet: &str,
         lease: StagedPackageLease,
-        cancel: Option<&AtomicBool>,
         deadline: Option<std::time::Instant>,
     ) -> Result<PreparedTargetSourcePackage, ExcelError> {
         let sheet_id = self.graph.sheet_id(sheet).ok_or_else(|| {
@@ -7321,7 +7319,7 @@ where
                 .map_err(|reason| ExcelError::new(ExcelErrorKind::Value).with_message(reason))?;
         }
         replay_disposition.extend_suppressed_excel_coords(suppressed.iter().copied());
-        self.target_preparation_checkpoint(cancel, deadline, 1)?;
+        self.target_preparation_checkpoint(deadline, 1)?;
         let mut replay_records = if let Some(mut records) = reconciliation_replay {
             records.retain(|record| {
                 let Some((row, col)) = record.row.checked_sub(1).zip(record.col.checked_sub(1))
@@ -7352,7 +7350,7 @@ where
         };
         replay_records.sort_by_key(|record| record.source_order);
         for chunk in replay_records.chunks(256) {
-            self.target_preparation_checkpoint(cancel, deadline, chunk.len() as u64)?;
+            self.target_preparation_checkpoint(deadline, chunk.len() as u64)?;
         }
         if replay_records
             .windows(2)
@@ -7376,7 +7374,7 @@ where
         let mut anchor_analyses = 0u64;
         if self.config.formula_plane_mode != FormulaPlaneMode::Off {
             for family in &families {
-                self.target_preparation_checkpoint(cancel, deadline, 1)?;
+                self.target_preparation_checkpoint(deadline, 1)?;
                 if invalidated.contains(&family.source_id) {
                     continue;
                 }
@@ -7412,7 +7410,7 @@ where
             }
 
             for source in &partitions {
-                self.target_preparation_checkpoint(cancel, deadline, 1)?;
+                self.target_preparation_checkpoint(deadline, 1)?;
                 if invalidated.contains(&source.source_id) {
                     continue;
                 }
@@ -9087,11 +9085,14 @@ where
 
     fn target_preparation_checkpoint(
         &mut self,
-        cancel: Option<&AtomicBool>,
         deadline: Option<std::time::Instant>,
         work: u64,
     ) -> Result<(), ExcelError> {
-        if cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+        if self
+            .active_cancel_flag
+            .as_ref()
+            .is_some_and(|cancel| cancel.is_cancelled())
+        {
             return Err(ExcelError::new(ExcelErrorKind::Cancelled)
                 .with_message("target graph preparation cancelled"));
         }
@@ -9625,7 +9626,7 @@ where
     pub fn prepare_graph_for_targets(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-        options: crate::engine::PrepareTargetsOptions<'_>,
+        options: crate::engine::TargetEvalOptions<'_>,
     ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
         let previous_budgets = self.evaluation_resource_budgets.clone();
         let diagnostics_len = self.formula_parse_diagnostics.len();
@@ -9636,10 +9637,16 @@ where
         let previous_graph_budget_override = self
             .graph
             .set_admission_budget_override(Some(self.evaluation_resource_budgets.clone()));
+        // Hoist the call's cancellation onto the engine for its duration, so the
+        // preparation checkpoints observe it. This is a standalone entry point, so
+        // the previous value is restored rather than cleared.
+        let previous_cancel = self.active_cancel_flag.take();
+        self.active_cancel_flag = options.cancel.clone();
         let result = self.observe_evaluation_resource_request(
             EvaluationRequestKind::TargetPreparation,
             |engine| engine.prepare_graph_for_targets_unobserved(targets, &options),
         );
+        self.active_cancel_flag = previous_cancel;
         self.graph
             .set_admission_budget_override(previous_graph_budget_override);
         self.evaluation_resource_budgets = previous_budgets;
@@ -9653,7 +9660,7 @@ where
     fn prepare_graph_for_targets_unobserved(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-        options: &crate::engine::PrepareTargetsOptions<'_>,
+        options: &crate::engine::TargetEvalOptions<'_>,
     ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
         let scratch_checkpoint = self
             .active_resource_ledger
@@ -9675,14 +9682,14 @@ where
     fn prepare_graph_for_targets_transaction(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-        options: &crate::engine::PrepareTargetsOptions<'_>,
+        options: &crate::engine::TargetEvalOptions<'_>,
     ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
         use crate::engine::{
             OpaqueReason, PreparationOutcome, PrepareScope, PreparedTargetGraphReport,
             TableSelection,
         };
 
-        self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+        self.target_preparation_checkpoint(options.deadline, 0)?;
         self.observe_function_semantic_epoch()?;
         let assumptions = self.preparation_revisions();
         let ledger_at_start = self
@@ -9703,7 +9710,7 @@ where
         let mut normalized = Vec::with_capacity(targets.len());
         let mut symbol_vertices = VecDeque::new();
         for target in targets {
-            self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+            self.target_preparation_checkpoint(options.deadline, 1)?;
             match target {
                 crate::engine::EvaluationTarget::Cell { sheet, row, col } => {
                     if *row == 0 || *col == 0 {
@@ -9824,7 +9831,7 @@ where
                         continue;
                     };
                     for lease in self.staged_formula_index.leases_for_sheet(&sheet) {
-                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        self.target_preparation_checkpoint(options.deadline, 1)?;
                         regions.push_back(PreparationRegion {
                             sheet: sheet.clone(),
                             sheet_id,
@@ -9853,7 +9860,7 @@ where
             if matches!(scope, PrepareScope::Workbook) && !workbook_seeded {
                 workbook_seeded = true;
                 for (sheet, lease) in self.staged_formula_index.all_leases() {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     let Some(sheet_id) = self.graph.sheet_id(&sheet) else {
                         package_encountered = true;
                         Self::widen_target_preparation(
@@ -9902,7 +9909,7 @@ where
 
             let Some(region) = regions.pop_front() else {
                 if let Some(vertex) = symbol_vertices.pop_front() {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     if !visited_vertices.insert(vertex) || !self.graph.vertex_exists(vertex) {
                         continue;
                     }
@@ -9970,7 +9977,7 @@ where
                         });
                     }
                     for dependency in self.graph.get_dependencies(vertex) {
-                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        self.target_preparation_checkpoint(options.deadline, 1)?;
                         symbol_vertices.push_back(dependency);
                     }
                     if let Some(range_dependencies) = self
@@ -9979,11 +9986,7 @@ where
                         .map(<[_]>::to_vec)
                     {
                         for range in range_dependencies {
-                            self.target_preparation_checkpoint(
-                                options.cancel,
-                                options.deadline,
-                                1,
-                            )?;
+                            self.target_preparation_checkpoint(options.deadline, 1)?;
                             let sheet_id = match range.sheet {
                                 crate::reference::SharedSheetLocator::Id(id) => id,
                                 crate::reference::SharedSheetLocator::Current => {
@@ -10066,19 +10069,11 @@ where
                                     )?;
                                 }
                                 for dependency in dependencies {
-                                    self.target_preparation_checkpoint(
-                                        options.cancel,
-                                        options.deadline,
-                                        1,
-                                    )?;
+                                    self.target_preparation_checkpoint(options.deadline, 1)?;
                                     symbol_vertices.push_back(*dependency);
                                 }
                                 for range in range_deps {
-                                    self.target_preparation_checkpoint(
-                                        options.cancel,
-                                        options.deadline,
-                                        1,
-                                    )?;
+                                    self.target_preparation_checkpoint(options.deadline, 1)?;
                                     let sheet_id = match range.sheet {
                                         crate::reference::SharedSheetLocator::Id(id) => id,
                                         _ => self.graph.default_sheet_id(),
@@ -10115,7 +10110,7 @@ where
                 break;
             };
 
-            self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+            self.target_preparation_checkpoint(options.deadline, 1)?;
             if !visited_regions.insert(region.clone()) {
                 continue;
             }
@@ -10171,17 +10166,16 @@ where
             if let Some(package_lease) = package_lease
                 && selected_package_sheets.insert(region.sheet.clone())
             {
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 let mut package = self.prepare_target_source_package(
                     &region.sheet,
                     package_lease,
-                    options.cancel,
                     options.deadline,
                 )?;
                 for placement in &package.placements {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     for dependency in &placement.fragment_dependency_proof().1.dependencies {
-                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        self.target_preparation_checkpoint(options.deadline, 1)?;
                         let (rows, cols) = dependency.read_region.axis_ranges();
                         let (start_row, end_row) = rows.query_bounds();
                         let (start_col, end_col) = cols.query_bounds();
@@ -10208,7 +10202,7 @@ where
                 let batch = self
                     .formula_batch_from_exact_replay(&region.sheet, final_fallback.into_values())?;
                 for record in batch.formulas {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     let ast = self
                         .graph
                         .data_store()
@@ -10278,7 +10272,7 @@ where
                         }
                     }
                     for dep in &ingested.dep_plan.direct_cell_deps {
-                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        self.target_preparation_checkpoint(options.deadline, 1)?;
                         regions.push_back(PreparationRegion {
                             sheet: self.graph.sheet_name(dep.sheet_id).to_string(),
                             sheet_id: dep.sheet_id,
@@ -10289,7 +10283,7 @@ where
                         });
                     }
                     for range in &ingested.dep_plan.range_deps {
-                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        self.target_preparation_checkpoint(options.deadline, 1)?;
                         let dependency_sheet = match &range.sheet {
                             crate::reference::SharedSheetLocator::Id(id) => *id,
                             crate::reference::SharedSheetLocator::Current => package.sheet_id,
@@ -10329,7 +10323,7 @@ where
                         .iter()
                         .chain(&ingested.dep_plan.named_refs)
                     {
-                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        self.target_preparation_checkpoint(options.deadline, 1)?;
                         if let Some(entry) = self.graph.resolve_name_entry(name, package.sheet_id) {
                             symbol_vertices.push_back(entry.vertex);
                         } else if self.graph.resolve_source_scalar_entry(name).is_none()
@@ -10344,7 +10338,7 @@ where
                         }
                     }
                     for table in &ingested.dep_plan.table_refs {
-                        self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                        self.target_preparation_checkpoint(options.deadline, 1)?;
                         if let Some(entry) = self.graph.resolve_table_entry(table) {
                             symbol_vertices.push_back(entry.vertex);
                         } else if self.graph.resolve_source_table_entry(table).is_none() {
@@ -10373,7 +10367,7 @@ where
                 region.end_col,
             );
             for lease in leases {
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 let sheet_id = self.graph.sheet_id(&region.sheet).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Ref)
                         .with_message(format!("staged formula sheet not found: {}", region.sheet))
@@ -10396,7 +10390,7 @@ where
                 } else {
                     format!("={text}")
                 };
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 let ast = match formualizer_parse::parser::parse(&formula) {
                     Ok(ast) => ast,
                     Err(error) => {
@@ -10455,9 +10449,9 @@ where
                         }
                     }
                 };
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 let snapshot = self.target_planning_snapshot(&ast, &mut planning_requests)?;
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 if let Some(reason) =
                     Self::target_planning_snapshot_stale_reason(&snapshot, &assumptions)
                 {
@@ -10497,7 +10491,7 @@ where
                     placement,
                     Some(Arc::from(formula)),
                 )?;
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 if ingested.dep_plan.dynamic {
                     if proven_sheet_local_dynamic {
                         Self::widen_target_preparation_to_sheet(
@@ -10517,7 +10511,7 @@ where
                     }
                 }
                 for dep in &ingested.dep_plan.direct_cell_deps {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     regions.push_back(PreparationRegion {
                         sheet: self.graph.sheet_name(dep.sheet_id).to_string(),
                         sheet_id: dep.sheet_id,
@@ -10528,7 +10522,7 @@ where
                     });
                 }
                 for range in &ingested.dep_plan.range_deps {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     let sheet_id = match range.sheet {
                         crate::reference::SharedSheetLocator::Id(id) => id,
                         crate::reference::SharedSheetLocator::Current => sheet_id,
@@ -10568,7 +10562,7 @@ where
                     .iter()
                     .chain(&ingested.dep_plan.named_refs)
                 {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     if let Some(entry) = self.graph.resolve_name_entry(name, sheet_id) {
                         symbol_vertices.push_back(entry.vertex);
                     } else if self.graph.resolve_source_scalar_entry(name).is_none()
@@ -10583,7 +10577,7 @@ where
                     }
                 }
                 for table in &ingested.dep_plan.table_refs {
-                    self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                    self.target_preparation_checkpoint(options.deadline, 1)?;
                     if let Some(entry) = self.graph.resolve_table_entry(table) {
                         symbol_vertices.push_back(entry.vertex);
                     } else if self.graph.resolve_source_table_entry(table).is_none() {
@@ -10629,7 +10623,7 @@ where
                 region.end_col - 1,
             );
             for anchor in spill_anchors {
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 symbol_vertices.push_back(anchor);
             }
             let vertices = self.graph.vertices_in_region(
@@ -10640,7 +10634,7 @@ where
                 region.end_col - 1,
             );
             for vertex in vertices {
-                self.target_preparation_checkpoint(options.cancel, options.deadline, 1)?;
+                self.target_preparation_checkpoint(options.deadline, 1)?;
                 symbol_vertices.push_back(vertex);
             }
         }
@@ -10660,7 +10654,7 @@ where
                 &mut reasons,
                 OpaqueReason::UnsupportedSourceSemantics,
             )?;
-            self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+            self.target_preparation_checkpoint(options.deadline, 0)?;
             let selected_count = self.staged_formula_count();
             let selected_packages = self
                 .staged_formulas
@@ -10756,7 +10750,6 @@ where
                                 package,
                                 &assumptions,
                                 &mut planning_requests,
-                                options.cancel,
                                 options.deadline,
                             )?;
                         } else {
@@ -10888,7 +10881,7 @@ where
         if let Some(hook) = self.before_target_preparation_commit_hook.take() {
             hook();
         }
-        self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+        self.target_preparation_checkpoint(options.deadline, 0)?;
         #[cfg(test)]
         self.target_preparation_fault(
             crate::engine::target_preparation::TargetPreparationFault::FinalRevisionValidation,
@@ -10975,7 +10968,7 @@ where
                     pending_diagnostics.len() as u64,
                 )
             })?;
-        self.target_preparation_checkpoint(options.cancel, options.deadline, 0)?;
+        self.target_preparation_checkpoint(options.deadline, 0)?;
         #[cfg(test)]
         self.target_preparation_fault(
             crate::engine::target_preparation::TargetPreparationFault::BeforeFirstMutation,
@@ -17484,7 +17477,7 @@ where
     fn prepare_graph_for_routed_evaluation(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-        options: &crate::engine::PrepareTargetsOptions<'_>,
+        options: &crate::engine::TargetEvalOptions<'_>,
     ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
         const MAX_TRANSIENT_PREPARATION_RETRIES: usize = 2;
         let mut retries = 0usize;
@@ -17508,12 +17501,12 @@ where
     ) -> Result<EvalResult, ExcelError> {
         let _source_cache = self.source_cache_session();
         let cancel = self.active_cancel_flag.clone();
-        let options = crate::engine::PrepareTargetsOptions {
+        let options = crate::engine::TargetEvalOptions {
             request_id: self
                 .active_evaluation_resource_request
                 .as_ref()
                 .map(|stats| stats.request_id),
-            cancel: cancel.as_deref(),
+            cancel,
             deadline: None,
             budgets: None,
             opaque_policy: crate::engine::OpaquePreparePolicy::Widen,
@@ -17524,7 +17517,7 @@ where
     fn prepare_and_execute_target_recipe(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-        options: &crate::engine::PrepareTargetsOptions<'_>,
+        options: &crate::engine::TargetEvalOptions<'_>,
         delta: Option<&mut DeltaCollector>,
     ) -> Result<EvalResult, ExcelError> {
         let preparation = self.prepare_graph_for_routed_evaluation(targets, options)?;
@@ -17647,11 +17640,10 @@ where
     pub fn evaluate_targets_with_options(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-        options: crate::engine::PrepareTargetsOptions<'_>,
-        cancel_flag: Option<Arc<AtomicBool>>,
+        options: crate::engine::TargetEvalOptions<'_>,
     ) -> Result<EvalResult, ExcelError> {
         self.observe_evaluation_resource_request(EvaluationRequestKind::Targeted, |engine| {
-            engine.active_cancel_flag = cancel_flag;
+            engine.active_cancel_flag = options.cancel.clone();
             engine.active_evaluation_deadline = options.deadline;
             let result = (|| {
                 engine.cancellation_checkpoint("Evaluation cancelled before target preparation")?;
@@ -17829,14 +17821,14 @@ where
     ) -> Result<RecalcPlan, ExcelError> {
         self.build_recalc_plan_for_targets_with_options(
             targets,
-            crate::engine::PrepareTargetsOptions::default(),
+            crate::engine::TargetEvalOptions::default(),
         )
     }
 
     pub fn build_recalc_plan_for_targets_with_options(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-        options: crate::engine::PrepareTargetsOptions<'_>,
+        options: crate::engine::TargetEvalOptions<'_>,
     ) -> Result<RecalcPlan, ExcelError> {
         self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
             engine.observe_function_semantic_epoch()?;
@@ -17874,11 +17866,11 @@ where
     pub fn evaluate_recalc_plan_with_controls(
         &mut self,
         plan: &RecalcPlan,
-        cancel_flag: Option<Arc<AtomicBool>>,
+        cancel: Option<crate::engine::CancelToken>,
         deadline: Option<Instant>,
     ) -> Result<EvalResult, ExcelError> {
         self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
-            engine.active_cancel_flag = cancel_flag;
+            engine.active_cancel_flag = cancel.clone();
             engine.active_evaluation_deadline = deadline;
             let result = engine.evaluate_recalc_plan_unobserved(plan);
             engine.active_cancel_flag = None;
@@ -18348,7 +18340,9 @@ where
                                 current_sheet,
                                 self.graph.data_store(),
                                 self.graph.sheet_reg(),
-                                self.active_cancel_flag.as_deref(),
+                                self.active_cancel_flag
+                                    .as_ref()
+                                    .map(|c| c.as_flag().as_ref()),
                             );
                             #[cfg(test)]
                             let mut last_group_report = None;
@@ -20295,14 +20289,14 @@ where
     pub fn evaluate_cells_cancellable(
         &mut self,
         targets: &[(&str, u32, u32)],
-        cancel_flag: Arc<AtomicBool>,
+        cancel: crate::engine::CancelToken,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
         self.observe_evaluation_resource_request(
             EvaluationRequestKind::CellsCancellable,
             |engine| {
                 engine.observe_function_semantic_epoch()?;
-                engine.active_cancel_flag = Some(cancel_flag.clone());
-                let res = engine.evaluate_cells_cancellable_impl(targets, &cancel_flag);
+                engine.active_cancel_flag = Some(cancel.clone());
+                let res = engine.evaluate_cells_cancellable_impl(targets, cancel.as_flag());
                 engine.active_cancel_flag = None;
                 res
             },
@@ -20846,12 +20840,12 @@ where
     /// Evaluate all dirty/volatile vertices with cancellation support
     pub fn evaluate_all_cancellable(
         &mut self,
-        cancel_flag: Arc<AtomicBool>,
+        cancel: crate::engine::CancelToken,
     ) -> Result<EvalResult, ExcelError> {
         self.observe_evaluation_resource_request(EvaluationRequestKind::FullCancellable, |engine| {
             engine.observe_function_semantic_epoch()?;
-            engine.active_cancel_flag = Some(cancel_flag.clone());
-            let res = engine.evaluate_all_cancellable_impl(&cancel_flag);
+            engine.active_cancel_flag = Some(cancel.clone());
+            let res = engine.evaluate_all_cancellable_impl(cancel.as_flag());
             engine.active_cancel_flag = None;
             res
         })
@@ -21014,14 +21008,14 @@ where
     pub fn evaluate_until_cancellable(
         &mut self,
         targets: &[&str],
-        cancel_flag: Arc<AtomicBool>,
+        cancel: crate::engine::CancelToken,
     ) -> Result<EvalResult, ExcelError> {
         self.observe_evaluation_resource_request(
             EvaluationRequestKind::TargetedCancellable,
             |engine| {
                 engine.observe_function_semantic_epoch()?;
-                engine.active_cancel_flag = Some(cancel_flag.clone());
-                let res = engine.evaluate_until_cancellable_impl(targets, &cancel_flag);
+                engine.active_cancel_flag = Some(cancel.clone());
+                let res = engine.evaluate_until_cancellable_impl(targets, cancel.as_flag());
                 engine.active_cancel_flag = None;
                 res
             },
@@ -22383,7 +22377,12 @@ where
     }
 
     fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-        self.active_cancel_flag.clone()
+        // The context trait exposes the raw flag for custom-function authors; the
+        // engine's own call boundary uses CancelToken. See the follow-up issue on
+        // unifying the two.
+        self.active_cancel_flag
+            .as_ref()
+            .map(|cancel| Arc::clone(cancel.as_flag()))
     }
 
     fn chunk_hint(&self) -> Option<usize> {

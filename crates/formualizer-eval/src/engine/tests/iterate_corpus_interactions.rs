@@ -174,7 +174,9 @@ fn cancellation_mid_iteration_leaves_committed_values_and_engine_recovers() {
     set_formula(&mut engine, "Sheet1", 2, 1, "=A1+1");
 
     // (a) cancelled at the pass-3→4 boundary.
-    let err = engine.evaluate_all_cancellable(flag.clone()).unwrap_err();
+    let err = engine
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(flag.clone()))
+        .unwrap_err();
     assert_eq!(err.kind, ExcelErrorKind::Cancelled);
 
     // (b) pass 3 ran to completion before the boundary check: A1 = 5, A2 = 6.

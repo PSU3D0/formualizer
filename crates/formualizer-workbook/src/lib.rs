@@ -48,9 +48,9 @@ pub use transaction::{WriteOp, WriteTransaction};
 // Re-export for convenience
 pub use formualizer_common::{LiteralValue, RangeAddress};
 pub use formualizer_eval::engine::{
-    EvaluationTarget, FormulaSpoolDiskPolicy, OpaquePreparePolicy, OpaqueReason,
-    PreparationOutcome, PreparationRevision, PrepareScope, PrepareTargetsOptions,
-    PreparedTargetGraphReport, TableSelection, WorkbookLoadLimits,
+    CancelToken, EvaluationTarget, FormulaSpoolDiskPolicy, OpaquePreparePolicy, OpaqueReason,
+    PreparationOutcome, PreparationRevision, PrepareScope, PreparedTargetGraphReport,
+    TableSelection, TargetEvalOptions, WorkbookLoadLimits,
 };
 pub use workbook::{
     CustomFnHandler, CustomFnInfo, CustomFnOptions, WASM_ABI_VERSION_V1, WASM_CODEC_VERSION_V1,

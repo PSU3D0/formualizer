@@ -3,6 +3,7 @@
 //! Provides incremental formula evaluation with dependency tracking.
 
 pub mod arrow_ingest;
+pub mod cancel;
 pub(crate) mod convergence;
 pub mod effects;
 pub mod eval;
@@ -50,6 +51,7 @@ pub mod tuning;
 mod tests;
 
 pub use arena::AstNodeId;
+pub use cancel::CancelToken;
 pub use eval::{
     CycleTelemetry, Engine, EngineAction, EngineBaselineStats, EvalResult, RecalcPlan,
     SourceFormulaIngress, TableMetadata, VirtualDepTelemetry,
@@ -71,6 +73,8 @@ pub use formula_source::{
     SourceFamilyMembers, SourceFormulaFamily, SourceFormulaOrder, SourceRect,
 };
 pub use journal::{ActionJournal, ArrowOp, ArrowUndoBatch, GraphUndoBatch};
+#[allow(deprecated)]
+pub use target_preparation::PrepareTargetsOptions;
 // Use SoA implementation
 pub use formualizer_common::{ResourceExhaustionDetail, ResourceExhaustionReason};
 pub use graph::snapshot::VertexSnapshot;
@@ -99,7 +103,7 @@ pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
 pub use target_preparation::{
     EvaluationTarget, OpaquePreparePolicy, OpaqueReason, PreparationOutcome, PreparationRevision,
-    PrepareScope, PrepareTargetsOptions, PreparedTargetGraphReport, RequestId, TableSelection,
+    PrepareScope, PreparedTargetGraphReport, RequestId, TableSelection, TargetEvalOptions,
 };
 pub use vertex::{VertexId, VertexKind};
 

@@ -123,7 +123,9 @@ fn indirect_retarget_parity_across_full_recalc_entrypoints() {
         .set_cell_value("Sheet1", 1, 2, LiteralValue::Text("A1".to_string()))
         .unwrap();
     let cancel = Arc::new(AtomicBool::new(false));
-    engine.evaluate_all_cancellable(cancel).unwrap();
+    engine
+        .evaluate_all_cancellable(crate::engine::CancelToken::from_flag(cancel))
+        .unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
         Some(LiteralValue::Number(10.0))

@@ -8,8 +8,6 @@ use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -44,18 +42,18 @@ fn test_cancellation_between_layers() {
     engine.set_cell_formula("Sheet1", 1, 4, d1_formula).unwrap();
 
     // Set up cancellation flag that will be triggered
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    let cancel_flag_clone = Arc::clone(&cancel_flag);
+    let cancel = crate::engine::CancelToken::new();
+    let cancel_clone = cancel.clone();
 
     // Start evaluation in a separate thread
     let handle = thread::spawn(move || {
         // Small delay to ensure cancellation happens during evaluation
         thread::sleep(Duration::from_millis(1));
-        cancel_flag_clone.store(true, Ordering::Relaxed);
+        cancel_clone.cancel();
     });
 
     // Attempt evaluation with cancellation
-    let result = engine.evaluate_all_cancellable(cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel);
 
     handle.join().unwrap();
 
@@ -120,16 +118,16 @@ fn test_cancellation_within_large_layer() {
     }
 
     // Set up cancellation flag
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    let cancel_flag_clone = Arc::clone(&cancel_flag);
+    let cancel = crate::engine::CancelToken::new();
+    let cancel_clone = cancel.clone();
 
     // Start evaluation and cancel after a short delay
     let handle = thread::spawn(move || {
         thread::sleep(Duration::from_millis(5)); // Slightly longer delay for large layer
-        cancel_flag_clone.store(true, Ordering::Relaxed);
+        cancel_clone.cancel();
     });
 
-    let result = engine.evaluate_all_cancellable(cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel);
 
     handle.join().unwrap();
 
@@ -174,16 +172,16 @@ fn test_cancellation_in_demand_driven_evaluation() {
     engine.set_cell_formula("Sheet1", 1, 4, c1_ref).unwrap();
 
     // Set up cancellation
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    let cancel_flag_clone = Arc::clone(&cancel_flag);
+    let cancel = crate::engine::CancelToken::new();
+    let cancel_clone = cancel.clone();
 
     let handle = thread::spawn(move || {
         thread::sleep(Duration::from_millis(1));
-        cancel_flag_clone.store(true, Ordering::Relaxed);
+        cancel_clone.cancel();
     });
 
     // Try to evaluate until D1 with cancellation
-    let result = engine.evaluate_until_cancellable(&["D1"], cancel_flag);
+    let result = engine.evaluate_until_cancellable(&["D1"], cancel);
 
     handle.join().unwrap();
 
@@ -222,10 +220,14 @@ fn test_cancellation_during_cycle_handling() {
     engine.set_cell_formula("Sheet1", 1, 2, a1_ref).unwrap();
 
     // Set up immediate cancellation
-    let cancel_flag = Arc::new(AtomicBool::new(true));
+    let cancel = {
+        let token = crate::engine::CancelToken::new();
+        token.cancel();
+        token
+    };
 
     // Evaluation should be cancelled immediately
-    let result = engine.evaluate_all_cancellable(cancel_flag);
+    let result = engine.evaluate_all_cancellable(cancel);
 
     match result {
         Err(ExcelError {
@@ -265,10 +267,10 @@ fn test_non_cancelled_evaluation_works_normally() {
     engine.set_cell_formula("Sheet1", 1, 2, b1_formula).unwrap();
 
     // Use cancellation flag but never set it
-    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel = crate::engine::CancelToken::new();
 
     // Evaluation should complete normally
-    let result = engine.evaluate_all_cancellable(cancel_flag).unwrap();
+    let result = engine.evaluate_all_cancellable(cancel).unwrap();
 
     assert_eq!(result.computed_vertices, 1); // Only B1 needs evaluation
     assert_eq!(result.cycle_errors, 0);
@@ -303,12 +305,10 @@ fn test_demand_driven_non_cancelled_works_normally() {
     engine.set_cell_formula("Sheet1", 1, 3, c1_formula).unwrap();
 
     // Use cancellation flag but never set it
-    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let cancel = crate::engine::CancelToken::new();
 
     // Evaluation should complete normally
-    let result = engine
-        .evaluate_until_cancellable(&["C1"], cancel_flag)
-        .unwrap();
+    let result = engine.evaluate_until_cancellable(&["C1"], cancel).unwrap();
 
     assert_eq!(result.computed_vertices, 2); // B1 and C1 need evaluation
     assert_eq!(result.cycle_errors, 0);
@@ -335,8 +335,12 @@ fn test_cancellation_message_differentiation() {
     engine.set_cell_formula("Sheet1", 1, 1, one).unwrap();
 
     // Test immediate cancellation to get between-layers message
-    let cancel_flag = Arc::new(AtomicBool::new(true));
-    let result = engine.evaluate_all_cancellable(cancel_flag);
+    let cancel = {
+        let token = crate::engine::CancelToken::new();
+        token.cancel();
+        token
+    };
+    let result = engine.evaluate_all_cancellable(cancel);
 
     match result {
         Err(ExcelError {

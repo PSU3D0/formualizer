@@ -13,15 +13,13 @@ use crate::value::{InputSnapshot, InputUpdate, OutputSnapshot, PortValue, TableR
 use crate::{BatchExecutor, BatchOptions};
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_eval::engine::{
-    EvaluationBudgets, EvaluationTarget, OpaquePreparePolicy, PrepareTargetsOptions, RecalcPlan,
-    TableSelection,
+    EvaluationBudgets, EvaluationTarget, OpaquePreparePolicy, RecalcPlan, TableSelection,
+    TargetEvalOptions,
 };
 use formualizer_eval::traits::VolatileLevel;
 use formualizer_workbook::Workbook;
 use sheetport_spec::{Direction, LayoutTermination, Manifest, TableArea};
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 struct GridWrite<'a> {
@@ -62,7 +60,7 @@ pub(crate) struct ResolvedEvaluationRequest {
 pub struct SheetPort<'a> {
     workbook: &'a mut Workbook,
     bindings: ManifestBindings,
-    active_selector_cancel: Option<Arc<AtomicBool>>,
+    active_selector_cancel: Option<formualizer_eval::engine::CancelToken>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +69,7 @@ pub struct EvalOptions {
     pub rng_seed: Option<u64>,
     pub mode: EvalMode,
     pub deterministic_mode: Option<formualizer_eval::engine::DeterministicMode>,
-    pub cancel: Option<Arc<AtomicBool>>,
+    pub cancel: Option<formualizer_eval::engine::CancelToken>,
     pub deadline: Option<Instant>,
     pub budgets: Option<EvaluationBudgets>,
     pub opaque_policy: OpaquePreparePolicy,
@@ -260,7 +258,7 @@ impl<'a> SheetPort<'a> {
         if options
             .cancel
             .as_ref()
-            .is_some_and(|cancel| cancel.load(std::sync::atomic::Ordering::Relaxed))
+            .is_some_and(|cancel| cancel.is_cancelled())
         {
             return Err(SheetPortError::Engine {
                 source: formualizer_common::ExcelError::new(
@@ -301,18 +299,15 @@ impl<'a> SheetPort<'a> {
             Self::request_checkpoint(&options, "evaluation cancelled before selector resolution")?;
             let request = self.build_evaluation_request()?;
             if !request.targets.is_empty() {
-                let prepare = PrepareTargetsOptions {
+                let prepare = TargetEvalOptions {
                     request_id: None,
-                    cancel: options.cancel.as_deref(),
+                    cancel: options.cancel.clone(),
                     deadline: options.deadline,
                     budgets: options.budgets.as_ref(),
                     opaque_policy: options.opaque_policy,
                 };
-                self.workbook.evaluate_targets_with_options(
-                    &request.targets,
-                    prepare,
-                    options.cancel.clone(),
-                )?;
+                self.workbook
+                    .evaluate_targets_with_options(&request.targets, prepare)?;
             }
             Self::request_checkpoint(&options, "evaluation cancelled before output resolution")?;
             self.read_evaluation_request(&request, &options)
@@ -568,9 +563,9 @@ impl<'a> SheetPort<'a> {
         )?;
         let request = self.build_evaluation_request()?;
         let restore = self.apply_eval_options(&options.eval)?;
-        let prepare = PrepareTargetsOptions {
+        let prepare = TargetEvalOptions {
             request_id: None,
-            cancel: options.eval.cancel.as_deref(),
+            cancel: options.eval.cancel.clone(),
             deadline: options.eval.deadline,
             budgets: options.eval.budgets.as_ref(),
             opaque_policy: options.eval.opaque_policy,
@@ -596,9 +591,9 @@ impl<'a> SheetPort<'a> {
     ) -> Result<RecalcPlan, SheetPortError> {
         self.validate_eval_options(options)?;
         let restore = self.apply_eval_options(options)?;
-        let prepare = PrepareTargetsOptions {
+        let prepare = TargetEvalOptions {
             request_id: None,
-            cancel: options.cancel.as_deref(),
+            cancel: options.cancel.clone(),
             deadline: options.deadline,
             budgets: options.budgets.as_ref(),
             opaque_policy: options.opaque_policy,
@@ -772,7 +767,9 @@ impl<'a> SheetPort<'a> {
                     &binding.id,
                     self.workbook,
                     layout,
-                    self.active_selector_cancel.as_deref(),
+                    self.active_selector_cancel
+                        .as_ref()
+                        .map(|c| c.as_flag().as_ref()),
                 )?;
                 let start_row = bounds.start_row;
                 let end_row = bounds.end_row.max(bounds.start_row);
@@ -853,7 +850,9 @@ impl<'a> SheetPort<'a> {
                     self.workbook,
                     layout,
                     &column_hints,
-                    self.active_selector_cancel.as_deref(),
+                    self.active_selector_cancel
+                        .as_ref()
+                        .map(|c| c.as_flag().as_ref()),
                 )?;
                 let mut rows = Vec::new();
                 if bounds.data_end_row >= bounds.data_start_row {

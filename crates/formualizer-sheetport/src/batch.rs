@@ -175,7 +175,9 @@ ports:
         let mut executor = port
             .batch(BatchOptions {
                 eval: EvalOptions {
-                    cancel: Some(Arc::clone(&cancel)),
+                    cancel: Some(formualizer_eval::engine::CancelToken::from_flag(
+                        Arc::clone(&cancel),
+                    )),
                     ..EvalOptions::default()
                 },
                 ..BatchOptions::default()

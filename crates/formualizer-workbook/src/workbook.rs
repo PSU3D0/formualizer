@@ -2816,7 +2816,7 @@ impl Workbook {
     pub fn prepare_graph_for_targets(
         &mut self,
         targets: &[formualizer_eval::engine::EvaluationTarget],
-        options: formualizer_eval::engine::PrepareTargetsOptions<'_>,
+        options: formualizer_eval::engine::TargetEvalOptions<'_>,
     ) -> Result<formualizer_eval::engine::PreparedTargetGraphReport, IoError> {
         self.engine
             .prepare_graph_for_targets(targets, options)
@@ -2866,25 +2866,27 @@ impl Workbook {
     pub fn evaluate_targets_with_options(
         &mut self,
         targets: &[formualizer_eval::engine::EvaluationTarget],
-        options: formualizer_eval::engine::PrepareTargetsOptions<'_>,
-        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        options: formualizer_eval::engine::TargetEvalOptions<'_>,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine
-            .evaluate_targets_with_options(targets, options, cancel_flag)
+            .evaluate_targets_with_options(targets, options)
             .map_err(IoError::Engine)
     }
 
     pub fn evaluate_targets_cancellable(
         &mut self,
         targets: &[formualizer_eval::engine::EvaluationTarget],
-        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        cancel: formualizer_eval::engine::CancelToken,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
+        // Cancellation now reaches target *preparation* as well as evaluation.
+        // Previously this passed only the evaluation-side flag, leaving the
+        // preparation checkpoints inert.
+        let options = formualizer_eval::engine::TargetEvalOptions {
+            cancel: Some(cancel),
+            ..Default::default()
+        };
         self.engine
-            .evaluate_targets_with_options(
-                targets,
-                formualizer_eval::engine::PrepareTargetsOptions::default(),
-                Some(cancel_flag),
-            )
+            .evaluate_targets_with_options(targets, options)
             .map_err(IoError::Engine)
     }
 
@@ -2932,10 +2934,10 @@ impl Workbook {
     pub fn evaluate_cells_cancellable(
         &mut self,
         targets: &[(&str, u32, u32)],
-        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        cancel: formualizer_eval::engine::CancelToken,
     ) -> Result<Vec<LiteralValue>, IoError> {
         self.engine
-            .evaluate_cells_cancellable(targets, cancel_flag)
+            .evaluate_cells_cancellable(targets, cancel)
             .map_err(IoError::Engine)
             .map(|values| {
                 values
@@ -3045,10 +3047,10 @@ impl Workbook {
 
     pub fn evaluate_all_cancellable(
         &mut self,
-        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        cancel: formualizer_eval::engine::CancelToken,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine
-            .evaluate_all_cancellable(cancel_flag)
+            .evaluate_all_cancellable(cancel)
             .map_err(IoError::Engine)
     }
 
@@ -3068,7 +3070,7 @@ impl Workbook {
     pub fn build_recalc_plan_for_targets_with_options(
         &mut self,
         targets: &[formualizer_eval::engine::EvaluationTarget],
-        options: formualizer_eval::engine::PrepareTargetsOptions<'_>,
+        options: formualizer_eval::engine::TargetEvalOptions<'_>,
     ) -> Result<formualizer_eval::engine::RecalcPlan, IoError> {
         self.engine
             .build_recalc_plan_for_targets_with_options(targets, options)
@@ -3087,21 +3089,21 @@ impl Workbook {
     pub fn evaluate_with_plan_controls(
         &mut self,
         plan: &formualizer_eval::engine::RecalcPlan,
-        cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        cancel: Option<formualizer_eval::engine::CancelToken>,
         deadline: Option<std::time::Instant>,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine
-            .evaluate_recalc_plan_with_controls(plan, cancel_flag, deadline)
+            .evaluate_recalc_plan_with_controls(plan, cancel, deadline)
             .map_err(IoError::Engine)
     }
 
     pub fn evaluate_with_plan_cancellable(
         &mut self,
         plan: &formualizer_eval::engine::RecalcPlan,
-        cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        cancel: formualizer_eval::engine::CancelToken,
     ) -> Result<formualizer_eval::engine::EvalResult, IoError> {
         self.engine
-            .evaluate_recalc_plan_with_controls(plan, Some(cancel_flag), None)
+            .evaluate_recalc_plan_with_controls(plan, Some(cancel), None)
             .map_err(IoError::Engine)
     }
 
