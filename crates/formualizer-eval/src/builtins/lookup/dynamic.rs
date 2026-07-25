@@ -239,11 +239,11 @@ impl Function for XLookupFn {
                 e.clone(),
             )));
         }
-        let lookup_view = match args[1].range_view() {
+        let lookup_view = match args[1].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
-        let ret_view = match args[2].range_view() {
+        let ret_view = match args[2].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -597,7 +597,7 @@ impl Function for XMatchFn {
                 e.clone(),
             )));
         }
-        let lookup_view = match args[1].range_view() {
+        let lookup_view = match args[1].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -915,7 +915,7 @@ impl Function for SortFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let view = match args[0].range_view() {
+        let view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -1149,7 +1149,7 @@ impl Function for SortByFn {
             )));
         }
 
-        let view = match args[0].range_view() {
+        let view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -1167,7 +1167,7 @@ impl Function for SortByFn {
 
         while arg_idx < args.len() {
             // by_array
-            let by_view = match args[arg_idx].range_view() {
+            let by_view = match args[arg_idx].range_view_or_scalar() {
                 Ok(v) => v,
                 Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             };
@@ -1785,11 +1785,11 @@ impl Function for GroupByFn {
         }
 
         // Get row_fields and values ranges
-        let row_fields_view = match args[0].range_view() {
+        let row_fields_view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
-        let values_view = match args[1].range_view() {
+        let values_view = match args[1].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -2192,15 +2192,15 @@ impl Function for PivotByFn {
         }
 
         // Get ranges
-        let row_fields_view = match args[0].range_view() {
+        let row_fields_view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
-        let col_fields_view = match args[1].range_view() {
+        let col_fields_view = match args[1].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
-        let values_view = match args[2].range_view() {
+        let values_view = match args[2].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -2599,8 +2599,8 @@ impl Function for FilterFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let array_view = args[0].range_view()?;
-        let include_view = args[1].range_view()?;
+        let array_view = args[0].range_view_or_scalar()?;
+        let include_view = args[1].range_view_or_scalar()?;
 
         let (array_rows, array_cols) = array_view.dims();
         if array_rows == 0 || array_cols == 0 {
@@ -2764,7 +2764,7 @@ impl Function for UniqueFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let view = match args[0].range_view() {
+        let view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -3092,7 +3092,7 @@ impl Function for TransposeFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let view = match args[0].range_view() {
+        let view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -3226,7 +3226,7 @@ impl Function for TakeFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let view = match args[0].range_view() {
+        let view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
@@ -3410,7 +3410,7 @@ impl Function for DropFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let view = match args[0].range_view() {
+        let view = match args[0].range_view_or_scalar() {
             Ok(v) => v,
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };

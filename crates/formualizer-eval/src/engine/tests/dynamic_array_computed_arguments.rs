@@ -268,21 +268,22 @@ fn groupby_and_pivotby_accept_computed_arguments() {
     }
 }
 
-/// Documents (rather than endorses) the current handling of a computed
-/// *scalar*: only arrays gained acceptance here, so a non-array scalar is still
-/// rejected. Excel instead treats `=TRANSPOSE(2)` as a 1x1 array and returns
-/// `2`; closing that gap changes every range-consuming builtin and is
-/// deliberately left to a separate change.
+/// A computed *scalar* is now accepted as a 1x1 array, matching Excel.
+///
+/// This test previously documented the opposite: only arrays had gained
+/// acceptance, so `=TRANSPOSE(2)` was `#REF!`. Range-consuming builtins that
+/// treat a resolution failure as an error now opt into scalar promotion via
+/// `ArgumentHandle::range_view_or_scalar`.
 #[test]
-fn computed_scalars_are_still_rejected_as_ranges() {
+fn computed_scalars_are_accepted_as_1x1_ranges() {
     let mut engine = Engine::new(TestWorkbook::default(), EvalConfig::default());
     engine
         .set_cell_formula("Sheet1", 1, 5, parse("=COUNT(TRANSPOSE(1+1))").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
 
-    match engine.get_cell_value("Sheet1", 1, 5) {
-        Some(LiteralValue::Error(error)) => assert_eq!(error.kind, ExcelErrorKind::Ref),
-        other => panic!("expected a #REF! value, got {other:?}"),
-    }
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 5),
+        Some(LiteralValue::Number(1.0))
+    );
 }

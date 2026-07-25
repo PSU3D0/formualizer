@@ -198,7 +198,7 @@ fn eval_d_function<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view() {
+    let db_view = match args[0].range_view_or_scalar() {
         Ok(v) => v,
         Err(_) => {
             // Try to get as array literal
@@ -362,7 +362,7 @@ fn eval_d_stat_function<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view() {
+    let db_view = match args[0].range_view_or_scalar() {
         Ok(v) => v,
         Err(_) => {
             let val = args[0].value()?.into_literal();
@@ -491,7 +491,7 @@ fn eval_dget<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view() {
+    let db_view = match args[0].range_view_or_scalar() {
         Ok(v) => v,
         Err(_) => {
             let val = args[0].value()?.into_literal();
@@ -583,7 +583,7 @@ fn eval_dcounta<'a, 'b>(
     }
 
     // Get database range
-    let db_view = match args[0].range_view() {
+    let db_view = match args[0].range_view_or_scalar() {
         Ok(v) => v,
         Err(_) => {
             let val = args[0].value()?.into_literal();

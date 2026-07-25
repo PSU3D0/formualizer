@@ -704,6 +704,55 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// Resolve this argument to a [`RangeView`], promoting a scalar to a 1x1 view.
+    ///
+    /// Excel treats a scalar handed to a range-consuming function as a 1x1 array,
+    /// so `=TRANSPOSE(2)` is `2` rather than an error. [`Self::range_view`] rejects
+    /// scalars, and a function that wants the Excel behaviour opts in here.
+    ///
+    /// This is deliberately *not* the behaviour of `range_view` itself. Several
+    /// builtins use a `range_view` failure as type dispatch, where "scalar" and
+    /// "1x1 range" mean genuinely different things -- `MEDIAN(TRUE)` is `1`
+    /// because a direct scalar is coerced while a range cell of the same type is
+    /// skipped, and a D-function's scalar criteria argument is an error rather
+    /// than an empty criteria block that matches every row. Promoting inside
+    /// `range_view` would silently change those answers. The rule for choosing
+    /// between the two: a function that distinguishes a scalar argument from a
+    /// 1x1 range keeps `range_view`.
+    ///
+    /// An error scalar propagates as an error rather than becoming a 1x1 view
+    /// containing it, so `=TRANSPOSE(NA())` is `#N/A` instead of being masked as
+    /// `#REF!`.
+    pub fn range_view_or_scalar(&self) -> Result<RangeView<'b>, ExcelError> {
+        match self.resolve_once()? {
+            ResolvedArgument::Range(view) => Ok(view),
+            ResolvedArgument::ReferenceError(error) => Err(error),
+            ResolvedArgument::Value(CalcValue::Range(view)) => {
+                Ok(self.with_context_cancel_token(view))
+            }
+            ResolvedArgument::Value(CalcValue::Scalar(LiteralValue::Array(rows))) => {
+                RangeView::try_from_owned_rows(
+                    rows,
+                    self.interp.context.date_system(),
+                    self.interp.context.cancellation_token(),
+                )
+            }
+            // Preserve the argument's own error instead of reporting the shape
+            // mismatch that rejecting it would produce.
+            ResolvedArgument::Value(CalcValue::Scalar(LiteralValue::Error(error))) => Err(error),
+            ResolvedArgument::Value(CalcValue::Scalar(scalar)) => RangeView::try_from_owned_rows(
+                vec![vec![scalar]],
+                self.interp.context.date_system(),
+                self.interp.context.cancellation_token(),
+            ),
+            // A lambda is not a value that can stand in for a 1x1 array.
+            ResolvedArgument::Value(CalcValue::Callable(_)) => {
+                Err(ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message("Argument cannot be interpreted as a range."))
+            }
+        }
+    }
+
     pub fn value_or_range(&self) -> Result<EvaluatedArg<'_>, ExcelError> {
         self.range().map(EvaluatedArg::Range).or_else(|_| {
             self.value()
