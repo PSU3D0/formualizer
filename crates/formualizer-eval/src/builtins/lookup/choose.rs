@@ -282,7 +282,7 @@ impl Function for ChooseColsFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let view = args[0].range_view()?;
+        let view = args[0].range_view_or_scalar()?;
         let (rows, cols) = view.dims();
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
@@ -438,7 +438,7 @@ impl Function for ChooseRowsFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let view = args[0].range_view()?;
+        let view = args[0].range_view_or_scalar()?;
         let (rows, cols) = view.dims();
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
