@@ -416,7 +416,9 @@ impl PyWorkbook {
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         wb.add_sheet(name)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let mut sheets = self.sheets.write().unwrap();
+        let mut sheets = self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?;
         sheets.entry(name.to_string()).or_default();
         Ok(())
     }
@@ -697,7 +699,9 @@ impl PyWorkbook {
         wb.set_value(sheet, row, col, literal.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
-        let mut sheets = self.sheets.write().unwrap();
+        let mut sheets = self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?;
         let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
@@ -735,7 +739,9 @@ impl PyWorkbook {
         wb.set_formula(sheet, row, col, formula)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
-        let mut sheets = self.sheets.write().unwrap();
+        let mut sheets = self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?;
         let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
@@ -930,7 +936,11 @@ impl PyWorkbook {
         validate_cell_coords(row, col)?;
 
         if let Some(cached) = {
-            let sheets = self.sheets.read().unwrap();
+            let sheets = self.sheets.read().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?;
             sheets.get(sheet).and_then(|m| m.get(&(row, col)).cloned())
         } {
             if let Some(value) = cached.value {
@@ -1089,7 +1099,11 @@ impl PyWorkbook {
         res?;
         // Update compatibility cache
         {
-            let mut sheets = self.sheets.write().unwrap();
+            let mut sheets = self.sheets.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?;
             let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, v) in row_vals.into_iter().enumerate() {
@@ -1139,7 +1153,11 @@ impl PyWorkbook {
         res?;
         // Update compatibility cache
         {
-            let mut sheets = self.sheets.write().unwrap();
+            let mut sheets = self.sheets.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?;
             let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, s) in row_vals.into_iter().enumerate() {
@@ -1442,7 +1460,9 @@ impl PyWorkbook {
     {
         // Mutations performed through internal helpers (e.g. SheetPort) bypass the
         // legacy `sheets` cache; invalidate it so `get_value()` stays correct.
-        self.sheets.write().unwrap().clear();
+        self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?.clear();
 
         let mut wb = self
             .inner
