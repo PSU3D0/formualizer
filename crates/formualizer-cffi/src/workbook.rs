@@ -169,7 +169,17 @@ pub unsafe extern "C" fn fz_workbook_add_sheet(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
 
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return;
+        }
+    };
     if let Err(e) = wb_lock.add_sheet(&name_str) {
         if !status.is_null() {
             unsafe {
@@ -228,7 +238,17 @@ pub unsafe extern "C" fn fz_workbook_set_cell_value(
         }
     };
 
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return;
+        }
+    };
     if let Err(e) = wb_lock.set_value(&sheet_str, row, col, value) {
         if !status.is_null() {
             unsafe {
@@ -264,7 +284,17 @@ pub unsafe extern "C" fn fz_workbook_set_cell_formula(
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
     let formula_str = unsafe { CStr::from_ptr(formula).to_string_lossy() };
 
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return;
+        }
+    };
     if let Err(e) = wb_lock.set_formula(&sheet_str, row, col, &formula_str) {
         if !status.is_null() {
             unsafe {
@@ -298,7 +328,17 @@ pub unsafe extern "C" fn fz_workbook_get_cell_formula(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
 
-    let wb_lock = opaque.0.read().unwrap();
+    let wb_lock = match opaque.0.read() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return fz_buffer::empty();
+        }
+    };
     let formula = wb_lock.get_formula(&sheet_str, row, col);
 
     match formula {
@@ -342,7 +382,17 @@ pub unsafe extern "C" fn fz_workbook_get_cell_value(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
 
-    let wb_lock = opaque.0.read().unwrap();
+    let wb_lock = match opaque.0.read() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return fz_buffer::empty();
+        }
+    };
     let value = wb_lock
         .get_value(&sheet_str, row, col)
         .unwrap_or(LiteralValue::Empty);
@@ -395,7 +445,17 @@ pub unsafe extern "C" fn fz_workbook_evaluate_all(
     }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return fz_buffer::empty();
+        }
+    };
 
     // Workbook needs to build graph if deferred
     if let Err(e) = wb_lock.prepare_graph_all() {
@@ -492,7 +552,17 @@ pub unsafe extern "C" fn fz_workbook_evaluate_cells(
     }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return fz_buffer::empty();
+        }
+    };
 
     if let Err(e) = wb_lock.prepare_graph_for_sheets(sheets.iter().copied())
         && wb_lock.prepare_graph_all().is_err()
@@ -558,7 +628,17 @@ pub unsafe extern "C" fn fz_workbook_sheet_names(
     }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let wb_lock = opaque.0.read().unwrap();
+    let wb_lock = match opaque.0.read() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return fz_buffer::empty();
+        }
+    };
     let names = wb_lock.sheet_names();
 
     match encode_payload(&names, format) {
@@ -598,7 +678,17 @@ pub unsafe extern "C" fn fz_workbook_has_sheet(
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
-    let wb_lock = opaque.0.read().unwrap();
+    let wb_lock = match opaque.0.read() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return 0;
+        }
+    };
     let has = wb_lock.has_sheet(&name_str);
 
     if !status.is_null() {
@@ -627,7 +717,17 @@ pub unsafe extern "C" fn fz_workbook_sheet_dimensions(
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
-    let wb_lock = opaque.0.read().unwrap();
+    let wb_lock = match opaque.0.read() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return fz_buffer::empty();
+        }
+    };
 
     let Some((rows, cols)) = wb_lock.sheet_dimensions(&name_str) else {
         if !status.is_null() {
@@ -677,7 +777,17 @@ pub unsafe extern "C" fn fz_workbook_delete_sheet(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let name_str = unsafe { CStr::from_ptr(name).to_string_lossy() };
 
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return;
+        }
+    };
     if let Err(e) = wb_lock.delete_sheet(&name_str) {
         if !status.is_null() {
             unsafe {
@@ -711,7 +821,17 @@ pub unsafe extern "C" fn fz_workbook_rename_sheet(
     let old_str = unsafe { CStr::from_ptr(old_name).to_string_lossy() };
     let new_str = unsafe { CStr::from_ptr(new_name).to_string_lossy() };
 
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return;
+        }
+    };
     if let Err(e) = wb_lock.rename_sheet(&old_str, &new_str) {
         if !status.is_null() {
             unsafe {
@@ -755,7 +875,17 @@ pub unsafe extern "C" fn fz_workbook_read_range(
     };
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
-    let wb_lock = opaque.0.read().unwrap();
+    let wb_lock = match opaque.0.read() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return fz_buffer::empty();
+        }
+    };
     let values = wb_lock.read_range(&addr);
 
     match encode_payload(&values, format) {
@@ -813,7 +943,17 @@ pub unsafe extern "C" fn fz_workbook_set_values(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
 
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return;
+        }
+    };
     if let Err(e) = wb_lock.set_values(&sheet_str, start_row, start_col, &values) {
         if !status.is_null() {
             unsafe {
@@ -862,7 +1002,17 @@ pub unsafe extern "C" fn fz_workbook_set_formulas(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
 
-    let mut wb_lock = opaque.0.write().unwrap();
+    let mut wb_lock = match opaque.0.write() {
+        Ok(lock) => lock,
+        Err(_) => {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error("workbook lock poisoned".to_string());
+                }
+            }
+            return;
+        }
+    };
     if let Err(e) = wb_lock.set_formulas(&sheet_str, start_row, start_col, &formulas) {
         if !status.is_null() {
             unsafe {
