@@ -1053,7 +1053,18 @@ impl PyWorkbook {
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         wb.undo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        // Clear the compatibility cache so get_value reads from the engine
+        drop(wb);
+        self.sheets
+            .write()
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?
+            .clear();
+        Ok(())
     }
 
     /// Redo the most recently undone edit.
@@ -1063,7 +1074,18 @@ impl PyWorkbook {
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         wb.redo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        // Clear the compatibility cache so get_value reads from the engine
+        drop(wb);
+        self.sheets
+            .write()
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?
+            .clear();
+        Ok(())
     }
 
     // Batch ops
