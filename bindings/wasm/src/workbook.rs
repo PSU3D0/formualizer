@@ -714,18 +714,17 @@ impl Workbook {
     }
 
     #[wasm_bindgen(js_name = "sheetNames")]
-    pub fn sheet_names(&self) -> js_sys::Array {
+    pub fn sheet_names(&self) -> Result<js_sys::Array, JsValue> {
         let arr = js_sys::Array::new();
         let names = self
             .inner
             .read()
-            .ok()
-            .map(|w| w.sheet_names())
-            .unwrap_or_default();
+            .map_err(|_| js_error("failed to lock workbook for read"))?
+            .sheet_names();
         for s in names.into_iter() {
             arr.push(&JsValue::from_str(&s));
         }
-        arr
+        Ok(arr)
     }
 
     /// Register a workbook-local custom function backed by a JavaScript callback.
@@ -1375,11 +1374,15 @@ impl Sheet {
     }
 
     #[wasm_bindgen(js_name = "getFormula")]
-    pub fn get_formula(&self, row: u32, col: u32) -> Option<String> {
+    pub fn get_formula(&self, row: u32, col: u32) -> Result<Option<String>, JsValue> {
         if !cell_coords_are_valid(row, col) {
-            return None;
+            return Ok(None);
         }
-        self.wb.read().ok()?.get_formula(&self.name, row, col)
+        Ok(self
+            .wb
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?
+            .get_formula(&self.name, row, col))
     }
 
     #[wasm_bindgen(js_name = "setValues")]
