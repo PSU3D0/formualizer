@@ -24960,7 +24960,10 @@ where
     ) -> Result<usize, ExcelError> {
         use rayon::prelude::*;
 
-        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
+        let thread_pool = self.thread_pool.as_ref().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Calc)
+                .with_message("Thread pool not initialized; parallel evaluation unavailable".to_string())
+        })?.clone();
 
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
@@ -25082,7 +25085,10 @@ where
     ) -> Result<usize, ExcelError> {
         use rayon::prelude::*;
 
-        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
+        let thread_pool = self.thread_pool.as_ref().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Calc)
+                .with_message("Thread pool not initialized; parallel evaluation unavailable".to_string())
+        })?.clone();
 
         let mut phase1: Vec<VertexId> = Vec::new();
         let mut phase2: Vec<VertexId> = Vec::new();
@@ -25199,7 +25205,10 @@ where
     ) -> Result<usize, ExcelError> {
         use rayon::prelude::*;
 
-        let thread_pool = self.thread_pool.as_ref().unwrap().clone();
+        let thread_pool = self.thread_pool.as_ref().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Calc)
+                .with_message("Thread pool not initialized; parallel evaluation unavailable".to_string())
+        })?.clone();
 
         if cancel_flag.load(Ordering::Relaxed) {
             return Err(ExcelError::new(ExcelErrorKind::Cancelled)
