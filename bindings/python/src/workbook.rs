@@ -692,13 +692,15 @@ impl PyWorkbook {
         validate_cell_coords(row, col)?;
 
         let literal = py_to_literal(value)?;
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.set_value(sheet, row, col, literal.clone())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        // Update compatibility cache
+        {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            wb.set_value(sheet, row, col, literal.clone())
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        }
+        // Update compatibility cache (inner lock already released)
         let mut sheets = self.sheets.write().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
         })?;
@@ -732,13 +734,15 @@ impl PyWorkbook {
     pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
         validate_cell_coords(row, col)?;
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.set_formula(sheet, row, col, formula)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        // Update compatibility cache
+        {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            wb.set_formula(sheet, row, col, formula)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        }
+        // Update compatibility cache (inner lock already released)
         let mut sheets = self.sheets.write().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
         })?;
@@ -1108,18 +1112,20 @@ impl PyWorkbook {
             }
             rows_vec.push(row_vals);
         }
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        // Auto-group batch changes into a single undoable action when changelog is enabled
-        wb.begin_action("batch: set values".to_string());
-        let res = wb
-            .set_values(sheet, start_row, start_col, &rows_vec)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
-        wb.end_action();
-        res?;
-        // Update compatibility cache
+        {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            // Auto-group batch changes into a single undoable action when changelog is enabled
+            wb.begin_action("batch: set values".to_string());
+            let res = wb
+                .set_values(sheet, start_row, start_col, &rows_vec)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
+            wb.end_action();
+            res?;
+        }
+        // Update compatibility cache (inner lock already released)
         {
             let mut sheets = self.sheets.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -1163,17 +1169,19 @@ impl PyWorkbook {
             }
             rows_vec.push(row_vals);
         }
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.begin_action("batch: set formulas".to_string());
-        let res = wb
-            .set_formulas(sheet, start_row, start_col, &rows_vec)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
-        wb.end_action();
-        res?;
-        // Update compatibility cache
+        {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            wb.begin_action("batch: set formulas".to_string());
+            let res = wb
+                .set_formulas(sheet, start_row, start_col, &rows_vec)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
+            wb.end_action();
+            res?;
+        }
+        // Update compatibility cache (inner lock already released)
         {
             let mut sheets = self.sheets.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
