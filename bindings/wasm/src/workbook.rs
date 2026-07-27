@@ -217,10 +217,6 @@ fn unregister_js_callback(callback_id: u64) {
 const MAX_ROW: u32 = 1_048_576;
 const MAX_COL: u32 = 16_384;
 
-fn cell_coords_are_valid(row: u32, col: u32) -> bool {
-    row != 0 && col != 0 && row <= MAX_ROW && col <= MAX_COL
-}
-
 fn validate_cell_coords(row: u32, col: u32) -> Result<(), JsValue> {
     if row == 0 || col == 0 {
         return Err(js_error(format!(
@@ -1206,12 +1202,7 @@ impl Workbook {
                 .ok_or_else(|| js_error(format!("invalid sheet name at index {i}")))?;
             let row = parse_target_coord(arr.get(1).as_f64(), "row", i)?;
             let col = parse_target_coord(arr.get(2).as_f64(), "col", i)?;
-            if !cell_coords_are_valid(row, col) {
-                return Err(js_error(format!(
-                    "row/col must be 1-based and within {MAX_ROW}x{MAX_COL} \
-                     at index {i} (row={row}, col={col})"
-                )));
-            }
+            validate_cell_coords(row, col)?;
             target_vec.push((sheet, row, col));
         }
 
