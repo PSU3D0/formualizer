@@ -78,6 +78,24 @@ fn validate_block(
     Ok(())
 }
 
+/// Validate a table range tuple (start_row, start_col, end_row, end_col).
+/// All coordinates must be 1-based, within grid limits, and start <= end.
+fn validate_table_range(
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+) -> PyResult<()> {
+    validate_cell_coords(start_row, start_col)?;
+    validate_cell_coords(end_row, end_col)?;
+    if start_row > end_row || start_col > end_col {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "table range must have start <= end (got start=({start_row},{start_col}), end=({end_row},{end_col}))"
+        )));
+    }
+    Ok(())
+}
+
 struct PyCustomFnHandler {
     callback: PyObject,
 }
@@ -500,6 +518,8 @@ impl PyWorkbook {
         header_row: bool,
         totals_row: bool,
     ) -> PyResult<()> {
+        let (start_row, start_col, end_row, end_col) = cell_range;
+        validate_table_range(start_row, start_col, end_row, end_col)?;
         self.inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?

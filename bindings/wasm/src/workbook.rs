@@ -262,6 +262,20 @@ fn validate_block(
     Ok(())
 }
 
+/// Validate a table range tuple (start_row, start_col, end_row, end_col).
+/// All coordinates must be 1-based, within grid limits, and start <= end.
+fn validate_table_range(range: (u32, u32, u32, u32)) -> Result<(), JsValue> {
+    let (start_row, start_col, end_row, end_col) = range;
+    validate_cell_coords(start_row, start_col)?;
+    validate_cell_coords(end_row, end_col)?;
+    if start_row > end_row || start_col > end_col {
+        return Err(js_error(format!(
+            "table range must have start <= end (got start=({start_row},{start_col}), end=({end_row},{end_col}))"
+        )));
+    }
+    Ok(())
+}
+
 fn parse_target_coord(raw: Option<f64>, label: &str, index: u32) -> Result<u32, JsValue> {
     let value = raw.ok_or_else(|| js_error(format!("invalid {label} at index {index}")))?;
     if !value.is_finite() || value.fract() != 0.0 || value < 1.0 || value > u32::MAX as f64 {
@@ -903,6 +917,8 @@ impl Workbook {
         )?;
         let definition: JsTableDefinition = serde_wasm_bindgen::from_value(definition)
             .map_err(|err| js_error(format!("invalid table definition: {err}")))?;
+        // Validate the table range coordinates
+        validate_table_range(definition.range)?;
         self.inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
