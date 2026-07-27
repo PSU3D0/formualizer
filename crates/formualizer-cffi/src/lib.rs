@@ -12,8 +12,6 @@ pub mod workbook;
 pub use guard::*;
 pub use workbook::*;
 
-use crate::guard::catch_ffi;
-
 /// A buffer owned by Rust, to be freed by `fz_buffer_free`.
 #[repr(C)]
 pub struct fz_buffer {
