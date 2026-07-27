@@ -1411,9 +1411,7 @@ impl Sheet {
 
     #[wasm_bindgen(js_name = "getFormula")]
     pub fn get_formula(&self, row: u32, col: u32) -> Result<Option<String>, JsValue> {
-        if !cell_coords_are_valid(row, col) {
-            return Ok(None);
-        }
+        validate_cell_coords(row, col)?;
         Ok(self
             .wb
             .read()
