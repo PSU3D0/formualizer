@@ -54,6 +54,30 @@ fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
     Ok(())
 }
 
+/// Validate the top-left anchor of a batch write plus the block extent,
+/// so a batch that would run off the end of the grid is rejected up front.
+fn validate_block(
+    start_row: u32,
+    start_col: u32,
+    rows: usize,
+    cols: usize,
+) -> PyResult<()> {
+    validate_cell_coords(start_row, start_col)?;
+    let last_row = (start_row as u64) + rows.saturating_sub(1) as u64;
+    let last_col = (start_col as u64) + cols.saturating_sub(1) as u64;
+    if last_row > MAX_ROW as u64 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Block ending at row {last_row} exceeds maximum {MAX_ROW}"
+        )));
+    }
+    if last_col > MAX_COL as u64 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Block ending at col {last_col} exceeds maximum {MAX_COL}"
+        )));
+    }
+    Ok(())
+}
+
 struct PyCustomFnHandler {
     callback: PyObject,
 }
@@ -1124,7 +1148,13 @@ impl PyWorkbook {
         start_col: u32,
         data: &Bound<'_, pyo3::types::PyList>,
     ) -> PyResult<()> {
-        validate_cell_coords(start_row, start_col)?;
+        let num_rows = data.len();
+        let num_cols = if num_rows > 0 {
+            data.get_item(0)?.cast::<pyo3::types::PyList>()?.len()
+        } else {
+            0
+        };
+        validate_block(start_row, start_col, num_rows, num_cols)?;
 
         let mut rows_vec: Vec<Vec<LiteralValue>> = Vec::with_capacity(data.len());
         for row in data.iter() {
@@ -1180,7 +1210,13 @@ impl PyWorkbook {
         start_col: u32,
         formulas: &Bound<'_, pyo3::types::PyList>,
     ) -> PyResult<()> {
-        validate_cell_coords(start_row, start_col)?;
+        let num_rows = formulas.len();
+        let num_cols = if num_rows > 0 {
+            formulas.get_item(0)?.cast::<pyo3::types::PyList>()?.len()
+        } else {
+            0
+        };
+        validate_block(start_row, start_col, num_rows, num_cols)?;
 
         let mut rows_vec: Vec<Vec<String>> = Vec::with_capacity(formulas.len());
         for row in formulas.iter() {

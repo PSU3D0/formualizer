@@ -238,6 +238,30 @@ fn validate_cell_coords(row: u32, col: u32) -> Result<(), JsValue> {
     Ok(())
 }
 
+/// Validate the top-left anchor of a batch write plus the block extent,
+/// so a batch that would run off the end of the grid is rejected up front.
+fn validate_block(
+    start_row: u32,
+    start_col: u32,
+    rows: usize,
+    cols: usize,
+) -> Result<(), JsValue> {
+    validate_cell_coords(start_row, start_col)?;
+    let last_row = (start_row as u64) + rows.saturating_sub(1) as u64;
+    let last_col = (start_col as u64) + cols.saturating_sub(1) as u64;
+    if last_row > MAX_ROW as u64 {
+        return Err(js_error(format!(
+            "block ending at row {last_row} exceeds maximum {MAX_ROW}"
+        )));
+    }
+    if last_col > MAX_COL as u64 {
+        return Err(js_error(format!(
+            "block ending at col {last_col} exceeds maximum {MAX_COL}"
+        )));
+    }
+    Ok(())
+}
+
 fn parse_target_coord(raw: Option<f64>, label: &str, index: u32) -> Result<u32, JsValue> {
     let value = raw.ok_or_else(|| js_error(format!("invalid {label} at index {index}")))?;
     if !value.is_finite() || value.fract() != 0.0 || value < 1.0 || value > u32::MAX as f64 {
@@ -1404,8 +1428,6 @@ impl Sheet {
         start_col: u32,
         data: js_sys::Array,
     ) -> Result<(), JsValue> {
-        validate_cell_coords(start_row, start_col)?;
-
         // data: Array<Array<any>>
         let mut rows: Vec<Vec<formualizer::LiteralValue>> =
             Vec::with_capacity(data.length() as usize);
@@ -1418,6 +1440,9 @@ impl Sheet {
             }
             rows.push(row_vec);
         }
+        let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
+        validate_block(start_row, start_col, rows.len(), widest)?;
+
         let mut wb = self
             .wb
             .write()
@@ -1442,8 +1467,6 @@ impl Sheet {
         start_col: u32,
         data: js_sys::Array,
     ) -> Result<(), JsValue> {
-        validate_cell_coords(start_row, start_col)?;
-
         // data: Array<Array<string>>
         let mut rows: Vec<Vec<String>> = Vec::with_capacity(data.length() as usize);
         for r in 0..data.length() {
@@ -1456,6 +1479,9 @@ impl Sheet {
             }
             rows.push(row_vec);
         }
+        let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
+        validate_block(start_row, start_col, rows.len(), widest)?;
+
         let mut wb = self
             .wb
             .write()
