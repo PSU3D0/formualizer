@@ -23,4 +23,11 @@ tickets/
 # Local git worktrees (repo-local)
 .worktrees/
 .forkops/
-superpowers/
+.superpowers/
+docs/superpowers/
+
+# Editor / IDE
+.vscode/
+
+# Python coverage
+htmlcov/
