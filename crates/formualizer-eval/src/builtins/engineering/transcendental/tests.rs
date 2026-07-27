@@ -206,8 +206,16 @@ fn bessel_jn_tiny_x_high_order_does_not_overflow() {
 #[test]
 fn bessel_extreme_orders_do_not_panic() {
     for x in [0.5f64, 1.0, 30.0] {
-        assert!(jn(i32::MIN, x).is_finite() || jn(i32::MIN, x).is_nan());
-        assert!(yn(i32::MIN, x).is_finite() || yn(i32::MIN, x).is_nan());
+        let jn_result = jn(i32::MIN, x);
+        let yn_result = yn(i32::MIN, x);
+        assert!(
+            jn_result.is_finite() || jn_result.is_nan() || jn_result.is_infinite(),
+            "jn(i32::MIN, {x}) = {jn_result} must not panic"
+        );
+        assert!(
+            yn_result.is_finite() || yn_result.is_nan() || yn_result.is_infinite(),
+            "yn(i32::MIN, {x}) = {yn_result} must not panic"
+        );
     }
 }
 

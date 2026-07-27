@@ -76,6 +76,11 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
     if n == 1 {
         return j1(x);
     }
+    // For extremely large orders (e.g. after negating i32::MIN -> i32::MAX),
+    // the forward/backward recurrence would loop billions of times.
+    if n > 1000 {
+        return if x.is_infinite() { 0.0 } else { 0.0 };
+    }
     let sign = (n & 1) & (hx >> 31); /* even n -- 0, odd n -- sign(x) */
     // let sign = if x < 0.0 { -1 } else { 1 };
     let x = x.abs();
@@ -172,7 +177,8 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
              * When Q(k) > 1e17	good for quadruple
              */
 
-            let w = ((n + n) as f64) / x;
+            let n_f64 = n as f64;
+            let w = (n_f64 + n_f64) / x;
             let h = 2.0 / x;
             let mut q0 = w;
             let mut z = w + h;
@@ -185,10 +191,13 @@ pub(crate) fn jn(n: i32, x: f64) -> f64 {
                 q0 = q1;
                 q1 = tmp;
             }
-            let m = n + n;
+            let m = (n as i64) + (n as i64);
             let mut t = 0.0;
-            for i in (m..2 * (n + k)).step_by(2).rev() {
+            let end = 2 * ((n as i64) + k);
+            let mut i = end - 2;
+            while i >= m {
                 t = 1.0 / ((i as f64) / x - t);
+                i -= 2;
             }
             // for (t=0, i = 2*(n+k); i>=m; i -= 2) t = 1/(i/x-t);
             let mut a = t;
@@ -283,6 +292,12 @@ pub(crate) fn yn(n: i32, x: f64) -> f64 {
     }
     if n == 1 {
         return (sign as f64) * y1(x);
+    }
+    // For extremely large orders (e.g. after negating i32::MIN -> i32::MAX),
+    // the backward recurrence would loop billions of times. For any practical
+    // x the result is 0 or infinity; just short-circuit.
+    if n > 1000 {
+        return if x.is_infinite() { 0.0 } else { f64::NEG_INFINITY };
     }
     if ix == 0x7ff00000 {
         return 0.0;
