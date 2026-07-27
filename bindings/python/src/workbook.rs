@@ -27,11 +27,29 @@ pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "calamine";
 #[cfg(target_os = "emscripten")]
 pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "umya";
 
+/// Excel's grid limits, mirroring `formualizer_common::coord`.
+const MAX_ROW: u32 = 1_048_576;
+const MAX_COL: u32 = 16_384;
+
 fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
     if row == 0 || col == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "Row/col are 1-based",
         ));
+    }
+    // Upper bounds matter as much as the 1-based check: the engine packs
+    // coordinates into 20-bit row / 14-bit column fields and *asserts* on
+    // overflow, so an out-of-grid coordinate from Python would abort the
+    // interpreter instead of raising. Convert it to a normal `ValueError`.
+    if row > MAX_ROW {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Row {row} exceeds the maximum supported row {MAX_ROW}"
+        )));
+    }
+    if col > MAX_COL {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Column {col} exceeds the maximum supported column {MAX_COL}"
+        )));
     }
     Ok(())
 }
@@ -410,12 +428,17 @@ impl PyWorkbook {
     ///     wb.add_sheet("Outputs")
     /// ```
     pub fn add_sheet(&self, name: &str) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.add_sheet(name)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        {
+            let mut wb = self.inner.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
+            })?;
+            wb.add_sheet(name)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        }
+        // Update the compatibility cache only after the inner lock is
+        // released. `get_value()` takes `sheets` before `inner`, so holding
+        // `inner` while acquiring `sheets` here would invert the lock order
+        // and can deadlock under concurrent access.
         let mut sheets = self.sheets.write().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
         })?;

@@ -213,18 +213,29 @@ fn unregister_js_callback(callback_id: u64) {
     JS_CALLBACK_REGISTRY.with(|registry| registry.borrow_mut().remove(callback_id));
 }
 
+/// Excel's grid limits, mirroring `formualizer_common::coord`.
+const MAX_ROW: u32 = 1_048_576;
+const MAX_COL: u32 = 16_384;
+
 fn cell_coords_are_valid(row: u32, col: u32) -> bool {
-    row != 0 && col != 0
+    row != 0 && col != 0 && row <= MAX_ROW && col <= MAX_COL
 }
 
 fn validate_cell_coords(row: u32, col: u32) -> Result<(), JsValue> {
-    if cell_coords_are_valid(row, col) {
-        Ok(())
-    } else {
-        Err(js_error(format!(
+    if row == 0 || col == 0 {
+        return Err(js_error(format!(
             "row/col are 1-based (row={row}, col={col})"
-        )))
+        )));
     }
+    // The engine packs coordinates into 20-bit row / 14-bit column fields and
+    // asserts on overflow. In WASM a panic aborts the whole module, so reject
+    // out-of-grid coordinates as an ordinary JS error instead.
+    if row > MAX_ROW || col > MAX_COL {
+        return Err(js_error(format!(
+            "row/col exceed the maximum supported cell {MAX_ROW}x{MAX_COL} (row={row}, col={col})"
+        )));
+    }
+    Ok(())
 }
 
 fn parse_target_coord(raw: Option<f64>, label: &str, index: u32) -> Result<u32, JsValue> {
@@ -1157,7 +1168,8 @@ impl Workbook {
             let col = parse_target_coord(arr.get(2).as_f64(), "col", i)?;
             if !cell_coords_are_valid(row, col) {
                 return Err(js_error(format!(
-                    "row/col are 1-based at index {i} (row={row}, col={col})"
+                    "row/col must be 1-based and within {MAX_ROW}x{MAX_COL} \
+                     at index {i} (row={row}, col={col})"
                 )));
             }
             target_vec.push((sheet, row, col));
