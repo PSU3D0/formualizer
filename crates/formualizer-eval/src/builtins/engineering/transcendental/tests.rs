@@ -180,3 +180,53 @@ fn bessel_kn_known_values() {
         );
     }
 }
+
+/// Regression: the tiny-`x` Taylor branch of `jn` accumulated `n!` in an `i32`.
+/// `13!` already overflows `i32`, so any order in `13..=33` combined with a
+/// very small `x` panicked in debug builds (and silently wrapped, producing
+/// garbage, in release builds).
+#[test]
+fn bessel_jn_tiny_x_high_order_does_not_overflow() {
+    // x < 2^-29 selects the Taylor branch.
+    let x = 1e-12;
+    for n in 2..=33 {
+        let f = jn(n, x);
+        assert!(
+            f.is_finite(),
+            "jn({n}, {x}) must be finite, got {f}"
+        );
+        // (x/2)^n / n! underflows to +0 well before n = 33.
+        assert!(f >= 0.0, "jn({n}, {x}) must be non-negative, got {f}");
+    }
+}
+
+/// Regression: `jn`/`yn` negated `n` with `-n`, which overflows for
+/// `i32::MIN`, and `jn` negated the high word with `-hx`, which overflows for
+/// the high word of `-0.0`.
+#[test]
+fn bessel_extreme_orders_do_not_panic() {
+    for x in [0.5f64, 1.0, 30.0] {
+        assert!(jn(i32::MIN, x).is_finite() || jn(i32::MIN, x).is_nan());
+        assert!(yn(i32::MIN, x).is_finite() || yn(i32::MIN, x).is_nan());
+    }
+}
+
+/// Regression: `jn` used `-hx` on the high word to flip the sign of `x`.
+/// For `x == -0.0` the high word is `i32::MIN`, whose arithmetic negation
+/// overflows.
+#[test]
+fn bessel_jn_handles_negative_zero() {
+    assert_eq!(jn(2, -0.0), 0.0);
+    assert_eq!(jn(3, 0.0), 0.0);
+}
+
+/// `y0`/`yn` rely on the *high* word of the IEEE bit pattern to detect zero,
+/// infinity and the sign. Sanity-check those boundaries, which silently broke
+/// when the words were extracted via native byte order.
+#[test]
+fn bessel_y_special_values() {
+    assert!(yn(2, 0.0).is_infinite() && yn(2, 0.0) < 0.0);
+    assert!(yn(2, -1.0).is_nan());
+    assert_eq!(yn(2, f64::INFINITY), 0.0);
+    assert!(yn(2, f64::NAN).is_nan());
+}
