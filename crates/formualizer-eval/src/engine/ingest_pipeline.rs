@@ -1723,7 +1723,21 @@ mod tests {
         NameRegistryView::new(|_, _| None)
     }
 
+    /// `compute_read_projections` resolves functions through the process-global
+    /// registry. Without this, `SUM` is unknown and every projection collapses to
+    /// `UnsupportedDependencySummary` — which silently turns the accept-tests red
+    /// and, worse, makes the reject-tests pass for the wrong reason. Registering
+    /// here keeps each test in this module independent of what else has run.
+    fn ensure_builtins_registered() {
+        use std::sync::Once;
+        static ONCE: Once = Once::new();
+        ONCE.call_once(|| {
+            crate::builtins::math::register_builtins();
+        });
+    }
+
     fn read_projections_for(formula: &str, row: u32, col: u32) -> Vec<ReadProjection> {
+        ensure_builtins_registered();
         let mut sheet_registry = SheetRegistry::new();
         let sheet = sheet_registry.id_for("Sheet1");
         let ast = parse(formula).unwrap();
@@ -1773,6 +1787,7 @@ mod tests {
 
     #[test]
     fn formula_plane_ingest_read_projections_reject_top_level_and_open_ranges() {
+        ensure_builtins_registered();
         let mut sheet_registry = SheetRegistry::new();
         let sheet = sheet_registry.id_for("Sheet1");
         let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
@@ -1838,6 +1853,7 @@ mod tests {
 
     #[test]
     fn formula_plane_ingest_read_projections_accept_mixed_anchor_ranges() {
+        ensure_builtins_registered();
         let mut sheet_registry = SheetRegistry::new();
         let sheet = sheet_registry.id_for("Sheet1");
         let placement = CellRef::new(sheet, Coord::from_excel(1, 2, true, true));
