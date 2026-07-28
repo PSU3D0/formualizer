@@ -2,7 +2,7 @@
 
 <p align="center">
   <img alt="Arrow Powered" src="https://img.shields.io/badge/Arrow-Powered-0A66C2?logo=apache&logoColor=white" />
-  <a href="https://www.npmjs.com/package/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/formualizer.svg" /></a>
+  <a href="https://www.npmjs.com/package/@ocean8219/formualizer"><img alt="npm" src="https://img.shields.io/npm/v/@ocean8219/formualizer.svg" /></a>
   <a href="../../LICENSE-MIT"><img alt="License: MIT/Apache-2.0" src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" /></a>
   <a href="https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart"><img alt="Documentation" src="https://img.shields.io/badge/docs-formualizer.dev-blue" /></a>
 </p>
@@ -20,7 +20,7 @@ A Rust-powered spreadsheet engine compiled to WebAssembly with 320+ Excel-compat
 ## Installation
 
 ```bash
-npm install formualizer
+npm install @ocean8219/formualizer
 ```
 
 ## Documentation
@@ -38,7 +38,7 @@ Full documentation at **[formualizer.dev](https://www.formualizer.dev/docs)**:
 ### Evaluate a workbook
 
 ```typescript
-import init, { Workbook } from 'formualizer';
+import init, { Workbook } from '@ocean8219/formualizer';
 await init();
 
 const wb = new Workbook();
@@ -55,7 +55,7 @@ console.log(await wb.evaluateCell('Loans', 1, 2)); // ~1266.71
 ### Parse formulas
 
 ```typescript
-import init, { tokenize, parse } from 'formualizer';
+import init, { tokenize, parse } from '@ocean8219/formualizer';
 await init();
 
 const tokens = await tokenize('=SUMIFS(Sales,Region,"West",Year,2024)');
@@ -89,7 +89,7 @@ await wb.undo();  // reverts both
 ### Register custom functions
 
 ```typescript
-import init, { Workbook } from 'formualizer';
+import init, { Workbook } from '@ocean8219/formualizer';
 await init();
 
 const wb = new Workbook();
@@ -127,7 +127,7 @@ Note: the phase-4 Rust plugin seam (`register_wasm_function`) is intentionally s
 ### Initialization
 
 ```typescript
-import init from 'formualizer';
+import init from '@ocean8219/formualizer';
 await init(); // must be called once before using any API
 ```
 

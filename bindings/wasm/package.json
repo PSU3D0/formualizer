@@ -1,9 +1,12 @@
 {
-  "name": "formualizer",
-  "version": "0.7.1",
+  "name": "@ocean8219/formualizer",
+  "version": "0.7.2",
   "description": "Embeddable spreadsheet engine — parse, evaluate & mutate Excel workbooks in the browser. 320+ functions, Arrow-powered.",
   "homepage": "https://github.com/psu3d0/formualizer",
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@11.0.9",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -22,11 +25,11 @@
   ],
   "scripts": {
     "build": "npm run build:wasm && npm run build:ts",
-    "build:wasm": "wasm-pack build --target bundler --out-dir pkg --release && rm -f pkg/.gitignore",
+    "build:wasm": "wasm-pack build --target bundler --out-dir pkg --release && node scripts/remove-generated-gitignore.mjs",
     "build:ts": "tsc -p tsconfig.json",
     "prepack": "npm run build",
     "test": "wasm-pack test --node",
-    "clean": "rm -rf dist pkg"
+    "clean": "if exist dist rmdir /s /q dist & if exist pkg rmdir /s /q pkg"
   },
   "keywords": [
     "excel",
@@ -50,6 +53,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/PSU3D0/formualizer"
+    "url": "git+https://github.com/PSU3D0/formualizer.git"
   }
 }
