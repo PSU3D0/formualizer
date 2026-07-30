@@ -225,6 +225,53 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     assert_full_capacity_corpus_parity(&off, &authoritative);
 }
 
+#[test]
+fn cached_read_table_keeps_ranges_and_uncovered_points_without_expanding_ranges() {
+    const DEDUP_ROWS: u32 = 150;
+
+    let config =
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental);
+    let mut engine = Engine::new(TestWorkbook::default(), config);
+    engine
+        .set_cell_value(SHEET, 1, 3, LiteralValue::Number(1.0))
+        .unwrap();
+    let mut formulas = Vec::with_capacity((2 * DEDUP_ROWS - 1) as usize);
+    for row in 1..=DEDUP_ROWS {
+        engine
+            .set_cell_value(SHEET, row, 1, LiteralValue::Number(1.0))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+        if row > 1 {
+            formulas.push(record(
+                &mut engine,
+                row,
+                3,
+                &format!("=SUM($C$1:$C{})+$A{row}", row - 1),
+            ));
+        }
+    }
+    let report = engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
+        .unwrap();
+    assert_eq!(report.shadow_accepted_span_cells, u64::from(DEDUP_ROWS));
+
+    engine.evaluate_all().unwrap();
+
+    assert!(engine.mixed_topology_cache_present_for_test());
+    assert_eq!(
+        engine.mixed_topology_redundant_point_read_count_for_test(),
+        Some(0),
+        "a covering read region makes same-consumer point reads redundant"
+    );
+
+    let before = numeric_value(&engine, DEDUP_ROWS, 3);
+    engine
+        .set_cell_value(SHEET, DEDUP_ROWS, 1, LiteralValue::Number(5.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(numeric_value(&engine, DEDUP_ROWS, 3), before + 4.0);
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct CapacityOverlaySnapshot {
     overlay_ref: crate::formula_plane::runtime::FormulaOverlayRef,

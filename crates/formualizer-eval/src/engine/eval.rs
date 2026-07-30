@@ -5415,6 +5415,30 @@ where
         self.cached_mixed_topology.is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn mixed_topology_redundant_point_read_count_for_test(&self) -> Option<usize> {
+        let reads = &self.cached_mixed_topology.as_ref()?.consumer_reads;
+        Some(
+            reads
+                .entries()
+                .filter(|read| {
+                    let (rows, cols) = read.read_region.axis_ranges();
+                    matches!(
+                        (rows, cols),
+                        (
+                            crate::formula_plane::region_index::AxisRange::Point(_),
+                            crate::formula_plane::region_index::AxisRange::Point(_)
+                        )
+                    ) && reads.entries().any(|covering| {
+                        covering.consumer == read.consumer
+                            && covering.read_region != read.read_region
+                            && covering.read_region.contains_region(read.read_region)
+                    })
+                })
+                .count(),
+        )
+    }
+
     fn record_formula_ingest_report(&mut self, report: FormulaIngestReport) {
         self.formula_ingest_report_total.mode = report.mode;
         self.formula_ingest_report_total.accumulate(&report);
@@ -18815,33 +18839,13 @@ where
             };
             let result_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
             let mut seen = rustc_hash::FxHashSet::default();
-            for dep in self.graph.get_dependencies(*vertex) {
-                let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
-                    continue;
-                };
-                let read_region = Region::point(
-                    dep_cell.sheet_id,
-                    dep_cell.coord.row(),
-                    dep_cell.coord.col(),
-                );
-                if seen.insert(read_region) {
-                    consumer_reads.try_reserve(1).map_err(|_| {
-                        ExcelError::new(ExcelErrorKind::NImpl)
-                            .with_message("FormulaPlane cache read-index reservation failed")
-                    })?;
-                    consumer_reads.insert_read(
-                        FormulaProducerId::Legacy(*vertex),
-                        read_region,
-                        result_region,
-                        DirtyProjectionRule::WholeResult,
-                    );
-                }
-            }
+            let mut covering_read_regions = Vec::new();
             if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
                 for range in ranges {
                     let Some(read_region) = self.shared_range_to_region_pattern(range)? else {
                         continue;
                     };
+                    covering_read_regions.push(read_region);
                     if seen.insert(read_region) {
                         consumer_reads.try_reserve(1).map_err(|_| {
                             ExcelError::new(ExcelErrorKind::NImpl)
@@ -18856,6 +18860,49 @@ where
                     }
                 }
             }
+            for read_region in DynamicRefVirtualDepProvider::get_virtual_regions(self, *vertex) {
+                covering_read_regions.push(read_region);
+                if seen.insert(read_region) {
+                    consumer_reads.try_reserve(1).map_err(|_| {
+                        ExcelError::new(ExcelErrorKind::NImpl)
+                            .with_message("FormulaPlane dynamic-region reservation failed")
+                    })?;
+                    consumer_reads.insert_read(
+                        FormulaProducerId::Legacy(*vertex),
+                        read_region,
+                        result_region,
+                        DirtyProjectionRule::WholeResult,
+                    );
+                }
+            }
+            for dep in self.graph.get_dependencies(*vertex) {
+                let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
+                    continue;
+                };
+                let read_region = Region::point(
+                    dep_cell.sheet_id,
+                    dep_cell.coord.row(),
+                    dep_cell.coord.col(),
+                );
+                if covering_read_regions
+                    .iter()
+                    .any(|covering| covering.contains_region(read_region))
+                {
+                    continue;
+                }
+                if seen.insert(read_region) {
+                    consumer_reads.try_reserve(1).map_err(|_| {
+                        ExcelError::new(ExcelErrorKind::NImpl)
+                            .with_message("FormulaPlane cache read-index reservation failed")
+                    })?;
+                    consumer_reads.insert_read(
+                        FormulaProducerId::Legacy(*vertex),
+                        read_region,
+                        result_region,
+                        DirtyProjectionRule::WholeResult,
+                    );
+                }
+            }
             let (virtual_dependencies, _) = VirtualDepBuilder::new(self).build(&[*vertex]);
             for dependency in virtual_dependencies
                 .get(vertex)
@@ -18867,24 +18914,16 @@ where
                     continue;
                 };
                 let read_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                if covering_read_regions
+                    .iter()
+                    .any(|covering| covering.contains_region(read_region))
+                {
+                    continue;
+                }
                 if seen.insert(read_region) {
                     consumer_reads.try_reserve(1).map_err(|_| {
                         ExcelError::new(ExcelErrorKind::NImpl)
                             .with_message("FormulaPlane cache virtual read reservation failed")
-                    })?;
-                    consumer_reads.insert_read(
-                        FormulaProducerId::Legacy(*vertex),
-                        read_region,
-                        result_region,
-                        DirtyProjectionRule::WholeResult,
-                    );
-                }
-            }
-            for read_region in DynamicRefVirtualDepProvider::get_virtual_regions(self, *vertex) {
-                if seen.insert(read_region) {
-                    consumer_reads.try_reserve(1).map_err(|_| {
-                        ExcelError::new(ExcelErrorKind::NImpl)
-                            .with_message("FormulaPlane dynamic-region reservation failed")
                     })?;
                     consumer_reads.insert_read(
                         FormulaProducerId::Legacy(*vertex),
