@@ -444,7 +444,10 @@ def package_one(
 
 
 def seed_patched_registry_dependencies(
-    tool: Path, registry: Path, env: dict[str, str]
+    tool: Path,
+    registry: Path,
+    env: dict[str, str],
+    packages: tuple[Package, ...],
 ) -> None:
     """Add crates whose registry lock entry was replaced by a git/path patch."""
 
@@ -457,8 +460,11 @@ def seed_patched_registry_dependencies(
         locked.setdefault(str(package["name"]), set()).add(str(package["version"]))
 
     requirements: dict[str, set[str]] = {}
-    for package in metadata["packages"]:
-        for dependency in package["dependencies"]:
+    package_names = {package.name for package in packages}
+    for metadata_package in metadata["packages"]:
+        if metadata_package["name"] not in package_names:
+            continue
+        for dependency in metadata_package["dependencies"]:
             source = dependency.get("source") or ""
             if not source.startswith("registry+"):
                 continue
@@ -483,7 +489,9 @@ def seed_patched_registry_dependencies(
             )
 
 
-def prepare_local_registry(temp_root: Path) -> tuple[Path, dict[str, str]]:
+def prepare_local_registry(
+    temp_root: Path, packages: tuple[Package, ...]
+) -> tuple[Path, dict[str, str]]:
     tool = ensure_local_registry_tool()
     registry = temp_root / "registry"
     cargo_home = temp_root / "cargo-home"
@@ -491,7 +499,7 @@ def prepare_local_registry(temp_root: Path) -> tuple[Path, dict[str, str]]:
     env = os.environ.copy()
     env["CARGO_HOME"] = str(TOOL_CARGO_HOME)
     run([str(tool), "sync", str(ROOT / "Cargo.lock"), str(registry)], env=env)
-    seed_patched_registry_dependencies(tool, registry, env)
+    seed_patched_registry_dependencies(tool, registry, env, packages)
     return registry, staging_environment(cargo_home, registry)
 
 
@@ -510,7 +518,7 @@ def preflight(track: str, allow_dirty: bool) -> None:
         registry: Path | None = None
         package_env: dict[str, str] | None = None
         if len(packages) > 1:
-            registry, package_env = prepare_local_registry(temp_root)
+            registry, package_env = prepare_local_registry(temp_root, packages)
 
         results: list[dict[str, str]] = []
         for package in packages:
