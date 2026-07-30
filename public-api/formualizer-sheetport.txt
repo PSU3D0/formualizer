@@ -1,0 +1,379 @@
+pub mod formualizer_sheetport
+pub enum formualizer_sheetport::AreaLocation
+pub formualizer_sheetport::AreaLocation::Layout(sheetport_spec::manifest::LayoutDescriptor)
+pub formualizer_sheetport::AreaLocation::Name(alloc::string::String)
+pub formualizer_sheetport::AreaLocation::Range(formualizer_common::range::RangeAddress)
+pub formualizer_sheetport::AreaLocation::StructRef(alloc::string::String)
+impl core::clone::Clone for formualizer_sheetport::AreaLocation
+pub fn formualizer_sheetport::AreaLocation::clone(&self) -> formualizer_sheetport::AreaLocation
+impl core::fmt::Debug for formualizer_sheetport::AreaLocation
+pub fn formualizer_sheetport::AreaLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_sheetport::BatchPlanStalePolicy
+pub formualizer_sheetport::BatchPlanStalePolicy::Error
+pub formualizer_sheetport::BatchPlanStalePolicy::RebuildOnStale
+impl core::clone::Clone for formualizer_sheetport::BatchPlanStalePolicy
+pub fn formualizer_sheetport::BatchPlanStalePolicy::clone(&self) -> formualizer_sheetport::BatchPlanStalePolicy
+impl core::cmp::Eq for formualizer_sheetport::BatchPlanStalePolicy
+impl core::cmp::PartialEq for formualizer_sheetport::BatchPlanStalePolicy
+pub fn formualizer_sheetport::BatchPlanStalePolicy::eq(&self, &formualizer_sheetport::BatchPlanStalePolicy) -> bool
+impl core::default::Default for formualizer_sheetport::BatchPlanStalePolicy
+pub fn formualizer_sheetport::BatchPlanStalePolicy::default() -> formualizer_sheetport::BatchPlanStalePolicy
+impl core::fmt::Debug for formualizer_sheetport::BatchPlanStalePolicy
+pub fn formualizer_sheetport::BatchPlanStalePolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_sheetport::BatchPlanStalePolicy
+impl core::marker::StructuralPartialEq for formualizer_sheetport::BatchPlanStalePolicy
+pub enum formualizer_sheetport::BoundPort
+pub formualizer_sheetport::BoundPort::Range(formualizer_sheetport::RangeBinding)
+pub formualizer_sheetport::BoundPort::Record(formualizer_sheetport::RecordBinding)
+pub formualizer_sheetport::BoundPort::Scalar(formualizer_sheetport::ScalarBinding)
+pub formualizer_sheetport::BoundPort::Table(formualizer_sheetport::TableBinding)
+impl core::clone::Clone for formualizer_sheetport::BoundPort
+pub fn formualizer_sheetport::BoundPort::clone(&self) -> formualizer_sheetport::BoundPort
+impl core::fmt::Debug for formualizer_sheetport::BoundPort
+pub fn formualizer_sheetport::BoundPort::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_sheetport::EvalMode
+pub formualizer_sheetport::EvalMode::Full
+impl core::clone::Clone for formualizer_sheetport::EvalMode
+pub fn formualizer_sheetport::EvalMode::clone(&self) -> formualizer_sheetport::EvalMode
+impl core::fmt::Debug for formualizer_sheetport::EvalMode
+pub fn formualizer_sheetport::EvalMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_sheetport::FieldLocation
+pub formualizer_sheetport::FieldLocation::Cell(formualizer_common::range::RangeAddress)
+pub formualizer_sheetport::FieldLocation::Name(alloc::string::String)
+pub formualizer_sheetport::FieldLocation::StructRef(alloc::string::String)
+impl core::clone::Clone for formualizer_sheetport::FieldLocation
+pub fn formualizer_sheetport::FieldLocation::clone(&self) -> formualizer_sheetport::FieldLocation
+impl core::fmt::Debug for formualizer_sheetport::FieldLocation
+pub fn formualizer_sheetport::FieldLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_sheetport::PortValue
+pub formualizer_sheetport::PortValue::Range(alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>)
+pub formualizer_sheetport::PortValue::Record(alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_common::value::LiteralValue>)
+pub formualizer_sheetport::PortValue::Scalar(formualizer_common::value::LiteralValue)
+pub formualizer_sheetport::PortValue::Table(formualizer_sheetport::TableValue)
+impl formualizer_sheetport::PortValue
+pub fn formualizer_sheetport::PortValue::as_range(&self) -> core::option::Option<&[alloc::vec::Vec<formualizer_common::value::LiteralValue>]>
+pub fn formualizer_sheetport::PortValue::as_record(&self) -> core::option::Option<&alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_common::value::LiteralValue>>
+pub fn formualizer_sheetport::PortValue::as_scalar(&self) -> core::option::Option<&formualizer_common::value::LiteralValue>
+pub fn formualizer_sheetport::PortValue::as_table(&self) -> core::option::Option<&formualizer_sheetport::TableValue>
+pub fn formualizer_sheetport::PortValue::is_empty(&self) -> bool
+impl core::clone::Clone for formualizer_sheetport::PortValue
+pub fn formualizer_sheetport::PortValue::clone(&self) -> formualizer_sheetport::PortValue
+impl core::cmp::PartialEq for formualizer_sheetport::PortValue
+pub fn formualizer_sheetport::PortValue::eq(&self, &formualizer_sheetport::PortValue) -> bool
+impl core::fmt::Debug for formualizer_sheetport::PortValue
+pub fn formualizer_sheetport::PortValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_sheetport::PortValue
+pub enum formualizer_sheetport::ScalarLocation
+pub formualizer_sheetport::ScalarLocation::Cell(formualizer_common::range::RangeAddress)
+pub formualizer_sheetport::ScalarLocation::Name(alloc::string::String)
+pub formualizer_sheetport::ScalarLocation::StructRef(alloc::string::String)
+impl core::clone::Clone for formualizer_sheetport::ScalarLocation
+pub fn formualizer_sheetport::ScalarLocation::clone(&self) -> formualizer_sheetport::ScalarLocation
+impl core::fmt::Debug for formualizer_sheetport::ScalarLocation
+pub fn formualizer_sheetport::ScalarLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_sheetport::SheetPortError
+pub formualizer_sheetport::SheetPortError::BatchRestoration
+pub formualizer_sheetport::SheetPortError::BatchRestoration::primary: alloc::boxed::Box<formualizer_sheetport::SheetPortError>
+pub formualizer_sheetport::SheetPortError::BatchRestoration::restoration: alloc::boxed::Box<formualizer_sheetport::SheetPortError>
+pub formualizer_sheetport::SheetPortError::ConstraintViolation
+pub formualizer_sheetport::SheetPortError::ConstraintViolation::violations: alloc::vec::Vec<formualizer_sheetport::ConstraintViolation>
+pub formualizer_sheetport::SheetPortError::Engine
+pub formualizer_sheetport::SheetPortError::Engine::source: formualizer_common::error::ExcelError
+pub formualizer_sheetport::SheetPortError::InvalidManifest
+pub formualizer_sheetport::SheetPortError::InvalidManifest::issues: alloc::vec::Vec<sheetport_spec::validation::ManifestIssue>
+pub formualizer_sheetport::SheetPortError::InvalidReference
+pub formualizer_sheetport::SheetPortError::InvalidReference::details: alloc::string::String
+pub formualizer_sheetport::SheetPortError::InvalidReference::port: alloc::string::String
+pub formualizer_sheetport::SheetPortError::InvalidReference::reference: alloc::string::String
+pub formualizer_sheetport::SheetPortError::InvariantViolation
+pub formualizer_sheetport::SheetPortError::InvariantViolation::message: alloc::string::String
+pub formualizer_sheetport::SheetPortError::InvariantViolation::port: alloc::string::String
+pub formualizer_sheetport::SheetPortError::LayoutExhausted
+pub formualizer_sheetport::SheetPortError::LayoutExhausted::limit: u32
+pub formualizer_sheetport::SheetPortError::LayoutExhausted::observed: u32
+pub formualizer_sheetport::SheetPortError::LayoutExhausted::port: alloc::string::String
+pub formualizer_sheetport::SheetPortError::LayoutExhausted::scan_start: u32
+pub formualizer_sheetport::SheetPortError::LayoutExhausted::sheet: alloc::string::String
+pub formualizer_sheetport::SheetPortError::LayoutExhausted::termination: alloc::string::String
+pub formualizer_sheetport::SheetPortError::MissingSheet
+pub formualizer_sheetport::SheetPortError::MissingSheet::port: alloc::string::String
+pub formualizer_sheetport::SheetPortError::MissingSheet::sheet: alloc::string::String
+pub formualizer_sheetport::SheetPortError::SelectorSafety
+pub formualizer_sheetport::SheetPortError::SelectorSafety::port: alloc::string::String
+pub formualizer_sheetport::SheetPortError::SelectorSafety::reason: alloc::string::String
+pub formualizer_sheetport::SheetPortError::UnsupportedSelector
+pub formualizer_sheetport::SheetPortError::UnsupportedSelector::port: alloc::string::String
+pub formualizer_sheetport::SheetPortError::UnsupportedSelector::reason: alloc::string::String
+pub formualizer_sheetport::SheetPortError::Workbook
+pub formualizer_sheetport::SheetPortError::Workbook::source: formualizer_workbook::error::IoError
+impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_sheetport::SheetPortError
+pub fn formualizer_sheetport::SheetPortError::from(formualizer_common::error::ExcelError) -> Self
+impl core::convert::From<formualizer_workbook::error::IoError> for formualizer_sheetport::SheetPortError
+pub fn formualizer_sheetport::SheetPortError::from(formualizer_workbook::error::IoError) -> Self
+impl core::convert::From<sheetport_spec::validation::ValidationError> for formualizer_sheetport::SheetPortError
+pub fn formualizer_sheetport::SheetPortError::from(sheetport_spec::validation::ValidationError) -> Self
+impl core::error::Error for formualizer_sheetport::SheetPortError
+pub fn formualizer_sheetport::SheetPortError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for formualizer_sheetport::SheetPortError
+pub fn formualizer_sheetport::SheetPortError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_sheetport::SheetPortError
+pub fn formualizer_sheetport::SheetPortError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_sheetport::TableLocation
+pub formualizer_sheetport::TableLocation::Layout(sheetport_spec::manifest::LayoutDescriptor)
+pub formualizer_sheetport::TableLocation::Table(sheetport_spec::manifest::TableSelector)
+impl core::clone::Clone for formualizer_sheetport::TableLocation
+pub fn formualizer_sheetport::TableLocation::clone(&self) -> formualizer_sheetport::TableLocation
+impl core::fmt::Debug for formualizer_sheetport::TableLocation
+pub fn formualizer_sheetport::TableLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_sheetport::ValidationScope
+pub formualizer_sheetport::ValidationScope::Full
+pub formualizer_sheetport::ValidationScope::Partial
+impl core::clone::Clone for formualizer_sheetport::ValidationScope
+pub fn formualizer_sheetport::ValidationScope::clone(&self) -> formualizer_sheetport::ValidationScope
+impl core::cmp::Eq for formualizer_sheetport::ValidationScope
+impl core::cmp::PartialEq for formualizer_sheetport::ValidationScope
+pub fn formualizer_sheetport::ValidationScope::eq(&self, &formualizer_sheetport::ValidationScope) -> bool
+impl core::fmt::Debug for formualizer_sheetport::ValidationScope
+pub fn formualizer_sheetport::ValidationScope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_sheetport::ValidationScope
+impl core::marker::StructuralPartialEq for formualizer_sheetport::ValidationScope
+pub struct formualizer_sheetport::BatchExecutor<'a>
+impl<'a> formualizer_sheetport::BatchExecutor<'a>
+pub fn formualizer_sheetport::BatchExecutor<'a>::run<I>(&mut self, I) -> core::result::Result<alloc::vec::Vec<formualizer_sheetport::BatchResult>, formualizer_sheetport::SheetPortError> where I: core::iter::traits::collect::IntoIterator<Item = formualizer_sheetport::BatchInput>
+pub struct formualizer_sheetport::BatchInput
+pub formualizer_sheetport::BatchInput::id: alloc::string::String
+pub formualizer_sheetport::BatchInput::update: formualizer_sheetport::InputUpdate
+impl formualizer_sheetport::BatchInput
+pub fn formualizer_sheetport::BatchInput::new(impl core::convert::Into<alloc::string::String>, formualizer_sheetport::InputUpdate) -> Self
+impl core::clone::Clone for formualizer_sheetport::BatchInput
+pub fn formualizer_sheetport::BatchInput::clone(&self) -> formualizer_sheetport::BatchInput
+impl core::fmt::Debug for formualizer_sheetport::BatchInput
+pub fn formualizer_sheetport::BatchInput::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::BatchOptions<'a>
+pub formualizer_sheetport::BatchOptions::concurrency: core::option::Option<usize>
+pub formualizer_sheetport::BatchOptions::eval: formualizer_sheetport::EvalOptions
+pub formualizer_sheetport::BatchOptions::progress: core::option::Option<alloc::boxed::Box<(dyn core::ops::function::FnMut(formualizer_sheetport::BatchProgress<'_>) + core::marker::Send + 'a)>>
+pub formualizer_sheetport::BatchOptions::stale_policy: formualizer_sheetport::BatchPlanStalePolicy
+impl<'a> core::default::Default for formualizer_sheetport::BatchOptions<'a>
+pub fn formualizer_sheetport::BatchOptions<'a>::default() -> formualizer_sheetport::BatchOptions<'a>
+pub struct formualizer_sheetport::BatchProgress<'a>
+pub formualizer_sheetport::BatchProgress::completed: usize
+pub formualizer_sheetport::BatchProgress::scenario_id: &'a str
+pub formualizer_sheetport::BatchProgress::total: usize
+impl<'a> core::clone::Clone for formualizer_sheetport::BatchProgress<'a>
+pub fn formualizer_sheetport::BatchProgress<'a>::clone(&self) -> formualizer_sheetport::BatchProgress<'a>
+impl<'a> core::fmt::Debug for formualizer_sheetport::BatchProgress<'a>
+pub fn formualizer_sheetport::BatchProgress<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::BatchResult
+pub formualizer_sheetport::BatchResult::id: alloc::string::String
+pub formualizer_sheetport::BatchResult::outputs: formualizer_sheetport::OutputSnapshot
+impl core::clone::Clone for formualizer_sheetport::BatchResult
+pub fn formualizer_sheetport::BatchResult::clone(&self) -> formualizer_sheetport::BatchResult
+impl core::fmt::Debug for formualizer_sheetport::BatchResult
+pub fn formualizer_sheetport::BatchResult::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::ConstraintViolation
+pub formualizer_sheetport::ConstraintViolation::message: alloc::string::String
+pub formualizer_sheetport::ConstraintViolation::path: alloc::string::String
+pub formualizer_sheetport::ConstraintViolation::port: alloc::string::String
+impl formualizer_sheetport::ConstraintViolation
+pub fn formualizer_sheetport::ConstraintViolation::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for formualizer_sheetport::ConstraintViolation
+pub fn formualizer_sheetport::ConstraintViolation::clone(&self) -> formualizer_sheetport::ConstraintViolation
+impl core::fmt::Debug for formualizer_sheetport::ConstraintViolation
+pub fn formualizer_sheetport::ConstraintViolation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::EvalOptions
+pub formualizer_sheetport::EvalOptions::budgets: core::option::Option<formualizer_eval::engine::resource_ledger::EvaluationBudgets>
+pub formualizer_sheetport::EvalOptions::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
+pub formualizer_sheetport::EvalOptions::deadline: core::option::Option<std::time::Instant>
+pub formualizer_sheetport::EvalOptions::deterministic_mode: core::option::Option<formualizer_eval::engine::DeterministicMode>
+pub formualizer_sheetport::EvalOptions::freeze_volatile: bool
+pub formualizer_sheetport::EvalOptions::mode: formualizer_sheetport::EvalMode
+pub formualizer_sheetport::EvalOptions::opaque_policy: formualizer_eval::engine::target_preparation::OpaquePreparePolicy
+pub formualizer_sheetport::EvalOptions::rng_seed: core::option::Option<u64>
+impl core::clone::Clone for formualizer_sheetport::EvalOptions
+pub fn formualizer_sheetport::EvalOptions::clone(&self) -> formualizer_sheetport::EvalOptions
+impl core::default::Default for formualizer_sheetport::EvalOptions
+pub fn formualizer_sheetport::EvalOptions::default() -> Self
+impl core::fmt::Debug for formualizer_sheetport::EvalOptions
+pub fn formualizer_sheetport::EvalOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::InputSnapshot(pub alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>)
+impl formualizer_sheetport::InputSnapshot
+pub fn formualizer_sheetport::InputSnapshot::get(&self, &str) -> core::option::Option<&formualizer_sheetport::PortValue>
+pub fn formualizer_sheetport::InputSnapshot::inner(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>
+pub fn formualizer_sheetport::InputSnapshot::into_inner(self) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>
+pub fn formualizer_sheetport::InputSnapshot::new(alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>) -> Self
+pub fn formualizer_sheetport::InputSnapshot::to_update(&self) -> formualizer_sheetport::InputUpdate
+impl core::clone::Clone for formualizer_sheetport::InputSnapshot
+pub fn formualizer_sheetport::InputSnapshot::clone(&self) -> formualizer_sheetport::InputSnapshot
+impl core::cmp::PartialEq for formualizer_sheetport::InputSnapshot
+pub fn formualizer_sheetport::InputSnapshot::eq(&self, &formualizer_sheetport::InputSnapshot) -> bool
+impl core::default::Default for formualizer_sheetport::InputSnapshot
+pub fn formualizer_sheetport::InputSnapshot::default() -> formualizer_sheetport::InputSnapshot
+impl core::fmt::Debug for formualizer_sheetport::InputSnapshot
+pub fn formualizer_sheetport::InputSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_sheetport::InputSnapshot
+pub struct formualizer_sheetport::InputUpdate(pub alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>)
+impl formualizer_sheetport::InputUpdate
+pub fn formualizer_sheetport::InputUpdate::insert(&mut self, impl core::convert::Into<alloc::string::String>, formualizer_sheetport::PortValue)
+pub fn formualizer_sheetport::InputUpdate::into_inner(self) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>
+pub fn formualizer_sheetport::InputUpdate::is_empty(&self) -> bool
+pub fn formualizer_sheetport::InputUpdate::new() -> Self
+impl core::clone::Clone for formualizer_sheetport::InputUpdate
+pub fn formualizer_sheetport::InputUpdate::clone(&self) -> formualizer_sheetport::InputUpdate
+impl core::cmp::PartialEq for formualizer_sheetport::InputUpdate
+pub fn formualizer_sheetport::InputUpdate::eq(&self, &formualizer_sheetport::InputUpdate) -> bool
+impl core::default::Default for formualizer_sheetport::InputUpdate
+pub fn formualizer_sheetport::InputUpdate::default() -> formualizer_sheetport::InputUpdate
+impl core::fmt::Debug for formualizer_sheetport::InputUpdate
+pub fn formualizer_sheetport::InputUpdate::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_sheetport::InputUpdate
+pub struct formualizer_sheetport::ManifestBindings
+impl formualizer_sheetport::ManifestBindings
+pub fn formualizer_sheetport::ManifestBindings::bindings(&self) -> &[formualizer_sheetport::PortBinding]
+pub fn formualizer_sheetport::ManifestBindings::get(&self, &str) -> core::option::Option<&formualizer_sheetport::PortBinding>
+pub fn formualizer_sheetport::ManifestBindings::into_parts(self) -> (sheetport_spec::manifest::Manifest, alloc::vec::Vec<formualizer_sheetport::PortBinding>)
+pub fn formualizer_sheetport::ManifestBindings::manifest(&self) -> &sheetport_spec::manifest::Manifest
+pub fn formualizer_sheetport::ManifestBindings::new(sheetport_spec::manifest::Manifest) -> core::result::Result<Self, formualizer_sheetport::SheetPortError>
+impl core::clone::Clone for formualizer_sheetport::ManifestBindings
+pub fn formualizer_sheetport::ManifestBindings::clone(&self) -> formualizer_sheetport::ManifestBindings
+impl core::fmt::Debug for formualizer_sheetport::ManifestBindings
+pub fn formualizer_sheetport::ManifestBindings::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::OutputSnapshot(pub alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>)
+impl formualizer_sheetport::OutputSnapshot
+pub fn formualizer_sheetport::OutputSnapshot::get(&self, &str) -> core::option::Option<&formualizer_sheetport::PortValue>
+pub fn formualizer_sheetport::OutputSnapshot::inner(&self) -> &alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>
+pub fn formualizer_sheetport::OutputSnapshot::into_inner(self) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>
+pub fn formualizer_sheetport::OutputSnapshot::new(alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::PortValue>) -> Self
+impl core::clone::Clone for formualizer_sheetport::OutputSnapshot
+pub fn formualizer_sheetport::OutputSnapshot::clone(&self) -> formualizer_sheetport::OutputSnapshot
+impl core::cmp::PartialEq for formualizer_sheetport::OutputSnapshot
+pub fn formualizer_sheetport::OutputSnapshot::eq(&self, &formualizer_sheetport::OutputSnapshot) -> bool
+impl core::default::Default for formualizer_sheetport::OutputSnapshot
+pub fn formualizer_sheetport::OutputSnapshot::default() -> formualizer_sheetport::OutputSnapshot
+impl core::fmt::Debug for formualizer_sheetport::OutputSnapshot
+pub fn formualizer_sheetport::OutputSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_sheetport::OutputSnapshot
+pub struct formualizer_sheetport::PortBinding
+pub formualizer_sheetport::PortBinding::constraints: core::option::Option<sheetport_spec::manifest::Constraints>
+pub formualizer_sheetport::PortBinding::default: core::option::Option<serde_json::value::Value>
+pub formualizer_sheetport::PortBinding::description: core::option::Option<alloc::string::String>
+pub formualizer_sheetport::PortBinding::direction: sheetport_spec::manifest::Direction
+pub formualizer_sheetport::PortBinding::id: alloc::string::String
+pub formualizer_sheetport::PortBinding::index: usize
+pub formualizer_sheetport::PortBinding::kind: formualizer_sheetport::BoundPort
+pub formualizer_sheetport::PortBinding::partition_key: bool
+pub formualizer_sheetport::PortBinding::required: bool
+pub formualizer_sheetport::PortBinding::resolved_default: core::option::Option<formualizer_sheetport::PortValue>
+pub formualizer_sheetport::PortBinding::units: core::option::Option<sheetport_spec::manifest::Units>
+impl core::clone::Clone for formualizer_sheetport::PortBinding
+pub fn formualizer_sheetport::PortBinding::clone(&self) -> formualizer_sheetport::PortBinding
+impl core::fmt::Debug for formualizer_sheetport::PortBinding
+pub fn formualizer_sheetport::PortBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::RangeBinding
+pub formualizer_sheetport::RangeBinding::cell_type: sheetport_spec::manifest::ValueType
+pub formualizer_sheetport::RangeBinding::format: core::option::Option<alloc::string::String>
+pub formualizer_sheetport::RangeBinding::location: formualizer_sheetport::AreaLocation
+impl core::clone::Clone for formualizer_sheetport::RangeBinding
+pub fn formualizer_sheetport::RangeBinding::clone(&self) -> formualizer_sheetport::RangeBinding
+impl core::fmt::Debug for formualizer_sheetport::RangeBinding
+pub fn formualizer_sheetport::RangeBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::RecordBinding
+pub formualizer_sheetport::RecordBinding::fields: alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_sheetport::RecordFieldBinding>
+pub formualizer_sheetport::RecordBinding::location: formualizer_sheetport::AreaLocation
+impl core::clone::Clone for formualizer_sheetport::RecordBinding
+pub fn formualizer_sheetport::RecordBinding::clone(&self) -> formualizer_sheetport::RecordBinding
+impl core::fmt::Debug for formualizer_sheetport::RecordBinding
+pub fn formualizer_sheetport::RecordBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::RecordFieldBinding
+pub formualizer_sheetport::RecordFieldBinding::constraints: core::option::Option<sheetport_spec::manifest::Constraints>
+pub formualizer_sheetport::RecordFieldBinding::location: formualizer_sheetport::FieldLocation
+pub formualizer_sheetport::RecordFieldBinding::units: core::option::Option<sheetport_spec::manifest::Units>
+pub formualizer_sheetport::RecordFieldBinding::value_type: sheetport_spec::manifest::ValueType
+impl core::clone::Clone for formualizer_sheetport::RecordFieldBinding
+pub fn formualizer_sheetport::RecordFieldBinding::clone(&self) -> formualizer_sheetport::RecordFieldBinding
+impl core::fmt::Debug for formualizer_sheetport::RecordFieldBinding
+pub fn formualizer_sheetport::RecordFieldBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::ScalarBinding
+pub formualizer_sheetport::ScalarBinding::format: core::option::Option<alloc::string::String>
+pub formualizer_sheetport::ScalarBinding::location: formualizer_sheetport::ScalarLocation
+pub formualizer_sheetport::ScalarBinding::value_type: sheetport_spec::manifest::ValueType
+impl core::clone::Clone for formualizer_sheetport::ScalarBinding
+pub fn formualizer_sheetport::ScalarBinding::clone(&self) -> formualizer_sheetport::ScalarBinding
+impl core::fmt::Debug for formualizer_sheetport::ScalarBinding
+pub fn formualizer_sheetport::ScalarBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::SheetPort<'a>
+impl<'a> formualizer_sheetport::SheetPort<'a>
+pub fn formualizer_sheetport::SheetPort<'a>::batch(&'a mut self, formualizer_sheetport::BatchOptions<'a>) -> core::result::Result<formualizer_sheetport::BatchExecutor<'a>, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPort<'a>::bindings(&self) -> &[formualizer_sheetport::PortBinding]
+pub fn formualizer_sheetport::SheetPort<'a>::evaluate_once(&mut self, formualizer_sheetport::EvalOptions) -> core::result::Result<formualizer_sheetport::OutputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPort<'a>::evaluate_with_plan(&mut self, &formualizer_eval::engine::eval::RecalcPlan, formualizer_sheetport::EvalOptions) -> core::result::Result<formualizer_sheetport::OutputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPort<'a>::from_bindings(&'a mut formualizer_workbook::workbook::Workbook, formualizer_sheetport::ManifestBindings) -> core::result::Result<Self, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPort<'a>::into_parts(self) -> (&'a mut formualizer_workbook::workbook::Workbook, formualizer_sheetport::ManifestBindings)
+pub fn formualizer_sheetport::SheetPort<'a>::manifest(&self) -> &sheetport_spec::manifest::Manifest
+pub fn formualizer_sheetport::SheetPort<'a>::new(&'a mut formualizer_workbook::workbook::Workbook, sheetport_spec::manifest::Manifest) -> core::result::Result<Self, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPort<'a>::read_inputs(&mut self) -> core::result::Result<formualizer_sheetport::InputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPort<'a>::read_outputs(&mut self) -> core::result::Result<formualizer_sheetport::OutputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPort<'a>::workbook(&self) -> &formualizer_workbook::workbook::Workbook
+pub fn formualizer_sheetport::SheetPort<'a>::workbook_mut(&mut self) -> &mut formualizer_workbook::workbook::Workbook
+pub fn formualizer_sheetport::SheetPort<'a>::write_inputs(&mut self, formualizer_sheetport::InputUpdate) -> core::result::Result<(), formualizer_sheetport::SheetPortError>
+pub struct formualizer_sheetport::SheetPortSession
+impl formualizer_sheetport::SheetPortSession
+pub fn formualizer_sheetport::SheetPortSession::bindings(&self) -> &[formualizer_sheetport::PortBinding]
+pub fn formualizer_sheetport::SheetPortSession::evaluate_once(&mut self, formualizer_sheetport::EvalOptions) -> core::result::Result<formualizer_sheetport::OutputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPortSession::evaluate_with_plan(&mut self, &formualizer_eval::engine::eval::RecalcPlan, formualizer_sheetport::EvalOptions) -> core::result::Result<formualizer_sheetport::OutputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPortSession::from_parts(formualizer_workbook::workbook::Workbook, formualizer_sheetport::ManifestBindings) -> core::result::Result<Self, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPortSession::into_parts(self) -> (formualizer_workbook::workbook::Workbook, formualizer_sheetport::ManifestBindings)
+pub fn formualizer_sheetport::SheetPortSession::manifest(&self) -> &sheetport_spec::manifest::Manifest
+pub fn formualizer_sheetport::SheetPortSession::new(formualizer_workbook::workbook::Workbook, sheetport_spec::manifest::Manifest) -> core::result::Result<Self, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPortSession::read_inputs(&mut self) -> core::result::Result<formualizer_sheetport::InputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPortSession::read_outputs(&mut self) -> core::result::Result<formualizer_sheetport::OutputSnapshot, formualizer_sheetport::SheetPortError>
+pub fn formualizer_sheetport::SheetPortSession::workbook(&self) -> &formualizer_workbook::workbook::Workbook
+pub fn formualizer_sheetport::SheetPortSession::workbook_mut(&mut self) -> &mut formualizer_workbook::workbook::Workbook
+pub fn formualizer_sheetport::SheetPortSession::write_inputs(&mut self, formualizer_sheetport::InputUpdate) -> core::result::Result<(), formualizer_sheetport::SheetPortError>
+pub struct formualizer_sheetport::TableBinding
+pub formualizer_sheetport::TableBinding::columns: alloc::vec::Vec<formualizer_sheetport::TableColumnBinding>
+pub formualizer_sheetport::TableBinding::keys: alloc::vec::Vec<alloc::string::String>
+pub formualizer_sheetport::TableBinding::location: formualizer_sheetport::TableLocation
+impl core::clone::Clone for formualizer_sheetport::TableBinding
+pub fn formualizer_sheetport::TableBinding::clone(&self) -> formualizer_sheetport::TableBinding
+impl core::fmt::Debug for formualizer_sheetport::TableBinding
+pub fn formualizer_sheetport::TableBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::TableColumnBinding
+pub formualizer_sheetport::TableColumnBinding::column_hint: core::option::Option<alloc::string::String>
+pub formualizer_sheetport::TableColumnBinding::format: core::option::Option<alloc::string::String>
+pub formualizer_sheetport::TableColumnBinding::name: alloc::string::String
+pub formualizer_sheetport::TableColumnBinding::units: core::option::Option<sheetport_spec::manifest::Units>
+pub formualizer_sheetport::TableColumnBinding::value_type: sheetport_spec::manifest::ValueType
+impl core::clone::Clone for formualizer_sheetport::TableColumnBinding
+pub fn formualizer_sheetport::TableColumnBinding::clone(&self) -> formualizer_sheetport::TableColumnBinding
+impl core::fmt::Debug for formualizer_sheetport::TableColumnBinding
+pub fn formualizer_sheetport::TableColumnBinding::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_sheetport::TableRow
+pub formualizer_sheetport::TableRow::values: alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_common::value::LiteralValue>
+impl formualizer_sheetport::TableRow
+pub fn formualizer_sheetport::TableRow::get(&self, &str) -> core::option::Option<&formualizer_common::value::LiteralValue>
+pub fn formualizer_sheetport::TableRow::is_empty(&self) -> bool
+pub fn formualizer_sheetport::TableRow::new(alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_common::value::LiteralValue>) -> Self
+impl core::clone::Clone for formualizer_sheetport::TableRow
+pub fn formualizer_sheetport::TableRow::clone(&self) -> formualizer_sheetport::TableRow
+impl core::cmp::PartialEq for formualizer_sheetport::TableRow
+pub fn formualizer_sheetport::TableRow::eq(&self, &formualizer_sheetport::TableRow) -> bool
+impl core::default::Default for formualizer_sheetport::TableRow
+pub fn formualizer_sheetport::TableRow::default() -> formualizer_sheetport::TableRow
+impl core::fmt::Debug for formualizer_sheetport::TableRow
+pub fn formualizer_sheetport::TableRow::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_sheetport::TableRow
+pub struct formualizer_sheetport::TableValue
+pub formualizer_sheetport::TableValue::rows: alloc::vec::Vec<formualizer_sheetport::TableRow>
+impl formualizer_sheetport::TableValue
+pub fn formualizer_sheetport::TableValue::is_empty(&self) -> bool
+pub fn formualizer_sheetport::TableValue::new(alloc::vec::Vec<formualizer_sheetport::TableRow>) -> Self
+impl core::clone::Clone for formualizer_sheetport::TableValue
+pub fn formualizer_sheetport::TableValue::clone(&self) -> formualizer_sheetport::TableValue
+impl core::cmp::PartialEq for formualizer_sheetport::TableValue
+pub fn formualizer_sheetport::TableValue::eq(&self, &formualizer_sheetport::TableValue) -> bool
+impl core::default::Default for formualizer_sheetport::TableValue
+pub fn formualizer_sheetport::TableValue::default() -> formualizer_sheetport::TableValue
+impl core::fmt::Debug for formualizer_sheetport::TableValue
+pub fn formualizer_sheetport::TableValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_sheetport::TableValue
