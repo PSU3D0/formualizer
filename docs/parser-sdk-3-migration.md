@@ -47,7 +47,7 @@ Replace the removed token-vector classifier constructors with parser configurati
 let mut parser = Parser::new(formula)?.with_volatility_classifier(classifier);
 
 // Replaces Parser::new_with_classifier_and_dialect(
-//     tokens, include_whitespace, classifier, dialect,
+//     tokens, include_whitespace, dialect, classifier,
 // )
 let mut parser = ParserBuilder::default()
     .dialect(dialect)
@@ -61,16 +61,18 @@ For one-shot parsing, `parse_with_volatility_classifier` and `parse_with_dialect
 
 New date-aware code should choose `DateSystem::Excel1900` or `DateSystem::Excel1904` and use the `*_for` APIs, for example `datetime_to_serial_for`, `try_serial_to_datetime_for`, and `try_serial_to_display_date_parts_for`. The display-parts API is the only API that distinguishes Excel's fictitious 1900-02-29 at serial 60; representable `chrono` conversion aliases serial 60 to 1900-02-28.
 
-The root `datetime_to_serial` and `serial_to_datetime` functions keep the historical implicit Excel-1900 behavior. Their legacy module-qualified paths are also available again in 3.0:
+The root `datetime_to_serial` and `serial_to_datetime` functions keep the implicit Excel-1900 API. Their legacy module-qualified paths are also available again in 3.0:
 
 ```rust
 formualizer_common::value::datetime_to_serial(&datetime);
 formualizer_common::value::serial_to_datetime(serial);
 ```
 
+The restored module paths provide source-path compatibility, not every 2.0 edge-case bug. In 3.0, `serial_to_datetime` uses the canonical carry-aware rounding: a fractional day that rounds to 86,400 seconds advances to midnight on the next date. The 2.0 implementation instead wrapped that boundary to midnight on the same date; that end-of-day wrap bug is intentionally not restored.
+
 ## Add wildcard arms for reported vocabularies
 
-The following reported error/outcome enums are now `#[non_exhaustive]`. Matches outside `formualizer-common` must include a wildcard arm:
+The following reported error/outcome enums are now `#[non_exhaustive]`. Matches outside the crate that defines an enum must include a wildcard arm:
 
 - `ExcelErrorKind`
 - `ResourceExhaustionReason`
@@ -81,10 +83,12 @@ The following reported error/outcome enums are now `#[non_exhaustive]`. Matches 
 - `A1ParseError`
 - `SheetAddressError`
 - `ValueError`
+- `formualizer_parse::RecoveryAction`
+- `formualizer_parse::ParsingError`
 
 Choose a fallback that matches the output boundary. For example, an error-code storage layer can map a future `ExcelErrorKind` to its generic error code, while a diagnostic binding can omit an unknown structured-extra projection and still preserve the error itself. Future variants must not reach `unreachable!`, `panic!`, or an equivalent assertion.
 
-Caller-supplied/core vocabularies remain exhaustive deliberately: `DateSystem`, `LiteralValue`, `ArgKind`, `CoercionPolicy`, `SheetLocator`, and `SheetRef`. Continue matching those explicitly when the compiler verifies the complete contract; do not add speculative wildcard arms.
+Caller-supplied/core vocabularies remain exhaustive deliberately: `DateSystem`, `LiteralValue`, `ArgKind`, `CoercionPolicy`, `SheetLocator`, and `SheetRef`, along with parser dialect, token, and core AST/value enums. Continue matching those explicitly when the compiler verifies the complete contract; do not add speculative wildcard arms.
 
 ## Serde wire compatibility
 

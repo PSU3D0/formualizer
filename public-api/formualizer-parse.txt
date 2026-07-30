@@ -442,7 +442,7 @@ impl core::fmt::Debug for formualizer_parse::tokenizer::Associativity
 pub fn formualizer_parse::tokenizer::Associativity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_parse::tokenizer::Associativity
 impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::Associativity
-pub enum formualizer_parse::tokenizer::RecoveryAction
+#[non_exhaustive] pub enum formualizer_parse::tokenizer::RecoveryAction
 pub formualizer_parse::tokenizer::RecoveryAction::InvalidErrorLiteral
 pub formualizer_parse::tokenizer::RecoveryAction::SkippedUnmatchedCloser
 pub formualizer_parse::tokenizer::RecoveryAction::UnmatchedBracket
@@ -671,7 +671,7 @@ impl serde_core::ser::Serialize for formualizer_parse::types::FormulaDialect
 pub fn formualizer_parse::types::FormulaDialect::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::types::FormulaDialect
 pub fn formualizer_parse::types::FormulaDialect::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_parse::types::ParsingError
+#[non_exhaustive] pub enum formualizer_parse::types::ParsingError
 pub formualizer_parse::types::ParsingError::InvalidReference(alloc::string::String)
 impl core::clone::Clone for formualizer_parse::types::ParsingError
 pub fn formualizer_parse::types::ParsingError::clone(&self) -> formualizer_parse::types::ParsingError
@@ -734,7 +734,7 @@ impl serde_core::ser::Serialize for formualizer_parse::types::FormulaDialect
 pub fn formualizer_parse::types::FormulaDialect::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::types::FormulaDialect
 pub fn formualizer_parse::types::FormulaDialect::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_parse::ParsingError
+#[non_exhaustive] pub enum formualizer_parse::ParsingError
 pub formualizer_parse::ParsingError::InvalidReference(alloc::string::String)
 impl core::clone::Clone for formualizer_parse::types::ParsingError
 pub fn formualizer_parse::types::ParsingError::clone(&self) -> formualizer_parse::types::ParsingError
@@ -745,7 +745,7 @@ pub fn formualizer_parse::types::ParsingError::fmt(&self, &mut core::fmt::Format
 impl core::fmt::Display for formualizer_parse::types::ParsingError
 pub fn formualizer_parse::types::ParsingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_parse::types::ParsingError
-pub enum formualizer_parse::RecoveryAction
+#[non_exhaustive] pub enum formualizer_parse::RecoveryAction
 pub formualizer_parse::RecoveryAction::InvalidErrorLiteral
 pub formualizer_parse::RecoveryAction::SkippedUnmatchedCloser
 pub formualizer_parse::RecoveryAction::UnmatchedBracket

@@ -80,7 +80,7 @@ Multiple tags can point at the same commit if we want “synced” releases with
 ### Cross-track compatibility
 
 - Product crates should depend on parser/SDK crates with semver ranges (not exact pins) once `parse/common` reach stability.
-  - Example target end state: product crates depend on `formualizer-parse = "^1"` and `formualizer-common = "^1"`.
+  - Current 3.0 track: product crates depend on `formualizer-parse = "^3.0"` and `formualizer-common = "^3.0"`.
 - While `0.x`, treat “minor” bumps as breaking; avoid frequent cross-track churn.
 
 ### Feature forwarding

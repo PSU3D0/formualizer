@@ -40,3 +40,12 @@ fn legacy_value_serial_60_keeps_historical_representable_alias() {
         59.0
     );
 }
+
+#[test]
+fn legacy_value_path_uses_canonical_end_of_day_carry() {
+    let rounds_to_next_day = 1.0 + 86_399.6 / 86_400.0;
+    assert_eq!(
+        formualizer_common::value::serial_to_datetime(rounds_to_next_day),
+        datetime(1900, 1, 2, 0)
+    );
+}

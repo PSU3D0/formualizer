@@ -1,3 +1,6 @@
+//! These integration tests compile as an external downstream crate. The wildcard
+//! arms prove the required match shape; assertions cover only variants that exist now.
+
 use formualizer_common::{
     A1ParseError, CoordError, ExcelErrorExtra, ExcelErrorKind, PlanStaleReason,
     PreparationStaleReason, ResourceExhaustionReason, SheetAddressError, ValueError,
@@ -67,7 +70,7 @@ fn value_error_label(value: ValueError) -> &'static str {
 }
 
 #[test]
-fn downstream_matches_handle_known_reported_variants_and_future_variants() {
+fn external_wildcard_matches_compile_and_map_known_variants() {
     assert_eq!(error_kind_label(ExcelErrorKind::Value), "value");
     assert_eq!(
         resource_reason_label(ResourceExhaustionReason::GraphEdges),
