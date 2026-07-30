@@ -6,6 +6,12 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Breaking changes
 
+#### Parser/SDK 3.0 preparation
+
+- `formualizer-common` and `formualizer-parse` now share version 3.0.0. The major records the removal of the four 2.0 token-vector/classifier `Parser` constructors in favor of source strings, `TokenStream`, and `ParserBuilder`; the deleted token-vector parser is not restored. See `docs/parser-sdk-3-migration.md`. (#257)
+- Reported error/outcome vocabularies (`ExcelErrorKind`, resource and staleness reasons, `ExcelErrorExtra`, common coordinate/address/value errors, `RecoveryAction`, and `ParsingError`) are now non-exhaustive. Downstream output mappings use deliberate future fallbacks, while caller-supplied/core enums remain exhaustive. Serde unknown variants remain a separate wire-compatibility concern. (#257)
+- Restored the inexpensive legacy `formualizer_common::value::{datetime_to_serial, serial_to_datetime}` paths as forwarding reexports; the root and `date_serial` paths remain available. (#257)
+
 - Migrated the remaining public context and range raw-flag signatures to `CancelToken`: `EvaluationContext::cancellation_token()` and `FunctionContext::cancellation_token()` now return `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`, and `RangeView::with_cancel_token(...)` now accepts `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`. Context implementers should clone and return the shared handle without allocating; custom functions should retrieve it once before hot loops and periodically poll `is_cancelled()`. To adopt an existing raw flag, use `CancelToken::from_flag(flag)`, for example `Some(CancelToken::from_flag(Arc::clone(&flag)))`. (#233)
 
 ### Added

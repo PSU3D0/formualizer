@@ -480,7 +480,7 @@ impl ReferenceType {
         }
     }
 
-    /// Create a reference from a string. Can be A1, A:A, A1:B2, Table1[Column], etc.
+    /// Create a reference from a string such as `A1`, `A:A`, `A1:B2`, or `Table1[Column]`.
     pub fn from_string(reference: &str) -> Result<Self, ParsingError> {
         Self::parse_excel_reference(reference)
     }

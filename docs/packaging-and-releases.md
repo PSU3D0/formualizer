@@ -80,7 +80,7 @@ Multiple tags can point at the same commit if we want “synced” releases with
 ### Cross-track compatibility
 
 - Product crates should depend on parser/SDK crates with semver ranges (not exact pins) once `parse/common` reach stability.
-  - Example target end state: product crates depend on `formualizer-parse = "^1"` and `formualizer-common = "^1"`.
+  - Current 3.0 track: product crates depend on `formualizer-parse = "^3.0"` and `formualizer-common = "^3.0"`.
 - While `0.x`, treat “minor” bumps as breaking; avoid frequent cross-track churn.
 
 ### Feature forwarding
@@ -148,7 +148,7 @@ Use `scripts/bump-version.py` to update versions across all manifests for a give
 ./scripts/bump-version.py --track product --version 0.4.0
 
 # Parser/SDK track (formualizer-common + formualizer-parse)
-./scripts/bump-version.py --track parse --version 1.1.0
+./scripts/bump-version.py --track parse --version 3.0.0
 
 # Spec track (sheetport-spec only)
 ./scripts/bump-version.py --track spec --version 0.4.0

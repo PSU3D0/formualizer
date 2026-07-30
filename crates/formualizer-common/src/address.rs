@@ -100,6 +100,7 @@ impl PackedSheetCell {
 }
 
 /// Errors that can occur while constructing sheet-scoped references.
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SheetAddressError {
     /// Encountered a 0 or underflowed 1-based index when converting to 0-based.

@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-common"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-parse"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "formualizer-common",
  "once_cell",

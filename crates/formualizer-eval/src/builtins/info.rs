@@ -1568,6 +1568,25 @@ pub struct ErrorTypeFn;
 /// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
+fn error_type_code(kind: ExcelErrorKind) -> i64 {
+    match kind {
+        ExcelErrorKind::Null => 1,
+        ExcelErrorKind::Div => 2,
+        ExcelErrorKind::Value => 3,
+        ExcelErrorKind::Ref => 4,
+        ExcelErrorKind::Name => 5,
+        ExcelErrorKind::Num => 6,
+        ExcelErrorKind::Na => 7,
+        ExcelErrorKind::Error => 8,
+        ExcelErrorKind::NImpl => 9,
+        ExcelErrorKind::Spill => 10,
+        ExcelErrorKind::Calc => 11,
+        ExcelErrorKind::Circ => 12,
+        ExcelErrorKind::Cancelled => 13,
+        _ => 8,
+    }
+}
+
 impl Function for ErrorTypeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
@@ -1592,22 +1611,7 @@ impl Function for ErrorTypeFn {
         let v = args[0].value()?.into_literal();
         match v {
             LiteralValue::Error(e) => {
-                let code = match e.kind {
-                    ExcelErrorKind::Null => 1,
-                    ExcelErrorKind::Div => 2,
-                    ExcelErrorKind::Value => 3,
-                    ExcelErrorKind::Ref => 4,
-                    ExcelErrorKind::Name => 5,
-                    ExcelErrorKind::Num => 6,
-                    ExcelErrorKind::Na => 7,
-                    ExcelErrorKind::Error => 8,
-                    // Non-standard extensions (codes 9-13)
-                    ExcelErrorKind::NImpl => 9,
-                    ExcelErrorKind::Spill => 10,
-                    ExcelErrorKind::Calc => 11,
-                    ExcelErrorKind::Circ => 12,
-                    ExcelErrorKind::Cancelled => 13,
-                };
+                let code = error_type_code(e.kind);
                 Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(code)))
             }
             _ => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -1734,6 +1738,28 @@ mod tests {
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
+    }
+
+    #[test]
+    fn error_type_known_mappings_are_stable() {
+        let cases = [
+            (ExcelErrorKind::Null, 1),
+            (ExcelErrorKind::Div, 2),
+            (ExcelErrorKind::Value, 3),
+            (ExcelErrorKind::Ref, 4),
+            (ExcelErrorKind::Name, 5),
+            (ExcelErrorKind::Num, 6),
+            (ExcelErrorKind::Na, 7),
+            (ExcelErrorKind::Error, 8),
+            (ExcelErrorKind::NImpl, 9),
+            (ExcelErrorKind::Spill, 10),
+            (ExcelErrorKind::Calc, 11),
+            (ExcelErrorKind::Circ, 12),
+            (ExcelErrorKind::Cancelled, 13),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(error_type_code(kind), expected, "{kind:?}");
+        }
     }
 
     #[test]

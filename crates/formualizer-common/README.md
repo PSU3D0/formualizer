@@ -10,11 +10,10 @@ crate represent literal values, ranges, function signatures, and diagnostic
 errors that travel between the parser, evaluator, workbook, and external
 surfaces.
 
-> **Note:** This crate exists primarily to satisfy compile-time sharing across
-> the Formualizer workspace. It is published so downstream crates resolve, but
-> its APIs are considered internal and may change between releases without
-> notice. Prefer the higher-level `formualizer-*` crates unless you are working
-> within the Formualizer project itself.
+> **Note:** This crate is a versioned SDK dependency shared across Formualizer
+> crates and is also available to downstream integrations. Public API changes
+> follow semantic versioning. Prefer a higher-level `formualizer-*` crate when
+> you do not need the shared value, reference, or diagnostic types directly.
 
 ## Highlights
 
