@@ -6646,6 +6646,53 @@ where
         }
     }
 
+    fn prepared_placement_function_semantics_changed(
+        &self,
+        semantic_epoch: u64,
+        prepared: &crate::formula_plane::placement::PreparedAnchorOncePlacement,
+        guard: &crate::function_registry::SemanticEpochReadGuard,
+    ) -> bool {
+        if semantic_epoch == guard.epoch() {
+            return false;
+        }
+        let (_, _, _, ast_id, _, _) = prepared.ownership_proof();
+        let Some(ast) = self
+            .graph
+            .data_store()
+            .reconstruct_ast_node(ast_id, self.graph.sheet_reg())
+        else {
+            // Missing planning evidence must never turn a semantic change into reuse.
+            return true;
+        };
+        let mut requests = Vec::new();
+        Self::collect_planning_function_requests(&ast, &mut requests);
+        guard.semantic_changes_affect_requests_since(semantic_epoch, requests)
+    }
+
+    fn prepared_function_semantics_changed(
+        &self,
+        preparation: &crate::engine::FormulaCompressedPreparation,
+        guard: &crate::function_registry::SemanticEpochReadGuard,
+    ) -> bool {
+        if preparation.function_semantic_epoch == guard.epoch() {
+            return false;
+        }
+
+        let mut requests = Vec::new();
+        for (_, _, prepared) in &preparation.prepared {
+            let (_, _, _, ast_id, _, _) = prepared.ownership_proof();
+            let Some(ast) = self
+                .graph
+                .data_store()
+                .reconstruct_ast_node(ast_id, self.graph.sheet_reg())
+            else {
+                return true;
+            };
+            Self::collect_planning_function_requests(&ast, &mut requests);
+        }
+        guard.semantic_changes_affect_requests_since(preparation.function_semantic_epoch, requests)
+    }
+
     pub(crate) fn prepare_source_formula_families(
         &mut self,
         sheet_name: &str,
@@ -7644,9 +7691,7 @@ where
                 .with_message("compressed source preparation sheet mismatch"));
         }
         let initial_guard = crate::function_registry::semantic_epoch_read_guard();
-        let initial_epoch = initial_guard.epoch();
         let initial_provider_revision = self.resolver.planning_semantic_revision();
-        drop(initial_guard);
         let mut fallback_batches = Vec::with_capacity(batches.len());
         let mut stale_fallback_batches = Vec::new();
         let mut pending_preparations = Vec::new();
@@ -7684,7 +7729,8 @@ where
                 .then(|| {
                     if preparation.function_provider_revision != initial_provider_revision {
                         Some("FunctionProviderRevisionChanged")
-                    } else if preparation.function_semantic_epoch != initial_epoch {
+                    } else if self.prepared_function_semantics_changed(&preparation, &initial_guard)
+                    {
                         Some("FunctionSemanticEpochChanged")
                     } else {
                         None
@@ -7729,6 +7775,7 @@ where
             }
             pending_preparations.push((preparation, stale_semantics));
         }
+        drop(initial_guard);
 
         // Build known fallback graphs first. Stale batches are forced through legacy ingest.
         let configured_mode = self.config.formula_plane_mode;
@@ -7792,7 +7839,6 @@ where
                 hook();
             }
             let commit_guard = crate::function_registry::semantic_epoch_read_guard();
-            let commit_epoch = commit_guard.epoch();
             let commit_provider_revision = self.resolver.planning_semantic_revision();
             let mut newly_stale = Vec::new();
             let mut current = Vec::new();
@@ -7803,7 +7849,9 @@ where
                     .then(|| {
                         if pending.0.function_provider_revision != commit_provider_revision {
                             Some("FunctionProviderRevisionChanged")
-                        } else if pending.0.function_semantic_epoch != commit_epoch {
+                        } else if self
+                            .prepared_function_semantics_changed(&pending.0, &commit_guard)
+                        {
                             Some("FunctionSemanticEpochChanged")
                         } else {
                             None
@@ -8077,9 +8125,14 @@ where
                         SourceProposal::Clean(source_id, _, prepared) => {
                             let commit_guard =
                                 crate::function_registry::semantic_epoch_read_guard();
-                            let commit_epoch = commit_guard.epoch();
                             let commit_provider_revision =
                                 self.resolver.planning_semantic_revision();
+                            let semantic_changed = preparation.function_semantics_used
+                                && self.prepared_placement_function_semantics_changed(
+                                    preparation.function_semantic_epoch,
+                                    &prepared,
+                                    &commit_guard,
+                                );
                             let cells = prepared.member_count;
                             let stats = self.graph.baseline_stats();
                             self.preflight_graph_admission(
@@ -8113,9 +8166,7 @@ where
                                     {
                                         return Err("FunctionProviderRevisionChanged".to_string());
                                     }
-                                    if preparation.function_semantics_used
-                                        && preparation.function_semantic_epoch != commit_epoch
-                                    {
+                                    if semantic_changed {
                                         return Err("FunctionSemanticEpochChanged".to_string());
                                     }
                                     self.graph

@@ -893,7 +893,20 @@ fn semantic_changes_affect_requests_in_state(
     }
     let requests = requests
         .into_iter()
-        .map(|(namespace, name, _)| (norm(namespace), norm(name)))
+        .flat_map(|(namespace, name, _)| {
+            let namespace = norm(namespace);
+            let normalized = norm(name);
+            let mut spellings = vec![(namespace.clone(), normalized.clone())];
+            let mut stripped = normalized.as_str();
+            while let Some(rest) = EXCEL_PREFIXES
+                .iter()
+                .find_map(|prefix| stripped.strip_prefix(prefix))
+            {
+                stripped = rest;
+                spellings.push((namespace.clone(), stripped.to_string()));
+            }
+            spellings
+        })
         .collect::<std::collections::BTreeSet<_>>();
     changes.keys.into_iter().any(|key| requests.contains(&key))
 }
@@ -1036,11 +1049,9 @@ pub fn register_alias(ns: &str, alias: &str, target_ns: &str, target_name: &str)
             owner: None,
         },
     );
-    let mut changed = vec![alias_key, target];
-    if let Some(old_target) = old_target {
-        changed.push(old_target);
-    }
-    publish_semantic_change(&mut state, changed);
+    // Retargeting changes resolution through the alias spelling, not resolution
+    // of either directly named target.
+    publish_semantic_change(&mut state, [alias_key]);
 }
 
 pub fn snapshot_registered() -> Vec<(String, String, Arc<dyn Function>)> {
@@ -1602,21 +1613,95 @@ mod tests {
     }
 
     #[test]
-    fn alias_redirect_publishes_old_new_targets_and_spelling_atomically() {
-        crate::builtins::load_builtins();
-        register_alias("", "__ALIAS_EPOCH_FIXTURE__", "", "SUM");
-        let before = semantic_epoch();
-        register_alias("", "__ALIAS_EPOCH_FIXTURE__", "", "ABS");
-        let changes = semantic_changes_since(before);
-        assert!(changes.epoch > before);
-        assert!(changes.complete);
-        for expected in [
-            (String::new(), "__ALIAS_EPOCH_FIXTURE__".to_string()),
-            (String::new(), "SUM".to_string()),
-            (String::new(), "ABS".to_string()),
-        ] {
-            assert!(changes.keys.contains(&expected), "missing {expected:?}");
+    fn alias_requests_keep_the_spelling_used_by_the_formula() {
+        let ns = "__ALIAS_REQUEST_SPELLING__";
+        register_builtin(planning_fn(ns, "TARGET", &[], FnCaps::empty()));
+        register_alias(ns, "FORMULA_ALIAS", ns, "TARGET");
+        let request = (ns.to_string(), "FORMULA_ALIAS".to_string(), 1);
+        let snapshot = RegistryPlanningSnapshot::capture_for_requests(
+            &GlobalRegistryFunctionProvider,
+            [request.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.requests.as_ref(), &[request]);
+        assert_eq!(
+            snapshot
+                .function_semantic_identity(ns, "FORMULA_ALIAS", 1)
+                .unwrap()
+                .canonical_name,
+            "TARGET"
+        );
+    }
+
+    #[test]
+    fn alias_mutations_affect_alias_requests_but_not_direct_target_requests() {
+        let ns = "__ALIAS_CHANGE_SCOPE__";
+        register_builtin(planning_fn(ns, "OLD_TARGET", &[], FnCaps::empty()));
+        register_builtin(planning_fn(ns, "NEW_TARGET", &[], FnCaps::empty()));
+
+        let add_epoch = semantic_epoch();
+        register_alias(ns, "ADDED_ALIAS", ns, "OLD_TARGET");
+        assert!(semantic_changes_affect_requests_since(
+            add_epoch,
+            [(ns.to_string(), "ADDED_ALIAS".to_string(), 1)]
+        ));
+        assert!(!semantic_changes_affect_requests_since(
+            add_epoch,
+            [(ns.to_string(), "OLD_TARGET".to_string(), 1)]
+        ));
+
+        register_alias(ns, "RETARGETED_ALIAS", ns, "OLD_TARGET");
+        let retarget_epoch = semantic_epoch();
+        register_alias(ns, "RETARGETED_ALIAS", ns, "NEW_TARGET");
+        assert!(semantic_changes_affect_requests_since(
+            retarget_epoch,
+            [(ns.to_string(), "RETARGETED_ALIAS".to_string(), 1)]
+        ));
+        assert!(semantic_changes_affect_requests_since(
+            retarget_epoch,
+            [(ns.to_string(), "_xlfn.RETARGETED_ALIAS".to_string(), 1)]
+        ));
+        for target in ["OLD_TARGET", "NEW_TARGET"] {
+            assert!(!semantic_changes_affect_requests_since(
+                retarget_epoch,
+                [(ns.to_string(), target.to_string(), 1)]
+            ));
         }
+
+        register_alias(ns, "REMOVED_ALIAS", ns, "OLD_TARGET");
+        let remove_epoch = semantic_epoch();
+        {
+            let mut state = REGISTRY
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let alias_key = (ns.to_string(), "REMOVED_ALIAS".to_string());
+            assert!(state.aliases.remove(&alias_key).is_some());
+            publish_semantic_change(&mut state, [alias_key]);
+        }
+        assert!(semantic_changes_affect_requests_since(
+            remove_epoch,
+            [(ns.to_string(), "REMOVED_ALIAS".to_string(), 1)]
+        ));
+        assert!(!semantic_changes_affect_requests_since(
+            remove_epoch,
+            [(ns.to_string(), "OLD_TARGET".to_string(), 1)]
+        ));
+    }
+
+    #[test]
+    fn request_change_check_stays_conservative_after_log_truncation() {
+        let mut state = RegistryState::default();
+        let before = state.semantic_epoch;
+        for index in 0..=1_024 {
+            publish_semantic_change(&mut state, [(String::new(), format!("UNRELATED_{index}"))]);
+        }
+
+        assert!(semantic_changes_affect_requests_in_state(
+            &state,
+            before,
+            [(String::new(), "TARGET".to_string(), 1)]
+        ));
     }
 
     #[test]
