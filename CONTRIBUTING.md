@@ -50,7 +50,10 @@ cargo test --workspace
 ### Public Rust API snapshots
 
 The published Rust crates have deterministic API snapshots under `public-api/`.
-Install the pinned tools, then run the same drift check as CI:
+Canonical generation requires Linux `x86_64-unknown-linux-gnu`; use the
+repository devcontainer or an equivalent Linux environment, not macOS or
+Windows output. Rustup, Python 3, and standard Linux utilities are required.
+Install the pinned isolated tools, then run the same drift check as CI:
 
 ```bash
 scripts/public-api.sh setup

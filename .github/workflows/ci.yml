@@ -156,30 +156,30 @@ jobs:
         target/cffi_smoke
 
   public-api:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Set up pinned installer Rust
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       with:
         toolchain: 1.93.0
 
     - name: Set up pinned rustdoc nightly
-      uses: dtolnay/rust-toolchain@nightly
+      uses: dtolnay/rust-toolchain@4fd1da8b0805d2d2e936788875a7d65dbd677dc2 # nightly
       with:
         toolchain: nightly-2026-02-16
         targets: x86_64-unknown-linux-gnu
 
     - name: Cache public API tooling and build output
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: |
-          ~/.cargo/bin/cargo-public-api
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
+          target/public-api-tools/
+          target/public-api-cargo-home/
           target/public-api/
         key: ${{ runner.os }}-public-api-0.52.0-nightly-2026-02-16-${{ hashFiles('**/Cargo.lock', 'scripts/public-api.sh') }}
         restore-keys: |

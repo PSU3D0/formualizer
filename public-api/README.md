@@ -28,7 +28,7 @@ The CFFI, Python, and WASM manifests' current publish flags are release-hygiene 
 
 ## Native feature profiles
 
-`scripts/public-api.sh` is the single source of truth for these explicit maximal native allowlists. It always disables default features first and never uses `--all-features`.
+`scripts/public-api.sh` is the single source of truth for these explicit maximal native allowlists. It always disables default features first and never uses `--all-features`. Before generation, Python 3 compares every governed package's `cargo metadata --no-deps` feature keys with the enabled, excluded, alias, and default classifications below. A new unclassified feature fails with instructions instead of silently changing or escaping the profile.
 
 | Crate | Enabled native features | Rationale and exclusions |
 | --- | --- | --- |
@@ -43,14 +43,16 @@ The CFFI, Python, and WASM manifests' current publish flags are release-hygiene 
 
 ## Deterministic generation
 
+Canonical generation is supported on Linux (`x86_64-unknown-linux-gnu`), including the repository devcontainer and the `ubuntu-24.04` CI runner. It requires rustup, Python 3 for feature-policy validation, and standard Linux utilities (`diff`, `realpath`, and `mktemp`). Run review generation in that environment rather than treating output from macOS or Windows as canonical.
+
 Generation pins these inputs and neutralizes host configuration:
 
-- `cargo-public-api 0.52.0`, installed with Rust `1.93.0`
+- exact `cargo-public-api =0.52.0`, installed with Rust `1.93.0` under versioned `target/public-api-tools/` rather than replacing a global Cargo plugin
 - rustdoc `nightly-2026-02-16` (`rustc 1.95.0-nightly`)
 - target `x86_64-unknown-linux-gnu`
 - `LC_ALL=C`, `TZ=UTC`, and `CARGO_TERM_COLOR=never`
-- unset `RUSTFLAGS`, `RUSTDOCFLAGS`, and `CARGO_BUILD_TARGET`
-- isolated `CARGO_TARGET_DIR=target/public-api`
+- unset plain and encoded rust/rustdoc flags, compiler overrides, wrappers, target linker/runner overrides, and their Cargo build equivalents
+- isolated `CARGO_TARGET_DIR=target/public-api` and `CARGO_HOME=target/public-api-cargo-home`
 
 Snapshots omit cargo-public-api's blanket implementations and compiler auto-trait implementations. Omitting auto-trait implementations means these files do not detect changes to inferred `Send`, `Sync`, or similar auto traits; reviewers must assess those separately. Derive-generated and explicit implementations remain because traits such as `Clone`, `Eq`, and `Default` are downstream commitments even though retaining them makes the baseline larger.
 
@@ -74,7 +76,7 @@ A crate selection is useful while iterating:
 scripts/public-api.sh check formualizer-eval
 ```
 
-When an API change is intentional, generate every requested crate successfully before replacing any snapshot:
+When an API change is intentional, generation completes for every requested crate before publication. Candidates are then staged on the snapshot filesystem and installed as a rollback-protected multi-file transaction, so a failed command or signal restores the entire selected baseline:
 
 ```bash
 scripts/public-api.sh update
