@@ -7,7 +7,8 @@
 `sheetport-spec` defines the Formualizer I/O (FIO) manifest format used by SheetPort.
 
 - Canonical JSON Schema: `schema/fio-0.3.json` (Draft 2019-09)
-- Current spec version: `0.3.0` (`spec_version`)
+- Current protocol version: `0.3.0` (`spec_version`)
+- Current crate/validator version: `0.3.1`
 - Conformance profiles: `core-v0` (default), `full-v0` (reserved)
 
 ## What Is FIO?
@@ -57,8 +58,9 @@ cargo run -p sheetport-spec --bin fio-lint -- tests/fixtures/supply_planning.yam
 
 ## Versioning
 
-- `spec_version` in the manifest is the authoritative spec version.
-- The crate version is expected to track the supported spec version.
+- `spec_version` in the manifest is the authoritative protocol version.
+- The crate's major/minor line tracks the supported protocol line.
+- Crate patch releases may ship validator, CLI, or packaging fixes without changing `spec_version` or the canonical schema. Crate `0.3.1` still reads and writes fio `0.3.0`; it adds the missing Excel bounds check for layout header rows.
 
 ## Documentation
 
