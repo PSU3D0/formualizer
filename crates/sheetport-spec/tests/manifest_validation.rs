@@ -393,6 +393,56 @@ ports:
     }
 }
 
+fn layout_manifest_with_header_row(header_row: u32) -> Manifest {
+    let yaml = format!(
+        r#"spec: fio
+spec_version: "0.3.0"
+manifest: {{ id: sample, name: Sample }}
+ports:
+  - id: t
+    dir: in
+    shape: table
+    location:
+      layout:
+        sheet: Sheet1
+        header_row: {header_row}
+        anchor_col: A
+        terminate: first_blank_row
+    schema:
+      kind: table
+      columns:
+        - {{ name: a, type: number }}
+"#
+    );
+    serde_yaml::from_str(&yaml).expect("manifest parses")
+}
+
+#[test]
+fn layout_header_row_accepts_excel_boundaries() {
+    for header_row in [1, 1_048_576] {
+        layout_manifest_with_header_row(header_row)
+            .validate()
+            .unwrap_or_else(|err| panic!("header row {header_row} should be valid: {err}"));
+    }
+}
+
+#[test]
+fn layout_header_row_rejects_values_outside_excel_bounds() {
+    for header_row in [0, 1_048_577] {
+        let err = layout_manifest_with_header_row(header_row)
+            .validate()
+            .expect_err("out-of-bounds header row must fail validation");
+        assert!(
+            err.issues().iter().any(|issue| {
+                issue.path == "ports[0].location.layout.header_row"
+                    && issue.message == "header_row must be within the Excel row bounds"
+            }),
+            "expected header-row bounds issue for {header_row}, got {:#?}",
+            err.issues()
+        );
+    }
+}
+
 #[test]
 fn enum_values_must_match_value_type_for_scalar() {
     let yaml = r#"spec: fio

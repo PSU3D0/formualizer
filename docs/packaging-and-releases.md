@@ -150,8 +150,8 @@ Use `scripts/bump-version.py` to update versions across all manifests for a give
 # Parser/SDK track (formualizer-common + formualizer-parse)
 ./scripts/bump-version.py --track parse --version 3.0.0
 
-# Spec track (sheetport-spec only)
-./scripts/bump-version.py --track spec --version 0.4.0
+# Spec track (sheetport-spec package + downstream adoption floor)
+./scripts/bump-version.py --track spec --version 0.3.1
 
 # Preview changes without modifying files
 ./scripts/bump-version.py --track product --version 0.4.0 --dry-run
@@ -164,6 +164,7 @@ The script updates:
 - **Package versions** in `Cargo.toml`, `pyproject.toml`, `package.json`
 - **Workspace dependencies** in root `Cargo.toml`
 - **Internal dependency versions** (e.g., `formualizer-eval = { path = "...", version = "X.Y.Z" }`)
+- **Spec adoption floors** in `formualizer-sheetport` and the roll-up crate when the spec track changes, preventing packaged crates from resolving behavior older than the local path source
 
 After bumping, the script runs `cargo check` to verify the workspace compiles (use `--no-verify` to skip).
 
