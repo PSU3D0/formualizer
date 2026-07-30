@@ -47,6 +47,21 @@ Full (environment permitting):
 cargo test --workspace
 ```
 
+### Public Rust API snapshots
+
+The published Rust crates have deterministic API snapshots under `public-api/`.
+Install the pinned tools, then run the same drift check as CI:
+
+```bash
+scripts/public-api.sh setup
+scripts/public-api.sh check
+```
+
+If a public API change is intentional, update all affected snapshots with
+`scripts/public-api.sh update [crate ...]`, review the unified diff for semver
+impact, and commit it with the source change. See `public-api/README.md` for the
+crate scope, native feature profiles, exclusions, and review limitations.
+
 ### Python bindings
 
 Use the helper script (creates/uses venv, builds wheel, runs tests):

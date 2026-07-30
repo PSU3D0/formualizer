@@ -1,0 +1,672 @@
+pub mod sheetport_spec
+pub enum sheetport_spec::Direction
+pub sheetport_spec::Direction::In
+pub sheetport_spec::Direction::Out
+impl core::clone::Clone for sheetport_spec::Direction
+pub fn sheetport_spec::Direction::clone(&self) -> sheetport_spec::Direction
+impl core::cmp::Eq for sheetport_spec::Direction
+impl core::cmp::PartialEq for sheetport_spec::Direction
+pub fn sheetport_spec::Direction::eq(&self, &sheetport_spec::Direction) -> bool
+impl core::fmt::Debug for sheetport_spec::Direction
+pub fn sheetport_spec::Direction::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::Direction
+impl core::marker::StructuralPartialEq for sheetport_spec::Direction
+impl schemars::JsonSchema for sheetport_spec::Direction
+pub fn sheetport_spec::Direction::inline_schema() -> bool
+pub fn sheetport_spec::Direction::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Direction::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Direction::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Direction
+pub fn sheetport_spec::Direction::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Direction
+pub fn sheetport_spec::Direction::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::FieldSelector
+pub sheetport_spec::FieldSelector::A1(sheetport_spec::SelectorA1)
+pub sheetport_spec::FieldSelector::Name(sheetport_spec::SelectorName)
+pub sheetport_spec::FieldSelector::StructRef(sheetport_spec::SelectorStructRef)
+impl core::clone::Clone for sheetport_spec::FieldSelector
+pub fn sheetport_spec::FieldSelector::clone(&self) -> sheetport_spec::FieldSelector
+impl core::fmt::Debug for sheetport_spec::FieldSelector
+pub fn sheetport_spec::FieldSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::FieldSelector
+pub fn sheetport_spec::FieldSelector::inline_schema() -> bool
+pub fn sheetport_spec::FieldSelector::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::FieldSelector::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::FieldSelector::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::FieldSelector
+pub fn sheetport_spec::FieldSelector::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::FieldSelector
+pub fn sheetport_spec::FieldSelector::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::LayoutKind
+pub sheetport_spec::LayoutKind::HeaderContiguousV1
+impl core::clone::Clone for sheetport_spec::LayoutKind
+pub fn sheetport_spec::LayoutKind::clone(&self) -> sheetport_spec::LayoutKind
+impl core::cmp::Eq for sheetport_spec::LayoutKind
+impl core::cmp::PartialEq for sheetport_spec::LayoutKind
+pub fn sheetport_spec::LayoutKind::eq(&self, &sheetport_spec::LayoutKind) -> bool
+impl core::default::Default for sheetport_spec::LayoutKind
+pub fn sheetport_spec::LayoutKind::default() -> sheetport_spec::LayoutKind
+impl core::fmt::Debug for sheetport_spec::LayoutKind
+pub fn sheetport_spec::LayoutKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::LayoutKind
+impl core::marker::StructuralPartialEq for sheetport_spec::LayoutKind
+impl schemars::JsonSchema for sheetport_spec::LayoutKind
+pub fn sheetport_spec::LayoutKind::inline_schema() -> bool
+pub fn sheetport_spec::LayoutKind::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::LayoutKind::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::LayoutKind::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::LayoutKind
+pub fn sheetport_spec::LayoutKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::LayoutKind
+pub fn sheetport_spec::LayoutKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::LayoutTermination
+pub sheetport_spec::LayoutTermination::FirstBlankRow
+pub sheetport_spec::LayoutTermination::SheetEnd
+pub sheetport_spec::LayoutTermination::UntilMarker
+impl core::clone::Clone for sheetport_spec::LayoutTermination
+pub fn sheetport_spec::LayoutTermination::clone(&self) -> sheetport_spec::LayoutTermination
+impl core::fmt::Debug for sheetport_spec::LayoutTermination
+pub fn sheetport_spec::LayoutTermination::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::LayoutTermination
+pub fn sheetport_spec::LayoutTermination::inline_schema() -> bool
+pub fn sheetport_spec::LayoutTermination::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::LayoutTermination::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::LayoutTermination::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::LayoutTermination
+pub fn sheetport_spec::LayoutTermination::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::LayoutTermination
+pub fn sheetport_spec::LayoutTermination::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::Profile
+pub sheetport_spec::Profile::CoreV0
+pub sheetport_spec::Profile::FullV0
+impl core::clone::Clone for sheetport_spec::Profile
+pub fn sheetport_spec::Profile::clone(&self) -> sheetport_spec::Profile
+impl core::cmp::Eq for sheetport_spec::Profile
+impl core::cmp::PartialEq for sheetport_spec::Profile
+pub fn sheetport_spec::Profile::eq(&self, &sheetport_spec::Profile) -> bool
+impl core::default::Default for sheetport_spec::Profile
+pub fn sheetport_spec::Profile::default() -> sheetport_spec::Profile
+impl core::fmt::Debug for sheetport_spec::Profile
+pub fn sheetport_spec::Profile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::Profile
+impl core::marker::StructuralPartialEq for sheetport_spec::Profile
+impl schemars::JsonSchema for sheetport_spec::Profile
+pub fn sheetport_spec::Profile::inline_schema() -> bool
+pub fn sheetport_spec::Profile::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Profile::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Profile::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Profile
+pub fn sheetport_spec::Profile::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Profile
+pub fn sheetport_spec::Profile::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::RangeKind
+pub sheetport_spec::RangeKind::Range
+impl core::clone::Clone for sheetport_spec::RangeKind
+pub fn sheetport_spec::RangeKind::clone(&self) -> sheetport_spec::RangeKind
+impl core::default::Default for sheetport_spec::RangeKind
+pub fn sheetport_spec::RangeKind::default() -> sheetport_spec::RangeKind
+impl core::fmt::Debug for sheetport_spec::RangeKind
+pub fn sheetport_spec::RangeKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::RangeKind
+impl schemars::JsonSchema for sheetport_spec::RangeKind
+pub fn sheetport_spec::RangeKind::inline_schema() -> bool
+pub fn sheetport_spec::RangeKind::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::RangeKind::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::RangeKind::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::RangeKind
+pub fn sheetport_spec::RangeKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::RangeKind
+pub fn sheetport_spec::RangeKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::RecordKind
+pub sheetport_spec::RecordKind::Record
+impl core::clone::Clone for sheetport_spec::RecordKind
+pub fn sheetport_spec::RecordKind::clone(&self) -> sheetport_spec::RecordKind
+impl core::default::Default for sheetport_spec::RecordKind
+pub fn sheetport_spec::RecordKind::default() -> sheetport_spec::RecordKind
+impl core::fmt::Debug for sheetport_spec::RecordKind
+pub fn sheetport_spec::RecordKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::RecordKind
+impl schemars::JsonSchema for sheetport_spec::RecordKind
+pub fn sheetport_spec::RecordKind::inline_schema() -> bool
+pub fn sheetport_spec::RecordKind::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::RecordKind::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::RecordKind::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::RecordKind
+pub fn sheetport_spec::RecordKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::RecordKind
+pub fn sheetport_spec::RecordKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::Schema
+pub sheetport_spec::Schema::Range(sheetport_spec::RangeSchema)
+pub sheetport_spec::Schema::Record(sheetport_spec::RecordSchema)
+pub sheetport_spec::Schema::Scalar(sheetport_spec::ScalarSchema)
+pub sheetport_spec::Schema::Table(sheetport_spec::TableSchema)
+impl core::clone::Clone for sheetport_spec::Schema
+pub fn sheetport_spec::Schema::clone(&self) -> sheetport_spec::Schema
+impl core::fmt::Debug for sheetport_spec::Schema
+pub fn sheetport_spec::Schema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::Schema
+pub fn sheetport_spec::Schema::inline_schema() -> bool
+pub fn sheetport_spec::Schema::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Schema::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Schema::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Schema
+pub fn sheetport_spec::Schema::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Schema
+pub fn sheetport_spec::Schema::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::Selector
+pub sheetport_spec::Selector::A1(sheetport_spec::SelectorA1)
+pub sheetport_spec::Selector::Layout(sheetport_spec::SelectorLayout)
+pub sheetport_spec::Selector::Name(sheetport_spec::SelectorName)
+pub sheetport_spec::Selector::StructRef(sheetport_spec::SelectorStructRef)
+pub sheetport_spec::Selector::Table(sheetport_spec::SelectorTable)
+impl core::clone::Clone for sheetport_spec::Selector
+pub fn sheetport_spec::Selector::clone(&self) -> sheetport_spec::Selector
+impl core::fmt::Debug for sheetport_spec::Selector
+pub fn sheetport_spec::Selector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::Selector
+pub fn sheetport_spec::Selector::inline_schema() -> bool
+pub fn sheetport_spec::Selector::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Selector::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Selector::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Selector
+pub fn sheetport_spec::Selector::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Selector
+pub fn sheetport_spec::Selector::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::Shape
+pub sheetport_spec::Shape::Range
+pub sheetport_spec::Shape::Record
+pub sheetport_spec::Shape::Scalar
+pub sheetport_spec::Shape::Table
+impl core::clone::Clone for sheetport_spec::Shape
+pub fn sheetport_spec::Shape::clone(&self) -> sheetport_spec::Shape
+impl core::cmp::Eq for sheetport_spec::Shape
+impl core::cmp::PartialEq for sheetport_spec::Shape
+pub fn sheetport_spec::Shape::eq(&self, &sheetport_spec::Shape) -> bool
+impl core::fmt::Debug for sheetport_spec::Shape
+pub fn sheetport_spec::Shape::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::Shape
+impl core::marker::StructuralPartialEq for sheetport_spec::Shape
+impl schemars::JsonSchema for sheetport_spec::Shape
+pub fn sheetport_spec::Shape::inline_schema() -> bool
+pub fn sheetport_spec::Shape::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Shape::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Shape::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Shape
+pub fn sheetport_spec::Shape::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Shape
+pub fn sheetport_spec::Shape::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::TableArea
+pub sheetport_spec::TableArea::Body
+pub sheetport_spec::TableArea::Header
+pub sheetport_spec::TableArea::Totals
+impl core::clone::Clone for sheetport_spec::TableArea
+pub fn sheetport_spec::TableArea::clone(&self) -> sheetport_spec::TableArea
+impl core::fmt::Debug for sheetport_spec::TableArea
+pub fn sheetport_spec::TableArea::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::TableArea
+impl schemars::JsonSchema for sheetport_spec::TableArea
+pub fn sheetport_spec::TableArea::inline_schema() -> bool
+pub fn sheetport_spec::TableArea::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::TableArea::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::TableArea::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::TableArea
+pub fn sheetport_spec::TableArea::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::TableArea
+pub fn sheetport_spec::TableArea::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::TableKind
+pub sheetport_spec::TableKind::Table
+impl core::clone::Clone for sheetport_spec::TableKind
+pub fn sheetport_spec::TableKind::clone(&self) -> sheetport_spec::TableKind
+impl core::default::Default for sheetport_spec::TableKind
+pub fn sheetport_spec::TableKind::default() -> sheetport_spec::TableKind
+impl core::fmt::Debug for sheetport_spec::TableKind
+pub fn sheetport_spec::TableKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::TableKind
+impl schemars::JsonSchema for sheetport_spec::TableKind
+pub fn sheetport_spec::TableKind::inline_schema() -> bool
+pub fn sheetport_spec::TableKind::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::TableKind::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::TableKind::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::TableKind
+pub fn sheetport_spec::TableKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::TableKind
+pub fn sheetport_spec::TableKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum sheetport_spec::ValueType
+pub sheetport_spec::ValueType::Boolean
+pub sheetport_spec::ValueType::Date
+pub sheetport_spec::ValueType::Datetime
+pub sheetport_spec::ValueType::Integer
+pub sheetport_spec::ValueType::Number
+pub sheetport_spec::ValueType::String
+impl core::clone::Clone for sheetport_spec::ValueType
+pub fn sheetport_spec::ValueType::clone(&self) -> sheetport_spec::ValueType
+impl core::fmt::Debug for sheetport_spec::ValueType
+pub fn sheetport_spec::ValueType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for sheetport_spec::ValueType
+impl schemars::JsonSchema for sheetport_spec::ValueType
+pub fn sheetport_spec::ValueType::inline_schema() -> bool
+pub fn sheetport_spec::ValueType::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::ValueType::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::ValueType::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::ValueType
+pub fn sheetport_spec::ValueType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::ValueType
+pub fn sheetport_spec::ValueType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::Capabilities
+pub sheetport_spec::Capabilities::features: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub sheetport_spec::Capabilities::profile: sheetport_spec::Profile
+impl core::clone::Clone for sheetport_spec::Capabilities
+pub fn sheetport_spec::Capabilities::clone(&self) -> sheetport_spec::Capabilities
+impl core::default::Default for sheetport_spec::Capabilities
+pub fn sheetport_spec::Capabilities::default() -> Self
+impl core::fmt::Debug for sheetport_spec::Capabilities
+pub fn sheetport_spec::Capabilities::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::Capabilities
+pub fn sheetport_spec::Capabilities::inline_schema() -> bool
+pub fn sheetport_spec::Capabilities::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Capabilities::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Capabilities::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Capabilities
+pub fn sheetport_spec::Capabilities::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Capabilities
+pub fn sheetport_spec::Capabilities::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::Constraints
+pub sheetport_spec::Constraints::enum: core::option::Option<alloc::vec::Vec<serde_json::value::Value>>
+pub sheetport_spec::Constraints::max: core::option::Option<f64>
+pub sheetport_spec::Constraints::min: core::option::Option<f64>
+pub sheetport_spec::Constraints::nullable: core::option::Option<bool>
+pub sheetport_spec::Constraints::pattern: core::option::Option<alloc::string::String>
+impl core::clone::Clone for sheetport_spec::Constraints
+pub fn sheetport_spec::Constraints::clone(&self) -> sheetport_spec::Constraints
+impl core::fmt::Debug for sheetport_spec::Constraints
+pub fn sheetport_spec::Constraints::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::Constraints
+pub fn sheetport_spec::Constraints::inline_schema() -> bool
+pub fn sheetport_spec::Constraints::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Constraints::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Constraints::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Constraints
+pub fn sheetport_spec::Constraints::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Constraints
+pub fn sheetport_spec::Constraints::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::LayoutDescriptor
+pub sheetport_spec::LayoutDescriptor::anchor_col: alloc::string::String
+pub sheetport_spec::LayoutDescriptor::header_row: u32
+pub sheetport_spec::LayoutDescriptor::kind: sheetport_spec::LayoutKind
+pub sheetport_spec::LayoutDescriptor::marker_text: core::option::Option<alloc::string::String>
+pub sheetport_spec::LayoutDescriptor::sheet: alloc::string::String
+pub sheetport_spec::LayoutDescriptor::terminate: sheetport_spec::LayoutTermination
+impl core::clone::Clone for sheetport_spec::LayoutDescriptor
+pub fn sheetport_spec::LayoutDescriptor::clone(&self) -> sheetport_spec::LayoutDescriptor
+impl core::fmt::Debug for sheetport_spec::LayoutDescriptor
+pub fn sheetport_spec::LayoutDescriptor::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::LayoutDescriptor
+pub fn sheetport_spec::LayoutDescriptor::inline_schema() -> bool
+pub fn sheetport_spec::LayoutDescriptor::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::LayoutDescriptor::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::LayoutDescriptor::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::LayoutDescriptor
+pub fn sheetport_spec::LayoutDescriptor::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::LayoutDescriptor
+pub fn sheetport_spec::LayoutDescriptor::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::Manifest
+pub sheetport_spec::Manifest::capabilities: core::option::Option<sheetport_spec::Capabilities>
+pub sheetport_spec::Manifest::manifest: sheetport_spec::ManifestMeta
+pub sheetport_spec::Manifest::ports: alloc::vec::Vec<sheetport_spec::Port>
+pub sheetport_spec::Manifest::spec: alloc::string::String
+pub sheetport_spec::Manifest::spec_version: sheetport_spec::SpecVersion
+impl sheetport_spec::Manifest
+pub fn sheetport_spec::Manifest::effective_profile(&self) -> sheetport_spec::Profile
+pub fn sheetport_spec::Manifest::from_yaml_reader<R: std::io::Read>(R) -> core::result::Result<Self, serde_yaml::error::Error>
+pub fn sheetport_spec::Manifest::from_yaml_str(&str) -> core::result::Result<Self, serde_yaml::error::Error>
+pub fn sheetport_spec::Manifest::normalize(&mut self)
+pub fn sheetport_spec::Manifest::normalized(self) -> Self
+pub fn sheetport_spec::Manifest::to_yaml(&self) -> core::result::Result<alloc::string::String, serde_yaml::error::Error>
+pub fn sheetport_spec::Manifest::validate(&self) -> core::result::Result<(), sheetport_spec::ValidationError>
+impl core::clone::Clone for sheetport_spec::Manifest
+pub fn sheetport_spec::Manifest::clone(&self) -> sheetport_spec::Manifest
+impl core::fmt::Debug for sheetport_spec::Manifest
+pub fn sheetport_spec::Manifest::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::str::traits::FromStr for sheetport_spec::Manifest
+pub type sheetport_spec::Manifest::Err = serde_yaml::error::Error
+pub fn sheetport_spec::Manifest::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl schemars::JsonSchema for sheetport_spec::Manifest
+pub fn sheetport_spec::Manifest::inline_schema() -> bool
+pub fn sheetport_spec::Manifest::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Manifest::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Manifest::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Manifest
+pub fn sheetport_spec::Manifest::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Manifest
+pub fn sheetport_spec::Manifest::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::ManifestIssue
+pub sheetport_spec::ManifestIssue::message: alloc::string::String
+pub sheetport_spec::ManifestIssue::path: alloc::string::String
+impl sheetport_spec::ManifestIssue
+pub fn sheetport_spec::ManifestIssue::new(impl core::convert::Into<alloc::string::String>, impl core::convert::Into<alloc::string::String>) -> Self
+impl core::clone::Clone for sheetport_spec::ManifestIssue
+pub fn sheetport_spec::ManifestIssue::clone(&self) -> sheetport_spec::ManifestIssue
+impl core::cmp::Eq for sheetport_spec::ManifestIssue
+impl core::cmp::PartialEq for sheetport_spec::ManifestIssue
+pub fn sheetport_spec::ManifestIssue::eq(&self, &sheetport_spec::ManifestIssue) -> bool
+impl core::fmt::Debug for sheetport_spec::ManifestIssue
+pub fn sheetport_spec::ManifestIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for sheetport_spec::ManifestIssue
+pub fn sheetport_spec::ManifestIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for sheetport_spec::ManifestIssue
+impl serde_core::ser::Serialize for sheetport_spec::ManifestIssue
+pub fn sheetport_spec::ManifestIssue::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::ManifestIssue
+pub fn sheetport_spec::ManifestIssue::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::ManifestMeta
+pub sheetport_spec::ManifestMeta::description: core::option::Option<alloc::string::String>
+pub sheetport_spec::ManifestMeta::id: alloc::string::String
+pub sheetport_spec::ManifestMeta::metadata: core::option::Option<alloc::collections::btree::map::BTreeMap<alloc::string::String, serde_json::value::Value>>
+pub sheetport_spec::ManifestMeta::name: alloc::string::String
+pub sheetport_spec::ManifestMeta::tags: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub sheetport_spec::ManifestMeta::workbook: core::option::Option<sheetport_spec::WorkbookMeta>
+impl core::clone::Clone for sheetport_spec::ManifestMeta
+pub fn sheetport_spec::ManifestMeta::clone(&self) -> sheetport_spec::ManifestMeta
+impl core::fmt::Debug for sheetport_spec::ManifestMeta
+pub fn sheetport_spec::ManifestMeta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::ManifestMeta
+pub fn sheetport_spec::ManifestMeta::inline_schema() -> bool
+pub fn sheetport_spec::ManifestMeta::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::ManifestMeta::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::ManifestMeta::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::ManifestMeta
+pub fn sheetport_spec::ManifestMeta::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::ManifestMeta
+pub fn sheetport_spec::ManifestMeta::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::Port
+pub sheetport_spec::Port::constraints: core::option::Option<sheetport_spec::Constraints>
+pub sheetport_spec::Port::default: core::option::Option<serde_json::value::Value>
+pub sheetport_spec::Port::description: core::option::Option<alloc::string::String>
+pub sheetport_spec::Port::dir: sheetport_spec::Direction
+pub sheetport_spec::Port::id: alloc::string::String
+pub sheetport_spec::Port::location: sheetport_spec::Selector
+pub sheetport_spec::Port::partition_key: core::option::Option<bool>
+pub sheetport_spec::Port::required: bool
+pub sheetport_spec::Port::schema: sheetport_spec::Schema
+pub sheetport_spec::Port::shape: sheetport_spec::Shape
+pub sheetport_spec::Port::units: core::option::Option<sheetport_spec::Units>
+impl core::clone::Clone for sheetport_spec::Port
+pub fn sheetport_spec::Port::clone(&self) -> sheetport_spec::Port
+impl core::fmt::Debug for sheetport_spec::Port
+pub fn sheetport_spec::Port::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::Port
+pub fn sheetport_spec::Port::inline_schema() -> bool
+pub fn sheetport_spec::Port::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Port::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Port::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Port
+pub fn sheetport_spec::Port::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Port
+pub fn sheetport_spec::Port::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::RangeSchema
+pub sheetport_spec::RangeSchema::cell_type: sheetport_spec::ValueType
+pub sheetport_spec::RangeSchema::format: core::option::Option<alloc::string::String>
+pub sheetport_spec::RangeSchema::kind: sheetport_spec::RangeKind
+impl core::clone::Clone for sheetport_spec::RangeSchema
+pub fn sheetport_spec::RangeSchema::clone(&self) -> sheetport_spec::RangeSchema
+impl core::fmt::Debug for sheetport_spec::RangeSchema
+pub fn sheetport_spec::RangeSchema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::RangeSchema
+pub fn sheetport_spec::RangeSchema::inline_schema() -> bool
+pub fn sheetport_spec::RangeSchema::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::RangeSchema::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::RangeSchema::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::RangeSchema
+pub fn sheetport_spec::RangeSchema::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::RangeSchema
+pub fn sheetport_spec::RangeSchema::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::RecordField
+pub sheetport_spec::RecordField::constraints: core::option::Option<sheetport_spec::Constraints>
+pub sheetport_spec::RecordField::location: sheetport_spec::FieldSelector
+pub sheetport_spec::RecordField::units: core::option::Option<sheetport_spec::Units>
+pub sheetport_spec::RecordField::value_type: sheetport_spec::ValueType
+impl core::clone::Clone for sheetport_spec::RecordField
+pub fn sheetport_spec::RecordField::clone(&self) -> sheetport_spec::RecordField
+impl core::fmt::Debug for sheetport_spec::RecordField
+pub fn sheetport_spec::RecordField::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::RecordField
+pub fn sheetport_spec::RecordField::inline_schema() -> bool
+pub fn sheetport_spec::RecordField::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::RecordField::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::RecordField::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::RecordField
+pub fn sheetport_spec::RecordField::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::RecordField
+pub fn sheetport_spec::RecordField::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::RecordSchema
+pub sheetport_spec::RecordSchema::fields: alloc::collections::btree::map::BTreeMap<alloc::string::String, sheetport_spec::RecordField>
+pub sheetport_spec::RecordSchema::kind: sheetport_spec::RecordKind
+impl core::clone::Clone for sheetport_spec::RecordSchema
+pub fn sheetport_spec::RecordSchema::clone(&self) -> sheetport_spec::RecordSchema
+impl core::fmt::Debug for sheetport_spec::RecordSchema
+pub fn sheetport_spec::RecordSchema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::RecordSchema
+pub fn sheetport_spec::RecordSchema::inline_schema() -> bool
+pub fn sheetport_spec::RecordSchema::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::RecordSchema::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::RecordSchema::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::RecordSchema
+pub fn sheetport_spec::RecordSchema::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::RecordSchema
+pub fn sheetport_spec::RecordSchema::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::ScalarSchema
+pub sheetport_spec::ScalarSchema::format: core::option::Option<alloc::string::String>
+pub sheetport_spec::ScalarSchema::value_type: sheetport_spec::ValueType
+impl core::clone::Clone for sheetport_spec::ScalarSchema
+pub fn sheetport_spec::ScalarSchema::clone(&self) -> sheetport_spec::ScalarSchema
+impl core::fmt::Debug for sheetport_spec::ScalarSchema
+pub fn sheetport_spec::ScalarSchema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::ScalarSchema
+pub fn sheetport_spec::ScalarSchema::inline_schema() -> bool
+pub fn sheetport_spec::ScalarSchema::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::ScalarSchema::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::ScalarSchema::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::ScalarSchema
+pub fn sheetport_spec::ScalarSchema::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::ScalarSchema
+pub fn sheetport_spec::ScalarSchema::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::SelectorA1
+pub sheetport_spec::SelectorA1::a1: alloc::string::String
+impl core::clone::Clone for sheetport_spec::SelectorA1
+pub fn sheetport_spec::SelectorA1::clone(&self) -> sheetport_spec::SelectorA1
+impl core::fmt::Debug for sheetport_spec::SelectorA1
+pub fn sheetport_spec::SelectorA1::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::SelectorA1
+pub fn sheetport_spec::SelectorA1::inline_schema() -> bool
+pub fn sheetport_spec::SelectorA1::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::SelectorA1::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::SelectorA1::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::SelectorA1
+pub fn sheetport_spec::SelectorA1::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::SelectorA1
+pub fn sheetport_spec::SelectorA1::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::SelectorLayout
+pub sheetport_spec::SelectorLayout::layout: sheetport_spec::LayoutDescriptor
+impl core::clone::Clone for sheetport_spec::SelectorLayout
+pub fn sheetport_spec::SelectorLayout::clone(&self) -> sheetport_spec::SelectorLayout
+impl core::fmt::Debug for sheetport_spec::SelectorLayout
+pub fn sheetport_spec::SelectorLayout::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::SelectorLayout
+pub fn sheetport_spec::SelectorLayout::inline_schema() -> bool
+pub fn sheetport_spec::SelectorLayout::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::SelectorLayout::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::SelectorLayout::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::SelectorLayout
+pub fn sheetport_spec::SelectorLayout::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::SelectorLayout
+pub fn sheetport_spec::SelectorLayout::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::SelectorName
+pub sheetport_spec::SelectorName::name: alloc::string::String
+impl core::clone::Clone for sheetport_spec::SelectorName
+pub fn sheetport_spec::SelectorName::clone(&self) -> sheetport_spec::SelectorName
+impl core::fmt::Debug for sheetport_spec::SelectorName
+pub fn sheetport_spec::SelectorName::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::SelectorName
+pub fn sheetport_spec::SelectorName::inline_schema() -> bool
+pub fn sheetport_spec::SelectorName::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::SelectorName::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::SelectorName::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::SelectorName
+pub fn sheetport_spec::SelectorName::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::SelectorName
+pub fn sheetport_spec::SelectorName::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::SelectorStructRef
+pub sheetport_spec::SelectorStructRef::struct_ref: alloc::string::String
+impl core::clone::Clone for sheetport_spec::SelectorStructRef
+pub fn sheetport_spec::SelectorStructRef::clone(&self) -> sheetport_spec::SelectorStructRef
+impl core::fmt::Debug for sheetport_spec::SelectorStructRef
+pub fn sheetport_spec::SelectorStructRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::SelectorStructRef
+pub fn sheetport_spec::SelectorStructRef::inline_schema() -> bool
+pub fn sheetport_spec::SelectorStructRef::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::SelectorStructRef::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::SelectorStructRef::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::SelectorStructRef
+pub fn sheetport_spec::SelectorStructRef::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::SelectorStructRef
+pub fn sheetport_spec::SelectorStructRef::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::SelectorTable
+pub sheetport_spec::SelectorTable::table: sheetport_spec::TableSelector
+impl core::clone::Clone for sheetport_spec::SelectorTable
+pub fn sheetport_spec::SelectorTable::clone(&self) -> sheetport_spec::SelectorTable
+impl core::fmt::Debug for sheetport_spec::SelectorTable
+pub fn sheetport_spec::SelectorTable::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::SelectorTable
+pub fn sheetport_spec::SelectorTable::inline_schema() -> bool
+pub fn sheetport_spec::SelectorTable::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::SelectorTable::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::SelectorTable::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::SelectorTable
+pub fn sheetport_spec::SelectorTable::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::SelectorTable
+pub fn sheetport_spec::SelectorTable::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::SpecVersion(pub semver::Version)
+impl sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::new(semver::Version) -> Self
+impl core::clone::Clone for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::clone(&self) -> sheetport_spec::SpecVersion
+impl core::cmp::Eq for sheetport_spec::SpecVersion
+impl core::cmp::Ord for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::cmp(&self, &sheetport_spec::SpecVersion) -> core::cmp::Ordering
+impl core::cmp::PartialEq for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::eq(&self, &sheetport_spec::SpecVersion) -> bool
+impl core::cmp::PartialOrd for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::partial_cmp(&self, &sheetport_spec::SpecVersion) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for sheetport_spec::SpecVersion
+impl schemars::JsonSchema for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::SpecVersion::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::serialize<S>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error> where S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::SpecVersion
+pub fn sheetport_spec::SpecVersion::deserialize<D>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error> where D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::TableColumn
+pub sheetport_spec::TableColumn::col: core::option::Option<alloc::string::String>
+pub sheetport_spec::TableColumn::format: core::option::Option<alloc::string::String>
+pub sheetport_spec::TableColumn::name: alloc::string::String
+pub sheetport_spec::TableColumn::units: core::option::Option<sheetport_spec::Units>
+pub sheetport_spec::TableColumn::value_type: sheetport_spec::ValueType
+impl core::clone::Clone for sheetport_spec::TableColumn
+pub fn sheetport_spec::TableColumn::clone(&self) -> sheetport_spec::TableColumn
+impl core::fmt::Debug for sheetport_spec::TableColumn
+pub fn sheetport_spec::TableColumn::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::TableColumn
+pub fn sheetport_spec::TableColumn::inline_schema() -> bool
+pub fn sheetport_spec::TableColumn::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::TableColumn::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::TableColumn::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::TableColumn
+pub fn sheetport_spec::TableColumn::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::TableColumn
+pub fn sheetport_spec::TableColumn::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::TableSchema
+pub sheetport_spec::TableSchema::columns: alloc::vec::Vec<sheetport_spec::TableColumn>
+pub sheetport_spec::TableSchema::keys: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub sheetport_spec::TableSchema::kind: sheetport_spec::TableKind
+impl core::clone::Clone for sheetport_spec::TableSchema
+pub fn sheetport_spec::TableSchema::clone(&self) -> sheetport_spec::TableSchema
+impl core::fmt::Debug for sheetport_spec::TableSchema
+pub fn sheetport_spec::TableSchema::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::TableSchema
+pub fn sheetport_spec::TableSchema::inline_schema() -> bool
+pub fn sheetport_spec::TableSchema::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::TableSchema::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::TableSchema::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::TableSchema
+pub fn sheetport_spec::TableSchema::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::TableSchema
+pub fn sheetport_spec::TableSchema::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::TableSelector
+pub sheetport_spec::TableSelector::area: core::option::Option<sheetport_spec::TableArea>
+pub sheetport_spec::TableSelector::name: alloc::string::String
+impl core::clone::Clone for sheetport_spec::TableSelector
+pub fn sheetport_spec::TableSelector::clone(&self) -> sheetport_spec::TableSelector
+impl core::fmt::Debug for sheetport_spec::TableSelector
+pub fn sheetport_spec::TableSelector::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::TableSelector
+pub fn sheetport_spec::TableSelector::inline_schema() -> bool
+pub fn sheetport_spec::TableSelector::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::TableSelector::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::TableSelector::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::TableSelector
+pub fn sheetport_spec::TableSelector::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::TableSelector
+pub fn sheetport_spec::TableSelector::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::Units
+pub sheetport_spec::Units::currency: core::option::Option<alloc::string::String>
+impl core::clone::Clone for sheetport_spec::Units
+pub fn sheetport_spec::Units::clone(&self) -> sheetport_spec::Units
+impl core::fmt::Debug for sheetport_spec::Units
+pub fn sheetport_spec::Units::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::Units
+pub fn sheetport_spec::Units::inline_schema() -> bool
+pub fn sheetport_spec::Units::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::Units::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::Units::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::Units
+pub fn sheetport_spec::Units::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::Units
+pub fn sheetport_spec::Units::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct sheetport_spec::ValidationError
+impl sheetport_spec::ValidationError
+pub fn sheetport_spec::ValidationError::issues(&self) -> &[sheetport_spec::ManifestIssue]
+pub fn sheetport_spec::ValidationError::new(alloc::vec::Vec<sheetport_spec::ManifestIssue>) -> Self
+impl core::error::Error for sheetport_spec::ValidationError
+impl core::fmt::Debug for sheetport_spec::ValidationError
+pub fn sheetport_spec::ValidationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for sheetport_spec::ValidationError
+pub fn sheetport_spec::ValidationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct sheetport_spec::WorkbookMeta
+pub sheetport_spec::WorkbookMeta::date_system: core::option::Option<i32>
+pub sheetport_spec::WorkbookMeta::locale: core::option::Option<alloc::string::String>
+pub sheetport_spec::WorkbookMeta::timezone: core::option::Option<alloc::string::String>
+pub sheetport_spec::WorkbookMeta::uri: core::option::Option<alloc::string::String>
+impl core::clone::Clone for sheetport_spec::WorkbookMeta
+pub fn sheetport_spec::WorkbookMeta::clone(&self) -> sheetport_spec::WorkbookMeta
+impl core::fmt::Debug for sheetport_spec::WorkbookMeta
+pub fn sheetport_spec::WorkbookMeta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl schemars::JsonSchema for sheetport_spec::WorkbookMeta
+pub fn sheetport_spec::WorkbookMeta::inline_schema() -> bool
+pub fn sheetport_spec::WorkbookMeta::json_schema(&mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema
+pub fn sheetport_spec::WorkbookMeta::schema_id() -> alloc::borrow::Cow<'static, str>
+pub fn sheetport_spec::WorkbookMeta::schema_name() -> alloc::borrow::Cow<'static, str>
+impl serde_core::ser::Serialize for sheetport_spec::WorkbookMeta
+pub fn sheetport_spec::WorkbookMeta::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for sheetport_spec::WorkbookMeta
+pub fn sheetport_spec::WorkbookMeta::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub const sheetport_spec::CRATE_VERSION: &str
+pub const sheetport_spec::CURRENT_SPEC_VERSION: &str
+pub const sheetport_spec::SPEC_IDENT: &str
+pub fn sheetport_spec::generate_schema_json_pretty() -> alloc::string::String
+pub fn sheetport_spec::generate_schema_value() -> serde_json::value::Value
+pub fn sheetport_spec::load_manifest_from_reader<R: std::io::Read>(R) -> core::result::Result<sheetport_spec::Manifest, serde_yaml::error::Error>
+pub fn sheetport_spec::load_manifest_from_str(&str) -> core::result::Result<sheetport_spec::Manifest, serde_yaml::error::Error>
+pub fn sheetport_spec::manifest_to_yaml(&sheetport_spec::Manifest) -> core::result::Result<alloc::string::String, serde_yaml::error::Error>
+pub fn sheetport_spec::schema_json() -> &'static str

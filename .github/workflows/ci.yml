@@ -155,6 +155,42 @@ jobs:
           -o target/cffi_smoke
         target/cffi_smoke
 
+  public-api:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up pinned installer Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 1.93.0
+
+    - name: Set up pinned rustdoc nightly
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        toolchain: nightly-2026-02-16
+        targets: x86_64-unknown-linux-gnu
+
+    - name: Cache public API tooling and build output
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/cargo-public-api
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/public-api/
+        key: ${{ runner.os }}-public-api-0.52.0-nightly-2026-02-16-${{ hashFiles('**/Cargo.lock', 'scripts/public-api.sh') }}
+        restore-keys: |
+          ${{ runner.os }}-public-api-0.52.0-nightly-2026-02-16-
+
+    - name: Verify public API tools
+      run: scripts/public-api.sh setup
+
+    - name: Check public Rust API snapshots
+      run: scripts/public-api.sh check
+
   build-wheels:
     runs-on: ${{ matrix.os }}
     strategy:
