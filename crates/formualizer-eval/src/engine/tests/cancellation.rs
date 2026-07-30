@@ -4,12 +4,85 @@
 //! the Phase 2.1 implementation requirements from FUTUREPROOF_MILESTONES.md
 
 use super::common::{create_binary_op_ast, create_cell_ref_ast};
-use crate::engine::{Engine, EvalConfig};
+use crate::engine::{CancelToken, Engine, EvalConfig};
+use crate::function::Function;
 use crate::test_workbook::TestWorkbook;
+use crate::traits::{
+    ArgumentHandle, CalcValue, DefaultFunctionContext, EvaluationContext, FunctionContext,
+};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+
+#[derive(Debug)]
+struct SharedCancellationProbe {
+    expected: CancelToken,
+    observed: Arc<AtomicBool>,
+}
+
+impl Function for SharedCancellationProbe {
+    fn name(&self) -> &'static str {
+        "SHARED_CANCELLATION_PROBE"
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let context_token = ctx
+            .cancellation_token()
+            .expect("engine cancellation token should reach custom functions");
+        context_token.cancel();
+        self.observed
+            .store(self.expected.is_cancelled(), Ordering::SeqCst);
+        Ok(CalcValue::Scalar(LiteralValue::Int(1)))
+    }
+}
+
+#[test]
+fn engine_context_and_function_context_share_cancellation_signal() {
+    let token = CancelToken::new();
+    let observed = Arc::new(AtomicBool::new(false));
+    let workbook = TestWorkbook::new().with_function(Arc::new(SharedCancellationProbe {
+        expected: token.clone(),
+        observed: Arc::clone(&observed),
+    }));
+    let mut engine = Engine::new(workbook, EvalConfig::default());
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            formualizer_parse::parser::parse("=SHARED_CANCELLATION_PROBE()").unwrap(),
+        )
+        .unwrap();
+
+    let result = engine.evaluate_all_cancellable(token);
+
+    assert!(
+        observed.load(Ordering::SeqCst),
+        "the FunctionContext token must share the Engine's active signal"
+    );
+    assert!(
+        result.is_ok() || result.unwrap_err().kind == ExcelErrorKind::Cancelled,
+        "cancelling from the function may be observed at the next engine checkpoint"
+    );
+}
+
+#[test]
+fn cancellation_context_traits_remain_dyn_compatible() {
+    fn accept_evaluation_context(_: &dyn EvaluationContext) {}
+    fn accept_function_context<'ctx>(_: &dyn FunctionContext<'ctx>) {}
+
+    let workbook = TestWorkbook::new();
+    accept_evaluation_context(&workbook);
+    let function_context = DefaultFunctionContext::new(&workbook, None, "Sheet1");
+    accept_function_context(&function_context);
+}
 
 /// Test that cancellation works between layers in evaluate_all_cancellable
 #[test]

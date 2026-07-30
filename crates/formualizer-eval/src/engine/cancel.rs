@@ -41,6 +41,7 @@ impl CancelToken {
     }
 
     /// Returns whether cancellation has been signalled.
+    #[inline]
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Relaxed)
     }
@@ -51,7 +52,10 @@ impl CancelToken {
         Self(flag)
     }
 
-    /// Borrows the underlying flag, for interoperating with code that expects one.
+    /// Borrows the underlying flag as a legacy/interoperability bridge.
+    ///
+    /// New code should poll [`CancelToken::is_cancelled`] instead. The raw flag
+    /// may not represent future richer cancellation semantics.
     pub fn as_flag(&self) -> &Arc<AtomicBool> {
         &self.0
     }

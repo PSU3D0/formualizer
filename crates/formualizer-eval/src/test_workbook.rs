@@ -31,7 +31,7 @@ pub struct TestWorkbook {
     fns: HashMap<(String, String), Arc<dyn Function>>,
     aliases: HashMap<(String, String), (String, String)>,
     planning_revision: Option<Arc<std::sync::atomic::AtomicU64>>,
-    cancellation_token: Option<Arc<std::sync::atomic::AtomicBool>>,
+    cancellation_token: Option<crate::engine::CancelToken>,
 }
 
 impl Default for TestWorkbook {
@@ -82,10 +82,7 @@ impl TestWorkbook {
     }
 
     #[cfg(test)]
-    pub(crate) fn with_cancellation_token(
-        mut self,
-        token: Arc<std::sync::atomic::AtomicBool>,
-    ) -> Self {
+    pub(crate) fn with_cancellation_token(mut self, token: crate::engine::CancelToken) -> Self {
         self.cancellation_token = Some(token);
         self
     }
@@ -261,7 +258,7 @@ impl TestWorkbook {
 
 /* ─────────────────────── trait impls ─────────────────────── */
 impl EvaluationContext for TestWorkbook {
-    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
         self.cancellation_token.clone()
     }
 

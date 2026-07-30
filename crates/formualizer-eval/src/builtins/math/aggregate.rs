@@ -976,7 +976,9 @@ mod computed_array_tests {
                     vec![vec![LiteralValue::Number(1.0)]],
                     ctx.date_system(),
                 )
-                .with_cancel_token(Some(Arc::clone(&self.0))),
+                .with_cancel_token(Some(crate::engine::CancelToken::from_flag(
+                    Arc::clone(&self.0),
+                ))),
             ))
         }
     }
@@ -1142,7 +1144,7 @@ mod computed_array_tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let token = Arc::new(AtomicBool::new(true));
         let wb = workbook()
-            .with_cancellation_token(token)
+            .with_cancellation_token(crate::engine::CancelToken::from_flag(token))
             .with_function(Arc::new(CountedArrayFn(Arc::clone(&calls))));
 
         let error = evaluate(&wb, "=SUM(COUNTED_ARRAY())").unwrap_err();

@@ -18535,9 +18535,7 @@ where
                                 current_sheet,
                                 self.graph.data_store(),
                                 self.graph.sheet_reg(),
-                                self.active_cancel_flag
-                                    .as_ref()
-                                    .map(|c| c.as_flag().as_ref()),
+                                self.active_cancel_flag.as_ref(),
                             );
                             #[cfg(test)]
                             let mut last_group_report = None;
@@ -23063,13 +23061,8 @@ where
         self.thread_pool.as_ref()
     }
 
-    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-        // The context trait exposes the raw flag for custom-function authors; the
-        // engine's own call boundary uses CancelToken. See the follow-up issue on
-        // unifying the two.
-        self.active_cancel_flag
-            .as_ref()
-            .map(|cancel| Arc::clone(cancel.as_flag()))
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
+        self.active_cancel_flag.clone()
     }
 
     fn chunk_hint(&self) -> Option<usize> {

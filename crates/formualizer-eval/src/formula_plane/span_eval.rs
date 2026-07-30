@@ -6,13 +6,13 @@
 //! single writeback mechanism.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::arrow_store::{OverlayValue, map_error_code};
+use crate::engine::CancelToken;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::eval::ComputedWriteBuffer;
 use crate::engine::sheet_registry::SheetRegistry;
@@ -173,7 +173,7 @@ pub(crate) struct SpanEvaluator<'a> {
     current_sheet: &'a str,
     data_store: &'a DataStore,
     sheet_registry: &'a SheetRegistry,
-    cancel: Option<&'a AtomicBool>,
+    cancel: Option<&'a CancelToken>,
 }
 
 impl<'a> SpanEvaluator<'a> {
@@ -200,7 +200,7 @@ impl<'a> SpanEvaluator<'a> {
         current_sheet: &'a str,
         data_store: &'a DataStore,
         sheet_registry: &'a SheetRegistry,
-        cancel: Option<&'a AtomicBool>,
+        cancel: Option<&'a CancelToken>,
     ) -> Self {
         Self {
             plane,
@@ -213,8 +213,7 @@ impl<'a> SpanEvaluator<'a> {
     }
 
     fn cancellation_checkpoint(&self, index: usize) -> Result<(), SpanEvalError> {
-        if index.is_multiple_of(256) && self.cancel.is_some_and(|flag| flag.load(Ordering::Relaxed))
-        {
+        if index.is_multiple_of(256) && self.cancel.is_some_and(CancelToken::is_cancelled) {
             Err(SpanEvalError::Cancelled)
         } else {
             Ok(())
@@ -495,7 +494,7 @@ impl<'a> SpanEvaluator<'a> {
             writable_placements
                 .par_iter()
                 .map(|placement| {
-                    if self.cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                    if self.cancel.is_some_and(CancelToken::is_cancelled) {
                         return Err(SpanEvalError::Cancelled);
                     }
                     self.evaluate_placement_value(
@@ -1239,6 +1238,130 @@ mod tests {
         let evaluator = SpanEvaluator::new(plane, workbook, "Sheet1", data_store, sheet_registry);
         let mut sink = SpanComputedWriteSink::new(buffer);
         evaluator.evaluate_task(task, &mut sink).unwrap()
+    }
+
+    fn cancellation_span_fixture(
+        placement_count: u32,
+    ) -> (
+        FormulaPlane,
+        DataStore,
+        SheetRegistry,
+        FormulaSpanRef,
+        AstNodeId,
+    ) {
+        let mut plane = FormulaPlane::default();
+        let mut data_store = DataStore::new();
+        let sheet_registry = SheetRegistry::new();
+        let ast_id = data_store.store_ast(&parse("=A1+1").unwrap(), &sheet_registry);
+        let template_id = plane.intern_template(
+            Arc::<str>::from("cancellation-template"),
+            ast_id,
+            1,
+            1,
+            Some(Arc::<str>::from("=A1+1")),
+        );
+        let domain = PlacementDomain::row_run(0, 0, placement_count - 1, 0);
+        let span = plane.insert_span(NewFormulaSpan {
+            sheet_id: 0,
+            template_id,
+            result_region: ResultRegion::scalar_cells(domain.clone()),
+            domain,
+            intrinsic_mask_id: None,
+            read_summary_id: None,
+            binding_set_id: None,
+            is_constant_result: false,
+        });
+        (plane, data_store, sheet_registry, span, ast_id)
+    }
+
+    #[test]
+    fn span_evaluator_sequential_path_observes_cancel_token() {
+        let (plane, data_store, sheet_registry, span_ref, ast_id) = cancellation_span_fixture(1);
+        let workbook = TestWorkbook::new();
+        let token = CancelToken::new();
+        token.cancel();
+        let evaluator = SpanEvaluator::new_with_cancel(
+            &plane,
+            &workbook,
+            "Sheet1",
+            &data_store,
+            &sheet_registry,
+            Some(&token),
+        );
+        let mut buffer = ComputedWriteBuffer::default();
+        let mut sink = SpanComputedWriteSink::new(&mut buffer);
+        let mut report = SpanEvalReport::default();
+        let placements = [PlacementCoord {
+            sheet_id: 0,
+            row: 0,
+            col: 0,
+        }];
+
+        let error = evaluator
+            .evaluate_per_placement_sequential(
+                plane.spans.get(span_ref).unwrap(),
+                ast_id,
+                1,
+                1,
+                None,
+                &placements,
+                &mut sink,
+                &mut report,
+            )
+            .unwrap_err();
+
+        assert_eq!(error, SpanEvalError::Cancelled);
+        assert!(buffer.is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn span_evaluator_parallel_path_observes_cancel_token() {
+        let (plane, data_store, sheet_registry, span_ref, ast_id) =
+            cancellation_span_fixture(PARALLEL_PLACEMENT_THRESHOLD as u32);
+        let workbook = TestWorkbook::new();
+        let token = CancelToken::new();
+        token.cancel();
+        let evaluator = SpanEvaluator::new_with_cancel(
+            &plane,
+            &workbook,
+            "Sheet1",
+            &data_store,
+            &sheet_registry,
+            Some(&token),
+        );
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        let placements = (0..PARALLEL_PLACEMENT_THRESHOLD as u32)
+            .map(|row| PlacementCoord {
+                sheet_id: 0,
+                row,
+                col: 0,
+            })
+            .collect::<Vec<_>>();
+        let mut buffer = ComputedWriteBuffer::default();
+        let mut sink = SpanComputedWriteSink::new(&mut buffer);
+        let mut report = SpanEvalReport::default();
+
+        let error = evaluator
+            .evaluate_per_placement_parallel(
+                &pool,
+                plane.spans.get(span_ref).unwrap(),
+                ast_id,
+                1,
+                1,
+                None,
+                &placements,
+                &mut sink,
+                &mut report,
+            )
+            .unwrap_err();
+
+        assert_eq!(error, SpanEvalError::Cancelled);
+        assert!(buffer.is_empty());
+        assert_eq!(report.parallel_per_placement_invocations, 1);
     }
 
     fn arrow_eval_config() -> EvalConfig {

@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Breaking changes
+
+- Migrated the remaining public cancellation seam to `CancelToken`: `EvaluationContext::cancellation_token()` and `FunctionContext::cancellation_token()` now return `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`, and `RangeView::with_cancel_token(...)` now accepts `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`. Custom contexts and functions should clone and return the shared handle, retrieve it once before hot loops, and periodically poll `is_cancelled()`. To adopt an existing raw flag, use `CancelToken::from_flag(flag)`, for example `Some(CancelToken::from_flag(Arc::clone(&flag)))`. (#233)
+
 ### Added
 
 - Tables can be defined at runtime, without a serialise-and-reload round trip: `Workbook::define_table` (Rust), `Workbook.addTable` (WASM) and `Workbook.add_table` (Python), plus `tables()` / `getTables()` to list them. Tables are metadata over cells that already exist, so populate the region first; structured references resolve immediately afterwards and edits inside the region propagate. Definitions are validated up front -- unknown sheet, 1-based range violations, an inverted range, a header row with no data rows, and a header count that does not match the range width are all rejected by name rather than silently producing a table whose columns read outside its own range. The WASM binding rejects unknown keys instead of ignoring them and ships `TableDefinition`/`TableMetadata` TypeScript interfaces. (#212)
