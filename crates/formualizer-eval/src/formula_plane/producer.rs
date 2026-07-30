@@ -413,6 +413,24 @@ impl FormulaConsumerReadIndex {
         self.entries.len()
     }
 
+    pub(crate) fn entries_intersecting(
+        &self,
+        region: Region,
+    ) -> RegionQueryResult<&FormulaConsumerReadEntry> {
+        let result = self.index.query(region);
+        RegionQueryResult {
+            matches: result
+                .matches
+                .into_iter()
+                .map(|matched| RegionMatch {
+                    value: &self.entries[matched.value.0],
+                    indexed_region: matched.indexed_region,
+                })
+                .collect(),
+            stats: result.stats,
+        }
+    }
+
     pub(crate) fn entries(&self) -> impl Iterator<Item = &FormulaConsumerReadEntry> {
         self.entries.iter()
     }

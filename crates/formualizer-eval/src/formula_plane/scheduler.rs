@@ -1357,6 +1357,10 @@ fn inspect_exact_read(
     None
 }
 
+fn exact_read_query_work(visited_index_entries: usize, matches: usize) -> u64 {
+    u64::try_from(visited_index_entries.saturating_add(matches)).unwrap_or(u64::MAX)
+}
+
 fn finish_schedule_from_sorted_edges<E>(
     merged_work: Vec<FormulaProducerWork>,
     edges: &[ExactEdge],
@@ -1446,7 +1450,7 @@ pub(crate) fn schedule_dirty_work_paged<E>(
     let mut edges: BTreeMap<FormulaProducerId, FxHashSet<FormulaProducerId>> = BTreeMap::new();
     let mut reverse_edges: BTreeMap<FormulaProducerId, FxHashSet<FormulaProducerId>> =
         BTreeMap::new();
-    let mut pages = 0_u64;
+    let mut queries = 0_u64;
     for item in &merged_work {
         let Some(source_region) = producer_results.producer_result_region(item.producer) else {
             push_fallback_once(
@@ -1459,33 +1463,34 @@ pub(crate) fn schedule_dirty_work_paged<E>(
         };
         stats.producer_result_region_lookups =
             stats.producer_result_region_lookups.saturating_add(1);
-        for start in (0..consumer_reads.len()).step_by(EXACT_PAGE_SIZE) {
-            let page = consumer_reads.entries_page(start, EXACT_PAGE_SIZE);
-            checkpoint(u64::try_from(page.len()).unwrap_or(u64::MAX))?;
-            pages = pages.saturating_add(1);
-            for read in page {
-                if let Some(edge) = inspect_exact_read(
-                    item,
-                    source_region,
-                    read,
-                    &scheduled,
-                    max_precise_edge_regions,
-                    &mut stats,
-                    &mut fallbacks,
-                ) {
-                    if add_edge(edge.source, edge.target, &mut edges, &mut reverse_edges) {
-                        stats.edges_added = stats.edges_added.saturating_add(1);
-                    } else {
-                        stats.duplicate_edges_skipped =
-                            stats.duplicate_edges_skipped.saturating_add(1);
-                    }
+        checkpoint(0)?;
+        let query = consumer_reads.entries_intersecting(source_region);
+        checkpoint(exact_read_query_work(
+            query.stats.visited_index_entries,
+            query.matches.len(),
+        ))?;
+        queries = queries.saturating_add(1);
+        for matched in query.matches {
+            if let Some(edge) = inspect_exact_read(
+                item,
+                source_region,
+                matched.value,
+                &scheduled,
+                max_precise_edge_regions,
+                &mut stats,
+                &mut fallbacks,
+            ) {
+                if add_edge(edge.source, edge.target, &mut edges, &mut reverse_edges) {
+                    stats.edges_added = stats.edges_added.saturating_add(1);
+                } else {
+                    stats.duplicate_edges_skipped = stats.duplicate_edges_skipped.saturating_add(1);
                 }
             }
         }
     }
     Ok((
         finish_schedule(merged_work, edges, reverse_edges, stats, fallbacks),
-        pages,
+        queries,
     ))
 }
 
@@ -1546,12 +1551,17 @@ pub(crate) fn schedule_dirty_work_in_memory_runs<E>(
         };
         stats.producer_result_region_lookups =
             stats.producer_result_region_lookups.saturating_add(1);
-        for read in consumer_reads.entries() {
-            checkpoint(1)?;
+        checkpoint(0)?;
+        let query = consumer_reads.entries_intersecting(source_region);
+        checkpoint(exact_read_query_work(
+            query.stats.visited_index_entries,
+            query.matches.len(),
+        ))?;
+        for matched in query.matches {
             if let Some(edge) = inspect_exact_read(
                 item,
                 source_region,
-                read,
+                matched.value,
                 &scheduled,
                 max_precise_edge_regions,
                 &mut stats,
@@ -1620,12 +1630,18 @@ pub(crate) fn schedule_dirty_work_native<E>(
             continue;
         };
         let mut targets = BTreeSet::new();
-        for read in consumer_reads.entries() {
-            checkpoint(1).map_err(NativeExactScheduleError::Work)?;
+        checkpoint(0).map_err(NativeExactScheduleError::Work)?;
+        let query = consumer_reads.entries_intersecting(source_region);
+        checkpoint(exact_read_query_work(
+            query.stats.visited_index_entries,
+            query.matches.len(),
+        ))
+        .map_err(NativeExactScheduleError::Work)?;
+        for matched in query.matches {
             if let Some(edge) = inspect_exact_read(
                 item,
                 source_region,
-                read,
+                matched.value,
                 &scheduled,
                 max_precise_edge_regions,
                 &mut stats,
@@ -1754,77 +1770,48 @@ pub(crate) fn schedule_dirty_work_repeated_passes<E>(
 
     while !remaining.is_empty() {
         passes = passes.saturating_add(1);
-        let pass_work = remaining
-            .len()
-            .saturating_mul(remaining.len())
-            .saturating_mul(consumer_reads.len().max(1));
-        checkpoint(u64::try_from(pass_work).unwrap_or(u64::MAX))?;
-        let mut ready = Vec::new();
-
-        for &consumer in &remaining {
-            let mut has_precedent = false;
-            'sources: for &source in &remaining {
-                if source == consumer {
-                    continue;
-                }
-                let Some(source_region) = producer_results.producer_result_region(source) else {
-                    push_fallback_once(
-                        &mut fallbacks,
-                        source,
-                        MixedScheduleFallbackReason::MissingProducerResultRegion,
-                    );
-                    continue;
-                };
-                stats.producer_result_region_lookups =
-                    stats.producer_result_region_lookups.saturating_add(1);
-                let source_work = &work_by_producer[&source];
-                let changed_regions = edge_derivation_regions(
-                    &source_work.dirty,
+        let mut preceded = BTreeSet::new();
+        for &source in &remaining {
+            let Some(source_region) = producer_results.producer_result_region(source) else {
+                push_fallback_once(
+                    &mut fallbacks,
+                    source,
+                    MixedScheduleFallbackReason::MissingProducerResultRegion,
+                );
+                continue;
+            };
+            stats.producer_result_region_lookups =
+                stats.producer_result_region_lookups.saturating_add(1);
+            checkpoint(0)?;
+            let query = consumer_reads.entries_intersecting(source_region);
+            checkpoint(exact_read_query_work(
+                query.stats.visited_index_entries,
+                query.matches.len(),
+            ))?;
+            for matched in query.matches {
+                if let Some(edge) = inspect_exact_read(
+                    &work_by_producer[&source],
                     source_region,
+                    matched.value,
+                    &remaining,
                     max_precise_edge_regions,
                     &mut stats,
-                );
-                for read in consumer_reads
-                    .entries()
-                    .filter(|read| read.consumer == consumer)
-                {
-                    stats.consumer_candidate_count =
-                        stats.consumer_candidate_count.saturating_add(1);
-                    if !source_region.intersects(&read.read_region) {
-                        continue;
-                    }
-                    for changed in &changed_regions {
-                        match read.projection.project_changed_region(
-                            *changed,
-                            read.read_region,
-                            read.consumer_result_region,
-                        ) {
-                            ProjectionResult::Exact(_) | ProjectionResult::Conservative { .. } => {
-                                stats.edges_added = stats.edges_added.saturating_add(1);
-                                has_precedent = true;
-                                break 'sources;
-                            }
-                            ProjectionResult::NoIntersection => {
-                                stats.no_intersection_candidate_count =
-                                    stats.no_intersection_candidate_count.saturating_add(1);
-                            }
-                            ProjectionResult::Unsupported(_) => {
-                                stats.unsupported_projection_count =
-                                    stats.unsupported_projection_count.saturating_add(1);
-                                push_fallback_once(
-                                    &mut fallbacks,
-                                    consumer,
-                                    MixedScheduleFallbackReason::UnsupportedProjection,
-                                );
-                            }
-                        }
+                    &mut fallbacks,
+                ) {
+                    if preceded.insert(edge.target) {
+                        stats.edges_added = stats.edges_added.saturating_add(1);
+                    } else {
+                        stats.duplicate_edges_skipped =
+                            stats.duplicate_edges_skipped.saturating_add(1);
                     }
                 }
             }
-            if !has_precedent {
-                ready.push(consumer);
-            }
         }
+        let ready = remaining
+            .iter()
+            .filter(|producer| !preceded.contains(producer))
+            .copied()
+            .collect::<Vec<_>>();
 
         if ready.is_empty() {
             stats.cycle_count = remaining.len();
@@ -2556,11 +2543,15 @@ mod tests {
     }
 
     #[test]
-    fn exact_paged_traverses_finite_pages_and_dedupes_edges() {
+    fn exact_paged_queries_intersections_and_dedupes_edges() {
         let (results, reads, work) = exact_strategy_inputs(EXACT_PAGE_SIZE + 1);
-        let (schedule, pages) =
+        let (schedule, queries) =
             schedule_dirty_work_paged(work, &results, &reads, 256, |_| Ok::<_, ()>(())).unwrap();
-        assert!(pages >= 4, "two producers must each traverse two pages");
+        assert_eq!(
+            queries, 2,
+            "each producer must query its result region once"
+        );
+        assert_eq!(schedule.stats.consumer_candidate_count, EXACT_PAGE_SIZE + 1);
         assert_eq!(schedule.stats.edges_added, 1);
         assert_eq!(schedule.layers.len(), 2);
     }
@@ -2577,7 +2568,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_repeated_passes_charges_quadratic_scan_body() {
+    fn exact_repeated_passes_charges_intersection_queries() {
         let (results, reads, work) = exact_strategy_inputs(3);
         let mut charged = 0_u64;
         let (schedule, passes) =
@@ -2587,7 +2578,11 @@ mod tests {
             })
             .unwrap();
         assert_eq!(passes, 2);
-        assert!(charged >= 15, "4*3 plus 1*3 read scans must be charged");
+        assert!(
+            charged >= 6,
+            "three index visits plus three intersecting reads must be charged"
+        );
+        assert!(charged < 15, "full-table scans must no longer be charged");
         assert_eq!(schedule.layers.len(), 2);
     }
 

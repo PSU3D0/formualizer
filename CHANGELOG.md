@@ -53,6 +53,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Performance
 
+- Experimental authoritative FormulaPlane evaluation now uses the existing consumer-read interval index when exact schedule construction falls back after topology-cache overflow, avoiding full-table scans per dirty formula during the first evaluation of bulk-loaded workbooks. (#240)
 - Experimental authoritative FormulaPlane evaluation now caches accounted consumer and precedent topology across warm and value-only evaluations. Exact graph, authority, semantic, provider, and dynamic-reference revisions invalidate or bypass stale cache generations; candidate, edge, and retained-byte cache overflow selects exact paged/run/native/repeated-pass request topology without span demotion, while span-free and warm no-dirty requests retain topology-free sparse paths.
 - Proven complete source-formula families now parse and analyze one anchor and avoid per-descendant strings, ASTs, staging entries, and graph vertices. In same-machine release probes, a clean 100k-family load improved from 997 ms and 313 MiB RSS under forced replay to 129 ms and 26 MiB RSS; a 1M-family load completed in 2.2 s at 167 MiB RSS instead of 13.1 s at 3.0 GiB.
 
