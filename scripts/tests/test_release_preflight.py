@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 import sys
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parents[1] / "release-preflight.py"
 SPEC = importlib.util.spec_from_file_location("release_preflight", SCRIPT)
@@ -35,6 +37,20 @@ def crate_archive(
 
 
 class ReleasePreflightTests(unittest.TestCase):
+    def test_subprocess_environment_drops_release_credentials(self) -> None:
+        source = {
+            "PATH": "/bin",
+            "CARGO_REGISTRY_TOKEN": "secret",
+            "CARGO_REGISTRIES_PRIVATE_TOKEN": "private",
+            "GH_TOKEN": "gh-secret",
+            "GITHUB_TOKEN": "actions-secret",
+        }
+        with mock.patch.dict(os.environ, source, clear=True):
+            env = release_preflight.credential_free_environment()
+        self.assertEqual(env["PATH"], "/bin")
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+        self.assertFalse(any(key.endswith("TOKEN") for key in env))
+
     def test_registry_index_paths_follow_cargo_layout(self) -> None:
         registry = Path("/registry")
         self.assertEqual(

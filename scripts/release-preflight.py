@@ -38,6 +38,7 @@ TOOL_ROOT = TARGET / "release-preflight-tools" / f"cargo-local-registry-{TOOL_VE
 TOOL_BIN = TOOL_ROOT / "bin" / "cargo-local-registry"
 TOOL_CARGO_HOME = TARGET / "release-preflight-cargo-home"
 USER_AGENT = "formualizer-release-preflight/1 (https://github.com/psu3d0/formualizer)"
+DIRECT_SECRET_ENV = frozenset({"CARGO_REGISTRY_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"})
 
 
 @dataclass(frozen=True)
@@ -79,8 +80,19 @@ def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
-def command_output(command: list[str]) -> str:
-    return subprocess.check_output(command, cwd=ROOT, text=True).strip()
+def command_output(command: list[str], *, env: dict[str, str] | None = None) -> str:
+    return subprocess.check_output(command, cwd=ROOT, env=env, text=True).strip()
+
+
+def credential_free_environment() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in list(env):
+        if key in DIRECT_SECRET_ENV or (
+            key.startswith("CARGO_REGISTRIES_") and key.endswith("_TOKEN")
+        ):
+            env.pop(key)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
 
 
 def assert_safe_project_path(path: Path) -> None:
@@ -152,7 +164,7 @@ def ensure_local_registry_tool() -> Path:
         tempfile.mkdtemp(prefix="cargo-local-registry-install-", dir=TOOL_ROOT.parent)
     )
     try:
-        env = os.environ.copy()
+        env = credential_free_environment()
         env["CARGO_HOME"] = str(TOOL_CARGO_HOME)
         run(
             [
@@ -418,7 +430,7 @@ def staging_environment(cargo_home: Path, registry: Path) -> dict[str, str]:
     cargo_home.mkdir(parents=True)
     config = f"""[source.crates-io]\nreplace-with = "formualizer-preflight"\n\n[source.formualizer-preflight]\nlocal-registry = {json.dumps(str(registry))}\n\n[net]\ngit-fetch-with-cli = true\n"""
     (cargo_home / "config.toml").write_text(config, encoding="utf-8")
-    env = os.environ.copy()
+    env = credential_free_environment()
     env["CARGO_HOME"] = str(cargo_home)
     return env
 
@@ -452,7 +464,10 @@ def seed_patched_registry_dependencies(
     """Add crates whose registry lock entry was replaced by a git/path patch."""
 
     metadata = json.loads(
-        command_output(["cargo", "metadata", "--no-deps", "--format-version", "1"])
+        command_output(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+            env=credential_free_environment(),
+        )
     )
     lock = tomllib.loads((ROOT / "Cargo.lock").read_text(encoding="utf-8"))
     locked: dict[str, set[str]] = {}
@@ -496,7 +511,7 @@ def prepare_local_registry(
     registry = temp_root / "registry"
     cargo_home = temp_root / "cargo-home"
     registry.mkdir()
-    env = os.environ.copy()
+    env = credential_free_environment()
     env["CARGO_HOME"] = str(TOOL_CARGO_HOME)
     run([str(tool), "sync", str(ROOT / "Cargo.lock"), str(registry)], env=env)
     seed_patched_registry_dependencies(tool, registry, env, packages)
@@ -516,7 +531,7 @@ def preflight(track: str, allow_dirty: bool) -> None:
         downloads = temp_root / "downloads"
         downloads.mkdir()
         registry: Path | None = None
-        package_env: dict[str, str] | None = None
+        package_env = credential_free_environment()
         if len(packages) > 1:
             registry, package_env = prepare_local_registry(temp_root, packages)
 
