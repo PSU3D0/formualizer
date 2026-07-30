@@ -27,6 +27,7 @@ const COL_ABS_BIT: u64 = 1 << 1;
 const RELATIVE_RESERVED_LOW_MASK: u64 = RESERVED_LOW_MASK & !(ROW_ABS_BIT | COL_ABS_BIT);
 
 /// Errors returned when constructing coordinates from unchecked inputs.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoordError {
     RowOverflow(i64),
@@ -51,6 +52,7 @@ impl fmt::Display for CoordError {
 }
 
 /// Errors that can occur while parsing A1-style references.
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum A1ParseError {
     Empty,

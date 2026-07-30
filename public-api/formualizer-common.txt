@@ -1,6 +1,6 @@
 pub mod formualizer_common
 pub mod formualizer_common::address
-pub enum formualizer_common::address::SheetAddressError
+#[non_exhaustive] pub enum formualizer_common::address::SheetAddressError
 pub formualizer_common::address::SheetAddressError::Coord(formualizer_common::CoordError)
 pub formualizer_common::address::SheetAddressError::MismatchedSheets
 pub formualizer_common::address::SheetAddressError::MissingSheetName
@@ -161,7 +161,7 @@ pub fn formualizer_common::SheetRangeRef<'a>::hash<__H: core::hash::Hasher>(&sel
 impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRangeRef<'a>
 pub type formualizer_common::address::SheetId = u16
 pub mod formualizer_common::coord
-pub enum formualizer_common::coord::A1ParseError
+#[non_exhaustive] pub enum formualizer_common::coord::A1ParseError
 pub formualizer_common::coord::A1ParseError::ColumnOutOfRange(u32)
 pub formualizer_common::coord::A1ParseError::Empty
 pub formualizer_common::coord::A1ParseError::InvalidColumnChar(char)
@@ -184,7 +184,7 @@ pub fn formualizer_common::A1ParseError::fmt(&self, &mut core::fmt::Formatter<'_
 impl core::fmt::Display for formualizer_common::A1ParseError
 pub fn formualizer_common::A1ParseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_common::A1ParseError
-pub enum formualizer_common::coord::CoordError
+#[non_exhaustive] pub enum formualizer_common::coord::CoordError
 pub formualizer_common::coord::CoordError::ColOverflow(i64)
 pub formualizer_common::coord::CoordError::NegativeCol(i64)
 pub formualizer_common::coord::CoordError::NegativeRow(i64)
@@ -354,7 +354,7 @@ pub fn formualizer_common::date_serial::try_serial_to_datetime_for(formualizer_c
 pub fn formualizer_common::date_serial::try_serial_to_display_date_parts_for(formualizer_common::DateSystem, f64) -> core::result::Result<formualizer_common::ExcelDateParts, formualizer_common::ExcelError>
 pub fn formualizer_common::date_serial::validate_excel_serial(formualizer_common::DateSystem, f64) -> core::result::Result<(), formualizer_common::ExcelError>
 pub mod formualizer_common::error
-pub enum formualizer_common::error::ExcelErrorExtra
+#[non_exhaustive] pub enum formualizer_common::error::ExcelErrorExtra
 pub formualizer_common::error::ExcelErrorExtra::None
 pub formualizer_common::error::ExcelErrorExtra::PlanStale
 pub formualizer_common::error::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
@@ -381,7 +381,7 @@ impl serde_core::ser::Serialize for formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelErrorExtra::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelErrorExtra::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::error::ExcelErrorKind
+#[non_exhaustive] pub enum formualizer_common::error::ExcelErrorKind
 pub formualizer_common::error::ExcelErrorKind::Calc
 pub formualizer_common::error::ExcelErrorKind::Cancelled
 pub formualizer_common::error::ExcelErrorKind::Circ
@@ -419,7 +419,7 @@ impl serde_core::ser::Serialize for formualizer_common::ExcelErrorKind
 pub fn formualizer_common::ExcelErrorKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorKind
 pub fn formualizer_common::ExcelErrorKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::error::PlanStaleReason
+#[non_exhaustive] pub enum formualizer_common::error::PlanStaleReason
 pub formualizer_common::error::PlanStaleReason::Authority
 pub formualizer_common::error::PlanStaleReason::Budget
 pub formualizer_common::error::PlanStaleReason::Engine
@@ -446,7 +446,7 @@ impl serde_core::ser::Serialize for formualizer_common::PlanStaleReason
 pub fn formualizer_common::PlanStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PlanStaleReason
 pub fn formualizer_common::PlanStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::error::PreparationStaleReason
+#[non_exhaustive] pub enum formualizer_common::error::PreparationStaleReason
 pub formualizer_common::error::PreparationStaleReason::Authority
 pub formualizer_common::error::PreparationStaleReason::Graph
 pub formualizer_common::error::PreparationStaleReason::Provider
@@ -470,7 +470,7 @@ impl serde_core::ser::Serialize for formualizer_common::PreparationStaleReason
 pub fn formualizer_common::PreparationStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PreparationStaleReason
 pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::error::ResourceExhaustionReason
+#[non_exhaustive] pub enum formualizer_common::error::ResourceExhaustionReason
 pub formualizer_common::error::ResourceExhaustionReason::Admission
 pub formualizer_common::error::ResourceExhaustionReason::ArithmeticOverflow
 pub formualizer_common::error::ResourceExhaustionReason::Deadline
@@ -705,7 +705,7 @@ impl serde_core::ser::Serialize for formualizer_common::LiteralValue
 pub fn formualizer_common::LiteralValue::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::LiteralValue
 pub fn formualizer_common::LiteralValue::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::value::ValueError
+#[non_exhaustive] pub enum formualizer_common::value::ValueError
 pub formualizer_common::value::ValueError::ImplicitIntersection(alloc::string::String)
 impl core::clone::Clone for formualizer_common::ValueError
 pub fn formualizer_common::ValueError::clone(&self) -> formualizer_common::ValueError
@@ -714,7 +714,9 @@ pub fn formualizer_common::ValueError::eq(&self, &formualizer_common::ValueError
 impl core::fmt::Debug for formualizer_common::ValueError
 pub fn formualizer_common::ValueError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_common::ValueError
-pub enum formualizer_common::A1ParseError
+pub fn formualizer_common::value::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::value::serial_to_datetime(f64) -> chrono::naive::datetime::NaiveDateTime
+#[non_exhaustive] pub enum formualizer_common::A1ParseError
 pub formualizer_common::A1ParseError::ColumnOutOfRange(u32)
 pub formualizer_common::A1ParseError::Empty
 pub formualizer_common::A1ParseError::InvalidColumnChar(char)
@@ -770,7 +772,7 @@ impl core::fmt::Debug for formualizer_common::CoercionPolicy
 pub fn formualizer_common::CoercionPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_common::CoercionPolicy
 impl core::marker::StructuralPartialEq for formualizer_common::CoercionPolicy
-pub enum formualizer_common::CoordError
+#[non_exhaustive] pub enum formualizer_common::CoordError
 pub formualizer_common::CoordError::ColOverflow(i64)
 pub formualizer_common::CoordError::NegativeCol(i64)
 pub formualizer_common::CoordError::NegativeRow(i64)
@@ -807,7 +809,7 @@ impl core::hash::Hash for formualizer_common::DateSystem
 pub fn formualizer_common::DateSystem::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_common::DateSystem
 impl core::marker::StructuralPartialEq for formualizer_common::DateSystem
-pub enum formualizer_common::ExcelErrorExtra
+#[non_exhaustive] pub enum formualizer_common::ExcelErrorExtra
 pub formualizer_common::ExcelErrorExtra::None
 pub formualizer_common::ExcelErrorExtra::PlanStale
 pub formualizer_common::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
@@ -834,7 +836,7 @@ impl serde_core::ser::Serialize for formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelErrorExtra::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelErrorExtra::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::ExcelErrorKind
+#[non_exhaustive] pub enum formualizer_common::ExcelErrorKind
 pub formualizer_common::ExcelErrorKind::Calc
 pub formualizer_common::ExcelErrorKind::Cancelled
 pub formualizer_common::ExcelErrorKind::Circ
@@ -911,7 +913,7 @@ impl serde_core::ser::Serialize for formualizer_common::LiteralValue
 pub fn formualizer_common::LiteralValue::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::LiteralValue
 pub fn formualizer_common::LiteralValue::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::PlanStaleReason
+#[non_exhaustive] pub enum formualizer_common::PlanStaleReason
 pub formualizer_common::PlanStaleReason::Authority
 pub formualizer_common::PlanStaleReason::Budget
 pub formualizer_common::PlanStaleReason::Engine
@@ -938,7 +940,7 @@ impl serde_core::ser::Serialize for formualizer_common::PlanStaleReason
 pub fn formualizer_common::PlanStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PlanStaleReason
 pub fn formualizer_common::PlanStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::PreparationStaleReason
+#[non_exhaustive] pub enum formualizer_common::PreparationStaleReason
 pub formualizer_common::PreparationStaleReason::Authority
 pub formualizer_common::PreparationStaleReason::Graph
 pub formualizer_common::PreparationStaleReason::Provider
@@ -962,7 +964,7 @@ impl serde_core::ser::Serialize for formualizer_common::PreparationStaleReason
 pub fn formualizer_common::PreparationStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PreparationStaleReason
 pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::ResourceExhaustionReason
+#[non_exhaustive] pub enum formualizer_common::ResourceExhaustionReason
 pub formualizer_common::ResourceExhaustionReason::Admission
 pub formualizer_common::ResourceExhaustionReason::ArithmeticOverflow
 pub formualizer_common::ResourceExhaustionReason::Deadline
@@ -989,7 +991,7 @@ impl serde_core::ser::Serialize for formualizer_common::ResourceExhaustionReason
 pub fn formualizer_common::ResourceExhaustionReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ResourceExhaustionReason
 pub fn formualizer_common::ResourceExhaustionReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
-pub enum formualizer_common::SheetAddressError
+#[non_exhaustive] pub enum formualizer_common::SheetAddressError
 pub formualizer_common::SheetAddressError::Coord(formualizer_common::CoordError)
 pub formualizer_common::SheetAddressError::MismatchedSheets
 pub formualizer_common::SheetAddressError::MissingSheetName
@@ -1056,7 +1058,7 @@ pub fn formualizer_common::SheetRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_
 impl<'a> core::hash::Hash for formualizer_common::SheetRef<'a>
 pub fn formualizer_common::SheetRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRef<'a>
-pub enum formualizer_common::ValueError
+#[non_exhaustive] pub enum formualizer_common::ValueError
 pub formualizer_common::ValueError::ImplicitIntersection(alloc::string::String)
 impl core::clone::Clone for formualizer_common::ValueError
 pub fn formualizer_common::ValueError::clone(&self) -> formualizer_common::ValueError
@@ -1409,9 +1411,11 @@ pub fn formualizer_common::col_index_from_letters_1based(&str) -> core::result::
 pub fn formualizer_common::col_letters_from_1based(u32) -> core::result::Result<alloc::string::String, formualizer_common::A1ParseError>
 pub fn formualizer_common::date_to_serial_for(formualizer_common::DateSystem, &chrono::naive::date::NaiveDate) -> f64
 pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::datetime_to_serial_for(formualizer_common::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::max_excel_serial_for(formualizer_common::DateSystem) -> f64
 pub fn formualizer_common::parse_a1_1based(&str) -> core::result::Result<(u32, u32, bool, bool), formualizer_common::A1ParseError>
+pub fn formualizer_common::serial_to_datetime(f64) -> chrono::naive::datetime::NaiveDateTime
 pub fn formualizer_common::serial_to_datetime(f64) -> chrono::naive::datetime::NaiveDateTime
 pub fn formualizer_common::time_to_fraction(&chrono::naive::time::NaiveTime) -> f64
 pub fn formualizer_common::try_serial_to_date_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::date::NaiveDate, formualizer_common::ExcelError>

@@ -784,6 +784,7 @@ pub fn map_error_code(kind: ExcelErrorKind) -> u8 {
         ExcelErrorKind::Calc => 11,
         ExcelErrorKind::Circ => 12,
         ExcelErrorKind::Cancelled => 13,
+        _ => 8,
     }
 }
 
@@ -4651,6 +4652,30 @@ pub struct ColumnShape {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn known_error_storage_codes_are_stable() {
+        let cases = [
+            (ExcelErrorKind::Null, 1),
+            (ExcelErrorKind::Ref, 2),
+            (ExcelErrorKind::Name, 3),
+            (ExcelErrorKind::Value, 4),
+            (ExcelErrorKind::Div, 5),
+            (ExcelErrorKind::Na, 6),
+            (ExcelErrorKind::Num, 7),
+            (ExcelErrorKind::Error, 8),
+            (ExcelErrorKind::NImpl, 9),
+            (ExcelErrorKind::Spill, 10),
+            (ExcelErrorKind::Calc, 11),
+            (ExcelErrorKind::Circ, 12),
+            (ExcelErrorKind::Cancelled, 13),
+        ];
+        for (kind, code) in cases {
+            assert_eq!(map_error_code(kind), code, "{kind:?}");
+            assert_eq!(unmap_error_code(code), kind, "code {code}");
+        }
+        assert_eq!(unmap_error_code(u8::MAX), ExcelErrorKind::Error);
+    }
     use arrow_array::Array;
     use arrow_schema::DataType;
     use chrono::{Datelike, Timelike};

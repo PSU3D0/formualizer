@@ -20,6 +20,7 @@ use crate::LiteralValue;
 ///
 /// **Note:** names are CamelCase (idiomatic Rust) while `Display`
 /// renders them exactly as Excel shows them (`#DIV/0!`, …).
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ExcelErrorKind {
@@ -99,6 +100,7 @@ pub struct ErrorContext {
 }
 
 /// Stable reason for a resource exhaustion diagnostic.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum ResourceExhaustionReason {
@@ -140,6 +142,7 @@ pub struct ResourceExhaustionDetail {
 }
 
 /// Stable category for a target-preparation plan rejected at its final boundary.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum PreparationStaleReason {
@@ -165,6 +168,7 @@ impl PreparationStaleReason {
 }
 
 /// Stable category for a reusable recalculation plan rejected before execution.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum PlanStaleReason {
@@ -198,6 +202,7 @@ impl PlanStaleReason {
 /// Kind-specific payloads (“extension slot”).
 ///
 /// Only variants that need extra data get it—rest stay at `None`.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum ExcelErrorExtra {

@@ -2174,6 +2174,7 @@ impl RecalcPlan {
                     self.key.revisions.graph_topology_revision =
                         self.key.revisions.graph_topology_revision.wrapping_add(1);
                 }
+                _ => {}
             }
         }
     }

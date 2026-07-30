@@ -148,7 +148,7 @@ Use `scripts/bump-version.py` to update versions across all manifests for a give
 ./scripts/bump-version.py --track product --version 0.4.0
 
 # Parser/SDK track (formualizer-common + formualizer-parse)
-./scripts/bump-version.py --track parse --version 1.1.0
+./scripts/bump-version.py --track parse --version 3.0.0
 
 # Spec track (sheetport-spec only)
 ./scripts/bump-version.py --track spec --version 0.4.0

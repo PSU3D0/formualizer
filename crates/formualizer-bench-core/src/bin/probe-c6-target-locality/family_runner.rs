@@ -10,7 +10,7 @@ use formualizer_bench_core::c6_calibration::families::{
     LAYOUT_PREPARATION_ENVELOPE_END_ROW, expected_typed_outputs, layout_manifest, scalar_manifest,
     table_manifest,
 };
-use formualizer_common::{ExcelErrorExtra, LiteralValue, PlanStaleReason, RangeAddress};
+use formualizer_common::{ExcelErrorExtra, LiteralValue, RangeAddress};
 use formualizer_eval::engine::{EvaluationTarget, TableSelection};
 use formualizer_eval::reference::{CellRef, Coord, RangeRef};
 use formualizer_sheetport::{BatchInput, BatchOptions, InputUpdate, PortValue, SheetPort};
@@ -801,17 +801,7 @@ fn stale_reason(error: &IoError) -> Option<&'static str> {
     let ExcelErrorExtra::PlanStale { reason } = excel.extra else {
         return None;
     };
-    Some(match reason {
-        PlanStaleReason::Engine => "engine",
-        PlanStaleReason::Provider => "provider",
-        PlanStaleReason::Semantic => "semantic",
-        PlanStaleReason::Budget => "budget",
-        PlanStaleReason::Staged => "staged",
-        PlanStaleReason::Symbols => "symbols",
-        PlanStaleReason::Authority => "authority",
-        PlanStaleReason::SpanGeneration => "span_generation",
-        PlanStaleReason::Graph => "graph",
-    })
+    Some(reason.as_str())
 }
 
 fn read_family_outputs(workbook: &Workbook, shape: &FamilyFixtureShape) -> Vec<TypedOracleValue> {
