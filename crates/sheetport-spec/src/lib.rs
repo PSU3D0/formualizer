@@ -15,9 +15,11 @@ mod validation;
 pub use manifest::*;
 pub use validation::{ManifestIssue, ValidationError};
 
-/// Version of this reference implementation crate.
+/// Package version of this reference implementation crate.
 ///
-/// This is expected to track the manifest `spec_version` for the supported spec.
+/// Its major/minor line tracks the supported manifest protocol. Patch releases
+/// may advance validator, CLI, or packaging behavior without changing
+/// [`CURRENT_SPEC_VERSION`] or the canonical schema.
 pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns the canonical JSON Schema (Draft 2019-09) for the current manifest version.
