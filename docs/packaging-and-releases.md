@@ -93,6 +93,24 @@ Multiple tags can point at the same commit if we want “synced” releases with
 
 Bindings should enable features on `formualizer` (not on individual subcrates).
 
+## Release package preflight
+
+Run the credential-free package preflight from a clean release commit **before creating a tag**:
+
+```bash
+python3 scripts/release-preflight.py --track parse
+python3 scripts/release-preflight.py --track spec
+python3 scripts/release-preflight.py --track product
+```
+
+Use only the track being released. `--allow-dirty` exists for development checks and is forbidden for a release tag.
+
+For multi-crate tracks, the script packages crates in dependency order, adds each prospective archive to a temporary local Cargo registry, and verifies downstream archives against those exact bytes. Workspace path dependencies therefore cannot hide an unpublished or incompatible registry package. The staging registry and Cargo home are temporary; inherited Cargo/GitHub token variables are removed and Git prompting is disabled. The exact `cargo-local-registry` helper and its isolated download cache live under `target/release-preflight-*` without replacing a global tool.
+
+For every package, the preflight queries crates.io. A version that does not yet exist is accepted. If the version exists, the shipped source/data/doc payload must match exactly; generated `Cargo.toml`, `Cargo.lock`, and `.cargo_vcs_info.json` are excluded because they vary with Cargo or the source commit, while `Cargo.toml.orig` remains compared so dependency requirements are covered. Any other difference means the source must be restored or the package version bumped.
+
+The tag-triggered release workflow repeats the same preflight before any publish job receives a registry token. The pre-tag run avoids creating a bad tag; the workflow run prevents publication if a tag bypasses the human checklist.
+
 ## Publishing Order (Rust)
 
 ### Parser/SDK release (`parse-v*`)
@@ -173,7 +191,8 @@ After bumping, the script runs `cargo check` to verify the workspace compiles (u
 1. Decide which track(s) you are releasing.
 2. Run `./scripts/bump-version.py --track <track> --version <version>` (use `--dry-run` first to preview).
 3. Ensure `CHANGELOG` entries exist where applicable.
-4. Commit the version bump: `git commit -am "chore: bump <track> to <version>"`
-5. Create the tag: `git tag v<version>` (or `parse-v<version>` / `sheetport-spec-v<version>`).
-6. Push: `git push && git push --tags`
-7. Verify GitHub Actions publishes successfully.
+4. Commit the version bump: `git commit -am "chore: bump <track> to <version>"`.
+5. From the clean commit, run `python3 scripts/release-preflight.py --track <track>` and retain the package hashes in the release evidence.
+6. Create the tag: `git tag v<version>` (or `parse-v<version>` / `sheetport-spec-v<version>`).
+7. Push the branch and tag.
+8. Verify the tag workflow repeats the preflight and publishes successfully.

@@ -61,6 +61,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Security and hardening
 
+- Added a credential-free release preflight that packages each Rust release track through a temporary local registry in publish order, verifies downstream archives against the exact prospective upstream bytes, and rejects source drift when a package version already exists on crates.io. Clean-checkout, symlink, archive-member, checksum, exclusive-lock, and exact isolated-tool guards keep the pre-tag check transactional; tag workflows repeat it before any publish job receives a registry token. (#257, #258)
 - Upgraded PyO3 and NumPy bindings to 0.29.0, resolving the PyO3 out-of-bounds iterator and missing closure `Sync` advisories. Upgraded `pyo3-stub-gen` to 0.23.0, made existing clone-based Python extraction explicit, and aligned generated stubs with the private maturin extension-module path while preserving the public `formualizer` package API.
 
 ### Performance
