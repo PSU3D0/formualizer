@@ -13,7 +13,7 @@ use crate::traits::{
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -40,6 +40,40 @@ impl Function for SharedCancellationProbe {
         self.observed
             .store(self.expected.is_cancelled(), Ordering::SeqCst);
         Ok(CalcValue::Scalar(LiteralValue::Int(1)))
+    }
+}
+
+#[derive(Debug)]
+struct DynamicCollectorCancellationProbe {
+    expected: CancelToken,
+    calls: Arc<AtomicUsize>,
+    missing_tokens: Arc<AtomicUsize>,
+    shared_signal_observed: Arc<AtomicBool>,
+}
+
+impl Function for DynamicCollectorCancellationProbe {
+    fn name(&self) -> &'static str {
+        "DYNAMIC_COLLECTOR_CANCELLATION_PROBE"
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        match ctx.cancellation_token() {
+            Some(token) if call == 0 => {
+                token.cancel();
+                self.shared_signal_observed
+                    .store(self.expected.is_cancelled(), Ordering::SeqCst);
+            }
+            Some(_) => {}
+            None => {
+                self.missing_tokens.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        Ok(CalcValue::Scalar(LiteralValue::Int(0)))
     }
 }
 
@@ -70,6 +104,45 @@ fn engine_context_and_function_context_share_cancellation_signal() {
     assert!(
         result.is_ok() || result.unwrap_err().kind == ExcelErrorKind::Cancelled,
         "cancelling from the function may be observed at the next engine checkpoint"
+    );
+}
+
+#[test]
+fn dynamic_ref_collector_forwards_shared_cancellation_token() {
+    let token = CancelToken::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let missing_tokens = Arc::new(AtomicUsize::new(0));
+    let shared_signal_observed = Arc::new(AtomicBool::new(false));
+    let workbook = TestWorkbook::new().with_function(Arc::new(DynamicCollectorCancellationProbe {
+        expected: token.clone(),
+        calls: Arc::clone(&calls),
+        missing_tokens: Arc::clone(&missing_tokens),
+        shared_signal_observed: Arc::clone(&shared_signal_observed),
+    }));
+    let mut engine = Engine::new(workbook, EvalConfig::default());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            2,
+            formualizer_parse::parser::parse(
+                "=DYNAMIC_COLLECTOR_CANCELLATION_PROBE()+INDIRECT(\"A1\")",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+    let error = engine.evaluate_all_cancellable(token).unwrap_err();
+
+    assert_eq!(error.kind, ExcelErrorKind::Cancelled);
+    assert!(calls.load(Ordering::SeqCst) >= 1);
+    assert_eq!(missing_tokens.load(Ordering::SeqCst), 0);
+    assert!(
+        shared_signal_observed.load(Ordering::SeqCst),
+        "the DynamicRefCollector token must share the Engine's active signal"
     );
 }
 

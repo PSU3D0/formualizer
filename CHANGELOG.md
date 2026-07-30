@@ -6,7 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Breaking changes
 
-- Migrated the remaining public cancellation seam to `CancelToken`: `EvaluationContext::cancellation_token()` and `FunctionContext::cancellation_token()` now return `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`, and `RangeView::with_cancel_token(...)` now accepts `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`. Custom contexts and functions should clone and return the shared handle, retrieve it once before hot loops, and periodically poll `is_cancelled()`. To adopt an existing raw flag, use `CancelToken::from_flag(flag)`, for example `Some(CancelToken::from_flag(Arc::clone(&flag)))`. (#233)
+- Migrated the remaining public context and range raw-flag signatures to `CancelToken`: `EvaluationContext::cancellation_token()` and `FunctionContext::cancellation_token()` now return `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`, and `RangeView::with_cancel_token(...)` now accepts `Option<CancelToken>` instead of `Option<Arc<AtomicBool>>`. Context implementers should clone and return the shared handle without allocating; custom functions should retrieve it once before hot loops and periodically poll `is_cancelled()`. To adopt an existing raw flag, use `CancelToken::from_flag(flag)`, for example `Some(CancelToken::from_flag(Arc::clone(&flag)))`. (#233)
 
 ### Added
 
