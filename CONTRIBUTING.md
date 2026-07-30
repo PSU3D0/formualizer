@@ -52,7 +52,8 @@ cargo test --workspace
 The published Rust crates have deterministic API snapshots under `public-api/`.
 Canonical generation requires Linux `x86_64-unknown-linux-gnu`; use the
 repository devcontainer or an equivalent Linux environment, not macOS or
-Windows output. Rustup, Python 3, and standard Linux utilities are required.
+Windows output. Rustup, Python 3, and standard Linux utilities including
+`flock` are required.
 Install the pinned isolated tools, then run the same drift check as CI:
 
 ```bash

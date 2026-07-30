@@ -191,6 +191,9 @@ jobs:
     - name: Check public Rust API snapshots
       run: scripts/public-api.sh check
 
+    - name: Test concurrent snapshot updates
+      run: scripts/tests/public-api-concurrency.sh
+
   build-wheels:
     runs-on: ${{ matrix.os }}
     strategy:

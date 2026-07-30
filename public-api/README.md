@@ -43,7 +43,7 @@ The CFFI, Python, and WASM manifests' current publish flags are release-hygiene 
 
 ## Deterministic generation
 
-Canonical generation is supported on Linux (`x86_64-unknown-linux-gnu`), including the repository devcontainer and the `ubuntu-24.04` CI runner. It requires rustup, Python 3 for feature-policy validation, and standard Linux utilities (`diff`, `realpath`, and `mktemp`). Run review generation in that environment rather than treating output from macOS or Windows as canonical.
+Canonical generation is supported on Linux (`x86_64-unknown-linux-gnu`), including the repository devcontainer and the `ubuntu-24.04` CI runner. It requires rustup, Python 3 for feature-policy validation, and standard Linux utilities (`diff`, `flock`, `realpath`, and `mktemp`). Run review generation in that environment rather than treating output from macOS or Windows as canonical.
 
 Generation pins these inputs and neutralizes host configuration:
 
@@ -51,7 +51,7 @@ Generation pins these inputs and neutralizes host configuration:
 - rustdoc `nightly-2026-02-16` (`rustc 1.95.0-nightly`)
 - target `x86_64-unknown-linux-gnu`
 - `LC_ALL=C`, `TZ=UTC`, and `CARGO_TERM_COLOR=never`
-- unset plain and encoded rust/rustdoc flags, compiler overrides, wrappers, target linker/runner overrides, and their Cargo build equivalents
+- unset plain and encoded rust/rustdoc flags, inherited `CARGO`, compiler overrides, wrappers, target linker/runner overrides, and their Cargo build equivalents
 - isolated `CARGO_TARGET_DIR=target/public-api` and `CARGO_HOME=target/public-api-cargo-home`
 
 Snapshots omit cargo-public-api's blanket implementations and compiler auto-trait implementations. Omitting auto-trait implementations means these files do not detect changes to inferred `Send`, `Sync`, or similar auto traits; reviewers must assess those separately. Derive-generated and explicit implementations remain because traits such as `Clone`, `Eq`, and `Default` are downstream commitments even though retaining them makes the baseline larger.
@@ -76,7 +76,9 @@ A crate selection is useful while iterating:
 scripts/public-api.sh check formualizer-eval
 ```
 
-When an API change is intentional, generation completes for every requested crate before publication. Candidates are then staged on the snapshot filesystem and installed as a rollback-protected multi-file transaction, so a failed command or signal restores the entire selected baseline:
+Checks take a shared cooperating-process lock and updates take an exclusive lock under the preflighted, non-symlink `target/public-api-lock/` path. The lock is held from before generation through comparison or publication and rollback, so cooperating readers and writers never observe or produce an interleaved baseline.
+
+When an API change is intentional, generation completes for every requested crate before publication. Candidates are then staged on the snapshot filesystem and installed as a rollback-protected multi-file transaction, so a detected command failure or handled signal restores the entire selected baseline:
 
 ```bash
 scripts/public-api.sh update
@@ -85,3 +87,7 @@ scripts/public-api.sh check
 ```
 
 Review the unified diff. Confirm that the native feature profile still represents the release surface, classify additions/removals/changes for semver impact, and commit the reviewed snapshots with the source change. Do not update snapshots merely to make CI green.
+
+The rollback guarantee covers cooperating script processes and detected failures. Hostile non-cooperating filesystem mutation, `SIGKILL`, process crashes that bypass traps, and power loss are outside its scope. If a detected rollback cannot complete safely, the script retains the recoverable transaction backup directory and prints its path rather than deleting evidence or following an unsafe path.
+
+`scripts/tests/public-api-concurrency.sh` deterministically pauses one update after its first file install, starts a second update with a distinct two-crate candidate set, and proves the second process waits and ultimately publishes one complete set rather than an interleaved baseline.

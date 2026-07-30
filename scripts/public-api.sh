@@ -14,6 +14,8 @@ readonly ROOT="$(CDPATH= cd -P -- "${SCRIPT_DIR}/.." && pwd -P)"
 readonly SNAPSHOT_DIR="${ROOT}/public-api"
 readonly TARGET_ROOT="${ROOT}/target"
 readonly TARGET_DIR="${TARGET_ROOT}/public-api"
+readonly LOCK_DIR="${TARGET_ROOT}/public-api-lock"
+readonly LOCK_PATH="${LOCK_DIR}/snapshots.lock"
 readonly TOOL_ROOT="${TARGET_ROOT}/public-api-tools/cargo-public-api-${PUBLIC_API_VERSION}"
 readonly PUBLIC_API_BIN="${TOOL_ROOT}/bin/cargo-public-api"
 readonly ISOLATED_CARGO_HOME="${TARGET_ROOT}/public-api-cargo-home"
@@ -36,6 +38,7 @@ GENERATED_DIR=""
 TRANSACTION_DIR=""
 TRANSACTION_ACTIVE=0
 TRANSACTION_ROLLBACK_FAILED=0
+LOCK_FD=""
 
 usage() {
   cat >&2 <<USAGE
@@ -211,6 +214,8 @@ preflight_repo_paths() {
   assert_no_symlink_components "$SNAPSHOT_DIR"
   assert_no_symlink_components "$TARGET_ROOT"
   assert_no_symlink_components "$TARGET_DIR"
+  assert_no_symlink_components "$LOCK_DIR"
+  assert_no_symlink_components "$LOCK_PATH"
   assert_no_symlink_components "$TOOL_ROOT"
   assert_no_symlink_components "$PUBLIC_API_BIN"
   assert_no_symlink_components "$ISOLATED_CARGO_HOME"
@@ -221,12 +226,16 @@ preflight_repo_paths() {
   fi
 
   local directory
-  for directory in "$TARGET_ROOT" "$TARGET_DIR" "$TOOL_ROOT" "$ISOLATED_CARGO_HOME"; do
+  for directory in "$TARGET_ROOT" "$TARGET_DIR" "$LOCK_DIR" "$TOOL_ROOT" "$ISOLATED_CARGO_HOME"; do
     if [[ -e "$directory" && ! -d "$directory" ]]; then
       echo "error: expected directory path is not a directory: ${directory#"${ROOT}/"}" >&2
       return 1
     fi
   done
+  if [[ -e "$LOCK_PATH" && ! -f "$LOCK_PATH" ]]; then
+    echo "error: public API lock path is not a regular file: ${LOCK_PATH#"${ROOT}/"}" >&2
+    return 1
+  fi
   if [[ -e "$PUBLIC_API_BIN" && ! -f "$PUBLIC_API_BIN" ]]; then
     echo "error: isolated cargo-public-api path is not a regular file: ${PUBLIC_API_BIN#"${ROOT}/"}" >&2
     return 1
@@ -251,6 +260,7 @@ sanitize_build_environment() {
     CARGO_ENCODED_RUSTDOCFLAGS \
     CARGO_BUILD_TARGET \
     CARGO_BUILD_RUSTFLAGS \
+    CARGO \
     RUSTC \
     RUSTDOC \
     RUSTC_WRAPPER \
@@ -349,6 +359,48 @@ verify_tools() {
     echo "error: pinned public API tools are not ready; run scripts/public-api.sh setup" >&2
     exit 1
   fi
+}
+
+acquire_process_lock() {
+  local action="$1"
+  command -v flock >/dev/null 2>&1 || {
+    echo "error: flock is required for public API snapshot concurrency safety" >&2
+    exit 1
+  }
+
+  preflight_repo_paths
+  mkdir -p -- "$LOCK_DIR"
+  preflight_repo_paths
+  exec {LOCK_FD}>>"$LOCK_PATH"
+  if [[ -L "$LOCK_PATH" || ! -f "$LOCK_PATH" ]]; then
+    echo "error: public API lock path became unsafe: ${LOCK_PATH#"${ROOT}/"}" >&2
+    exec {LOCK_FD}>&-
+    LOCK_FD=""
+    exit 1
+  fi
+
+  case "$action" in
+    check)
+      echo "Waiting for shared public API snapshot lock..." >&2
+      flock --shared "$LOCK_FD"
+      ;;
+    update)
+      echo "Waiting for exclusive public API snapshot lock..." >&2
+      flock --exclusive "$LOCK_FD"
+      ;;
+    *)
+      echo "error: internal lock request for unsupported action: ${action}" >&2
+      exit 1
+      ;;
+  esac
+  echo "Acquired ${action} public API snapshot lock." >&2
+}
+
+release_process_lock() {
+  [[ -n "$LOCK_FD" ]] || return 0
+  flock --unlock "$LOCK_FD" || true
+  exec {LOCK_FD}>&-
+  LOCK_FD=""
 }
 
 validate_feature_policy() {
@@ -487,6 +539,7 @@ cleanup_on_exit() {
     safe_remove_transaction_dir || status=70
   fi
   safe_remove_generated_dir
+  release_process_lock
   exit "$status"
 }
 
@@ -554,6 +607,13 @@ transaction_term_handler() {
   exit 143
 }
 
+managed_doc_link_is_valid() {
+  local doc_link="$1"
+  [[ -L "$doc_link" ]] &&
+    [[ "$(readlink -- "$doc_link")" == ../doc ]] &&
+    [[ "$(realpath -m -- "$doc_link")" == "${TARGET_DIR}/doc" ]]
+}
+
 prepare_target_dir() {
   assert_no_symlink_components "$TARGET_DIR"
   mkdir -p -- "${TARGET_DIR}/doc" "${TARGET_DIR}/${TARGET}"
@@ -562,16 +622,19 @@ prepare_target_dir() {
 
   local doc_link="${TARGET_DIR}/${TARGET}/doc"
   if [[ -L "$doc_link" ]]; then
-    if [[ "$(readlink -- "$doc_link")" != ../doc ||
-          "$(realpath -m -- "$doc_link")" != "${TARGET_DIR}/doc" ]]; then
+    if ! managed_doc_link_is_valid "$doc_link"; then
       echo "error: refusing unexpected proc-macro doc symlink: ${doc_link#"${ROOT}/"}" >&2
       return 1
     fi
   elif [[ -e "$doc_link" ]]; then
     echo "error: expected proc-macro doc path to be absent or the managed ../doc symlink: ${doc_link#"${ROOT}/"}" >&2
     return 1
-  else
-    ln -s -- ../doc "$doc_link"
+  elif ! ln -s -- ../doc "$doc_link"; then
+    # Concurrent shared checks may both initialize the managed bridge.
+    if ! managed_doc_link_is_valid "$doc_link"; then
+      echo "error: failed to create the managed proc-macro doc symlink: ${doc_link#"${ROOT}/"}" >&2
+      return 1
+    fi
   fi
 }
 
@@ -775,6 +838,7 @@ main() {
   fi
 
   verify_tools
+  acquire_process_lock "$action"
   initialize_generated_dir
   validate_feature_policy
 
