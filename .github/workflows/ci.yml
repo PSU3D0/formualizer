@@ -185,6 +185,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-public-api-0.52.0-nightly-2026-02-16-
 
+    - name: Test release preflight helpers
+      run: python3 -m unittest scripts/tests/test_release_preflight.py
+
     - name: Verify public API tools
       run: scripts/public-api.sh setup
 
