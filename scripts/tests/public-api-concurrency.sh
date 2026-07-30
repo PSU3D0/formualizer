@@ -12,10 +12,20 @@ readonly TEST_DIR="$(mktemp -d -- "${TMPDIR:-/tmp}/formualizer-public-api-concur
 A_PID=""
 B_PID=""
 
+interrupt_handler() {
+  exit 130
+}
+
+terminate_handler() {
+  exit 143
+}
+
 initial_cleanup() {
   rm -rf -- "$TEST_DIR"
 }
-trap initial_cleanup EXIT INT TERM
+trap initial_cleanup EXIT
+trap interrupt_handler INT
+trap terminate_handler TERM
 
 cleanup() {
   touch "${TEST_DIR}/release" 2>/dev/null || true
@@ -45,7 +55,7 @@ cp -- "$EVAL_SOURCE" "${TEST_DIR}/eval-source"
 cp -- "$COMMON_SOURCE" "${TEST_DIR}/common-source"
 cp -- "$EVAL_SNAPSHOT" "${TEST_DIR}/eval-snapshot"
 cp -- "$COMMON_SNAPSHOT" "${TEST_DIR}/common-snapshot"
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
 mkdir -- "${TEST_DIR}/bin"
 
 cat >"${TEST_DIR}/bin/mv" <<'WRAPPER'
