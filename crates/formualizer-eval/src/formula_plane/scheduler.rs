@@ -141,6 +141,7 @@ struct CompiledPrecedent {
 pub(crate) struct MixedTopology {
     relationships: BTreeMap<FormulaProducerId, Vec<CompiledRelationship>>,
     precedents: BTreeMap<FormulaProducerId, Vec<CompiledPrecedent>>,
+    complete_sources: FxHashSet<FormulaProducerId>,
     pub(crate) stats: MixedTopologyCompileStats,
     pub(crate) fallbacks: Vec<MixedScheduleFallback>,
     complete: bool,
@@ -172,6 +173,7 @@ impl MixedTopology {
     fn estimated_memory_bytes(
         relationships: &BTreeMap<FormulaProducerId, Vec<CompiledRelationship>>,
         precedents: &BTreeMap<FormulaProducerId, Vec<CompiledPrecedent>>,
+        complete_source_capacity: usize,
         fallback_capacity: usize,
         retained_memory_bytes: usize,
     ) -> Option<usize> {
@@ -201,6 +203,9 @@ impl MixedTopology {
                     .checked_mul(std::mem::size_of::<CompiledPrecedent>())?,
             )?;
         }
+        bytes = bytes.checked_add(complete_source_capacity.checked_mul(
+            std::mem::size_of::<FormulaProducerId>() + 2 * std::mem::size_of::<usize>(),
+        )?)?;
         bytes = bytes.checked_add(
             fallback_capacity.checked_mul(std::mem::size_of::<MixedScheduleFallback>())?,
         )?;
@@ -250,11 +255,14 @@ pub(crate) fn compile_mixed_topology(
     };
     let mut relationships = BTreeMap::new();
     let mut precedents = BTreeMap::new();
+    let mut complete_sources = FxHashSet::default();
+    let mut complete_source_count = 0usize;
     let mut fallbacks = Vec::new();
     let mut complete = true;
     let initial_memory = MixedTopology::estimated_memory_bytes(
         &relationships,
         &precedents,
+        complete_sources.capacity(),
         fallbacks.capacity(),
         config.retained_memory_bytes,
     );
@@ -270,7 +278,7 @@ pub(crate) fn compile_mixed_topology(
         );
     }
 
-    for producer in producers {
+    for &producer in &producers {
         let Some(result_region) = producer_results.producer_result_region(producer) else {
             complete = false;
             fallbacks.push(MixedScheduleFallback {
@@ -365,6 +373,7 @@ pub(crate) fn compile_mixed_topology(
             let estimated = MixedTopology::estimated_memory_bytes(
                 &relationships,
                 &precedents,
+                complete_sources.capacity(),
                 fallbacks.capacity(),
                 config.retained_memory_bytes,
             );
@@ -382,15 +391,74 @@ pub(crate) fn compile_mixed_topology(
         if !complete {
             break;
         }
+        complete_source_count = complete_source_count.saturating_add(1);
+    }
+
+    if !complete
+        && matches!(
+            fallbacks.last().map(|fallback| fallback.reason),
+            Some(
+                MixedScheduleFallbackReason::MaxCandidatesExceeded
+                    | MixedScheduleFallbackReason::MaxEdgesExceeded
+            )
+        )
+    {
+        if complete_sources.try_reserve(complete_source_count).is_err() {
+            return memory_overflow_result(
+                stats,
+                producers
+                    .get(complete_source_count)
+                    .copied()
+                    .unwrap_or(FormulaProducerId::Legacy(crate::engine::VertexId(0))),
+                usize::MAX,
+            );
+        }
+        complete_sources.extend(producers[..complete_source_count].iter().copied());
+        let estimated = MixedTopology::estimated_memory_bytes(
+            &relationships,
+            &precedents,
+            complete_sources.capacity(),
+            fallbacks.capacity(),
+            config.retained_memory_bytes,
+        );
+        stats.estimated_memory_bytes = estimated.unwrap_or(usize::MAX);
+        if estimated.is_none() || stats.estimated_memory_bytes > config.max_memory_bytes {
+            stats.memory_overflow_count = stats.memory_overflow_count.saturating_add(1);
+            fallbacks.push(MixedScheduleFallback {
+                producer: fallbacks
+                    .last()
+                    .map(|fallback| fallback.producer)
+                    .unwrap_or(FormulaProducerId::Legacy(crate::engine::VertexId(0))),
+                reason: MixedScheduleFallbackReason::CacheMemoryExceeded,
+            });
+        }
     }
 
     if complete {
         MixedTopologyCompileResult::Cached(MixedTopology {
             relationships,
             precedents,
+            complete_sources,
             stats,
             fallbacks,
             complete: true,
+        })
+    } else if !relationships.is_empty()
+        && matches!(
+            fallbacks.last().map(|fallback| fallback.reason),
+            Some(
+                MixedScheduleFallbackReason::MaxCandidatesExceeded
+                    | MixedScheduleFallbackReason::MaxEdgesExceeded
+            )
+        )
+    {
+        MixedTopologyCompileResult::Cached(MixedTopology {
+            relationships,
+            precedents,
+            complete_sources,
+            stats,
+            fallbacks,
+            complete: false,
         })
     } else {
         let reason = fallbacks
@@ -1437,8 +1505,27 @@ pub(crate) fn schedule_dirty_work_paged<E>(
     producer_results: &FormulaProducerResultIndex,
     consumer_reads: &FormulaConsumerReadIndex,
     max_precise_edge_regions: usize,
+    checkpoint: impl FnMut(u64) -> Result<(), E>,
+) -> Result<(MixedSchedule, u64), E> {
+    schedule_dirty_work_paged_hybrid(
+        work,
+        producer_results,
+        consumer_reads,
+        None,
+        max_precise_edge_regions,
+        checkpoint,
+    )
+}
+
+pub(crate) fn schedule_dirty_work_paged_hybrid<E>(
+    work: impl IntoIterator<Item = FormulaProducerWork>,
+    producer_results: &FormulaProducerResultIndex,
+    consumer_reads: &FormulaConsumerReadIndex,
+    partial_topology: Option<&MixedTopology>,
+    max_precise_edge_regions: usize,
     mut checkpoint: impl FnMut(u64) -> Result<(), E>,
 ) -> Result<(MixedSchedule, u64), E> {
+    debug_assert!(partial_topology.is_none_or(|topology| !topology.is_complete()));
     let (merged_work, mut stats) = merge_work_items(work);
     let scheduled = merged_work
         .iter()
@@ -1463,6 +1550,68 @@ pub(crate) fn schedule_dirty_work_paged<E>(
         };
         stats.producer_result_region_lookups =
             stats.producer_result_region_lookups.saturating_add(1);
+        if let Some(topology) = partial_topology
+            && topology.complete_sources.contains(&item.producer)
+        {
+            let changed_regions = edge_derivation_regions(
+                &item.dirty,
+                source_region,
+                max_precise_edge_regions,
+                &mut stats,
+            );
+            let relationships = topology
+                .relationships
+                .get(&item.producer)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            checkpoint(u64::try_from(relationships.len()).unwrap_or(u64::MAX))?;
+            for relationship in relationships {
+                if !scheduled.contains(&relationship.target) {
+                    continue;
+                }
+                let mut applies = false;
+                for changed in &changed_regions {
+                    match relationship.projection.project_changed_region(
+                        *changed,
+                        relationship.read_region,
+                        relationship.consumer_result_region,
+                    ) {
+                        ProjectionResult::Exact(_) | ProjectionResult::Conservative { .. } => {
+                            applies = true;
+                            break;
+                        }
+                        ProjectionResult::NoIntersection => {
+                            stats.no_intersection_candidate_count =
+                                stats.no_intersection_candidate_count.saturating_add(1);
+                        }
+                        ProjectionResult::Unsupported(_) => {
+                            stats.unsupported_projection_count =
+                                stats.unsupported_projection_count.saturating_add(1);
+                            push_fallback_once(
+                                &mut fallbacks,
+                                relationship.target,
+                                MixedScheduleFallbackReason::UnsupportedProjection,
+                            );
+                            break;
+                        }
+                    }
+                }
+                if applies {
+                    if add_edge(
+                        item.producer,
+                        relationship.target,
+                        &mut edges,
+                        &mut reverse_edges,
+                    ) {
+                        stats.edges_added = stats.edges_added.saturating_add(1);
+                    } else {
+                        stats.duplicate_edges_skipped =
+                            stats.duplicate_edges_skipped.saturating_add(1);
+                    }
+                }
+            }
+            continue;
+        }
         checkpoint(0)?;
         let query = consumer_reads.entries_intersecting(source_region);
         checkpoint(exact_read_query_work(
@@ -2408,6 +2557,71 @@ mod tests {
         };
         assert_eq!(reason, MixedScheduleFallbackReason::MaxCandidatesExceeded);
         assert_eq!(observed.candidate_overflow_count, 1);
+    }
+
+    #[test]
+    fn candidate_cap_retains_a_safe_prefix_and_exactly_schedules_the_tail() {
+        let mut results = FormulaProducerResultIndex::default();
+        let mut reads = FormulaConsumerReadIndex::default();
+        results.insert_producer(span(1), cell(0, 0, 0));
+        results.insert_producer(span(2), cell(0, 1, 0));
+        results.insert_producer(span(3), cell(0, 10, 0));
+        for row in 0..=1 {
+            reads.insert_read(
+                span(3),
+                cell(0, row, 0),
+                cell(0, 10, 0),
+                DirtyProjectionRule::WholeResult,
+            );
+        }
+        let limited = compile_mixed_topology(
+            &results,
+            &reads,
+            &MixedTopologyConfig {
+                max_candidates: 1,
+                ..MixedTopologyConfig::default()
+            },
+        );
+        let MixedTopologyCompileResult::Cached(partial) = limited else {
+            panic!("a useful bounded prefix must be retained");
+        };
+        assert!(!partial.is_complete());
+        assert_eq!(partial.stats.candidate_overflow_count, 1);
+        assert!(partial.complete_sources.contains(&span(1)));
+        assert!(!partial.complete_sources.contains(&span(2)));
+
+        let work = [
+            work(span(1), ProducerDirtyDomain::Whole),
+            work(span(2), ProducerDirtyDomain::Whole),
+            work(span(3), ProducerDirtyDomain::Whole),
+        ];
+        let (hybrid, queries) = schedule_dirty_work_paged_hybrid(
+            work.clone(),
+            &results,
+            &reads,
+            Some(&partial),
+            256,
+            |_| Ok::<(), ()>(()),
+        )
+        .unwrap();
+        let (exact, _) =
+            schedule_dirty_work_paged(work, &results, &reads, 256, |_| Ok::<(), ()>(())).unwrap();
+        assert_eq!(hybrid.layers, exact.layers);
+        assert!(hybrid.is_authoritative_safe());
+        assert_eq!(queries, 2, "only the uncovered sources use exact queries");
+
+        let at_cap = compile_mixed_topology(
+            &results,
+            &reads,
+            &MixedTopologyConfig {
+                max_candidates: 2,
+                ..MixedTopologyConfig::default()
+            },
+        );
+        assert!(matches!(
+            at_cap,
+            MixedTopologyCompileResult::Cached(ref topology) if topology.is_complete()
+        ));
     }
 
     #[test]

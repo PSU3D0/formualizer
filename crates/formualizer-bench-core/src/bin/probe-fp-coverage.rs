@@ -71,6 +71,16 @@ mod probe {
         load_ms: u128,
         eval_first_ms: u128,
         eval_warm_ms: u128,
+        eval_warm_hit_ms: u128,
+        topology_cache_outcome_first: String,
+        topology_strategy_first: String,
+        topology_candidate_cap_hits_first: u64,
+        topology_cache_outcome_warm: String,
+        topology_strategy_warm: String,
+        topology_cache_hit_events_warm: u64,
+        topology_cache_outcome_warm_hit: String,
+        topology_strategy_warm_hit: String,
+        topology_cache_hit_events_warm_hit: u64,
     }
 
     #[derive(Debug, Serialize)]
@@ -193,10 +203,71 @@ mod probe {
         let t = Instant::now();
         wb.evaluate_all()?;
         let eval_first_ms = t.elapsed().as_millis();
+        let (
+            topology_cache_outcome_first,
+            topology_strategy_first,
+            topology_candidate_cap_hits_first,
+        ) = wb
+            .engine()
+            .last_evaluation_resource_request_stats()
+            .map(|stats| {
+                (
+                    stats.topology.cache_outcome.as_str().to_string(),
+                    stats.topology.strategy.as_str().to_string(),
+                    stats.topology.candidate_cap_hits,
+                )
+            })
+            .unwrap_or_else(|| ("not_used".to_string(), "not_used".to_string(), 0));
 
+        if let Some(input) = corpus.data_values.first() {
+            wb.set_value(
+                input.sheet,
+                input.row,
+                input.col,
+                LiteralValue::Number(input.value + 1.0),
+            )?;
+        }
         let t = Instant::now();
         wb.evaluate_all()?;
         let eval_warm_ms = t.elapsed().as_millis();
+        let (topology_cache_outcome_warm, topology_strategy_warm, topology_cache_hit_events_warm) =
+            wb.engine()
+                .last_evaluation_resource_request_stats()
+                .map(|stats| {
+                    (
+                        stats.topology.cache_outcome.as_str().to_string(),
+                        stats.topology.strategy.as_str().to_string(),
+                        stats.topology.cache_hit_events,
+                    )
+                })
+                .unwrap_or_else(|| ("not_used".to_string(), "not_used".to_string(), 0));
+
+        if let Some(input) = corpus.data_values.first() {
+            wb.set_value(
+                input.sheet,
+                input.row,
+                input.col,
+                LiteralValue::Number(input.value + 2.0),
+            )?;
+        }
+        let t = Instant::now();
+        wb.evaluate_all()?;
+        let eval_warm_hit_ms = t.elapsed().as_millis();
+        let (
+            topology_cache_outcome_warm_hit,
+            topology_strategy_warm_hit,
+            topology_cache_hit_events_warm_hit,
+        ) = wb
+            .engine()
+            .last_evaluation_resource_request_stats()
+            .map(|stats| {
+                (
+                    stats.topology.cache_outcome.as_str().to_string(),
+                    stats.topology.strategy.as_str().to_string(),
+                    stats.topology.cache_hit_events,
+                )
+            })
+            .unwrap_or_else(|| ("not_used".to_string(), "not_used".to_string(), 0));
 
         let mut values = Vec::new();
         for cell in corpus.sections.iter().flat_map(|s| s.formulas.iter()) {
@@ -233,6 +304,16 @@ mod probe {
                 load_ms,
                 eval_first_ms,
                 eval_warm_ms,
+                eval_warm_hit_ms,
+                topology_cache_outcome_first,
+                topology_strategy_first,
+                topology_candidate_cap_hits_first,
+                topology_cache_outcome_warm,
+                topology_strategy_warm,
+                topology_cache_hit_events_warm,
+                topology_cache_outcome_warm_hit,
+                topology_strategy_warm_hit,
+                topology_cache_hit_events_warm_hit,
             },
             values,
             coverage,

@@ -52,7 +52,7 @@ use crate::formula_plane::scheduler::{
     MixedTopologyCompileStats, MixedTopologyConfig, build_demand_closure_cached,
     build_demand_closure_in_memory_runs, build_demand_closure_paged,
     build_demand_closure_repeated_passes, compile_mixed_topology, schedule_dirty_work,
-    schedule_dirty_work_in_memory_runs, schedule_dirty_work_paged,
+    schedule_dirty_work_in_memory_runs, schedule_dirty_work_paged_hybrid,
     schedule_dirty_work_repeated_passes,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -19010,23 +19010,22 @@ where
         let (cache_outcome, strategy, compile_stats) = if cache_hit {
             self.mixed_topology_cache_hits = self.mixed_topology_cache_hits.saturating_add(1);
             self.mixed_topology_cache_skip_streak = 0;
-            let stats = self
+            let cached = self
                 .cached_mixed_topology
                 .as_ref()
-                .expect("cache hit has topology")
-                .topology
-                .stats
-                .clone();
+                .expect("cache hit has topology");
+            let stats = cached.topology.stats.clone();
+            let strategy = if cached.topology.is_complete() {
+                FormulaPlaneTopologyStrategy::Cached
+            } else {
+                FormulaPlaneTopologyStrategy::ExactPagedIndexed
+            };
             if let Some(ledger) = self.active_resource_ledger.as_mut() {
                 ledger
                     .account_mixed_cache(stats.estimated_memory_bytes as u64)
                     .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
             }
-            (
-                FormulaPlaneTopologyCacheOutcome::Hit,
-                FormulaPlaneTopologyStrategy::Cached,
-                stats,
-            )
+            (FormulaPlaneTopologyCacheOutcome::Hit, strategy, stats)
         } else {
             // A key/cap miss makes the old retained topology stale. Drop it before building its
             // replacement so the request never accounts or owns both generations concurrently.
@@ -19124,6 +19123,11 @@ where
                 }
                 FormulaPlaneTopologyCompileResult::Cached(compiled) => {
                     let stats = compiled.topology.stats.clone();
+                    let strategy = if compiled.topology.is_complete() {
+                        FormulaPlaneTopologyStrategy::CompiledAndCached
+                    } else {
+                        FormulaPlaneTopologyStrategy::ExactPagedIndexed
+                    };
                     let retained_result = self
                         .active_resource_ledger
                         .as_mut()
@@ -19144,11 +19148,7 @@ where
                             .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
                     }
                     index_scratch_reserved = 0;
-                    (
-                        FormulaPlaneTopologyCacheOutcome::Built,
-                        FormulaPlaneTopologyStrategy::CompiledAndCached,
-                        stats,
-                    )
+                    (FormulaPlaneTopologyCacheOutcome::Built, strategy, stats)
                 }
                 FormulaPlaneTopologyCompileResult::CacheSkipped(skipped) => {
                     debug_assert!(self.cached_mixed_topology.is_none());
@@ -19192,29 +19192,43 @@ where
             }
         }
 
+        let reuse_partial_topology = cache_outcome == FormulaPlaneTopologyCacheOutcome::Hit;
         let schedule_result = (|| -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
-            let (producer_results, consumer_reads, span_refs_by_id, plane_epoch, cached_topology) =
-                if let Some(skipped) = skipped_topology.as_ref() {
-                    (
-                        &skipped.producer_results,
-                        &skipped.consumer_reads,
-                        &skipped.span_refs_by_id,
-                        skipped.plane_epoch,
-                        None,
-                    )
+            let (
+                producer_results,
+                consumer_reads,
+                span_refs_by_id,
+                plane_epoch,
+                cached_topology,
+                partial_topology,
+            ) = if let Some(skipped) = skipped_topology.as_ref() {
+                (
+                    &skipped.producer_results,
+                    &skipped.consumer_reads,
+                    &skipped.span_refs_by_id,
+                    skipped.plane_epoch,
+                    None,
+                    None,
+                )
+            } else {
+                let cached = self
+                    .cached_mixed_topology
+                    .as_ref()
+                    .expect("mixed topology available for request");
+                let (complete, partial) = if cached.topology.is_complete() {
+                    (Some(&cached.topology), None)
                 } else {
-                    let cached = self
-                        .cached_mixed_topology
-                        .as_ref()
-                        .expect("complete mixed topology available for request");
-                    (
-                        &cached.producer_results,
-                        &cached.consumer_reads,
-                        &cached.span_refs_by_id,
-                        cached.plane_epoch,
-                        Some(&cached.topology),
-                    )
+                    (None, Some(&cached.topology))
                 };
+                (
+                    &cached.producer_results,
+                    &cached.consumer_reads,
+                    &cached.span_refs_by_id,
+                    cached.plane_epoch,
+                    complete,
+                    partial,
+                )
+            };
             let demand = if let Some(target_roots) = target_roots {
                 use crate::engine::target_preparation::TargetProducer;
                 let mut roots = Vec::new();
@@ -19750,10 +19764,11 @@ where
                             0,
                         ),
                         (_, Some(FormulaPlaneTopologyStrategy::ExactPagedIndexed)) => {
-                            let (schedule, passes) = schedule_dirty_work_paged(
+                            let (schedule, passes) = schedule_dirty_work_paged_hybrid(
                                 work,
                                 producer_results,
                                 consumer_reads,
+                                partial_topology.filter(|_| reuse_partial_topology),
                                 256,
                                 |units| {
                                     Self::resource_loop_checkpoint(
