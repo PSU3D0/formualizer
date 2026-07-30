@@ -35,7 +35,7 @@ mod tests {
             None
         }
 
-        fn cancellation_token(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
             None
         }
 

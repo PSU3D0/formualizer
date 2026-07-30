@@ -6,13 +6,13 @@
 //! single writeback mechanism.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use crate::arrow_store::{OverlayValue, map_error_code};
+use crate::engine::CancelToken;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::eval::ComputedWriteBuffer;
 use crate::engine::sheet_registry::SheetRegistry;
@@ -173,7 +173,7 @@ pub(crate) struct SpanEvaluator<'a> {
     current_sheet: &'a str,
     data_store: &'a DataStore,
     sheet_registry: &'a SheetRegistry,
-    cancel: Option<&'a AtomicBool>,
+    cancel: Option<&'a CancelToken>,
 }
 
 impl<'a> SpanEvaluator<'a> {
@@ -200,7 +200,7 @@ impl<'a> SpanEvaluator<'a> {
         current_sheet: &'a str,
         data_store: &'a DataStore,
         sheet_registry: &'a SheetRegistry,
-        cancel: Option<&'a AtomicBool>,
+        cancel: Option<&'a CancelToken>,
     ) -> Self {
         Self {
             plane,
@@ -213,8 +213,7 @@ impl<'a> SpanEvaluator<'a> {
     }
 
     fn cancellation_checkpoint(&self, index: usize) -> Result<(), SpanEvalError> {
-        if index.is_multiple_of(256) && self.cancel.is_some_and(|flag| flag.load(Ordering::Relaxed))
-        {
+        if index.is_multiple_of(256) && self.cancel.is_some_and(CancelToken::is_cancelled) {
             Err(SpanEvalError::Cancelled)
         } else {
             Ok(())
@@ -495,7 +494,7 @@ impl<'a> SpanEvaluator<'a> {
             writable_placements
                 .par_iter()
                 .map(|placement| {
-                    if self.cancel.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+                    if self.cancel.is_some_and(CancelToken::is_cancelled) {
                         return Err(SpanEvalError::Cancelled);
                     }
                     self.evaluate_placement_value(

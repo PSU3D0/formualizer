@@ -1,11 +1,11 @@
 use crate::arrow_store;
 use crate::arrow_store::IngestBuilder;
+use crate::engine::CancelToken;
 use crate::stripes::NumericChunk;
 use arrow_array::Array;
 use arrow_schema::DataType;
 use formualizer_common::{CoercionPolicy, DateSystem, ExcelError, LiteralValue};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone)]
 pub enum RangeBacking<'a> {
@@ -24,7 +24,7 @@ pub struct RangeView<'a> {
     ec: usize,
     rows: usize,
     cols: usize,
-    cancel_token: Option<Arc<AtomicBool>>,
+    cancel_token: Option<CancelToken>,
 }
 
 impl<'a> core::fmt::Debug for RangeView<'a> {
@@ -68,8 +68,11 @@ impl<'a> Iterator for RowChunkIterator<'a> {
     type Item = Result<ChunkSlice, ExcelError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(token) = &self.view.cancel_token
-            && token.load(Ordering::Relaxed)
+        if self
+            .view
+            .cancel_token
+            .as_ref()
+            .is_some_and(CancelToken::is_cancelled)
         {
             return Some(Err(ExcelError::new(
                 formualizer_common::ExcelErrorKind::Cancelled,
@@ -201,8 +204,13 @@ impl<'a> RangeView<'a> {
         }
     }
 
+    /// Attaches a shared cancellation handle to cancellation-aware range walks.
+    ///
+    /// Cloning a [`CancelToken`] shares its signal without allocating. Retrieve
+    /// a context token once before a hot loop and poll
+    /// [`CancelToken::is_cancelled`] periodically.
     #[must_use]
-    pub fn with_cancel_token(mut self, token: Option<Arc<AtomicBool>>) -> Self {
+    pub fn with_cancel_token(mut self, token: Option<CancelToken>) -> Self {
         self.cancel_token = token;
         self
     }
@@ -226,7 +234,7 @@ impl<'a> RangeView<'a> {
     pub(crate) fn try_from_owned_rows(
         rows: Vec<Vec<LiteralValue>>,
         date_system: DateSystem,
-        cancel_token: Option<Arc<AtomicBool>>,
+        cancel_token: Option<CancelToken>,
     ) -> Result<RangeView<'static>, ExcelError> {
         let nrows = rows.len();
         let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
@@ -235,10 +243,7 @@ impl<'a> RangeView<'a> {
         let mut ib = IngestBuilder::new("__tmp", ncols, chunk_rows, date_system);
 
         for mut r in rows {
-            if cancel_token
-                .as_ref()
-                .is_some_and(|token| token.load(Ordering::Relaxed))
-            {
+            if cancel_token.as_ref().is_some_and(CancelToken::is_cancelled) {
                 return Err(ExcelError::new(
                     formualizer_common::ExcelErrorKind::Cancelled,
                 ));
@@ -1329,5 +1334,37 @@ mod tests {
             DateSystem::Excel1900,
         );
         assert_eq!(view.as_1x1(), Some(LiteralValue::Number(7.0)));
+    }
+
+    #[test]
+    fn pre_cancelled_token_stops_owned_row_construction() {
+        let token = CancelToken::new();
+        token.cancel();
+
+        let error = RangeView::try_from_owned_rows(
+            vec![vec![LiteralValue::Number(1.0)]],
+            DateSystem::Excel1900,
+            Some(token),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Cancelled);
+    }
+
+    #[test]
+    fn pre_cancelled_token_stops_row_chunk_iteration() {
+        let token = CancelToken::new();
+        token.cancel();
+        let view = RangeView::from_owned_rows(
+            vec![vec![LiteralValue::Number(1.0)]],
+            DateSystem::Excel1900,
+        )
+        .with_cancel_token(Some(token));
+
+        let Some(Err(error)) = view.iter_row_chunks().next() else {
+            panic!("pre-cancelled chunk iteration should return cancellation");
+        };
+
+        assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Cancelled);
     }
 }
