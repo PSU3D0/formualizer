@@ -253,6 +253,10 @@ impl FormulaProducerResultIndex {
         self.entries.iter().map(|entry| entry.producer)
     }
 
+    pub(crate) fn entries(&self) -> impl Iterator<Item = &FormulaProducerResultEntry> {
+        self.entries.iter()
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }

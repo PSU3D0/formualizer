@@ -54,6 +54,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Performance
 
+- Experimental authoritative FormulaPlane evaluation now contracts proven span-disconnected legacy islands into the compressed legacy scheduler while retaining span-connected legacy producers in the mixed cycle detector. Dynamic references, names, spills, structural-summary uncertainty, and boundary-discovery overflow fail closed to the global mixed planner. (#251)
 - Mixed FormulaPlane topology overflow now retains the bounded, accounted prefix and its indexes instead of discarding successful compile work. Paged schedule discovery reuses complete cached sources and derives only the uncovered tail exactly, so dense growing-range workbooks avoid rebuilding the same overflowed topology on every recalculation.
 - Experimental authoritative FormulaPlane evaluation now uses the existing consumer-read interval index when exact schedule construction falls back after topology-cache overflow, avoiding full-table scans per dirty formula during the first evaluation of bulk-loaded workbooks. (#240)
 - Experimental authoritative FormulaPlane evaluation now caches accounted consumer and precedent topology across warm and value-only evaluations. Exact graph, authority, semantic, provider, and dynamic-reference revisions invalidate or bypass stale cache generations; candidate, edge, and retained-byte cache overflow selects exact paged/run/native/repeated-pass request topology without span demotion, while span-free and warm no-dirty requests retain topology-free sparse paths.

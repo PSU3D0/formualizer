@@ -33,7 +33,8 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
 use crate::engine::{
-    Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+    CycleConfig, Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+    FormulaPlaneRoute, FormulaPlaneRoutePhase,
 };
 use crate::test_workbook::TestWorkbook;
 
@@ -125,6 +126,21 @@ fn mixed_tail_reads_complete_in_one_authoritative_pass() {
 
     engine.evaluate_all().unwrap();
 
+    let request = engine.last_evaluation_resource_request_stats().unwrap();
+    let route_events =
+        &request.topology.route_events[..usize::from(request.topology.route_event_count)];
+    assert!(
+        route_events.iter().any(|event| {
+            event.route == FormulaPlaneRoute::ContractedLegacyIsland
+                && event.phase == FormulaPlaneRoutePhase::Executed
+        }),
+        "disabling island contraction must fail this routing assertion"
+    );
+    assert_eq!(request.topology.island_membership_vertices, u64::from(ROWS));
+    assert!(request.topology.island_membership_retained_bytes > 0);
+    assert!(request.topology.legacy_relationships_omitted >= u64::from(ROWS));
+    assert_eq!(request.topology.boundary_relationships_retained, 0);
+
     assert_eq!(
         engine.formula_plane_capacity_bailouts(),
         0,
@@ -150,6 +166,51 @@ fn mixed_tail_reads_complete_in_one_authoritative_pass() {
         "quiescent recalc must not re-evaluate spans"
     );
     assert_eq!(engine.formula_plane_capacity_bailouts(), 0);
+}
+
+#[test]
+fn independent_iterative_island_preserves_accumulator_and_single_request_lifecycle() {
+    let config = EvalConfig::default()
+        .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
+        .with_cycle(CycleConfig::iterate(1, 0.001));
+    let mut engine = Engine::new(TestWorkbook::default(), config);
+    let mut formulas = Vec::new();
+    for row in 1..=120 {
+        engine
+            .set_cell_value(SHEET, row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        formulas.push(record(&mut engine, row, 2, &format!("=A{row}+1")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, formulas)])
+        .unwrap();
+    engine
+        .set_cell_value(SHEET, 1, 3, LiteralValue::Number(5.0))
+        .unwrap();
+    engine
+        .set_cell_formula(SHEET, 1, 4, parse("=D1+C1").unwrap())
+        .unwrap();
+
+    for (recalc, expected) in [5.0, 10.0, 15.0].into_iter().enumerate() {
+        let epoch = engine.recalc_epoch;
+        let begins = engine.evaluation_request_begin_count_for_test();
+        engine.evaluate_all().unwrap();
+        assert_eq!(numeric_value(&engine, 1, 4), expected);
+        assert_eq!(engine.recalc_epoch, epoch.wrapping_add(1));
+        assert_eq!(
+            engine.evaluation_request_begin_count_for_test(),
+            begins + 1,
+            "the clock and iterative-redirty state must be sampled once per request"
+        );
+        if recalc == 0 {
+            let request = engine.last_evaluation_resource_request_stats().unwrap();
+            assert!(
+                request.topology.route_events[..usize::from(request.topology.route_event_count)]
+                    .iter()
+                    .any(|event| event.phase == FormulaPlaneRoutePhase::Executed)
+            );
+        }
+    }
 }
 
 fn assert_full_capacity_corpus_parity(
@@ -188,6 +249,13 @@ fn cached_mixed_topology_matches_off_first_warm_and_post_edit() {
     off.evaluate_all().unwrap();
     authoritative.evaluate_all().unwrap();
     assert_eq!(authoritative.formula_plane_capacity_bailouts(), 0);
+    let connected_request = authoritative
+        .last_evaluation_resource_request_stats()
+        .unwrap();
+    assert_eq!(
+        connected_request.topology.route_event_count, 0,
+        "misclassifying a span-connected legacy component as isolated must fail this assertion"
+    );
     let first_stats = authoritative.baseline_stats();
     assert_eq!(first_stats.formula_plane_active_span_count, 1);
     assert_eq!(first_stats.formula_plane_mixed_topology_cache_builds, 1);
