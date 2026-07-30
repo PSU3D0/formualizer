@@ -148,6 +148,59 @@ pub enum FormulaDirtyLeaseOutcome {
     RetainedOnError,
 }
 
+/// Bounded routing telemetry for legacy-island contraction. The fixed-size
+/// representation prevents observability from introducing an unaccounted,
+/// input-sized allocation under retained-memory pressure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FormulaPlaneRoute {
+    #[default]
+    GlobalMixed,
+    ContractedLegacyIsland,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FormulaPlaneRoutePhase {
+    #[default]
+    Planned,
+    Executed,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum FormulaPlaneRouteTransitionReason {
+    #[default]
+    ProvenIsolated,
+    DynamicReference,
+    NamedDependency,
+    SpillOrArray,
+    StructuralSummaryUncertain,
+    UnsupportedReadSummary,
+    BoundaryDiscoveryOverflow,
+    SpanCycleDemotion,
+    RuntimeReplan,
+}
+
+pub const FORMULA_PLANE_ROUTE_EVENT_CAPACITY: usize = 16;
+pub const FORMULA_PLANE_ROUTE_EVENT_SHEET_CAPACITY: usize = 8;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct FormulaPlaneRouteEvent {
+    /// Deterministic request-local identity derived from island membership.
+    pub island_id: u64,
+    pub phase: FormulaPlaneRoutePhase,
+    pub route: FormulaPlaneRoute,
+    /// Sorted sheet IDs touched by the island, truncated at the fixed capacity.
+    pub sheet_ids: [u16; FORMULA_PLANE_ROUTE_EVENT_SHEET_CAPACITY],
+    pub sheet_count: u8,
+    pub authority_epoch: u64,
+    pub index_epoch: u64,
+    pub transition_reason: FormulaPlaneRouteTransitionReason,
+    pub demotion_generation: u32,
+    pub replan_generation: u32,
+}
+
 impl EvaluationRequestKind {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -277,6 +330,18 @@ pub struct FormulaPlaneTopologyRequestStats {
     pub byte_cap_hits: u64,
     pub overflow_reason: Option<EvaluationResourceReason>,
     pub incomplete_reason: Option<EvaluationIncompleteReason>,
+    /// Bounded per-route records. Entries beyond the fixed capacity are
+    /// counted rather than allocated.
+    pub route_events: [FormulaPlaneRouteEvent; FORMULA_PLANE_ROUTE_EVENT_CAPACITY],
+    pub route_event_count: u8,
+    pub route_events_dropped: u64,
+    /// Inline telemetry bytes plus membership bytes charged to the retained
+    /// mixed-cache ledger.
+    pub route_event_bytes_observed: u64,
+    pub island_membership_vertices: u64,
+    pub island_membership_retained_bytes: u64,
+    pub legacy_relationships_omitted: u64,
+    pub boundary_relationships_retained: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

@@ -96,8 +96,9 @@ pub use resource_observability::{
     EvaluationRequestKind, EvaluationRequestOutcome, EvaluationRequestPhaseTimings,
     EvaluationResourceBaselineStats, EvaluationResourceClass, EvaluationResourceLedgerRequestStats,
     EvaluationResourceReason, EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome,
-    FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyRequestStats,
-    FormulaPlaneTopologyStrategy,
+    FormulaPlaneRoute, FormulaPlaneRouteEvent, FormulaPlaneRoutePhase,
+    FormulaPlaneRouteTransitionReason, FormulaPlaneTopologyCacheOutcome,
+    FormulaPlaneTopologyRequestStats, FormulaPlaneTopologyStrategy,
 };
 pub use row_visibility::{RowVisibilitySource, VisibilityMaskMode};
 pub use scheduler::{Layer, Schedule, ScheduleUnit, Scheduler};
