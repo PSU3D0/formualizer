@@ -1270,36 +1270,118 @@ fn every_staged_storage_mutation_moves_index_revision_and_keeps_exact_parity() {
 fn provider_revision_change_at_final_validation_is_stale_and_atomic() {
     use std::sync::atomic::Ordering;
 
-    let workbook = TestWorkbook::default();
-    let revision = workbook.planning_revision_handle();
-    let config = EvalConfig {
-        defer_graph_building: true,
-        ..EvalConfig::default()
-    };
-    let mut engine = Engine::new(workbook, config);
-    engine.add_sheet("Outputs").unwrap();
-    engine.stage_formula_text("Outputs", 1, 1, "=1".into());
-    let before = engine.baseline_stats();
-    let bump = revision.clone();
-    engine.set_before_target_preparation_commit_hook(move || {
-        bump.fetch_add(1, Ordering::AcqRel);
-    });
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let workbook = TestWorkbook::default();
+        let revision = workbook.planning_revision_handle();
+        let config = EvalConfig {
+            defer_graph_building: true,
+            formula_plane_mode: mode,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(workbook, config);
+        engine.add_sheet("Outputs").unwrap();
+        engine.stage_formula_text("Outputs", 1, 1, "=1".into());
+        let before = engine.baseline_stats();
+        let before_index_revision = engine.staged_formula_index_revision_for_test();
+        let report_before = engine.last_formula_ingest_report().cloned();
+        let total_before = engine.formula_ingest_report_total().clone();
+        let recalc_before = engine.recalc_epoch;
+        let bump = revision.clone();
+        engine.set_before_target_preparation_commit_hook(move || {
+            bump.fetch_add(1, Ordering::AcqRel);
+        });
 
-    let error = engine
-        .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
-        .unwrap_err();
-    assert!(matches!(
-        error.extra,
-        ExcelErrorExtra::PreparationStale {
-            reason: formualizer_common::PreparationStaleReason::Provider
-        }
-    ));
-    assert_eq!(
-        engine.baseline_stats().graph_vertex_count,
-        before.graph_vertex_count
-    );
-    assert_eq!(engine.staged_formula_count(), 1);
-    assert!(engine.staged_formula_index_is_consistent_for_test());
+        let error = engine
+            .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.extra,
+                ExcelErrorExtra::PreparationStale {
+                    reason: formualizer_common::PreparationStaleReason::Provider
+                }
+            ),
+            "{mode:?}: {error:?}"
+        );
+        assert_eq!(
+            engine.baseline_stats().graph_vertex_count,
+            before.graph_vertex_count,
+            "{mode:?}"
+        );
+        let after = engine.baseline_stats();
+        assert_eq!(after.graph_edge_count, before.graph_edge_count, "{mode:?}");
+        assert_eq!(
+            after.formula_plane_active_span_count, before.formula_plane_active_span_count,
+            "{mode:?}"
+        );
+        assert_eq!(engine.staged_formula_count(), 1, "{mode:?}");
+        assert_eq!(
+            engine.staged_formula_index_revision_for_test(),
+            before_index_revision,
+            "{mode:?}"
+        );
+        assert!(engine.formula_parse_diagnostics().is_empty(), "{mode:?}");
+        assert_eq!(engine.last_formula_ingest_report(), report_before.as_ref());
+        assert_eq!(engine.formula_ingest_report_total(), &total_before);
+        assert_eq!(engine.recalc_epoch, recalc_before, "{mode:?}");
+        assert!(engine.staged_formula_index_is_consistent_for_test());
+    }
+}
+
+#[test]
+fn authoritative_compatibility_final_validation_faults_are_atomic() {
+    for seam in [
+        TargetPreparationFault::FinalRevisionValidation,
+        TargetPreparationFault::FinalGraphValidation,
+    ] {
+        let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+        engine
+            .set_cell_value("Inputs", 3, 3, LiteralValue::Number(7.0))
+            .unwrap();
+        engine.stage_formula_text("Outputs", 1, 1, "=Inputs!A1+1".into());
+        engine.stage_formula_text("Inputs", 1, 1, "=1".into());
+        let before = engine.baseline_stats();
+        let before_revision = engine.staged_formula_index_revision_for_test();
+        let report_before = engine.last_formula_ingest_report().cloned();
+        let total_before = engine.formula_ingest_report_total().clone();
+        let recalc_before = engine.recalc_epoch;
+        let value_before = engine.get_cell_value("Inputs", 3, 3);
+
+        engine.set_target_preparation_fault_for_test(seam);
+        assert!(
+            engine
+                .prepare_graph_for_targets(&[cell("Outputs", 1, 1)], Default::default())
+                .is_err(),
+            "{seam:?}"
+        );
+
+        let after = engine.baseline_stats();
+        assert_eq!(
+            after.graph_vertex_count, before.graph_vertex_count,
+            "{seam:?}"
+        );
+        assert_eq!(after.graph_edge_count, before.graph_edge_count, "{seam:?}");
+        assert_eq!(
+            after.formula_plane_active_span_count, before.formula_plane_active_span_count,
+            "{seam:?}"
+        );
+        assert_eq!(engine.staged_formula_count(), 2, "{seam:?}");
+        assert_eq!(
+            engine.staged_formula_index_revision_for_test(),
+            before_revision,
+            "{seam:?}"
+        );
+        assert!(engine.formula_parse_diagnostics().is_empty(), "{seam:?}");
+        assert_eq!(engine.last_formula_ingest_report(), report_before.as_ref());
+        assert_eq!(engine.formula_ingest_report_total(), &total_before);
+        assert_eq!(engine.recalc_epoch, recalc_before);
+        assert_eq!(engine.get_cell_value("Inputs", 3, 3), value_before);
+        assert!(engine.staged_formula_index_is_consistent_for_test());
+    }
 }
 
 #[test]

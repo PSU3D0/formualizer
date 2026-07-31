@@ -1,4 +1,23 @@
 use super::*;
+use formualizer_common::LiteralValue;
+use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RangeSelfUse {
+    NoMatch,
+    Excluded,
+    IncludedOrUnknown,
+}
+
+impl RangeSelfUse {
+    fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::IncludedOrUnknown, _) | (_, Self::IncludedOrUnknown) => Self::IncludedOrUnknown,
+            (Self::Excluded, _) | (_, Self::Excluded) => Self::Excluded,
+            _ => Self::NoMatch,
+        }
+    }
+}
 
 impl DependencyGraph {
     /// Public wrapper to add range-dependent edges.
@@ -68,6 +87,218 @@ impl DependencyGraph {
         }
     }
 
+    /// Classify whether every occurrence of one compressed range that covers
+    /// the formula cell is narrowed away from that cell by a statically
+    /// resolvable `INDEX`. The range dependency itself remains conservative so
+    /// used-bound growth still invalidates the formula; only the synthetic #120
+    /// self-loop is omitted when the selected reference cannot contain the
+    /// formula cell.
+    fn compressed_range_self_use(
+        &self,
+        dependent: VertexId,
+        range_sheet: SheetId,
+        range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+    ) -> RangeSelfUse {
+        let Some(ast) = self.get_formula(dependent) else {
+            return RangeSelfUse::IncludedOrUnknown;
+        };
+
+        fn static_index(node: &ASTNode) -> Option<i64> {
+            match &node.node_type {
+                ASTNodeType::Literal(LiteralValue::Int(value)) => Some(*value),
+                ASTNodeType::Literal(LiteralValue::Number(value)) if value.is_finite() => {
+                    Some(*value as i64)
+                }
+                ASTNodeType::UnaryOp { op, expr } if op == "+" => static_index(expr),
+                ASTNodeType::UnaryOp { op, expr } if op == "-" => static_index(expr)?.checked_neg(),
+                _ => None,
+            }
+        }
+
+        fn matching_range(
+            graph: &DependencyGraph,
+            node: &ASTNode,
+            dependent: VertexId,
+            range_sheet: SheetId,
+            range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+        ) -> bool {
+            let ASTNodeType::Reference {
+                reference:
+                    ReferenceType::Range {
+                        sheet,
+                        start_row,
+                        start_col,
+                        end_row,
+                        end_col,
+                        ..
+                    },
+                ..
+            } = &node.node_type
+            else {
+                return false;
+            };
+            let sheet_id = match sheet.as_deref() {
+                Some(name) => match graph.sheet_id(name) {
+                    Some(id) => id,
+                    None => return false,
+                },
+                None => graph.get_vertex_sheet_id(dependent),
+            };
+            sheet_id == range_sheet
+                && start_row.map(|index| index.saturating_sub(1)) == range.0
+                && end_row.map(|index| index.saturating_sub(1)) == range.1
+                && start_col.map(|index| index.saturating_sub(1)) == range.2
+                && end_col.map(|index| index.saturating_sub(1)) == range.3
+        }
+
+        fn resolved_bounds(
+            graph: &DependencyGraph,
+            sheet: SheetId,
+            range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+        ) -> Option<(u32, u32, u32, u32)> {
+            let (start_row, end_row, start_col, end_col) = range;
+            let row_query = (
+                start_row.unwrap_or(0),
+                end_row.unwrap_or(graph.config.max_open_ended_rows.saturating_sub(1)),
+            );
+            let col_query = (
+                start_col.unwrap_or(0),
+                end_col.unwrap_or(graph.config.max_open_ended_cols.saturating_sub(1)),
+            );
+            let used_rows = graph.used_row_bounds_for_columns(sheet, col_query.0, col_query.1);
+            let used_cols = graph.used_col_bounds_for_rows(sheet, row_query.0, row_query.1);
+            // Runtime range resolution anchors an omitted/open start at the
+            // first Excel row or column. Only an omitted end uses the current
+            // used maximum (then the configured open-ended fallback).
+            let sr = start_row.unwrap_or(0);
+            let er = end_row
+                .or_else(|| used_rows.map(|bounds| bounds.1))
+                .unwrap_or_else(|| graph.config.max_open_ended_rows.saturating_sub(1));
+            let sc = start_col.unwrap_or(0);
+            let ec = end_col
+                .or_else(|| used_cols.map(|bounds| bounds.1))
+                .unwrap_or_else(|| graph.config.max_open_ended_cols.saturating_sub(1));
+            (sr <= er && sc <= ec).then_some((sr, er, sc, ec))
+        }
+
+        fn selected_region_contains_self(
+            graph: &DependencyGraph,
+            dependent: VertexId,
+            range_sheet: SheetId,
+            range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+            position: i64,
+            explicit_col: Option<i64>,
+        ) -> Option<bool> {
+            let (sr, er, sc, ec) = resolved_bounds(graph, range_sheet, range)?;
+            let (row, col) = match explicit_col {
+                Some(col) => (position, col),
+                None if sr == er => (1, position),
+                None => (position, 1),
+            };
+            if row < 0 || col < 0 {
+                return Some(false);
+            }
+            let coord = graph.store.coord(dependent);
+            let contains = if row == 0 && col == 0 {
+                coord.row() >= sr && coord.row() <= er && coord.col() >= sc && coord.col() <= ec
+            } else if col == 0 {
+                let selected_row = sr.checked_add(u32::try_from(row).ok()?.saturating_sub(1))?;
+                selected_row <= er
+                    && coord.row() == selected_row
+                    && coord.col() >= sc
+                    && coord.col() <= ec
+            } else if row == 0 {
+                let selected_col = sc.checked_add(u32::try_from(col).ok()?.saturating_sub(1))?;
+                selected_col <= ec
+                    && coord.col() == selected_col
+                    && coord.row() >= sr
+                    && coord.row() <= er
+            } else {
+                let selected_row = sr.checked_add(u32::try_from(row).ok()?.saturating_sub(1))?;
+                let selected_col = sc.checked_add(u32::try_from(col).ok()?.saturating_sub(1))?;
+                selected_row <= er
+                    && selected_col <= ec
+                    && coord.row() == selected_row
+                    && coord.col() == selected_col
+            };
+            Some(contains)
+        }
+
+        fn visit(
+            graph: &DependencyGraph,
+            node: &ASTNode,
+            dependent: VertexId,
+            range_sheet: SheetId,
+            range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+            index: Option<(i64, Option<i64>)>,
+        ) -> RangeSelfUse {
+            if matching_range(graph, node, dependent, range_sheet, range) {
+                return match index.and_then(|(row, col)| {
+                    selected_region_contains_self(graph, dependent, range_sheet, range, row, col)
+                }) {
+                    Some(false) => RangeSelfUse::Excluded,
+                    Some(true) | None => RangeSelfUse::IncludedOrUnknown,
+                };
+            }
+            match &node.node_type {
+                ASTNodeType::Function { name, args }
+                    if name.eq_ignore_ascii_case("INDEX") && (2..=3).contains(&args.len()) =>
+                {
+                    let row = static_index(&args[1]);
+                    let col = args.get(2).and_then(static_index);
+                    let selection = row.and_then(|row| {
+                        if args.len() == 2 || col.is_some() {
+                            Some((row, col))
+                        } else {
+                            None
+                        }
+                    });
+                    let mut use_kind =
+                        visit(graph, &args[0], dependent, range_sheet, range, selection);
+                    for arg in &args[1..] {
+                        use_kind =
+                            use_kind.merge(visit(graph, arg, dependent, range_sheet, range, None));
+                    }
+                    use_kind
+                }
+                ASTNodeType::Function { args, .. } => {
+                    args.iter().fold(RangeSelfUse::NoMatch, |kind, arg| {
+                        kind.merge(visit(graph, arg, dependent, range_sheet, range, None))
+                    })
+                }
+                ASTNodeType::UnaryOp { expr, .. } => {
+                    visit(graph, expr, dependent, range_sheet, range, None)
+                }
+                ASTNodeType::BinaryOp { left, right, .. } => visit(
+                    graph,
+                    left,
+                    dependent,
+                    range_sheet,
+                    range,
+                    None,
+                )
+                .merge(visit(graph, right, dependent, range_sheet, range, None)),
+                ASTNodeType::Call { callee, args } => {
+                    let mut kind = visit(graph, callee, dependent, range_sheet, range, None);
+                    for arg in args {
+                        kind = kind.merge(visit(graph, arg, dependent, range_sheet, range, None));
+                    }
+                    kind
+                }
+                ASTNodeType::Array(rows) => {
+                    rows.iter()
+                        .flatten()
+                        .fold(RangeSelfUse::NoMatch, |kind, item| {
+                            kind.merge(visit(graph, item, dependent, range_sheet, range, None))
+                        })
+                }
+                ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => RangeSelfUse::NoMatch,
+            }
+        }
+
+        visit(self, &ast, dependent, range_sheet, range, None)
+    }
+
     pub(super) fn add_range_dependent_edges(
         &mut self,
         dependent: VertexId,
@@ -96,7 +327,10 @@ impl DependencyGraph {
             // cell is a self-reference. Record a self-loop so SCC detection
             // flags the cycle (the ingest self-ref check only sees expanded
             // cell edges, which compressed ranges do not produce).
-            if self.range_region_contains_self(dependent, sheet_id, s_row, e_row, s_col, e_col) {
+            if self.range_region_contains_self(dependent, sheet_id, s_row, e_row, s_col, e_col)
+                && self.compressed_range_self_use(dependent, sheet_id, (s_row, e_row, s_col, e_col))
+                    != RangeSelfUse::Excluded
+            {
                 self.record_self_loop(dependent);
             }
 
@@ -314,7 +548,10 @@ impl DependencyGraph {
 
             // #120: see add_range_dependent_edges — compressed range covering
             // the formula's own cell records a self-loop for SCC detection.
-            if self.range_region_contains_self(dependent, sheet_id, s_row, e_row, s_col, e_col) {
+            if self.range_region_contains_self(dependent, sheet_id, s_row, e_row, s_col, e_col)
+                && self.compressed_range_self_use(dependent, sheet_id, (s_row, e_row, s_col, e_col))
+                    != RangeSelfUse::Excluded
+            {
                 self.record_self_loop(dependent);
             }
 

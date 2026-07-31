@@ -1360,29 +1360,56 @@ fn deferred_replay_failure_restores_package_and_retry_publishes_once() {
 
 #[test]
 fn deferred_strict_parse_failure_restores_package_without_diagnostics_or_telemetry() {
-    let cfg = EvalConfig {
-        defer_graph_building: true,
-        formula_parse_policy: FormulaParsePolicy::Strict,
-        ..EvalConfig::default()
-    };
-    let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    engine
-        .source_formula_ingress()
-        .stage_deferred(deferred_package("1+", false, false));
-    let before = engine.formula_ingest_report_total().clone();
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::Shadow,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let cfg = EvalConfig {
+            defer_graph_building: true,
+            formula_parse_policy: FormulaParsePolicy::Strict,
+            formula_plane_mode: mode,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(TestWorkbook::default(), cfg);
+        engine
+            .source_formula_ingress()
+            .stage_deferred(deferred_package("1+", false, false));
+        let before = engine.formula_ingest_report_total().clone();
 
-    assert!(engine.build_graph_all().is_err());
-    assert_eq!(engine.staged_formula_count(), 1);
-    assert!(engine.formula_parse_diagnostics().is_empty());
-    assert_eq!(engine.formula_ingest_report_total(), &before);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+        assert!(engine.build_graph_all().is_err(), "{mode:?}");
+        assert_eq!(engine.staged_formula_count(), 1, "{mode:?}");
+        assert!(engine.formula_parse_diagnostics().is_empty(), "{mode:?}");
+        assert_eq!(engine.formula_ingest_report_total(), &before, "{mode:?}");
+        assert_eq!(
+            engine.baseline_stats().graph_formula_vertex_count,
+            0,
+            "{mode:?}"
+        );
 
-    engine.config.formula_parse_policy = FormulaParsePolicy::AsText;
-    engine.build_graph_all().unwrap();
-    assert_eq!(engine.staged_formula_count(), 0);
-    assert_eq!(engine.formula_parse_diagnostics().len(), 1);
-    assert_eq!(engine.formula_ingest_report_total().source_spool_replays, 1);
-    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 1);
+        engine.config.formula_parse_policy = FormulaParsePolicy::AsText;
+        engine.build_graph_all().unwrap();
+        assert_eq!(engine.staged_formula_count(), 0, "{mode:?}");
+        assert_eq!(engine.formula_parse_diagnostics().len(), 1, "{mode:?}");
+        assert_eq!(
+            engine.formula_ingest_report_total().source_spool_replays,
+            1,
+            "{mode:?}"
+        );
+        assert_eq!(
+            engine.baseline_stats().graph_formula_vertex_count,
+            1,
+            "{mode:?}"
+        );
+
+        engine.stage_formula_text("Sheet1", 1, 1, "1+".to_string());
+        engine.build_graph_all().unwrap();
+        assert_eq!(
+            engine.formula_parse_diagnostics().len(),
+            2,
+            "{mode:?}: a later successful ingest of the same source is a distinct diagnostic event"
+        );
+    }
 }
 
 #[test]

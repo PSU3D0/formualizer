@@ -9081,6 +9081,23 @@ where
         Ok(report)
     }
 
+    fn dedup_formula_parse_diagnostics_since(&mut self, start: usize) {
+        let mut unique = Vec::new();
+        for diagnostic in self.formula_parse_diagnostics.drain(start..) {
+            let duplicate = unique.iter().any(|prior: &FormulaParseDiagnostic| {
+                prior.sheet == diagnostic.sheet
+                    && prior.row == diagnostic.row
+                    && prior.col == diagnostic.col
+                    && prior.formula == diagnostic.formula
+                    && prior.policy == diagnostic.policy
+            });
+            if !duplicate {
+                unique.push(diagnostic);
+            }
+        }
+        self.formula_parse_diagnostics.extend(unique);
+    }
+
     pub fn handle_formula_parse_error(
         &mut self,
         sheet: &str,
@@ -9146,6 +9163,37 @@ where
         ExcelError::new(ExcelErrorKind::Value)
             .with_message(message)
             .with_extra(formualizer_common::ExcelErrorExtra::PreparationStale { reason })
+    }
+
+    fn preparation_revision_stale_reason(
+        assumptions: &crate::engine::PreparationRevision,
+        current: &crate::engine::PreparationRevision,
+        planning_requests: &BTreeSet<(String, String, usize)>,
+        staged_leases_match: bool,
+    ) -> Option<formualizer_common::PreparationStaleReason> {
+        if assumptions.graph != current.graph {
+            Some(formualizer_common::PreparationStaleReason::Graph)
+        } else if assumptions.authority != current.authority
+            || assumptions.authority_indexes != current.authority_indexes
+            || assumptions.authority_indexed_plane != current.authority_indexed_plane
+        {
+            Some(formualizer_common::PreparationStaleReason::Authority)
+        } else if assumptions.staged != current.staged || !staged_leases_match {
+            Some(formualizer_common::PreparationStaleReason::Staged)
+        } else if assumptions.symbols != current.symbols {
+            Some(formualizer_common::PreparationStaleReason::Symbols)
+        } else if assumptions.provider != current.provider {
+            Some(formualizer_common::PreparationStaleReason::Provider)
+        } else if assumptions.semantic != current.semantic
+            && crate::function_registry::semantic_changes_affect_requests_since(
+                assumptions.semantic,
+                planning_requests.iter().cloned(),
+            )
+        {
+            Some(formualizer_common::PreparationStaleReason::Semantic)
+        } else {
+            None
+        }
     }
 
     fn preparation_revisions(&self) -> crate::engine::PreparationRevision {
@@ -10823,6 +10871,30 @@ where
                 .sum();
             self.formula_parse_diagnostics.truncate(diagnostics_len);
             self.last_formula_ingest_report = report_len;
+            if let Some(hook) = self.before_target_preparation_commit_hook.take() {
+                hook();
+            }
+            self.target_preparation_checkpoint(options.deadline, 0)?;
+            #[cfg(test)]
+            self.target_preparation_fault(
+                crate::engine::target_preparation::TargetPreparationFault::FinalRevisionValidation,
+            )?;
+            let current_revisions = self.preparation_revisions();
+            if let Some(reason) = Self::preparation_revision_stale_reason(
+                &assumptions,
+                &current_revisions,
+                &planning_requests,
+                true,
+            ) {
+                return Err(Self::preparation_stale(
+                    reason,
+                    "target compatibility preparation plan is stale",
+                ));
+            }
+            #[cfg(test)]
+            self.target_preparation_fault(
+                crate::engine::target_preparation::TargetPreparationFault::FinalGraphValidation,
+            )?;
             let commit_work_before = self
                 .active_resource_ledger
                 .as_ref()
@@ -11046,40 +11118,19 @@ where
             crate::engine::target_preparation::TargetPreparationFault::FinalRevisionValidation,
         )?;
         let current_revisions = self.preparation_revisions();
-        let stale_reason = if assumptions.graph != current_revisions.graph {
-            Some(formualizer_common::PreparationStaleReason::Graph)
-        } else if assumptions.authority != current_revisions.authority
-            || assumptions.authority_indexes != current_revisions.authority_indexes
-            || assumptions.authority_indexed_plane != current_revisions.authority_indexed_plane
-        {
-            Some(formualizer_common::PreparationStaleReason::Authority)
-        } else if assumptions.staged != current_revisions.staged
-            || prepared.iter().any(|formula| {
-                !self
-                    .staged_formula_index
-                    .lease_matches(&formula.sheet, formula.lease)
-            })
-            || prepared_packages.iter().any(|package| {
-                !self
-                    .staged_formula_index
-                    .package_lease_matches(&package.sheet, package.lease)
-            })
-        {
-            Some(formualizer_common::PreparationStaleReason::Staged)
-        } else if assumptions.symbols != current_revisions.symbols {
-            Some(formualizer_common::PreparationStaleReason::Symbols)
-        } else if assumptions.provider != current_revisions.provider {
-            Some(formualizer_common::PreparationStaleReason::Provider)
-        } else if assumptions.semantic != current_revisions.semantic
-            && crate::function_registry::semantic_changes_affect_requests_since(
-                assumptions.semantic,
-                planning_requests.iter().cloned(),
-            )
-        {
-            Some(formualizer_common::PreparationStaleReason::Semantic)
-        } else {
-            None
-        };
+        let staged_leases_match = prepared.iter().all(|formula| {
+            self.staged_formula_index
+                .lease_matches(&formula.sheet, formula.lease)
+        }) && prepared_packages.iter().all(|package| {
+            self.staged_formula_index
+                .package_lease_matches(&package.sheet, package.lease)
+        });
+        let stale_reason = Self::preparation_revision_stale_reason(
+            &assumptions,
+            &current_revisions,
+            &planning_requests,
+            staged_leases_match,
+        );
         if let Some(reason) = stale_reason {
             return Err(Self::preparation_stale(
                 reason,
@@ -11543,6 +11594,7 @@ where
         if !direct.is_empty() {
             let _ = self.finish_compressed_formula_sources(direct)?;
         }
+        self.dedup_formula_parse_diagnostics_since(diagnostics_len);
         Ok(())
     }
 
