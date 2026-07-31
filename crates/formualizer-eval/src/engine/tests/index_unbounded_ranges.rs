@@ -5,7 +5,7 @@
 //! the fixed behavior: unbounded dimensions are clamped to the used region via
 //! `resolve_range_view`, exactly like MATCH/VLOOKUP.
 
-use crate::engine::{Engine, EvalConfig};
+use crate::engine::{Engine, EvalConfig, FormulaPlaneMode};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
@@ -152,6 +152,100 @@ fn index_whole_column_out_of_range_is_ref_error() {
         match engine.get_cell_value("Sheet1", row, 4) {
             Some(LiteralValue::Error(e)) => assert_eq!(e.kind, ExcelErrorKind::Ref),
             other => panic!("Sheet1!R{row}C4: expected #REF!, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn dynamic_index_range_self_loop_uses_selected_reference_in_every_mode() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_formula_plane_mode(mode),
+        );
+        engine
+            .set_cell_value("Sheet1", 2, 2, LiteralValue::Int(42))
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 2, 1, parse("=INDEX(2:2,1,2)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 3, 1, parse("=INDEX(3:3,1,1)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 2, 5, parse("=INDEX(E:E,2)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 8, 8, parse("=INDEX(8:8,8)").unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        assert_number(&engine, "Sheet1", 2, 1, 42.0);
+        for (row, col) in [(3, 1), (2, 5), (8, 8)] {
+            match engine.get_cell_value("Sheet1", row, col) {
+                Some(LiteralValue::Error(error)) => {
+                    assert_eq!(error.kind, ExcelErrorKind::Circ, "{mode:?}")
+                }
+                other => panic!("{mode:?} Sheet1!R{row}C{col}: expected #CIRC!, got {other:?}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn static_index_self_loop_classification_matches_index_reference_semantics() {
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_formula_plane_mode(mode),
+        );
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(42))
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 100, 1, parse("=INDEX(A1:A100,1)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 2, 2, parse("=INDEX(B1:B100,2)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 3, LiteralValue::Int(42))
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 2, 1, parse("=SUM(INDEX(2:2,0,3))").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 3, 1, parse("=SUM(INDEX(3:3,1,0))").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 4, 1, parse("=INDEX(4:4,-1,1)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 5, 2, LiteralValue::Int(1))
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 5, 1, parse("=INDEX(5:5,1,2)+SUM(5:5)").unwrap())
+            .unwrap();
+
+        engine.evaluate_all().unwrap();
+        assert_number(&engine, "Sheet1", 100, 1, 42.0);
+        assert_number(&engine, "Sheet1", 2, 1, 42.0);
+        for (row, kind) in [
+            (2, ExcelErrorKind::Circ),
+            (3, ExcelErrorKind::Circ),
+            (4, ExcelErrorKind::Ref),
+            (5, ExcelErrorKind::Circ),
+        ] {
+            let col = if row == 2 { 2 } else { 1 };
+            match engine.get_cell_value("Sheet1", row, col) {
+                Some(LiteralValue::Error(error)) => assert_eq!(error.kind, kind, "{mode:?}"),
+                other => panic!("{mode:?} Sheet1!R{row}C{col}: expected {kind:?}, got {other:?}"),
+            }
         }
     }
 }
