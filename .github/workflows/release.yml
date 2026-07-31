@@ -17,11 +17,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      - name: Set up pinned preflight Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.93.0
 
       - name: Verify product tag versions match manifests
         shell: bash
@@ -71,17 +78,27 @@ jobs:
           print(f"OK: v{tag_version} matches product manifests")
           PY
 
+      - name: Verify staged product package chain
+        run: python3 scripts/release-preflight.py --track product
+
   verify-parse:
     if: startsWith(github.ref_name, 'parse-v')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      - name: Set up pinned preflight Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.93.0
 
       - name: Verify parse/common tag versions match manifests
         shell: bash
@@ -125,17 +142,27 @@ jobs:
           print(f"OK: parse-v{tag_version} matches parser/common manifests")
           PY
 
+      - name: Verify staged parser/SDK package chain
+        run: python3 scripts/release-preflight.py --track parse
+
   verify-spec:
     if: startsWith(github.ref_name, 'sheetport-spec-v')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+
+      - name: Set up pinned preflight Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.93.0
 
       - name: Verify spec tag version matches manifest
         shell: bash
@@ -160,6 +187,9 @@ jobs:
 
           print(f"OK: sheetport-spec-v{tag_version} matches manifest")
           PY
+
+      - name: Verify SheetPort spec package boundary
+        run: python3 scripts/release-preflight.py --track spec
 
   publish-parse-crates:
     if: startsWith(github.ref_name, 'parse-v')

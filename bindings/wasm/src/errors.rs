@@ -111,6 +111,7 @@ pub(crate) fn excel_error_to_js(error: ExcelError) -> JsValue {
         ExcelErrorExtra::PlanStale { reason } => {
             set_string(object, "plan_stale_reason", reason.as_str());
         }
+        _ => {}
     }
     js_error.into()
 }

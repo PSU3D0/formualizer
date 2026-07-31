@@ -253,6 +253,10 @@ impl FormulaProducerResultIndex {
         self.entries.iter().map(|entry| entry.producer)
     }
 
+    pub(crate) fn entries(&self) -> impl Iterator<Item = &FormulaProducerResultEntry> {
+        self.entries.iter()
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
@@ -411,6 +415,24 @@ impl FormulaConsumerReadIndex {
 
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    pub(crate) fn entries_intersecting(
+        &self,
+        region: Region,
+    ) -> RegionQueryResult<&FormulaConsumerReadEntry> {
+        let result = self.index.query(region);
+        RegionQueryResult {
+            matches: result
+                .matches
+                .into_iter()
+                .map(|matched| RegionMatch {
+                    value: &self.entries[matched.value.0],
+                    indexed_region: matched.indexed_region,
+                })
+                .collect(),
+            stats: result.stats,
+        }
     }
 
     pub(crate) fn entries(&self) -> impl Iterator<Item = &FormulaConsumerReadEntry> {

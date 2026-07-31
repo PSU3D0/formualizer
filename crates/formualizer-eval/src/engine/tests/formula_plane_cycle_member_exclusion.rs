@@ -94,6 +94,46 @@ fn build_workbook(detection: CycleDetection) -> Engine<TestWorkbook> {
     engine
 }
 
+#[test]
+fn post_warm_cross_sheet_back_edge_demotes_before_legacy_tarjan() {
+    let mut engine = authoritative_engine(CycleDetection::Static);
+    engine.add_sheet("Aux").unwrap();
+    let mut col_b = Vec::new();
+    let mut col_e = Vec::new();
+    for row in 1..=120 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+        engine
+            .set_cell_value("Aux", row, 1, LiteralValue::Number(0.0))
+            .unwrap();
+        col_b.push(record(&mut engine, row, 2, &format!("=A{row}+Aux!A{row}")));
+        col_e.push(record(&mut engine, row, 5, &format!("=A{row}*2")));
+    }
+    engine
+        .ingest_formula_batches(vec![FormulaIngestBatch::new(
+            "Sheet1",
+            col_b.into_iter().chain(col_e).collect(),
+        )])
+        .unwrap();
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 2);
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 5, 2), 5.0);
+
+    // The back-edge is introduced only after the span is warm. Legacy Tarjan
+    // cannot see the virtual B5 member; the mixed schedule must detect the
+    // cycle and demote B before the residual legacy SCC is resolved.
+    engine
+        .set_cell_formula("Aux", 5, 1, parse("=Sheet1!B5").unwrap())
+        .unwrap();
+    let result = engine.evaluate_all().unwrap();
+    assert_eq!(result.cycle_errors, 1);
+    assert!(is_circ(&engine, "Sheet1", 5, 2));
+    assert!(is_circ(&engine, "Aux", 5, 1));
+    assert_eq!(num(&engine, "Sheet1", 5, 5), 10.0);
+    assert_eq!(engine.baseline_stats().formula_plane_active_span_count, 1);
+}
+
 /// (a) cycle members are not span-evaluated — the cyclic span is demoted and the
 /// `CycleMember` placement-fallback reason is recorded; (b) results are correct
 /// under `CycleDetection::Static`: `#CIRC` for the cycle members, real span

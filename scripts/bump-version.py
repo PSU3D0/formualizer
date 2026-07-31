@@ -93,9 +93,14 @@ PARSE_INTERNAL_DEPS = [
     ("crates/formualizer-sheetport/Cargo.toml", "formualizer-parse"),
 ]
 
-# Spec track (standalone)
+# Spec track (standalone package plus downstream adoption floor)
 SPEC_PACKAGE_VERSION_FILES = [
     ("crates/sheetport-spec/Cargo.toml", "toml", ["package", "version"]),
+]
+
+SPEC_INTERNAL_DEPS = [
+    ("crates/formualizer-sheetport/Cargo.toml", "sheetport-spec"),
+    ("crates/formualizer/Cargo.toml", "sheetport-spec"),
 ]
 
 
@@ -517,15 +522,30 @@ def bump_spec(version: str, dry_run: bool, verify: bool, force: bool) -> bool:
         status = "OK" if old != new else "unchanged"
         print(f"  {rel_path}: {old} -> {new} ({status})")
 
-    # Note: spec is an independent track and is not auto-bumped by product releases.
-    # Downstream deps (formualizer-sheetport, formualizer) should be updated
-    # in a subsequent product release when adopting a newer spec.
+    # The spec package is independently versioned, but local product crates must
+    # declare the same minimum version as the path source they compile and test.
+    # Otherwise cargo package can silently resolve older registry behavior.
+    print("\nInternal dependencies (downstream adoption floor):")
+    updated_int = update_internal_deps(SPEC_INTERNAL_DEPS, version, dry_run)
+    for item in updated_int:
+        print(f"  {item} -> {version}")
+    if not updated_int:
+        print("  (none)")
 
     # 2. Verify with cargo check
     if verify and not dry_run:
-        print("\nRunning cargo check on sheetport-spec...")
+        print("\nRunning cargo check on the spec and downstream adopters...")
         result = subprocess.run(
-            ["cargo", "check", "-p", "sheetport-spec"],
+            [
+                "cargo",
+                "check",
+                "-p",
+                "sheetport-spec",
+                "-p",
+                "formualizer-sheetport",
+                "-p",
+                "formualizer",
+            ],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,

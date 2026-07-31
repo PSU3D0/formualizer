@@ -1,0 +1,1030 @@
+pub mod formualizer_parse
+pub use formualizer_parse::ArgKind
+pub use formualizer_parse::ExcelError
+pub use formualizer_parse::ExcelErrorKind
+pub use formualizer_parse::LiteralValue
+pub mod formualizer_parse::parser
+pub enum formualizer_parse::parser::ASTNodeType
+pub formualizer_parse::parser::ASTNodeType::Array(alloc::vec::Vec<alloc::vec::Vec<formualizer_parse::parser::ASTNode>>)
+pub formualizer_parse::parser::ASTNodeType::BinaryOp
+pub formualizer_parse::parser::ASTNodeType::BinaryOp::left: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::parser::ASTNodeType::BinaryOp::op: alloc::string::String
+pub formualizer_parse::parser::ASTNodeType::BinaryOp::right: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::parser::ASTNodeType::Call
+pub formualizer_parse::parser::ASTNodeType::Call::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::parser::ASTNodeType::Call::callee: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::parser::ASTNodeType::Function
+pub formualizer_parse::parser::ASTNodeType::Function::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::parser::ASTNodeType::Function::name: alloc::string::String
+pub formualizer_parse::parser::ASTNodeType::Literal(formualizer_common::value::LiteralValue)
+pub formualizer_parse::parser::ASTNodeType::Reference
+pub formualizer_parse::parser::ASTNodeType::Reference::original: alloc::string::String
+pub formualizer_parse::parser::ASTNodeType::Reference::reference: formualizer_parse::parser::ReferenceType
+pub formualizer_parse::parser::ASTNodeType::UnaryOp
+pub formualizer_parse::parser::ASTNodeType::UnaryOp::expr: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::parser::ASTNodeType::UnaryOp::op: alloc::string::String
+impl core::clone::Clone for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::clone(&self) -> formualizer_parse::parser::ASTNodeType
+impl core::cmp::PartialEq for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::eq(&self, &formualizer_parse::parser::ASTNodeType) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ASTNodeType
+impl serde_core::ser::Serialize for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::parser::ExternalBookRef
+pub formualizer_parse::parser::ExternalBookRef::Token(alloc::string::String)
+impl formualizer_parse::parser::ExternalBookRef
+pub fn formualizer_parse::parser::ExternalBookRef::token(&self) -> &str
+impl core::clone::Clone for formualizer_parse::parser::ExternalBookRef
+pub fn formualizer_parse::parser::ExternalBookRef::clone(&self) -> formualizer_parse::parser::ExternalBookRef
+impl core::cmp::PartialEq for formualizer_parse::parser::ExternalBookRef
+pub fn formualizer_parse::parser::ExternalBookRef::eq(&self, &formualizer_parse::parser::ExternalBookRef) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::ExternalBookRef
+pub fn formualizer_parse::parser::ExternalBookRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ExternalBookRef
+pub fn formualizer_parse::parser::ExternalBookRef::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ExternalBookRef
+impl serde_core::ser::Serialize for formualizer_parse::parser::ExternalBookRef
+pub fn formualizer_parse::parser::ExternalBookRef::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ExternalBookRef
+pub fn formualizer_parse::parser::ExternalBookRef::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::parser::ExternalRefKind
+pub formualizer_parse::parser::ExternalRefKind::Cell
+pub formualizer_parse::parser::ExternalRefKind::Cell::col: u32
+pub formualizer_parse::parser::ExternalRefKind::Cell::col_abs: bool
+pub formualizer_parse::parser::ExternalRefKind::Cell::row: u32
+pub formualizer_parse::parser::ExternalRefKind::Cell::row_abs: bool
+pub formualizer_parse::parser::ExternalRefKind::Range
+pub formualizer_parse::parser::ExternalRefKind::Range::end_col: core::option::Option<u32>
+pub formualizer_parse::parser::ExternalRefKind::Range::end_col_abs: bool
+pub formualizer_parse::parser::ExternalRefKind::Range::end_row: core::option::Option<u32>
+pub formualizer_parse::parser::ExternalRefKind::Range::end_row_abs: bool
+pub formualizer_parse::parser::ExternalRefKind::Range::start_col: core::option::Option<u32>
+pub formualizer_parse::parser::ExternalRefKind::Range::start_col_abs: bool
+pub formualizer_parse::parser::ExternalRefKind::Range::start_row: core::option::Option<u32>
+pub formualizer_parse::parser::ExternalRefKind::Range::start_row_abs: bool
+impl formualizer_parse::parser::ExternalRefKind
+pub fn formualizer_parse::parser::ExternalRefKind::cell(u32, u32) -> Self
+pub fn formualizer_parse::parser::ExternalRefKind::cell_with_abs(u32, u32, bool, bool) -> Self
+pub fn formualizer_parse::parser::ExternalRefKind::range(core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> Self
+pub fn formualizer_parse::parser::ExternalRefKind::range_with_abs(core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, bool, bool, bool, bool) -> Self
+impl core::clone::Clone for formualizer_parse::parser::ExternalRefKind
+pub fn formualizer_parse::parser::ExternalRefKind::clone(&self) -> formualizer_parse::parser::ExternalRefKind
+impl core::cmp::Eq for formualizer_parse::parser::ExternalRefKind
+impl core::cmp::PartialEq for formualizer_parse::parser::ExternalRefKind
+pub fn formualizer_parse::parser::ExternalRefKind::eq(&self, &formualizer_parse::parser::ExternalRefKind) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::ExternalRefKind
+pub fn formualizer_parse::parser::ExternalRefKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ExternalRefKind
+pub fn formualizer_parse::parser::ExternalRefKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::parser::ExternalRefKind
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ExternalRefKind
+impl serde_core::ser::Serialize for formualizer_parse::parser::ExternalRefKind
+pub fn formualizer_parse::parser::ExternalRefKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ExternalRefKind
+pub fn formualizer_parse::parser::ExternalRefKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::parser::RefView<'a>
+pub formualizer_parse::parser::RefView::Cell
+pub formualizer_parse::parser::RefView::Cell::col: u32
+pub formualizer_parse::parser::RefView::Cell::col_abs: bool
+pub formualizer_parse::parser::RefView::Cell::row: u32
+pub formualizer_parse::parser::RefView::Cell::row_abs: bool
+pub formualizer_parse::parser::RefView::Cell::sheet: core::option::Option<&'a str>
+pub formualizer_parse::parser::RefView::Cell3D
+pub formualizer_parse::parser::RefView::Cell3D::col: u32
+pub formualizer_parse::parser::RefView::Cell3D::col_abs: bool
+pub formualizer_parse::parser::RefView::Cell3D::row: u32
+pub formualizer_parse::parser::RefView::Cell3D::row_abs: bool
+pub formualizer_parse::parser::RefView::Cell3D::sheet_first: &'a str
+pub formualizer_parse::parser::RefView::Cell3D::sheet_last: &'a str
+pub formualizer_parse::parser::RefView::External
+pub formualizer_parse::parser::RefView::External::book: &'a str
+pub formualizer_parse::parser::RefView::External::kind: formualizer_parse::parser::ExternalRefKind
+pub formualizer_parse::parser::RefView::External::raw: &'a str
+pub formualizer_parse::parser::RefView::External::sheet: &'a str
+pub formualizer_parse::parser::RefView::NamedRange
+pub formualizer_parse::parser::RefView::NamedRange::name: &'a str
+pub formualizer_parse::parser::RefView::Range
+pub formualizer_parse::parser::RefView::Range::end_col: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range::end_col_abs: bool
+pub formualizer_parse::parser::RefView::Range::end_row: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range::end_row_abs: bool
+pub formualizer_parse::parser::RefView::Range::sheet: core::option::Option<&'a str>
+pub formualizer_parse::parser::RefView::Range::start_col: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range::start_col_abs: bool
+pub formualizer_parse::parser::RefView::Range::start_row: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range::start_row_abs: bool
+pub formualizer_parse::parser::RefView::Range3D
+pub formualizer_parse::parser::RefView::Range3D::end_col: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range3D::end_col_abs: bool
+pub formualizer_parse::parser::RefView::Range3D::end_row: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range3D::end_row_abs: bool
+pub formualizer_parse::parser::RefView::Range3D::sheet_first: &'a str
+pub formualizer_parse::parser::RefView::Range3D::sheet_last: &'a str
+pub formualizer_parse::parser::RefView::Range3D::start_col: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range3D::start_col_abs: bool
+pub formualizer_parse::parser::RefView::Range3D::start_row: core::option::Option<u32>
+pub formualizer_parse::parser::RefView::Range3D::start_row_abs: bool
+pub formualizer_parse::parser::RefView::Table
+pub formualizer_parse::parser::RefView::Table::name: &'a str
+pub formualizer_parse::parser::RefView::Table::specifier: core::option::Option<&'a formualizer_parse::parser::TableSpecifier>
+impl<'a> core::clone::Clone for formualizer_parse::parser::RefView<'a>
+pub fn formualizer_parse::parser::RefView<'a>::clone(&self) -> formualizer_parse::parser::RefView<'a>
+impl<'a> core::convert::From<&'a formualizer_parse::parser::ReferenceType> for formualizer_parse::parser::RefView<'a>
+pub fn formualizer_parse::parser::RefView<'a>::from(&'a formualizer_parse::parser::ReferenceType) -> Self
+impl<'a> core::fmt::Debug for formualizer_parse::parser::RefView<'a>
+pub fn formualizer_parse::parser::RefView<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for formualizer_parse::parser::RefView<'a>
+pub enum formualizer_parse::parser::ReferenceType
+pub formualizer_parse::parser::ReferenceType::Cell
+pub formualizer_parse::parser::ReferenceType::Cell::col: u32
+pub formualizer_parse::parser::ReferenceType::Cell::col_abs: bool
+pub formualizer_parse::parser::ReferenceType::Cell::row: u32
+pub formualizer_parse::parser::ReferenceType::Cell::row_abs: bool
+pub formualizer_parse::parser::ReferenceType::Cell::sheet: core::option::Option<alloc::string::String>
+pub formualizer_parse::parser::ReferenceType::Cell3D
+pub formualizer_parse::parser::ReferenceType::Cell3D::col: u32
+pub formualizer_parse::parser::ReferenceType::Cell3D::col_abs: bool
+pub formualizer_parse::parser::ReferenceType::Cell3D::row: u32
+pub formualizer_parse::parser::ReferenceType::Cell3D::row_abs: bool
+pub formualizer_parse::parser::ReferenceType::Cell3D::sheet_first: alloc::string::String
+pub formualizer_parse::parser::ReferenceType::Cell3D::sheet_last: alloc::string::String
+pub formualizer_parse::parser::ReferenceType::External(formualizer_parse::parser::ExternalReference)
+pub formualizer_parse::parser::ReferenceType::NamedRange(alloc::string::String)
+pub formualizer_parse::parser::ReferenceType::Range
+pub formualizer_parse::parser::ReferenceType::Range::end_col: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range::end_col_abs: bool
+pub formualizer_parse::parser::ReferenceType::Range::end_row: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range::end_row_abs: bool
+pub formualizer_parse::parser::ReferenceType::Range::sheet: core::option::Option<alloc::string::String>
+pub formualizer_parse::parser::ReferenceType::Range::start_col: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range::start_col_abs: bool
+pub formualizer_parse::parser::ReferenceType::Range::start_row: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range::start_row_abs: bool
+pub formualizer_parse::parser::ReferenceType::Range3D
+pub formualizer_parse::parser::ReferenceType::Range3D::end_col: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range3D::end_col_abs: bool
+pub formualizer_parse::parser::ReferenceType::Range3D::end_row: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range3D::end_row_abs: bool
+pub formualizer_parse::parser::ReferenceType::Range3D::sheet_first: alloc::string::String
+pub formualizer_parse::parser::ReferenceType::Range3D::sheet_last: alloc::string::String
+pub formualizer_parse::parser::ReferenceType::Range3D::start_col: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range3D::start_col_abs: bool
+pub formualizer_parse::parser::ReferenceType::Range3D::start_row: core::option::Option<u32>
+pub formualizer_parse::parser::ReferenceType::Range3D::start_row_abs: bool
+pub formualizer_parse::parser::ReferenceType::Table(formualizer_parse::parser::TableReference)
+impl formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::cell(core::option::Option<alloc::string::String>, u32, u32) -> Self
+pub fn formualizer_parse::parser::ReferenceType::cell_with_abs(core::option::Option<alloc::string::String>, u32, u32, bool, bool) -> Self
+pub fn formualizer_parse::parser::ReferenceType::from_string(&str) -> core::result::Result<Self, formualizer_parse::types::ParsingError>
+pub fn formualizer_parse::parser::ReferenceType::from_string_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> core::result::Result<Self, formualizer_parse::types::ParsingError>
+pub fn formualizer_parse::parser::ReferenceType::parse_sheet_ref(&str) -> core::result::Result<formualizer_common::address::SheetRef<'static>, formualizer_parse::types::ParsingError>
+pub fn formualizer_parse::parser::ReferenceType::parse_sheet_ref_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> core::result::Result<formualizer_common::address::SheetRef<'static>, formualizer_parse::types::ParsingError>
+pub fn formualizer_parse::parser::ReferenceType::range(core::option::Option<alloc::string::String>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> Self
+pub fn formualizer_parse::parser::ReferenceType::range_with_abs(core::option::Option<alloc::string::String>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, bool, bool, bool, bool) -> Self
+pub fn formualizer_parse::parser::ReferenceType::to_sheet_ref_lossy(&self) -> core::option::Option<formualizer_common::address::SheetRef<'_>>
+impl formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::normalise(&self) -> alloc::string::String
+pub fn formualizer_parse::parser::ReferenceType::to_excel_string(&self) -> alloc::string::String
+impl core::clone::Clone for formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::clone(&self) -> formualizer_parse::parser::ReferenceType
+impl core::cmp::PartialEq for formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::eq(&self, &formualizer_parse::parser::ReferenceType) -> bool
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::ReferenceType
+pub type formualizer_parse::parser::ReferenceType::Error = formualizer_parse::types::ParsingError
+pub fn formualizer_parse::parser::ReferenceType::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ReferenceType
+impl core::str::traits::FromStr for formualizer_parse::parser::ReferenceType
+pub type formualizer_parse::parser::ReferenceType::Err = formualizer_parse::types::ParsingError
+pub fn formualizer_parse::parser::ReferenceType::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl serde_core::ser::Serialize for formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'a> core::convert::From<&'a formualizer_parse::parser::ReferenceType> for formualizer_parse::parser::RefView<'a>
+pub fn formualizer_parse::parser::RefView<'a>::from(&'a formualizer_parse::parser::ReferenceType) -> Self
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ReferenceType
+pub fn formualizer_parse::parser::ReferenceType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::parser::SpecialItem
+pub formualizer_parse::parser::SpecialItem::All
+pub formualizer_parse::parser::SpecialItem::Data
+pub formualizer_parse::parser::SpecialItem::Headers
+pub formualizer_parse::parser::SpecialItem::ThisRow
+pub formualizer_parse::parser::SpecialItem::Totals
+impl core::clone::Clone for formualizer_parse::parser::SpecialItem
+pub fn formualizer_parse::parser::SpecialItem::clone(&self) -> formualizer_parse::parser::SpecialItem
+impl core::cmp::PartialEq for formualizer_parse::parser::SpecialItem
+pub fn formualizer_parse::parser::SpecialItem::eq(&self, &formualizer_parse::parser::SpecialItem) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::SpecialItem
+pub fn formualizer_parse::parser::SpecialItem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::SpecialItem
+pub fn formualizer_parse::parser::SpecialItem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::SpecialItem
+pub fn formualizer_parse::parser::SpecialItem::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::SpecialItem
+impl serde_core::ser::Serialize for formualizer_parse::parser::SpecialItem
+pub fn formualizer_parse::parser::SpecialItem::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::SpecialItem
+pub fn formualizer_parse::parser::SpecialItem::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::parser::TableRowSpecifier
+pub formualizer_parse::parser::TableRowSpecifier::All
+pub formualizer_parse::parser::TableRowSpecifier::Current
+pub formualizer_parse::parser::TableRowSpecifier::Data
+pub formualizer_parse::parser::TableRowSpecifier::Headers
+pub formualizer_parse::parser::TableRowSpecifier::Index(u32)
+pub formualizer_parse::parser::TableRowSpecifier::Totals
+impl core::clone::Clone for formualizer_parse::parser::TableRowSpecifier
+pub fn formualizer_parse::parser::TableRowSpecifier::clone(&self) -> formualizer_parse::parser::TableRowSpecifier
+impl core::cmp::PartialEq for formualizer_parse::parser::TableRowSpecifier
+pub fn formualizer_parse::parser::TableRowSpecifier::eq(&self, &formualizer_parse::parser::TableRowSpecifier) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::TableRowSpecifier
+pub fn formualizer_parse::parser::TableRowSpecifier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::TableRowSpecifier
+pub fn formualizer_parse::parser::TableRowSpecifier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::TableRowSpecifier
+pub fn formualizer_parse::parser::TableRowSpecifier::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::TableRowSpecifier
+impl serde_core::ser::Serialize for formualizer_parse::parser::TableRowSpecifier
+pub fn formualizer_parse::parser::TableRowSpecifier::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::TableRowSpecifier
+pub fn formualizer_parse::parser::TableRowSpecifier::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::parser::TableSpecifier
+pub formualizer_parse::parser::TableSpecifier::All
+pub formualizer_parse::parser::TableSpecifier::Column(alloc::string::String)
+pub formualizer_parse::parser::TableSpecifier::ColumnRange(alloc::string::String, alloc::string::String)
+pub formualizer_parse::parser::TableSpecifier::Combination(alloc::vec::Vec<alloc::boxed::Box<formualizer_parse::parser::TableSpecifier>>)
+pub formualizer_parse::parser::TableSpecifier::Data
+pub formualizer_parse::parser::TableSpecifier::Headers
+pub formualizer_parse::parser::TableSpecifier::Row(formualizer_parse::parser::TableRowSpecifier)
+pub formualizer_parse::parser::TableSpecifier::SpecialItem(formualizer_parse::parser::SpecialItem)
+pub formualizer_parse::parser::TableSpecifier::Totals
+impl core::clone::Clone for formualizer_parse::parser::TableSpecifier
+pub fn formualizer_parse::parser::TableSpecifier::clone(&self) -> formualizer_parse::parser::TableSpecifier
+impl core::cmp::PartialEq for formualizer_parse::parser::TableSpecifier
+pub fn formualizer_parse::parser::TableSpecifier::eq(&self, &formualizer_parse::parser::TableSpecifier) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::TableSpecifier
+pub fn formualizer_parse::parser::TableSpecifier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::TableSpecifier
+pub fn formualizer_parse::parser::TableSpecifier::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::TableSpecifier
+pub fn formualizer_parse::parser::TableSpecifier::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::TableSpecifier
+impl serde_core::ser::Serialize for formualizer_parse::parser::TableSpecifier
+pub fn formualizer_parse::parser::TableSpecifier::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::TableSpecifier
+pub fn formualizer_parse::parser::TableSpecifier::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::parser::ASTNode
+pub formualizer_parse::parser::ASTNode::contains_volatile: bool
+pub formualizer_parse::parser::ASTNode::node_type: formualizer_parse::parser::ASTNodeType
+pub formualizer_parse::parser::ASTNode::source_token: core::option::Option<formualizer_parse::tokenizer::Token>
+impl formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::calculate_hash(&self) -> u64
+pub fn formualizer_parse::parser::ASTNode::collect_references(&self, &formualizer_parse::parser::CollectPolicy) -> smallvec::SmallVec<[formualizer_parse::parser::ReferenceType; 4]>
+pub fn formualizer_parse::parser::ASTNode::contains_volatile(&self) -> bool
+pub fn formualizer_parse::parser::ASTNode::fingerprint(&self) -> u64
+pub fn formualizer_parse::parser::ASTNode::get_dependencies(&self) -> alloc::vec::Vec<&formualizer_parse::parser::ReferenceType>
+pub fn formualizer_parse::parser::ASTNode::get_dependency_strings(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn formualizer_parse::parser::ASTNode::new(formualizer_parse::parser::ASTNodeType, core::option::Option<formualizer_parse::tokenizer::Token>) -> Self
+pub fn formualizer_parse::parser::ASTNode::new_with_volatile(formualizer_parse::parser::ASTNodeType, core::option::Option<formualizer_parse::tokenizer::Token>, bool) -> Self
+pub fn formualizer_parse::parser::ASTNode::refs(&self) -> formualizer_parse::parser::RefIter<'_>
+pub fn formualizer_parse::parser::ASTNode::update_sheet_references(&mut self, core::option::Option<&str>, &str)
+pub fn formualizer_parse::parser::ASTNode::visit_refs<V: core::ops::function::FnMut(formualizer_parse::parser::RefView<'_>)>(&self, V)
+impl core::clone::Clone for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::clone(&self) -> formualizer_parse::parser::ASTNode
+impl core::cmp::PartialEq for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::eq(&self, &formualizer_parse::parser::ASTNode) -> bool
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::ASTNode
+pub type formualizer_parse::parser::ASTNode::Error = formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ASTNode::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<alloc::string::String> for formualizer_parse::parser::ASTNode
+pub type formualizer_parse::parser::ASTNode::Error = formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ASTNode::try_from(alloc::string::String) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ASTNode
+impl core::str::traits::FromStr for formualizer_parse::parser::ASTNode
+pub type formualizer_parse::parser::ASTNode::Err = formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ASTNode::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl serde_core::ser::Serialize for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::parser::BatchParser
+impl formualizer_parse::parser::BatchParser
+pub fn formualizer_parse::parser::BatchParser::builder() -> formualizer_parse::parser::BatchParserBuilder
+pub fn formualizer_parse::parser::BatchParser::parse(&mut self, &str) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub struct formualizer_parse::parser::BatchParserBuilder
+impl formualizer_parse::parser::BatchParserBuilder
+pub fn formualizer_parse::parser::BatchParserBuilder::build(self) -> formualizer_parse::parser::BatchParser
+pub fn formualizer_parse::parser::BatchParserBuilder::dialect(self, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::parser::BatchParserBuilder::include_whitespace(self, bool) -> Self
+pub fn formualizer_parse::parser::BatchParserBuilder::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+impl core::default::Default for formualizer_parse::parser::BatchParserBuilder
+pub fn formualizer_parse::parser::BatchParserBuilder::default() -> formualizer_parse::parser::BatchParserBuilder
+pub struct formualizer_parse::parser::CollectPolicy
+pub formualizer_parse::parser::CollectPolicy::expand_small_ranges: bool
+pub formualizer_parse::parser::CollectPolicy::include_names: bool
+pub formualizer_parse::parser::CollectPolicy::range_expansion_limit: usize
+impl core::clone::Clone for formualizer_parse::parser::CollectPolicy
+pub fn formualizer_parse::parser::CollectPolicy::clone(&self) -> formualizer_parse::parser::CollectPolicy
+impl core::default::Default for formualizer_parse::parser::CollectPolicy
+pub fn formualizer_parse::parser::CollectPolicy::default() -> Self
+impl core::fmt::Debug for formualizer_parse::parser::CollectPolicy
+pub fn formualizer_parse::parser::CollectPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_parse::parser::ExternalReference
+pub formualizer_parse::parser::ExternalReference::book: formualizer_parse::parser::ExternalBookRef
+pub formualizer_parse::parser::ExternalReference::kind: formualizer_parse::parser::ExternalRefKind
+pub formualizer_parse::parser::ExternalReference::raw: alloc::string::String
+pub formualizer_parse::parser::ExternalReference::sheet: alloc::string::String
+impl core::clone::Clone for formualizer_parse::parser::ExternalReference
+pub fn formualizer_parse::parser::ExternalReference::clone(&self) -> formualizer_parse::parser::ExternalReference
+impl core::cmp::PartialEq for formualizer_parse::parser::ExternalReference
+pub fn formualizer_parse::parser::ExternalReference::eq(&self, &formualizer_parse::parser::ExternalReference) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::ExternalReference
+pub fn formualizer_parse::parser::ExternalReference::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ExternalReference
+pub fn formualizer_parse::parser::ExternalReference::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ExternalReference
+impl serde_core::ser::Serialize for formualizer_parse::parser::ExternalReference
+pub fn formualizer_parse::parser::ExternalReference::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ExternalReference
+pub fn formualizer_parse::parser::ExternalReference::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::parser::Parser
+impl formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::builder() -> formualizer_parse::parser::ParserBuilder
+impl formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::from_token_stream(&formualizer_parse::tokenizer::TokenStream) -> Self
+pub fn formualizer_parse::parser::Parser::new<T: core::convert::AsRef<str>>(T) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::Parser::new_with_dialect<T: core::convert::AsRef<str>>(T, formualizer_parse::types::FormulaDialect) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::Parser::parse(&mut self) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parser::Parser::try_from_formula(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::Parser::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+impl core::convert::From<&formualizer_parse::tokenizer::TokenStream> for formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::from(&formualizer_parse::tokenizer::TokenStream) -> Self
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::Parser
+pub type formualizer_parse::parser::Parser::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::parser::Parser::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<alloc::string::String> for formualizer_parse::parser::Parser
+pub type formualizer_parse::parser::Parser::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::parser::Parser::try_from(alloc::string::String) -> core::result::Result<Self, Self::Error>
+pub struct formualizer_parse::parser::ParserBuilder
+impl formualizer_parse::parser::ParserBuilder
+pub fn formualizer_parse::parser::ParserBuilder::build<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::Parser, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::ParserBuilder::dialect(self, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::parser::ParserBuilder::parse<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parser::ParserBuilder::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+impl core::default::Default for formualizer_parse::parser::ParserBuilder
+pub fn formualizer_parse::parser::ParserBuilder::default() -> formualizer_parse::parser::ParserBuilder
+pub struct formualizer_parse::parser::ParserError
+pub formualizer_parse::parser::ParserError::message: alloc::string::String
+pub formualizer_parse::parser::ParserError::position: core::option::Option<usize>
+impl core::convert::From<formualizer_parse::tokenizer::TokenizerError> for formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ParserError::from(formualizer_parse::tokenizer::TokenizerError) -> Self
+impl core::error::Error for formualizer_parse::parser::ParserError
+impl core::fmt::Debug for formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ParserError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ParserError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_parse::parser::RefIter<'a>
+impl<'a> core::iter::traits::iterator::Iterator for formualizer_parse::parser::RefIter<'a>
+pub type formualizer_parse::parser::RefIter<'a>::Item = formualizer_parse::parser::RefView<'a>
+pub fn formualizer_parse::parser::RefIter<'a>::next(&mut self) -> core::option::Option<Self::Item>
+pub struct formualizer_parse::parser::TableReference
+pub formualizer_parse::parser::TableReference::name: alloc::string::String
+pub formualizer_parse::parser::TableReference::specifier: core::option::Option<formualizer_parse::parser::TableSpecifier>
+impl core::clone::Clone for formualizer_parse::parser::TableReference
+pub fn formualizer_parse::parser::TableReference::clone(&self) -> formualizer_parse::parser::TableReference
+impl core::cmp::PartialEq for formualizer_parse::parser::TableReference
+pub fn formualizer_parse::parser::TableReference::eq(&self, &formualizer_parse::parser::TableReference) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::TableReference
+pub fn formualizer_parse::parser::TableReference::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::TableReference
+pub fn formualizer_parse::parser::TableReference::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::TableReference
+impl serde_core::ser::Serialize for formualizer_parse::parser::TableReference
+pub fn formualizer_parse::parser::TableReference::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::TableReference
+pub fn formualizer_parse::parser::TableReference::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub fn formualizer_parse::parser::normalise_reference(&str) -> core::result::Result<alloc::string::String, formualizer_parse::types::ParsingError>
+pub fn formualizer_parse::parser::parse<T: core::convert::AsRef<str>>(T) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parser::parse_with_dialect<T: core::convert::AsRef<str>>(T, formualizer_parse::types::FormulaDialect) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parser::parse_with_dialect_and_volatility_classifier<T, F>(T, formualizer_parse::types::FormulaDialect, F) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError> where T: core::convert::AsRef<str>, F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub fn formualizer_parse::parser::parse_with_volatility_classifier<T, F>(T, F) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError> where T: core::convert::AsRef<str>, F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub mod formualizer_parse::pretty
+pub fn formualizer_parse::pretty::canonical_formula(&formualizer_parse::parser::ASTNode) -> alloc::string::String
+pub fn formualizer_parse::pretty::pretty_parse_render(&str) -> core::result::Result<alloc::string::String, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::pretty::pretty_print(&formualizer_parse::parser::ASTNode) -> alloc::string::String
+pub mod formualizer_parse::tokenizer
+pub enum formualizer_parse::tokenizer::Associativity
+pub formualizer_parse::tokenizer::Associativity::Left
+pub formualizer_parse::tokenizer::Associativity::Right
+impl core::clone::Clone for formualizer_parse::tokenizer::Associativity
+pub fn formualizer_parse::tokenizer::Associativity::clone(&self) -> formualizer_parse::tokenizer::Associativity
+impl core::cmp::Eq for formualizer_parse::tokenizer::Associativity
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::Associativity
+pub fn formualizer_parse::tokenizer::Associativity::eq(&self, &formualizer_parse::tokenizer::Associativity) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::Associativity
+pub fn formualizer_parse::tokenizer::Associativity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_parse::tokenizer::Associativity
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::Associativity
+#[non_exhaustive] pub enum formualizer_parse::tokenizer::RecoveryAction
+pub formualizer_parse::tokenizer::RecoveryAction::InvalidErrorLiteral
+pub formualizer_parse::tokenizer::RecoveryAction::SkippedUnmatchedCloser
+pub formualizer_parse::tokenizer::RecoveryAction::UnmatchedBracket
+pub formualizer_parse::tokenizer::RecoveryAction::UnmatchedOpener
+pub formualizer_parse::tokenizer::RecoveryAction::UnterminatedString
+impl core::clone::Clone for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::clone(&self) -> formualizer_parse::tokenizer::RecoveryAction
+impl core::cmp::Eq for formualizer_parse::tokenizer::RecoveryAction
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::eq(&self, &formualizer_parse::tokenizer::RecoveryAction) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::RecoveryAction
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::RecoveryAction
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::tokenizer::TokenSubType
+pub formualizer_parse::tokenizer::TokenSubType::Arg
+pub formualizer_parse::tokenizer::TokenSubType::Close
+pub formualizer_parse::tokenizer::TokenSubType::Error
+pub formualizer_parse::tokenizer::TokenSubType::Logical
+pub formualizer_parse::tokenizer::TokenSubType::None
+pub formualizer_parse::tokenizer::TokenSubType::Number
+pub formualizer_parse::tokenizer::TokenSubType::Open
+pub formualizer_parse::tokenizer::TokenSubType::Range
+pub formualizer_parse::tokenizer::TokenSubType::Row
+pub formualizer_parse::tokenizer::TokenSubType::Text
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::clone(&self) -> formualizer_parse::tokenizer::TokenSubType
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenSubType
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::eq(&self, &formualizer_parse::tokenizer::TokenSubType) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::TokenSubType
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenSubType
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::tokenizer::TokenType
+pub formualizer_parse::tokenizer::TokenType::Array
+pub formualizer_parse::tokenizer::TokenType::Func
+pub formualizer_parse::tokenizer::TokenType::Literal
+pub formualizer_parse::tokenizer::TokenType::OpInfix
+pub formualizer_parse::tokenizer::TokenType::OpPostfix
+pub formualizer_parse::tokenizer::TokenType::OpPrefix
+pub formualizer_parse::tokenizer::TokenType::Operand
+pub formualizer_parse::tokenizer::TokenType::Paren
+pub formualizer_parse::tokenizer::TokenType::Sep
+pub formualizer_parse::tokenizer::TokenType::Whitespace
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::clone(&self) -> formualizer_parse::tokenizer::TokenType
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenType
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::eq(&self, &formualizer_parse::tokenizer::TokenType) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::TokenType
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenType
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::tokenizer::Token
+pub formualizer_parse::tokenizer::Token::end: usize
+pub formualizer_parse::tokenizer::Token::start: usize
+pub formualizer_parse::tokenizer::Token::subtype: formualizer_parse::tokenizer::TokenSubType
+pub formualizer_parse::tokenizer::Token::token_type: formualizer_parse::tokenizer::TokenType
+pub formualizer_parse::tokenizer::Token::value: alloc::string::String
+impl formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::get_closer(&self) -> core::result::Result<formualizer_parse::tokenizer::Token, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::Token::get_precedence(&self) -> core::option::Option<(u8, formualizer_parse::tokenizer::Associativity)>
+pub fn formualizer_parse::tokenizer::Token::is_operator(&self) -> bool
+pub fn formualizer_parse::tokenizer::Token::make_operand(alloc::string::String) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_operand_with_span(alloc::string::String, usize, usize) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_separator(&str) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_separator_with_span(&str, usize, usize) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_subexp(&str, bool) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_subexp_with_span(&str, bool, usize, usize) -> Self
+pub fn formualizer_parse::tokenizer::Token::new(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType) -> Self
+pub fn formualizer_parse::tokenizer::Token::new_with_span(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType, usize, usize) -> Self
+impl core::clone::Clone for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::clone(&self) -> formualizer_parse::tokenizer::Token
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::eq(&self, &formualizer_parse::tokenizer::Token) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::Token
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::tokenizer::TokenDiagnostic
+pub formualizer_parse::tokenizer::TokenDiagnostic::message: alloc::string::String
+pub formualizer_parse::tokenizer::TokenDiagnostic::recovery: formualizer_parse::tokenizer::RecoveryAction
+pub formualizer_parse::tokenizer::TokenDiagnostic::span: formualizer_parse::tokenizer::TokenSpan
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::clone(&self) -> formualizer_parse::tokenizer::TokenDiagnostic
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenDiagnostic
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::eq(&self, &formualizer_parse::tokenizer::TokenDiagnostic) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenDiagnostic
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::tokenizer::TokenSpan
+pub formualizer_parse::tokenizer::TokenSpan::end: usize
+pub formualizer_parse::tokenizer::TokenSpan::start: usize
+pub formualizer_parse::tokenizer::TokenSpan::subtype: formualizer_parse::tokenizer::TokenSubType
+pub formualizer_parse::tokenizer::TokenSpan::token_type: formualizer_parse::tokenizer::TokenType
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::clone(&self) -> formualizer_parse::tokenizer::TokenSpan
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenSpan
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::eq(&self, &formualizer_parse::tokenizer::TokenSpan) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::TokenSpan
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenSpan
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::tokenizer::TokenStream
+pub formualizer_parse::tokenizer::TokenStream::spans: alloc::vec::Vec<formualizer_parse::tokenizer::TokenSpan>
+impl formualizer_parse::tokenizer::TokenStream
+pub fn formualizer_parse::tokenizer::TokenStream::diagnostics(&self) -> alloc::vec::Vec<formualizer_parse::tokenizer::TokenDiagnostic>
+pub fn formualizer_parse::tokenizer::TokenStream::diagnostics_ref(&self) -> &[formualizer_parse::tokenizer::TokenDiagnostic]
+pub fn formualizer_parse::tokenizer::TokenStream::dialect(&self) -> formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::tokenizer::TokenStream::get(&self, usize) -> core::option::Option<formualizer_parse::tokenizer::TokenView<'_>>
+pub fn formualizer_parse::tokenizer::TokenStream::has_errors(&self) -> bool
+pub fn formualizer_parse::tokenizer::TokenStream::invalid_spans(&self) -> alloc::vec::Vec<&formualizer_parse::tokenizer::TokenSpan>
+pub fn formualizer_parse::tokenizer::TokenStream::invalid_spans_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = &formualizer_parse::tokenizer::TokenSpan>
+pub fn formualizer_parse::tokenizer::TokenStream::is_empty(&self) -> bool
+pub fn formualizer_parse::tokenizer::TokenStream::len(&self) -> usize
+pub fn formualizer_parse::tokenizer::TokenStream::new(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::TokenStream::new_best_effort(&str) -> Self
+pub fn formualizer_parse::tokenizer::TokenStream::new_best_effort_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::tokenizer::TokenStream::new_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::TokenStream::render(&self) -> alloc::string::String
+pub fn formualizer_parse::tokenizer::TokenStream::render_formula(&self) -> alloc::string::String
+pub fn formualizer_parse::tokenizer::TokenStream::source(&self) -> &str
+pub fn formualizer_parse::tokenizer::TokenStream::to_tokens(&self) -> alloc::vec::Vec<formualizer_parse::tokenizer::Token>
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenStream
+pub fn formualizer_parse::tokenizer::TokenStream::clone(&self) -> formualizer_parse::tokenizer::TokenStream
+impl core::convert::From<&formualizer_parse::tokenizer::TokenStream> for formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::from(&formualizer_parse::tokenizer::TokenStream) -> Self
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenStream
+pub fn formualizer_parse::tokenizer::TokenStream::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_parse::tokenizer::TokenView<'a>
+pub formualizer_parse::tokenizer::TokenView::span: &'a formualizer_parse::tokenizer::TokenSpan
+pub formualizer_parse::tokenizer::TokenView::value: &'a str
+impl<'a> core::clone::Clone for formualizer_parse::tokenizer::TokenView<'a>
+pub fn formualizer_parse::tokenizer::TokenView<'a>::clone(&self) -> formualizer_parse::tokenizer::TokenView<'a>
+impl<'a> core::cmp::Eq for formualizer_parse::tokenizer::TokenView<'a>
+impl<'a> core::cmp::PartialEq for formualizer_parse::tokenizer::TokenView<'a>
+pub fn formualizer_parse::tokenizer::TokenView<'a>::eq(&self, &formualizer_parse::tokenizer::TokenView<'a>) -> bool
+impl<'a> core::fmt::Debug for formualizer_parse::tokenizer::TokenView<'a>
+pub fn formualizer_parse::tokenizer::TokenView<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for formualizer_parse::tokenizer::TokenView<'a>
+impl<'a> core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenView<'a>
+pub struct formualizer_parse::tokenizer::Tokenizer
+pub formualizer_parse::tokenizer::Tokenizer::items: alloc::vec::Vec<formualizer_parse::tokenizer::Token>
+impl formualizer_parse::tokenizer::Tokenizer
+pub fn formualizer_parse::tokenizer::Tokenizer::dialect(&self) -> formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::tokenizer::Tokenizer::from_token_stream(&formualizer_parse::tokenizer::TokenStream) -> Self
+pub fn formualizer_parse::tokenizer::Tokenizer::new(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::Tokenizer::new_best_effort(&str) -> Self
+pub fn formualizer_parse::tokenizer::Tokenizer::new_best_effort_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::tokenizer::Tokenizer::new_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::Tokenizer::render(&self) -> alloc::string::String
+impl core::convert::TryFrom<&str> for formualizer_parse::tokenizer::Tokenizer
+pub type formualizer_parse::tokenizer::Tokenizer::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::Tokenizer::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<alloc::string::String> for formualizer_parse::tokenizer::Tokenizer
+pub type formualizer_parse::tokenizer::Tokenizer::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::Tokenizer::try_from(alloc::string::String) -> core::result::Result<Self, Self::Error>
+pub struct formualizer_parse::tokenizer::TokenizerError
+pub formualizer_parse::tokenizer::TokenizerError::message: alloc::string::String
+pub formualizer_parse::tokenizer::TokenizerError::pos: usize
+impl core::convert::From<formualizer_parse::tokenizer::TokenizerError> for formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ParserError::from(formualizer_parse::tokenizer::TokenizerError) -> Self
+impl core::error::Error for formualizer_parse::tokenizer::TokenizerError
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::TokenizerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::TokenizerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod formualizer_parse::types
+pub enum formualizer_parse::types::FormulaDialect
+pub formualizer_parse::types::FormulaDialect::Excel
+pub formualizer_parse::types::FormulaDialect::OpenFormula
+impl core::clone::Clone for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::clone(&self) -> formualizer_parse::types::FormulaDialect
+impl core::cmp::Eq for formualizer_parse::types::FormulaDialect
+impl core::cmp::PartialEq for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::eq(&self, &formualizer_parse::types::FormulaDialect) -> bool
+impl core::default::Default for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::default() -> formualizer_parse::types::FormulaDialect
+impl core::fmt::Debug for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_parse::types::FormulaDialect
+impl core::marker::StructuralPartialEq for formualizer_parse::types::FormulaDialect
+impl serde_core::ser::Serialize for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_parse::types::ParsingError
+pub formualizer_parse::types::ParsingError::InvalidReference(alloc::string::String)
+impl core::clone::Clone for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::clone(&self) -> formualizer_parse::types::ParsingError
+impl core::cmp::PartialEq for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::eq(&self, &formualizer_parse::types::ParsingError) -> bool
+impl core::fmt::Debug for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_parse::types::ParsingError
+pub enum formualizer_parse::ASTNodeType
+pub formualizer_parse::ASTNodeType::Array(alloc::vec::Vec<alloc::vec::Vec<formualizer_parse::parser::ASTNode>>)
+pub formualizer_parse::ASTNodeType::BinaryOp
+pub formualizer_parse::ASTNodeType::BinaryOp::left: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::ASTNodeType::BinaryOp::op: alloc::string::String
+pub formualizer_parse::ASTNodeType::BinaryOp::right: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::ASTNodeType::Call
+pub formualizer_parse::ASTNodeType::Call::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::ASTNodeType::Call::callee: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::ASTNodeType::Function
+pub formualizer_parse::ASTNodeType::Function::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::ASTNodeType::Function::name: alloc::string::String
+pub formualizer_parse::ASTNodeType::Literal(formualizer_common::value::LiteralValue)
+pub formualizer_parse::ASTNodeType::Reference
+pub formualizer_parse::ASTNodeType::Reference::original: alloc::string::String
+pub formualizer_parse::ASTNodeType::Reference::reference: formualizer_parse::parser::ReferenceType
+pub formualizer_parse::ASTNodeType::UnaryOp
+pub formualizer_parse::ASTNodeType::UnaryOp::expr: alloc::boxed::Box<formualizer_parse::parser::ASTNode>
+pub formualizer_parse::ASTNodeType::UnaryOp::op: alloc::string::String
+impl core::clone::Clone for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::clone(&self) -> formualizer_parse::parser::ASTNodeType
+impl core::cmp::PartialEq for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::eq(&self, &formualizer_parse::parser::ASTNodeType) -> bool
+impl core::fmt::Debug for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ASTNodeType
+impl serde_core::ser::Serialize for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ASTNodeType
+pub fn formualizer_parse::parser::ASTNodeType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::FormulaDialect
+pub formualizer_parse::FormulaDialect::Excel
+pub formualizer_parse::FormulaDialect::OpenFormula
+impl core::clone::Clone for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::clone(&self) -> formualizer_parse::types::FormulaDialect
+impl core::cmp::Eq for formualizer_parse::types::FormulaDialect
+impl core::cmp::PartialEq for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::eq(&self, &formualizer_parse::types::FormulaDialect) -> bool
+impl core::default::Default for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::default() -> formualizer_parse::types::FormulaDialect
+impl core::fmt::Debug for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_parse::types::FormulaDialect
+impl core::marker::StructuralPartialEq for formualizer_parse::types::FormulaDialect
+impl serde_core::ser::Serialize for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::types::FormulaDialect::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_parse::ParsingError
+pub formualizer_parse::ParsingError::InvalidReference(alloc::string::String)
+impl core::clone::Clone for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::clone(&self) -> formualizer_parse::types::ParsingError
+impl core::cmp::PartialEq for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::eq(&self, &formualizer_parse::types::ParsingError) -> bool
+impl core::fmt::Debug for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::types::ParsingError
+pub fn formualizer_parse::types::ParsingError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_parse::types::ParsingError
+#[non_exhaustive] pub enum formualizer_parse::RecoveryAction
+pub formualizer_parse::RecoveryAction::InvalidErrorLiteral
+pub formualizer_parse::RecoveryAction::SkippedUnmatchedCloser
+pub formualizer_parse::RecoveryAction::UnmatchedBracket
+pub formualizer_parse::RecoveryAction::UnmatchedOpener
+pub formualizer_parse::RecoveryAction::UnterminatedString
+impl core::clone::Clone for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::clone(&self) -> formualizer_parse::tokenizer::RecoveryAction
+impl core::cmp::Eq for formualizer_parse::tokenizer::RecoveryAction
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::eq(&self, &formualizer_parse::tokenizer::RecoveryAction) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::RecoveryAction
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::RecoveryAction
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::RecoveryAction
+pub fn formualizer_parse::tokenizer::RecoveryAction::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::TokenSubType
+pub formualizer_parse::TokenSubType::Arg
+pub formualizer_parse::TokenSubType::Close
+pub formualizer_parse::TokenSubType::Error
+pub formualizer_parse::TokenSubType::Logical
+pub formualizer_parse::TokenSubType::None
+pub formualizer_parse::TokenSubType::Number
+pub formualizer_parse::TokenSubType::Open
+pub formualizer_parse::TokenSubType::Range
+pub formualizer_parse::TokenSubType::Row
+pub formualizer_parse::TokenSubType::Text
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::clone(&self) -> formualizer_parse::tokenizer::TokenSubType
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenSubType
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::eq(&self, &formualizer_parse::tokenizer::TokenSubType) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::TokenSubType
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenSubType
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenSubType
+pub fn formualizer_parse::tokenizer::TokenSubType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_parse::TokenType
+pub formualizer_parse::TokenType::Array
+pub formualizer_parse::TokenType::Func
+pub formualizer_parse::TokenType::Literal
+pub formualizer_parse::TokenType::OpInfix
+pub formualizer_parse::TokenType::OpPostfix
+pub formualizer_parse::TokenType::OpPrefix
+pub formualizer_parse::TokenType::Operand
+pub formualizer_parse::TokenType::Paren
+pub formualizer_parse::TokenType::Sep
+pub formualizer_parse::TokenType::Whitespace
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::clone(&self) -> formualizer_parse::tokenizer::TokenType
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenType
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::eq(&self, &formualizer_parse::tokenizer::TokenType) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::TokenType
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenType
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenType
+pub fn formualizer_parse::tokenizer::TokenType::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::ASTNode
+pub formualizer_parse::ASTNode::contains_volatile: bool
+pub formualizer_parse::ASTNode::node_type: formualizer_parse::parser::ASTNodeType
+pub formualizer_parse::ASTNode::source_token: core::option::Option<formualizer_parse::tokenizer::Token>
+impl formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::calculate_hash(&self) -> u64
+pub fn formualizer_parse::parser::ASTNode::collect_references(&self, &formualizer_parse::parser::CollectPolicy) -> smallvec::SmallVec<[formualizer_parse::parser::ReferenceType; 4]>
+pub fn formualizer_parse::parser::ASTNode::contains_volatile(&self) -> bool
+pub fn formualizer_parse::parser::ASTNode::fingerprint(&self) -> u64
+pub fn formualizer_parse::parser::ASTNode::get_dependencies(&self) -> alloc::vec::Vec<&formualizer_parse::parser::ReferenceType>
+pub fn formualizer_parse::parser::ASTNode::get_dependency_strings(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn formualizer_parse::parser::ASTNode::new(formualizer_parse::parser::ASTNodeType, core::option::Option<formualizer_parse::tokenizer::Token>) -> Self
+pub fn formualizer_parse::parser::ASTNode::new_with_volatile(formualizer_parse::parser::ASTNodeType, core::option::Option<formualizer_parse::tokenizer::Token>, bool) -> Self
+pub fn formualizer_parse::parser::ASTNode::refs(&self) -> formualizer_parse::parser::RefIter<'_>
+pub fn formualizer_parse::parser::ASTNode::update_sheet_references(&mut self, core::option::Option<&str>, &str)
+pub fn formualizer_parse::parser::ASTNode::visit_refs<V: core::ops::function::FnMut(formualizer_parse::parser::RefView<'_>)>(&self, V)
+impl core::clone::Clone for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::clone(&self) -> formualizer_parse::parser::ASTNode
+impl core::cmp::PartialEq for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::eq(&self, &formualizer_parse::parser::ASTNode) -> bool
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::ASTNode
+pub type formualizer_parse::parser::ASTNode::Error = formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ASTNode::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<alloc::string::String> for formualizer_parse::parser::ASTNode
+pub type formualizer_parse::parser::ASTNode::Error = formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ASTNode::try_from(alloc::string::String) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::StructuralPartialEq for formualizer_parse::parser::ASTNode
+impl core::str::traits::FromStr for formualizer_parse::parser::ASTNode
+pub type formualizer_parse::parser::ASTNode::Err = formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ASTNode::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl serde_core::ser::Serialize for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::parser::ASTNode
+pub fn formualizer_parse::parser::ASTNode::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::Parser
+impl formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::builder() -> formualizer_parse::parser::ParserBuilder
+impl formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::from_token_stream(&formualizer_parse::tokenizer::TokenStream) -> Self
+pub fn formualizer_parse::parser::Parser::new<T: core::convert::AsRef<str>>(T) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::Parser::new_with_dialect<T: core::convert::AsRef<str>>(T, formualizer_parse::types::FormulaDialect) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::Parser::parse(&mut self) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parser::Parser::try_from_formula(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::Parser::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+impl core::convert::From<&formualizer_parse::tokenizer::TokenStream> for formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::from(&formualizer_parse::tokenizer::TokenStream) -> Self
+impl core::convert::TryFrom<&str> for formualizer_parse::parser::Parser
+pub type formualizer_parse::parser::Parser::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::parser::Parser::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<alloc::string::String> for formualizer_parse::parser::Parser
+pub type formualizer_parse::parser::Parser::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::parser::Parser::try_from(alloc::string::String) -> core::result::Result<Self, Self::Error>
+pub struct formualizer_parse::ParserBuilder
+impl formualizer_parse::parser::ParserBuilder
+pub fn formualizer_parse::parser::ParserBuilder::build<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::Parser, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::parser::ParserBuilder::dialect(self, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::parser::ParserBuilder::parse<T: core::convert::AsRef<str>>(self, T) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parser::ParserBuilder::with_volatility_classifier<F>(self, F) -> Self where F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+impl core::default::Default for formualizer_parse::parser::ParserBuilder
+pub fn formualizer_parse::parser::ParserBuilder::default() -> formualizer_parse::parser::ParserBuilder
+pub struct formualizer_parse::Token
+pub formualizer_parse::Token::end: usize
+pub formualizer_parse::Token::start: usize
+pub formualizer_parse::Token::subtype: formualizer_parse::tokenizer::TokenSubType
+pub formualizer_parse::Token::token_type: formualizer_parse::tokenizer::TokenType
+pub formualizer_parse::Token::value: alloc::string::String
+impl formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::get_closer(&self) -> core::result::Result<formualizer_parse::tokenizer::Token, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::Token::get_precedence(&self) -> core::option::Option<(u8, formualizer_parse::tokenizer::Associativity)>
+pub fn formualizer_parse::tokenizer::Token::is_operator(&self) -> bool
+pub fn formualizer_parse::tokenizer::Token::make_operand(alloc::string::String) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_operand_with_span(alloc::string::String, usize, usize) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_separator(&str) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_separator_with_span(&str, usize, usize) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_subexp(&str, bool) -> Self
+pub fn formualizer_parse::tokenizer::Token::make_subexp_with_span(&str, bool, usize, usize) -> Self
+pub fn formualizer_parse::tokenizer::Token::new(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType) -> Self
+pub fn formualizer_parse::tokenizer::Token::new_with_span(alloc::string::String, formualizer_parse::tokenizer::TokenType, formualizer_parse::tokenizer::TokenSubType, usize, usize) -> Self
+impl core::clone::Clone for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::clone(&self) -> formualizer_parse::tokenizer::Token
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::eq(&self, &formualizer_parse::tokenizer::Token) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::Token
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::Token
+pub fn formualizer_parse::tokenizer::Token::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::TokenDiagnostic
+pub formualizer_parse::TokenDiagnostic::message: alloc::string::String
+pub formualizer_parse::TokenDiagnostic::recovery: formualizer_parse::tokenizer::RecoveryAction
+pub formualizer_parse::TokenDiagnostic::span: formualizer_parse::tokenizer::TokenSpan
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::clone(&self) -> formualizer_parse::tokenizer::TokenDiagnostic
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenDiagnostic
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::eq(&self, &formualizer_parse::tokenizer::TokenDiagnostic) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenDiagnostic
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenDiagnostic
+pub fn formualizer_parse::tokenizer::TokenDiagnostic::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::TokenSpan
+pub formualizer_parse::TokenSpan::end: usize
+pub formualizer_parse::TokenSpan::start: usize
+pub formualizer_parse::TokenSpan::subtype: formualizer_parse::tokenizer::TokenSubType
+pub formualizer_parse::TokenSpan::token_type: formualizer_parse::tokenizer::TokenType
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::clone(&self) -> formualizer_parse::tokenizer::TokenSpan
+impl core::cmp::Eq for formualizer_parse::tokenizer::TokenSpan
+impl core::cmp::PartialEq for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::eq(&self, &formualizer_parse::tokenizer::TokenSpan) -> bool
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_parse::tokenizer::TokenSpan
+impl core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenSpan
+impl serde_core::ser::Serialize for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_parse::tokenizer::TokenSpan
+pub fn formualizer_parse::tokenizer::TokenSpan::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_parse::TokenStream
+pub formualizer_parse::TokenStream::spans: alloc::vec::Vec<formualizer_parse::tokenizer::TokenSpan>
+impl formualizer_parse::tokenizer::TokenStream
+pub fn formualizer_parse::tokenizer::TokenStream::diagnostics(&self) -> alloc::vec::Vec<formualizer_parse::tokenizer::TokenDiagnostic>
+pub fn formualizer_parse::tokenizer::TokenStream::diagnostics_ref(&self) -> &[formualizer_parse::tokenizer::TokenDiagnostic]
+pub fn formualizer_parse::tokenizer::TokenStream::dialect(&self) -> formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::tokenizer::TokenStream::get(&self, usize) -> core::option::Option<formualizer_parse::tokenizer::TokenView<'_>>
+pub fn formualizer_parse::tokenizer::TokenStream::has_errors(&self) -> bool
+pub fn formualizer_parse::tokenizer::TokenStream::invalid_spans(&self) -> alloc::vec::Vec<&formualizer_parse::tokenizer::TokenSpan>
+pub fn formualizer_parse::tokenizer::TokenStream::invalid_spans_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = &formualizer_parse::tokenizer::TokenSpan>
+pub fn formualizer_parse::tokenizer::TokenStream::is_empty(&self) -> bool
+pub fn formualizer_parse::tokenizer::TokenStream::len(&self) -> usize
+pub fn formualizer_parse::tokenizer::TokenStream::new(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::TokenStream::new_best_effort(&str) -> Self
+pub fn formualizer_parse::tokenizer::TokenStream::new_best_effort_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::tokenizer::TokenStream::new_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::TokenStream::render(&self) -> alloc::string::String
+pub fn formualizer_parse::tokenizer::TokenStream::render_formula(&self) -> alloc::string::String
+pub fn formualizer_parse::tokenizer::TokenStream::source(&self) -> &str
+pub fn formualizer_parse::tokenizer::TokenStream::to_tokens(&self) -> alloc::vec::Vec<formualizer_parse::tokenizer::Token>
+impl core::clone::Clone for formualizer_parse::tokenizer::TokenStream
+pub fn formualizer_parse::tokenizer::TokenStream::clone(&self) -> formualizer_parse::tokenizer::TokenStream
+impl core::convert::From<&formualizer_parse::tokenizer::TokenStream> for formualizer_parse::parser::Parser
+pub fn formualizer_parse::parser::Parser::from(&formualizer_parse::tokenizer::TokenStream) -> Self
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenStream
+pub fn formualizer_parse::tokenizer::TokenStream::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_parse::TokenView<'a>
+pub formualizer_parse::TokenView::span: &'a formualizer_parse::tokenizer::TokenSpan
+pub formualizer_parse::TokenView::value: &'a str
+impl<'a> core::clone::Clone for formualizer_parse::tokenizer::TokenView<'a>
+pub fn formualizer_parse::tokenizer::TokenView<'a>::clone(&self) -> formualizer_parse::tokenizer::TokenView<'a>
+impl<'a> core::cmp::Eq for formualizer_parse::tokenizer::TokenView<'a>
+impl<'a> core::cmp::PartialEq for formualizer_parse::tokenizer::TokenView<'a>
+pub fn formualizer_parse::tokenizer::TokenView<'a>::eq(&self, &formualizer_parse::tokenizer::TokenView<'a>) -> bool
+impl<'a> core::fmt::Debug for formualizer_parse::tokenizer::TokenView<'a>
+pub fn formualizer_parse::tokenizer::TokenView<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for formualizer_parse::tokenizer::TokenView<'a>
+impl<'a> core::marker::StructuralPartialEq for formualizer_parse::tokenizer::TokenView<'a>
+pub struct formualizer_parse::Tokenizer
+pub formualizer_parse::Tokenizer::items: alloc::vec::Vec<formualizer_parse::tokenizer::Token>
+impl formualizer_parse::tokenizer::Tokenizer
+pub fn formualizer_parse::tokenizer::Tokenizer::dialect(&self) -> formualizer_parse::types::FormulaDialect
+pub fn formualizer_parse::tokenizer::Tokenizer::from_token_stream(&formualizer_parse::tokenizer::TokenStream) -> Self
+pub fn formualizer_parse::tokenizer::Tokenizer::new(&str) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::Tokenizer::new_best_effort(&str) -> Self
+pub fn formualizer_parse::tokenizer::Tokenizer::new_best_effort_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> Self
+pub fn formualizer_parse::tokenizer::Tokenizer::new_with_dialect(&str, formualizer_parse::types::FormulaDialect) -> core::result::Result<Self, formualizer_parse::tokenizer::TokenizerError>
+pub fn formualizer_parse::tokenizer::Tokenizer::render(&self) -> alloc::string::String
+impl core::convert::TryFrom<&str> for formualizer_parse::tokenizer::Tokenizer
+pub type formualizer_parse::tokenizer::Tokenizer::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::Tokenizer::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<alloc::string::String> for formualizer_parse::tokenizer::Tokenizer
+pub type formualizer_parse::tokenizer::Tokenizer::Error = formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::Tokenizer::try_from(alloc::string::String) -> core::result::Result<Self, Self::Error>
+pub struct formualizer_parse::TokenizerError
+pub formualizer_parse::TokenizerError::message: alloc::string::String
+pub formualizer_parse::TokenizerError::pos: usize
+impl core::convert::From<formualizer_parse::tokenizer::TokenizerError> for formualizer_parse::parser::ParserError
+pub fn formualizer_parse::parser::ParserError::from(formualizer_parse::tokenizer::TokenizerError) -> Self
+impl core::error::Error for formualizer_parse::tokenizer::TokenizerError
+impl core::fmt::Debug for formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::TokenizerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_parse::tokenizer::TokenizerError
+pub fn formualizer_parse::tokenizer::TokenizerError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub fn formualizer_parse::canonical_formula(&formualizer_parse::parser::ASTNode) -> alloc::string::String
+pub fn formualizer_parse::parse<T: core::convert::AsRef<str>>(T) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parse_with_dialect<T: core::convert::AsRef<str>>(T, formualizer_parse::types::FormulaDialect) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::parse_with_dialect_and_volatility_classifier<T, F>(T, formualizer_parse::types::FormulaDialect, F) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError> where T: core::convert::AsRef<str>, F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub fn formualizer_parse::parse_with_volatility_classifier<T, F>(T, F) -> core::result::Result<formualizer_parse::parser::ASTNode, formualizer_parse::parser::ParserError> where T: core::convert::AsRef<str>, F: core::ops::function::Fn(&str) -> bool + core::marker::Send + core::marker::Sync + 'static
+pub fn formualizer_parse::pretty_parse_render(&str) -> core::result::Result<alloc::string::String, formualizer_parse::parser::ParserError>
+pub fn formualizer_parse::pretty_print(&formualizer_parse::parser::ASTNode) -> alloc::string::String

@@ -427,7 +427,7 @@ impl<'a, R: EvaluationContext> EvaluationContext for RecordingContext<'a, R> {
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>> {
         self.engine.thread_pool()
     }
-    fn cancellation_token(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
         self.engine.cancellation_token()
     }
     fn chunk_hint(&self) -> Option<usize> {

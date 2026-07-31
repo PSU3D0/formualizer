@@ -236,6 +236,10 @@ impl<'a, R: EvaluationContext> FunctionProvider for DynamicRefCollector<'a, R> {
 }
 
 impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> {
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
+        self.engine.cancellation_token()
+    }
+
     fn resolve_range_view<'c>(
         &'c self,
         reference: &ReferenceType,

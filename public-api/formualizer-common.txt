@@ -1,0 +1,1427 @@
+pub mod formualizer_common
+pub mod formualizer_common::address
+#[non_exhaustive] pub enum formualizer_common::address::SheetAddressError
+pub formualizer_common::address::SheetAddressError::Coord(formualizer_common::CoordError)
+pub formualizer_common::address::SheetAddressError::MismatchedSheets
+pub formualizer_common::address::SheetAddressError::MissingSheetName
+pub formualizer_common::address::SheetAddressError::Parse(formualizer_common::A1ParseError)
+pub formualizer_common::address::SheetAddressError::RangeOrder
+pub formualizer_common::address::SheetAddressError::UnboundedRange
+pub formualizer_common::address::SheetAddressError::ZeroIndex
+impl core::clone::Clone for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::clone(&self) -> formualizer_common::SheetAddressError
+impl core::cmp::Eq for formualizer_common::SheetAddressError
+impl core::cmp::PartialEq for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::eq(&self, &formualizer_common::SheetAddressError) -> bool
+impl core::convert::From<formualizer_common::A1ParseError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::A1ParseError) -> Self
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::CoordError) -> Self
+impl core::error::Error for formualizer_common::SheetAddressError
+impl core::fmt::Debug for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::SheetAddressError
+pub enum formualizer_common::address::SheetLocator<'a>
+pub formualizer_common::address::SheetLocator::Current
+pub formualizer_common::address::SheetLocator::Id(formualizer_common::SheetId)
+pub formualizer_common::address::SheetLocator::Name(alloc::borrow::Cow<'a, str>)
+impl<'a> formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::as_ref(&self) -> formualizer_common::SheetLocator<'_>
+pub const fn formualizer_common::SheetLocator<'a>::current() -> Self
+pub const fn formualizer_common::SheetLocator<'a>::from_id(formualizer_common::SheetId) -> Self
+pub fn formualizer_common::SheetLocator<'a>::from_name(impl core::convert::Into<alloc::borrow::Cow<'a, str>>) -> Self
+pub const fn formualizer_common::SheetLocator<'a>::id(&self) -> core::option::Option<formualizer_common::SheetId>
+pub fn formualizer_common::SheetLocator<'a>::into_owned(self) -> formualizer_common::SheetLocator<'static>
+pub const fn formualizer_common::SheetLocator<'a>::is_current(&self) -> bool
+pub fn formualizer_common::SheetLocator<'a>::name(&self) -> core::option::Option<&str>
+impl<'a> core::clone::Clone for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::clone(&self) -> formualizer_common::SheetLocator<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetLocator<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::eq(&self, &formualizer_common::SheetLocator<'a>) -> bool
+impl<'a> core::convert::From<&'a str> for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::from(&'a str) -> Self
+impl<'a> core::convert::From<alloc::string::String> for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::from(alloc::string::String) -> Self
+impl<'a> core::convert::From<u16> for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::from(formualizer_common::SheetId) -> Self
+impl<'a> core::default::Default for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::default() -> formualizer_common::SheetLocator<'a>
+impl<'a> core::fmt::Debug for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetLocator<'a>
+pub enum formualizer_common::address::SheetRef<'a>
+pub formualizer_common::address::SheetRef::Cell(formualizer_common::SheetCellRef<'a>)
+pub formualizer_common::address::SheetRef::Range(formualizer_common::SheetRangeRef<'a>)
+impl<'a> core::clone::Clone for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::clone(&self) -> formualizer_common::SheetRef<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetRef<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::eq(&self, &formualizer_common::SheetRef<'a>) -> bool
+impl<'a> core::fmt::Debug for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRef<'a>
+pub struct formualizer_common::address::AxisBound
+pub formualizer_common::address::AxisBound::abs: bool
+pub formualizer_common::address::AxisBound::index: u32
+impl formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::from_excel_1based(u32, bool) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub const fn formualizer_common::AxisBound::new(u32, bool) -> Self
+pub const fn formualizer_common::AxisBound::to_excel_1based(self) -> u32
+impl core::clone::Clone for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::clone(&self) -> formualizer_common::AxisBound
+impl core::cmp::Eq for formualizer_common::AxisBound
+impl core::cmp::PartialEq for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::eq(&self, &formualizer_common::AxisBound) -> bool
+impl core::fmt::Debug for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::AxisBound
+impl core::marker::StructuralPartialEq for formualizer_common::AxisBound
+#[repr(transparent)] pub struct formualizer_common::address::PackedSheetCell(_)
+impl formualizer_common::PackedSheetCell
+pub const formualizer_common::PackedSheetCell::MAX_COL0: u32
+pub const formualizer_common::PackedSheetCell::MAX_ROW0: u32
+pub const fn formualizer_common::PackedSheetCell::as_u64(self) -> u64
+pub const fn formualizer_common::PackedSheetCell::col0(self) -> u32
+pub const fn formualizer_common::PackedSheetCell::row0(self) -> u32
+pub const fn formualizer_common::PackedSheetCell::sheet_id(self) -> formualizer_common::SheetId
+pub const fn formualizer_common::PackedSheetCell::to_excel_1based(self) -> (formualizer_common::SheetId, u32, u32)
+pub fn formualizer_common::PackedSheetCell::try_from_excel_1based(formualizer_common::SheetId, u32, u32) -> core::option::Option<Self>
+pub const fn formualizer_common::PackedSheetCell::try_from_u64(u64) -> core::option::Option<Self>
+pub const fn formualizer_common::PackedSheetCell::try_new(formualizer_common::SheetId, u32, u32) -> core::option::Option<Self>
+impl core::clone::Clone for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::clone(&self) -> formualizer_common::PackedSheetCell
+impl core::cmp::Eq for formualizer_common::PackedSheetCell
+impl core::cmp::Ord for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::cmp(&self, &formualizer_common::PackedSheetCell) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::eq(&self, &formualizer_common::PackedSheetCell) -> bool
+impl core::cmp::PartialOrd for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::partial_cmp(&self, &formualizer_common::PackedSheetCell) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::PackedSheetCell
+impl core::marker::StructuralPartialEq for formualizer_common::PackedSheetCell
+pub struct formualizer_common::address::SheetCellRef<'a>
+pub formualizer_common::address::SheetCellRef::coord: formualizer_common::RelativeCoord
+pub formualizer_common::address::SheetCellRef::sheet: formualizer_common::SheetLocator<'a>
+impl<'a> formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::as_ref(&self) -> formualizer_common::SheetCellRef<'_>
+pub fn formualizer_common::SheetCellRef<'a>::from_excel(formualizer_common::SheetLocator<'a>, u32, u32, bool, bool) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetCellRef<'a>::into_owned(self) -> formualizer_common::SheetCellRef<'static>
+pub const fn formualizer_common::SheetCellRef<'a>::new(formualizer_common::SheetLocator<'a>, formualizer_common::RelativeCoord) -> Self
+pub fn formualizer_common::SheetCellRef<'a>::try_from_a1(formualizer_common::SheetLocator<'a>, &str) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+impl<'a> core::clone::Clone for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::clone(&self) -> formualizer_common::SheetCellRef<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetCellRef<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::eq(&self, &formualizer_common::SheetCellRef<'a>) -> bool
+impl<'a> core::fmt::Debug for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetCellRef<'a>
+pub struct formualizer_common::address::SheetRangeRef<'a>
+pub formualizer_common::address::SheetRangeRef::end_col: core::option::Option<formualizer_common::AxisBound>
+pub formualizer_common::address::SheetRangeRef::end_row: core::option::Option<formualizer_common::AxisBound>
+pub formualizer_common::address::SheetRangeRef::sheet: formualizer_common::SheetLocator<'a>
+pub formualizer_common::address::SheetRangeRef::start_col: core::option::Option<formualizer_common::AxisBound>
+pub formualizer_common::address::SheetRangeRef::start_row: core::option::Option<formualizer_common::AxisBound>
+impl<'a> formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::as_ref(&self) -> formualizer_common::SheetRangeRef<'_>
+pub fn formualizer_common::SheetRangeRef<'a>::from_cells(formualizer_common::SheetCellRef<'a>, formualizer_common::SheetCellRef<'a>) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetRangeRef<'a>::from_excel_rect(formualizer_common::SheetLocator<'a>, u32, u32, u32, u32, bool, bool, bool, bool) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetRangeRef<'a>::from_parts(formualizer_common::SheetLocator<'a>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetRangeRef<'a>::into_owned(self) -> formualizer_common::SheetRangeRef<'static>
+pub const fn formualizer_common::SheetRangeRef<'a>::new(formualizer_common::SheetLocator<'a>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>) -> Self
+impl<'a> core::clone::Clone for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::clone(&self) -> formualizer_common::SheetRangeRef<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetRangeRef<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::eq(&self, &formualizer_common::SheetRangeRef<'a>) -> bool
+impl<'a> core::convert::From<&'a formualizer_common::RangeAddress> for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::from(&'a formualizer_common::RangeAddress) -> Self
+impl<'a> core::convert::TryFrom<formualizer_common::SheetRangeRef<'a>> for formualizer_common::RangeAddress
+pub type formualizer_common::RangeAddress::Error = formualizer_common::SheetAddressError
+pub fn formualizer_common::RangeAddress::try_from(formualizer_common::SheetRangeRef<'a>) -> core::result::Result<Self, Self::Error>
+impl<'a> core::fmt::Debug for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRangeRef<'a>
+pub type formualizer_common::address::SheetId = u16
+pub mod formualizer_common::coord
+#[non_exhaustive] pub enum formualizer_common::coord::A1ParseError
+pub formualizer_common::coord::A1ParseError::ColumnOutOfRange(u32)
+pub formualizer_common::coord::A1ParseError::Empty
+pub formualizer_common::coord::A1ParseError::InvalidColumnChar(char)
+pub formualizer_common::coord::A1ParseError::InvalidRowChar(char)
+pub formualizer_common::coord::A1ParseError::MissingColumn
+pub formualizer_common::coord::A1ParseError::MissingRow
+pub formualizer_common::coord::A1ParseError::RowOutOfRange(u32)
+pub formualizer_common::coord::A1ParseError::TrailingCharacters(alloc::string::String)
+impl core::clone::Clone for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::clone(&self) -> formualizer_common::A1ParseError
+impl core::cmp::Eq for formualizer_common::A1ParseError
+impl core::cmp::PartialEq for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::eq(&self, &formualizer_common::A1ParseError) -> bool
+impl core::convert::From<formualizer_common::A1ParseError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::A1ParseError) -> Self
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::from(formualizer_common::CoordError) -> Self
+impl core::fmt::Debug for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::A1ParseError
+#[non_exhaustive] pub enum formualizer_common::coord::CoordError
+pub formualizer_common::coord::CoordError::ColOverflow(i64)
+pub formualizer_common::coord::CoordError::NegativeCol(i64)
+pub formualizer_common::coord::CoordError::NegativeRow(i64)
+pub formualizer_common::coord::CoordError::ReservedBitsSet(u64)
+pub formualizer_common::coord::CoordError::RowOverflow(i64)
+impl core::clone::Clone for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::clone(&self) -> formualizer_common::CoordError
+impl core::cmp::Eq for formualizer_common::CoordError
+impl core::cmp::PartialEq for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::eq(&self, &formualizer_common::CoordError) -> bool
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::from(formualizer_common::CoordError) -> Self
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::CoordError) -> Self
+impl core::fmt::Debug for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::CoordError
+impl core::marker::StructuralPartialEq for formualizer_common::CoordError
+pub struct formualizer_common::coord::Coord(_)
+impl formualizer_common::Coord
+pub const formualizer_common::Coord::INVALID: Self
+pub fn formualizer_common::Coord::as_u64(self) -> u64
+pub fn formualizer_common::Coord::col(self) -> u32
+pub fn formualizer_common::Coord::from_excel(u32, u32) -> Self
+pub fn formualizer_common::Coord::from_raw(u64) -> core::result::Result<Self, formualizer_common::CoordError>
+pub fn formualizer_common::Coord::into_relative(self) -> formualizer_common::RelativeCoord
+pub fn formualizer_common::Coord::is_valid(self) -> bool
+pub fn formualizer_common::Coord::new(u32, u32) -> Self
+pub fn formualizer_common::Coord::normalize(self) -> Self
+pub fn formualizer_common::Coord::row(self) -> u32
+pub fn formualizer_common::Coord::try_from_a1(&str) -> core::result::Result<Self, formualizer_common::A1ParseError>
+pub fn formualizer_common::Coord::try_new(u32, u32) -> core::result::Result<Self, formualizer_common::CoordError>
+impl core::clone::Clone for formualizer_common::Coord
+pub fn formualizer_common::Coord::clone(&self) -> formualizer_common::Coord
+impl core::cmp::Eq for formualizer_common::Coord
+impl core::cmp::PartialEq for formualizer_common::Coord
+pub fn formualizer_common::Coord::eq(&self, &formualizer_common::Coord) -> bool
+impl core::convert::From<formualizer_common::Coord> for (u32, u32)
+pub fn (u32, u32)::from(formualizer_common::Coord) -> Self
+impl core::convert::From<formualizer_common::Coord> for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::from(formualizer_common::Coord) -> Self
+impl core::convert::From<formualizer_common::RelativeCoord> for formualizer_common::Coord
+pub fn formualizer_common::Coord::from(formualizer_common::RelativeCoord) -> Self
+impl core::convert::TryFrom<&str> for formualizer_common::Coord
+pub type formualizer_common::Coord::Error = formualizer_common::A1ParseError
+pub fn formualizer_common::Coord::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<(i64, i64)> for formualizer_common::Coord
+pub type formualizer_common::Coord::Error = formualizer_common::CoordError
+pub fn formualizer_common::Coord::try_from((i64, i64)) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<(u32, u32)> for formualizer_common::Coord
+pub type formualizer_common::Coord::Error = formualizer_common::CoordError
+pub fn formualizer_common::Coord::try_from((u32, u32)) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_common::Coord
+pub fn formualizer_common::Coord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::Coord
+pub fn formualizer_common::Coord::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::Coord
+impl core::marker::StructuralPartialEq for formualizer_common::Coord
+impl core::str::traits::FromStr for formualizer_common::Coord
+pub type formualizer_common::Coord::Err = formualizer_common::A1ParseError
+pub fn formualizer_common::Coord::from_str(&str) -> core::result::Result<Self, Self::Err>
+pub struct formualizer_common::coord::RelativeCoord(_)
+impl formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::as_u64(self) -> u64
+pub fn formualizer_common::RelativeCoord::col(self) -> u32
+pub fn formualizer_common::RelativeCoord::col_abs(self) -> bool
+pub fn formualizer_common::RelativeCoord::col_to_letters(u32) -> alloc::string::String
+pub fn formualizer_common::RelativeCoord::from_raw(u64) -> core::result::Result<Self, formualizer_common::CoordError>
+pub fn formualizer_common::RelativeCoord::into_absolute(self) -> formualizer_common::Coord
+pub fn formualizer_common::RelativeCoord::letters_to_col(&str) -> core::option::Option<u32>
+pub fn formualizer_common::RelativeCoord::new(u32, u32, bool, bool) -> Self
+pub fn formualizer_common::RelativeCoord::offset(self, i32, i32) -> Self
+pub fn formualizer_common::RelativeCoord::rebase(self, formualizer_common::RelativeCoord, formualizer_common::RelativeCoord) -> Self
+pub fn formualizer_common::RelativeCoord::row(self) -> u32
+pub fn formualizer_common::RelativeCoord::row_abs(self) -> bool
+pub fn formualizer_common::RelativeCoord::try_from_a1(&str) -> core::result::Result<Self, formualizer_common::A1ParseError>
+pub fn formualizer_common::RelativeCoord::try_new(u32, u32, bool, bool) -> core::result::Result<Self, formualizer_common::CoordError>
+pub fn formualizer_common::RelativeCoord::with_col_abs(self, bool) -> Self
+pub fn formualizer_common::RelativeCoord::with_row_abs(self, bool) -> Self
+impl core::clone::Clone for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::clone(&self) -> formualizer_common::RelativeCoord
+impl core::cmp::Eq for formualizer_common::RelativeCoord
+impl core::cmp::Ord for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::cmp(&self, &formualizer_common::RelativeCoord) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::eq(&self, &formualizer_common::RelativeCoord) -> bool
+impl core::cmp::PartialOrd for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::partial_cmp(&self, &formualizer_common::RelativeCoord) -> core::option::Option<core::cmp::Ordering>
+impl core::convert::From<formualizer_common::Coord> for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::from(formualizer_common::Coord) -> Self
+impl core::convert::From<formualizer_common::RelativeCoord> for formualizer_common::Coord
+pub fn formualizer_common::Coord::from(formualizer_common::RelativeCoord) -> Self
+impl core::convert::TryFrom<&str> for formualizer_common::RelativeCoord
+pub type formualizer_common::RelativeCoord::Error = formualizer_common::A1ParseError
+pub fn formualizer_common::RelativeCoord::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<(u32, u32, bool, bool)> for formualizer_common::RelativeCoord
+pub type formualizer_common::RelativeCoord::Error = formualizer_common::CoordError
+pub fn formualizer_common::RelativeCoord::try_from((u32, u32, bool, bool)) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::RelativeCoord
+impl core::marker::StructuralPartialEq for formualizer_common::RelativeCoord
+impl core::str::traits::FromStr for formualizer_common::RelativeCoord
+pub type formualizer_common::RelativeCoord::Err = formualizer_common::A1ParseError
+pub fn formualizer_common::RelativeCoord::from_str(&str) -> core::result::Result<Self, Self::Err>
+pub fn formualizer_common::coord::col_index_from_letters_1based(&str) -> core::result::Result<u32, formualizer_common::A1ParseError>
+pub fn formualizer_common::coord::col_letters_from_1based(u32) -> core::result::Result<alloc::string::String, formualizer_common::A1ParseError>
+pub fn formualizer_common::coord::parse_a1_1based(&str) -> core::result::Result<(u32, u32, bool, bool), formualizer_common::A1ParseError>
+pub mod formualizer_common::coord_hash
+pub struct formualizer_common::coord_hash::CoordBuildHasher
+impl core::clone::Clone for formualizer_common::CoordBuildHasher
+pub fn formualizer_common::CoordBuildHasher::clone(&self) -> formualizer_common::CoordBuildHasher
+impl core::default::Default for formualizer_common::CoordBuildHasher
+pub fn formualizer_common::CoordBuildHasher::default() -> formualizer_common::CoordBuildHasher
+impl core::fmt::Debug for formualizer_common::CoordBuildHasher
+pub fn formualizer_common::CoordBuildHasher::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::BuildHasher for formualizer_common::CoordBuildHasher
+pub type formualizer_common::CoordBuildHasher::Hasher = formualizer_common::CoordHasher
+pub fn formualizer_common::CoordBuildHasher::build_hasher(&self) -> formualizer_common::CoordHasher
+impl core::marker::Copy for formualizer_common::CoordBuildHasher
+pub struct formualizer_common::coord_hash::CoordHasher(_)
+impl core::clone::Clone for formualizer_common::CoordHasher
+pub fn formualizer_common::CoordHasher::clone(&self) -> formualizer_common::CoordHasher
+impl core::fmt::Debug for formualizer_common::CoordHasher
+pub fn formualizer_common::CoordHasher::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hasher for formualizer_common::CoordHasher
+pub fn formualizer_common::CoordHasher::finish(&self) -> u64
+pub fn formualizer_common::CoordHasher::write(&mut self, &[u8])
+pub fn formualizer_common::CoordHasher::write_i32(&mut self, i32)
+pub fn formualizer_common::CoordHasher::write_i64(&mut self, i64)
+pub fn formualizer_common::CoordHasher::write_u16(&mut self, u16)
+pub fn formualizer_common::CoordHasher::write_u32(&mut self, u32)
+pub fn formualizer_common::CoordHasher::write_u64(&mut self, u64)
+pub fn formualizer_common::CoordHasher::write_u8(&mut self, u8)
+pub fn formualizer_common::CoordHasher::write_usize(&mut self, usize)
+impl core::marker::Copy for formualizer_common::CoordHasher
+pub type formualizer_common::coord_hash::CoordHashMap<K, V> = std::collections::hash::map::HashMap<K, V, formualizer_common::CoordBuildHasher>
+pub type formualizer_common::coord_hash::CoordHashSet<K> = std::collections::hash::set::HashSet<K, formualizer_common::CoordBuildHasher>
+pub mod formualizer_common::date_serial
+pub struct formualizer_common::date_serial::ExcelDateParts
+pub formualizer_common::date_serial::ExcelDateParts::day: u32
+pub formualizer_common::date_serial::ExcelDateParts::month: u32
+pub formualizer_common::date_serial::ExcelDateParts::year: i32
+impl core::clone::Clone for formualizer_common::ExcelDateParts
+pub fn formualizer_common::ExcelDateParts::clone(&self) -> formualizer_common::ExcelDateParts
+impl core::cmp::Eq for formualizer_common::ExcelDateParts
+impl core::cmp::PartialEq for formualizer_common::ExcelDateParts
+pub fn formualizer_common::ExcelDateParts::eq(&self, &formualizer_common::ExcelDateParts) -> bool
+impl core::fmt::Debug for formualizer_common::ExcelDateParts
+pub fn formualizer_common::ExcelDateParts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::ExcelDateParts
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelDateParts
+pub fn formualizer_common::date_serial::date_to_serial_for(formualizer_common::DateSystem, &chrono::naive::date::NaiveDate) -> f64
+pub fn formualizer_common::date_serial::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::date_serial::datetime_to_serial_for(formualizer_common::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::date_serial::max_excel_serial_for(formualizer_common::DateSystem) -> f64
+pub fn formualizer_common::date_serial::serial_to_datetime(f64) -> chrono::naive::datetime::NaiveDateTime
+pub fn formualizer_common::date_serial::time_to_fraction(&chrono::naive::time::NaiveTime) -> f64
+pub fn formualizer_common::date_serial::try_serial_to_date_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::date::NaiveDate, formualizer_common::ExcelError>
+pub fn formualizer_common::date_serial::try_serial_to_datetime_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::ExcelError>
+pub fn formualizer_common::date_serial::try_serial_to_display_date_parts_for(formualizer_common::DateSystem, f64) -> core::result::Result<formualizer_common::ExcelDateParts, formualizer_common::ExcelError>
+pub fn formualizer_common::date_serial::validate_excel_serial(formualizer_common::DateSystem, f64) -> core::result::Result<(), formualizer_common::ExcelError>
+pub mod formualizer_common::error
+#[non_exhaustive] pub enum formualizer_common::error::ExcelErrorExtra
+pub formualizer_common::error::ExcelErrorExtra::None
+pub formualizer_common::error::ExcelErrorExtra::PlanStale
+pub formualizer_common::error::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
+pub formualizer_common::error::ExcelErrorExtra::PreparationStale
+pub formualizer_common::error::ExcelErrorExtra::PreparationStale::reason: formualizer_common::PreparationStaleReason
+pub formualizer_common::error::ExcelErrorExtra::Resource
+pub formualizer_common::error::ExcelErrorExtra::Resource::detail: alloc::boxed::Box<formualizer_common::ResourceExhaustionDetail>
+pub formualizer_common::error::ExcelErrorExtra::Spill
+pub formualizer_common::error::ExcelErrorExtra::Spill::expected_cols: u32
+pub formualizer_common::error::ExcelErrorExtra::Spill::expected_rows: u32
+impl core::clone::Clone for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::clone(&self) -> formualizer_common::ExcelErrorExtra
+impl core::cmp::Eq for formualizer_common::ExcelErrorExtra
+impl core::cmp::PartialEq for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::eq(&self, &formualizer_common::ExcelErrorExtra) -> bool
+impl core::default::Default for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::default() -> formualizer_common::ExcelErrorExtra
+impl core::fmt::Debug for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelErrorExtra
+impl serde_core::ser::Serialize for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::error::ExcelErrorKind
+pub formualizer_common::error::ExcelErrorKind::Calc
+pub formualizer_common::error::ExcelErrorKind::Cancelled
+pub formualizer_common::error::ExcelErrorKind::Circ
+pub formualizer_common::error::ExcelErrorKind::Div
+pub formualizer_common::error::ExcelErrorKind::Error
+pub formualizer_common::error::ExcelErrorKind::NImpl
+pub formualizer_common::error::ExcelErrorKind::Na
+pub formualizer_common::error::ExcelErrorKind::Name
+pub formualizer_common::error::ExcelErrorKind::Null
+pub formualizer_common::error::ExcelErrorKind::Num
+pub formualizer_common::error::ExcelErrorKind::Ref
+pub formualizer_common::error::ExcelErrorKind::Spill
+pub formualizer_common::error::ExcelErrorKind::Value
+impl formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::parse(&str) -> Self
+pub fn formualizer_common::ExcelErrorKind::try_parse(&str) -> core::option::Option<Self>
+impl core::clone::Clone for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::clone(&self) -> formualizer_common::ExcelErrorKind
+impl core::cmp::Eq for formualizer_common::ExcelErrorKind
+impl core::cmp::PartialEq for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::eq(&self, &formualizer_common::ExcelErrorKind) -> bool
+impl core::cmp::PartialEq<str> for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::eq(&self, &str) -> bool
+impl core::convert::From<formualizer_common::ExcelErrorKind> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::from(formualizer_common::ExcelErrorKind) -> Self
+impl core::fmt::Debug for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::ExcelErrorKind
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelErrorKind
+impl serde_core::ser::Serialize for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::error::PlanStaleReason
+pub formualizer_common::error::PlanStaleReason::Authority
+pub formualizer_common::error::PlanStaleReason::Budget
+pub formualizer_common::error::PlanStaleReason::Engine
+pub formualizer_common::error::PlanStaleReason::Graph
+pub formualizer_common::error::PlanStaleReason::Provider
+pub formualizer_common::error::PlanStaleReason::Semantic
+pub formualizer_common::error::PlanStaleReason::SpanGeneration
+pub formualizer_common::error::PlanStaleReason::Staged
+pub formualizer_common::error::PlanStaleReason::Symbols
+impl formualizer_common::PlanStaleReason
+pub const fn formualizer_common::PlanStaleReason::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::clone(&self) -> formualizer_common::PlanStaleReason
+impl core::cmp::Eq for formualizer_common::PlanStaleReason
+impl core::cmp::PartialEq for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::eq(&self, &formualizer_common::PlanStaleReason) -> bool
+impl core::fmt::Debug for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::PlanStaleReason
+impl core::marker::StructuralPartialEq for formualizer_common::PlanStaleReason
+impl serde_core::ser::Serialize for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::error::PreparationStaleReason
+pub formualizer_common::error::PreparationStaleReason::Authority
+pub formualizer_common::error::PreparationStaleReason::Graph
+pub formualizer_common::error::PreparationStaleReason::Provider
+pub formualizer_common::error::PreparationStaleReason::Semantic
+pub formualizer_common::error::PreparationStaleReason::Staged
+pub formualizer_common::error::PreparationStaleReason::Symbols
+impl formualizer_common::PreparationStaleReason
+pub const fn formualizer_common::PreparationStaleReason::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::clone(&self) -> formualizer_common::PreparationStaleReason
+impl core::cmp::Eq for formualizer_common::PreparationStaleReason
+impl core::cmp::PartialEq for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::eq(&self, &formualizer_common::PreparationStaleReason) -> bool
+impl core::fmt::Debug for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::PreparationStaleReason
+impl core::marker::StructuralPartialEq for formualizer_common::PreparationStaleReason
+impl serde_core::ser::Serialize for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::error::ResourceExhaustionReason
+pub formualizer_common::error::ResourceExhaustionReason::Admission
+pub formualizer_common::error::ResourceExhaustionReason::ArithmeticOverflow
+pub formualizer_common::error::ResourceExhaustionReason::Deadline
+pub formualizer_common::error::ResourceExhaustionReason::GraphEdges
+pub formualizer_common::error::ResourceExhaustionReason::GraphVertices
+pub formualizer_common::error::ResourceExhaustionReason::MaterializationCells
+pub formualizer_common::error::ResourceExhaustionReason::RetainedMemory
+pub formualizer_common::error::ResourceExhaustionReason::ScratchMemory
+pub formualizer_common::error::ResourceExhaustionReason::WorkUnits
+impl formualizer_common::ResourceExhaustionReason
+pub const fn formualizer_common::ResourceExhaustionReason::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::clone(&self) -> formualizer_common::ResourceExhaustionReason
+impl core::cmp::Eq for formualizer_common::ResourceExhaustionReason
+impl core::cmp::PartialEq for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::eq(&self, &formualizer_common::ResourceExhaustionReason) -> bool
+impl core::fmt::Debug for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::ResourceExhaustionReason
+impl core::marker::StructuralPartialEq for formualizer_common::ResourceExhaustionReason
+impl serde_core::ser::Serialize for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::error::ErrorContext
+pub formualizer_common::error::ErrorContext::col: core::option::Option<u32>
+pub formualizer_common::error::ErrorContext::origin_col: core::option::Option<u32>
+pub formualizer_common::error::ErrorContext::origin_row: core::option::Option<u32>
+pub formualizer_common::error::ErrorContext::origin_sheet: core::option::Option<alloc::string::String>
+pub formualizer_common::error::ErrorContext::row: core::option::Option<u32>
+impl core::clone::Clone for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::clone(&self) -> formualizer_common::ErrorContext
+impl core::cmp::Eq for formualizer_common::ErrorContext
+impl core::cmp::PartialEq for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::eq(&self, &formualizer_common::ErrorContext) -> bool
+impl core::default::Default for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::default() -> formualizer_common::ErrorContext
+impl core::fmt::Debug for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ErrorContext
+impl serde_core::ser::Serialize for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::error::ExcelError
+pub formualizer_common::error::ExcelError::context: core::option::Option<formualizer_common::ErrorContext>
+pub formualizer_common::error::ExcelError::extra: formualizer_common::ExcelErrorExtra
+pub formualizer_common::error::ExcelError::kind: formualizer_common::ExcelErrorKind
+pub formualizer_common::error::ExcelError::message: core::option::Option<alloc::string::String>
+impl formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
+pub fn formualizer_common::ExcelError::new_circ() -> Self
+pub fn formualizer_common::ExcelError::new_div() -> Self
+pub fn formualizer_common::ExcelError::new_na() -> Self
+pub fn formualizer_common::ExcelError::new_name() -> Self
+pub fn formualizer_common::ExcelError::new_num() -> Self
+pub fn formualizer_common::ExcelError::new_ref() -> Self
+pub fn formualizer_common::ExcelError::new_value() -> Self
+pub fn formualizer_common::ExcelError::with_extra(self, formualizer_common::ExcelErrorExtra) -> Self
+pub fn formualizer_common::ExcelError::with_location(self, u32, u32) -> Self
+pub fn formualizer_common::ExcelError::with_message<S: core::convert::Into<alloc::string::String>>(self, S) -> Self
+pub fn formualizer_common::ExcelError::with_origin(self, core::option::Option<alloc::string::String>, u32, u32) -> Self
+impl core::clone::Clone for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::clone(&self) -> formualizer_common::ExcelError
+impl core::cmp::Eq for formualizer_common::ExcelError
+impl core::cmp::PartialEq for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::eq(&self, &formualizer_common::ExcelError) -> bool
+impl core::cmp::PartialEq<&str> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::eq(&self, &&str) -> bool
+impl core::cmp::PartialEq<str> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::eq(&self, &str) -> bool
+impl core::convert::From<formualizer_common::ExcelError> for alloc::string::String
+pub fn alloc::string::String::from(formualizer_common::ExcelError) -> Self
+impl core::convert::From<formualizer_common::ExcelError> for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::from(formualizer_common::ExcelError) -> Self
+impl core::convert::From<formualizer_common::ExcelErrorKind> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::from(formualizer_common::ExcelErrorKind) -> Self
+impl core::error::Error for formualizer_common::ExcelError
+impl core::fmt::Debug for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelError
+impl serde_core::ser::Serialize for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::error::ResourceExhaustionDetail
+pub formualizer_common::error::ResourceExhaustionDetail::limit: u64
+pub formualizer_common::error::ResourceExhaustionDetail::observed: u64
+pub formualizer_common::error::ResourceExhaustionDetail::reason: formualizer_common::ResourceExhaustionReason
+pub formualizer_common::error::ResourceExhaustionDetail::request_id: core::option::Option<u64>
+impl core::clone::Clone for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::clone(&self) -> formualizer_common::ResourceExhaustionDetail
+impl core::cmp::Eq for formualizer_common::ResourceExhaustionDetail
+impl core::cmp::PartialEq for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::eq(&self, &formualizer_common::ResourceExhaustionDetail) -> bool
+impl core::fmt::Debug for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ResourceExhaustionDetail
+impl serde_core::ser::Serialize for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub mod formualizer_common::function
+pub enum formualizer_common::function::ArgKind
+pub formualizer_common::function::ArgKind::Any
+pub formualizer_common::function::ArgKind::Logical
+pub formualizer_common::function::ArgKind::Number
+pub formualizer_common::function::ArgKind::Range
+pub formualizer_common::function::ArgKind::Text
+impl formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::parse(&str) -> Self
+impl core::clone::Clone for formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::clone(&self) -> formualizer_common::ArgKind
+impl core::cmp::Eq for formualizer_common::ArgKind
+impl core::cmp::PartialEq for formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::eq(&self, &formualizer_common::ArgKind) -> bool
+impl core::fmt::Debug for formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::ArgKind
+impl core::marker::StructuralPartialEq for formualizer_common::ArgKind
+pub enum formualizer_common::function::CoercionPolicy
+pub formualizer_common::function::CoercionPolicy::Criteria
+pub formualizer_common::function::CoercionPolicy::DateTimeSerial
+pub formualizer_common::function::CoercionPolicy::Logical
+pub formualizer_common::function::CoercionPolicy::None
+pub formualizer_common::function::CoercionPolicy::NumberLenientText
+pub formualizer_common::function::CoercionPolicy::NumberStrict
+impl core::clone::Clone for formualizer_common::CoercionPolicy
+pub fn formualizer_common::CoercionPolicy::clone(&self) -> formualizer_common::CoercionPolicy
+impl core::cmp::Eq for formualizer_common::CoercionPolicy
+impl core::cmp::PartialEq for formualizer_common::CoercionPolicy
+pub fn formualizer_common::CoercionPolicy::eq(&self, &formualizer_common::CoercionPolicy) -> bool
+impl core::fmt::Debug for formualizer_common::CoercionPolicy
+pub fn formualizer_common::CoercionPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::CoercionPolicy
+impl core::marker::StructuralPartialEq for formualizer_common::CoercionPolicy
+pub mod formualizer_common::range
+pub struct formualizer_common::range::RangeAddress
+pub formualizer_common::range::RangeAddress::end_col: u32
+pub formualizer_common::range::RangeAddress::end_row: u32
+pub formualizer_common::range::RangeAddress::sheet: alloc::string::String
+pub formualizer_common::range::RangeAddress::start_col: u32
+pub formualizer_common::range::RangeAddress::start_row: u32
+impl formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::height(&self) -> u32
+pub fn formualizer_common::RangeAddress::new(impl core::convert::Into<alloc::string::String>, u32, u32, u32, u32) -> core::result::Result<Self, &'static str>
+pub fn formualizer_common::RangeAddress::to_sheet_range(&self) -> formualizer_common::SheetRangeRef<'_>
+pub fn formualizer_common::RangeAddress::width(&self) -> u32
+impl core::clone::Clone for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::clone(&self) -> formualizer_common::RangeAddress
+impl core::cmp::Eq for formualizer_common::RangeAddress
+impl core::cmp::PartialEq for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::eq(&self, &formualizer_common::RangeAddress) -> bool
+impl core::fmt::Debug for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::RangeAddress
+impl serde_core::ser::Serialize for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'a> core::convert::From<&'a formualizer_common::RangeAddress> for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::from(&'a formualizer_common::RangeAddress) -> Self
+impl<'a> core::convert::TryFrom<formualizer_common::SheetRangeRef<'a>> for formualizer_common::RangeAddress
+pub type formualizer_common::RangeAddress::Error = formualizer_common::SheetAddressError
+pub fn formualizer_common::RangeAddress::try_from(formualizer_common::SheetRangeRef<'a>) -> core::result::Result<Self, Self::Error>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub mod formualizer_common::value
+pub enum formualizer_common::value::DateSystem
+pub formualizer_common::value::DateSystem::Excel1900
+pub formualizer_common::value::DateSystem::Excel1904
+impl core::clone::Clone for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::clone(&self) -> formualizer_common::DateSystem
+impl core::cmp::Eq for formualizer_common::DateSystem
+impl core::cmp::PartialEq for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::eq(&self, &formualizer_common::DateSystem) -> bool
+impl core::fmt::Debug for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::DateSystem
+impl core::marker::StructuralPartialEq for formualizer_common::DateSystem
+pub enum formualizer_common::value::LiteralValue
+pub formualizer_common::value::LiteralValue::Array(alloc::vec::Vec<alloc::vec::Vec<formualizer_common::LiteralValue>>)
+pub formualizer_common::value::LiteralValue::Boolean(bool)
+pub formualizer_common::value::LiteralValue::Date(chrono::naive::date::NaiveDate)
+pub formualizer_common::value::LiteralValue::DateTime(chrono::naive::datetime::NaiveDateTime)
+pub formualizer_common::value::LiteralValue::Duration(chrono::Duration)
+pub formualizer_common::value::LiteralValue::Empty
+pub formualizer_common::value::LiteralValue::Error(formualizer_common::ExcelError)
+pub formualizer_common::value::LiteralValue::Int(i64)
+pub formualizer_common::value::LiteralValue::Number(f64)
+pub formualizer_common::value::LiteralValue::Pending
+pub formualizer_common::value::LiteralValue::Text(alloc::string::String)
+pub formualizer_common::value::LiteralValue::Time(chrono::naive::time::NaiveTime)
+impl formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::as_serial_number(&self) -> core::option::Option<f64>
+pub fn formualizer_common::LiteralValue::as_serial_number_for(&self, formualizer_common::DateSystem) -> core::option::Option<f64>
+pub fn formualizer_common::LiteralValue::coerce_to_single_value(&self) -> core::result::Result<formualizer_common::LiteralValue, formualizer_common::ValueError>
+pub fn formualizer_common::LiteralValue::from_serial_number(f64) -> Self
+pub fn formualizer_common::LiteralValue::is_truthy(&self) -> bool
+pub fn formualizer_common::LiteralValue::try_from_serial_number(f64) -> core::result::Result<Self, formualizer_common::ExcelError>
+pub fn formualizer_common::LiteralValue::try_from_serial_number_for(formualizer_common::DateSystem, f64) -> core::result::Result<Self, formualizer_common::ExcelError>
+impl core::clone::Clone for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::clone(&self) -> formualizer_common::LiteralValue
+impl core::cmp::Eq for formualizer_common::LiteralValue
+impl core::cmp::PartialEq for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::eq(&self, &formualizer_common::LiteralValue) -> bool
+impl core::convert::From<formualizer_common::ExcelError> for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::from(formualizer_common::ExcelError) -> Self
+impl core::fmt::Debug for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::StructuralPartialEq for formualizer_common::LiteralValue
+impl serde_core::ser::Serialize for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::value::ValueError
+pub formualizer_common::value::ValueError::ImplicitIntersection(alloc::string::String)
+impl core::clone::Clone for formualizer_common::ValueError
+pub fn formualizer_common::ValueError::clone(&self) -> formualizer_common::ValueError
+impl core::cmp::PartialEq for formualizer_common::ValueError
+pub fn formualizer_common::ValueError::eq(&self, &formualizer_common::ValueError) -> bool
+impl core::fmt::Debug for formualizer_common::ValueError
+pub fn formualizer_common::ValueError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::ValueError
+pub fn formualizer_common::value::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::value::serial_to_datetime(f64) -> chrono::naive::datetime::NaiveDateTime
+#[non_exhaustive] pub enum formualizer_common::A1ParseError
+pub formualizer_common::A1ParseError::ColumnOutOfRange(u32)
+pub formualizer_common::A1ParseError::Empty
+pub formualizer_common::A1ParseError::InvalidColumnChar(char)
+pub formualizer_common::A1ParseError::InvalidRowChar(char)
+pub formualizer_common::A1ParseError::MissingColumn
+pub formualizer_common::A1ParseError::MissingRow
+pub formualizer_common::A1ParseError::RowOutOfRange(u32)
+pub formualizer_common::A1ParseError::TrailingCharacters(alloc::string::String)
+impl core::clone::Clone for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::clone(&self) -> formualizer_common::A1ParseError
+impl core::cmp::Eq for formualizer_common::A1ParseError
+impl core::cmp::PartialEq for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::eq(&self, &formualizer_common::A1ParseError) -> bool
+impl core::convert::From<formualizer_common::A1ParseError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::A1ParseError) -> Self
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::from(formualizer_common::CoordError) -> Self
+impl core::fmt::Debug for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::A1ParseError
+pub enum formualizer_common::ArgKind
+pub formualizer_common::ArgKind::Any
+pub formualizer_common::ArgKind::Logical
+pub formualizer_common::ArgKind::Number
+pub formualizer_common::ArgKind::Range
+pub formualizer_common::ArgKind::Text
+impl formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::parse(&str) -> Self
+impl core::clone::Clone for formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::clone(&self) -> formualizer_common::ArgKind
+impl core::cmp::Eq for formualizer_common::ArgKind
+impl core::cmp::PartialEq for formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::eq(&self, &formualizer_common::ArgKind) -> bool
+impl core::fmt::Debug for formualizer_common::ArgKind
+pub fn formualizer_common::ArgKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::ArgKind
+impl core::marker::StructuralPartialEq for formualizer_common::ArgKind
+pub enum formualizer_common::CoercionPolicy
+pub formualizer_common::CoercionPolicy::Criteria
+pub formualizer_common::CoercionPolicy::DateTimeSerial
+pub formualizer_common::CoercionPolicy::Logical
+pub formualizer_common::CoercionPolicy::None
+pub formualizer_common::CoercionPolicy::NumberLenientText
+pub formualizer_common::CoercionPolicy::NumberStrict
+impl core::clone::Clone for formualizer_common::CoercionPolicy
+pub fn formualizer_common::CoercionPolicy::clone(&self) -> formualizer_common::CoercionPolicy
+impl core::cmp::Eq for formualizer_common::CoercionPolicy
+impl core::cmp::PartialEq for formualizer_common::CoercionPolicy
+pub fn formualizer_common::CoercionPolicy::eq(&self, &formualizer_common::CoercionPolicy) -> bool
+impl core::fmt::Debug for formualizer_common::CoercionPolicy
+pub fn formualizer_common::CoercionPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::CoercionPolicy
+impl core::marker::StructuralPartialEq for formualizer_common::CoercionPolicy
+#[non_exhaustive] pub enum formualizer_common::CoordError
+pub formualizer_common::CoordError::ColOverflow(i64)
+pub formualizer_common::CoordError::NegativeCol(i64)
+pub formualizer_common::CoordError::NegativeRow(i64)
+pub formualizer_common::CoordError::ReservedBitsSet(u64)
+pub formualizer_common::CoordError::RowOverflow(i64)
+impl core::clone::Clone for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::clone(&self) -> formualizer_common::CoordError
+impl core::cmp::Eq for formualizer_common::CoordError
+impl core::cmp::PartialEq for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::eq(&self, &formualizer_common::CoordError) -> bool
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::A1ParseError
+pub fn formualizer_common::A1ParseError::from(formualizer_common::CoordError) -> Self
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::CoordError) -> Self
+impl core::fmt::Debug for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::CoordError
+pub fn formualizer_common::CoordError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::CoordError
+impl core::marker::StructuralPartialEq for formualizer_common::CoordError
+pub enum formualizer_common::DateSystem
+pub formualizer_common::DateSystem::Excel1900
+pub formualizer_common::DateSystem::Excel1904
+impl core::clone::Clone for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::clone(&self) -> formualizer_common::DateSystem
+impl core::cmp::Eq for formualizer_common::DateSystem
+impl core::cmp::PartialEq for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::eq(&self, &formualizer_common::DateSystem) -> bool
+impl core::fmt::Debug for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::DateSystem
+pub fn formualizer_common::DateSystem::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::DateSystem
+impl core::marker::StructuralPartialEq for formualizer_common::DateSystem
+#[non_exhaustive] pub enum formualizer_common::ExcelErrorExtra
+pub formualizer_common::ExcelErrorExtra::None
+pub formualizer_common::ExcelErrorExtra::PlanStale
+pub formualizer_common::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
+pub formualizer_common::ExcelErrorExtra::PreparationStale
+pub formualizer_common::ExcelErrorExtra::PreparationStale::reason: formualizer_common::PreparationStaleReason
+pub formualizer_common::ExcelErrorExtra::Resource
+pub formualizer_common::ExcelErrorExtra::Resource::detail: alloc::boxed::Box<formualizer_common::ResourceExhaustionDetail>
+pub formualizer_common::ExcelErrorExtra::Spill
+pub formualizer_common::ExcelErrorExtra::Spill::expected_cols: u32
+pub formualizer_common::ExcelErrorExtra::Spill::expected_rows: u32
+impl core::clone::Clone for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::clone(&self) -> formualizer_common::ExcelErrorExtra
+impl core::cmp::Eq for formualizer_common::ExcelErrorExtra
+impl core::cmp::PartialEq for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::eq(&self, &formualizer_common::ExcelErrorExtra) -> bool
+impl core::default::Default for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::default() -> formualizer_common::ExcelErrorExtra
+impl core::fmt::Debug for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelErrorExtra
+impl serde_core::ser::Serialize for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorExtra
+pub fn formualizer_common::ExcelErrorExtra::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::ExcelErrorKind
+pub formualizer_common::ExcelErrorKind::Calc
+pub formualizer_common::ExcelErrorKind::Cancelled
+pub formualizer_common::ExcelErrorKind::Circ
+pub formualizer_common::ExcelErrorKind::Div
+pub formualizer_common::ExcelErrorKind::Error
+pub formualizer_common::ExcelErrorKind::NImpl
+pub formualizer_common::ExcelErrorKind::Na
+pub formualizer_common::ExcelErrorKind::Name
+pub formualizer_common::ExcelErrorKind::Null
+pub formualizer_common::ExcelErrorKind::Num
+pub formualizer_common::ExcelErrorKind::Ref
+pub formualizer_common::ExcelErrorKind::Spill
+pub formualizer_common::ExcelErrorKind::Value
+impl formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::parse(&str) -> Self
+pub fn formualizer_common::ExcelErrorKind::try_parse(&str) -> core::option::Option<Self>
+impl core::clone::Clone for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::clone(&self) -> formualizer_common::ExcelErrorKind
+impl core::cmp::Eq for formualizer_common::ExcelErrorKind
+impl core::cmp::PartialEq for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::eq(&self, &formualizer_common::ExcelErrorKind) -> bool
+impl core::cmp::PartialEq<str> for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::eq(&self, &str) -> bool
+impl core::convert::From<formualizer_common::ExcelErrorKind> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::from(formualizer_common::ExcelErrorKind) -> Self
+impl core::fmt::Debug for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::ExcelErrorKind
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelErrorKind
+impl serde_core::ser::Serialize for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelErrorKind
+pub fn formualizer_common::ExcelErrorKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_common::LiteralValue
+pub formualizer_common::LiteralValue::Array(alloc::vec::Vec<alloc::vec::Vec<formualizer_common::LiteralValue>>)
+pub formualizer_common::LiteralValue::Boolean(bool)
+pub formualizer_common::LiteralValue::Date(chrono::naive::date::NaiveDate)
+pub formualizer_common::LiteralValue::DateTime(chrono::naive::datetime::NaiveDateTime)
+pub formualizer_common::LiteralValue::Duration(chrono::Duration)
+pub formualizer_common::LiteralValue::Empty
+pub formualizer_common::LiteralValue::Error(formualizer_common::ExcelError)
+pub formualizer_common::LiteralValue::Int(i64)
+pub formualizer_common::LiteralValue::Number(f64)
+pub formualizer_common::LiteralValue::Pending
+pub formualizer_common::LiteralValue::Text(alloc::string::String)
+pub formualizer_common::LiteralValue::Time(chrono::naive::time::NaiveTime)
+impl formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::as_serial_number(&self) -> core::option::Option<f64>
+pub fn formualizer_common::LiteralValue::as_serial_number_for(&self, formualizer_common::DateSystem) -> core::option::Option<f64>
+pub fn formualizer_common::LiteralValue::coerce_to_single_value(&self) -> core::result::Result<formualizer_common::LiteralValue, formualizer_common::ValueError>
+pub fn formualizer_common::LiteralValue::from_serial_number(f64) -> Self
+pub fn formualizer_common::LiteralValue::is_truthy(&self) -> bool
+pub fn formualizer_common::LiteralValue::try_from_serial_number(f64) -> core::result::Result<Self, formualizer_common::ExcelError>
+pub fn formualizer_common::LiteralValue::try_from_serial_number_for(formualizer_common::DateSystem, f64) -> core::result::Result<Self, formualizer_common::ExcelError>
+impl core::clone::Clone for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::clone(&self) -> formualizer_common::LiteralValue
+impl core::cmp::Eq for formualizer_common::LiteralValue
+impl core::cmp::PartialEq for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::eq(&self, &formualizer_common::LiteralValue) -> bool
+impl core::convert::From<formualizer_common::ExcelError> for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::from(formualizer_common::ExcelError) -> Self
+impl core::fmt::Debug for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::hash<H: core::hash::Hasher>(&self, &mut H)
+impl core::marker::StructuralPartialEq for formualizer_common::LiteralValue
+impl serde_core::ser::Serialize for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::PlanStaleReason
+pub formualizer_common::PlanStaleReason::Authority
+pub formualizer_common::PlanStaleReason::Budget
+pub formualizer_common::PlanStaleReason::Engine
+pub formualizer_common::PlanStaleReason::Graph
+pub formualizer_common::PlanStaleReason::Provider
+pub formualizer_common::PlanStaleReason::Semantic
+pub formualizer_common::PlanStaleReason::SpanGeneration
+pub formualizer_common::PlanStaleReason::Staged
+pub formualizer_common::PlanStaleReason::Symbols
+impl formualizer_common::PlanStaleReason
+pub const fn formualizer_common::PlanStaleReason::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::clone(&self) -> formualizer_common::PlanStaleReason
+impl core::cmp::Eq for formualizer_common::PlanStaleReason
+impl core::cmp::PartialEq for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::eq(&self, &formualizer_common::PlanStaleReason) -> bool
+impl core::fmt::Debug for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::PlanStaleReason
+impl core::marker::StructuralPartialEq for formualizer_common::PlanStaleReason
+impl serde_core::ser::Serialize for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PlanStaleReason
+pub fn formualizer_common::PlanStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::PreparationStaleReason
+pub formualizer_common::PreparationStaleReason::Authority
+pub formualizer_common::PreparationStaleReason::Graph
+pub formualizer_common::PreparationStaleReason::Provider
+pub formualizer_common::PreparationStaleReason::Semantic
+pub formualizer_common::PreparationStaleReason::Staged
+pub formualizer_common::PreparationStaleReason::Symbols
+impl formualizer_common::PreparationStaleReason
+pub const fn formualizer_common::PreparationStaleReason::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::clone(&self) -> formualizer_common::PreparationStaleReason
+impl core::cmp::Eq for formualizer_common::PreparationStaleReason
+impl core::cmp::PartialEq for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::eq(&self, &formualizer_common::PreparationStaleReason) -> bool
+impl core::fmt::Debug for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::PreparationStaleReason
+impl core::marker::StructuralPartialEq for formualizer_common::PreparationStaleReason
+impl serde_core::ser::Serialize for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::PreparationStaleReason
+pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::ResourceExhaustionReason
+pub formualizer_common::ResourceExhaustionReason::Admission
+pub formualizer_common::ResourceExhaustionReason::ArithmeticOverflow
+pub formualizer_common::ResourceExhaustionReason::Deadline
+pub formualizer_common::ResourceExhaustionReason::GraphEdges
+pub formualizer_common::ResourceExhaustionReason::GraphVertices
+pub formualizer_common::ResourceExhaustionReason::MaterializationCells
+pub formualizer_common::ResourceExhaustionReason::RetainedMemory
+pub formualizer_common::ResourceExhaustionReason::ScratchMemory
+pub formualizer_common::ResourceExhaustionReason::WorkUnits
+impl formualizer_common::ResourceExhaustionReason
+pub const fn formualizer_common::ResourceExhaustionReason::as_str(self) -> &'static str
+impl core::clone::Clone for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::clone(&self) -> formualizer_common::ResourceExhaustionReason
+impl core::cmp::Eq for formualizer_common::ResourceExhaustionReason
+impl core::cmp::PartialEq for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::eq(&self, &formualizer_common::ResourceExhaustionReason) -> bool
+impl core::fmt::Debug for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::ResourceExhaustionReason
+impl core::marker::StructuralPartialEq for formualizer_common::ResourceExhaustionReason
+impl serde_core::ser::Serialize for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ResourceExhaustionReason
+pub fn formualizer_common::ResourceExhaustionReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_common::SheetAddressError
+pub formualizer_common::SheetAddressError::Coord(formualizer_common::CoordError)
+pub formualizer_common::SheetAddressError::MismatchedSheets
+pub formualizer_common::SheetAddressError::MissingSheetName
+pub formualizer_common::SheetAddressError::Parse(formualizer_common::A1ParseError)
+pub formualizer_common::SheetAddressError::RangeOrder
+pub formualizer_common::SheetAddressError::UnboundedRange
+pub formualizer_common::SheetAddressError::ZeroIndex
+impl core::clone::Clone for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::clone(&self) -> formualizer_common::SheetAddressError
+impl core::cmp::Eq for formualizer_common::SheetAddressError
+impl core::cmp::PartialEq for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::eq(&self, &formualizer_common::SheetAddressError) -> bool
+impl core::convert::From<formualizer_common::A1ParseError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::A1ParseError) -> Self
+impl core::convert::From<formualizer_common::CoordError> for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::from(formualizer_common::CoordError) -> Self
+impl core::error::Error for formualizer_common::SheetAddressError
+impl core::fmt::Debug for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::SheetAddressError
+pub fn formualizer_common::SheetAddressError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::SheetAddressError
+pub enum formualizer_common::SheetLocator<'a>
+pub formualizer_common::SheetLocator::Current
+pub formualizer_common::SheetLocator::Id(formualizer_common::SheetId)
+pub formualizer_common::SheetLocator::Name(alloc::borrow::Cow<'a, str>)
+impl<'a> formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::as_ref(&self) -> formualizer_common::SheetLocator<'_>
+pub const fn formualizer_common::SheetLocator<'a>::current() -> Self
+pub const fn formualizer_common::SheetLocator<'a>::from_id(formualizer_common::SheetId) -> Self
+pub fn formualizer_common::SheetLocator<'a>::from_name(impl core::convert::Into<alloc::borrow::Cow<'a, str>>) -> Self
+pub const fn formualizer_common::SheetLocator<'a>::id(&self) -> core::option::Option<formualizer_common::SheetId>
+pub fn formualizer_common::SheetLocator<'a>::into_owned(self) -> formualizer_common::SheetLocator<'static>
+pub const fn formualizer_common::SheetLocator<'a>::is_current(&self) -> bool
+pub fn formualizer_common::SheetLocator<'a>::name(&self) -> core::option::Option<&str>
+impl<'a> core::clone::Clone for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::clone(&self) -> formualizer_common::SheetLocator<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetLocator<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::eq(&self, &formualizer_common::SheetLocator<'a>) -> bool
+impl<'a> core::convert::From<&'a str> for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::from(&'a str) -> Self
+impl<'a> core::convert::From<alloc::string::String> for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::from(alloc::string::String) -> Self
+impl<'a> core::convert::From<u16> for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::from(formualizer_common::SheetId) -> Self
+impl<'a> core::default::Default for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::default() -> formualizer_common::SheetLocator<'a>
+impl<'a> core::fmt::Debug for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetLocator<'a>
+pub fn formualizer_common::SheetLocator<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetLocator<'a>
+pub enum formualizer_common::SheetRef<'a>
+pub formualizer_common::SheetRef::Cell(formualizer_common::SheetCellRef<'a>)
+pub formualizer_common::SheetRef::Range(formualizer_common::SheetRangeRef<'a>)
+impl<'a> core::clone::Clone for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::clone(&self) -> formualizer_common::SheetRef<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetRef<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::eq(&self, &formualizer_common::SheetRef<'a>) -> bool
+impl<'a> core::fmt::Debug for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetRef<'a>
+pub fn formualizer_common::SheetRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRef<'a>
+#[non_exhaustive] pub enum formualizer_common::ValueError
+pub formualizer_common::ValueError::ImplicitIntersection(alloc::string::String)
+impl core::clone::Clone for formualizer_common::ValueError
+pub fn formualizer_common::ValueError::clone(&self) -> formualizer_common::ValueError
+impl core::cmp::PartialEq for formualizer_common::ValueError
+pub fn formualizer_common::ValueError::eq(&self, &formualizer_common::ValueError) -> bool
+impl core::fmt::Debug for formualizer_common::ValueError
+pub fn formualizer_common::ValueError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_common::ValueError
+pub struct formualizer_common::AxisBound
+pub formualizer_common::AxisBound::abs: bool
+pub formualizer_common::AxisBound::index: u32
+impl formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::from_excel_1based(u32, bool) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub const fn formualizer_common::AxisBound::new(u32, bool) -> Self
+pub const fn formualizer_common::AxisBound::to_excel_1based(self) -> u32
+impl core::clone::Clone for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::clone(&self) -> formualizer_common::AxisBound
+impl core::cmp::Eq for formualizer_common::AxisBound
+impl core::cmp::PartialEq for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::eq(&self, &formualizer_common::AxisBound) -> bool
+impl core::fmt::Debug for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::AxisBound
+pub fn formualizer_common::AxisBound::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::AxisBound
+impl core::marker::StructuralPartialEq for formualizer_common::AxisBound
+pub struct formualizer_common::Coord(_)
+impl formualizer_common::Coord
+pub const formualizer_common::Coord::INVALID: Self
+pub fn formualizer_common::Coord::as_u64(self) -> u64
+pub fn formualizer_common::Coord::col(self) -> u32
+pub fn formualizer_common::Coord::from_excel(u32, u32) -> Self
+pub fn formualizer_common::Coord::from_raw(u64) -> core::result::Result<Self, formualizer_common::CoordError>
+pub fn formualizer_common::Coord::into_relative(self) -> formualizer_common::RelativeCoord
+pub fn formualizer_common::Coord::is_valid(self) -> bool
+pub fn formualizer_common::Coord::new(u32, u32) -> Self
+pub fn formualizer_common::Coord::normalize(self) -> Self
+pub fn formualizer_common::Coord::row(self) -> u32
+pub fn formualizer_common::Coord::try_from_a1(&str) -> core::result::Result<Self, formualizer_common::A1ParseError>
+pub fn formualizer_common::Coord::try_new(u32, u32) -> core::result::Result<Self, formualizer_common::CoordError>
+impl core::clone::Clone for formualizer_common::Coord
+pub fn formualizer_common::Coord::clone(&self) -> formualizer_common::Coord
+impl core::cmp::Eq for formualizer_common::Coord
+impl core::cmp::PartialEq for formualizer_common::Coord
+pub fn formualizer_common::Coord::eq(&self, &formualizer_common::Coord) -> bool
+impl core::convert::From<formualizer_common::Coord> for (u32, u32)
+pub fn (u32, u32)::from(formualizer_common::Coord) -> Self
+impl core::convert::From<formualizer_common::Coord> for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::from(formualizer_common::Coord) -> Self
+impl core::convert::From<formualizer_common::RelativeCoord> for formualizer_common::Coord
+pub fn formualizer_common::Coord::from(formualizer_common::RelativeCoord) -> Self
+impl core::convert::TryFrom<&str> for formualizer_common::Coord
+pub type formualizer_common::Coord::Error = formualizer_common::A1ParseError
+pub fn formualizer_common::Coord::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<(i64, i64)> for formualizer_common::Coord
+pub type formualizer_common::Coord::Error = formualizer_common::CoordError
+pub fn formualizer_common::Coord::try_from((i64, i64)) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<(u32, u32)> for formualizer_common::Coord
+pub type formualizer_common::Coord::Error = formualizer_common::CoordError
+pub fn formualizer_common::Coord::try_from((u32, u32)) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_common::Coord
+pub fn formualizer_common::Coord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::Coord
+pub fn formualizer_common::Coord::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::Coord
+impl core::marker::StructuralPartialEq for formualizer_common::Coord
+impl core::str::traits::FromStr for formualizer_common::Coord
+pub type formualizer_common::Coord::Err = formualizer_common::A1ParseError
+pub fn formualizer_common::Coord::from_str(&str) -> core::result::Result<Self, Self::Err>
+pub struct formualizer_common::CoordBuildHasher
+impl core::clone::Clone for formualizer_common::CoordBuildHasher
+pub fn formualizer_common::CoordBuildHasher::clone(&self) -> formualizer_common::CoordBuildHasher
+impl core::default::Default for formualizer_common::CoordBuildHasher
+pub fn formualizer_common::CoordBuildHasher::default() -> formualizer_common::CoordBuildHasher
+impl core::fmt::Debug for formualizer_common::CoordBuildHasher
+pub fn formualizer_common::CoordBuildHasher::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::BuildHasher for formualizer_common::CoordBuildHasher
+pub type formualizer_common::CoordBuildHasher::Hasher = formualizer_common::CoordHasher
+pub fn formualizer_common::CoordBuildHasher::build_hasher(&self) -> formualizer_common::CoordHasher
+impl core::marker::Copy for formualizer_common::CoordBuildHasher
+pub struct formualizer_common::CoordHasher(_)
+impl core::clone::Clone for formualizer_common::CoordHasher
+pub fn formualizer_common::CoordHasher::clone(&self) -> formualizer_common::CoordHasher
+impl core::fmt::Debug for formualizer_common::CoordHasher
+pub fn formualizer_common::CoordHasher::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hasher for formualizer_common::CoordHasher
+pub fn formualizer_common::CoordHasher::finish(&self) -> u64
+pub fn formualizer_common::CoordHasher::write(&mut self, &[u8])
+pub fn formualizer_common::CoordHasher::write_i32(&mut self, i32)
+pub fn formualizer_common::CoordHasher::write_i64(&mut self, i64)
+pub fn formualizer_common::CoordHasher::write_u16(&mut self, u16)
+pub fn formualizer_common::CoordHasher::write_u32(&mut self, u32)
+pub fn formualizer_common::CoordHasher::write_u64(&mut self, u64)
+pub fn formualizer_common::CoordHasher::write_u8(&mut self, u8)
+pub fn formualizer_common::CoordHasher::write_usize(&mut self, usize)
+impl core::marker::Copy for formualizer_common::CoordHasher
+pub struct formualizer_common::ErrorContext
+pub formualizer_common::ErrorContext::col: core::option::Option<u32>
+pub formualizer_common::ErrorContext::origin_col: core::option::Option<u32>
+pub formualizer_common::ErrorContext::origin_row: core::option::Option<u32>
+pub formualizer_common::ErrorContext::origin_sheet: core::option::Option<alloc::string::String>
+pub formualizer_common::ErrorContext::row: core::option::Option<u32>
+impl core::clone::Clone for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::clone(&self) -> formualizer_common::ErrorContext
+impl core::cmp::Eq for formualizer_common::ErrorContext
+impl core::cmp::PartialEq for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::eq(&self, &formualizer_common::ErrorContext) -> bool
+impl core::default::Default for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::default() -> formualizer_common::ErrorContext
+impl core::fmt::Debug for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ErrorContext
+impl serde_core::ser::Serialize for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ErrorContext
+pub fn formualizer_common::ErrorContext::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::ExcelDateParts
+pub formualizer_common::ExcelDateParts::day: u32
+pub formualizer_common::ExcelDateParts::month: u32
+pub formualizer_common::ExcelDateParts::year: i32
+impl core::clone::Clone for formualizer_common::ExcelDateParts
+pub fn formualizer_common::ExcelDateParts::clone(&self) -> formualizer_common::ExcelDateParts
+impl core::cmp::Eq for formualizer_common::ExcelDateParts
+impl core::cmp::PartialEq for formualizer_common::ExcelDateParts
+pub fn formualizer_common::ExcelDateParts::eq(&self, &formualizer_common::ExcelDateParts) -> bool
+impl core::fmt::Debug for formualizer_common::ExcelDateParts
+pub fn formualizer_common::ExcelDateParts::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_common::ExcelDateParts
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelDateParts
+pub struct formualizer_common::ExcelError
+pub formualizer_common::ExcelError::context: core::option::Option<formualizer_common::ErrorContext>
+pub formualizer_common::ExcelError::extra: formualizer_common::ExcelErrorExtra
+pub formualizer_common::ExcelError::kind: formualizer_common::ExcelErrorKind
+pub formualizer_common::ExcelError::message: core::option::Option<alloc::string::String>
+impl formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
+pub fn formualizer_common::ExcelError::new_circ() -> Self
+pub fn formualizer_common::ExcelError::new_div() -> Self
+pub fn formualizer_common::ExcelError::new_na() -> Self
+pub fn formualizer_common::ExcelError::new_name() -> Self
+pub fn formualizer_common::ExcelError::new_num() -> Self
+pub fn formualizer_common::ExcelError::new_ref() -> Self
+pub fn formualizer_common::ExcelError::new_value() -> Self
+pub fn formualizer_common::ExcelError::with_extra(self, formualizer_common::ExcelErrorExtra) -> Self
+pub fn formualizer_common::ExcelError::with_location(self, u32, u32) -> Self
+pub fn formualizer_common::ExcelError::with_message<S: core::convert::Into<alloc::string::String>>(self, S) -> Self
+pub fn formualizer_common::ExcelError::with_origin(self, core::option::Option<alloc::string::String>, u32, u32) -> Self
+impl core::clone::Clone for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::clone(&self) -> formualizer_common::ExcelError
+impl core::cmp::Eq for formualizer_common::ExcelError
+impl core::cmp::PartialEq for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::eq(&self, &formualizer_common::ExcelError) -> bool
+impl core::cmp::PartialEq<&str> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::eq(&self, &&str) -> bool
+impl core::cmp::PartialEq<str> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::eq(&self, &str) -> bool
+impl core::convert::From<formualizer_common::ExcelError> for alloc::string::String
+pub fn alloc::string::String::from(formualizer_common::ExcelError) -> Self
+impl core::convert::From<formualizer_common::ExcelError> for formualizer_common::LiteralValue
+pub fn formualizer_common::LiteralValue::from(formualizer_common::ExcelError) -> Self
+impl core::convert::From<formualizer_common::ExcelErrorKind> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::from(formualizer_common::ExcelErrorKind) -> Self
+impl core::error::Error for formualizer_common::ExcelError
+impl core::fmt::Debug for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ExcelError
+impl serde_core::ser::Serialize for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ExcelError
+pub fn formualizer_common::ExcelError::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[repr(transparent)] pub struct formualizer_common::PackedSheetCell(_)
+impl formualizer_common::PackedSheetCell
+pub const formualizer_common::PackedSheetCell::MAX_COL0: u32
+pub const formualizer_common::PackedSheetCell::MAX_ROW0: u32
+pub const fn formualizer_common::PackedSheetCell::as_u64(self) -> u64
+pub const fn formualizer_common::PackedSheetCell::col0(self) -> u32
+pub const fn formualizer_common::PackedSheetCell::row0(self) -> u32
+pub const fn formualizer_common::PackedSheetCell::sheet_id(self) -> formualizer_common::SheetId
+pub const fn formualizer_common::PackedSheetCell::to_excel_1based(self) -> (formualizer_common::SheetId, u32, u32)
+pub fn formualizer_common::PackedSheetCell::try_from_excel_1based(formualizer_common::SheetId, u32, u32) -> core::option::Option<Self>
+pub const fn formualizer_common::PackedSheetCell::try_from_u64(u64) -> core::option::Option<Self>
+pub const fn formualizer_common::PackedSheetCell::try_new(formualizer_common::SheetId, u32, u32) -> core::option::Option<Self>
+impl core::clone::Clone for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::clone(&self) -> formualizer_common::PackedSheetCell
+impl core::cmp::Eq for formualizer_common::PackedSheetCell
+impl core::cmp::Ord for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::cmp(&self, &formualizer_common::PackedSheetCell) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::eq(&self, &formualizer_common::PackedSheetCell) -> bool
+impl core::cmp::PartialOrd for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::partial_cmp(&self, &formualizer_common::PackedSheetCell) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::PackedSheetCell
+pub fn formualizer_common::PackedSheetCell::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::PackedSheetCell
+impl core::marker::StructuralPartialEq for formualizer_common::PackedSheetCell
+pub struct formualizer_common::RangeAddress
+pub formualizer_common::RangeAddress::end_col: u32
+pub formualizer_common::RangeAddress::end_row: u32
+pub formualizer_common::RangeAddress::sheet: alloc::string::String
+pub formualizer_common::RangeAddress::start_col: u32
+pub formualizer_common::RangeAddress::start_row: u32
+impl formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::height(&self) -> u32
+pub fn formualizer_common::RangeAddress::new(impl core::convert::Into<alloc::string::String>, u32, u32, u32, u32) -> core::result::Result<Self, &'static str>
+pub fn formualizer_common::RangeAddress::to_sheet_range(&self) -> formualizer_common::SheetRangeRef<'_>
+pub fn formualizer_common::RangeAddress::width(&self) -> u32
+impl core::clone::Clone for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::clone(&self) -> formualizer_common::RangeAddress
+impl core::cmp::Eq for formualizer_common::RangeAddress
+impl core::cmp::PartialEq for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::eq(&self, &formualizer_common::RangeAddress) -> bool
+impl core::fmt::Debug for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::RangeAddress
+impl serde_core::ser::Serialize for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'a> core::convert::From<&'a formualizer_common::RangeAddress> for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::from(&'a formualizer_common::RangeAddress) -> Self
+impl<'a> core::convert::TryFrom<formualizer_common::SheetRangeRef<'a>> for formualizer_common::RangeAddress
+pub type formualizer_common::RangeAddress::Error = formualizer_common::SheetAddressError
+pub fn formualizer_common::RangeAddress::try_from(formualizer_common::SheetRangeRef<'a>) -> core::result::Result<Self, Self::Error>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::RelativeCoord(_)
+impl formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::as_u64(self) -> u64
+pub fn formualizer_common::RelativeCoord::col(self) -> u32
+pub fn formualizer_common::RelativeCoord::col_abs(self) -> bool
+pub fn formualizer_common::RelativeCoord::col_to_letters(u32) -> alloc::string::String
+pub fn formualizer_common::RelativeCoord::from_raw(u64) -> core::result::Result<Self, formualizer_common::CoordError>
+pub fn formualizer_common::RelativeCoord::into_absolute(self) -> formualizer_common::Coord
+pub fn formualizer_common::RelativeCoord::letters_to_col(&str) -> core::option::Option<u32>
+pub fn formualizer_common::RelativeCoord::new(u32, u32, bool, bool) -> Self
+pub fn formualizer_common::RelativeCoord::offset(self, i32, i32) -> Self
+pub fn formualizer_common::RelativeCoord::rebase(self, formualizer_common::RelativeCoord, formualizer_common::RelativeCoord) -> Self
+pub fn formualizer_common::RelativeCoord::row(self) -> u32
+pub fn formualizer_common::RelativeCoord::row_abs(self) -> bool
+pub fn formualizer_common::RelativeCoord::try_from_a1(&str) -> core::result::Result<Self, formualizer_common::A1ParseError>
+pub fn formualizer_common::RelativeCoord::try_new(u32, u32, bool, bool) -> core::result::Result<Self, formualizer_common::CoordError>
+pub fn formualizer_common::RelativeCoord::with_col_abs(self, bool) -> Self
+pub fn formualizer_common::RelativeCoord::with_row_abs(self, bool) -> Self
+impl core::clone::Clone for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::clone(&self) -> formualizer_common::RelativeCoord
+impl core::cmp::Eq for formualizer_common::RelativeCoord
+impl core::cmp::Ord for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::cmp(&self, &formualizer_common::RelativeCoord) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::eq(&self, &formualizer_common::RelativeCoord) -> bool
+impl core::cmp::PartialOrd for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::partial_cmp(&self, &formualizer_common::RelativeCoord) -> core::option::Option<core::cmp::Ordering>
+impl core::convert::From<formualizer_common::Coord> for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::from(formualizer_common::Coord) -> Self
+impl core::convert::From<formualizer_common::RelativeCoord> for formualizer_common::Coord
+pub fn formualizer_common::Coord::from(formualizer_common::RelativeCoord) -> Self
+impl core::convert::TryFrom<&str> for formualizer_common::RelativeCoord
+pub type formualizer_common::RelativeCoord::Error = formualizer_common::A1ParseError
+pub fn formualizer_common::RelativeCoord::try_from(&str) -> core::result::Result<Self, Self::Error>
+impl core::convert::TryFrom<(u32, u32, bool, bool)> for formualizer_common::RelativeCoord
+pub type formualizer_common::RelativeCoord::Error = formualizer_common::CoordError
+pub fn formualizer_common::RelativeCoord::try_from((u32, u32, bool, bool)) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::RelativeCoord
+pub fn formualizer_common::RelativeCoord::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_common::RelativeCoord
+impl core::marker::StructuralPartialEq for formualizer_common::RelativeCoord
+impl core::str::traits::FromStr for formualizer_common::RelativeCoord
+pub type formualizer_common::RelativeCoord::Err = formualizer_common::A1ParseError
+pub fn formualizer_common::RelativeCoord::from_str(&str) -> core::result::Result<Self, Self::Err>
+pub struct formualizer_common::ResourceExhaustionDetail
+pub formualizer_common::ResourceExhaustionDetail::limit: u64
+pub formualizer_common::ResourceExhaustionDetail::observed: u64
+pub formualizer_common::ResourceExhaustionDetail::reason: formualizer_common::ResourceExhaustionReason
+pub formualizer_common::ResourceExhaustionDetail::request_id: core::option::Option<u64>
+impl core::clone::Clone for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::clone(&self) -> formualizer_common::ResourceExhaustionDetail
+impl core::cmp::Eq for formualizer_common::ResourceExhaustionDetail
+impl core::cmp::PartialEq for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::eq(&self, &formualizer_common::ResourceExhaustionDetail) -> bool
+impl core::fmt::Debug for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::ResourceExhaustionDetail
+impl serde_core::ser::Serialize for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ResourceExhaustionDetail
+pub fn formualizer_common::ResourceExhaustionDetail::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::SheetCellRef<'a>
+pub formualizer_common::SheetCellRef::coord: formualizer_common::RelativeCoord
+pub formualizer_common::SheetCellRef::sheet: formualizer_common::SheetLocator<'a>
+impl<'a> formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::as_ref(&self) -> formualizer_common::SheetCellRef<'_>
+pub fn formualizer_common::SheetCellRef<'a>::from_excel(formualizer_common::SheetLocator<'a>, u32, u32, bool, bool) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetCellRef<'a>::into_owned(self) -> formualizer_common::SheetCellRef<'static>
+pub const fn formualizer_common::SheetCellRef<'a>::new(formualizer_common::SheetLocator<'a>, formualizer_common::RelativeCoord) -> Self
+pub fn formualizer_common::SheetCellRef<'a>::try_from_a1(formualizer_common::SheetLocator<'a>, &str) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+impl<'a> core::clone::Clone for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::clone(&self) -> formualizer_common::SheetCellRef<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetCellRef<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::eq(&self, &formualizer_common::SheetCellRef<'a>) -> bool
+impl<'a> core::fmt::Debug for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetCellRef<'a>
+pub fn formualizer_common::SheetCellRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetCellRef<'a>
+pub struct formualizer_common::SheetRangeRef<'a>
+pub formualizer_common::SheetRangeRef::end_col: core::option::Option<formualizer_common::AxisBound>
+pub formualizer_common::SheetRangeRef::end_row: core::option::Option<formualizer_common::AxisBound>
+pub formualizer_common::SheetRangeRef::sheet: formualizer_common::SheetLocator<'a>
+pub formualizer_common::SheetRangeRef::start_col: core::option::Option<formualizer_common::AxisBound>
+pub formualizer_common::SheetRangeRef::start_row: core::option::Option<formualizer_common::AxisBound>
+impl<'a> formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::as_ref(&self) -> formualizer_common::SheetRangeRef<'_>
+pub fn formualizer_common::SheetRangeRef<'a>::from_cells(formualizer_common::SheetCellRef<'a>, formualizer_common::SheetCellRef<'a>) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetRangeRef<'a>::from_excel_rect(formualizer_common::SheetLocator<'a>, u32, u32, u32, u32, bool, bool, bool, bool) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetRangeRef<'a>::from_parts(formualizer_common::SheetLocator<'a>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::SheetRangeRef<'a>::into_owned(self) -> formualizer_common::SheetRangeRef<'static>
+pub const fn formualizer_common::SheetRangeRef<'a>::new(formualizer_common::SheetLocator<'a>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>, core::option::Option<formualizer_common::AxisBound>) -> Self
+impl<'a> core::clone::Clone for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::clone(&self) -> formualizer_common::SheetRangeRef<'a>
+impl<'a> core::cmp::Eq for formualizer_common::SheetRangeRef<'a>
+impl<'a> core::cmp::PartialEq for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::eq(&self, &formualizer_common::SheetRangeRef<'a>) -> bool
+impl<'a> core::convert::From<&'a formualizer_common::RangeAddress> for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::from(&'a formualizer_common::RangeAddress) -> Self
+impl<'a> core::convert::TryFrom<formualizer_common::SheetRangeRef<'a>> for formualizer_common::RangeAddress
+pub type formualizer_common::RangeAddress::Error = formualizer_common::SheetAddressError
+pub fn formualizer_common::RangeAddress::try_from(formualizer_common::SheetRangeRef<'a>) -> core::result::Result<Self, Self::Error>
+impl<'a> core::fmt::Debug for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::hash::Hash for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::SheetRangeRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::col_index_from_letters_1based(&str) -> core::result::Result<u32, formualizer_common::A1ParseError>
+pub fn formualizer_common::col_letters_from_1based(u32) -> core::result::Result<alloc::string::String, formualizer_common::A1ParseError>
+pub fn formualizer_common::date_to_serial_for(formualizer_common::DateSystem, &chrono::naive::date::NaiveDate) -> f64
+pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::datetime_to_serial_for(formualizer_common::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::max_excel_serial_for(formualizer_common::DateSystem) -> f64
+pub fn formualizer_common::parse_a1_1based(&str) -> core::result::Result<(u32, u32, bool, bool), formualizer_common::A1ParseError>
+pub fn formualizer_common::serial_to_datetime(f64) -> chrono::naive::datetime::NaiveDateTime
+pub fn formualizer_common::serial_to_datetime(f64) -> chrono::naive::datetime::NaiveDateTime
+pub fn formualizer_common::time_to_fraction(&chrono::naive::time::NaiveTime) -> f64
+pub fn formualizer_common::try_serial_to_date_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::date::NaiveDate, formualizer_common::ExcelError>
+pub fn formualizer_common::try_serial_to_datetime_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::ExcelError>
+pub fn formualizer_common::try_serial_to_display_date_parts_for(formualizer_common::DateSystem, f64) -> core::result::Result<formualizer_common::ExcelDateParts, formualizer_common::ExcelError>
+pub fn formualizer_common::validate_excel_serial(formualizer_common::DateSystem, f64) -> core::result::Result<(), formualizer_common::ExcelError>
+pub type formualizer_common::CoordHashMap<K, V> = std::collections::hash::map::HashMap<K, V, formualizer_common::CoordBuildHasher>
+pub type formualizer_common::CoordHashSet<K> = std::collections::hash::set::HashSet<K, formualizer_common::CoordBuildHasher>
+pub type formualizer_common::SheetId = u16

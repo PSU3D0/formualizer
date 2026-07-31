@@ -1336,8 +1336,13 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         None
     }
 
-    /// Optional cancellation token. When Some, long-running operations should periodically abort.
-    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+    /// Returns the optional shared cancellation handle for this evaluation.
+    ///
+    /// Custom context authors may return a clone: clones share the same signal
+    /// without allocating. Consumers should retrieve the handle once before a
+    /// hot loop and poll [`crate::engine::CancelToken::is_cancelled`]
+    /// periodically.
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
         None
     }
 
@@ -1576,7 +1581,12 @@ pub trait FunctionContext<'ctx> {
     fn timezone(&self) -> &crate::timezone::TimeZoneSpec;
     fn clock(&self) -> &dyn crate::timezone::ClockProvider;
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>>;
-    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>>;
+    /// Returns the optional shared cancellation handle for this evaluation.
+    ///
+    /// Custom function authors should retrieve this once before a hot loop and
+    /// poll [`crate::engine::CancelToken::is_cancelled`] periodically. Cloning
+    /// the handle shares the same signal without allocating.
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken>;
     fn chunk_hint(&self) -> Option<usize>;
 
     /// Current formula sheet name.
@@ -1742,7 +1752,7 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
     fn thread_pool(&self) -> Option<&std::sync::Arc<rayon::ThreadPool>> {
         self.base.thread_pool()
     }
-    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
         self.base.cancellation_token()
     }
     fn chunk_hint(&self) -> Option<usize> {

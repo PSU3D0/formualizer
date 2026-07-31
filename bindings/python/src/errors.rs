@@ -49,6 +49,7 @@ fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject
         ExcelErrorExtra::PlanStale { reason } => {
             let _ = dict.set_item("plan_stale_reason", reason.as_str());
         }
+        _ => return None,
     }
     Some(dict.into_any().unbind())
 }
@@ -338,6 +339,7 @@ impl PyExcelError {
             ExcelErrorKind::Cancelled => "#CANCELLED!".to_string(),
             ExcelErrorKind::Error => "#ERROR!".to_string(),
             ExcelErrorKind::NImpl => "#N/IMPL!".to_string(),
+            _ => self.inner.kind.to_string(),
         }
     }
 }

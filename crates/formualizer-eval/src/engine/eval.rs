@@ -28,9 +28,10 @@ use crate::engine::{
     EvaluationRequestOutcome, EvaluationResourceBaselineStats, EvaluationResourceReason,
     EvaluationResourceRequestStats, FormulaDirtyLeaseOutcome, FormulaIngestBatch,
     FormulaIngestRecord, FormulaIngestReport, FormulaParseDiagnostic, FormulaParsePolicy,
-    FormulaPlaneMode, FormulaPlaneTopologyCacheOutcome, FormulaPlaneTopologyStrategy,
-    ResourceLedger, RowVisibilitySource, ScheduleUnit, Scheduler, VertexId, VertexKind,
-    VisibilityMaskMode,
+    FormulaPlaneMode, FormulaPlaneRoute, FormulaPlaneRouteEvent, FormulaPlaneRoutePhase,
+    FormulaPlaneRouteTransitionReason, FormulaPlaneTopologyCacheOutcome,
+    FormulaPlaneTopologyStrategy, ResourceLedger, RowVisibilitySource, ScheduleUnit, Scheduler,
+    VertexId, VertexKind, VisibilityMaskMode,
 };
 use crate::formula_plane::placement::prepare_anchor_once_fragment;
 use crate::formula_plane::placement::{
@@ -52,7 +53,7 @@ use crate::formula_plane::scheduler::{
     MixedTopologyCompileStats, MixedTopologyConfig, build_demand_closure_cached,
     build_demand_closure_in_memory_runs, build_demand_closure_paged,
     build_demand_closure_repeated_passes, compile_mixed_topology, schedule_dirty_work,
-    schedule_dirty_work_in_memory_runs, schedule_dirty_work_paged,
+    schedule_dirty_work_in_memory_runs, schedule_dirty_work_paged_hybrid,
     schedule_dirty_work_repeated_passes,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -473,12 +474,31 @@ pub(crate) fn classify_mixed_topology_incomplete(
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct LegacyIslandPlan {
+    membership: Vec<VertexId>,
+    dirty_vertices: Vec<VertexId>,
+    sheet_ids: Vec<SheetId>,
+    island_id: u64,
+    retained_bytes: usize,
+    boundary_relationships: usize,
+    omitted_relationships: usize,
+    omitted_direct_relationships: usize,
+}
+
+impl LegacyIslandPlan {
+    fn is_empty(&self) -> bool {
+        self.membership.is_empty()
+    }
+}
+
 type FormulaPlaneMixedScheduleBuild = (
     MixedSchedule,
     BTreeMap<crate::formula_plane::runtime::FormulaSpanId, FormulaSpanRef>,
     u64,
     Vec<VertexId>,
     Vec<usize>,
+    LegacyIslandPlan,
 );
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -901,6 +921,9 @@ pub struct Engine<R> {
     pub recalc_epoch: u64,
     snapshot_id: std::sync::atomic::AtomicU64,
     topology_epoch: u64,
+    /// False after a structural axis operation. While #171 remains open we
+    /// must not use relocated span read summaries to prove disconnection.
+    legacy_island_structural_summaries_trusted: bool,
     cached_static_schedule: Option<CachedScheduleEntry>,
     cached_mixed_topology: Option<CachedMixedTopology>,
     mixed_topology_cache_builds: u64,
@@ -1029,6 +1052,8 @@ pub struct Engine<R> {
 
     #[cfg(test)]
     last_formula_plane_span_eval_report: Option<SpanEvalReport>,
+    #[cfg(test)]
+    evaluation_request_begin_count_for_test: u64,
     before_prepared_span_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     before_target_preparation_commit_hook: Option<Box<dyn FnOnce() + Send + Sync>>,
     #[cfg(test)]
@@ -1749,6 +1774,11 @@ struct MixedTopologyCacheKey {
     engine_topology_epoch: u64,
     graph_topology_revision: u64,
     authority_indexes_epoch: u64,
+    /// Explicit revisions for retained island membership and boundary views.
+    /// They currently share the authoritative graph/index clocks but remain
+    /// distinct key fields so future independent indexes cannot omit them.
+    legacy_island_revision: u64,
+    boundary_index_revision: u64,
     function_semantic_epoch: u64,
     function_provider_revision: Option<u64>,
     max_candidates: usize,
@@ -1764,6 +1794,7 @@ struct CachedMixedTopology {
     consumer_reads: FormulaConsumerReadIndex,
     span_refs_by_id: BTreeMap<FormulaSpanId, FormulaSpanRef>,
     plane_epoch: u64,
+    island: LegacyIslandPlan,
 }
 
 #[derive(Debug)]
@@ -1774,6 +1805,7 @@ struct SkippedMixedTopology {
     consumer_reads: FormulaConsumerReadIndex,
     span_refs_by_id: BTreeMap<FormulaSpanId, FormulaSpanRef>,
     plane_epoch: u64,
+    island: LegacyIslandPlan,
 }
 
 #[derive(Debug)]
@@ -2142,6 +2174,7 @@ impl RecalcPlan {
                     self.key.revisions.graph_topology_revision =
                         self.key.revisions.graph_topology_revision.wrapping_add(1);
                 }
+                _ => {}
             }
         }
     }
@@ -2493,6 +2526,7 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
+            legacy_island_structural_summaries_trusted: true,
             cached_static_schedule: None,
             cached_mixed_topology: None,
             mixed_topology_cache_builds: 0,
@@ -2543,6 +2577,8 @@ where
             function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            #[cfg(test)]
+            evaluation_request_begin_count_for_test: 0,
             before_prepared_span_commit_hook: None,
             before_target_preparation_commit_hook: None,
             #[cfg(test)]
@@ -2628,6 +2664,7 @@ where
             recalc_epoch: 0,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
+            legacy_island_structural_summaries_trusted: true,
             cached_static_schedule: None,
             cached_mixed_topology: None,
             mixed_topology_cache_builds: 0,
@@ -2678,6 +2715,8 @@ where
             function_provider_revision_seen,
             #[cfg(test)]
             last_formula_plane_span_eval_report: None,
+            #[cfg(test)]
+            evaluation_request_begin_count_for_test: 0,
             before_prepared_span_commit_hook: None,
             before_target_preparation_commit_hook: None,
             #[cfg(test)]
@@ -3255,6 +3294,55 @@ where
         }
     }
 
+    fn observe_formula_plane_route(
+        &mut self,
+        plan: &LegacyIslandPlan,
+        phase: FormulaPlaneRoutePhase,
+        reason: FormulaPlaneRouteTransitionReason,
+        demotion_generation: usize,
+        replan_generation: usize,
+    ) {
+        if plan.is_empty() {
+            return;
+        }
+        let mut sheet_ids = [0_u16;
+            crate::engine::resource_observability::FORMULA_PLANE_ROUTE_EVENT_SHEET_CAPACITY];
+        let sheet_count = plan.sheet_ids.len().min(sheet_ids.len());
+        sheet_ids[..sheet_count].copy_from_slice(&plan.sheet_ids[..sheet_count]);
+        let authority = self.graph.formula_authority();
+        let event = FormulaPlaneRouteEvent {
+            island_id: plan.island_id,
+            phase,
+            route: FormulaPlaneRoute::ContractedLegacyIsland,
+            sheet_ids,
+            sheet_count: sheet_count as u8,
+            authority_epoch: authority.plane.epoch().0,
+            index_epoch: authority.indexes_epoch(),
+            transition_reason: reason,
+            demotion_generation: demotion_generation.min(u32::MAX as usize) as u32,
+            replan_generation: replan_generation.min(u32::MAX as usize) as u32,
+        };
+        if let Some(stats) = self.active_evaluation_resource_request.as_mut() {
+            let index = usize::from(stats.topology.route_event_count);
+            if index < stats.topology.route_events.len() {
+                stats.topology.route_events[index] = event;
+                stats.topology.route_event_count =
+                    stats.topology.route_event_count.saturating_add(1);
+            } else {
+                stats.topology.route_events_dropped =
+                    stats.topology.route_events_dropped.saturating_add(1);
+            }
+            stats.topology.route_event_bytes_observed = stats
+                .topology
+                .route_event_bytes_observed
+                .saturating_add(std::mem::size_of::<FormulaPlaneRouteEvent>() as u64);
+            stats.topology.island_membership_vertices = plan.membership.len() as u64;
+            stats.topology.island_membership_retained_bytes = plan.retained_bytes as u64;
+            stats.topology.legacy_relationships_omitted = plan.omitted_relationships as u64;
+            stats.topology.boundary_relationships_retained = plan.boundary_relationships as u64;
+        }
+    }
+
     fn observe_materialization(
         &mut self,
         placements: usize,
@@ -3340,6 +3428,12 @@ where
     /// take the per-recalc volatile clock sample. Called at the start of
     /// every evaluation request that walks schedule units.
     fn begin_evaluation_request(&mut self) {
+        #[cfg(test)]
+        {
+            self.evaluation_request_begin_count_for_test = self
+                .evaluation_request_begin_count_for_test
+                .saturating_add(1);
+        }
         self.last_cycle_telemetry = CycleTelemetry::default();
         // Defensive: consumed at the end of the previous request; a request
         // that errored out mid-walk must not leak its members into this one.
@@ -5357,6 +5451,11 @@ where
     }
 
     #[cfg(test)]
+    pub(crate) fn evaluation_request_begin_count_for_test(&self) -> u64 {
+        self.evaluation_request_begin_count_for_test
+    }
+
+    #[cfg(test)]
     pub(crate) fn force_source_family_fallback_for_test(&mut self, force: bool) {
         self.force_source_family_fallback = force;
     }
@@ -6646,6 +6745,53 @@ where
         }
     }
 
+    fn prepared_placement_function_semantics_changed(
+        &self,
+        semantic_epoch: u64,
+        prepared: &crate::formula_plane::placement::PreparedAnchorOncePlacement,
+        guard: &crate::function_registry::SemanticEpochReadGuard,
+    ) -> bool {
+        if semantic_epoch == guard.epoch() {
+            return false;
+        }
+        let (_, _, _, ast_id, _, _) = prepared.ownership_proof();
+        let Some(ast) = self
+            .graph
+            .data_store()
+            .reconstruct_ast_node(ast_id, self.graph.sheet_reg())
+        else {
+            // Missing planning evidence must never turn a semantic change into reuse.
+            return true;
+        };
+        let mut requests = Vec::new();
+        Self::collect_planning_function_requests(&ast, &mut requests);
+        guard.semantic_changes_affect_requests_since(semantic_epoch, requests)
+    }
+
+    fn prepared_function_semantics_changed(
+        &self,
+        preparation: &crate::engine::FormulaCompressedPreparation,
+        guard: &crate::function_registry::SemanticEpochReadGuard,
+    ) -> bool {
+        if preparation.function_semantic_epoch == guard.epoch() {
+            return false;
+        }
+
+        let mut requests = Vec::new();
+        for (_, _, prepared) in &preparation.prepared {
+            let (_, _, _, ast_id, _, _) = prepared.ownership_proof();
+            let Some(ast) = self
+                .graph
+                .data_store()
+                .reconstruct_ast_node(ast_id, self.graph.sheet_reg())
+            else {
+                return true;
+            };
+            Self::collect_planning_function_requests(&ast, &mut requests);
+        }
+        guard.semantic_changes_affect_requests_since(preparation.function_semantic_epoch, requests)
+    }
+
     pub(crate) fn prepare_source_formula_families(
         &mut self,
         sheet_name: &str,
@@ -7644,9 +7790,7 @@ where
                 .with_message("compressed source preparation sheet mismatch"));
         }
         let initial_guard = crate::function_registry::semantic_epoch_read_guard();
-        let initial_epoch = initial_guard.epoch();
         let initial_provider_revision = self.resolver.planning_semantic_revision();
-        drop(initial_guard);
         let mut fallback_batches = Vec::with_capacity(batches.len());
         let mut stale_fallback_batches = Vec::new();
         let mut pending_preparations = Vec::new();
@@ -7684,7 +7828,8 @@ where
                 .then(|| {
                     if preparation.function_provider_revision != initial_provider_revision {
                         Some("FunctionProviderRevisionChanged")
-                    } else if preparation.function_semantic_epoch != initial_epoch {
+                    } else if self.prepared_function_semantics_changed(&preparation, &initial_guard)
+                    {
                         Some("FunctionSemanticEpochChanged")
                     } else {
                         None
@@ -7729,6 +7874,7 @@ where
             }
             pending_preparations.push((preparation, stale_semantics));
         }
+        drop(initial_guard);
 
         // Build known fallback graphs first. Stale batches are forced through legacy ingest.
         let configured_mode = self.config.formula_plane_mode;
@@ -7792,7 +7938,6 @@ where
                 hook();
             }
             let commit_guard = crate::function_registry::semantic_epoch_read_guard();
-            let commit_epoch = commit_guard.epoch();
             let commit_provider_revision = self.resolver.planning_semantic_revision();
             let mut newly_stale = Vec::new();
             let mut current = Vec::new();
@@ -7803,7 +7948,9 @@ where
                     .then(|| {
                         if pending.0.function_provider_revision != commit_provider_revision {
                             Some("FunctionProviderRevisionChanged")
-                        } else if pending.0.function_semantic_epoch != commit_epoch {
+                        } else if self
+                            .prepared_function_semantics_changed(&pending.0, &commit_guard)
+                        {
                             Some("FunctionSemanticEpochChanged")
                         } else {
                             None
@@ -8077,9 +8224,14 @@ where
                         SourceProposal::Clean(source_id, _, prepared) => {
                             let commit_guard =
                                 crate::function_registry::semantic_epoch_read_guard();
-                            let commit_epoch = commit_guard.epoch();
                             let commit_provider_revision =
                                 self.resolver.planning_semantic_revision();
+                            let semantic_changed = preparation.function_semantics_used
+                                && self.prepared_placement_function_semantics_changed(
+                                    preparation.function_semantic_epoch,
+                                    &prepared,
+                                    &commit_guard,
+                                );
                             let cells = prepared.member_count;
                             let stats = self.graph.baseline_stats();
                             self.preflight_graph_admission(
@@ -8113,9 +8265,7 @@ where
                                     {
                                         return Err("FunctionProviderRevisionChanged".to_string());
                                     }
-                                    if preparation.function_semantics_used
-                                        && preparation.function_semantic_epoch != commit_epoch
-                                    {
+                                    if semantic_changed {
                                         return Err("FunctionSemanticEpochChanged".to_string());
                                     }
                                     self.graph
@@ -12355,6 +12505,9 @@ where
         if op.count() == 0 {
             return Ok(());
         }
+        // #171: after an axis edit, retained read-summary relocation cannot be
+        // used as a proof of disconnection. Fail closed for this engine.
+        self.legacy_island_structural_summaries_trusted = false;
         self.demote_spans_for_structural_op_impl(Some(op), affected_region, true)
     }
 
@@ -18076,13 +18229,9 @@ where
         target_roots: Option<&[crate::engine::target_preparation::TargetProducer]>,
         mut delta: Option<&mut DeltaCollector>,
     ) -> Result<EvalResult, ExcelError> {
-        // Fresh per-request cycle counters. Some callers (`evaluate_vertex`,
-        // `evaluate_cells*`) reach this coordinator without an entry-point
-        // reset; callers that did reset have accumulated nothing in between,
-        // so the duplicate reset is harmless. The composed legacy primitive
-        // below intentionally does not reset, so `evaluate_legacy_cycle_prepass`
-        // counts survive into the final telemetry.
-        self.begin_evaluation_request();
+        // The public/request coordinators begin exactly once. Every primitive
+        // below is deliberately non-beginning and non-finalising so the dirty
+        // lease, iterative accumulator and §7.11 clock sample have one owner.
         let mut formula_dirty = self.graph.lease_formula_dirty();
         self.observe_dirty_lease_acquired(formula_dirty.is_empty());
 
@@ -18139,22 +18288,35 @@ where
             .then(|| self.start_virtual_dep_telemetry());
         'virtual_replan: loop {
             self.cancellation_checkpoint("Evaluation cancelled before mixed topology")?;
-            let (schedule, span_refs_by_id, plane_epoch, legacy_vertices, owned_dirty_events) = loop {
-                let (schedule, span_refs_by_id, plane_epoch, legacy_vertices, owned_dirty_events) =
-                    if let Some(target_roots) = runtime_target_roots.as_deref() {
-                        self.build_formula_plane_target_schedule(
-                            &formula_dirty,
-                            &retry_whole_spans,
-                            include_dirty_regions,
-                            target_roots,
-                        )?
-                    } else {
-                        self.build_formula_plane_mixed_schedule(
-                            &formula_dirty,
-                            &retry_whole_spans,
-                            include_dirty_regions,
-                        )?
-                    };
+            let (
+                schedule,
+                span_refs_by_id,
+                plane_epoch,
+                legacy_vertices,
+                owned_dirty_events,
+                island_plan,
+            ) = loop {
+                let (
+                    schedule,
+                    span_refs_by_id,
+                    plane_epoch,
+                    legacy_vertices,
+                    owned_dirty_events,
+                    island_plan,
+                ) = if let Some(target_roots) = runtime_target_roots.as_deref() {
+                    self.build_formula_plane_target_schedule(
+                        &formula_dirty,
+                        &retry_whole_spans,
+                        include_dirty_regions,
+                        target_roots,
+                    )?
+                } else {
+                    self.build_formula_plane_mixed_schedule(
+                        &formula_dirty,
+                        &retry_whole_spans,
+                        include_dirty_regions,
+                    )?
+                };
                 #[cfg(test)]
                 let mut schedule = schedule;
                 #[cfg(test)]
@@ -18181,6 +18343,7 @@ where
                         plane_epoch,
                         legacy_vertices,
                         owned_dirty_events,
+                        island_plan,
                     );
                 }
 
@@ -18311,6 +18474,30 @@ where
                     ));
                 }
             };
+            self.observe_formula_plane_route(
+                &island_plan,
+                FormulaPlaneRoutePhase::Planned,
+                FormulaPlaneRouteTransitionReason::ProvenIsolated,
+                cycle_demote_iters,
+                runtime_replan_iterations,
+            );
+            if !island_plan.dirty_vertices.is_empty() {
+                self.cancellation_checkpoint("Evaluation cancelled before legacy island")?;
+                let (island_computed, island_cycles) = self.evaluate_legacy_island_non_finalizing(
+                    &island_plan.dirty_vertices,
+                    delta.as_deref_mut(),
+                )?;
+                computed_vertices = computed_vertices.saturating_add(island_computed);
+                prepass_cycle_errors = prepass_cycle_errors.saturating_add(island_cycles);
+                self.observe_formula_plane_route(
+                    &island_plan,
+                    FormulaPlaneRoutePhase::Executed,
+                    FormulaPlaneRouteTransitionReason::ProvenIsolated,
+                    cycle_demote_iters,
+                    runtime_replan_iterations,
+                );
+                self.cancellation_checkpoint("Evaluation cancelled after legacy island")?;
+            }
             let old_virtual_dependencies = VirtualDepBuilder::new(self).build(&legacy_vertices).0;
             let old_dynamic_regions = self.dynamic_virtual_regions(&legacy_vertices);
 
@@ -18349,9 +18536,7 @@ where
                                 current_sheet,
                                 self.graph.data_store(),
                                 self.graph.sheet_reg(),
-                                self.active_cancel_flag
-                                    .as_ref()
-                                    .map(|c| c.as_flag().as_ref()),
+                                self.active_cancel_flag.as_ref(),
                             );
                             #[cfg(test)]
                             let mut last_group_report = None;
@@ -18610,6 +18795,8 @@ where
             engine_topology_epoch: self.topology_epoch,
             graph_topology_revision: self.graph.topology_revision(),
             authority_indexes_epoch: self.graph.formula_authority().indexes_epoch(),
+            legacy_island_revision: self.graph.topology_revision(),
+            boundary_index_revision: self.graph.formula_authority().indexes_epoch(),
             function_semantic_epoch: self.function_semantic_epoch_seen,
             function_provider_revision: self.function_provider_revision_seen,
             max_candidates,
@@ -18685,6 +18872,328 @@ where
             .saturating_add((span_refs.len() as u64).saturating_mul(BINDING_BYTES))
     }
 
+    fn prove_sheet_disjoint_legacy_island(
+        &self,
+        span_results: &FormulaProducerResultIndex,
+        span_reads: &FormulaConsumerReadIndex,
+        legacy_vertices: &[VertexId],
+    ) -> Option<LegacyIslandPlan> {
+        if !self.legacy_island_structural_summaries_trusted
+            || self.graph.named_ranges_iter().next().is_some()
+            || self.graph.sheet_named_ranges_iter().next().is_some()
+            || self.graph.spill_registry_counts() != (0, 0)
+            || legacy_vertices.iter().copied().any(|vertex| {
+                self.graph.is_dynamic(vertex)
+                    || self.graph.get_vertex_kind(vertex) == VertexKind::FormulaArray
+            })
+        {
+            return None;
+        }
+        let span_result_sheets = span_results
+            .entries()
+            .filter(|entry| matches!(entry.producer, FormulaProducerId::Span(_)))
+            .map(|entry| entry.result_region.sheet_id())
+            .collect::<FxHashSet<_>>();
+        let span_read_sheets = span_reads
+            .entries()
+            .filter(|entry| matches!(entry.consumer, FormulaProducerId::Span(_)))
+            .map(|entry| entry.read_region.sheet_id())
+            .collect::<FxHashSet<_>>();
+
+        let span_boundary_sheets = span_result_sheets
+            .union(&span_read_sheets)
+            .copied()
+            .collect::<FxHashSet<_>>();
+        for vertex in legacy_vertices {
+            let cell = self.graph.get_cell_ref_for_vertex(*vertex)?;
+            if span_boundary_sheets.contains(&cell.sheet_id) {
+                return None;
+            }
+            for dependency in self.graph.get_dependencies(*vertex) {
+                let dependency_cell = self.graph.get_cell_ref_for_vertex(dependency)?;
+                if span_boundary_sheets.contains(&dependency_cell.sheet_id) {
+                    return None;
+                }
+            }
+            if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+                for range in ranges {
+                    let region = self.shared_range_to_region_pattern(range).ok()??;
+                    if span_boundary_sheets.contains(&region.sheet_id()) {
+                        return None;
+                    }
+                }
+            }
+        }
+
+        let mut membership = legacy_vertices.to_vec();
+        membership.sort_unstable();
+        if membership.is_empty() {
+            return None;
+        }
+        let mut sheet_ids = membership
+            .iter()
+            .filter_map(|vertex| self.graph.get_cell_ref_for_vertex(*vertex))
+            .map(|cell| cell.sheet_id)
+            .collect::<Vec<_>>();
+        sheet_ids.sort_unstable();
+        sheet_ids.dedup();
+        let island_id = membership
+            .iter()
+            .fold(0xcbf29ce484222325_u64, |hash, vertex| {
+                (hash ^ u64::from(vertex.0)).wrapping_mul(0x100000001b3)
+            });
+        let retained_bytes = membership
+            .capacity()
+            .saturating_mul(std::mem::size_of::<VertexId>())
+            .saturating_add(
+                sheet_ids
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<SheetId>()),
+            );
+        Some(LegacyIslandPlan {
+            membership,
+            dirty_vertices: Vec::new(),
+            sheet_ids,
+            island_id,
+            retained_bytes,
+            boundary_relationships: 0,
+            omitted_relationships: legacy_vertices.len(),
+            omitted_direct_relationships: 0,
+        })
+    }
+
+    fn contract_legacy_islands(
+        &self,
+        full_results: &FormulaProducerResultIndex,
+        full_reads: &FormulaConsumerReadIndex,
+        legacy_reads_complete: bool,
+        candidate_cap: usize,
+    ) -> Option<(
+        FormulaProducerResultIndex,
+        FormulaConsumerReadIndex,
+        LegacyIslandPlan,
+    )> {
+        use crate::formula_plane::producer::ProjectionResult;
+        use crate::formula_plane::region_index::BoundedRegionQueryResult;
+
+        if !self.legacy_island_structural_summaries_trusted
+            || !legacy_reads_complete
+            || self.graph.named_ranges_iter().next().is_some()
+            || self.graph.sheet_named_ranges_iter().next().is_some()
+            || self.graph.spill_registry_counts() != (0, 0)
+        {
+            return None;
+        }
+        let legacy_vertices = self.graph.formula_vertices();
+        if legacy_vertices.iter().copied().any(|vertex| {
+            self.graph.is_dynamic(vertex)
+                || self.graph.get_vertex_kind(vertex) == VertexKind::FormulaArray
+        }) {
+            return None;
+        }
+
+        let mut reads_by_consumer: FxHashMap<VertexId, Vec<Region>> = FxHashMap::default();
+        for entry in full_reads.entries() {
+            if let FormulaProducerId::Legacy(vertex) = entry.consumer {
+                reads_by_consumer
+                    .entry(vertex)
+                    .or_default()
+                    .push(entry.read_region);
+            }
+        }
+
+        let mut connected = FxHashSet::default();
+        let mut queue = VecDeque::new();
+        let mut observed_candidates = 0usize;
+        let mut boundary_relationships = 0usize;
+        let add_connected = |vertex: VertexId,
+                             connected: &mut FxHashSet<VertexId>,
+                             queue: &mut VecDeque<VertexId>| {
+            if connected.insert(vertex) {
+                queue.push_back(vertex);
+            }
+        };
+
+        // Span results -> legacy consumers.
+        for result in full_results.entries() {
+            if !matches!(result.producer, FormulaProducerId::Span(_)) {
+                continue;
+            }
+            let remaining = candidate_cap.saturating_sub(observed_candidates);
+            let query = full_reads.query_changed_region_bounded(result.result_region, remaining);
+            let BoundedRegionQueryResult::Complete(query) = query else {
+                return None;
+            };
+            observed_candidates = observed_candidates.saturating_add(query.stats.candidate_count);
+            for matched in query.matches {
+                if let FormulaProducerId::Legacy(vertex) = matched.value.consumer {
+                    match matched.value.dirty {
+                        ProjectionResult::NoIntersection => {}
+                        ProjectionResult::Unsupported(_) => return None,
+                        ProjectionResult::Exact(_) | ProjectionResult::Conservative { .. } => {
+                            boundary_relationships = boundary_relationships.saturating_add(1);
+                            add_connected(vertex, &mut connected, &mut queue);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Span reads -> legacy producers.
+        for read in full_reads.entries() {
+            if !matches!(read.consumer, FormulaProducerId::Span(_)) {
+                continue;
+            }
+            let remaining = candidate_cap.saturating_sub(observed_candidates);
+            let query = full_results.query_bounded(read.read_region, remaining);
+            let BoundedRegionQueryResult::Complete(query) = query else {
+                return None;
+            };
+            observed_candidates = observed_candidates.saturating_add(query.stats.candidate_count);
+            for matched in query.matches {
+                if let FormulaProducerId::Legacy(vertex) = matched.value.producer {
+                    boundary_relationships = boundary_relationships.saturating_add(1);
+                    add_connected(vertex, &mut connected, &mut queue);
+                }
+            }
+        }
+
+        // Undirected closure through legacy relationships. Every vertex in this
+        // closure remains in the mixed scheduler, preserving the only detector
+        // for cycles whose path crosses a virtual span member.
+        while let Some(vertex) = queue.pop_front() {
+            let producer = FormulaProducerId::Legacy(vertex);
+            if let Some(result_region) = full_results.producer_result_region(producer) {
+                let remaining = candidate_cap.saturating_sub(observed_candidates);
+                let query = full_reads.query_changed_region_bounded(result_region, remaining);
+                let BoundedRegionQueryResult::Complete(query) = query else {
+                    return None;
+                };
+                observed_candidates =
+                    observed_candidates.saturating_add(query.stats.candidate_count);
+                for matched in query.matches {
+                    if let FormulaProducerId::Legacy(consumer) = matched.value.consumer {
+                        match matched.value.dirty {
+                            ProjectionResult::NoIntersection => {}
+                            ProjectionResult::Unsupported(_) => return None,
+                            ProjectionResult::Exact(_) | ProjectionResult::Conservative { .. } => {
+                                add_connected(consumer, &mut connected, &mut queue);
+                            }
+                        }
+                    }
+                }
+            }
+            for read_region in reads_by_consumer.get(&vertex).into_iter().flatten() {
+                let remaining = candidate_cap.saturating_sub(observed_candidates);
+                let query = full_results.query_bounded(*read_region, remaining);
+                let BoundedRegionQueryResult::Complete(query) = query else {
+                    return None;
+                };
+                observed_candidates =
+                    observed_candidates.saturating_add(query.stats.candidate_count);
+                for matched in query.matches {
+                    if let FormulaProducerId::Legacy(precedent) = matched.value.producer {
+                        add_connected(precedent, &mut connected, &mut queue);
+                    }
+                }
+            }
+        }
+
+        let mut membership = legacy_vertices
+            .iter()
+            .copied()
+            .filter(|vertex| !connected.contains(vertex))
+            .collect::<Vec<_>>();
+        membership.sort_unstable();
+        if membership.is_empty() {
+            return None;
+        }
+
+        let mut producer_results = FormulaProducerResultIndex::default();
+        let mut consumer_reads = FormulaConsumerReadIndex::default();
+        let retained_span_results = full_results
+            .entries()
+            .filter(|entry| matches!(entry.producer, FormulaProducerId::Span(_)))
+            .count();
+        producer_results
+            .try_reserve(retained_span_results.saturating_add(connected.len()))
+            .ok()?;
+        for entry in full_results.entries() {
+            let retain = match entry.producer {
+                FormulaProducerId::Span(_) => true,
+                FormulaProducerId::Legacy(vertex) => connected.contains(&vertex),
+            };
+            if retain {
+                producer_results.insert_producer(entry.producer, entry.result_region);
+            }
+        }
+        for entry in full_reads.entries() {
+            let retain = match entry.consumer {
+                FormulaProducerId::Span(_) => true,
+                FormulaProducerId::Legacy(vertex) => connected.contains(&vertex),
+            };
+            if retain {
+                consumer_reads.try_reserve(1).ok()?;
+                consumer_reads.insert_read(
+                    entry.consumer,
+                    entry.read_region,
+                    entry.consumer_result_region,
+                    entry.projection,
+                );
+            }
+        }
+
+        let mut sheet_ids = membership
+            .iter()
+            .filter_map(|vertex| self.graph.get_cell_ref_for_vertex(*vertex))
+            .map(|cell| cell.sheet_id)
+            .collect::<Vec<_>>();
+        sheet_ids.sort_unstable();
+        sheet_ids.dedup();
+        let island_id = membership
+            .iter()
+            .fold(0xcbf29ce484222325_u64, |hash, vertex| {
+                (hash ^ u64::from(vertex.0)).wrapping_mul(0x100000001b3)
+            });
+        let retained_bytes = membership
+            .capacity()
+            .saturating_mul(std::mem::size_of::<VertexId>())
+            .saturating_add(
+                sheet_ids
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<SheetId>()),
+            );
+        let omitted_relationships = full_reads
+            .entries()
+            .filter(|entry| matches!(entry.consumer, FormulaProducerId::Legacy(vertex) if !connected.contains(&vertex)))
+            .count();
+        let membership_set = membership.iter().copied().collect::<FxHashSet<_>>();
+        let omitted_direct_relationships = membership
+            .iter()
+            .map(|vertex| {
+                self.graph
+                    .get_dependencies(*vertex)
+                    .into_iter()
+                    .filter(|dependency| membership_set.contains(dependency))
+                    .count()
+            })
+            .sum();
+        Some((
+            producer_results,
+            consumer_reads,
+            LegacyIslandPlan {
+                membership,
+                dirty_vertices: Vec::new(),
+                sheet_ids,
+                island_id,
+                retained_bytes,
+                boundary_relationships,
+                omitted_relationships,
+                omitted_direct_relationships,
+            },
+        ))
+    }
+
     fn compile_formula_plane_mixed_topology(
         &mut self,
         key: MixedTopologyCacheKey,
@@ -18697,16 +19206,17 @@ where
         let authority = self.graph.formula_authority();
         let mut producer_results = FormulaProducerResultIndex::default();
         let mut consumer_reads = FormulaConsumerReadIndex::default();
+        let mut legacy_reads_complete = true;
         let span_refs = authority.active_span_refs();
         let legacy_vertices = self.graph.formula_vertices();
-        let producer_count = span_refs
+        let _producer_count = span_refs
             .len()
             .checked_add(legacy_vertices.len())
             .ok_or_else(|| {
                 ExcelError::new(ExcelErrorKind::NImpl)
                     .with_message("FormulaPlane cache producer count overflow")
             })?;
-        producer_results.try_reserve(producer_count).map_err(|_| {
+        producer_results.try_reserve(_producer_count).map_err(|_| {
             ExcelError::new(ExcelErrorKind::NImpl)
                 .with_message("FormulaPlane cache producer index reservation failed")
         })?;
@@ -18749,48 +19259,40 @@ where
             }
         }
 
-        for vertex in &legacy_vertices {
-            let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
-                continue;
-            };
-            producer_results.insert_producer(
-                FormulaProducerId::Legacy(*vertex),
-                Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col()),
-            );
-        }
-        for vertex in &legacy_vertices {
-            let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
-                continue;
-            };
-            let result_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
-            let mut seen = rustc_hash::FxHashSet::default();
-            for dep in self.graph.get_dependencies(*vertex) {
-                let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
+        let sheet_disjoint_island = self.prove_sheet_disjoint_legacy_island(
+            &producer_results,
+            &consumer_reads,
+            &legacy_vertices,
+        );
+        if sheet_disjoint_island.is_none() {
+            for vertex in &legacy_vertices {
+                let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
                     continue;
                 };
-                let read_region = Region::point(
-                    dep_cell.sheet_id,
-                    dep_cell.coord.row(),
-                    dep_cell.coord.col(),
+                producer_results.insert_producer(
+                    FormulaProducerId::Legacy(*vertex),
+                    Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col()),
                 );
-                if seen.insert(read_region) {
-                    consumer_reads.try_reserve(1).map_err(|_| {
-                        ExcelError::new(ExcelErrorKind::NImpl)
-                            .with_message("FormulaPlane cache read-index reservation failed")
-                    })?;
-                    consumer_reads.insert_read(
-                        FormulaProducerId::Legacy(*vertex),
-                        read_region,
-                        result_region,
-                        DirtyProjectionRule::WholeResult,
-                    );
-                }
             }
-            if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
-                for range in ranges {
-                    let Some(read_region) = self.shared_range_to_region_pattern(range)? else {
+            for vertex in &legacy_vertices {
+                let Some(cell) = self.graph.get_cell_ref_for_vertex(*vertex) else {
+                    continue;
+                };
+                let result_region =
+                    Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                let mut seen = rustc_hash::FxHashSet::default();
+                for dep in self.graph.get_dependencies(*vertex) {
+                    let Some(dep_cell) = self.graph.get_cell_ref_for_vertex(dep) else {
+                        // Named/table/source vertices do not have a trustworthy
+                        // regional boundary summary. Preserve the global planner.
+                        legacy_reads_complete = false;
                         continue;
                     };
+                    let read_region = Region::point(
+                        dep_cell.sheet_id,
+                        dep_cell.coord.row(),
+                        dep_cell.coord.col(),
+                    );
                     if seen.insert(read_region) {
                         consumer_reads.try_reserve(1).map_err(|_| {
                             ExcelError::new(ExcelErrorKind::NImpl)
@@ -18804,46 +19306,89 @@ where
                         );
                     }
                 }
-            }
-            let (virtual_dependencies, _) = VirtualDepBuilder::new(self).build(&[*vertex]);
-            for dependency in virtual_dependencies
-                .get(vertex)
-                .into_iter()
-                .flatten()
-                .copied()
-            {
-                let Some(cell) = self.graph.get_cell_ref_for_vertex(dependency) else {
-                    continue;
-                };
-                let read_region = Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
-                if seen.insert(read_region) {
-                    consumer_reads.try_reserve(1).map_err(|_| {
-                        ExcelError::new(ExcelErrorKind::NImpl)
-                            .with_message("FormulaPlane cache virtual read reservation failed")
-                    })?;
-                    consumer_reads.insert_read(
-                        FormulaProducerId::Legacy(*vertex),
-                        read_region,
-                        result_region,
-                        DirtyProjectionRule::WholeResult,
-                    );
+                if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
+                    for range in ranges {
+                        let Some(read_region) = self.shared_range_to_region_pattern(range)? else {
+                            legacy_reads_complete = false;
+                            continue;
+                        };
+                        if seen.insert(read_region) {
+                            consumer_reads.try_reserve(1).map_err(|_| {
+                                ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                                    "FormulaPlane cache read-index reservation failed",
+                                )
+                            })?;
+                            consumer_reads.insert_read(
+                                FormulaProducerId::Legacy(*vertex),
+                                read_region,
+                                result_region,
+                                DirtyProjectionRule::WholeResult,
+                            );
+                        }
+                    }
                 }
-            }
-            for read_region in DynamicRefVirtualDepProvider::get_virtual_regions(self, *vertex) {
-                if seen.insert(read_region) {
-                    consumer_reads.try_reserve(1).map_err(|_| {
-                        ExcelError::new(ExcelErrorKind::NImpl)
-                            .with_message("FormulaPlane dynamic-region reservation failed")
-                    })?;
-                    consumer_reads.insert_read(
-                        FormulaProducerId::Legacy(*vertex),
-                        read_region,
-                        result_region,
-                        DirtyProjectionRule::WholeResult,
-                    );
+                let (virtual_dependencies, _) = VirtualDepBuilder::new(self).build(&[*vertex]);
+                for dependency in virtual_dependencies
+                    .get(vertex)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                {
+                    let Some(cell) = self.graph.get_cell_ref_for_vertex(dependency) else {
+                        continue;
+                    };
+                    let read_region =
+                        Region::point(cell.sheet_id, cell.coord.row(), cell.coord.col());
+                    if seen.insert(read_region) {
+                        consumer_reads.try_reserve(1).map_err(|_| {
+                            ExcelError::new(ExcelErrorKind::NImpl)
+                                .with_message("FormulaPlane cache virtual read reservation failed")
+                        })?;
+                        consumer_reads.insert_read(
+                            FormulaProducerId::Legacy(*vertex),
+                            read_region,
+                            result_region,
+                            DirtyProjectionRule::WholeResult,
+                        );
+                    }
+                }
+                for read_region in DynamicRefVirtualDepProvider::get_virtual_regions(self, *vertex)
+                {
+                    if seen.insert(read_region) {
+                        consumer_reads.try_reserve(1).map_err(|_| {
+                            ExcelError::new(ExcelErrorKind::NImpl)
+                                .with_message("FormulaPlane dynamic-region reservation failed")
+                        })?;
+                        consumer_reads.insert_read(
+                            FormulaProducerId::Legacy(*vertex),
+                            read_region,
+                            result_region,
+                            DirtyProjectionRule::WholeResult,
+                        );
+                    }
                 }
             }
         }
+
+        // Boundary discovery uses complete, request-local indexes. Only the
+        // span-connected closure is retained and compiled; disconnected legacy
+        // membership is contracted into the legacy scheduler primitive.
+        let (producer_results, consumer_reads, island) = if let Some(island) = sheet_disjoint_island
+        {
+            (producer_results, consumer_reads, island)
+        } else {
+            self.contract_legacy_islands(
+                &producer_results,
+                &consumer_reads,
+                legacy_reads_complete,
+                key.max_candidates,
+            )
+            .unwrap_or((
+                producer_results,
+                consumer_reads,
+                LegacyIslandPlan::default(),
+            ))
+        };
 
         let retained_memory_bytes = std::mem::size_of::<CachedMixedTopology>()
             .checked_add(
@@ -18859,6 +19404,7 @@ where
                 )
             })
             .and_then(|bytes| bytes.checked_add(estimated_span_bindings_bytes(&span_refs_by_id)?))
+            .and_then(|bytes| bytes.checked_add(island.retained_bytes))
             .unwrap_or(usize::MAX);
         let config = MixedTopologyConfig {
             max_candidates: key.max_candidates,
@@ -18866,7 +19412,35 @@ where
             max_memory_bytes: key.max_memory_bytes,
             retained_memory_bytes,
         };
-        let compiled = compile_mixed_topology(&producer_results, &consumer_reads, &config);
+        let mut compiled = compile_mixed_topology(&producer_results, &consumer_reads, &config);
+        // `producers_observed` remains a discovery counter, not merely the
+        // post-contraction mixed-node count. Preserve that established meaning
+        // while exposing omissions separately in route telemetry.
+        match &mut compiled {
+            MixedTopologyCompileResult::Cached(topology) => {
+                topology.stats.producers = topology
+                    .stats
+                    .producers
+                    .saturating_add(island.membership.len());
+                topology.stats.candidates = topology
+                    .stats
+                    .candidates
+                    .saturating_add(island.omitted_direct_relationships);
+                topology.stats.relationships = topology
+                    .stats
+                    .relationships
+                    .saturating_add(island.omitted_direct_relationships);
+            }
+            MixedTopologyCompileResult::CacheSkipped { observed, .. } => {
+                observed.producers = observed.producers.saturating_add(island.membership.len());
+                observed.candidates = observed
+                    .candidates
+                    .saturating_add(island.omitted_direct_relationships);
+                observed.relationships = observed
+                    .relationships
+                    .saturating_add(island.omitted_direct_relationships);
+            }
+        }
         let plane_epoch = authority.plane.epoch().0;
         Ok(match compiled {
             MixedTopologyCompileResult::Cached(topology) => {
@@ -18877,6 +19451,7 @@ where
                     consumer_reads,
                     span_refs_by_id,
                     plane_epoch,
+                    island,
                 })
             }
             MixedTopologyCompileResult::CacheSkipped { reason, observed } => {
@@ -18887,6 +19462,7 @@ where
                     consumer_reads,
                     span_refs_by_id,
                     plane_epoch,
+                    island,
                 })
             }
         })
@@ -18959,23 +19535,22 @@ where
         let (cache_outcome, strategy, compile_stats) = if cache_hit {
             self.mixed_topology_cache_hits = self.mixed_topology_cache_hits.saturating_add(1);
             self.mixed_topology_cache_skip_streak = 0;
-            let stats = self
+            let cached = self
                 .cached_mixed_topology
                 .as_ref()
-                .expect("cache hit has topology")
-                .topology
-                .stats
-                .clone();
+                .expect("cache hit has topology");
+            let stats = cached.topology.stats.clone();
+            let strategy = if cached.topology.is_complete() {
+                FormulaPlaneTopologyStrategy::Cached
+            } else {
+                FormulaPlaneTopologyStrategy::ExactPagedIndexed
+            };
             if let Some(ledger) = self.active_resource_ledger.as_mut() {
                 ledger
                     .account_mixed_cache(stats.estimated_memory_bytes as u64)
                     .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
             }
-            (
-                FormulaPlaneTopologyCacheOutcome::Hit,
-                FormulaPlaneTopologyStrategy::Cached,
-                stats,
-            )
+            (FormulaPlaneTopologyCacheOutcome::Hit, strategy, stats)
         } else {
             // A key/cap miss makes the old retained topology stale. Drop it before building its
             // replacement so the request never accounts or owns both generations concurrently.
@@ -19011,7 +19586,8 @@ where
                     })
                     .and_then(|bytes| {
                         bytes.checked_add(estimated_span_bindings_bytes(&compiled.span_refs_by_id)?)
-                    }),
+                    })
+                    .and_then(|bytes| bytes.checked_add(compiled.island.retained_bytes)),
                 FormulaPlaneTopologyCompileResult::CacheSkipped(skipped) => skipped
                     .producer_results
                     .estimated_memory_bytes()
@@ -19020,7 +19596,8 @@ where
                     })
                     .and_then(|bytes| {
                         bytes.checked_add(estimated_span_bindings_bytes(&skipped.span_refs_by_id)?)
-                    }),
+                    })
+                    .and_then(|bytes| bytes.checked_add(skipped.island.retained_bytes)),
             }
             .unwrap_or(usize::MAX) as u64;
             debug_assert!(
@@ -19064,6 +19641,7 @@ where
                         consumer_reads: compiled.consumer_reads,
                         span_refs_by_id: compiled.span_refs_by_id,
                         plane_epoch: compiled.plane_epoch,
+                        island: compiled.island,
                     });
                     (
                         FormulaPlaneTopologyCacheOutcome::SkippedDynamicLegacy,
@@ -19073,6 +19651,11 @@ where
                 }
                 FormulaPlaneTopologyCompileResult::Cached(compiled) => {
                     let stats = compiled.topology.stats.clone();
+                    let strategy = if compiled.topology.is_complete() {
+                        FormulaPlaneTopologyStrategy::CompiledAndCached
+                    } else {
+                        FormulaPlaneTopologyStrategy::ExactPagedIndexed
+                    };
                     let retained_result = self
                         .active_resource_ledger
                         .as_mut()
@@ -19093,11 +19676,7 @@ where
                             .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
                     }
                     index_scratch_reserved = 0;
-                    (
-                        FormulaPlaneTopologyCacheOutcome::Built,
-                        FormulaPlaneTopologyStrategy::CompiledAndCached,
-                        stats,
-                    )
+                    (FormulaPlaneTopologyCacheOutcome::Built, strategy, stats)
                 }
                 FormulaPlaneTopologyCompileResult::CacheSkipped(skipped) => {
                     debug_assert!(self.cached_mixed_topology.is_none());
@@ -19141,29 +19720,46 @@ where
             }
         }
 
+        let reuse_partial_topology = cache_outcome == FormulaPlaneTopologyCacheOutcome::Hit;
         let schedule_result = (|| -> Result<FormulaPlaneMixedScheduleBuild, ExcelError> {
-            let (producer_results, consumer_reads, span_refs_by_id, plane_epoch, cached_topology) =
-                if let Some(skipped) = skipped_topology.as_ref() {
-                    (
-                        &skipped.producer_results,
-                        &skipped.consumer_reads,
-                        &skipped.span_refs_by_id,
-                        skipped.plane_epoch,
-                        None,
-                    )
+            let (
+                producer_results,
+                consumer_reads,
+                span_refs_by_id,
+                plane_epoch,
+                cached_topology,
+                partial_topology,
+                island,
+            ) = if let Some(skipped) = skipped_topology.as_ref() {
+                (
+                    &skipped.producer_results,
+                    &skipped.consumer_reads,
+                    &skipped.span_refs_by_id,
+                    skipped.plane_epoch,
+                    None,
+                    None,
+                    &skipped.island,
+                )
+            } else {
+                let cached = self
+                    .cached_mixed_topology
+                    .as_ref()
+                    .expect("mixed topology available for request");
+                let (complete, partial) = if cached.topology.is_complete() {
+                    (Some(&cached.topology), None)
                 } else {
-                    let cached = self
-                        .cached_mixed_topology
-                        .as_ref()
-                        .expect("complete mixed topology available for request");
-                    (
-                        &cached.producer_results,
-                        &cached.consumer_reads,
-                        &cached.span_refs_by_id,
-                        cached.plane_epoch,
-                        Some(&cached.topology),
-                    )
+                    (None, Some(&cached.topology))
                 };
+                (
+                    &cached.producer_results,
+                    &cached.consumer_reads,
+                    &cached.span_refs_by_id,
+                    cached.plane_epoch,
+                    complete,
+                    partial,
+                    &cached.island,
+                )
+            };
             let demand = if let Some(target_roots) = target_roots {
                 use crate::engine::target_preparation::TargetProducer;
                 let mut roots = Vec::new();
@@ -19401,6 +19997,35 @@ where
             };
 
             let dirty_legacy = self.graph.get_evaluation_vertices();
+            let dirty_legacy_set = dirty_legacy.iter().copied().collect::<FxHashSet<_>>();
+            let island_target_demand = target_roots.map(|roots| {
+                use crate::engine::target_preparation::TargetProducer;
+                let graph_roots = roots
+                    .iter()
+                    .filter_map(|root| match *root {
+                        TargetProducer::Legacy(vertex) | TargetProducer::Symbol(vertex) => {
+                            Some(vertex)
+                        }
+                        TargetProducer::Span { .. } | TargetProducer::ValueOnly(_) => None,
+                    })
+                    .collect::<Vec<_>>();
+                self.build_demand_subgraph(&graph_roots)
+                    .0
+                    .into_iter()
+                    .collect::<FxHashSet<_>>()
+            });
+            let mut island_plan = island.clone();
+            island_plan.dirty_vertices = island_plan
+                .membership
+                .iter()
+                .copied()
+                .filter(|vertex| dirty_legacy_set.contains(vertex))
+                .filter(|vertex| {
+                    island_target_demand
+                        .as_ref()
+                        .is_none_or(|demand| demand.contains(vertex))
+                })
+                .collect();
             let mut work = Vec::new();
             let mut scheduled_legacy_vertices = Vec::new();
             let demanded_dirty = |producer: FormulaProducerId,
@@ -19699,10 +20324,11 @@ where
                             0,
                         ),
                         (_, Some(FormulaPlaneTopologyStrategy::ExactPagedIndexed)) => {
-                            let (schedule, passes) = schedule_dirty_work_paged(
+                            let (schedule, passes) = schedule_dirty_work_paged_hybrid(
                                 work,
                                 producer_results,
                                 consumer_reads,
+                                partial_topology.filter(|_| reuse_partial_topology),
                                 256,
                                 |units| {
                                     Self::resource_loop_checkpoint(
@@ -19858,6 +20484,7 @@ where
                 plane_epoch,
                 scheduled_legacy_vertices,
                 owned_dirty_events,
+                island_plan,
             ))
         })();
         let scratch_release_result = self
@@ -19979,6 +20606,56 @@ where
             }
         }
         Ok((computed_vertices, cycle_count))
+    }
+
+    /// Execute a proven span-disconnected legacy island without beginning or
+    /// finalising an evaluation request. The FormulaPlane coordinator retains
+    /// sole ownership of the dirty lease, volatile redirty, acknowledgement,
+    /// clock sample, and recalc-epoch advance.
+    fn evaluate_legacy_island_non_finalizing(
+        &mut self,
+        vertices: &[VertexId],
+        mut delta: Option<&mut DeltaCollector>,
+    ) -> Result<(usize, usize), ExcelError> {
+        if vertices.is_empty() {
+            return Ok((0, 0));
+        }
+        let (schedule, _, _) = self.create_evaluation_schedule(vertices)?;
+        let mut computed = 0usize;
+        let mut cycles = 0usize;
+        for &unit in &schedule.units {
+            self.cancellation_checkpoint("Evaluation cancelled during legacy island")?;
+            match unit {
+                ScheduleUnit::Cycle(index) => {
+                    if self.handle_cycle_unit(
+                        schedule.unit_cycle(index),
+                        delta.as_deref_mut(),
+                        None,
+                        None,
+                    )? > 0
+                    {
+                        cycles = cycles.saturating_add(1);
+                    }
+                }
+                ScheduleUnit::Layer(index) => {
+                    let layer = schedule.unit_layer(index);
+                    let evaluated = if let Some(delta) = delta.as_deref_mut() {
+                        if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                            self.evaluate_layer_parallel_with_delta(layer, delta)?
+                        } else {
+                            self.evaluate_layer_sequential_with_delta(layer, delta)?
+                        }
+                    } else if self.thread_pool.is_some() && layer.vertices.len() > 1 {
+                        self.evaluate_layer_parallel(layer)?
+                    } else {
+                        self.evaluate_layer_sequential(layer)?
+                    };
+                    computed = computed.saturating_add(evaluated);
+                }
+            }
+        }
+        self.graph.clear_dirty_flags(vertices);
+        Ok((computed, cycles))
     }
 
     /// Legacy `evaluate_all` body, reachable from the FormulaPlane coordinator
@@ -22385,13 +23062,8 @@ where
         self.thread_pool.as_ref()
     }
 
-    fn cancellation_token(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-        // The context trait exposes the raw flag for custom-function authors; the
-        // engine's own call boundary uses CancelToken. See the follow-up issue on
-        // unifying the two.
-        self.active_cancel_flag
-            .as_ref()
-            .map(|cancel| Arc::clone(cancel.as_flag()))
+    fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
+        self.active_cancel_flag.clone()
     }
 
     fn chunk_hint(&self) -> Option<usize> {

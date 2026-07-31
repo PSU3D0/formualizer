@@ -2386,6 +2386,78 @@ fn unrelated_semantic_epoch_change_does_not_replay_arithmetic_preparation() {
 }
 
 #[test]
+fn unrelated_commit_boundary_registration_keeps_function_preparation() {
+    struct UnrelatedFunction;
+    impl crate::function::Function for UnrelatedFunction {
+        fn name(&self) -> &'static str {
+            "__UNRELATED_FUNCTION_PREPARATION_CHANGE__"
+        }
+
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+            _ctx: &dyn crate::traits::FunctionContext<'b>,
+        ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
+        }
+    }
+
+    crate::builtins::load_builtins();
+    let mut engine = Engine::new(
+        TestWorkbook::default(),
+        EvalConfig::default().with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    );
+    let family = provider_revision_family(30);
+    let family_id = family.source_id;
+    let preparation = engine
+        .source_formula_ingress()
+        .prepare_families("Sheet1", &[family])
+        .unwrap()
+        .with_exact_replay(
+            Arc::new(std::sync::Mutex::new(Box::new(provider_revision_replay(
+                family_id,
+            )))),
+            BTreeSet::new(),
+        );
+    assert_eq!(preparation.direct_family_count(), 1);
+
+    engine.set_before_prepared_span_commit_hook(|| {
+        crate::function_registry::register_function(Arc::new(UnrelatedFunction));
+        crate::function_registry::register_alias(
+            "",
+            "__UNRELATED_FUNCTION_PREPARATION_ALIAS__",
+            "",
+            "ABS",
+        );
+    });
+    let report = engine
+        .source_formula_ingress()
+        .finish_prepared(vec![(
+            FormulaIngestBatch::new("Sheet1", Vec::new()),
+            FormulaCompressedSourceReport {
+                families_seen: 1,
+                family_cells_seen: 100,
+                ..Default::default()
+            },
+            preparation,
+        )])
+        .unwrap();
+
+    assert_eq!(
+        engine.baseline_stats().formula_plane_active_span_count,
+        1,
+        "{report:?}"
+    );
+    assert_eq!(engine.baseline_stats().graph_formula_vertex_count, 0);
+    assert!(
+        !report
+            .fallback_reasons
+            .contains_key("FunctionSemanticEpochChanged"),
+        "{report:?}"
+    );
+}
+
+#[test]
 fn unrelated_commit_boundary_epoch_change_keeps_arithmetic_preparation() {
     crate::builtins::load_builtins();
     let cfg =

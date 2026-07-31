@@ -400,9 +400,9 @@ pub enum EvaluationTarget {
     Table { name: String, selection: TableSelection },
 }
 
-pub struct PrepareTargetsOptions<'a> {
+pub struct TargetEvalOptions<'a> {
     pub request_id: Option<RequestId>,
-    pub cancel: Option<&'a AtomicBool>,
+    pub cancel: Option<CancelToken>,
     pub deadline: Option<Instant>,
     pub budgets: Option<&'a EvaluationBudgets>,
     pub opaque_policy: OpaquePreparePolicy,
@@ -425,7 +425,7 @@ pub struct PreparedTargetGraphReport {
 pub fn prepare_graph_for_targets(
     &mut self,
     targets: &[EvaluationTarget],
-    options: PrepareTargetsOptions<'_>,
+    options: TargetEvalOptions<'_>,
 ) -> Result<PreparedTargetGraphReport, ExcelError>;
 ```
 

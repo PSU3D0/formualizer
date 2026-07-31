@@ -123,9 +123,16 @@ ports:
 }
 
 #[test]
-fn crate_version_matches_spec_version() {
+fn crate_version_tracks_protocol_line_without_lagging_it() {
+    let protocol = semver::Version::parse(sheetport_spec::CURRENT_SPEC_VERSION).unwrap();
+    let package = semver::Version::parse(sheetport_spec::CRATE_VERSION).unwrap();
+
     assert_eq!(
-        sheetport_spec::CURRENT_SPEC_VERSION,
-        sheetport_spec::CRATE_VERSION
+        (package.major, package.minor),
+        (protocol.major, protocol.minor)
+    );
+    assert!(
+        package >= protocol,
+        "crate patch releases may advance validator behavior but must not lag the protocol"
     );
 }

@@ -11,6 +11,7 @@ pub enum FormulaDialect {
     OpenFormula,
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParsingError {
     InvalidReference(String),

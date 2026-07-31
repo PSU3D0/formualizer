@@ -6,6 +6,8 @@ use std::{
 
 use crate::ExcelError;
 
+pub use crate::date_serial::{datetime_to_serial, serial_to_datetime};
+
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +86,7 @@ impl Display for LiteralValue {
     }
 }
 
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueError {
     ImplicitIntersection(String),

@@ -808,7 +808,7 @@ mod computed_array_tests {
     use crate::test_workbook::TestWorkbook;
     use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn workbook() -> TestWorkbook {
         crate::builtins::lookup::register_builtins();
@@ -959,7 +959,7 @@ mod computed_array_tests {
     }
 
     #[derive(Debug)]
-    struct PretokenizedRangeFn(Arc<AtomicBool>);
+    struct PretokenizedRangeFn(crate::engine::CancelToken);
 
     impl Function for PretokenizedRangeFn {
         fn name(&self) -> &'static str {
@@ -976,7 +976,7 @@ mod computed_array_tests {
                     vec![vec![LiteralValue::Number(1.0)]],
                     ctx.date_system(),
                 )
-                .with_cancel_token(Some(Arc::clone(&self.0))),
+                .with_cancel_token(Some(self.0.clone())),
             ))
         }
     }
@@ -1129,7 +1129,8 @@ mod computed_array_tests {
 
     #[test]
     fn pretokenized_range_keeps_cancellation_without_context_token() {
-        let token = Arc::new(AtomicBool::new(true));
+        let token = crate::engine::CancelToken::new();
+        token.cancel();
         let wb = workbook().with_function(Arc::new(PretokenizedRangeFn(token)));
 
         let error = evaluate(&wb, "=SUM(PRETOKENIZED_RANGE())").unwrap_err();
@@ -1140,7 +1141,8 @@ mod computed_array_tests {
     #[test]
     fn computed_array_range_walk_propagates_cancellation() {
         let calls = Arc::new(AtomicUsize::new(0));
-        let token = Arc::new(AtomicBool::new(true));
+        let token = crate::engine::CancelToken::new();
+        token.cancel();
         let wb = workbook()
             .with_cancellation_token(token)
             .with_function(Arc::new(CountedArrayFn(Arc::clone(&calls))));
