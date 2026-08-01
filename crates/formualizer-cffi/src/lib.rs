@@ -5,9 +5,11 @@ use std::ffi::{c_char, c_int};
 use std::ptr;
 use std::slice;
 
+pub mod guard;
 pub mod parse;
 pub mod workbook;
 
+pub use guard::*;
 pub use workbook::*;
 
 /// A buffer owned by Rust, to be freed by `fz_buffer_free`.
@@ -62,7 +64,13 @@ impl fz_status {
     }
 
     pub fn error(msg: String) -> Self {
-        let error_json = format!("{{\"message\": {:?}}}", msg);
+        // Serialise through `serde_json` rather than `{:?}`. Rust's `Debug`
+        // formatting for `str` is *not* JSON: it escapes with `\u{1f}`-style
+        // sequences and leaves characters such as DEL unescaped, so any error
+        // message containing control characters or non-ASCII escapes produced
+        // a payload that consumers could not parse.
+        let error_json = serde_json::to_string(&serde_json::json!({ "message": msg }))
+            .unwrap_or_else(|_| String::from(r#"{"message":"error serialization failed"}"#));
         fz_status {
             code: fz_status_code::FZ_STATUS_ERROR,
             error: fz_buffer::from_vec(error_json.into_bytes()),
@@ -151,7 +159,7 @@ pub unsafe extern "C" fn fz_parse_tokenize(
 
     let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
 
-    let result: Result<Vec<u8>, String> = (|| {
+    let compute = || -> Result<Vec<u8>, String> {
         let dialect = FormulaDialect::from(options.dialect);
         let tokens = Tokenizer::new_with_dialect(&input, dialect)
             .map_err(|e| e.to_string())?
@@ -172,26 +180,9 @@ pub unsafe extern "C" fn fz_parse_tokenize(
                 Ok(buf)
             }
         }
-    })();
+    };
 
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || compute().map(fz_buffer::from_vec))
 }
 
 #[unsafe(no_mangle)]
@@ -217,7 +208,7 @@ pub unsafe extern "C" fn fz_parse_ast(
 
     let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
 
-    let result: Result<Vec<u8>, String> = (|| {
+    let compute = || -> Result<Vec<u8>, String> {
         let dialect = FormulaDialect::from(options.dialect);
         let ast = parse_with_dialect(&input, dialect).map_err(|e| e.to_string())?;
 
@@ -233,26 +224,9 @@ pub unsafe extern "C" fn fz_parse_ast(
                 Ok(buf)
             }
         }
-    })();
+    };
 
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || compute().map(fz_buffer::from_vec))
 }
 
 #[unsafe(no_mangle)]
@@ -261,7 +235,7 @@ pub unsafe extern "C" fn fz_parse_canonical_formula(
     dialect: fz_formula_dialect,
     status: *mut fz_status,
 ) -> fz_buffer {
-    use formualizer_parse::{FormulaDialect, pretty_parse_render};
+    use formualizer_parse::{FormulaDialect, canonical_formula, parse_with_dialect};
     use std::ffi::CStr;
 
     if formula.is_null() {
@@ -275,27 +249,31 @@ pub unsafe extern "C" fn fz_parse_canonical_formula(
 
     let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
 
-    let _ = FormulaDialect::from(dialect);
-    let result: Result<String, String> = pretty_parse_render(&input).map_err(|e| e.to_string());
+    // Honour the caller-supplied dialect. The previous implementation
+    // discarded it (`let _ = ...`) and always parsed with the Excel dialect
+    // via `pretty_parse_render`, so `FZ_DIALECT_OPENFORMULA` silently produced
+    // Excel-dialect output.
+    let compute = || -> Result<String, String> {
+        if input.is_empty() {
+            return Ok(String::new());
+        }
+        let dialect = FormulaDialect::from(dialect);
+        // `parse_with_dialect` expects a leading `=`; mirror the leniency of
+        // the previous helper by adding one when absent.
+        let owned;
+        let to_parse: &str = if input.starts_with('=') {
+            input.as_ref()
+        } else {
+            owned = format!("={input}");
+            &owned
+        };
+        let ast = parse_with_dialect(to_parse, dialect).map_err(|e| e.to_string())?;
+        Ok(canonical_formula(&ast))
+    };
 
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v.into_bytes())
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || {
+        compute().map(|v| fz_buffer::from_vec(v.into_bytes()))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -318,7 +296,7 @@ pub unsafe extern "C" fn fz_common_parse_range_a1(
 
     let input = unsafe { CStr::from_ptr(range_a1).to_string_lossy() };
 
-    let result: Result<Vec<u8>, String> = (|| {
+    let compute = || -> Result<Vec<u8>, String> {
         // Simple A1 range parser: [Sheet!]A1[:B2]
         let (sheet, rest) = if let Some(pos) = input.find('!') {
             (&input[..pos], &input[pos + 1..])
@@ -347,26 +325,9 @@ pub unsafe extern "C" fn fz_common_parse_range_a1(
                 Ok(buf)
             }
         }
-    })();
+    };
 
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || compute().map(fz_buffer::from_vec))
 }
 
 #[unsafe(no_mangle)]
@@ -387,7 +348,7 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
         return fz_buffer::empty();
     }
 
-    let result: Result<Vec<u8>, String> = (|| {
+    let compute = || -> Result<Vec<u8>, String> {
         let payload = unsafe { slice::from_raw_parts(range_payload, len) };
         let addr: RangeAddress = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
@@ -397,6 +358,10 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
                 ciborium::from_reader(payload).map_err(|e| e.to_string())?
             }
         };
+
+        // Decoded payloads bypass `RangeAddress::new`, so enforce the
+        // 1-based/ordered invariants before formatting.
+        addr.validate().map_err(|e| e.to_string())?;
 
         let start_col =
             coord::col_letters_from_1based(addr.start_col).map_err(|e| e.to_string())?;
@@ -416,26 +381,9 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
         }
 
         Ok(out.into_bytes())
-    })();
+    };
 
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || compute().map(fz_buffer::from_vec))
 }
 
 #[unsafe(no_mangle)]
@@ -456,7 +404,7 @@ pub unsafe extern "C" fn fz_common_normalize_literal_value(
         return fz_buffer::empty();
     }
 
-    let result: Result<Vec<u8>, String> = (|| {
+    let compute = || -> Result<Vec<u8>, String> {
         let payload = unsafe { slice::from_raw_parts(value_payload, len) };
         let value: LiteralValue = match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
@@ -479,24 +427,7 @@ pub unsafe extern "C" fn fz_common_normalize_literal_value(
                 Ok(buf)
             }
         }
-    })();
+    };
 
-    match result {
-        Ok(v) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::ok();
-                }
-            }
-            fz_buffer::from_vec(v)
-        }
-        Err(e) => {
-            if !status.is_null() {
-                unsafe {
-                    *status = fz_status::error(e);
-                }
-            }
-            fz_buffer::empty()
-        }
-    }
+    catch_ffi(status, fz_buffer::empty(), || compute().map(fz_buffer::from_vec))
 }

@@ -27,11 +27,71 @@ pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "calamine";
 #[cfg(target_os = "emscripten")]
 pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "umya";
 
+/// Excel's grid limits, mirroring `formualizer_common::coord`.
+const MAX_ROW: u32 = 1_048_576;
+const MAX_COL: u32 = 16_384;
+
 fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
     if row == 0 || col == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
             "Row/col are 1-based",
         ));
+    }
+    // Upper bounds matter as much as the 1-based check: the engine packs
+    // coordinates into 20-bit row / 14-bit column fields and *asserts* on
+    // overflow, so an out-of-grid coordinate from Python would abort the
+    // interpreter instead of raising. Convert it to a normal `ValueError`.
+    if row > MAX_ROW {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Row {row} exceeds the maximum supported row {MAX_ROW}"
+        )));
+    }
+    if col > MAX_COL {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Column {col} exceeds the maximum supported column {MAX_COL}"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate the top-left anchor of a batch write plus the block extent,
+/// so a batch that would run off the end of the grid is rejected up front.
+fn validate_block(
+    start_row: u32,
+    start_col: u32,
+    rows: usize,
+    cols: usize,
+) -> PyResult<()> {
+    validate_cell_coords(start_row, start_col)?;
+    let last_row = (start_row as u64) + rows.saturating_sub(1) as u64;
+    let last_col = (start_col as u64) + cols.saturating_sub(1) as u64;
+    if last_row > MAX_ROW as u64 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Block ending at row {last_row} exceeds maximum {MAX_ROW}"
+        )));
+    }
+    if last_col > MAX_COL as u64 {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "Block ending at col {last_col} exceeds maximum {MAX_COL}"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate a table range tuple (start_row, start_col, end_row, end_col).
+/// All coordinates must be 1-based, within grid limits, and start <= end.
+fn validate_table_range(
+    start_row: u32,
+    start_col: u32,
+    end_row: u32,
+    end_col: u32,
+) -> PyResult<()> {
+    validate_cell_coords(start_row, start_col)?;
+    validate_cell_coords(end_row, end_col)?;
+    if start_row > end_row || start_col > end_col {
+        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "table range must have start <= end (got start=({start_row},{start_col}), end=({end_row},{end_col}))"
+        )));
     }
     Ok(())
 }
@@ -410,13 +470,20 @@ impl PyWorkbook {
     ///     wb.add_sheet("Outputs")
     /// ```
     pub fn add_sheet(&self, name: &str) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.add_sheet(name)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        let mut sheets = self.sheets.write().unwrap();
+        {
+            let mut wb = self.inner.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
+            })?;
+            wb.add_sheet(name)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        }
+        // Update the compatibility cache only after the inner lock is
+        // released. `get_value()` takes `sheets` before `inner`, so holding
+        // `inner` while acquiring `sheets` here would invert the lock order
+        // and can deadlock under concurrent access.
+        let mut sheets = self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?;
         sheets.entry(name.to_string()).or_default();
         Ok(())
     }
@@ -451,6 +518,8 @@ impl PyWorkbook {
         header_row: bool,
         totals_row: bool,
     ) -> PyResult<()> {
+        let (start_row, start_col, end_row, end_col) = cell_range;
+        validate_table_range(start_row, start_col, end_row, end_col)?;
         self.inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?
@@ -690,14 +759,18 @@ impl PyWorkbook {
         validate_cell_coords(row, col)?;
 
         let literal = py_to_literal(value)?;
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.set_value(sheet, row, col, literal.clone())
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        // Update compatibility cache
-        let mut sheets = self.sheets.write().unwrap();
+        {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            wb.set_value(sheet, row, col, literal.clone())
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        }
+        // Update compatibility cache (inner lock already released)
+        let mut sheets = self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?;
         let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
@@ -728,14 +801,18 @@ impl PyWorkbook {
     pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
         validate_cell_coords(row, col)?;
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.set_formula(sheet, row, col, formula)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-        // Update compatibility cache
-        let mut sheets = self.sheets.write().unwrap();
+        {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            wb.set_formula(sheet, row, col, formula)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        }
+        // Update compatibility cache (inner lock already released)
+        let mut sheets = self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?;
         let sheet_map = sheets.entry(sheet.to_string()).or_default();
         sheet_map.insert(
             (row, col),
@@ -930,7 +1007,11 @@ impl PyWorkbook {
         validate_cell_coords(row, col)?;
 
         if let Some(cached) = {
-            let sheets = self.sheets.read().unwrap();
+            let sheets = self.sheets.read().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?;
             sheets.get(sheet).and_then(|m| m.get(&(row, col)).cloned())
         } {
             if let Some(value) = cached.value {
@@ -1043,7 +1124,18 @@ impl PyWorkbook {
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         wb.undo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        // Clear the compatibility cache so get_value reads from the engine
+        drop(wb);
+        self.sheets
+            .write()
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?
+            .clear();
+        Ok(())
     }
 
     /// Redo the most recently undone edit.
@@ -1053,7 +1145,18 @@ impl PyWorkbook {
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
         wb.redo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        // Clear the compatibility cache so get_value reads from the engine
+        drop(wb);
+        self.sheets
+            .write()
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?
+            .clear();
+        Ok(())
     }
 
     // Batch ops
@@ -1065,7 +1168,13 @@ impl PyWorkbook {
         start_col: u32,
         data: &Bound<'_, pyo3::types::PyList>,
     ) -> PyResult<()> {
-        validate_cell_coords(start_row, start_col)?;
+        let num_rows = data.len();
+        let num_cols = if num_rows > 0 {
+            data.get_item(0)?.cast::<pyo3::types::PyList>()?.len()
+        } else {
+            0
+        };
+        validate_block(start_row, start_col, num_rows, num_cols)?;
 
         let mut rows_vec: Vec<Vec<LiteralValue>> = Vec::with_capacity(data.len());
         for row in data.iter() {
@@ -1076,20 +1185,26 @@ impl PyWorkbook {
             }
             rows_vec.push(row_vals);
         }
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        // Auto-group batch changes into a single undoable action when changelog is enabled
-        wb.begin_action("batch: set values".to_string());
-        let res = wb
-            .set_values(sheet, start_row, start_col, &rows_vec)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
-        wb.end_action();
-        res?;
-        // Update compatibility cache
         {
-            let mut sheets = self.sheets.write().unwrap();
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            // Auto-group batch changes into a single undoable action when changelog is enabled
+            wb.begin_action("batch: set values".to_string());
+            let res = wb
+                .set_values(sheet, start_row, start_col, &rows_vec)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
+            wb.end_action();
+            res?;
+        }
+        // Update compatibility cache (inner lock already released)
+        {
+            let mut sheets = self.sheets.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?;
             let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, v) in row_vals.into_iter().enumerate() {
@@ -1115,7 +1230,13 @@ impl PyWorkbook {
         start_col: u32,
         formulas: &Bound<'_, pyo3::types::PyList>,
     ) -> PyResult<()> {
-        validate_cell_coords(start_row, start_col)?;
+        let num_rows = formulas.len();
+        let num_cols = if num_rows > 0 {
+            formulas.get_item(0)?.cast::<pyo3::types::PyList>()?.len()
+        } else {
+            0
+        };
+        validate_block(start_row, start_col, num_rows, num_cols)?;
 
         let mut rows_vec: Vec<Vec<String>> = Vec::with_capacity(formulas.len());
         for row in formulas.iter() {
@@ -1127,19 +1248,25 @@ impl PyWorkbook {
             }
             rows_vec.push(row_vals);
         }
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        wb.begin_action("batch: set formulas".to_string());
-        let res = wb
-            .set_formulas(sheet, start_row, start_col, &rows_vec)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
-        wb.end_action();
-        res?;
-        // Update compatibility cache
         {
-            let mut sheets = self.sheets.write().unwrap();
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+            wb.begin_action("batch: set formulas".to_string());
+            let res = wb
+                .set_formulas(sheet, start_row, start_col, &rows_vec)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()));
+            wb.end_action();
+            res?;
+        }
+        // Update compatibility cache (inner lock already released)
+        {
+            let mut sheets = self.sheets.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?;
             let sheet_map = sheets.entry(sheet.to_string()).or_default();
             for (r_off, row_vals) in rows_vec.into_iter().enumerate() {
                 for (c_off, s) in row_vals.into_iter().enumerate() {
@@ -1442,7 +1569,9 @@ impl PyWorkbook {
     {
         // Mutations performed through internal helpers (e.g. SheetPort) bypass the
         // legacy `sheets` cache; invalidate it so `get_value()` stays correct.
-        self.sheets.write().unwrap().clear();
+        self.sheets.write().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("sheets cache lock: {e}"))
+        })?.clear();
 
         let mut wb = self
             .inner
