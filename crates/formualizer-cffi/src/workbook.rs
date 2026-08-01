@@ -39,6 +39,75 @@ struct CffiCellTarget {
     col: u32,
 }
 
+const EXCEL_MAX_ROWS: u32 = 1_048_576;
+const EXCEL_MAX_COLS: u32 = 16_384;
+
+/// Validate a 1-based cell or block before it reaches the workbook engine.
+fn checked_excel_coordinates(
+    start_row: u32,
+    start_col: u32,
+    block_dimensions: Option<(usize, usize)>,
+) -> Result<(), String> {
+    if !(1..=EXCEL_MAX_ROWS).contains(&start_row) {
+        return Err(format!(
+            "row {start_row} is outside Excel's valid range 1..={EXCEL_MAX_ROWS}"
+        ));
+    }
+    if !(1..=EXCEL_MAX_COLS).contains(&start_col) {
+        return Err(format!(
+            "column {start_col} is outside Excel's valid range 1..={EXCEL_MAX_COLS}"
+        ));
+    }
+
+    let Some((height, width)) = block_dimensions else {
+        return Ok(());
+    };
+    if height == 0 || width == 0 {
+        return Ok(());
+    }
+
+    let row_offset =
+        u32::try_from(height - 1).map_err(|_| "cell block row extent exceeds u32".to_string())?;
+    let col_offset =
+        u32::try_from(width - 1).map_err(|_| "cell block column extent exceeds u32".to_string())?;
+    let end_row = start_row
+        .checked_add(row_offset)
+        .ok_or_else(|| "cell block row extent overflows".to_string())?;
+    let end_col = start_col
+        .checked_add(col_offset)
+        .ok_or_else(|| "cell block column extent overflows".to_string())?;
+
+    if end_row > EXCEL_MAX_ROWS {
+        return Err(format!(
+            "cell block ends at row {end_row}, outside Excel's valid range 1..={EXCEL_MAX_ROWS}"
+        ));
+    }
+    if end_col > EXCEL_MAX_COLS {
+        return Err(format!(
+            "cell block ends at column {end_col}, outside Excel's valid range 1..={EXCEL_MAX_COLS}"
+        ));
+    }
+    Ok(())
+}
+
+fn actual_block_dimensions<T>(rows: &[Vec<T>]) -> (usize, usize) {
+    let height = rows
+        .iter()
+        .rposition(|row| !row.is_empty())
+        .map_or(0, |index| index + 1);
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    (height, width)
+}
+
+fn formula_block_dimensions(rows: &[Vec<String>]) -> (usize, usize) {
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if width == 0 {
+        (0, 0)
+    } else {
+        (rows.len(), width)
+    }
+}
+
 fn decode_payload<T: DeserializeOwned>(
     payload: *const u8,
     len: usize,
@@ -202,6 +271,14 @@ pub unsafe extern "C" fn fz_workbook_set_cell_value(
         }
         return;
     }
+    if let Err(e) = checked_excel_coordinates(row, col, None) {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e);
+            }
+        }
+        return;
+    }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
@@ -259,6 +336,14 @@ pub unsafe extern "C" fn fz_workbook_set_cell_formula(
         }
         return;
     }
+    if let Err(e) = checked_excel_coordinates(row, col, None) {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e);
+            }
+        }
+        return;
+    }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
@@ -290,6 +375,14 @@ pub unsafe extern "C" fn fz_workbook_get_cell_formula(
         if !status.is_null() {
             unsafe {
                 *status = fz_status::error("invalid arguments".to_string());
+            }
+        }
+        return fz_buffer::empty();
+    }
+    if let Err(e) = checked_excel_coordinates(row, col, None) {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e);
             }
         }
         return fz_buffer::empty();
@@ -334,6 +427,14 @@ pub unsafe extern "C" fn fz_workbook_get_cell_value(
         if !status.is_null() {
             unsafe {
                 *status = fz_status::error("invalid arguments".to_string());
+            }
+        }
+        return fz_buffer::empty();
+    }
+    if let Err(e) = checked_excel_coordinates(row, col, None) {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e);
             }
         }
         return fz_buffer::empty();
@@ -485,6 +586,16 @@ pub unsafe extern "C" fn fz_workbook_evaluate_cells(
             return fz_buffer::empty();
         }
     };
+    for target in &targets {
+        if let Err(e) = checked_excel_coordinates(target.row, target.col, None) {
+            if !status.is_null() {
+                unsafe {
+                    *status = fz_status::error(e);
+                }
+            }
+            return fz_buffer::empty();
+        }
+    }
 
     let mut sheets: BTreeSet<&str> = BTreeSet::new();
     for target in &targets {
@@ -809,6 +920,16 @@ pub unsafe extern "C" fn fz_workbook_set_values(
             return;
         }
     };
+    if let Err(e) =
+        checked_excel_coordinates(start_row, start_col, Some(actual_block_dimensions(&values)))
+    {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e);
+            }
+        }
+        return;
+    }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
@@ -858,6 +979,18 @@ pub unsafe extern "C" fn fz_workbook_set_formulas(
             return;
         }
     };
+    if let Err(e) = checked_excel_coordinates(
+        start_row,
+        start_col,
+        Some(formula_block_dimensions(&formulas)),
+    ) {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e);
+            }
+        }
+        return;
+    }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let sheet_str = unsafe { CStr::from_ptr(sheet).to_string_lossy() };
@@ -873,5 +1006,22 @@ pub unsafe extern "C" fn fz_workbook_set_formulas(
         unsafe {
             *status = fz_status::ok();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checked_excel_coordinates_cover_limits_and_extents() {
+        assert!(checked_excel_coordinates(0, 1, None).is_err());
+        assert!(checked_excel_coordinates(EXCEL_MAX_ROWS, EXCEL_MAX_COLS, None).is_ok());
+        assert!(checked_excel_coordinates(EXCEL_MAX_ROWS + 1, 1, None).is_err());
+        assert!(checked_excel_coordinates(1, EXCEL_MAX_COLS + 1, None).is_err());
+        assert!(checked_excel_coordinates(EXCEL_MAX_ROWS, 1, Some((2, 1))).is_err());
+        assert!(checked_excel_coordinates(1, EXCEL_MAX_COLS, Some((1, 2))).is_err());
+        assert!(checked_excel_coordinates(1, 1, Some((usize::MAX, 1))).is_err());
+        assert!(checked_excel_coordinates(1, 1, Some((1, usize::MAX))).is_err());
     }
 }
