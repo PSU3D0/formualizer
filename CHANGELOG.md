@@ -41,6 +41,7 @@ All notable changes to Formualizer will be documented in this file.
 ### Fixed
 
 - CFFI cell and rectangular block entry points now reject zero, out-of-grid, and overflowing Excel coordinates with a typed status before touching workbook state, preventing packed-coordinate aborts.
+- CFFI `RangeAddress` JSON and CBOR boundaries now reject zero, inverted, and out-of-grid ranges before formatting or workbook reads, preventing malformed-bound underflow and out-of-grid materialization.
 - Python `Workbook.undo()` and `redo()` now invalidate the compatibility cell cache before replay, so `Workbook.get_value()` and existing `Sheet` handles immediately reflect authoritative values after successful, failed, or no-op replay without introducing a cache-lock panic.
 - Authoritative FormulaPlane fallback no longer reports a false `#CIRC!` when a statically indexed compressed range contains the formula cell but `INDEX` selects a different cell. Whole-row, whole-column, bounded, omitted-column, zero, negative, and genuine self-selection cases now follow the same reference semantics in Off and authoritative modes.
 - Deferred malformed-formula retries now publish one parse diagnostic per successful ingest event instead of duplicating a source record during authoritative replay; a later distinct ingest of the same malformed source still emits its own diagnostic.

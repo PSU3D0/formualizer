@@ -102,6 +102,32 @@ pub enum fz_encoding_format {
     FZ_ENCODING_CBOR = 1,
 }
 
+pub(crate) const EXCEL_MAX_ROWS: u32 = 1_048_576;
+pub(crate) const EXCEL_MAX_COLS: u32 = 16_384;
+
+/// Validate a range after it crosses the CFFI serialization boundary.
+pub(crate) fn validate_cffi_range(addr: &formualizer_common::RangeAddress) -> Result<(), String> {
+    if addr.start_row == 0 || addr.start_col == 0 || addr.end_row == 0 || addr.end_col == 0 {
+        return Err("range bounds must be 1-based".to_string());
+    }
+    if addr.start_row > addr.end_row || addr.start_col > addr.end_col {
+        return Err("range bounds must be ordered: start <= end".to_string());
+    }
+    if addr.end_row > EXCEL_MAX_ROWS {
+        return Err(format!(
+            "range ends at row {}, outside Excel's valid range 1..={EXCEL_MAX_ROWS}",
+            addr.end_row
+        ));
+    }
+    if addr.end_col > EXCEL_MAX_COLS {
+        return Err(format!(
+            "range ends at column {}, outside Excel's valid range 1..={EXCEL_MAX_COLS}",
+            addr.end_col
+        ));
+    }
+    Ok(())
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct fz_parse_options {
@@ -336,6 +362,7 @@ pub unsafe extern "C" fn fz_common_parse_range_a1(
         let (er, ec, _, _) = coord::parse_a1_1based(end_str).map_err(|e| e.to_string())?;
 
         let addr = RangeAddress::new(sheet, sr, sc, er, ec).map_err(|e| e.to_string())?;
+        crate::validate_cffi_range(&addr)?;
 
         match format {
             fz_encoding_format::FZ_ENCODING_JSON => {
@@ -397,6 +424,7 @@ pub unsafe extern "C" fn fz_common_format_range_a1(
                 ciborium::from_reader(payload).map_err(|e| e.to_string())?
             }
         };
+        crate::validate_cffi_range(&addr)?;
 
         let start_col =
             coord::col_letters_from_1based(addr.start_col).map_err(|e| e.to_string())?;
