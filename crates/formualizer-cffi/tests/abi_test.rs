@@ -79,6 +79,83 @@ fn test_invalid_range() {
 }
 
 #[test]
+fn test_status_error_json_escaping() {
+    let messages = vec![
+        "ordinary existing message".to_string(),
+        "quote: \"; backslash: \\".to_string(),
+        "line one\nline two".to_string(),
+        "unit separator: \u{1f}".to_string(),
+        "delete: \u{7f}".to_string(),
+        "non-ASCII: café 日本語 😀".to_string(),
+        "long message: ".to_string() + &"x".repeat(16_384),
+    ];
+
+    for message in messages {
+        let status = fz_status::error(message.clone());
+        assert_eq!(status.code, fz_status_code::FZ_STATUS_ERROR);
+
+        let parsed: serde_json::Value = serde_json::from_slice(&buffer_as_bytes(&status.error))
+            .expect("status error should be valid JSON");
+        assert_eq!(parsed, serde_json::json!({"message": message}));
+        unsafe { fz_buffer_free(status.error) };
+    }
+}
+
+#[test]
+fn test_exported_api_error_is_json() {
+    let options = fz_parse_options {
+        include_spans: false,
+        dialect: fz_formula_dialect::FZ_DIALECT_EXCEL,
+    };
+    let mut status = fz_status::ok();
+
+    let buffer = unsafe {
+        fz_parse_tokenize(
+            std::ptr::null(),
+            options,
+            fz_encoding_format::FZ_ENCODING_JSON,
+            &mut status,
+        )
+    };
+    assert_eq!(status.code, fz_status_code::FZ_STATUS_ERROR);
+    assert_eq!(buffer.len, 0);
+
+    let parsed: serde_json::Value = serde_json::from_slice(&buffer_as_bytes(&status.error))
+        .expect("exported API status error should be valid JSON");
+    assert_eq!(parsed, serde_json::json!({"message": "formula is null"}));
+    unsafe { fz_buffer_free(status.error) };
+}
+
+#[test]
+fn test_exported_api_error_escapes_control_character() {
+    let input = CString::new("bad\u{1f}").unwrap();
+    let mut status = fz_status::ok();
+
+    let buffer = unsafe {
+        fz_common_parse_range_a1(
+            input.as_ptr(),
+            fz_encoding_format::FZ_ENCODING_JSON,
+            &mut status,
+        )
+    };
+    assert_eq!(status.code, fz_status_code::FZ_STATUS_ERROR);
+    assert_eq!(buffer.len, 0);
+
+    let parsed: serde_json::Value = serde_json::from_slice(&buffer_as_bytes(&status.error))
+        .expect("exported API status error should be valid JSON");
+    assert_eq!(
+        parsed,
+        serde_json::json!({
+            "message": "invalid row character `\u{1f}`; expected 0-9"
+        })
+    );
+    unsafe {
+        fz_buffer_free(buffer);
+        fz_buffer_free(status.error);
+    }
+}
+
+#[test]
 fn test_range_roundtrip_cbor() {
     unsafe {
         let range_str = "Sheet1!A1:B2";

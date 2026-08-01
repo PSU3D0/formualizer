@@ -2,6 +2,7 @@
 
 use std::ffi::{c_char, c_int};
 
+use serde::Serialize;
 use std::ptr;
 use std::slice;
 
@@ -53,6 +54,11 @@ pub struct fz_status {
     pub error: fz_buffer, // JSON encoded error if code != OK
 }
 
+#[derive(Serialize)]
+struct StatusError<'a> {
+    message: &'a str,
+}
+
 impl fz_status {
     pub fn ok() -> Self {
         fz_status {
@@ -62,10 +68,15 @@ impl fz_status {
     }
 
     pub fn error(msg: String) -> Self {
-        let error_json = format!("{{\"message\": {:?}}}", msg);
+        let error_json = match serde_json::to_vec(&StatusError { message: &msg }) {
+            Ok(json) => json,
+            // String serialization cannot fail, but keep the C boundary total if the
+            // serializer gains a fallible path in the future.
+            Err(_) => br#"{"message":"failed to serialize error"}"#.to_vec(),
+        };
         fz_status {
             code: fz_status_code::FZ_STATUS_ERROR,
-            error: fz_buffer::from_vec(error_json.into_bytes()),
+            error: fz_buffer::from_vec(error_json),
         }
     }
 }
