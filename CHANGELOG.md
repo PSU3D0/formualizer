@@ -40,6 +40,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Python `Workbook.undo()` and `redo()` now invalidate the compatibility cell cache before replay, so `Workbook.get_value()` and existing `Sheet` handles immediately reflect authoritative values after successful, failed, or no-op replay without introducing a cache-lock panic.
 - Authoritative FormulaPlane fallback no longer reports a false `#CIRC!` when a statically indexed compressed range contains the formula cell but `INDEX` selects a different cell. Whole-row, whole-column, bounded, omitted-column, zero, negative, and genuine self-selection cases now follow the same reference semantics in Off and authoritative modes.
 - Deferred malformed-formula retries now publish one parse diagnostic per successful ingest event instead of duplicating a source record during authoritative replay; a later distinct ingest of the same malformed source still emits its own diagnostic.
 - Compatibility-widened target preparation now performs the same final graph, authority, staged, symbol, provider, and relevant function-semantic revision validation as exact preparation before publishing. Provider changes and injected final-validation failures remain atomic in Off, Shadow, and authoritative modes.

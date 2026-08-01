@@ -1042,8 +1042,15 @@ impl PyWorkbook {
             .inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        {
+            let mut sheets = self.sheets.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
+            })?;
+            sheets.clear();
+        }
         wb.undo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(())
     }
 
     /// Redo the most recently undone edit.
@@ -1052,8 +1059,15 @@ impl PyWorkbook {
             .inner
             .write()
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        {
+            let mut sheets = self.sheets.write().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
+            })?;
+            sheets.clear();
+        }
         wb.redo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(())
     }
 
     // Batch ops
