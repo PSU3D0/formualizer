@@ -1,6 +1,8 @@
 #![allow(clippy::missing_safety_doc)]
 
-use crate::{fz_buffer, fz_encoding_format, fz_status};
+use crate::{
+    EXCEL_MAX_COLS, EXCEL_MAX_ROWS, fz_buffer, fz_encoding_format, fz_status, validate_cffi_range,
+};
 
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_workbook::{
@@ -38,9 +40,6 @@ struct CffiCellTarget {
     row: u32,
     col: u32,
 }
-
-const EXCEL_MAX_ROWS: u32 = 1_048_576;
-const EXCEL_MAX_COLS: u32 = 16_384;
 
 /// Validate a 1-based cell or block before it reaches the workbook engine.
 fn checked_excel_coordinates(
@@ -864,6 +863,14 @@ pub unsafe extern "C" fn fz_workbook_read_range(
             return fz_buffer::empty();
         }
     };
+    if let Err(e) = validate_cffi_range(&addr) {
+        if !status.is_null() {
+            unsafe {
+                *status = fz_status::error(e);
+            }
+        }
+        return fz_buffer::empty();
+    }
 
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let wb_lock = opaque.0.read().unwrap();
