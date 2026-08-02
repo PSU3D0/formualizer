@@ -723,3 +723,72 @@ fn test_canonical_formula() {
         fz_buffer_free(buffer);
     }
 }
+
+#[test]
+fn test_canonical_formula_uses_openformula_dialect() {
+    let formula = CString::new("=SUM([.A1];[.B1])").unwrap();
+    let mut open_status = fz_status::ok();
+
+    unsafe {
+        let open_buffer = fz_parse_canonical_formula(
+            formula.as_ptr(),
+            fz_formula_dialect::FZ_DIALECT_OPENFORMULA,
+            &mut open_status,
+        );
+        assert_eq!(open_status.code, fz_status_code::FZ_STATUS_OK);
+        let result = String::from_utf8_lossy(std::slice::from_raw_parts(
+            open_buffer.data,
+            open_buffer.len,
+        ));
+        assert_eq!(result, "=SUM(A1, B1)");
+        fz_buffer_free(open_buffer);
+
+        // Excel tokenization cannot parse OpenFormula references/separators.
+        let mut excel_status = fz_status::ok();
+        let excel_buffer = fz_parse_canonical_formula(
+            formula.as_ptr(),
+            fz_formula_dialect::FZ_DIALECT_EXCEL,
+            &mut excel_status,
+        );
+        assert_eq!(excel_status.code, fz_status_code::FZ_STATUS_ERROR);
+        assert_eq!(excel_buffer.len, 0);
+        fz_buffer_free(excel_buffer);
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&buffer_as_bytes(&excel_status.error))
+                .is_ok()
+        );
+        fz_buffer_free(excel_status.error);
+    }
+}
+
+#[test]
+fn test_canonical_formula_preserves_empty_and_optional_equals_contract() {
+    let empty = CString::new("").unwrap();
+    let without_equals = CString::new("sum([.A1];[.B1])").unwrap();
+
+    unsafe {
+        let mut empty_status = fz_status::ok();
+        let empty_buffer = fz_parse_canonical_formula(
+            empty.as_ptr(),
+            fz_formula_dialect::FZ_DIALECT_OPENFORMULA,
+            &mut empty_status,
+        );
+        assert_eq!(empty_status.code, fz_status_code::FZ_STATUS_OK);
+        assert_eq!(empty_buffer.len, 0);
+        fz_buffer_free(empty_buffer);
+
+        let mut no_equals_status = fz_status::ok();
+        let no_equals_buffer = fz_parse_canonical_formula(
+            without_equals.as_ptr(),
+            fz_formula_dialect::FZ_DIALECT_OPENFORMULA,
+            &mut no_equals_status,
+        );
+        assert_eq!(no_equals_status.code, fz_status_code::FZ_STATUS_OK);
+        let result = String::from_utf8_lossy(std::slice::from_raw_parts(
+            no_equals_buffer.data,
+            no_equals_buffer.len,
+        ));
+        assert_eq!(result, "SUM(A1, B1)");
+        fz_buffer_free(no_equals_buffer);
+    }
+}
