@@ -716,3 +716,101 @@ fn evaluate_cells_allows_null_status_pointer() {
         fz_workbook_free(wb);
     }
 }
+
+#[test]
+fn evaluate_cells_reports_targeted_and_full_preparation_failures() {
+    unsafe {
+        let mut status = fz_status::ok();
+        let mut config = formualizer_workbook::WorkbookConfig::interactive();
+        config.eval.evaluation_budgets.work.max_work_units = Some(0);
+        let workbook = formualizer_workbook::Workbook::new_with_config(config);
+        let opaque = Box::new(OpaqueWorkbook(std::sync::Arc::new(std::sync::RwLock::new(
+            workbook,
+        ))));
+        let wb = fz_workbook_h(Box::into_raw(opaque) as *mut std::ffi::c_void);
+
+        for name in ["Existing", "Target"] {
+            let name = CString::new(name).unwrap();
+            fz_workbook_add_sheet(wb, name.as_ptr(), &mut status);
+            assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
+        }
+        for (sheet, formula) in [("Existing", "=1"), ("Target", "=2")] {
+            let sheet = CString::new(sheet).unwrap();
+            let formula = CString::new(formula).unwrap();
+            fz_workbook_set_cell_formula(wb, sheet.as_ptr(), 1, 1, formula.as_ptr(), &mut status);
+            assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
+        }
+
+        let targets = r#"[{"sheet":"Target","row":1,"col":1}]"#;
+        let result = fz_workbook_evaluate_cells(
+            wb,
+            targets.as_ptr(),
+            targets.len(),
+            fz_encoding_format::FZ_ENCODING_JSON,
+            &mut status,
+        );
+        assert_eq!(status.code, fz_status_code::FZ_STATUS_ERROR);
+        assert!(result.data.is_null());
+        assert_eq!(result.len, 0);
+        let error = std::slice::from_raw_parts(status.error.data, status.error.len);
+        let error_json: serde_json::Value = serde_json::from_slice(error).unwrap();
+        let message = error_json["message"].as_str().unwrap();
+        let targeted = message.find("targeted graph preparation failed: ").unwrap();
+        let full = message
+            .find("full graph preparation fallback failed: ")
+            .unwrap();
+        assert!(targeted < full);
+        let targeted_message = &message[targeted..full];
+        let full_message = &message[full..];
+        assert!(targeted_message.contains("evaluation resource exhausted: work_units"));
+        assert!(targeted_message.contains("work_units (observed 1, limit 0)"));
+        assert!(!targeted_message.contains("work_units (observed 2, limit 0)"));
+        assert!(full_message.contains("evaluation resource exhausted: work_units"));
+        assert!(full_message.contains("work_units (observed 2, limit 0)"));
+        assert!(!full_message.contains("work_units (observed 1, limit 0)"));
+        let first_message = message.to_string();
+        fz_buffer_free(result);
+        clear_status(&mut status);
+
+        let null_status = fz_workbook_evaluate_cells(
+            wb,
+            targets.as_ptr(),
+            targets.len(),
+            fz_encoding_format::FZ_ENCODING_JSON,
+            ptr::null_mut(),
+        );
+        assert!(null_status.data.is_null());
+        assert_eq!(null_status.len, 0);
+        fz_buffer_free(null_status);
+
+        let repeated = fz_workbook_evaluate_cells(
+            wb,
+            targets.as_ptr(),
+            targets.len(),
+            fz_encoding_format::FZ_ENCODING_JSON,
+            &mut status,
+        );
+        assert_eq!(status.code, fz_status_code::FZ_STATUS_ERROR);
+        assert!(repeated.data.is_null());
+        assert_eq!(repeated.len, 0);
+        let repeated_error = std::slice::from_raw_parts(status.error.data, status.error.len);
+        let repeated_json: serde_json::Value = serde_json::from_slice(repeated_error).unwrap();
+        assert_eq!(
+            repeated_json["message"].as_str(),
+            Some(first_message.as_str())
+        );
+        fz_buffer_free(repeated);
+        clear_status(&mut status);
+
+        for (sheet, expected_formula) in [("Existing", "=1"), ("Target", "=2")] {
+            let sheet = CString::new(sheet).unwrap();
+            let formula = fz_workbook_get_cell_formula(wb, sheet.as_ptr(), 1, 1, &mut status);
+            assert_eq!(status.code, fz_status_code::FZ_STATUS_OK);
+            let formula_bytes = std::slice::from_raw_parts(formula.data, formula.len);
+            assert_eq!(formula_bytes, expected_formula.as_bytes());
+            fz_buffer_free(formula);
+        }
+        clear_status(&mut status);
+        fz_workbook_free(wb);
+    }
+}

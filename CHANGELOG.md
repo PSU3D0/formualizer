@@ -40,6 +40,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- CFFI targeted cell evaluation now reports both the targeted graph-preparation error and the distinct full-graph fallback error when both preparation attempts fail.
 - CFFI canonical formula rendering now honors the selected Excel or OpenFormula dialect while retaining canonical Excel output and existing input/output contracts.
 - CFFI status errors now use canonical JSON string escaping, preserving valid round-trippable messages for control characters and other special text.
 - CFFI cell and rectangular block entry points now reject zero, out-of-grid, and overflowing Excel coordinates with a typed status before touching workbook state, preventing packed-coordinate aborts.
