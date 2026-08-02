@@ -165,6 +165,34 @@ impl From<fz_formula_dialect> for formualizer_parse::FormulaDialect {
     }
 }
 
+/// Render a formula with the selected dialect while preserving the CFFI
+/// canonical-rendering contract.
+fn cffi_pretty_parse_render(
+    formula: &str,
+    dialect: formualizer_parse::FormulaDialect,
+) -> Result<String, String> {
+    if formula.is_empty() {
+        return Ok(String::new());
+    }
+
+    let needs_equals = !formula.starts_with('=');
+    let formula_to_parse = if needs_equals {
+        format!("={formula}")
+    } else {
+        formula.to_string()
+    };
+
+    let ast = formualizer_parse::parse_with_dialect(&formula_to_parse, dialect)
+        .map_err(|e| e.to_string())?;
+    let pretty_printed = formualizer_parse::pretty_print(&ast);
+
+    if needs_equals {
+        Ok(pretty_printed)
+    } else {
+        Ok(format!("={pretty_printed}"))
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fz_parse_tokenize(
     formula: *const c_char,
@@ -298,7 +326,7 @@ pub unsafe extern "C" fn fz_parse_canonical_formula(
     dialect: fz_formula_dialect,
     status: *mut fz_status,
 ) -> fz_buffer {
-    use formualizer_parse::{FormulaDialect, pretty_parse_render};
+    use formualizer_parse::FormulaDialect;
     use std::ffi::CStr;
 
     if formula.is_null() {
@@ -312,8 +340,7 @@ pub unsafe extern "C" fn fz_parse_canonical_formula(
 
     let input = unsafe { CStr::from_ptr(formula).to_string_lossy() };
 
-    let _ = FormulaDialect::from(dialect);
-    let result: Result<String, String> = pretty_parse_render(&input).map_err(|e| e.to_string());
+    let result = cffi_pretty_parse_render(&input, FormulaDialect::from(dialect));
 
     match result {
         Ok(v) => {
