@@ -604,12 +604,15 @@ pub unsafe extern "C" fn fz_workbook_evaluate_cells(
     let opaque = unsafe { &*(wb.0 as *mut OpaqueWorkbook) };
     let mut wb_lock = opaque.0.write().unwrap();
 
-    if let Err(e) = wb_lock.prepare_graph_for_sheets(sheets.iter().copied())
-        && wb_lock.prepare_graph_all().is_err()
+    if let Err(targeted_error) = wb_lock.prepare_graph_for_sheets(sheets.iter().copied())
+        && let Err(full_error) = wb_lock.prepare_graph_all()
     {
         if !status.is_null() {
             unsafe {
-                *status = fz_status::error(e.to_string());
+                *status = fz_status::error(format!(
+                    "targeted graph preparation failed: {targeted_error}; \
+full graph preparation fallback failed: {full_error}"
+                ));
             }
         }
         return fz_buffer::empty();
