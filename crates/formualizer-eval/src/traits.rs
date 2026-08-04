@@ -156,12 +156,13 @@ impl<'a> CalcValue<'a> {
                     rv.get_cell(0, 0)
                 } else {
                     let mut data = Vec::with_capacity(rows);
-                    // Use a simple materialization loop for now
-                    // In the future, this should be optimized.
-                    let _ = rv.for_each_row(&mut |row| {
-                        data.push(row.to_vec());
-                        Ok(())
-                    });
+                    for row_idx in 0..rows {
+                        let mut row = Vec::with_capacity(cols);
+                        for col_idx in 0..cols {
+                            row.push(rv.get_cell(row_idx, col_idx));
+                        }
+                        data.push(row);
+                    }
                     LiteralValue::Array(data)
                 }
             }

@@ -3361,7 +3361,18 @@ impl ArrowSheet {
     /// Columns start with no materialized chunks; callers can populate only touched
     /// column/chunk pairs via `set_sparse_overlay_value`. Missing chunks remain
     /// observable as empty cells through scalar and range reads.
-    pub fn new_sparse(
+    pub fn new_sparse(sheet_name: &str, ncols: usize, nrows: usize, chunk_rows: usize) -> Self {
+        Self::new_sparse_with_date_system(
+            sheet_name,
+            ncols,
+            nrows,
+            chunk_rows,
+            crate::engine::DateSystem::Excel1900,
+        )
+    }
+
+    /// Create a sparse sheet using an explicitly selected workbook date system.
+    pub fn new_sparse_with_date_system(
         sheet_name: &str,
         ncols: usize,
         nrows: usize,
@@ -4681,6 +4692,37 @@ mod tests {
     use chrono::{Datelike, Timelike};
 
     #[test]
+    fn sparse_constructor_defaults_to_excel_1900_and_decodes_excel_1904() {
+        let date = chrono::NaiveDate::from_ymd_opt(1904, 1, 1).unwrap();
+        let datetime = date.and_hms_opt(12, 0, 0).unwrap();
+
+        let mut default_sheet = ArrowSheet::new_sparse("Default", 1, 1, 16);
+        assert_eq!(
+            default_sheet.date_system,
+            crate::engine::DateSystem::Excel1900
+        );
+        default_sheet.set_sparse_overlay_value(0, 0, OverlayValue::DateTime(1462.5));
+        assert_eq!(
+            default_sheet.get_cell_value(0, 0),
+            LiteralValue::DateTime(datetime)
+        );
+
+        let mut excel_1904 = ArrowSheet::new_sparse_with_date_system(
+            "1904",
+            1,
+            1,
+            16,
+            crate::engine::DateSystem::Excel1904,
+        );
+        assert_eq!(excel_1904.date_system, crate::engine::DateSystem::Excel1904);
+        excel_1904.set_sparse_overlay_value(0, 0, OverlayValue::DateTime(0.5));
+        assert_eq!(
+            excel_1904.get_cell_value(0, 0),
+            LiteralValue::DateTime(datetime)
+        );
+    }
+
+    #[test]
     fn datetime_lanes_round_trip_the_sheet_date_system() {
         let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         let datetime = date.and_hms_opt(12, 30, 0).unwrap();
@@ -4701,7 +4743,7 @@ mod tests {
             assert_eq!(view.get_cell(0, 0), values[0]);
             assert_eq!(view.get_cell(0, 1), values[1]);
 
-            let mut sparse = ArrowSheet::new_sparse("Sparse", 1, 1, 16, system);
+            let mut sparse = ArrowSheet::new_sparse_with_date_system("Sparse", 1, 1, 16, system);
             sparse.set_sparse_overlay_value(
                 0,
                 0,

@@ -349,7 +349,7 @@ impl CalamineAdapter {
             row_started: false,
         });
         let mut sparse = force_sparse_from_start.then(|| {
-            formualizer_eval::arrow_store::ArrowSheet::new_sparse(
+            formualizer_eval::arrow_store::ArrowSheet::new_sparse_with_date_system(
                 sheet,
                 dims_cols,
                 dims_rows,
