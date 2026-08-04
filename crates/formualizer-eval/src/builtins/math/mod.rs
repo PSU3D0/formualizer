@@ -5,9 +5,9 @@ pub mod numeric;
 pub mod reduction;
 pub mod trig;
 
+#[cfg(test)]
 pub use aggregate::*;
-pub use combinatorics::*;
-pub use criteria_aggregates::*;
+#[cfg(test)]
 pub use trig::*;
 
 pub(super) enum AggregateArgument<'a> {

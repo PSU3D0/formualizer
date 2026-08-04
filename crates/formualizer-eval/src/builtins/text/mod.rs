@@ -17,14 +17,12 @@ mod value_text; // VALUE, TEXT
 #[cfg(test)]
 mod text_tests; // Comprehensive test suite
 
-pub use array_text::*;
-pub use byte::*;
-pub use char_code_rept::*;
-pub use extended::*;
 pub use find_search_exact::*;
 pub use len_left_right::*;
 pub use mid_sub_replace::*;
+#[cfg(test)]
 pub use trim_case_concat::*;
+#[cfg(test)]
 pub use value_text::*;
 
 pub fn register_builtins() {

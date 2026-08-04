@@ -34,7 +34,7 @@ mod sheets;
 pub mod snapshot;
 mod sources;
 mod tables;
-pub use tables::TableEntry;
+pub(crate) use tables::TableEntry;
 
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;

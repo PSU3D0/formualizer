@@ -9,13 +9,13 @@ use serde::{Deserialize, Serialize};
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct VirtualSourceId(pub u32);
+pub struct VirtualSourceId(pub(crate) u32);
 
 /// Session-local handle for a future provider-backed virtual reference.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct VirtualRangeId(pub u32);
+pub struct VirtualRangeId(pub(crate) u32);
 
 /// Stable persisted identity for a future virtual source.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

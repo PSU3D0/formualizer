@@ -456,6 +456,7 @@ impl Function for RankAvgFn {
 ///   - q: "When does LARGE return #NUM!?"
 ///     a: "It returns #NUM! when k < 1, k exceeds numeric count, or no numeric values exist."
 /// ```
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug)]
 pub struct LARGE;
 /// [formualizer-docgen:schema:start]
@@ -556,6 +557,7 @@ impl Function for LARGE {
 ///   - q: "Does SMALL include text in referenced ranges?"
 ///     a: "No. Non-numeric range values are ignored when selecting the k-th smallest value."
 /// ```
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug)]
 pub struct SMALL;
 /// [formualizer-docgen:schema:start]
@@ -655,6 +657,7 @@ impl Function for SMALL {
 ///   - q: "When does MEDIAN return #NUM!?"
 ///     a: "MEDIAN returns #NUM! when no numeric values are available after filtering/coercion."
 /// ```
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug)]
 pub struct MEDIAN;
 /// [formualizer-docgen:schema:start]

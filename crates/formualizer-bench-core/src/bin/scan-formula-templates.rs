@@ -1278,8 +1278,8 @@ fn summarize_authority_templates(
                 let key = keys.iter().next().expect("one key present");
                 if let Some(aggregate) = by_authority_key.get(key) {
                     run_mappings.push(AuthorityRunMappingSummary {
-                        run_id: run.id.0,
-                        template_id: run.template_id.0,
+                        run_id: run.id.as_u32(),
+                        template_id: run.template_id.as_u32(),
                         source_template_id: run.source_template_id.clone(),
                         authority_template_key: key.clone(),
                         authority_template_diagnostic_id: aggregate
@@ -1355,8 +1355,8 @@ fn push_unmapped_authority_run_sample(
         return;
     }
     samples.push(AuthorityRunUnmappedSummary {
-        run_id: run.id.0,
-        template_id: run.template_id.0,
+        run_id: run.id.as_u32(),
+        template_id: run.template_id.as_u32(),
         source_template_id: run.source_template_id.clone(),
         reason,
         authority_template_keys,
@@ -1418,7 +1418,7 @@ fn summarize_formula_run_store(store: &FormulaRunStore) -> FormulaRunStoreReport
             .templates
             .iter()
             .map(|template| FormulaRunStoreTemplateSummary {
-                template_id: template.id.0,
+                template_id: template.id.as_u32(),
                 source_template_id: template.source_template_id.clone(),
                 formula_cell_count: template.formula_cell_count,
                 status: template_status_label(template.status),
@@ -1429,8 +1429,8 @@ fn summarize_formula_run_store(store: &FormulaRunStore) -> FormulaRunStoreReport
             .iter()
             .take(20)
             .map(|run| FormulaRunStoreRunSummary {
-                run_id: run.id.0,
-                template_id: run.template_id.0,
+                run_id: run.id.as_u32(),
+                template_id: run.template_id.as_u32(),
                 source_template_id: run.source_template_id.clone(),
                 sheet: run.sheet.clone(),
                 shape: run_shape_label(run.shape),
@@ -1449,7 +1449,7 @@ fn summarize_formula_run_store(store: &FormulaRunStore) -> FormulaRunStoreReport
             .take(20)
             .map(|gap| match gap.kind {
                 SpanGapKind::Hole => FormulaRunStoreGapSummary {
-                    template_id: gap.template_id.0,
+                    template_id: gap.template_id.as_u32(),
                     sheet: gap.sheet.clone(),
                     row: gap.row,
                     col: gap.col,
@@ -1457,12 +1457,12 @@ fn summarize_formula_run_store(store: &FormulaRunStore) -> FormulaRunStoreReport
                     other_template_id: None,
                 },
                 SpanGapKind::Exception { other_template_id } => FormulaRunStoreGapSummary {
-                    template_id: gap.template_id.0,
+                    template_id: gap.template_id.as_u32(),
                     sheet: gap.sheet.clone(),
                     row: gap.row,
                     col: gap.col,
                     kind: "exception",
-                    other_template_id: Some(other_template_id.0),
+                    other_template_id: Some(other_template_id.as_u32()),
                 },
             })
             .collect(),

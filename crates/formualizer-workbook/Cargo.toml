@@ -80,6 +80,7 @@ tempfile = { workspace = true }
 wasmtime = { version = "43.0.2", optional = true }
 
 [dev-dependencies]
+formualizer-eval = { path = "../formualizer-eval", version = "0.7.1", default-features = false, features = ["test-support"] }
 wasm-encoder = "0.240"
 formualizer-testkit = { path = "../formualizer-testkit" }
 tempfile = { workspace = true }

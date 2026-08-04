@@ -1,17 +1,17 @@
-pub mod database; // Phase 4 database functions (DSUM, DAVERAGE, etc.)
+pub(crate) mod database; // Phase 4 database functions (DSUM, DAVERAGE, etc.)
 pub mod datetime; // Phase 3 date and time functions
-pub mod engineering; // Phase 2 engineering functions (bitwise, base conversion, complex numbers, etc.)
-pub mod financial; // Phase 5 financial functions
-pub mod info; // Sprint 9 info / error introspection
-pub mod lambda;
-pub mod logical;
-pub mod logical_ext;
-pub mod lookup; // Sprint 4 classic lookup (partial)
-pub mod math;
-pub mod random;
-pub mod reference_fns;
-pub mod stats; // Phase 6 statistical basics + extended stats
-pub mod text; // Phase 2 core text functions
+pub(crate) mod engineering; // Phase 2 engineering functions (bitwise, base conversion, complex numbers, etc.)
+pub(crate) mod financial; // Phase 5 financial functions
+pub(crate) mod info; // Sprint 9 info / error introspection
+pub(crate) mod lambda;
+pub(crate) mod logical;
+pub(crate) mod logical_ext;
+pub(crate) mod lookup; // Sprint 4 classic lookup (partial)
+pub(crate) mod math;
+pub(crate) mod random;
+pub(crate) mod reference_fns;
+pub(crate) mod stats; // Phase 6 statistical basics + extended stats
+pub(crate) mod text; // Phase 2 core text functions
 mod utils;
 
 #[cfg(test)]

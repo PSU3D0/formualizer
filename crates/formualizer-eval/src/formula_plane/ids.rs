@@ -9,13 +9,31 @@ use serde::{Deserialize, Serialize};
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct FormulaTemplateId(pub u32);
+pub struct FormulaTemplateId(pub(crate) u32);
+
+impl FormulaTemplateId {
+    /// Return the request-local diagnostic value for this opaque identifier.
+    ///
+    /// The value must not be persisted or compared across engine sessions.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
 
 /// Opaque identifier for a future Formula Plane V2 placement or run.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct FormulaRunId(pub u32);
+pub struct FormulaRunId(pub(crate) u32);
+
+impl FormulaRunId {
+    /// Return the request-local diagnostic value for this opaque identifier.
+    ///
+    /// The value must not be persisted or compared across engine sessions.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
 
 /// 128-bit formula-content fingerprint; construction is deferred.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

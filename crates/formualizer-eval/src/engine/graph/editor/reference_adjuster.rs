@@ -16,7 +16,7 @@ use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 /// which historically pinned absolute anchors; flipping named ranges to
 /// `Track` is a separate policy decision (see the #168 discussion).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AbsShiftPolicy {
+pub(crate) enum AbsShiftPolicy {
     /// Absolute references shift with structural inserts/deletes
     /// (Excel-correct; the default for formula reference adjustment).
     Track,
@@ -38,13 +38,13 @@ pub struct ReferenceAdjuster;
 ///
 /// This lets structural adjustment distinguish unqualified references on the
 /// formula's sheet from qualified references to another sheet.
-pub struct ReferenceContext<'a> {
+pub(crate) struct ReferenceContext<'a> {
     formula_sheet_id: SheetId,
     sheet_registry: &'a SheetRegistry,
 }
 
 impl<'a> ReferenceContext<'a> {
-    pub fn new(formula_sheet_id: SheetId, sheet_registry: &'a SheetRegistry) -> Self {
+    pub(crate) fn new(formula_sheet_id: SheetId, sheet_registry: &'a SheetRegistry) -> Self {
         Self {
             formula_sheet_id,
             sheet_registry,
@@ -95,17 +95,16 @@ impl ReferenceAdjuster {
     }
 
     /// Adjust an AST for a shift operation.
-    /// Absolute references track the shift (see [`AbsShiftPolicy::Track`]).
+    /// Absolute references track structural shifts.
     ///
     /// This compatibility API retains the historical context-free behavior and
-    /// assumes every cell/range reference binds to the operation's sheet. New
-    /// callers should use [`Self::adjust_ast_in_context`].
+    /// assumes every cell/range reference binds to the operation's sheet.
     pub fn adjust_ast(&self, ast: &ASTNode, op: &ShiftOperation) -> ASTNode {
         self.adjust_ast_with_policy(ast, op, AbsShiftPolicy::Track)
     }
 
     /// Adjust an AST under an explicit absolute-reference policy.
-    pub fn adjust_ast_with_policy(
+    pub(crate) fn adjust_ast_with_policy(
         &self,
         ast: &ASTNode,
         op: &ShiftOperation,
@@ -120,8 +119,8 @@ impl ReferenceAdjuster {
         self.adjust_ast_if_changed_with_policy(ast, op, AbsShiftPolicy::Track)
     }
 
-    /// [`Self::adjust_ast_if_changed`] under an explicit absolute-ref policy.
-    pub fn adjust_ast_if_changed_with_policy(
+    /// Adjust an AST only when references change under an explicit policy.
+    pub(crate) fn adjust_ast_if_changed_with_policy(
         &self,
         ast: &ASTNode,
         op: &ShiftOperation,
@@ -130,7 +129,7 @@ impl ReferenceAdjuster {
         self.adjust_ast_if_changed_inner(ast, op, policy, None)
     }
 
-    pub fn adjust_ast_in_context(
+    pub(crate) fn adjust_ast_in_context(
         &self,
         ast: &ASTNode,
         op: &ShiftOperation,
@@ -139,7 +138,7 @@ impl ReferenceAdjuster {
         self.adjust_ast_with_policy_in_context(ast, op, AbsShiftPolicy::Track, context)
     }
 
-    pub fn adjust_ast_with_policy_in_context(
+    pub(crate) fn adjust_ast_with_policy_in_context(
         &self,
         ast: &ASTNode,
         op: &ShiftOperation,
@@ -150,7 +149,7 @@ impl ReferenceAdjuster {
             .unwrap_or_else(|| ast.clone())
     }
 
-    pub fn adjust_ast_if_changed_in_context(
+    pub(crate) fn adjust_ast_if_changed_in_context(
         &self,
         ast: &ASTNode,
         op: &ShiftOperation,
@@ -159,7 +158,7 @@ impl ReferenceAdjuster {
         self.adjust_ast_if_changed_with_policy_in_context(ast, op, AbsShiftPolicy::Track, context)
     }
 
-    pub fn adjust_ast_if_changed_with_policy_in_context(
+    pub(crate) fn adjust_ast_if_changed_with_policy_in_context(
         &self,
         ast: &ASTNode,
         op: &ShiftOperation,
@@ -282,13 +281,13 @@ impl ReferenceAdjuster {
 
     /// Adjust a cell reference for a shift operation.
     /// Returns None if the cell is deleted.
-    /// Absolute references track the shift (see [`AbsShiftPolicy::Track`]).
+    /// Absolute references track structural shifts.
     pub fn adjust_cell_ref(&self, cell_ref: &CellRef, op: &ShiftOperation) -> Option<CellRef> {
         self.adjust_cell_ref_with_policy(cell_ref, op, AbsShiftPolicy::Track)
     }
 
-    /// [`Self::adjust_cell_ref`] under an explicit absolute-ref policy.
-    pub fn adjust_cell_ref_with_policy(
+    /// Adjust a cell reference under an explicit absolute-reference policy.
+    pub(crate) fn adjust_cell_ref_with_policy(
         &self,
         cell_ref: &CellRef,
         op: &ShiftOperation,
