@@ -16,26 +16,11 @@ mod reference_info; // modern lookup & dynamic array subset (XLOOKUP, FILTER, UN
 mod stack; // stacking & concatenation functions (HSTACK, VSTACK)
 
 #[cfg(test)]
-pub use address::AddressFn;
-#[cfg(test)]
-pub use array_shape::{ToColFn, ToRowFn};
-#[cfg(test)]
 pub use choose::ChooseFn;
 #[cfg(test)]
-pub use core::{HLookupFn, MatchFn, VLookupFn};
+pub use core::MatchFn;
 #[cfg(test)]
-pub use dynamic::{
-    FilterFn, GroupByFn, PivotByFn, RandArrayFn, SortByFn, SortFn, UniqueFn, XLookupFn, XMatchFn,
-};
-#[cfg(test)]
-pub use legacy::LookupFn;
-#[cfg(test)]
-pub use reference_info::{ColumnFn, ColumnsFn, RowFn, RowsFn};
-#[cfg(test)]
-pub use stack::{HStackFn, VStackFn};
-// CHOOSECOLS / CHOOSEROWS live in choose.rs alongside CHOOSE
-#[cfg(test)]
-pub use choose::{ChooseColsFn, ChooseRowsFn};
+pub use dynamic::RandArrayFn;
 
 /// Register all lookup and reference functions
 pub fn register_builtins() {
