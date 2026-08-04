@@ -40,6 +40,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Restored the released `formualizer_eval::builtins::datetime` conversion helpers and sparse-sheet constructor compatibility paths, including explicit 1904 date-system handling. The eval decode wrappers retain released 0.7.1 component-clamping and negative-fraction behavior; as an intentional safety deviation, infinities and chrono date/duration overflow now return typed `#NUM!` instead of panicking. (#259)
+
 - CFFI targeted cell evaluation now reports both the targeted graph-preparation error and the distinct full-graph fallback error when both preparation attempts fail.
 - CFFI canonical formula rendering now honors the selected Excel or OpenFormula dialect while retaining canonical Excel output and existing input/output contracts.
 - CFFI status errors now use canonical JSON string escaping, preserving valid round-trippable messages for control characters and other special text.

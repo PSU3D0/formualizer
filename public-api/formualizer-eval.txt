@@ -143,7 +143,8 @@ pub fn formualizer_eval::arrow_store::ArrowSheet::get_cell_value(&self, usize, u
 pub fn formualizer_eval::arrow_store::ArrowSheet::insert_columns(&mut self, usize, usize)
 pub fn formualizer_eval::arrow_store::ArrowSheet::insert_rows(&mut self, usize, usize)
 pub fn formualizer_eval::arrow_store::ArrowSheet::maybe_compact_chunk(&mut self, usize, usize, usize, usize) -> usize
-pub fn formualizer_eval::arrow_store::ArrowSheet::new_sparse(&str, usize, usize, usize, formualizer_common::value::DateSystem) -> Self
+pub fn formualizer_eval::arrow_store::ArrowSheet::new_sparse(&str, usize, usize, usize) -> Self
+pub fn formualizer_eval::arrow_store::ArrowSheet::new_sparse_with_date_system(&str, usize, usize, usize, formualizer_common::value::DateSystem) -> Self
 pub fn formualizer_eval::arrow_store::ArrowSheet::range_view(&self, usize, usize, usize, usize) -> formualizer_eval::engine::range_view::RangeView<'_>
 pub fn formualizer_eval::arrow_store::ArrowSheet::set_sparse_overlay_value(&mut self, usize, usize, formualizer_eval::arrow_store::OverlayValue) -> isize
 pub fn formualizer_eval::arrow_store::ArrowSheet::shape(&self) -> alloc::vec::Vec<formualizer_eval::arrow_store::ColumnShape>
@@ -912,7 +913,16 @@ pub fn formualizer_eval::builtins::datetime::YearFracFn::namespace(&self) -> &'s
 pub fn formualizer_eval::builtins::datetime::YearFracFn::semantic_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub fn formualizer_eval::builtins::datetime::YearFracFn::variadic(&self) -> bool
 pub fn formualizer_eval::builtins::datetime::YearFracFn::volatile(&self) -> bool
+pub fn formualizer_eval::builtins::datetime::create_date_normalized(i32, i32, i32) -> core::result::Result<chrono::naive::date::NaiveDate, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::builtins::datetime::date_to_serial(&chrono::naive::date::NaiveDate) -> f64
+pub fn formualizer_eval::builtins::datetime::date_to_serial_for(formualizer_common::value::DateSystem, &chrono::naive::date::NaiveDate) -> f64
+pub fn formualizer_eval::builtins::datetime::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_eval::builtins::datetime::datetime_to_serial_for(formualizer_common::value::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_eval::builtins::datetime::register_builtins()
+pub fn formualizer_eval::builtins::datetime::serial_to_date(f64) -> core::result::Result<chrono::naive::date::NaiveDate, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::builtins::datetime::serial_to_datetime(f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::builtins::datetime::serial_to_datetime_for(formualizer_common::value::DateSystem, f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::builtins::datetime::time_to_fraction(&chrono::naive::time::NaiveTime) -> f64
 pub mod formualizer_eval::builtins::engineering
 pub struct formualizer_eval::builtins::engineering::BesselIFn
 impl core::fmt::Debug for formualizer_eval::builtins::engineering::BesselIFn

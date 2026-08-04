@@ -1267,8 +1267,13 @@ where
                 engine.workbook_load_limits(),
             );
             let asheet = if sparse_initial {
-                let mut asheet =
-                    ArrowSheet::new_sparse(n, cols, rows, chunk_rows, engine.config.date_system);
+                let mut asheet = ArrowSheet::new_sparse_with_date_system(
+                    n,
+                    cols,
+                    rows,
+                    chunk_rows,
+                    engine.config.date_system,
+                );
                 for ((row, col), cd) in &sheet_data.cells {
                     if cd.formula.is_some() {
                         continue;

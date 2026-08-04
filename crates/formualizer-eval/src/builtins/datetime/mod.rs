@@ -9,6 +9,7 @@ mod date_parts;
 mod date_time;
 mod date_value;
 mod edate_eomonth;
+mod serial;
 mod today_now;
 mod weekday_workday;
 
@@ -16,6 +17,7 @@ pub use date_parts::*;
 pub use date_time::*;
 pub use date_value::*;
 pub use edate_eomonth::*;
+pub use serial::*;
 pub use today_now::*;
 pub use weekday_workday::*;
 
