@@ -89,6 +89,12 @@ harness = false
 [[bench]]
 name = "sheet_ops"
 harness = false
+required-features = ["test-support"]
+
+[[test]]
+name = "fp8_ingest_pipeline_parity"
+path = "tests/fp8_ingest_pipeline_parity.rs"
+required-features = ["test-support"]
 
 [features]
 # system-clock: enables SystemClock + chrono ambient-time (Local::now / Utc::now).
@@ -111,7 +117,10 @@ perf_instrumentation = []
 formula_plane_diagnostics = []
 # Private benchmark-only forced-replay seam; not a product configuration surface.
 benchmark_internal = []
+# Private test and integration support; never enabled by default.
+test-support = []
 
 [[example]]
 name = "recalc_quadratic"
 path = "examples/recalc_quadratic.rs"
+required-features = ["test-support"]

@@ -30,6 +30,9 @@ For most integrations, [`formualizer-workbook`](https://crates.io/crates/formual
 
 ## Quick start
 
+`TestWorkbook` is opt-in test support. Enable it with `--features test-support` (for
+example, `cargo test -p formualizer-eval --features test-support`).
+
 ```rust
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::{Engine, EvalConfig};

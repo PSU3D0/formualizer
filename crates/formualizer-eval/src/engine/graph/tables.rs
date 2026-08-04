@@ -11,13 +11,13 @@ fn normalize_table_key(name: &str) -> String {
 
 /// Native workbook table (Excel ListObject) metadata.
 #[derive(Debug, Clone)]
-pub struct TableEntry {
-    pub name: String,
-    pub range: RangeRef,
-    pub header_row: bool,
-    pub headers: Vec<String>,
-    pub totals_row: bool,
-    pub vertex: VertexId,
+pub(crate) struct TableEntry {
+    pub(crate) name: String,
+    pub(crate) range: RangeRef,
+    pub(crate) header_row: bool,
+    pub(crate) headers: Vec<String>,
+    pub(crate) totals_row: bool,
+    pub(crate) vertex: VertexId,
 }
 
 impl TableEntry {
@@ -48,7 +48,7 @@ impl DependencyGraph {
         self.tables_lookup.get(&key).cloned()
     }
 
-    pub fn resolve_table_entry(&self, name: &str) -> Option<&TableEntry> {
+    pub(crate) fn resolve_table_entry(&self, name: &str) -> Option<&TableEntry> {
         if self.config.case_sensitive_tables {
             self.tables.get(name)
         } else {
@@ -59,7 +59,7 @@ impl DependencyGraph {
         }
     }
 
-    pub fn table_by_vertex(&self, vertex: VertexId) -> Option<&TableEntry> {
+    pub(crate) fn table_by_vertex(&self, vertex: VertexId) -> Option<&TableEntry> {
         self.table_vertex_lookup
             .get(&vertex)
             .and_then(|name| self.tables.get(name))

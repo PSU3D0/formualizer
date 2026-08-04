@@ -15,17 +15,26 @@ pub(crate) mod lookup_utils; // shared helper utilities for lookup family
 mod reference_info; // modern lookup & dynamic array subset (XLOOKUP, FILTER, UNIQUE)
 mod stack; // stacking & concatenation functions (HSTACK, VSTACK)
 
+#[cfg(test)]
 pub use address::AddressFn;
+#[cfg(test)]
 pub use array_shape::{ToColFn, ToRowFn};
+#[cfg(test)]
 pub use choose::ChooseFn;
+#[cfg(test)]
 pub use core::{HLookupFn, MatchFn, VLookupFn};
+#[cfg(test)]
 pub use dynamic::{
     FilterFn, GroupByFn, PivotByFn, RandArrayFn, SortByFn, SortFn, UniqueFn, XLookupFn, XMatchFn,
 };
+#[cfg(test)]
 pub use legacy::LookupFn;
+#[cfg(test)]
 pub use reference_info::{ColumnFn, ColumnsFn, RowFn, RowsFn};
+#[cfg(test)]
 pub use stack::{HStackFn, VStackFn};
 // CHOOSECOLS / CHOOSEROWS live in choose.rs alongside CHOOSE
+#[cfg(test)]
 pub use choose::{ChooseColsFn, ChooseRowsFn};
 
 /// Register all lookup and reference functions
@@ -34,24 +43,24 @@ pub fn register_builtins() {
     use std::sync::Arc;
 
     // Classic lookup functions (from parent lookup.rs)
-    register_builtin(Arc::new(MatchFn));
-    register_builtin(Arc::new(VLookupFn));
-    register_builtin(Arc::new(HLookupFn));
+    register_builtin(Arc::new(core::MatchFn));
+    register_builtin(Arc::new(core::VLookupFn));
+    register_builtin(Arc::new(core::HLookupFn));
 
     // Legacy LOOKUP (vector & array forms)
-    register_builtin(Arc::new(LookupFn));
+    register_builtin(Arc::new(legacy::LookupFn));
 
     // Choose function
-    register_builtin(Arc::new(ChooseFn));
+    register_builtin(Arc::new(choose::ChooseFn));
 
     // Reference info functions
-    register_builtin(Arc::new(RowFn));
-    register_builtin(Arc::new(RowsFn));
-    register_builtin(Arc::new(ColumnFn));
-    register_builtin(Arc::new(ColumnsFn));
+    register_builtin(Arc::new(reference_info::RowFn));
+    register_builtin(Arc::new(reference_info::RowsFn));
+    register_builtin(Arc::new(reference_info::ColumnFn));
+    register_builtin(Arc::new(reference_info::ColumnsFn));
 
     // Address function
-    register_builtin(Arc::new(AddressFn));
+    register_builtin(Arc::new(address::AddressFn));
 
     // Dynamic / modern lookup subset (Sprint 5 initial)
     dynamic::register_builtins();

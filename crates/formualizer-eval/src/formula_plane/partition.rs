@@ -9,4 +9,4 @@ use serde::{Deserialize, Serialize};
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct PartitionId(pub u32);
+pub struct PartitionId(pub(crate) u32);

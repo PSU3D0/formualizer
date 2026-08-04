@@ -27,6 +27,8 @@ pub use reference::SheetId;
 mod macros;
 #[cfg(test)]
 pub mod test_utils;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
 pub mod test_workbook;
 
 pub mod engine;
