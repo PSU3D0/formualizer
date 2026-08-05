@@ -69,6 +69,50 @@ TRACKS: dict[str, tuple[Package, ...]] = {
     "product": (COMMON, PARSE, SPEC, MACROS, EVAL, WORKBOOK, SHEETPORT, FORMUALIZER),
 }
 
+# Binding crates ship through C, PyPI, and npm channels rather than crates.io.
+BINDING_PACKAGE_POLICY: tuple[tuple[str, str], ...] = (
+    ("crates/formualizer-cffi/Cargo.toml", "formualizer-cffi"),
+    ("bindings/python/Cargo.toml", "formualizer-python"),
+    ("bindings/wasm/Cargo.toml", "formualizer-wasm"),
+)
+
+
+def validate_binding_package_policy(root: Path = ROOT) -> None:
+    """Require exact identities and literal non-publishable binding manifests."""
+
+    binding_names = {name for _, name in BINDING_PACKAGE_POLICY}
+    track_names = {
+        package.name for packages in TRACKS.values() for package in packages
+    }
+    overlap = sorted(binding_names & track_names)
+    if overlap:
+        raise RuntimeError(
+            "binding package policy: crates.io release tracks include "
+            + ", ".join(overlap)
+        )
+
+    for manifest, expected_name in BINDING_PACKAGE_POLICY:
+        manifest_path = root / manifest
+        try:
+            data = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            raise RuntimeError(
+                f"binding package policy {manifest}: cannot parse manifest: {exc}"
+            ) from exc
+        package = data.get("package")
+        if not isinstance(package, dict) or package.get("name") != expected_name:
+            actual_name = package.get("name") if isinstance(package, dict) else None
+            raise RuntimeError(
+                f"binding package policy {manifest}: expected package name "
+                f"{expected_name!r}, found {actual_name!r}"
+            )
+        if package.get("publish") is not False:
+            raise RuntimeError(
+                f"binding package policy {manifest}: package {expected_name!r} "
+                "must set literal publish = false"
+            )
+
+
 # Cargo-generated metadata varies with the packaging Cargo version or source
 # commit. Cargo.toml.orig and every shipped source/data/doc file remain in the
 # comparison, so dependency requirements and payload behavior are still covered.
@@ -519,6 +563,7 @@ def prepare_local_registry(
 
 
 def preflight(track: str, allow_dirty: bool) -> None:
+    validate_binding_package_policy()
     ensure_clean(allow_dirty)
     packages = TRACKS[track]
     with (
