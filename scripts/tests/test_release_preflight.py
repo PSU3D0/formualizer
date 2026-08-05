@@ -6,6 +6,7 @@ import os
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -144,6 +145,58 @@ class ReleasePreflightTests(unittest.TestCase):
                 RuntimeError, "symlink in persistent preflight state"
             ):
                 release_preflight.reject_tree_symlinks(root)
+
+    def test_binding_manifests_have_exact_non_publishable_policy(self) -> None:
+        for manifest, expected_name in release_preflight.BINDING_PACKAGE_POLICY:
+            data = tomllib.loads(
+                (release_preflight.ROOT / manifest).read_text(encoding="utf-8")
+            )
+            self.assertEqual(data["package"]["name"], expected_name)
+            self.assertIs(data["package"]["publish"], False)
+        release_preflight.validate_binding_package_policy()
+
+    def test_binding_policy_reports_each_manifest_mutation(self) -> None:
+        for manifest, expected_name in release_preflight.BINDING_PACKAGE_POLICY:
+            source = (release_preflight.ROOT / manifest).read_text(encoding="utf-8")
+            for mutation in ("missing-publish", "changed-publish", "changed-name"):
+                with self.subTest(manifest=manifest, mutation=mutation):
+                    contents = source
+                    if mutation == "missing-publish":
+                        contents = contents.replace("publish = false\n", "", 1)
+                    elif mutation == "changed-publish":
+                        contents = contents.replace("publish = false", "publish = true", 1)
+                    else:
+                        contents = contents.replace(
+                            f'name = "{expected_name}"',
+                            'name = "unexpected-binding-name"',
+                            1,
+                        )
+                    with tempfile.TemporaryDirectory() as temp:
+                        root = Path(temp)
+                        for candidate, _ in release_preflight.BINDING_PACKAGE_POLICY:
+                            destination = root / candidate
+                            destination.parent.mkdir(parents=True, exist_ok=True)
+                            destination.write_text(
+                                (release_preflight.ROOT / candidate).read_text(
+                                    encoding="utf-8"
+                                ),
+                                encoding="utf-8",
+                            )
+                        (root / manifest).write_text(contents, encoding="utf-8")
+                        with self.assertRaisesRegex(
+                            RuntimeError, rf"{manifest}.*{expected_name}"
+                        ):
+                            release_preflight.validate_binding_package_policy(root)
+
+    def test_binding_packages_are_disjoint_from_every_release_track(self) -> None:
+        track_names = {
+            package.name
+            for packages in release_preflight.TRACKS.values()
+            for package in packages
+        }
+        for _, name in release_preflight.BINDING_PACKAGE_POLICY:
+            self.assertNotIn(name, track_names)
+        release_preflight.validate_binding_package_policy()
 
     def test_track_order_matches_publish_dependencies(self) -> None:
         self.assertEqual(

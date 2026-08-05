@@ -24,7 +24,7 @@ The following contracts are deliberately checked elsewhere:
 - WASM/npm uses wasm-bindgen and TypeScript package output.
 - Bench, testkit, and xtask crates are unpublished internal tooling.
 
-The CFFI, Python, and WASM manifests' current publish flags are release-hygiene debt for the final API review. This check does not change them or treat those crates as crates.io surfaces.
+The CFFI, Python, and WASM Cargo packages are deliberately non-publishable. Their contracts are validated through the C header/ABI, generated Python stubs and wheels, and wasm-bindgen/TypeScript/npm artifacts; they remain outside this eight-crate snapshot set and every crates.io release track.
 
 ## Native feature profiles
 
