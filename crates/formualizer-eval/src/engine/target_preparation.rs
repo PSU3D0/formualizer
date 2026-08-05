@@ -74,6 +74,7 @@ pub enum OpaquePreparePolicy {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PrepareScope {
     #[default]
     Exact,
@@ -82,6 +83,7 @@ pub enum PrepareScope {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum OpaqueReason {
     DynamicReference,
     RuntimeTextReference,
@@ -121,6 +123,7 @@ impl Default for TargetEvalOptions<'_> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PreparationRevision {
     pub graph: u64,
     /// Raw FormulaPlane epoch. Kept separate from each authority-index counter so
@@ -135,6 +138,7 @@ pub struct PreparationRevision {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PreparationOutcome {
     #[default]
     Prepared,
@@ -142,6 +146,7 @@ pub enum PreparationOutcome {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PreparedTargetGraphReport {
     pub request_id: RequestId,
     pub requested_targets: usize,

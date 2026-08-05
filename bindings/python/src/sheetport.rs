@@ -736,6 +736,7 @@ fn map_sheetport_err(py: Python<'_>, err: RuntimeSheetPortError) -> PyErr {
         } => SheetPortError::new_err(format!(
             "batch failed ({primary}); baseline restoration also failed ({restoration})"
         )),
+        other => SheetPortError::new_err(other.to_string()),
     }
 }
 

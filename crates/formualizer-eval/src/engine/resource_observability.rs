@@ -186,15 +186,20 @@ pub const FORMULA_PLANE_ROUTE_EVENT_CAPACITY: usize = 16;
 pub const FORMULA_PLANE_ROUTE_EVENT_SHEET_CAPACITY: usize = 8;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct FormulaPlaneRouteEvent {
-    /// Deterministic request-local identity derived from island membership.
+    /// Opaque request/session-local correlation identity derived from island membership; not
+    /// a durable identifier.
     pub island_id: u64,
     pub phase: FormulaPlaneRoutePhase,
     pub route: FormulaPlaneRoute,
-    /// Sorted sheet IDs touched by the island, truncated at the fixed capacity.
+    /// Opaque request/session-local sheet correlation IDs, sorted and truncated at the fixed
+    /// capacity; not durable identifiers.
     pub sheet_ids: [u16; FORMULA_PLANE_ROUTE_EVENT_SHEET_CAPACITY],
     pub sheet_count: u8,
+    /// Opaque request/session-local correlation epoch, not a durable identifier.
     pub authority_epoch: u64,
+    /// Opaque request/session-local correlation epoch, not a durable identifier.
     pub index_epoch: u64,
     pub transition_reason: FormulaPlaneRouteTransitionReason,
     pub demotion_generation: u32,
@@ -304,6 +309,7 @@ impl FormulaDirtyLeaseOutcome {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct FormulaPlaneTopologyRequestStats {
     /// Most severe strategy observed during the request.
     pub strategy: FormulaPlaneTopologyStrategy,
@@ -345,6 +351,7 @@ pub struct FormulaPlaneTopologyRequestStats {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EvaluationResourceLedgerRequestStats {
     pub retained_limit: Option<u64>,
     pub mixed_cache_limit: Option<u64>,
@@ -382,6 +389,7 @@ impl EvaluationResourceLedgerRequestStats {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EvaluationRequestPhaseTimings {
     pub total_ns: u64,
     pub staged_prepare_ns: u64,
@@ -391,6 +399,7 @@ pub struct EvaluationRequestPhaseTimings {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EvaluationResourceRequestStats {
     pub request_id: u64,
     pub kind: EvaluationRequestKind,
@@ -474,6 +483,7 @@ impl EvaluationResourceRequestStats {
 /// Cumulative observational counters since engine creation or the last explicit telemetry reset.
 /// Resetting these counters never resets the monotonic request ID sequence.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EvaluationResourceBaselineStats {
     pub last_request_id: u64,
     pub requests_started: u64,

@@ -631,6 +631,7 @@ fn sheetport_error_to_js(err: formualizer::SheetPortError) -> JsValue {
         formualizer::SheetPortError::ConstraintViolation { .. } => "ConstraintViolation",
         formualizer::SheetPortError::Engine { .. } => "Engine",
         formualizer::SheetPortError::Workbook { .. } => "Workbook",
+        _ => "Unknown",
     };
     let _ = js_sys::Reflect::set(object, &JsValue::from_str("kind"), &JsValue::from_str(kind));
     match err {
@@ -776,6 +777,7 @@ fn sheetport_error_to_js(err: formualizer::SheetPortError) -> JsValue {
                 &JsValue::from_str(&source.to_string()),
             );
         }
+        _ => {}
     }
     error.into()
 }

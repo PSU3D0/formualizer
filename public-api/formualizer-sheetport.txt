@@ -71,7 +71,7 @@ impl core::clone::Clone for formualizer_sheetport::ScalarLocation
 pub fn formualizer_sheetport::ScalarLocation::clone(&self) -> formualizer_sheetport::ScalarLocation
 impl core::fmt::Debug for formualizer_sheetport::ScalarLocation
 pub fn formualizer_sheetport::ScalarLocation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub enum formualizer_sheetport::SheetPortError
+#[non_exhaustive] pub enum formualizer_sheetport::SheetPortError
 pub formualizer_sheetport::SheetPortError::BatchRestoration
 pub formualizer_sheetport::SheetPortError::BatchRestoration::primary: alloc::boxed::Box<formualizer_sheetport::SheetPortError>
 pub formualizer_sheetport::SheetPortError::BatchRestoration::restoration: alloc::boxed::Box<formualizer_sheetport::SheetPortError>

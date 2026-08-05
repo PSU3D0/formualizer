@@ -806,8 +806,10 @@ workbook-exact attempt to one. Each bounded buffer flush performs deadline commi
 preflight before its non-cancellable write phase.
 
 `TargetEvalDelta` version 1 and `EvalDeltaRecord::{Run, Region}` collect legacy, span, and spill
-changes without per-placement report expansion. Existing `EvalDelta` remains field compatible and
-unbounded by default; callers may opt into an explicit cell limit that returns typed common resource
+changes without per-placement report expansion. `SheetId` values in these records are
+workbook-session-local identities: they are not durable, persistable, or replayable across workbooks
+or sessions. Existing `EvalDelta` remains field readable and unbounded by default; callers may opt
+into an explicit cell limit that returns typed common resource
 overflow without truncation. Zero-span and warm no-dirty requests retain their topology-free sparse
 paths. These additive Rust APIs are not yet projected into every language binding.
 

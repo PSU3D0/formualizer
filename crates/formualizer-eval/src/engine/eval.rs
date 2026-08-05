@@ -1640,6 +1640,7 @@ impl Drop for SourceCacheSession {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct EvalResult {
     pub computed_vertices: usize,
     pub cycle_errors: usize,
@@ -1647,6 +1648,7 @@ pub struct EvalResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TableMetadata {
     pub name: String,
     pub sheet: String,
@@ -1664,6 +1666,7 @@ pub struct TableMetadata {
 /// These counters are deliberately observational: collecting them must not mutate engine state or
 /// alter formula evaluation semantics.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EngineBaselineStats {
     pub graph_vertex_count: usize,
     pub graph_formula_vertex_count: usize,
@@ -1691,6 +1694,7 @@ pub struct EngineBaselineStats {
 }
 
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct VirtualDepTelemetry {
     pub candidate_vertices_total: usize,
     pub vdeps_vertices_total: usize,
@@ -1716,6 +1720,7 @@ pub struct VirtualDepTelemetry {
 /// which pays per-schedule costs). Counters reset at the start of every
 /// evaluation request.
 #[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
 pub struct CycleTelemetry {
     /// SCC tasks executed (static SCCs that reached Runtime evaluation).
     pub static_sccs: usize,
