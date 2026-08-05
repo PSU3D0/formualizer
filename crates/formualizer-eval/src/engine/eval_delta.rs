@@ -28,6 +28,7 @@ pub enum DeltaMode {
 
 /// Engine-level evaluation deltas for a single evaluation pass.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct EvalDelta {
     pub changed_cells: Vec<PackedSheetCell>,
 }
@@ -38,7 +39,12 @@ impl EvalDelta {
     }
 }
 
+/// A changed rectangular region identified within one workbook evaluation session.
+///
+/// `SheetId` values are workbook-session-local identities; do not persist these records or
+/// replay them into another workbook or session.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum EvalDeltaRecord {
     Run {
         sheet_id: SheetId,
@@ -83,7 +89,12 @@ impl EvalDeltaRecord {
     }
 }
 
+/// Versioned target-evaluation changes for one workbook evaluation session.
+///
+/// The `SheetId` values carried by records are workbook-session-local identities and are not
+/// persistable or replayable across workbooks or sessions.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TargetEvalDelta {
     pub version: u16,
     pub records: Vec<EvalDeltaRecord>,

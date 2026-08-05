@@ -1272,7 +1272,7 @@ impl core::fmt::Debug for formualizer_eval::engine::effects::Effect
 pub fn formualizer_eval::engine::effects::Effect::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub type formualizer_eval::engine::effects::EffectBatch = alloc::vec::Vec<(formualizer_eval::engine::vertex::VertexId, alloc::vec::Vec<formualizer_eval::engine::effects::Effect>)>
 pub mod formualizer_eval::engine::eval
-pub struct formualizer_eval::engine::eval::CycleTelemetry
+#[non_exhaustive] pub struct formualizer_eval::engine::eval::CycleTelemetry
 pub formualizer_eval::engine::eval::CycleTelemetry::capped_sccs: usize
 pub formualizer_eval::engine::eval::CycleTelemetry::circ_cells_stamped: usize
 pub formualizer_eval::engine::eval::CycleTelemetry::converged_sccs: usize
@@ -1498,7 +1498,7 @@ pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_formula(&mu
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_row_hidden(&mut self, &str, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_rows_hidden(&mut self, &str, u32, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
-pub struct formualizer_eval::engine::eval::EngineBaselineStats
+#[non_exhaustive] pub struct formualizer_eval::engine::eval::EngineBaselineStats
 pub formualizer_eval::engine::eval::EngineBaselineStats::dirty_vertex_count: usize
 pub formualizer_eval::engine::eval::EngineBaselineStats::evaluation_vertex_count: usize
 pub formualizer_eval::engine::eval::EngineBaselineStats::formula_ast_node_count: usize
@@ -1544,7 +1544,7 @@ impl core::clone::Clone for formualizer_eval::engine::eval::EvalPlan
 pub fn formualizer_eval::engine::eval::EvalPlan::clone(&self) -> formualizer_eval::engine::eval::EvalPlan
 impl core::fmt::Debug for formualizer_eval::engine::eval::EvalPlan
 pub fn formualizer_eval::engine::eval::EvalPlan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::eval::EvalResult
+#[non_exhaustive] pub struct formualizer_eval::engine::eval::EvalResult
 pub formualizer_eval::engine::eval::EvalResult::computed_vertices: usize
 pub formualizer_eval::engine::eval::EvalResult::cycle_errors: usize
 pub formualizer_eval::engine::eval::EvalResult::elapsed: core::time::Duration
@@ -1567,7 +1567,7 @@ pub fn formualizer_eval::engine::eval::RecalcPlan::fmt(&self, &mut core::fmt::Fo
 pub struct formualizer_eval::engine::eval::ShimSpillManager
 impl core::default::Default for formualizer_eval::engine::eval::ShimSpillManager
 pub fn formualizer_eval::engine::eval::ShimSpillManager::default() -> formualizer_eval::engine::eval::ShimSpillManager
-pub struct formualizer_eval::engine::eval::TableMetadata
+#[non_exhaustive] pub struct formualizer_eval::engine::eval::TableMetadata
 pub formualizer_eval::engine::eval::TableMetadata::end_col: u32
 pub formualizer_eval::engine::eval::TableMetadata::end_row: u32
 pub formualizer_eval::engine::eval::TableMetadata::header_row: bool
@@ -1585,7 +1585,7 @@ pub fn formualizer_eval::engine::eval::TableMetadata::eq(&self, &formualizer_eva
 impl core::fmt::Debug for formualizer_eval::engine::eval::TableMetadata
 pub fn formualizer_eval::engine::eval::TableMetadata::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval::TableMetadata
-pub struct formualizer_eval::engine::eval::VirtualDepTelemetry
+#[non_exhaustive] pub struct formualizer_eval::engine::eval::VirtualDepTelemetry
 pub formualizer_eval::engine::eval::VirtualDepTelemetry::bailout_reason: core::option::Option<&'static str>
 pub formualizer_eval::engine::eval::VirtualDepTelemetry::builder_elapsed_ms_total: u128
 pub formualizer_eval::engine::eval::VirtualDepTelemetry::candidate_vertices_total: usize
@@ -1634,7 +1634,7 @@ impl core::fmt::Debug for formualizer_eval::engine::eval_delta::EvalDeltaCompati
 pub fn formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy
-pub enum formualizer_eval::engine::eval_delta::EvalDeltaRecord
+#[non_exhaustive] pub enum formualizer_eval::engine::eval_delta::EvalDeltaRecord
 pub formualizer_eval::engine::eval_delta::EvalDeltaRecord::Region
 pub formualizer_eval::engine::eval_delta::EvalDeltaRecord::Region::end_col: u32
 pub formualizer_eval::engine::eval_delta::EvalDeltaRecord::Region::end_row: u32
@@ -1658,7 +1658,7 @@ pub fn formualizer_eval::engine::eval_delta::EvalDeltaRecord::eq(&self, &formual
 impl core::fmt::Debug for formualizer_eval::engine::eval_delta::EvalDeltaRecord
 pub fn formualizer_eval::engine::eval_delta::EvalDeltaRecord::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval_delta::EvalDeltaRecord
-pub struct formualizer_eval::engine::eval_delta::EvalDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::eval_delta::EvalDelta
 pub formualizer_eval::engine::eval_delta::EvalDelta::changed_cells: alloc::vec::Vec<formualizer_common::address::PackedSheetCell>
 impl formualizer_eval::engine::eval_delta::EvalDelta
 pub fn formualizer_eval::engine::eval_delta::EvalDelta::is_empty(&self) -> bool
@@ -1672,7 +1672,7 @@ pub fn formualizer_eval::engine::eval_delta::EvalDelta::default() -> formualizer
 impl core::fmt::Debug for formualizer_eval::engine::eval_delta::EvalDelta
 pub fn formualizer_eval::engine::eval_delta::EvalDelta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval_delta::EvalDelta
-pub struct formualizer_eval::engine::eval_delta::TargetEvalDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::eval_delta::TargetEvalDelta
 pub formualizer_eval::engine::eval_delta::TargetEvalDelta::records: alloc::vec::Vec<formualizer_eval::engine::eval_delta::EvalDeltaRecord>
 pub formualizer_eval::engine::eval_delta::TargetEvalDelta::version: u16
 impl formualizer_eval::engine::eval_delta::TargetEvalDelta
@@ -3560,7 +3560,7 @@ impl core::hash::Hash for formualizer_eval::engine::resource_observability::Form
 pub fn formualizer_eval::engine::resource_observability::FormulaPlaneTopologyStrategy::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::FormulaPlaneTopologyStrategy
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::FormulaPlaneTopologyStrategy
-pub struct formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings
+#[non_exhaustive] pub struct formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings
 pub formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings::evaluation_ns: u64
 pub formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings::materialization_ns: u64
 pub formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings::staged_prepare_ns: u64
@@ -3577,7 +3577,7 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings
-pub struct formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats
+#[non_exhaustive] pub struct formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats
 pub formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats::cycle_materialized_cells_total: u64
 pub formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats::dirty_leases_acknowledged: u64
 pub formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats::dirty_leases_retained_on_cancel: u64
@@ -3624,7 +3624,7 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceBaselineStats
-pub struct formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats
 pub formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats::deadline_checkpoints: u64
 pub formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats::deadline_ns: core::option::Option<u64>
 pub formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats::disk_scratch_policy: core::option::Option<formualizer_eval::engine::resource_ledger::DiskScratchPolicy>
@@ -3650,7 +3650,7 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats
-pub struct formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
 pub formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::cycle_materialized_cells: u64
 pub formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::dirty_lease: formualizer_eval::engine::resource_observability::FormulaDirtyLeaseOutcome
 pub formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::evaluation_commit_actual_ns: u64
@@ -3688,7 +3688,7 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
-pub struct formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent
+#[non_exhaustive] pub struct formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent
 pub formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent::authority_epoch: u64
 pub formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent::demotion_generation: u32
 pub formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent::index_epoch: u64
@@ -3712,7 +3712,7 @@ impl core::hash::Hash for formualizer_eval::engine::resource_observability::Form
 pub fn formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent
-pub struct formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats
 pub formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats::boundary_relationships_retained: u64
 pub formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats::byte_cap_hits: u64
 pub formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats::cache_build_events: u64
@@ -4436,7 +4436,7 @@ impl core::fmt::Debug for formualizer_eval::engine::eval_delta::EvalDeltaCompati
 pub fn formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy
-pub enum formualizer_eval::engine::EvalDeltaRecord
+#[non_exhaustive] pub enum formualizer_eval::engine::EvalDeltaRecord
 pub formualizer_eval::engine::EvalDeltaRecord::Region
 pub formualizer_eval::engine::EvalDeltaRecord::Region::end_col: u32
 pub formualizer_eval::engine::EvalDeltaRecord::Region::end_row: u32
@@ -4796,7 +4796,7 @@ impl core::hash::Hash for formualizer_eval::engine::OpaquePreparePolicy
 pub fn formualizer_eval::engine::OpaquePreparePolicy::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::OpaquePreparePolicy
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::OpaquePreparePolicy
-pub enum formualizer_eval::engine::OpaqueReason
+#[non_exhaustive] pub enum formualizer_eval::engine::OpaqueReason
 pub formualizer_eval::engine::OpaqueReason::DeferredSourcePackage
 pub formualizer_eval::engine::OpaqueReason::DynamicReference
 pub formualizer_eval::engine::OpaqueReason::FormulaName
@@ -4823,7 +4823,7 @@ impl core::hash::Hash for formualizer_eval::engine::OpaqueReason
 pub fn formualizer_eval::engine::OpaqueReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::OpaqueReason
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::OpaqueReason
-pub enum formualizer_eval::engine::PreparationOutcome
+#[non_exhaustive] pub enum formualizer_eval::engine::PreparationOutcome
 pub formualizer_eval::engine::PreparationOutcome::CompatibilityPrepared
 pub formualizer_eval::engine::PreparationOutcome::Prepared
 impl core::clone::Clone for formualizer_eval::engine::PreparationOutcome
@@ -4837,7 +4837,7 @@ impl core::fmt::Debug for formualizer_eval::engine::PreparationOutcome
 pub fn formualizer_eval::engine::PreparationOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::PreparationOutcome
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::PreparationOutcome
-pub enum formualizer_eval::engine::PrepareScope
+#[non_exhaustive] pub enum formualizer_eval::engine::PrepareScope
 pub formualizer_eval::engine::PrepareScope::Exact
 pub formualizer_eval::engine::PrepareScope::Sheets(alloc::vec::Vec<alloc::string::String>)
 pub formualizer_eval::engine::PrepareScope::Workbook
@@ -5184,7 +5184,7 @@ impl core::fmt::Debug for formualizer_eval::engine::CycleConfig
 pub fn formualizer_eval::engine::CycleConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::CycleConfig
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::CycleConfig
-pub struct formualizer_eval::engine::CycleTelemetry
+#[non_exhaustive] pub struct formualizer_eval::engine::CycleTelemetry
 pub formualizer_eval::engine::CycleTelemetry::capped_sccs: usize
 pub formualizer_eval::engine::CycleTelemetry::circ_cells_stamped: usize
 pub formualizer_eval::engine::CycleTelemetry::converged_sccs: usize
@@ -5562,7 +5562,7 @@ pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_formula(&mu
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_row_hidden(&mut self, &str, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_rows_hidden(&mut self, &str, u32, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
-pub struct formualizer_eval::engine::EngineBaselineStats
+#[non_exhaustive] pub struct formualizer_eval::engine::EngineBaselineStats
 pub formualizer_eval::engine::EngineBaselineStats::dirty_vertex_count: usize
 pub formualizer_eval::engine::EngineBaselineStats::evaluation_vertex_count: usize
 pub formualizer_eval::engine::EngineBaselineStats::formula_ast_node_count: usize
@@ -5658,7 +5658,7 @@ impl core::default::Default for formualizer_eval::engine::EvalConfig
 pub fn formualizer_eval::engine::EvalConfig::default() -> Self
 impl core::fmt::Debug for formualizer_eval::engine::EvalConfig
 pub fn formualizer_eval::engine::EvalConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::EvalDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::EvalDelta
 pub formualizer_eval::engine::EvalDelta::changed_cells: alloc::vec::Vec<formualizer_common::address::PackedSheetCell>
 impl formualizer_eval::engine::eval_delta::EvalDelta
 pub fn formualizer_eval::engine::eval_delta::EvalDelta::is_empty(&self) -> bool
@@ -5672,7 +5672,7 @@ pub fn formualizer_eval::engine::eval_delta::EvalDelta::default() -> formualizer
 impl core::fmt::Debug for formualizer_eval::engine::eval_delta::EvalDelta
 pub fn formualizer_eval::engine::eval_delta::EvalDelta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval_delta::EvalDelta
-pub struct formualizer_eval::engine::EvalResult
+#[non_exhaustive] pub struct formualizer_eval::engine::EvalResult
 pub formualizer_eval::engine::EvalResult::computed_vertices: usize
 pub formualizer_eval::engine::EvalResult::cycle_errors: usize
 pub formualizer_eval::engine::EvalResult::elapsed: core::time::Duration
@@ -5696,7 +5696,7 @@ pub fn formualizer_eval::engine::resource_ledger::EvaluationBudgets::default() -
 impl core::fmt::Debug for formualizer_eval::engine::resource_ledger::EvaluationBudgets
 pub fn formualizer_eval::engine::resource_ledger::EvaluationBudgets::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_ledger::EvaluationBudgets
-pub struct formualizer_eval::engine::EvaluationRequestPhaseTimings
+#[non_exhaustive] pub struct formualizer_eval::engine::EvaluationRequestPhaseTimings
 pub formualizer_eval::engine::EvaluationRequestPhaseTimings::evaluation_ns: u64
 pub formualizer_eval::engine::EvaluationRequestPhaseTimings::materialization_ns: u64
 pub formualizer_eval::engine::EvaluationRequestPhaseTimings::staged_prepare_ns: u64
@@ -5713,7 +5713,7 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationRequestPhaseTimings
-pub struct formualizer_eval::engine::EvaluationResourceBaselineStats
+#[non_exhaustive] pub struct formualizer_eval::engine::EvaluationResourceBaselineStats
 pub formualizer_eval::engine::EvaluationResourceBaselineStats::cycle_materialized_cells_total: u64
 pub formualizer_eval::engine::EvaluationResourceBaselineStats::dirty_leases_acknowledged: u64
 pub formualizer_eval::engine::EvaluationResourceBaselineStats::dirty_leases_retained_on_cancel: u64
@@ -5774,7 +5774,7 @@ pub fn formualizer_eval::engine::resource_ledger::EvaluationResourceConfigDiagno
 impl core::fmt::Debug for formualizer_eval::engine::resource_ledger::EvaluationResourceConfigDiagnostic
 pub fn formualizer_eval::engine::resource_ledger::EvaluationResourceConfigDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_ledger::EvaluationResourceConfigDiagnostic
-pub struct formualizer_eval::engine::EvaluationResourceLedgerRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::EvaluationResourceLedgerRequestStats
 pub formualizer_eval::engine::EvaluationResourceLedgerRequestStats::deadline_checkpoints: u64
 pub formualizer_eval::engine::EvaluationResourceLedgerRequestStats::deadline_ns: core::option::Option<u64>
 pub formualizer_eval::engine::EvaluationResourceLedgerRequestStats::disk_scratch_policy: core::option::Option<formualizer_eval::engine::resource_ledger::DiskScratchPolicy>
@@ -5800,7 +5800,7 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceLedgerRequestStats
-pub struct formualizer_eval::engine::EvaluationResourceRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::EvaluationResourceRequestStats
 pub formualizer_eval::engine::EvaluationResourceRequestStats::cycle_materialized_cells: u64
 pub formualizer_eval::engine::EvaluationResourceRequestStats::dirty_lease: formualizer_eval::engine::resource_observability::FormulaDirtyLeaseOutcome
 pub formualizer_eval::engine::EvaluationResourceRequestStats::evaluation_commit_actual_ns: u64
@@ -5942,7 +5942,7 @@ pub fn formualizer_eval::engine::FormulaParseDiagnostic::eq(&self, &formualizer_
 impl core::fmt::Debug for formualizer_eval::engine::FormulaParseDiagnostic
 pub fn formualizer_eval::engine::FormulaParseDiagnostic::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::FormulaParseDiagnostic
-pub struct formualizer_eval::engine::FormulaPlaneRouteEvent
+#[non_exhaustive] pub struct formualizer_eval::engine::FormulaPlaneRouteEvent
 pub formualizer_eval::engine::FormulaPlaneRouteEvent::authority_epoch: u64
 pub formualizer_eval::engine::FormulaPlaneRouteEvent::demotion_generation: u32
 pub formualizer_eval::engine::FormulaPlaneRouteEvent::index_epoch: u64
@@ -5966,7 +5966,7 @@ impl core::hash::Hash for formualizer_eval::engine::resource_observability::Form
 pub fn formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::FormulaPlaneRouteEvent
-pub struct formualizer_eval::engine::FormulaPlaneTopologyRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::FormulaPlaneTopologyRequestStats
 pub formualizer_eval::engine::FormulaPlaneTopologyRequestStats::boundary_relationships_retained: u64
 pub formualizer_eval::engine::FormulaPlaneTopologyRequestStats::byte_cap_hits: u64
 pub formualizer_eval::engine::FormulaPlaneTopologyRequestStats::cache_build_events: u64
@@ -6085,7 +6085,7 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_ledger::Optimizatio
 pub fn formualizer_eval::engine::resource_ledger::OptimizationResourceBudget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_ledger::OptimizationResourceBudget
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_ledger::OptimizationResourceBudget
-pub struct formualizer_eval::engine::PreparationRevision
+#[non_exhaustive] pub struct formualizer_eval::engine::PreparationRevision
 pub formualizer_eval::engine::PreparationRevision::authority: u64
 pub formualizer_eval::engine::PreparationRevision::authority_indexed_plane: u64
 pub formualizer_eval::engine::PreparationRevision::authority_indexes: u64
@@ -6104,7 +6104,7 @@ pub fn formualizer_eval::engine::PreparationRevision::default() -> formualizer_e
 impl core::fmt::Debug for formualizer_eval::engine::PreparationRevision
 pub fn formualizer_eval::engine::PreparationRevision::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::PreparationRevision
-pub struct formualizer_eval::engine::PreparedTargetGraphReport
+#[non_exhaustive] pub struct formualizer_eval::engine::PreparedTargetGraphReport
 pub formualizer_eval::engine::PreparedTargetGraphReport::actual_commit_work: u64
 pub formualizer_eval::engine::PreparedTargetGraphReport::commit_window: core::time::Duration
 pub formualizer_eval::engine::PreparedTargetGraphReport::estimated_commit_work: u64
@@ -6302,7 +6302,7 @@ pub fn formualizer_eval::engine::graph::StripeKey::fmt(&self, &mut core::fmt::Fo
 impl core::hash::Hash for formualizer_eval::engine::graph::StripeKey
 pub fn formualizer_eval::engine::graph::StripeKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::graph::StripeKey
-pub struct formualizer_eval::engine::TableMetadata
+#[non_exhaustive] pub struct formualizer_eval::engine::TableMetadata
 pub formualizer_eval::engine::TableMetadata::end_col: u32
 pub formualizer_eval::engine::TableMetadata::end_row: u32
 pub formualizer_eval::engine::TableMetadata::header_row: bool
@@ -6320,7 +6320,7 @@ pub fn formualizer_eval::engine::eval::TableMetadata::eq(&self, &formualizer_eva
 impl core::fmt::Debug for formualizer_eval::engine::eval::TableMetadata
 pub fn formualizer_eval::engine::eval::TableMetadata::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::eval::TableMetadata
-pub struct formualizer_eval::engine::TargetEvalDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::TargetEvalDelta
 pub formualizer_eval::engine::TargetEvalDelta::records: alloc::vec::Vec<formualizer_eval::engine::eval_delta::EvalDeltaRecord>
 pub formualizer_eval::engine::TargetEvalDelta::version: u16
 impl formualizer_eval::engine::eval_delta::TargetEvalDelta
@@ -6471,7 +6471,7 @@ impl core::clone::Clone for formualizer_eval::engine::graph::snapshot::VertexSna
 pub fn formualizer_eval::engine::graph::snapshot::VertexSnapshot::clone(&self) -> formualizer_eval::engine::graph::snapshot::VertexSnapshot
 impl core::fmt::Debug for formualizer_eval::engine::graph::snapshot::VertexSnapshot
 pub fn formualizer_eval::engine::graph::snapshot::VertexSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-pub struct formualizer_eval::engine::VirtualDepTelemetry
+#[non_exhaustive] pub struct formualizer_eval::engine::VirtualDepTelemetry
 pub formualizer_eval::engine::VirtualDepTelemetry::bailout_reason: core::option::Option<&'static str>
 pub formualizer_eval::engine::VirtualDepTelemetry::builder_elapsed_ms_total: u128
 pub formualizer_eval::engine::VirtualDepTelemetry::candidate_vertices_total: usize
@@ -8118,7 +8118,7 @@ impl core::hash::Hash for formualizer_eval::function_contract::FunctionSemanticI
 pub fn formualizer_eval::function_contract::FunctionSemanticIdentity::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::function_contract::FunctionSemanticIdentity
 pub mod formualizer_eval::function_registry
-pub enum formualizer_eval::function_registry::RegistrationError
+#[non_exhaustive] pub enum formualizer_eval::function_registry::RegistrationError
 pub formualizer_eval::function_registry::RegistrationError::NameMetadataPanicked
 pub formualizer_eval::function_registry::RegistrationError::NamespaceMetadataPanicked
 impl core::clone::Clone for formualizer_eval::function_registry::RegistrationError
@@ -8129,7 +8129,7 @@ pub fn formualizer_eval::function_registry::RegistrationError::eq(&self, &formua
 impl core::fmt::Debug for formualizer_eval::function_registry::RegistrationError
 pub fn formualizer_eval::function_registry::RegistrationError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::function_registry::RegistrationError
-pub enum formualizer_eval::function_registry::SemanticConformanceIssue
+#[non_exhaustive] pub enum formualizer_eval::function_registry::SemanticConformanceIssue
 pub formualizer_eval::function_registry::SemanticConformanceIssue::AliasMetadataPanicked
 pub formualizer_eval::function_registry::SemanticConformanceIssue::ArgumentSchemaPanicked
 pub formualizer_eval::function_registry::SemanticConformanceIssue::ArityMetadataPanicked
@@ -8153,14 +8153,14 @@ pub fn formualizer_eval::function_registry::SemanticConformanceIssue::eq(&self, 
 impl core::fmt::Debug for formualizer_eval::function_registry::SemanticConformanceIssue
 pub fn formualizer_eval::function_registry::SemanticConformanceIssue::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::function_registry::SemanticConformanceIssue
-pub struct formualizer_eval::function_registry::ResolvedFunction
+#[non_exhaustive] pub struct formualizer_eval::function_registry::ResolvedFunction
 pub formualizer_eval::function_registry::ResolvedFunction::canonical_name: alloc::string::String
 pub formualizer_eval::function_registry::ResolvedFunction::function: alloc::sync::Arc<dyn formualizer_eval::function::Function>
 pub formualizer_eval::function_registry::ResolvedFunction::namespace: alloc::string::String
 pub formualizer_eval::function_registry::ResolvedFunction::semantics: formualizer_eval::function_registry::SemanticContractResolution
 impl core::clone::Clone for formualizer_eval::function_registry::ResolvedFunction
 pub fn formualizer_eval::function_registry::ResolvedFunction::clone(&self) -> formualizer_eval::function_registry::ResolvedFunction
-pub struct formualizer_eval::function_registry::SemanticContractResolution
+#[non_exhaustive] pub struct formualizer_eval::function_registry::SemanticContractResolution
 pub formualizer_eval::function_registry::SemanticContractResolution::contract: core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub formualizer_eval::function_registry::SemanticContractResolution::generation: u64
 pub formualizer_eval::function_registry::SemanticContractResolution::issues: alloc::vec::Vec<formualizer_eval::function_registry::SemanticConformanceIssue>

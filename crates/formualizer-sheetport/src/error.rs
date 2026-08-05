@@ -6,6 +6,7 @@ use thiserror::Error;
 
 /// Errors produced when constructing or operating a SheetPort runtime.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SheetPortError {
     /// Manifest failed canonical validation.
     #[error("manifest validation failed")]

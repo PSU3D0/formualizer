@@ -45,6 +45,7 @@ impl Default for RegistryState {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SemanticConformanceIssue {
     CapabilityPanicked,
     DependencyContractPanicked,
@@ -64,6 +65,7 @@ pub enum SemanticConformanceIssue {
 }
 
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SemanticContractResolution {
     pub contract: Option<FunctionSemanticContract>,
     pub generation: u64,
@@ -78,6 +80,7 @@ impl SemanticContractResolution {
 }
 
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct ResolvedFunction {
     pub namespace: String,
     pub canonical_name: String,
@@ -167,6 +170,7 @@ fn semantic_changes_since_in_state(state: &RegistryState, epoch: u64) -> Semanti
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RegistrationError {
     NameMetadataPanicked,
     NamespaceMetadataPanicked,
