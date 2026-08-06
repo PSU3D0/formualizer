@@ -352,6 +352,19 @@ impl Function for MatchFn {
     }
 }
 
+fn range_lookup_is_approximate<'a, 'b>(
+    args: &[ArgumentHandle<'a, 'b>],
+    absent_default: bool,
+) -> Result<bool, ExcelError> {
+    if args.len() < 4 {
+        return Ok(absent_default);
+    }
+    if args[3].is_omitted() {
+        return Ok(false);
+    }
+    crate::coercion::to_logical(&args[3].value()?.into_literal())
+}
+
 #[derive(Debug)]
 pub struct VLookupFn;
 /// Looks up a value in the first column of a table and returns a value from another column.
@@ -360,8 +373,9 @@ pub struct VLookupFn;
 ///
 /// # Remarks
 /// - `col_index_num` is 1-based and must be within the table width.
-/// - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+/// - `range_lookup` defaults to `TRUE`, matching Excel and LibreOffice.
 /// - When `range_lookup=TRUE`, approximate match logic is used against the first column.
+/// - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
 /// - If the lookup value is not found, returns `#N/A`.
 /// - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
 /// - A matched empty target cell is materialized as numeric `0`.
@@ -398,7 +412,7 @@ pub struct VLookupFn;
 ///   - MATCH
 /// faq:
 ///   - q: "What is the default behavior when range_lookup is omitted?"
-///     a: "This engine defaults range_lookup to FALSE, so VLOOKUP performs exact matching unless TRUE is explicitly provided."
+///     a: "VLOOKUP defaults range_lookup to TRUE, so it performs approximate matching; pass FALSE or 0 for exact matching."
 ///   - q: "What happens if col_index_num points outside the table?"
 ///     a: "A numeric out-of-range column index returns #REF!, while a non-numeric col_index_num returns #VALUE!."
 /// ```
@@ -457,7 +471,7 @@ impl Function for VLookupFn {
                     repeating: None,
                     default: None,
                 },
-                // range_lookup (optional logical, default FALSE for safer exact default)
+                // range_lookup (optional logical, default TRUE to match Excel)
                 ArgSchema {
                     kinds: smallvec::smallvec![ArgKind::Logical],
                     required: false,
@@ -466,7 +480,7 @@ impl Function for VLookupFn {
                     coercion: CoercionPolicy::Logical,
                     max: None,
                     repeating: None,
-                    default: Some(LiteralValue::Boolean(false)),
+                    default: Some(LiteralValue::Boolean(true)),
                 },
             ]
         });
@@ -500,14 +514,7 @@ impl Function for VLookupFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let approximate = if args.len() >= 4 {
-            match args[3].value()?.into_literal() {
-                LiteralValue::Boolean(b) => b,
-                _ => true,
-            }
-        } else {
-            false // engine chooses FALSE default (exact) rather than Excel's historical TRUE to avoid silent approximate matches
-        };
+        let approximate = range_lookup_is_approximate(args, true)?;
         // Handle both cell references and array literals
         if let Some(table_ref) = table_ref_opt {
             let current_sheet = ctx.current_sheet();
@@ -623,8 +630,9 @@ pub struct HLookupFn;
 ///
 /// # Remarks
 /// - `row_index_num` is 1-based and must be within the table height.
-/// - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+/// - `range_lookup` defaults to `TRUE`, matching Excel and LibreOffice.
 /// - When `range_lookup=TRUE`, approximate match logic is used against the first row.
+/// - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
 /// - If the lookup value is not found, returns `#N/A`.
 /// - If `row_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
 /// - A matched empty target cell is materialized as numeric `0`.
@@ -661,7 +669,7 @@ pub struct HLookupFn;
 ///   - MATCH
 /// faq:
 ///   - q: "Does HLOOKUP default to exact or approximate matching?"
-///     a: "It defaults to exact matching in this engine because range_lookup defaults to FALSE."
+///     a: "It defaults to approximate matching because range_lookup defaults to TRUE; pass FALSE or 0 for exact matching."
 ///   - q: "How are invalid row_index_num values reported?"
 ///     a: "If row_index_num is outside table height HLOOKUP returns #REF!; if it is non-numeric it returns #VALUE!."
 /// ```
@@ -720,7 +728,7 @@ impl Function for HLookupFn {
                     repeating: None,
                     default: None,
                 },
-                // range_lookup (optional logical, default FALSE for safer exact default)
+                // range_lookup (optional logical, default TRUE to match Excel)
                 ArgSchema {
                     kinds: smallvec::smallvec![ArgKind::Logical],
                     required: false,
@@ -729,7 +737,7 @@ impl Function for HLookupFn {
                     coercion: CoercionPolicy::Logical,
                     max: None,
                     repeating: None,
-                    default: Some(LiteralValue::Boolean(false)),
+                    default: Some(LiteralValue::Boolean(true)),
                 },
             ]
         });
@@ -763,14 +771,7 @@ impl Function for HLookupFn {
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let approximate = if args.len() >= 4 {
-            match args[3].value()?.into_literal() {
-                LiteralValue::Boolean(b) => b,
-                _ => true,
-            }
-        } else {
-            false
-        };
+        let approximate = range_lookup_is_approximate(args, true)?;
         // Handle both cell references and array literals
         if let Some(table_ref) = table_ref_opt {
             let current_sheet = ctx.current_sheet();
@@ -1227,6 +1228,189 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v, LiteralValue::Number(0.0));
+    }
+
+    #[test]
+    fn lookup_range_lookup_oracle_lo_verified() {
+        // oracle: lo-verified; D1:E3 = {1,"a";2,"b";3,"c"}, lookup 2.5
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(VLookupFn))
+            .with_cell_a1("Sheet1", "D1", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "E1", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "D2", LiteralValue::Int(2))
+            .with_cell_a1("Sheet1", "E2", LiteralValue::Text("b".into()))
+            .with_cell_a1("Sheet1", "D3", LiteralValue::Int(3))
+            .with_cell_a1("Sheet1", "E3", LiteralValue::Text("c".into()))
+            .with_cell_a1("Sheet1", "F1", LiteralValue::Empty)
+            .with_cell_a1("Sheet1", "F2", LiteralValue::Int(99));
+        let ctx = wb.interpreter();
+        let table = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "D1:E3".into(),
+                reference: ReferenceType::range(None, Some(1), Some(4), Some(3), Some(5)),
+            },
+            None,
+        );
+        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
+        let run = |range_lookup: Option<ASTNode>| {
+            let key = lit(LiteralValue::Number(2.5));
+            let col = lit(LiteralValue::Int(2));
+            let mut args = vec![
+                ArgumentHandle::new(&key, &ctx),
+                ArgumentHandle::new(&table, &ctx),
+                ArgumentHandle::new(&col, &ctx),
+            ];
+            if let Some(ref value) = range_lookup {
+                args.push(ArgumentHandle::new(value, &ctx));
+            }
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal()
+        };
+        // oracle: lo-verified - absent defaults to approximate.
+        assert_eq!(run(None), LiteralValue::Text("b".into()));
+        // oracle: lo-verified - explicit TRUE is approximate.
+        assert_eq!(
+            run(Some(lit(LiteralValue::Boolean(true)))),
+            LiteralValue::Text("b".into())
+        );
+        // oracle: lo-verified - explicit FALSE is exact.
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Boolean(false)))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        // oracle: lo-verified - numeric 1 is approximate.
+        assert_eq!(
+            run(Some(lit(LiteralValue::Int(1)))),
+            LiteralValue::Text("b".into())
+        );
+        // oracle: lo-verified - numeric 0 is exact.
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Int(0)))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        // oracle: lo-verified - explicitly omitted is exact.
+        assert!(matches!(
+            run(Some(ASTNode::new(ASTNodeType::Omitted, None))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+
+        // Logical coercion follows the engine convention: TRUE/FALSE text is
+        // accepted, other text is #VALUE!, and a blank reference is FALSE.
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Text("FALSE".into())))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        assert_eq!(
+            run(Some(lit(LiteralValue::Text("TRUE".into())))),
+            LiteralValue::Text("b".into())
+        );
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Text("maybe".into())))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value
+        ));
+        let blank_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "F1".into(),
+                reference: ReferenceType::cell(None, 1, 6),
+            },
+            None,
+        );
+        assert!(matches!(
+            run(Some(blank_ref)),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        let propagated_error = lit(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)));
+        assert!(matches!(
+            run(Some(propagated_error)),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Div
+        ));
+
+        // oracle: lo-verified; H1:J2 is the transposed table.
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(HLookupFn))
+            .with_cell_a1("Sheet1", "H1", LiteralValue::Int(1))
+            .with_cell_a1("Sheet1", "I1", LiteralValue::Int(2))
+            .with_cell_a1("Sheet1", "J1", LiteralValue::Int(3))
+            .with_cell_a1("Sheet1", "H2", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "I2", LiteralValue::Text("b".into()))
+            .with_cell_a1("Sheet1", "J2", LiteralValue::Text("c".into()))
+            .with_cell_a1("Sheet1", "K1", LiteralValue::Empty)
+            .with_cell_a1("Sheet1", "K2", LiteralValue::Int(99));
+        let ctx = wb.interpreter();
+        let table = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "H1:J2".into(),
+                reference: ReferenceType::range(None, Some(1), Some(8), Some(2), Some(10)),
+            },
+            None,
+        );
+        let f = ctx.context.get_function("", "HLOOKUP").unwrap();
+        let run = |range_lookup: Option<ASTNode>| {
+            let key = lit(LiteralValue::Number(2.5));
+            let row = lit(LiteralValue::Int(2));
+            let mut args = vec![
+                ArgumentHandle::new(&key, &ctx),
+                ArgumentHandle::new(&table, &ctx),
+                ArgumentHandle::new(&row, &ctx),
+            ];
+            if let Some(ref value) = range_lookup {
+                args.push(ArgumentHandle::new(value, &ctx));
+            }
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal()
+        };
+        // oracle: lo-verified - HLOOKUP has the same six distinctions.
+        assert_eq!(run(None), LiteralValue::Text("b".into()));
+        assert_eq!(
+            run(Some(lit(LiteralValue::Boolean(true)))),
+            LiteralValue::Text("b".into())
+        );
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Boolean(false)))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        assert_eq!(
+            run(Some(lit(LiteralValue::Int(1)))),
+            LiteralValue::Text("b".into())
+        );
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Int(0)))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        assert!(matches!(
+            run(Some(ASTNode::new(ASTNodeType::Omitted, None))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Text("FALSE".into())))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        assert_eq!(
+            run(Some(lit(LiteralValue::Text("TRUE".into())))),
+            LiteralValue::Text("b".into())
+        );
+        assert!(matches!(
+            run(Some(lit(LiteralValue::Text("maybe".into())))),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value
+        ));
+        let blank_ref = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "K1".into(),
+                reference: ReferenceType::cell(None, 1, 11),
+            },
+            None,
+        );
+        assert!(matches!(
+            run(Some(blank_ref)),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na
+        ));
+        let propagated_error = lit(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)));
+        assert!(matches!(
+            run(Some(propagated_error)),
+            LiteralValue::Error(e) if e.kind == ExcelErrorKind::Div
+        ));
     }
 
     #[test]
