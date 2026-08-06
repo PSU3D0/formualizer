@@ -1,4 +1,4 @@
-use super::super::utils::ARG_ANY_ONE;
+use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -300,7 +300,7 @@ impl Function for ReplaceFn {
 }
 
 fn to_text<'a, 'b>(arg: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    let v = scalar_like_value(arg)?;
+    let v = scalar_text_value(arg)?;
     Ok(match v {
         LiteralValue::Text(s) => s,
         LiteralValue::Empty => String::new(),

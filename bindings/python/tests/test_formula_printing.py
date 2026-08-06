@@ -6,6 +6,21 @@ def test_parse_to_formula_quotes_text():
     assert ast.to_formula() == '=SUMIFS(A:A, B:B, "*Parking*")'
 
 
+def test_parse_projects_omitted_argument_distinctly():
+    ast = fz.parse("=IFERROR(A1,)")
+    assert ast.children()[1].node_type() == "Omitted"
+    assert ast.children()[1].get_literal_value() is None
+    assert ast.to_formula() == "=IFERROR(A1,)"
+
+
+def test_workbook_evaluates_omitted_iferror_fallback_as_zero():
+    wb = fz.Workbook()
+    wb.add_sheet("S")
+    wb.set_formula("S", 1, 1, "=IFERROR(1/0,)")
+    wb.evaluate_all()
+    assert wb.get_value("S", 1, 1) == 0
+
+
 def test_workbook_get_formula_roundtrips_text():
     wb = fz.Workbook()
     wb.add_sheet("S")

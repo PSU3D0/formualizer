@@ -223,22 +223,32 @@ impl Function for IndexFn {
             Ok(r) => r,
             Err(_) => return None,
         };
-        let position = match args[1].value() {
-            Ok(cv) => match cv.into_literal() {
-                LiteralValue::Number(n) => n as i64,
-                LiteralValue::Int(i) => i,
-                _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
-            },
-            Err(e) => return Some(Err(e)),
-        };
-        let explicit_col = if args.len() >= 3 {
-            Some(match args[2].value() {
+        // Defensive: value() currently materializes omitted indexes as Number(0), so these
+        // row/column checks are redundant while documenting whole-row/column intent.
+        let position = if args[1].is_omitted() {
+            0
+        } else {
+            match args[1].value() {
                 Ok(cv) => match cv.into_literal() {
                     LiteralValue::Number(n) => n as i64,
                     LiteralValue::Int(i) => i,
                     _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
                 },
                 Err(e) => return Some(Err(e)),
+            }
+        };
+        let explicit_col = if args.len() >= 3 {
+            Some(if args[2].is_omitted() {
+                0
+            } else {
+                match args[2].value() {
+                    Ok(cv) => match cv.into_literal() {
+                        LiteralValue::Number(n) => n as i64,
+                        LiteralValue::Int(i) => i,
+                        _ => return Some(Err(ExcelError::new(ExcelErrorKind::Value))),
+                    },
+                    Err(e) => return Some(Err(e)),
+                }
             })
         } else {
             None
@@ -359,25 +369,35 @@ impl Function for IndexFn {
                 LiteralValue::Array(rows) => rows,
                 other => vec![vec![other]],
             };
-            let index = match args[1].value()?.into_literal() {
-                LiteralValue::Number(n) => n as i64,
-                LiteralValue::Int(i) => i,
-                _ => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Value),
-                    )));
-                }
-            };
-
-            // Optional explicit column_num (third argument).
-            let explicit_col = if args.len() >= 3 {
-                Some(match args[2].value()?.into_literal() {
+            // Defensive: value() currently materializes omitted indexes as Number(0), so these
+            // row/column checks are redundant while documenting whole-row/column intent.
+            let index = if args[1].is_omitted() {
+                0
+            } else {
+                match args[1].value()?.into_literal() {
                     LiteralValue::Number(n) => n as i64,
                     LiteralValue::Int(i) => i,
                     _ => {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                             ExcelError::new(ExcelErrorKind::Value),
                         )));
+                    }
+                }
+            };
+
+            // Optional explicit column_num (third argument).
+            let explicit_col = if args.len() >= 3 {
+                Some(if args[2].is_omitted() {
+                    0
+                } else {
+                    match args[2].value()?.into_literal() {
+                        LiteralValue::Number(n) => n as i64,
+                        LiteralValue::Int(i) => i,
+                        _ => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                ExcelError::new(ExcelErrorKind::Value),
+                            )));
+                        }
                     }
                 })
             } else {
@@ -582,7 +602,7 @@ impl Function for OffsetFn {
 
         let nsr = (sr as i64) + dr;
         let nsc = (sc as i64) + dc;
-        let height = if args.len() >= 4 {
+        let height = if args.len() >= 4 && !args[3].is_omitted() {
             match args[3].value() {
                 Ok(cv) => match cv.into_literal() {
                     LiteralValue::Number(n) => n as i64,
@@ -594,7 +614,7 @@ impl Function for OffsetFn {
         } else {
             (er as i64) - (sr as i64) + 1
         };
-        let width = if args.len() >= 5 {
+        let width = if args.len() >= 5 && !args[4].is_omitted() {
             match args[4].value() {
                 Ok(cv) => match cv.into_literal() {
                     LiteralValue::Number(n) => n as i64,

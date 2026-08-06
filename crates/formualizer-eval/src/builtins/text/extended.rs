@@ -1,6 +1,9 @@
 //! Extended text functions: CLEAN, UNICHAR, UNICODE, TEXTBEFORE, TEXTAFTER, TEXTSPLIT, DOLLAR, FIXED
 
-use super::super::utils::{ARG_ANY_ONE, coerce_num};
+use super::{
+    super::utils::{ARG_ANY_ONE, coerce_num},
+    scalar_text_value,
+};
 use crate::args::{ArgSchema, ShapeKind};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
@@ -99,7 +102,7 @@ impl Function for CleanFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let v = scalar_like_value(&args[0])?;
+        let v = scalar_text_value(&args[0])?;
         let text = match v {
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             other => coerce_text(&other),
@@ -261,7 +264,7 @@ impl Function for UnicodeFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let v = scalar_like_value(&args[0])?;
+        let v = scalar_text_value(&args[0])?;
         let text = match v {
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             other => coerce_text(&other),
@@ -378,13 +381,13 @@ impl Function for TextBeforeFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let v1 = scalar_like_value(&args[0])?;
+        let v1 = scalar_text_value(&args[0])?;
         let text = match v1 {
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             other => coerce_text(&other),
         };
 
-        let v2 = scalar_like_value(&args[1])?;
+        let v2 = scalar_text_value(&args[1])?;
         let delimiter = match v2 {
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             other => coerce_text(&other),
@@ -509,13 +512,13 @@ impl Function for TextAfterFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let v1 = scalar_like_value(&args[0])?;
+        let v1 = scalar_text_value(&args[0])?;
         let text = match v1 {
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             other => coerce_text(&other),
         };
 
-        let v2 = scalar_like_value(&args[1])?;
+        let v2 = scalar_text_value(&args[1])?;
         let delimiter = match v2 {
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             other => coerce_text(&other),

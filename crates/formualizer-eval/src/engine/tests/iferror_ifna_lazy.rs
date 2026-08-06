@@ -53,6 +53,15 @@ fn ifna_catches_only_na() {
 }
 
 #[test]
+fn iferror_distinguishes_omitted_fallback_from_empty_text() {
+    assert_eq!(eval_formula("=IFERROR(1/0,)"), LiteralValue::Number(0.0));
+    assert_eq!(
+        eval_formula("=IFERROR(1/0,\"\")"),
+        LiteralValue::Text(String::new())
+    );
+}
+
+#[test]
 fn iferror_text_and_number_passthrough() {
     assert_eq!(
         eval_formula("=IFERROR(\"ok\",\"fb\")"),

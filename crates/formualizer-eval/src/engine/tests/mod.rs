@@ -140,6 +140,7 @@ mod indirect;
 mod info_reference_context;
 mod let_lambda;
 mod offset_dynamic;
+mod omitted_arguments;
 mod open_ended_bounds_caps;
 mod overlay_compaction;
 mod region_lock;

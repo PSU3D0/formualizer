@@ -126,6 +126,20 @@ fn pretty_child(
     }
 }
 
+fn pretty_print_arguments(args: &[ASTNode]) -> String {
+    let mut rendered = String::new();
+    for (index, arg) in args.iter().enumerate() {
+        if index > 0 {
+            rendered.push(',');
+            if !matches!(arg.node_type, ASTNodeType::Omitted) {
+                rendered.push(' ');
+            }
+        }
+        rendered.push_str(&pretty_print_node(arg));
+    }
+    rendered
+}
+
 fn pretty_print_node(ast: &ASTNode) -> String {
     match &ast.node_type {
         ASTNodeType::Literal(value) => match value {
@@ -136,6 +150,7 @@ fn pretty_print_node(ast: &ASTNode) -> String {
             }
             _ => format!("{value}"),
         },
+        ASTNodeType::Omitted => String::new(),
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
             let inner = pretty_print_node(expr);
@@ -166,12 +181,7 @@ fn pretty_print_node(ast: &ASTNode) -> String {
             }
         }
         ASTNodeType::Function { name, args } => {
-            let args_str = args
-                .iter()
-                .map(pretty_print_node)
-                .collect::<Vec<String>>()
-                .join(", ");
-
+            let args_str = pretty_print_arguments(args);
             format!("{}({})", name.to_uppercase(), args_str)
         }
         ASTNodeType::Call { callee, args } => {
@@ -183,11 +193,7 @@ fn pretty_print_node(ast: &ASTNode) -> String {
                 ASTNodeType::Function { .. } | ASTNodeType::Call { .. } => callee_str,
                 _ => format!("({callee_str})"),
             };
-            let args_str = args
-                .iter()
-                .map(pretty_print_node)
-                .collect::<Vec<String>>()
-                .join(", ");
+            let args_str = pretty_print_arguments(args);
             format!("{callee_rendered}({args_str})")
         }
         ASTNodeType::Array(rows) => {

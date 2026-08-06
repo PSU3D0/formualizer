@@ -1,4 +1,4 @@
-use super::super::utils::ARG_ANY_ONE;
+use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
 use crate::args::{ArgSchema, ShapeKind};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext, ResolvedArgument};
@@ -36,7 +36,7 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 }
 
 fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    literal_to_text(&scalar_like_value(a)?)
+    literal_to_text(&scalar_text_value(a)?)
 }
 
 fn literal_to_text(v: &LiteralValue) -> Result<String, ExcelError> {
@@ -65,7 +65,7 @@ fn literal_to_text(v: &LiteralValue) -> Result<String, ExcelError> {
 }
 
 fn legacy_scalar_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
-    Ok(match arg.value()? {
+    Ok(match arg.value_for_text()? {
         crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)) => rows
             .first()
             .and_then(|row| row.first())
@@ -99,7 +99,7 @@ fn for_each_expanded_value(
     arg: &ArgumentHandle<'_, '_>,
     visitor: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
-    match arg.resolve_once()? {
+    match arg.resolve_once_for_text()? {
         ResolvedArgument::Range(view) | ResolvedArgument::Value(CalcValue::Range(view)) => {
             view.for_each_cell(visitor)
         }

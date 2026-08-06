@@ -720,7 +720,7 @@ impl SummaryAnalyzer {
         in_function_arg: bool,
     ) -> bool {
         match expr {
-            CanonicalExpr::Literal(_) => matches!(
+            CanonicalExpr::Literal(_) | CanonicalExpr::Omitted => matches!(
                 context,
                 AnalyzerContext::Value | AnalyzerContext::CriteriaExpressionArg
             ),

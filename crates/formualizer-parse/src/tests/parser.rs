@@ -557,32 +557,31 @@ mod tests {
             panic!("Expected Function node");
         }
 
-        // Test with multiple optional arguments - some specified, some not
+        // Explicitly omitted arguments remain distinct from explicit empty text.
         let ast = parse_formula("=IFERROR(A1/B1,)").unwrap();
         if let ASTNodeType::Function { name, args } = &ast.node_type {
             assert_eq!(name, "IFERROR");
             assert_eq!(args.len(), 2);
-            // Second argument should be an empty string
-            if let ASTNodeType::Literal(LiteralValue::Text(text)) = &args[1].node_type {
-                assert_eq!(text, "");
-            } else {
-                panic!("Expected empty text literal for omitted argument");
-            }
+            assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
         } else {
             panic!("Expected Function node");
         }
+
+        let ast = parse_formula("=IFERROR(A1/B1,\"\")").unwrap();
+        let ASTNodeType::Function { args, .. } = &ast.node_type else {
+            panic!("Expected Function node");
+        };
+        assert!(matches!(
+            &args[1].node_type,
+            ASTNodeType::Literal(LiteralValue::Text(text)) if text.is_empty()
+        ));
 
         // Test skipping middle arguments
         let ast = parse_formula("=IF(A1>0,,C1)").unwrap();
         if let ASTNodeType::Function { name, args } = ast.node_type {
             assert_eq!(name, "IF");
             assert_eq!(args.len(), 3);
-            // Middle argument should be empty
-            if let ASTNodeType::Literal(LiteralValue::Text(text)) = &args[1].node_type {
-                assert_eq!(text, "");
-            } else {
-                panic!("Expected empty text literal for omitted middle argument");
-            }
+            assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
         } else {
             panic!("Expected Function node");
         }
@@ -592,17 +591,8 @@ mod tests {
         if let ASTNodeType::Function { name, args } = ast.node_type {
             assert_eq!(name, "IF");
             assert_eq!(args.len(), 3);
-            // Both optional arguments should be empty
-            if let ASTNodeType::Literal(LiteralValue::Text(text)) = &args[1].node_type {
-                assert_eq!(text, "");
-            } else {
-                panic!("Expected empty text literal for second argument");
-            }
-            if let ASTNodeType::Literal(LiteralValue::Text(text)) = &args[2].node_type {
-                assert_eq!(text, "");
-            } else {
-                panic!("Expected empty text literal for third argument");
-            }
+            assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
+            assert!(matches!(args[2].node_type, ASTNodeType::Omitted));
         } else {
             panic!("Expected Function node");
         }
@@ -612,20 +602,55 @@ mod tests {
         if let ASTNodeType::Function { name, args } = ast.node_type {
             assert_eq!(name, "CHOOSE");
             assert_eq!(args.len(), 6);
-            // Check the empty arguments (3rd and 5th)
-            if let ASTNodeType::Literal(LiteralValue::Text(text)) = &args[2].node_type {
-                assert_eq!(text, "");
-            } else {
-                panic!("Expected empty text literal for third argument");
-            }
-            if let ASTNodeType::Literal(LiteralValue::Text(text)) = &args[4].node_type {
-                assert_eq!(text, "");
-            } else {
-                panic!("Expected empty text literal for fifth argument");
-            }
+            assert!(matches!(args[2].node_type, ASTNodeType::Omitted));
+            assert!(matches!(args[4].node_type, ASTNodeType::Omitted));
         } else {
             panic!("Expected Function node");
         }
+    }
+
+    #[test]
+    fn test_omitted_argument_shapes_round_trip_and_fingerprint() {
+        for (formula, omitted_positions) in [
+            ("=IF(TRUE,,5)", vec![1]),
+            ("=SUM(1,)", vec![1]),
+            ("=SUM(1,,)", vec![1, 2]),
+            ("=SUM(1, )", vec![1]),
+        ] {
+            let ast = parse_formula(formula).unwrap();
+            let ASTNodeType::Function { args, .. } = &ast.node_type else {
+                panic!("Expected Function node for {formula}");
+            };
+            for position in omitted_positions {
+                assert!(
+                    matches!(args[position].node_type, ASTNodeType::Omitted),
+                    "argument {position} was not omitted in {formula}"
+                );
+            }
+        }
+
+        let nested = parse_formula("=IF(TRUE,IFERROR(1/0,),2)").unwrap();
+        let rendered = crate::pretty::canonical_formula(&nested);
+        assert_eq!(rendered, "=IF(true, IFERROR(1 / 0,), 2)");
+        assert_eq!(
+            parse_formula(&rendered).unwrap().fingerprint(),
+            nested.fingerprint()
+        );
+
+        let omitted = parse_formula("=IFERROR(A1,)").unwrap();
+        let empty_text = parse_formula("=IFERROR(A1,\"\")").unwrap();
+        assert_ne!(omitted.fingerprint(), empty_text.fingerprint());
+        assert_ne!(
+            crate::pretty::canonical_formula(&omitted),
+            crate::pretty::canonical_formula(&empty_text)
+        );
+
+        let call = parse_formula("=LAMBDA(x,y,x)(1,)").unwrap();
+        let ASTNodeType::Call { args, .. } = call.node_type else {
+            panic!("Expected immediate call node");
+        };
+        assert_eq!(args.len(), 2);
+        assert!(matches!(args[1].node_type, ASTNodeType::Omitted));
     }
 
     #[test]

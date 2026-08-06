@@ -35,6 +35,10 @@ pub enum ASTNodeData {
         #[serde(flatten)]
         source: NodeSourceData,
     },
+    Omitted {
+        #[serde(flatten)]
+        source: NodeSourceData,
+    },
     Reference {
         reference: ReferenceData,
         #[serde(flatten)]
@@ -211,6 +215,7 @@ impl ASTNodeData {
                     source,
                 },
             },
+            ASTNodeType::Omitted => ASTNodeData::Omitted { source },
             ASTNodeType::Reference {
                 original,
                 reference,
@@ -345,6 +350,7 @@ impl ASTNode {
             ASTNodeData::Number { .. } => "number".to_string(),
             ASTNodeData::Text { .. } => "text".to_string(),
             ASTNodeData::Boolean { .. } => "boolean".to_string(),
+            ASTNodeData::Omitted { .. } => "omitted".to_string(),
             ASTNodeData::Reference { .. } => "reference".to_string(),
             ASTNodeData::Function { .. } => "function".to_string(),
             ASTNodeData::BinaryOp { .. } => "binaryOp".to_string(),

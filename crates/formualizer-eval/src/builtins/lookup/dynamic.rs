@@ -628,10 +628,15 @@ impl Function for XMatchFn {
         }
 
         let match_mode = if args.len() >= 3 {
-            match args[2].value()?.into_literal() {
-                LiteralValue::Int(i) => i,
-                LiteralValue::Number(n) => n as i64,
-                _ => 0,
+            // Defensive: value() currently materializes omission as Number(0), so this is redundant.
+            if args[2].is_omitted() {
+                0
+            } else {
+                match args[2].value()?.into_literal() {
+                    LiteralValue::Int(i) => i,
+                    LiteralValue::Number(n) => n as i64,
+                    _ => 0,
+                }
             }
         } else {
             0

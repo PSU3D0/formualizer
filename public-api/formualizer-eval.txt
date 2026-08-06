@@ -346,6 +346,7 @@ pub formualizer_eval::engine::arena::ast::AstNodeData::Function::args_count: u16
 pub formualizer_eval::engine::arena::ast::AstNodeData::Function::args_offset: u32
 pub formualizer_eval::engine::arena::ast::AstNodeData::Function::name_id: formualizer_eval::engine::arena::string_interner::StringId
 pub formualizer_eval::engine::arena::ast::AstNodeData::Literal(formualizer_eval::engine::arena::value_ref::ValueRef)
+pub formualizer_eval::engine::arena::ast::AstNodeData::Omitted
 pub formualizer_eval::engine::arena::ast::AstNodeData::Reference
 pub formualizer_eval::engine::arena::ast::AstNodeData::Reference::original_id: formualizer_eval::engine::arena::string_interner::StringId
 pub formualizer_eval::engine::arena::ast::AstNodeData::Reference::ref_type: formualizer_eval::engine::arena::ast::CompactRefType
@@ -733,6 +734,7 @@ pub formualizer_eval::engine::arena::AstNodeData::Function::args_count: u16
 pub formualizer_eval::engine::arena::AstNodeData::Function::args_offset: u32
 pub formualizer_eval::engine::arena::AstNodeData::Function::name_id: formualizer_eval::engine::arena::string_interner::StringId
 pub formualizer_eval::engine::arena::AstNodeData::Literal(formualizer_eval::engine::arena::value_ref::ValueRef)
+pub formualizer_eval::engine::arena::AstNodeData::Omitted
 pub formualizer_eval::engine::arena::AstNodeData::Reference
 pub formualizer_eval::engine::arena::AstNodeData::Reference::original_id: formualizer_eval::engine::arena::string_interner::StringId
 pub formualizer_eval::engine::arena::AstNodeData::Reference::ref_type: formualizer_eval::engine::arena::ast::CompactRefType
@@ -8547,6 +8549,7 @@ pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::as_reference_or_eval(&s
 pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::ast(&self) -> &formualizer_parse::parser::ASTNode
 pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::current_env(&self) -> formualizer_eval::interpreter::LocalEnv
 pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::inline_array_literal(&self) -> core::result::Result<core::option::Option<alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::is_omitted(&self) -> bool
 pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::lazy_values_owned(&'a self) -> core::result::Result<alloc::boxed::Box<(dyn core::iter::traits::iterator::Iterator<Item = formualizer_common::value::LiteralValue> + 'a)>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::matches_kind(&self, formualizer_common::function::ArgKind) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::ArgumentHandle<'a, 'b>::range(&self) -> core::result::Result<alloc::boxed::Box<dyn formualizer_eval::traits::Range>, formualizer_common::error::ExcelError>

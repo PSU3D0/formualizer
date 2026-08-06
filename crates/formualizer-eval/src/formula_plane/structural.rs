@@ -26,6 +26,7 @@ pub fn relocate_ast_for_template_placement(
 ) -> Result<ASTNode, ExcelError> {
     let node_type = match &ast.node_type {
         ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
+        ASTNodeType::Omitted => ASTNodeType::Omitted,
         ASTNodeType::Reference {
             original,
             reference,

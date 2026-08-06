@@ -1,6 +1,9 @@
 //! CHAR, CODE, REPT text functions
 
-use super::super::utils::{ARG_ANY_ONE, ARG_ANY_TWO, coerce_num};
+use super::{
+    super::utils::{ARG_ANY_ONE, ARG_ANY_TWO, coerce_num},
+    scalar_text_value,
+};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
@@ -199,7 +202,7 @@ impl Function for CodeFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let v = scalar_like_value(&args[0])?;
+        let v = scalar_text_value(&args[0])?;
         let s = match v {
             LiteralValue::Text(t) => t,
             LiteralValue::Empty => {
@@ -330,7 +333,7 @@ impl Function for AscFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = scalar_like_value(&args[0])?;
+        let v = scalar_text_value(&args[0])?;
         let s = match v {
             LiteralValue::Text(t) => t,
             LiteralValue::Empty => String::new(),
@@ -401,7 +404,7 @@ impl Function for ReptFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let text_val = scalar_like_value(&args[0])?;
+        let text_val = scalar_text_value(&args[0])?;
         let count_val = scalar_like_value(&args[1])?;
 
         let text = match text_val {

@@ -6754,7 +6754,7 @@ where
                     Self::collect_planning_function_requests(cell, requests);
                 }
             }
-            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => {}
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted | ASTNodeType::Reference { .. } => {}
         }
     }
 
@@ -9385,7 +9385,7 @@ where
                     | ReferenceType::Range3D { .. },
                 ..
             } => Some(crate::engine::OpaqueReason::UnresolvedCrossSheetBinding),
-            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => None,
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted | ASTNodeType::Reference { .. } => None,
         }
     }
 
@@ -9544,7 +9544,8 @@ where
                         | ReferenceType::Range { sheet: None, .. },
                     ..
                 }
-                | ASTNodeType::Literal(_) => (true, false),
+                | ASTNodeType::Literal(_)
+                | ASTNodeType::Omitted => (true, false),
                 ASTNodeType::Call { .. } | ASTNodeType::Reference { .. } => (false, false),
             }
         }
@@ -12285,7 +12286,7 @@ where
                 Self::ast_contains_function(left) || Self::ast_contains_function(right)
             }
             ASTNodeType::Array(rows) => rows.iter().flatten().any(Self::ast_contains_function),
-            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => false,
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted | ASTNodeType::Reference { .. } => false,
         }
     }
 
@@ -12696,6 +12697,7 @@ where
                         ASTNodeType::Literal(value)
                     }
                     ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
+                    ASTNodeType::Omitted => ASTNodeType::Omitted,
                     ASTNodeType::Reference {
                         original,
                         reference,
@@ -14075,6 +14077,7 @@ where
                         ASTNodeType::Literal(value)
                     }
                     ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
+                    ASTNodeType::Omitted => ASTNodeType::Omitted,
                     ASTNodeType::Reference {
                         original,
                         reference,

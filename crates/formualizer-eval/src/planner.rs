@@ -146,7 +146,7 @@ impl<'a> Planner<'a> {
 
         // Basic structure & cost estimation (very rough)
         let (cost, has_range, dims, fanout) = match &ast.node_type {
-            Literal(_) => (
+            Literal(_) | Omitted => (
                 NodeCost {
                     est_nanos: 50,
                     cells: 0,

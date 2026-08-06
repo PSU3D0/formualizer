@@ -104,6 +104,7 @@ impl PyASTNode {
     fn node_type(&self) -> String {
         match &self.inner.node_type {
             ASTNodeType::Literal(_) => "Literal".to_string(),
+            ASTNodeType::Omitted => "Omitted".to_string(),
             ASTNodeType::Reference { .. } => "Reference".to_string(),
             ASTNodeType::UnaryOp { .. } => "UnaryOp".to_string(),
             ASTNodeType::BinaryOp { .. } => "BinaryOp".to_string(),
@@ -184,6 +185,7 @@ impl PyASTNode {
                     self.format_literal_value(value)
                 )
             }
+            ASTNodeType::Omitted => format!("{indent_str}Omitted"),
             ASTNodeType::Reference { original, .. } => {
                 format!("{indent_str}Reference({original})")
             }
@@ -307,6 +309,7 @@ impl PyASTNode {
                 dict.set_item("value", self.literal_value_to_py(py, value))
                     .unwrap();
             }
+            ASTNodeType::Omitted => {}
             ASTNodeType::Reference { original, .. } => {
                 dict.set_item("reference", original).unwrap();
             }

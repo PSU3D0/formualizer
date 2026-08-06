@@ -4,6 +4,19 @@
 //! CHAR, CODE, REPT, CLEAN, UNICHAR, UNICODE, TEXTBEFORE, TEXTAFTER, DOLLAR, FIXED
 //! TEXTSPLIT, VALUETOTEXT, ARRAYTOTEXT (array text functions)
 
+use crate::traits::{ArgumentHandle, CalcValue};
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+
+fn scalar_text_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    Ok(match arg.value_for_text()? {
+        CalcValue::Scalar(value) => value,
+        CalcValue::Range(view) => view.get_cell(0, 0),
+        CalcValue::Callable(_) => LiteralValue::Error(
+            ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
+        ),
+    })
+}
+
 mod array_text; // TEXTSPLIT, VALUETOTEXT, ARRAYTOTEXT
 mod byte; // FINDB, LEFTB, LENB, MIDB, REPLACEB, RIGHTB, SEARCHB
 mod char_code_rept; // CHAR, CODE, REPT

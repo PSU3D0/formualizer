@@ -43,6 +43,9 @@ pub enum AstNodeData {
     /// Literal value
     Literal(ValueRef),
 
+    /// Explicitly omitted function argument.
+    Omitted,
+
     /// Cell or range reference
     Reference {
         original_id: StringId,    // Original reference string
@@ -312,6 +315,11 @@ impl AstArena {
     /// Insert a literal node
     pub fn insert_literal(&mut self, value: ValueRef) -> AstNodeId {
         self.insert(AstNodeData::Literal(value))
+    }
+
+    /// Insert an explicitly omitted argument node.
+    pub(crate) fn insert_omitted(&mut self) -> AstNodeId {
+        self.insert(AstNodeData::Omitted)
     }
 
     /// Insert a reference node

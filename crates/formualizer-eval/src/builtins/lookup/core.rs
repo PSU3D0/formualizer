@@ -183,19 +183,24 @@ impl Function for MatchFn {
         }
         let mut match_type = 1.0; // default
         if args.len() >= 3 {
-            let mt_val = args[2].value()?.into_literal();
-            if let LiteralValue::Error(e) = mt_val {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-            }
-            match mt_val {
-                LiteralValue::Number(n) => match_type = n,
-                LiteralValue::Int(i) => match_type = i as f64,
-                LiteralValue::Text(s) => {
-                    if let Ok(n) = s.parse::<f64>() {
-                        match_type = n;
-                    }
+            // Defensive: value() currently materializes omission as Number(0), so this is redundant.
+            if args[2].is_omitted() {
+                match_type = 0.0;
+            } else {
+                let mt_val = args[2].value()?.into_literal();
+                if let LiteralValue::Error(e) = mt_val {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                 }
-                _ => {}
+                match mt_val {
+                    LiteralValue::Number(n) => match_type = n,
+                    LiteralValue::Int(i) => match_type = i as f64,
+                    LiteralValue::Text(s) => {
+                        if let Ok(n) = s.parse::<f64>() {
+                            match_type = n;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         let mt = if match_type > 0.0 {

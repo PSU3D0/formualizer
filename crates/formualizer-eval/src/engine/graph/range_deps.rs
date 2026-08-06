@@ -292,7 +292,9 @@ impl DependencyGraph {
                             kind.merge(visit(graph, item, dependent, range_sheet, range, None))
                         })
                 }
-                ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => RangeSelfUse::NoMatch,
+                ASTNodeType::Literal(_) | ASTNodeType::Omitted | ASTNodeType::Reference { .. } => {
+                    RangeSelfUse::NoMatch
+                }
             }
         }
 

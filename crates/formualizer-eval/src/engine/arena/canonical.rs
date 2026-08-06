@@ -39,6 +39,7 @@ const KIND_UNARY: u8 = 3;
 const KIND_BINARY: u8 = 4;
 const KIND_FUNCTION: u8 = 5;
 const KIND_ARRAY: u8 = 6;
+const KIND_OMITTED: u8 = 7;
 
 const REF_CELL: u8 = 1;
 const REF_RANGE: u8 = 2;
@@ -81,6 +82,7 @@ pub(crate) fn compute_node_metadata(
             hasher.mix_u8(KIND_LITERAL);
             hasher.mix_u32(value.as_raw());
         }
+        AstNodeData::Omitted => hasher.mix_u8(KIND_OMITTED),
         AstNodeData::Reference {
             original_id,
             ref_type,

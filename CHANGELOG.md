@@ -8,6 +8,7 @@ All notable changes to Formualizer will be documented in this file.
 
 #### Parser/SDK 3.0 preparation
 
+- `ASTNodeType` adds the `Omitted` variant for explicitly omitted function-argument slots. Exhaustive Rust matches and AST projections must handle the new node; it remains distinct from empty text and blank-cell values. (#277)
 - `formualizer-common` and `formualizer-parse` now share version 3.0.0. The major records the removal of the four 2.0 token-vector/classifier `Parser` constructors in favor of source strings, `TokenStream`, and `ParserBuilder`; the deleted token-vector parser is not restored. See `docs/parser-sdk-3-migration.md`. (#257)
 - Reported error/outcome vocabularies (`ExcelErrorKind`, resource and staleness reasons, `ExcelErrorExtra`, common coordinate/address/value errors, `RecoveryAction`, and `ParsingError`) are now non-exhaustive. Downstream output mappings use deliberate future fallbacks, while caller-supplied/core enums remain exhaustive. Serde unknown variants remain a separate wire-compatibility concern. (#257)
 - Restored the inexpensive legacy `formualizer_common::value::{datetime_to_serial, serial_to_datetime}` paths as forwarding reexports; the root and `date_serial` paths remain available. (#257)
@@ -50,6 +51,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Explicitly omitted function arguments now retain their syntax through parsing and canonical rendering, coerce as Excel empty arguments (`0`, `FALSE`, or empty text by context), and count as numeric zero in aggregates without changing absent optional defaults or blank-reference behavior. (#277)
+- `TEXT` with an empty format string (explicit `""` or an omitted second argument) now returns empty text, matching Excel and LibreOffice; it previously rendered the value as if unformatted. (#277)
 - Restored the released `formualizer_eval::builtins::datetime` conversion helpers and sparse-sheet constructor compatibility paths, including explicit 1904 date-system handling. The eval decode wrappers retain released 0.7.1 component-clamping and negative-fraction behavior; as an intentional safety deviation, infinities and chrono date/duration overflow now return typed `#NUM!` instead of panicking. (#259)
 
 - CFFI targeted cell evaluation now reports both the targeted graph-preparation error and the distinct full-graph fallback error when both preparation attempts fail.

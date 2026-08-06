@@ -305,27 +305,76 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// Returns whether this handle represents an explicitly omitted argument slot.
+    ///
+    /// This is false for absent arguments, explicit empty text, and blank references.
+    pub fn is_omitted(&self) -> bool {
+        match &self.expr {
+            ArgumentExpr::Ast(node) => matches!(node.node_type, ASTNodeType::Omitted),
+            ArgumentExpr::Arena { id, data_store, .. } => matches!(
+                data_store.get_node(*id),
+                Some(crate::engine::arena::AstNodeData::Omitted)
+            ),
+        }
+    }
+
     pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         self.cached_value
             .get_or_init(|| self.compute_value())
             .clone()
     }
 
+    /// Resolves a scalar that is about to be coerced to text.
+    ///
+    /// Omitted arguments materialize as numeric zero through `value()`, which is
+    /// correct for Any/numeric consumers and aggregates. Text consumers must use
+    /// this boundary so omission becomes empty text without changing explicit 0.
+    pub(crate) fn value_for_text(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if self.is_omitted() {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                String::new(),
+            )))
+        } else {
+            self.value()
+        }
+    }
+
+    pub(crate) fn resolve_once_for_text(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
+        if self.is_omitted() {
+            Ok(ResolvedArgument::Value(crate::traits::CalcValue::Scalar(
+                LiteralValue::Text(String::new()),
+            )))
+        } else {
+            self.resolve_once()
+        }
+    }
+
     fn compute_value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         match &self.expr {
-            ArgumentExpr::Ast(node) => {
-                if let ASTNodeType::Literal(ref v) = node.node_type {
-                    return Ok(crate::traits::CalcValue::Scalar(v.clone()));
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
+                // With no schema-level text policy, Number(0) is the neutral Any-policy
+                // materialization. Text consumers resolve through `value_for_text`.
+                ASTNodeType::Omitted => {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
                 }
-                self.interp.evaluate_ast(node)
-            }
+                _ => self.interp.evaluate_ast(node),
+            },
             ArgumentExpr::Arena {
                 id,
                 data_store,
                 sheet_registry,
-            } => self
-                .interp
-                .evaluate_arena_ast(*id, data_store, sheet_registry),
+            } => {
+                if matches!(
+                    data_store.get_node(*id),
+                    Some(crate::engine::arena::AstNodeData::Omitted)
+                ) {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
+                } else {
+                    self.interp
+                        .evaluate_arena_ast(*id, data_store, sheet_registry)
+                }
+            }
         }
     }
 
@@ -335,17 +384,27 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let scoped = self.interp.with_local_env(env);
         match &self.expr {
-            ArgumentExpr::Ast(node) => {
-                if let ASTNodeType::Literal(ref v) = node.node_type {
-                    return Ok(crate::traits::CalcValue::Scalar(v.clone()));
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
+                ASTNodeType::Omitted => {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
                 }
-                scoped.evaluate_ast(node)
-            }
+                _ => scoped.evaluate_ast(node),
+            },
             ArgumentExpr::Arena {
                 id,
                 data_store,
                 sheet_registry,
-            } => scoped.evaluate_arena_ast(*id, data_store, sheet_registry),
+            } => {
+                if matches!(
+                    data_store.get_node(*id),
+                    Some(crate::engine::arena::AstNodeData::Omitted)
+                ) {
+                    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
+                } else {
+                    scoped.evaluate_arena_ast(*id, data_store, sheet_registry)
+                }
+            }
         }
     }
 
