@@ -136,6 +136,7 @@ fn pretty_print_node(ast: &ASTNode) -> String {
             }
             _ => format!("{value}"),
         },
+        ASTNodeType::Omitted => String::new(),
         ASTNodeType::Reference { reference, .. } => reference.normalise(),
         ASTNodeType::UnaryOp { op, expr } => {
             let inner = pretty_print_node(expr);

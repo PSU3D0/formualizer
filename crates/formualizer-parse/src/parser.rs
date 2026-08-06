@@ -1677,6 +1677,11 @@ impl ReferenceType {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ASTNodeType {
     Literal(LiteralValue),
+    /// An explicitly omitted function argument slot.
+    ///
+    /// This node is only valid as a direct argument of a [`Function`](Self::Function)
+    /// or [`Call`](Self::Call) node.
+    Omitted,
     Reference {
         original: String, // Original reference string (preserved for display/debugging)
         reference: ReferenceType, // Parsed reference
@@ -1707,6 +1712,7 @@ impl Display for ASTNodeType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ASTNodeType::Literal(value) => write!(f, "Literal({value})"),
+            ASTNodeType::Omitted => write!(f, "Omitted"),
             ASTNodeType::Reference { reference, .. } => write!(f, "Reference({reference:?})"),
             ASTNodeType::UnaryOp { op, expr } => write!(f, "UnaryOp({op}, {expr})"),
             ASTNodeType::BinaryOp { op, left, right } => {
@@ -1776,6 +1782,7 @@ impl ASTNode {
                 hasher.write(&[1]); // Discriminant for Literal
                 value.hash(hasher);
             }
+            ASTNodeType::Omitted => hasher.write(&[8]),
             ASTNodeType::Reference { reference, .. } => {
                 hasher.write(&[2]); // Discriminant for Reference
                 reference.hash(hasher);
@@ -1908,7 +1915,7 @@ impl ASTNode {
                         }
                     }
                 }
-                ASTNodeType::Literal(_) => {}
+                ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
             }
         }
     }
@@ -2290,7 +2297,7 @@ impl<'a> Iterator for RefIter<'a> {
                         }
                     }
                 }
-                ASTNodeType::Literal(_) => {}
+                ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
             }
         }
         None
@@ -2811,7 +2818,8 @@ impl Parser {
 
         self.in_call_args_depth += 1;
         let result = (|| -> Result<Vec<ASTNode>, ParserError> {
-            args.push(self.parse_expression()?);
+            let mut expecting_argument = true;
+            let mut saw_argument = false;
             loop {
                 self.skip_whitespace();
                 if self.position >= self.tokens.len() {
@@ -2820,16 +2828,35 @@ impl Parser {
                         position: Some(self.position),
                     });
                 }
+
                 let token = &self.tokens[self.position];
                 let is_separator = (token.token_type == TokenType::Sep
                     && token.subtype == TokenSubType::Arg)
                     || (token.token_type == TokenType::OpInfix && self.span_value(token) == ",");
-                if is_separator {
+                let is_close =
+                    token.token_type == TokenType::Paren && token.subtype == TokenSubType::Close;
+
+                if expecting_argument {
+                    if is_close {
+                        if saw_argument {
+                            args.push(ASTNode::new(ASTNodeType::Omitted, None));
+                        }
+                        self.position += 1;
+                        return Ok(std::mem::take(&mut args));
+                    }
+                    if is_separator {
+                        args.push(ASTNode::new(ASTNodeType::Omitted, None));
+                        saw_argument = true;
+                        self.position += 1;
+                    } else {
+                        args.push(self.parse_expression()?);
+                        saw_argument = true;
+                        expecting_argument = false;
+                    }
+                } else if is_separator {
                     self.position += 1;
-                    args.push(self.parse_expression()?);
-                } else if token.token_type == TokenType::Paren
-                    && token.subtype == TokenSubType::Close
-                {
+                    expecting_argument = true;
+                } else if is_close {
                     self.position += 1;
                     return Ok(std::mem::take(&mut args));
                 } else {
@@ -2856,59 +2883,46 @@ impl Parser {
             return Ok(args);
         }
 
-        self.skip_whitespace();
-        if self.position < self.tokens.len()
-            && self.tokens[self.position].token_type == TokenType::Sep
-            && self.tokens[self.position].subtype == TokenSubType::Arg
-        {
-            args.push(ASTNode::new(
-                ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                None,
-            ));
-        } else {
-            args.push(self.parse_expression()?);
-        }
-
-        while self.position < self.tokens.len() {
+        let mut expecting_argument = true;
+        let mut saw_argument = false;
+        loop {
             self.skip_whitespace();
             if self.position >= self.tokens.len() {
-                break;
+                return Err(ParserError {
+                    message: "Unterminated function argument list".to_string(),
+                    position: Some(self.position),
+                });
             }
 
             let token = &self.tokens[self.position];
-            if token.token_type == TokenType::Sep && token.subtype == TokenSubType::Arg {
-                self.position += 1;
-                self.skip_whitespace();
-                if self.position < self.tokens.len() {
-                    let next_token = &self.tokens[self.position];
-                    if next_token.token_type == TokenType::Sep
-                        && next_token.subtype == TokenSubType::Arg
-                    {
-                        args.push(ASTNode::new(
-                            ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                            None,
-                        ));
-                    } else if next_token.token_type == TokenType::Func
-                        && next_token.subtype == TokenSubType::Close
-                    {
-                        args.push(ASTNode::new(
-                            ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                            None,
-                        ));
-                        self.position += 1;
-                        break;
-                    } else {
-                        args.push(self.parse_expression()?);
+            let is_separator =
+                token.token_type == TokenType::Sep && token.subtype == TokenSubType::Arg;
+            let is_close =
+                token.token_type == TokenType::Func && token.subtype == TokenSubType::Close;
+
+            if expecting_argument {
+                if is_close {
+                    if saw_argument {
+                        args.push(ASTNode::new(ASTNodeType::Omitted, None));
                     }
-                } else {
-                    args.push(ASTNode::new(
-                        ASTNodeType::Literal(LiteralValue::Text("".to_string())),
-                        None,
-                    ));
+                    self.position += 1;
+                    return Ok(args);
                 }
-            } else if token.token_type == TokenType::Func && token.subtype == TokenSubType::Close {
+                if is_separator {
+                    args.push(ASTNode::new(ASTNodeType::Omitted, None));
+                    saw_argument = true;
+                    self.position += 1;
+                } else {
+                    args.push(self.parse_expression()?);
+                    saw_argument = true;
+                    expecting_argument = false;
+                }
+            } else if is_separator {
                 self.position += 1;
-                break;
+                expecting_argument = true;
+            } else if is_close {
+                self.position += 1;
+                return Ok(args);
             } else {
                 return Err(ParserError {
                     message: format!("Expected ',' or ')' in function arguments, got {token:?}"),
@@ -2916,8 +2930,6 @@ impl Parser {
                 });
             }
         }
-
-        Ok(args)
     }
 
     fn parse_array(&mut self) -> Result<ASTNode, ParserError> {
