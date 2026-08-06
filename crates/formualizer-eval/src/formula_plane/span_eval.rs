@@ -1562,7 +1562,7 @@ mod tests {
     }
 
     #[test]
-    fn span_eval_preserves_explicit_empty_outputs() {
+    fn span_eval_finalizes_explicit_empty_outputs_as_zero() {
         let mut plane = FormulaPlane::default();
         let mut data_store = DataStore::new();
         let sheet_registry = SheetRegistry::new();
@@ -1601,7 +1601,10 @@ mod tests {
 
         assert_eq!(
             cell_values(&buffer),
-            vec![(0, 0, OverlayValue::Empty), (1, 0, OverlayValue::Empty)]
+            vec![
+                (0, 0, OverlayValue::Number(0.0)),
+                (1, 0, OverlayValue::Number(0.0))
+            ]
         );
     }
 
