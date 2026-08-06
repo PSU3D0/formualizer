@@ -1,4 +1,4 @@
-use super::super::utils::ARG_ANY_ONE;
+use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -16,7 +16,7 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 }
 
 fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    let v = scalar_like_value(a)?;
+    let v = scalar_text_value(a)?;
     Ok(match v {
         LiteralValue::Text(s) => s,
         LiteralValue::Empty => String::new(),
@@ -298,6 +298,11 @@ impl Function for TextFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
         let fmt = to_text(&args[1])?;
+        if fmt.is_empty() {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                String::new(),
+            )));
+        }
         let num = match val {
             LiteralValue::Number(f) => f,
             LiteralValue::Int(i) => i as f64,

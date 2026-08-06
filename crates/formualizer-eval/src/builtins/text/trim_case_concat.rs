@@ -1,7 +1,7 @@
-use super::super::utils::ARG_ANY_ONE;
+use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
 use crate::args::{ArgSchema, ShapeKind};
 use crate::function::Function;
-use crate::traits::{ArgumentHandle, CalcValue, FunctionContext, ResolvedArgument};
+use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 use std::sync::LazyLock;
@@ -26,9 +26,6 @@ static TEXTJOIN_ARGS: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
 const MAX_CONCAT_RESULT_CHARS: usize = 32_767;
 
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
-    if arg.is_omitted() {
-        return Ok(LiteralValue::Text(String::new()));
-    }
     Ok(match arg.value()? {
         crate::traits::CalcValue::Scalar(v) => v,
         crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
@@ -39,7 +36,7 @@ fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, Excel
 }
 
 fn to_text<'a, 'b>(a: &ArgumentHandle<'a, 'b>) -> Result<String, ExcelError> {
-    literal_to_text(&scalar_like_value(a)?)
+    literal_to_text(&scalar_text_value(a)?)
 }
 
 fn literal_to_text(v: &LiteralValue) -> Result<String, ExcelError> {
@@ -68,10 +65,7 @@ fn literal_to_text(v: &LiteralValue) -> Result<String, ExcelError> {
 }
 
 fn legacy_scalar_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
-    if arg.is_omitted() {
-        return Ok(LiteralValue::Text(String::new()));
-    }
-    Ok(match arg.value()? {
+    Ok(match arg.value_for_text()? {
         crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)) => rows
             .first()
             .and_then(|row| row.first())
@@ -105,15 +99,9 @@ fn for_each_expanded_value(
     arg: &ArgumentHandle<'_, '_>,
     visitor: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
-    if arg.is_omitted() {
-        return visitor(&LiteralValue::Text(String::new()));
-    }
-    match arg.resolve_once()? {
-        ResolvedArgument::Range(view) | ResolvedArgument::Value(CalcValue::Range(view)) => {
-            view.for_each_cell(visitor)
-        }
-        ResolvedArgument::ReferenceError(error) => visitor(&LiteralValue::Error(error)),
-        ResolvedArgument::Value(CalcValue::Scalar(LiteralValue::Array(rows))) => {
+    match arg.value_for_text()? {
+        CalcValue::Range(view) => view.for_each_cell(visitor),
+        CalcValue::Scalar(LiteralValue::Array(rows)) => {
             for row in &rows {
                 for value in row {
                     visitor(value)?;
@@ -121,8 +109,8 @@ fn for_each_expanded_value(
             }
             Ok(())
         }
-        ResolvedArgument::Value(CalcValue::Scalar(value)) => visitor(&value),
-        ResolvedArgument::Value(CalcValue::Callable(_)) => visitor(&LiteralValue::Error(
+        CalcValue::Scalar(value) => visitor(&value),
+        CalcValue::Callable(_) => visitor(&LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
         )),
     }

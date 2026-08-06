@@ -324,12 +324,27 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             .clone()
     }
 
+    /// Resolves a scalar that is about to be coerced to text.
+    ///
+    /// Omitted arguments materialize as numeric zero through `value()`, which is
+    /// correct for Any/numeric consumers and aggregates. Text consumers must use
+    /// this boundary so omission becomes empty text without changing explicit 0.
+    pub(crate) fn value_for_text(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if self.is_omitted() {
+            Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                String::new(),
+            )))
+        } else {
+            self.value()
+        }
+    }
+
     fn compute_value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
                 // With no schema-level text policy, Number(0) is the neutral Any-policy
-                // materialization. Text consumers use `is_omitted` when empty text differs.
+                // materialization. Text consumers resolve through `value_for_text`.
                 ASTNodeType::Omitted => {
                     Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
                 }

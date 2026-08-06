@@ -1,4 +1,4 @@
-use super::super::utils::ARG_ANY_ONE;
+use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
@@ -74,7 +74,7 @@ impl Function for LenFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        let v = scalar_like_value(&args[0])?;
+        let v = scalar_text_value(&args[0])?;
         let count = match v {
             LiteralValue::Text(s) => s.chars().count() as i64,
             LiteralValue::Empty => 0,
@@ -154,7 +154,7 @@ impl Function for LeftFn {
                 ExcelError::new_value(),
             )));
         }
-        let s_val = scalar_like_value(&args[0])?;
+        let s_val = scalar_text_value(&args[0])?;
         let s = match s_val {
             LiteralValue::Text(t) => t,
             LiteralValue::Empty => String::new(),
@@ -248,7 +248,7 @@ impl Function for RightFn {
                 ExcelError::new_value(),
             )));
         }
-        let s_val = scalar_like_value(&args[0])?;
+        let s_val = scalar_text_value(&args[0])?;
         let s = match s_val {
             LiteralValue::Text(t) => t,
             LiteralValue::Empty => String::new(),

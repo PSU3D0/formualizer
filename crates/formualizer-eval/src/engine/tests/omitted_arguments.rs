@@ -159,10 +159,83 @@ fn omitted_argument_oracle_table() {
             "oracle: uniform-rule",
             Expected::Number(0.0),
         ),
+        (
+            "=REPLACE(\"abc\",1,1,)",
+            "oracle: lo-verified",
+            Expected::Text("bc"),
+        ),
+        (
+            "=SUBSTITUTE(\"a0b\",\"0\",)",
+            "oracle: lo-verified",
+            Expected::Text("ab"),
+        ),
+        (
+            "=SUBSTITUTE(\"a0b\",,\"x\")",
+            "oracle: lo-verified",
+            Expected::Text("a0b"),
+        ),
+        ("=LEFT(,2)", "oracle: lo-verified", Expected::Text("")),
+        ("=RIGHT(,2)", "oracle: lo-verified", Expected::Text("")),
+        ("=MID(,1,2)", "oracle: lo-verified", Expected::Text("")),
+        (
+            "=EXACT(\"\",)",
+            "oracle: lo-verified",
+            Expected::Boolean(true),
+        ),
+        ("=EXACT(,)", "oracle: lo-verified", Expected::Boolean(true)),
+        ("=TEXT(1,)", "oracle: lo-verified", Expected::Text("")),
+        ("=REPT(,2)", "oracle: lo-verified", Expected::Text("")),
+        (
+            "=SUBSTITUTE(\"abc\",\"b\",,)",
+            "oracle: lo-verified",
+            Expected::Error(ExcelErrorKind::Value),
+        ),
+        (
+            "=FIND(,\"abc\")",
+            "oracle: uniform-rule",
+            Expected::Number(1.0),
+        ),
+        (
+            "=FIND(\"\",\"abc\")",
+            "oracle: uniform-rule explicit-empty control",
+            Expected::Number(1.0),
+        ),
+        (
+            "=SEARCH(,\"abc\")",
+            "oracle: uniform-rule",
+            Expected::Number(1.0),
+        ),
+        (
+            "=SEARCH(\"\",\"abc\")",
+            "oracle: uniform-rule explicit-empty control",
+            Expected::Number(1.0),
+        ),
+        (
+            "=VALUE(,)",
+            "oracle: uniform-rule",
+            Expected::Error(ExcelErrorKind::Value),
+        ),
+        ("=LEFT(0,2)", "negative control", Expected::Text("0")),
+        (
+            "=EXACT(\"\",0)",
+            "negative control",
+            Expected::Boolean(false),
+        ),
     ];
 
     for (formula, oracle, expected) in cases {
         assert_expected(formula, oracle, expected);
+    }
+}
+
+#[test]
+fn omitted_find_text_matches_explicit_empty_text() {
+    for name in ["FIND", "SEARCH"] {
+        assert_eq!(
+            eval_formula(&format!("={name}(,\"abc\")")),
+            eval_formula(&format!("={name}(\"\",\"abc\")")),
+            "{name} must apply the same text coercion to omission and explicit empty text"
+        );
     }
 }
 
