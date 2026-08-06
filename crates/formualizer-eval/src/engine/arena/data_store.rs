@@ -372,7 +372,7 @@ impl DataStore {
                         stack.extend(elems.iter().rev().copied());
                     }
                 }
-                super::ast::AstNodeData::Literal(_) => {}
+                super::ast::AstNodeData::Literal(_) | super::ast::AstNodeData::Omitted => {}
             }
         }
         false
@@ -385,6 +385,8 @@ impl DataStore {
                 let value_ref = self.store_value(lit.clone());
                 self.asts.insert_literal(value_ref)
             }
+
+            ASTNodeType::Omitted => self.asts.insert_omitted(),
 
             ASTNodeType::Reference {
                 original,
@@ -601,6 +603,8 @@ impl DataStore {
                 let lit = self.retrieve_value(*value_ref);
                 ASTNodeType::Literal(lit)
             }
+
+            AstNodeData::Omitted => ASTNodeType::Omitted,
 
             AstNodeData::Reference {
                 original_id,

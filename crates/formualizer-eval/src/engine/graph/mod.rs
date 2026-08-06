@@ -2350,7 +2350,7 @@ impl DependencyGraph {
                 }
                 Ok(rewritten)
             }
-            ASTNodeType::Literal(_) => Ok(false),
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => Ok(false),
         }
     }
 

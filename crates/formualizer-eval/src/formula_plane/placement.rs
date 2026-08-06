@@ -1156,7 +1156,7 @@ pub(crate) fn commit_prepared_family(
 pub(crate) fn value_ref_slot_descriptors(expr: &CanonicalExpr) -> Vec<ValueRefSlotDescriptor> {
     fn walk(expr: &CanonicalExpr, out: &mut Vec<ValueRefSlotDescriptor>, preorder: &mut u32) {
         match expr {
-            CanonicalExpr::Literal(_) => {}
+            CanonicalExpr::Literal(_) | CanonicalExpr::Omitted => {}
             CanonicalExpr::Reference { context, reference } => {
                 let slot_context = match context {
                     super::template_canonical::CanonicalReferenceContext::Value => {
@@ -1677,7 +1677,7 @@ pub(crate) fn build_template_slot_map(
                     *next = next.saturating_add(1);
                 }
             }
-            AstNodeData::Reference { .. } => {}
+            AstNodeData::Reference { .. } | AstNodeData::Omitted => {}
             AstNodeData::UnaryOp { expr_id, .. } => walk(*expr_id, data_store, next, out),
             AstNodeData::BinaryOp {
                 left_id, right_id, ..
@@ -1734,7 +1734,7 @@ fn residual_relative_axes(expr: &CanonicalExpr) -> (bool, bool) {
 
     fn walk(expr: &CanonicalExpr, row: &mut bool, col: &mut bool) {
         match expr {
-            CanonicalExpr::Literal(_) => {}
+            CanonicalExpr::Literal(_) | CanonicalExpr::Omitted => {}
             CanonicalExpr::Reference { context, reference } => {
                 let slot_context = match context {
                     super::template_canonical::CanonicalReferenceContext::Value => {

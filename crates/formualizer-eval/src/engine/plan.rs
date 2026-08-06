@@ -155,7 +155,7 @@ fn collect_references_arena(
                     }
                 }
             }
-            AstNodeData::Literal(_) => {}
+            AstNodeData::Literal(_) | AstNodeData::Omitted => {}
         }
     }
 

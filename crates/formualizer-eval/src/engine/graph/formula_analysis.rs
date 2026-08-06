@@ -377,7 +377,8 @@ impl DependencyGraph {
                     )?;
                 }
             }
-            super::super::arena::ast::AstNodeData::Literal(_) => {}
+            super::super::arena::ast::AstNodeData::Literal(_)
+            | super::super::arena::ast::AstNodeData::Omitted => {}
         }
         Ok(())
     }
@@ -700,7 +701,7 @@ impl DependencyGraph {
                     )?;
                 }
             }
-            ASTNodeType::Literal(_) => {}
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
         }
         Ok(())
     }

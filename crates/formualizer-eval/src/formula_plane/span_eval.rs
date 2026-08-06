@@ -1046,7 +1046,7 @@ fn validate_relocatable_arena_ast(
         .get_node(node_id)
         .ok_or(SpanEvalError::UnsupportedReferenceRelocation)?;
     match node {
-        AstNodeData::Literal(_) => Ok(()),
+        AstNodeData::Literal(_) | AstNodeData::Omitted => Ok(()),
         AstNodeData::Reference { ref_type, .. } => validate_relocatable_compact_reference(ref_type),
         AstNodeData::UnaryOp { expr_id, .. } => {
             validate_relocatable_arena_ast(*expr_id, data_store)

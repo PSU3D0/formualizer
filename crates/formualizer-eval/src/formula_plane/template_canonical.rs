@@ -89,6 +89,7 @@ impl FormulaTemplateKey {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CanonicalExpr {
     Literal(CanonicalLiteral),
+    Omitted,
     Reference {
         context: CanonicalReferenceContext,
         reference: CanonicalReference,
@@ -525,6 +526,7 @@ impl Canonicalizer<'_> {
                 }
                 CanonicalExpr::Literal(self.canonicalize_literal(value))
             }
+            ASTNodeType::Omitted => CanonicalExpr::Omitted,
             ASTNodeType::Reference {
                 original,
                 reference,
@@ -1123,6 +1125,7 @@ fn write_parameterized_expr_key_inner(
     parameterize_literals: bool,
 ) {
     match expr {
+        CanonicalExpr::Omitted => out.push_str("omitted"),
         CanonicalExpr::Literal(value)
             if parameterize_literals && !matches!(value, CanonicalLiteral::Array(_)) =>
         {
@@ -1203,6 +1206,7 @@ fn write_parameterized_expr_key_inner(
 
 fn write_expr_key(expr: &CanonicalExpr, out: &mut String) {
     match expr {
+        CanonicalExpr::Omitted => out.push_str("omitted"),
         CanonicalExpr::Literal(value) => {
             out.push_str("lit(");
             write_literal_key(value, out);

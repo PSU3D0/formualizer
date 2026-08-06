@@ -332,7 +332,7 @@ impl<'a> IngestPipeline<'a> {
             ASTNodeType::Call { callee, args } => {
                 self.ast_is_volatile(callee) || args.iter().any(|arg| self.ast_is_volatile(arg))
             }
-            ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } => false,
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted | ASTNodeType::Reference { .. } => false,
         }
     }
 
@@ -446,7 +446,7 @@ impl<'a> IngestPipeline<'a> {
                 }
                 Ok(())
             }
-            ASTNodeType::Literal(_) => Ok(()),
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => Ok(()),
         }
     }
 
@@ -662,7 +662,7 @@ impl<'a> IngestPipeline<'a> {
                 }
                 Ok(rewritten)
             }
-            ASTNodeType::Literal(_) => Ok(false),
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => Ok(false),
         }
     }
 
@@ -892,7 +892,7 @@ fn compute_read_projections(
         in_function_arg: bool,
     ) -> Result<(), ProjectionFallbackReason> {
         match &ast.node_type {
-            ASTNodeType::Literal(_) => {
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => {
                 if matches!(
                     context,
                     AnalyzerContext::Value | AnalyzerContext::CriteriaExpressionArg
@@ -1261,6 +1261,7 @@ fn compute_tree_metadata(
                 AstNodeData::Literal(canonical_literal_value_ref(value.clone())),
                 Vec::new(),
             ),
+            ASTNodeType::Omitted => (AstNodeData::Omitted, Vec::new()),
             ASTNodeType::Reference {
                 original,
                 reference,
@@ -1513,7 +1514,7 @@ fn normalize_node_for_canonical_metadata(
     placement: CellRef,
 ) {
     match node {
-        AstNodeData::Literal(_) => {}
+        AstNodeData::Literal(_) | AstNodeData::Omitted => {}
         AstNodeData::Reference { ref_type, .. } => normalize_reference_axes(ref_type, placement),
         AstNodeData::UnaryOp { .. }
         | AstNodeData::BinaryOp { .. }

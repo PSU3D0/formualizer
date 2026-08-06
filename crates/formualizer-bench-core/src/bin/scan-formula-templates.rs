@@ -798,6 +798,7 @@ fn canonical_ast(
 ) -> String {
     match &ast.node_type {
         ASTNodeType::Literal(value) => format!("LIT:{:?}", value_kind(value)),
+        ASTNodeType::Omitted => "OMITTED".to_string(),
         ASTNodeType::Reference { reference, .. } => {
             canonical_reference(reference, anchor_row, anchor_col, labels)
         }

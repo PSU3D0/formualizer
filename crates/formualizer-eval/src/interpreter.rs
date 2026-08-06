@@ -257,7 +257,8 @@ impl<'a> Interpreter<'a> {
             | ASTNodeType::UnaryOp { .. }
             | ASTNodeType::BinaryOp { .. }
             | ASTNodeType::Call { .. }
-            | ASTNodeType::Literal(_) => Err(ExcelError::new(ExcelErrorKind::Ref)
+            | ASTNodeType::Literal(_)
+            | ASTNodeType::Omitted => Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Expression cannot be used as a reference")),
         }
     }
@@ -465,6 +466,7 @@ impl<'a> Interpreter<'a> {
                     data_store.retrieve_value(*vref),
                 ))
             }
+            AstNodeData::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             AstNodeData::Reference { ref_type, .. } => {
                 if self.local_env.is_empty()
                     && let CompactRefType::Cell {
@@ -789,6 +791,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         match &node.node_type {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
+            ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
             ASTNodeType::UnaryOp { op, expr } => self
                 .eval_unary(op, expr)
@@ -810,6 +813,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         match &node.node_type {
             ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
+            ASTNodeType::Omitted => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0))),
             ASTNodeType::Reference { reference, .. } => self.eval_ast_reference_to_calc(reference),
             ASTNodeType::UnaryOp { op, expr } => {
                 // For now, reuse existing unary implementation (which recurses).

@@ -25,6 +25,10 @@ pub enum CffiASTNode {
         #[serde(skip_serializing_if = "Option::is_none")]
         span: Option<[usize; 2]>,
     },
+    Omitted {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        span: Option<[usize; 2]>,
+    },
     Error {
         kind: String,
         message: Option<String>,
@@ -120,6 +124,7 @@ impl CffiASTNode {
                     span,
                 },
             },
+            ASTNodeType::Omitted => CffiASTNode::Omitted { span },
             ASTNodeType::Reference {
                 original,
                 reference,
