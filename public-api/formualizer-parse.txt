@@ -17,6 +17,7 @@ pub formualizer_parse::parser::ASTNodeType::Function
 pub formualizer_parse::parser::ASTNodeType::Function::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
 pub formualizer_parse::parser::ASTNodeType::Function::name: alloc::string::String
 pub formualizer_parse::parser::ASTNodeType::Literal(formualizer_common::value::LiteralValue)
+pub formualizer_parse::parser::ASTNodeType::Omitted
 pub formualizer_parse::parser::ASTNodeType::Reference
 pub formualizer_parse::parser::ASTNodeType::Reference::original: alloc::string::String
 pub formualizer_parse::parser::ASTNodeType::Reference::reference: formualizer_parse::parser::ReferenceType
@@ -695,6 +696,7 @@ pub formualizer_parse::ASTNodeType::Function
 pub formualizer_parse::ASTNodeType::Function::args: alloc::vec::Vec<formualizer_parse::parser::ASTNode>
 pub formualizer_parse::ASTNodeType::Function::name: alloc::string::String
 pub formualizer_parse::ASTNodeType::Literal(formualizer_common::value::LiteralValue)
+pub formualizer_parse::ASTNodeType::Omitted
 pub formualizer_parse::ASTNodeType::Reference
 pub formualizer_parse::ASTNodeType::Reference::original: alloc::string::String
 pub formualizer_parse::ASTNodeType::Reference::reference: formualizer_parse::parser::ReferenceType

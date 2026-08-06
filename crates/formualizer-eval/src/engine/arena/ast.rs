@@ -318,7 +318,7 @@ impl AstArena {
     }
 
     /// Insert an explicitly omitted argument node.
-    pub fn insert_omitted(&mut self) -> AstNodeId {
+    pub(crate) fn insert_omitted(&mut self) -> AstNodeId {
         self.insert(AstNodeData::Omitted)
     }
 
