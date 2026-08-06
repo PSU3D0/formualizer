@@ -375,6 +375,7 @@ pub struct VLookupFn;
 /// - `col_index_num` is 1-based and must be within the table width.
 /// - `range_lookup` defaults to `TRUE`, matching Excel and LibreOffice.
 /// - When `range_lookup=TRUE`, approximate match logic is used against the first column.
+/// - Approximate matching assumes the first column is sorted ascending; unsorted or descending data can return incorrect rows.
 /// - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
 /// - If the lookup value is not found, returns `#N/A`.
 /// - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
@@ -632,6 +633,7 @@ pub struct HLookupFn;
 /// - `row_index_num` is 1-based and must be within the table height.
 /// - `range_lookup` defaults to `TRUE`, matching Excel and LibreOffice.
 /// - When `range_lookup=TRUE`, approximate match logic is used against the first row.
+/// - Approximate matching assumes the first row is sorted ascending; unsorted or descending data can return incorrect rows.
 /// - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
 /// - If the lookup value is not found, returns `#N/A`.
 /// - If `row_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
