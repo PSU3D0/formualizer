@@ -292,7 +292,9 @@ impl<'a> SpanEvaluator<'a> {
                 first_writable_placement.col,
             ));
             let value = match interpreter.evaluate_ast(&ast_tree) {
-                Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
+                Ok(calc) => {
+                    formula_result_to_overlay(calc.into_literal(), self.context.date_system())
+                }
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             };
 
@@ -423,7 +425,9 @@ impl<'a> SpanEvaluator<'a> {
                 self.data_store,
                 self.sheet_registry,
             ) {
-                Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
+                Ok(calc) => {
+                    formula_result_to_overlay(calc.into_literal(), self.context.date_system())
+                }
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             }
         } else {
@@ -434,7 +438,9 @@ impl<'a> SpanEvaluator<'a> {
                 self.data_store,
                 self.sheet_registry,
             ) {
-                Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
+                Ok(calc) => {
+                    formula_result_to_overlay(calc.into_literal(), self.context.date_system())
+                }
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
             }
         };
@@ -707,7 +713,7 @@ impl<'a> SpanEvaluator<'a> {
             self.data_store,
             self.sheet_registry,
         ) {
-            Ok(calc) => literal_to_overlay(calc.into_literal(), self.context.date_system()),
+            Ok(calc) => formula_result_to_overlay(calc.into_literal(), self.context.date_system()),
             Err(err) => OverlayValue::Error(map_error_code(err.kind)),
         };
         Ok(value)
@@ -1120,6 +1126,16 @@ fn literal_to_overlay(
         LiteralValue::Pending => OverlayValue::Pending,
         LiteralValue::Error(err) => OverlayValue::Error(map_error_code(err.kind)),
     }
+}
+
+fn formula_result_to_overlay(
+    value: LiteralValue,
+    date_system: formualizer_common::DateSystem,
+) -> OverlayValue {
+    literal_to_overlay(
+        crate::engine::result_finalization::finalize_formula_result(value),
+        date_system,
+    )
 }
 
 #[cfg(test)]
