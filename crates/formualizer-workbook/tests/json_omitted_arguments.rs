@@ -10,12 +10,7 @@ fn json_round_trip_preserves_omitted_argument_formula_and_value() {
     let mut adapter = JsonAdapter::new();
     adapter.create_sheet("Sheet1").unwrap();
     adapter
-        .write_cell(
-            "Sheet1",
-            1,
-            1,
-            CellData::from_formula("=IFERROR(1/0,)"),
-        )
+        .write_cell("Sheet1", 1, 1, CellData::from_formula("=IFERROR(1/0,)"))
         .unwrap();
     adapter.set_dimensions("Sheet1", Some((1, 1)));
 
