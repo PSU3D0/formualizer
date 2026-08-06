@@ -52,6 +52,7 @@ All notable changes to Formualizer will be documented in this file.
 ### Fixed
 
 - Explicitly omitted function arguments now retain their syntax through parsing and canonical rendering, coerce as Excel empty arguments (`0`, `FALSE`, or empty text by context), and count as numeric zero in aggregates without changing absent optional defaults or blank-reference behavior. (#277)
+- `TEXT` with an empty format string (explicit `""` or an omitted second argument) now returns empty text, matching Excel and LibreOffice; it previously rendered the value as if unformatted. (#277)
 - Restored the released `formualizer_eval::builtins::datetime` conversion helpers and sparse-sheet constructor compatibility paths, including explicit 1904 date-system handling. The eval decode wrappers retain released 0.7.1 component-clamping and negative-fraction behavior; as an intentional safety deviation, infinities and chrono date/duration overflow now return typed `#NUM!` instead of panicking. (#259)
 
 - CFFI targeted cell evaluation now reports both the targeted graph-preparation error and the distinct full-graph fallback error when both preparation attempts fail.

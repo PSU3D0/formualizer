@@ -184,6 +184,11 @@ fn omitted_argument_oracle_table() {
         ),
         ("=EXACT(,)", "oracle: lo-verified", Expected::Boolean(true)),
         ("=TEXT(1,)", "oracle: lo-verified", Expected::Text("")),
+        (
+            "=TEXT(1,\"\")",
+            "oracle: lo-verified explicit-empty control",
+            Expected::Text(""),
+        ),
         ("=REPT(,2)", "oracle: lo-verified", Expected::Text("")),
         (
             "=SUBSTITUTE(\"abc\",\"b\",,)",
