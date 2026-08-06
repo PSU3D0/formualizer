@@ -18,9 +18,11 @@
 
 <br />
 
-**The spreadsheet engine that actually evaluates formulas.** Parse, evaluate, and mutate Excel workbooks from Rust, Python, or the browser.
+**A lightning-fast, embeddable spreadsheet runtime for Rust, Python, and JavaScript.** Parse formulas, load and edit Excel workbooks, recalculate them incrementally, and expose spreadsheet models as deterministic, typed APIs—without Excel.
 
-A permissively-licensed, production-grade spreadsheet engine with 400+ Excel-compatible functions, Apache Arrow storage, incremental dependency tracking, undo/redo, and dynamic array support. One Rust core, three language targets, MIT/Apache-2.0.
+No Excel COM automation. No LibreOffice UNO bridge. No stitching together slow Python libraries for workbook editing and partial formula evaluation.
+
+Formualizer combines broad Excel-compatible formula support with Arrow-backed storage, dependency-aware recalculation, dynamic arrays, file I/O, undo/redo, and SheetPort. One permissively licensed Rust core ships to Rust, Python, browsers, and Node.js.
 
 ---
 
