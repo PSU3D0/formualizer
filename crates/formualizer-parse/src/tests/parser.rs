@@ -631,7 +631,7 @@ mod tests {
 
         let nested = parse_formula("=IF(TRUE,IFERROR(1/0,),2)").unwrap();
         let rendered = crate::pretty::canonical_formula(&nested);
-        assert_eq!(rendered, "=IF(true, IFERROR(1 / 0, ), 2)");
+        assert_eq!(rendered, "=IF(true, IFERROR(1 / 0,), 2)");
         assert_eq!(
             parse_formula(&rendered).unwrap().fingerprint(),
             nested.fingerprint()

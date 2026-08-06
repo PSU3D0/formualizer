@@ -10,7 +10,7 @@ def test_parse_projects_omitted_argument_distinctly():
     ast = fz.parse("=IFERROR(A1,)")
     assert ast.children()[1].node_type() == "Omitted"
     assert ast.children()[1].get_literal_value() is None
-    assert ast.to_formula() == "=IFERROR(A1, )"
+    assert ast.to_formula() == "=IFERROR(A1,)"
 
 
 def test_workbook_evaluates_omitted_iferror_fallback_as_zero():
