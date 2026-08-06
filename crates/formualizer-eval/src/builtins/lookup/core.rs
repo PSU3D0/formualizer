@@ -183,6 +183,7 @@ impl Function for MatchFn {
         }
         let mut match_type = 1.0; // default
         if args.len() >= 3 {
+            // Defensive: value() currently materializes omission as Number(0), so this is redundant.
             if args[2].is_omitted() {
                 match_type = 0.0;
             } else {

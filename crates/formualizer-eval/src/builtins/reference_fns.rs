@@ -223,6 +223,8 @@ impl Function for IndexFn {
             Ok(r) => r,
             Err(_) => return None,
         };
+        // Defensive: value() currently materializes omitted indexes as Number(0), so these
+        // row/column checks are redundant while documenting whole-row/column intent.
         let position = if args[1].is_omitted() {
             0
         } else {
@@ -367,6 +369,8 @@ impl Function for IndexFn {
                 LiteralValue::Array(rows) => rows,
                 other => vec![vec![other]],
             };
+            // Defensive: value() currently materializes omitted indexes as Number(0), so these
+            // row/column checks are redundant while documenting whole-row/column intent.
             let index = if args[1].is_omitted() {
                 0
             } else {

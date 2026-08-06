@@ -628,6 +628,7 @@ impl Function for XMatchFn {
         }
 
         let match_mode = if args.len() >= 3 {
+            // Defensive: value() currently materializes omission as Number(0), so this is redundant.
             if args[2].is_omitted() {
                 0
             } else {

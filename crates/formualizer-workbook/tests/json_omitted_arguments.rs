@@ -20,7 +20,7 @@ fn json_round_trip_preserves_omitted_argument_formula_and_value() {
         .expect("bytes destination");
     let serialized = String::from_utf8(bytes.clone()).unwrap();
     assert!(serialized.contains("=IFERROR(1/0,)"));
-    assert!(!serialized.contains("omitted"));
+    assert!(!serialized.to_ascii_lowercase().contains("omitted"));
 
     let mut reopened = JsonAdapter::open_bytes(bytes).unwrap();
     let cell = reopened.read_cell("Sheet1", 1, 1).unwrap().unwrap();
