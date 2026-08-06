@@ -2166,9 +2166,9 @@
     },
     {
       "formula": "=DCOUNTA({\"A\",\"B\";\"text\",1;\"more\",2;\"\",3},\"A\",{\"A\"})",
-      "result": 2,
+      "result": 3,
       "result_type": "int",
-      "description": "DCOUNTA skips empty strings (treats them as blank cells)"
+      "description": "DCOUNTA counts explicit empty strings as values"
     },
     {
       "formula": "=PERCENTRANK.INC({1,2,3,4,5},1)",
