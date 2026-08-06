@@ -101,8 +101,8 @@ pub struct LetFn;
 /// Min args: 3
 /// Max args: variadic
 /// Variadic: true
-/// Signature: LET(<schema unavailable>)
-/// Arg schema: <unavailable: arg_schema panicked>
+/// Signature: LET(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for LetFn {
@@ -262,8 +262,8 @@ pub struct LambdaFn;
 /// Min args: 1
 /// Max args: variadic
 /// Variadic: true
-/// Signature: LAMBDA(<schema unavailable>)
-/// Arg schema: <unavailable: arg_schema panicked>
+/// Signature: LAMBDA(arg1...: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for LambdaFn {
