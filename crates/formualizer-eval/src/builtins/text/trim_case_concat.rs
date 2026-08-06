@@ -26,6 +26,9 @@ static TEXTJOIN_ARGS: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
 const MAX_CONCAT_RESULT_CHARS: usize = 32_767;
 
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    if arg.is_omitted() {
+        return Ok(LiteralValue::Text(String::new()));
+    }
     Ok(match arg.value()? {
         crate::traits::CalcValue::Scalar(v) => v,
         crate::traits::CalcValue::Range(rv) => rv.get_cell(0, 0),
@@ -65,6 +68,9 @@ fn literal_to_text(v: &LiteralValue) -> Result<String, ExcelError> {
 }
 
 fn legacy_scalar_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
+    if arg.is_omitted() {
+        return Ok(LiteralValue::Text(String::new()));
+    }
     Ok(match arg.value()? {
         crate::traits::CalcValue::Scalar(LiteralValue::Array(rows)) => rows
             .first()
@@ -99,6 +105,9 @@ fn for_each_expanded_value(
     arg: &ArgumentHandle<'_, '_>,
     visitor: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
+    if arg.is_omitted() {
+        return visitor(&LiteralValue::Text(String::new()));
+    }
     match arg.resolve_once()? {
         ResolvedArgument::Range(view) | ResolvedArgument::Value(CalcValue::Range(view)) => {
             view.for_each_cell(visitor)
