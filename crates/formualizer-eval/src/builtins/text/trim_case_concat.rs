@@ -1,7 +1,7 @@
 use super::{super::utils::ARG_ANY_ONE, scalar_text_value};
 use crate::args::{ArgSchema, ShapeKind};
 use crate::function::Function;
-use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+use crate::traits::{ArgumentHandle, CalcValue, FunctionContext, ResolvedArgument};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 use std::sync::LazyLock;
@@ -99,9 +99,12 @@ fn for_each_expanded_value(
     arg: &ArgumentHandle<'_, '_>,
     visitor: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
-    match arg.value_for_text()? {
-        CalcValue::Range(view) => view.for_each_cell(visitor),
-        CalcValue::Scalar(LiteralValue::Array(rows)) => {
+    match arg.resolve_once_for_text()? {
+        ResolvedArgument::Range(view) | ResolvedArgument::Value(CalcValue::Range(view)) => {
+            view.for_each_cell(visitor)
+        }
+        ResolvedArgument::ReferenceError(error) => visitor(&LiteralValue::Error(error)),
+        ResolvedArgument::Value(CalcValue::Scalar(LiteralValue::Array(rows))) => {
             for row in &rows {
                 for value in row {
                     visitor(value)?;
@@ -109,8 +112,8 @@ fn for_each_expanded_value(
             }
             Ok(())
         }
-        CalcValue::Scalar(value) => visitor(&value),
-        CalcValue::Callable(_) => visitor(&LiteralValue::Error(
+        ResolvedArgument::Value(CalcValue::Scalar(value)) => visitor(&value),
+        ResolvedArgument::Value(CalcValue::Callable(_)) => visitor(&LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
         )),
     }

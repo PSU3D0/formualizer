@@ -339,6 +339,16 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    pub(crate) fn resolve_once_for_text(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
+        if self.is_omitted() {
+            Ok(ResolvedArgument::Value(crate::traits::CalcValue::Scalar(
+                LiteralValue::Text(String::new()),
+            )))
+        } else {
+            self.resolve_once()
+        }
+    }
+
     fn compute_value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
