@@ -82,7 +82,7 @@ pub(crate) fn to_arithmetic_number_with_locale(
     match value {
         LiteralValue::Text(s) => loc
             .parse_number_invariant(s)
-            .or_else(|| formualizer_common::parse_excel_date_time_text_to_serial_for(system, s))
+            .or_else(|| formualizer_common::parse_excel_datetime_text_to_serial_for(system, s))
             .ok_or_else(|| {
                 ExcelError::new(ExcelErrorKind::Value)
                     .with_message(format!("Cannot convert '{s}' to arithmetic operand"))
