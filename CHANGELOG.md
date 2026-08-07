@@ -53,6 +53,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Arithmetic operators now coerce date, time, and datetime text operands to serial numbers using the workbook's 1900 or 1904 date system, while aggregate, comparison, criteria, `N`, and concatenation text semantics remain unchanged. (#289)
 - Database functions now distinguish explicit empty text from genuinely blank field cells: `DCOUNTA` counts the former, while `DGET` ignores the latter, matching LibreOffice and Excel. (#281)
 - Explicitly omitted function arguments now retain their syntax through parsing and canonical rendering, coerce as Excel empty arguments (`0`, `FALSE`, or empty text by context), and count as numeric zero in aggregates without changing absent optional defaults or blank-reference behavior. (#277)
 - `TEXT` with an empty format string (explicit `""` or an omitted second argument) now returns empty text, matching Excel and LibreOffice; it previously rendered the value as if unformatted. (#277)

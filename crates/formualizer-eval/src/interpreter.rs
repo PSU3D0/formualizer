@@ -1144,7 +1144,11 @@ impl<'a> Interpreter<'a> {
     where
         F: Fn(f64) -> f64,
     {
-        match crate::coercion::to_number_lenient_with_locale(&v, &self.context.locale()) {
+        match crate::coercion::to_arithmetic_number_with_locale(
+            &v,
+            &self.context.locale(),
+            self.context.date_system(),
+        ) {
             Ok(n) => match crate::coercion::sanitize_numeric(f(n)) {
                 Ok(n2) => Ok(LiteralValue::Number(n2)),
                 Err(e) => Ok(LiteralValue::Error(e)),
@@ -1223,7 +1227,11 @@ impl<'a> Interpreter<'a> {
             };
 
             let to_num = |v: &LiteralValue| -> Result<f64, ExcelError> {
-                crate::coercion::to_number_lenient_with_locale(v, &self.context.locale())
+                crate::coercion::to_arithmetic_number_with_locale(
+                    v,
+                    &self.context.locale(),
+                    date_system,
+                )
             };
 
             let serial_to_literal = |serial: f64| -> LiteralValue {
@@ -1351,8 +1359,16 @@ impl<'a> Interpreter<'a> {
         F: Fn(f64, f64) -> f64 + Copy,
     {
         self.broadcast_apply(left, right, |l, r| {
-            let a = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
-            let b = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            let a = crate::coercion::to_arithmetic_number_with_locale(
+                &l,
+                &self.context.locale(),
+                self.context.date_system(),
+            );
+            let b = crate::coercion::to_arithmetic_number_with_locale(
+                &r,
+                &self.context.locale(),
+                self.context.date_system(),
+            );
             match (a, b) {
                 (Ok(a), Ok(b)) => match crate::coercion::sanitize_numeric(f(a, b)) {
                     Ok(n2) => Ok(LiteralValue::Number(n2)),
@@ -1365,8 +1381,16 @@ impl<'a> Interpreter<'a> {
 
     fn divide(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
         self.broadcast_apply(left, right, |l, r| {
-            let ln = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
-            let rn = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            let ln = crate::coercion::to_arithmetic_number_with_locale(
+                &l,
+                &self.context.locale(),
+                self.context.date_system(),
+            );
+            let rn = crate::coercion::to_arithmetic_number_with_locale(
+                &r,
+                &self.context.locale(),
+                self.context.date_system(),
+            );
             let (a, b) = match (ln, rn) {
                 (Ok(a), Ok(b)) => (a, b),
                 (Err(e), _) | (_, Err(e)) => return Ok(LiteralValue::Error(e)),
@@ -1385,8 +1409,16 @@ impl<'a> Interpreter<'a> {
 
     fn power(&self, left: LiteralValue, right: LiteralValue) -> Result<LiteralValue, ExcelError> {
         self.broadcast_apply(left, right, |l, r| {
-            let ln = crate::coercion::to_number_lenient_with_locale(&l, &self.context.locale());
-            let rn = crate::coercion::to_number_lenient_with_locale(&r, &self.context.locale());
+            let ln = crate::coercion::to_arithmetic_number_with_locale(
+                &l,
+                &self.context.locale(),
+                self.context.date_system(),
+            );
+            let rn = crate::coercion::to_arithmetic_number_with_locale(
+                &r,
+                &self.context.locale(),
+                self.context.date_system(),
+            );
             let (a, b) = match (ln, rn) {
                 (Ok(a), Ok(b)) => (a, b),
                 (Err(e), _) | (_, Err(e)) => return Ok(LiteralValue::Error(e)),
