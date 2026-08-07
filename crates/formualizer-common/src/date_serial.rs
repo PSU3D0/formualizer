@@ -60,6 +60,99 @@ pub fn time_to_fraction(time: &NaiveTime) -> f64 {
     time.num_seconds_from_midnight() as f64 / SECONDS_PER_DAY
 }
 
+/// Parse date text using Formualizer's deterministic spreadsheet convention.
+///
+/// Numeric slash dates prefer month/day/year, with day/month/year retained as
+/// a fallback for unambiguous legacy `DATEVALUE` inputs. Two-digit years use
+/// Excel's fixed window: `00..=29` means 2000 through 2029 and `30..=99`
+/// means 1930 through 1999. Parsing never consults the host locale.
+pub fn parse_excel_date_text(input: &str) -> Option<NaiveDate> {
+    let text = input.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    if let Some(date) = parse_numeric_slash_date(text) {
+        return Some(date);
+    }
+
+    const FORMATS: &[&str] = &["%Y-%m-%d", "%B %d, %Y", "%b %d, %Y", "%d-%b-%Y", "%d %B %Y"];
+    FORMATS
+        .iter()
+        .find_map(|format| NaiveDate::parse_from_str(text, format).ok())
+}
+
+fn parse_numeric_slash_date(text: &str) -> Option<NaiveDate> {
+    let parts: Vec<&str> = text.split('/').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+
+    let first = parts[0].parse::<u32>().ok()?;
+    let second = parts[1].parse::<u32>().ok()?;
+    let third = parts[2].parse::<u32>().ok()?;
+
+    if parts[0].len() == 4 {
+        return NaiveDate::from_ymd_opt(i32::try_from(first).ok()?, second, third);
+    }
+
+    let year = match parts[2].len() {
+        2 if third <= 29 => 2000 + third as i32,
+        2 => 1900 + third as i32,
+        4 => i32::try_from(third).ok()?,
+        _ => return None,
+    };
+
+    NaiveDate::from_ymd_opt(year, first, second)
+        .or_else(|| NaiveDate::from_ymd_opt(year, second, first))
+}
+
+/// Parse time text using fixed 24-hour or English AM/PM formats.
+///
+/// Parsing is deterministic and does not consult the host locale.
+pub fn parse_excel_time_text(input: &str) -> Option<NaiveTime> {
+    let text = input.trim();
+    const FORMATS: &[&str] = &["%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p"];
+    FORMATS
+        .iter()
+        .find_map(|format| NaiveTime::parse_from_str(text, format).ok())
+}
+
+/// Parse a date and time separated by whitespace or `T`.
+///
+/// Date and time components use [`parse_excel_date_text`] and
+/// [`parse_excel_time_text`], so the result is independent of machine locale.
+pub fn parse_excel_datetime_text(input: &str) -> Option<NaiveDateTime> {
+    let text = input.trim();
+    text.char_indices()
+        .filter(|(_, ch)| *ch == 'T' || ch.is_ascii_whitespace())
+        .find_map(|(index, ch)| {
+            let time_start = index + ch.len_utf8();
+            let date = parse_excel_date_text(&text[..index])?;
+            let time = parse_excel_time_text(&text[time_start..])?;
+            Some(date.and_time(time))
+        })
+}
+
+/// Parse spreadsheet date, time, or datetime text and return its serial.
+///
+/// This is the canonical entry point for text operands that need a temporal
+/// serial. Date-bearing results honor the selected workbook date system;
+/// time-only results are fractional days in either system.
+pub fn parse_excel_date_time_text_to_serial_for(system: DateSystem, input: &str) -> Option<f64> {
+    if let Some(datetime) = parse_excel_datetime_text(input) {
+        return Some(datetime_to_serial_for(system, &datetime));
+    }
+    if let Some(date) = parse_excel_date_text(input) {
+        return Some(date_to_serial_for(system, &date));
+    }
+    parse_excel_time_text(input).map(|time| time_to_fraction(&time))
+}
+
 /// Return the final whole-day serial supported by Excel's calendar.
 pub fn max_excel_serial_for(system: DateSystem) -> f64 {
     date_to_serial_for(system, &EXCEL_MAX_DATE)
@@ -385,5 +478,33 @@ mod tests {
     fn time_fraction_is_second_precision() {
         let time = NaiveTime::from_hms_nano_opt(12, 0, 0, 999_999_999).unwrap();
         assert_eq!(time_to_fraction(&time), 0.5);
+    }
+
+    #[test]
+    fn temporal_text_parser_uses_excel_year_window_and_date_system() {
+        assert_eq!(
+            parse_excel_date_time_text_to_serial_for(DateSystem::Excel1900, "1/1/03"),
+            Some(37_622.0)
+        );
+        assert_eq!(
+            parse_excel_date_time_text_to_serial_for(DateSystem::Excel1904, "1/1/03 12:00"),
+            Some(36_160.5)
+        );
+        assert_eq!(parse_excel_date_text("1/1/29"), Some(date(2029, 1, 1)));
+        assert_eq!(parse_excel_date_text("1/1/30"), Some(date(1930, 1, 1)));
+        assert_eq!(
+            parse_excel_date_time_text_to_serial_for(DateSystem::Excel1900, "12:00"),
+            Some(0.5)
+        );
+    }
+
+    #[test]
+    fn temporal_text_parser_rejects_invalid_and_non_dates() {
+        for text in ["2/30/03", "abc", "", "13/13/13", "123-456"] {
+            assert!(
+                parse_excel_date_time_text_to_serial_for(DateSystem::Excel1900, text).is_none(),
+                "{text}"
+            );
+        }
     }
 }
