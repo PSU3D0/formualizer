@@ -181,8 +181,18 @@ fn lookup_families_match_multi_character_stars_and_escapes() {
     }
 }
 
+/// Guards that the #284 compiled-matcher change did not regress the criteria and
+/// database families, which use a SEPARATE matcher (`builtins::utils::wildcard_match`)
+/// and never had the multi-character `*` defect.
+///
+/// This is a non-regression control ONLY. It does not certify the criteria matcher as
+/// Excel-correct: that matcher ignores `~` escapes, matches `?` on bytes rather than
+/// characters, has no memoization, and the Arrow criteria path leaks SQL `LIKE`
+/// metacharacters. Those are pre-existing defects tracked separately in #295.
+/// Note the `br*` patterns below short-circuit into the `ends_with('*')` fast path in
+/// `utils.rs`, so they do not exercise the criteria matcher body at all.
 #[test]
-fn criteria_and_database_families_use_their_independent_wildcard_matcher() {
+fn criteria_families_are_not_regressed_by_wildcard_star_fix() {
     let cases = [
         ("COUNTIF", "=COUNTIF(T1:T3,\"br*\")", 2.0),
         ("SUMIF", "=SUMIF(T1:T3,\"br*\",U1:U3)", 40.0),
