@@ -264,7 +264,7 @@ impl CompiledWildcardPattern {
     fn matches_folded_chars(&self, text: &[char]) -> bool {
         let mut ti = 0usize;
         let mut si = 0usize;
-        let mut bt: Vec<(usize, usize)> = Vec::new();
+        let mut star_retry: Option<(usize, usize)> = None;
         loop {
             if ti == self.tokens.len() {
                 if si == text.len() {
@@ -274,7 +274,7 @@ impl CompiledWildcardPattern {
                 match &self.tokens[ti] {
                     WildcardToken::AnySeq => {
                         ti += 1;
-                        bt.push((ti - 1, si + 1));
+                        star_retry = Some((ti, si));
                         continue;
                     }
                     WildcardToken::AnyChar => {
@@ -294,11 +294,12 @@ impl CompiledWildcardPattern {
                     }
                 }
             }
-            if let Some((star_tok, new_si)) = bt.pop()
-                && new_si <= text.len()
+            if let Some((resume_ti, consumed_to)) = star_retry.as_mut()
+                && *consumed_to < text.len()
             {
-                ti = star_tok + 1;
-                si = new_si;
+                *consumed_to += 1;
+                ti = *resume_ti;
+                si = *consumed_to;
                 continue;
             }
             return false;
@@ -678,6 +679,46 @@ mod tests {
         assert!(wildcard_pattern_match("?", "😀"));
         assert!(wildcard_pattern_match("??", "😀x"));
         assert!(!wildcard_pattern_match("?", "😀x"));
+    }
+
+    #[test]
+    fn wildcard_pattern_match_retries_stars_without_branching() {
+        // oracle: lo-verified
+        let cases = [
+            ("*", "", true),
+            ("*", "bravo", true),
+            ("br*", "bravo", true),
+            ("*avo", "bravo", true),
+            ("a**b***d", "abcbd", true),
+            ("a*?d", "abcbd", true),
+            ("*b*d", "abcbd", true),
+            ("*b*d", "abcbx", false),
+            ("~*", "*", true),
+            ("~?", "?", true),
+            ("~~", "~", true),
+            ("a~**~?", "a*middle?", true),
+            ("ив?н*", "ИВАНОВИЧ", true),
+        ];
+
+        for (pattern, text, expected) in cases {
+            assert_eq!(
+                wildcard_pattern_match(pattern, text),
+                expected,
+                "pattern={pattern:?}, text={text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn wildcard_pattern_match_pathological_shape_completes_fast() {
+        let text = "a".repeat(250_000);
+        let start = Instant::now();
+        assert!(!wildcard_pattern_match("*a*a*a*a*a*b", &text));
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "wildcard retry became pathologically slow: {:?}",
+            start.elapsed()
+        );
     }
 
     #[test]
