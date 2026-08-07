@@ -23,6 +23,7 @@ pub mod plan;
 pub mod range_view;
 pub mod resource_ledger;
 pub mod resource_observability;
+pub(crate) mod result_finalization;
 pub mod row_visibility;
 pub mod scheduler;
 pub mod spill;

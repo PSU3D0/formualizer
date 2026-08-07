@@ -17111,7 +17111,8 @@ where
         // If array result, perform spill from the anchor cell
         match result {
             Ok(cv) => {
-                let result_literal = cv.into_literal();
+                let result_literal =
+                    crate::engine::result_finalization::finalize_formula_result(cv.into_literal());
                 match result_literal {
                     LiteralValue::Array(rows) => {
                         // Update kind to FormulaArray for tracking
@@ -22472,7 +22473,9 @@ where
 
         interpreter
             .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
-            .map(|cv| cv.into_literal())
+            .map(|cv| {
+                crate::engine::result_finalization::finalize_formula_result(cv.into_literal())
+            })
     }
 
     /// Get access to the shared thread pool for parallel evaluation
@@ -24724,7 +24727,11 @@ where
                 let interpreter = Interpreter::new_with_cell(ctx, sheet_name, cell_ref);
                 interpreter
                     .evaluate_arena_ast(ast_id, self.graph.data_store(), self.graph.sheet_reg())
-                    .map(|cv| cv.into_literal())
+                    .map(|cv| {
+                        crate::engine::result_finalization::finalize_formula_result(
+                            cv.into_literal(),
+                        )
+                    })
             }
             VertexKind::NamedScalar | VertexKind::NamedArray => {
                 let named_range = self.graph.named_range_by_vertex(vertex_id).ok_or_else(|| {
