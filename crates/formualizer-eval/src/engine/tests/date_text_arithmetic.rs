@@ -101,6 +101,11 @@ fn date_time_text_arithmetic_oracle_table() {
             Expected::Number(36_160.5),
         ),
         (
+            "=\"1-Jan-03\"+0",
+            Expected::Number(37_622.0),
+            Expected::Number(36_160.0),
+        ),
+        (
             "=ISNUMBER(\"1/1/03\"+0)",
             Expected::Boolean(true),
             Expected::Boolean(true),
