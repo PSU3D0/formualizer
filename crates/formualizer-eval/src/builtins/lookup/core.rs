@@ -2,7 +2,13 @@
 //!
 //! Implementation notes:
 //! - MATCH supports match_type: 0 exact, 1 approximate (largest <= lookup), -1 approximate (smallest >= lookup)
-//! - Approximate modes assume data sorted ascending (1) or descending (-1); unsorted leads to #N/A like Excel (we don't yet detect unsorted reliably, TODO)
+//! - Approximate modes assume data sorted ascending (1) or descending (-1).
+//! - Unsorted-data behavior differs by function and is deliberate: MATCH performs a lightweight
+//!   ascending-order check and returns #N/A when the data is not ordered, while VLOOKUP/HLOOKUP
+//!   bisect without a sortedness guard and can therefore return a row Excel would also return
+//!   incorrectly. Excel documents approximate results on unsorted data as "may not be correct"
+//!   rather than an error, so the unguarded path matches Excel; LibreOffice instead returns #N/A.
+//!   See issue #283 before changing either behavior.
 //! - Binary search used for approximate modes for efficiency; linear scan for exact or when data small (<8 elements) to avoid overhead.
 //! - VLOOKUP/HLOOKUP wrap MATCH logic; VLOOKUP: vertical first column; HLOOKUP: horizontal first row.
 //! - Error propagation: if lookup_value is error -> propagate. If table/range contains errors in non-deciding positions, they don't matter unless selected.
@@ -71,7 +77,7 @@ pub struct MatchFn;
 /// - `match_type=0` performs exact matching and supports `*`, `?`, and `~` wildcards for text.
 /// - `match_type=1` looks for the largest value less than or equal to the lookup value.
 /// - `match_type=-1` looks for the smallest value greater than or equal to the lookup value.
-/// - Approximate modes require sorted data; unsorted data returns `#N/A`.
+/// - Approximate modes require sorted data. MATCH detects unsorted input and returns `#N/A`; see the module notes for how VLOOKUP/HLOOKUP differ.
 /// - If no match is found, returns `#N/A`.
 ///
 /// # Examples
