@@ -60,6 +60,135 @@ pub fn time_to_fraction(time: &NaiveTime) -> f64 {
     time.num_seconds_from_midnight() as f64 / SECONDS_PER_DAY
 }
 
+/// Parse date text using Formualizer's deterministic en-US spreadsheet convention.
+///
+/// Numeric slash dates use month/day/year ordering. Two-digit years in slash
+/// and English month-name forms use Excel's fixed window: `00..=29` means
+/// 2000 through 2029 and `30..=99` means 1930 through 1999. ISO dates require
+/// a four-digit year. Parsing has no locale parameter and never consults the
+/// host locale.
+pub fn parse_excel_date_text(input: &str) -> Option<NaiveDate> {
+    let text = input.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    if let Some(date) = parse_numeric_slash_date(text) {
+        return Some(date);
+    }
+
+    parse_iso_date(text).or_else(|| parse_month_name_date(text))
+}
+
+fn parse_numeric_slash_date(text: &str) -> Option<NaiveDate> {
+    let parts: Vec<&str> = text.split('/').collect();
+    if parts.len() != 3
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return None;
+    }
+
+    let month = parts[0].parse::<u32>().ok()?;
+    let day = parts[1].parse::<u32>().ok()?;
+    let year = parse_excel_year(parts[2])?;
+    NaiveDate::from_ymd_opt(year, month, day)
+}
+
+fn parse_excel_year(text: &str) -> Option<i32> {
+    let year = text.parse::<i32>().ok()?;
+    match text.len() {
+        2 if year <= 29 => Some(2000 + year),
+        2 => Some(1900 + year),
+        4 => Some(year),
+        _ => None,
+    }
+}
+
+fn parse_iso_date(text: &str) -> Option<NaiveDate> {
+    let (year, rest) = text.split_once('-')?;
+    if year.len() != 4 || !year.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let normalized = format!("{}-{rest}", year.parse::<i32>().ok()?);
+    NaiveDate::parse_from_str(&normalized, "%Y-%m-%d").ok()
+}
+
+fn parse_month_name_date(text: &str) -> Option<NaiveDate> {
+    const FORMATS: &[&str] = &["%B %d, %Y", "%b %d, %Y", "%d-%b-%Y"];
+    FORMATS.iter().find_map(|format| {
+        let separator = if *format == "%d-%b-%Y" { '-' } else { ' ' };
+        let (prefix, year_text) = text.rsplit_once(separator)?;
+        let year = parse_excel_year(year_text)?;
+        let normalized = format!("{prefix}{separator}{year:04}");
+        NaiveDate::parse_from_str(&normalized, format).ok()
+    })
+}
+
+/// Parse time text using fixed 24-hour or English AM/PM formats.
+///
+/// Parsing has no locale parameter, uses English AM/PM markers, and never
+/// consults the host locale. ASCII whitespace around separators is ignored.
+pub fn parse_excel_time_text(input: &str) -> Option<NaiveTime> {
+    let text = input.trim();
+    let mut normalized = String::with_capacity(text.len());
+    let mut pending_space = false;
+    for ch in text.chars() {
+        if ch.is_ascii_whitespace() {
+            pending_space = true;
+        } else {
+            if pending_space && ch != ':' && !normalized.ends_with(':') && !normalized.is_empty() {
+                normalized.push(' ');
+            }
+            normalized.push(ch);
+            pending_space = false;
+        }
+    }
+    const FORMATS: &[&str] = &["%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p"];
+    FORMATS
+        .iter()
+        .find_map(|format| NaiveTime::parse_from_str(&normalized, format).ok())
+}
+
+/// Parse an en-US date and time separated by whitespace or an ISO `T`.
+///
+/// Date and time components use [`parse_excel_date_text`] and
+/// [`parse_excel_time_text`]. `T` is accepted only after a four-digit-year ISO
+/// date. There is no locale parameter, and parsing is independent of the host
+/// locale.
+pub fn parse_excel_datetime_text(input: &str) -> Option<NaiveDateTime> {
+    let text = input.trim();
+    text.char_indices()
+        .filter(|(_, ch)| *ch == 'T' || ch.is_ascii_whitespace())
+        .find_map(|(index, ch)| {
+            let time_start = index + ch.len_utf8();
+            let date = if ch == 'T' {
+                parse_iso_date(&text[..index])?
+            } else {
+                parse_excel_date_text(&text[..index])?
+            };
+            let time = parse_excel_time_text(&text[time_start..])?;
+            Some(date.and_time(time))
+        })
+}
+
+/// Parse spreadsheet date, time, or datetime text and return its serial.
+///
+/// This is the canonical entry point for text operands that need a temporal
+/// serial. Dates use deterministic en-US month/day/year ordering, with no
+/// locale parameter. Date-bearing results honor the selected workbook date
+/// system; time-only results are fractional days in either system.
+pub fn parse_excel_datetime_text_to_serial_for(system: DateSystem, input: &str) -> Option<f64> {
+    if let Some(datetime) = parse_excel_datetime_text(input) {
+        return Some(datetime_to_serial_for(system, &datetime));
+    }
+    if let Some(date) = parse_excel_date_text(input) {
+        return Some(date_to_serial_for(system, &date));
+    }
+    parse_excel_time_text(input).map(|time| time_to_fraction(&time))
+}
+
 /// Return the final whole-day serial supported by Excel's calendar.
 pub fn max_excel_serial_for(system: DateSystem) -> f64 {
     date_to_serial_for(system, &EXCEL_MAX_DATE)
@@ -385,5 +514,61 @@ mod tests {
     fn time_fraction_is_second_precision() {
         let time = NaiveTime::from_hms_nano_opt(12, 0, 0, 999_999_999).unwrap();
         assert_eq!(time_to_fraction(&time), 0.5);
+    }
+
+    #[test]
+    fn temporal_text_parser_uses_excel_year_window_and_date_system() {
+        assert_eq!(
+            parse_excel_datetime_text_to_serial_for(DateSystem::Excel1900, "1/1/03"),
+            Some(37_622.0)
+        );
+        assert_eq!(
+            parse_excel_datetime_text_to_serial_for(DateSystem::Excel1904, "1/1/03 12:00"),
+            Some(36_160.5)
+        );
+
+        // oracle: lo-verified for every accepted two-digit-year date shape.
+        for (input, expected) in [
+            ("1/1/29", date(2029, 1, 1)),
+            ("1/1/30", date(1930, 1, 1)),
+            ("January 1, 29", date(2029, 1, 1)),
+            ("January 1, 30", date(1930, 1, 1)),
+            ("Jan 1, 29", date(2029, 1, 1)),
+            ("Jan 1, 30", date(1930, 1, 1)),
+            ("1-Jan-29", date(2029, 1, 1)),
+            ("1-Jan-30", date(1930, 1, 1)),
+        ] {
+            assert_eq!(parse_excel_date_text(input), Some(expected), "{input}");
+        }
+
+        // oracle: lo-verified. A short year is not accepted in ISO year position.
+        assert_eq!(parse_excel_date_text("03-01-01"), None);
+        assert_eq!(
+            parse_excel_datetime_text_to_serial_for(DateSystem::Excel1900, "12:00"),
+            Some(0.5)
+        );
+    }
+
+    #[test]
+    fn temporal_text_parser_restricts_slash_order_and_t_separator() {
+        // oracle: lo-verified. Arithmetic follows en-US m/d/y, unlike DATEVALUE's
+        // separately retained legacy fallbacks.
+        assert_eq!(parse_excel_date_text("15/01/2003"), None);
+        assert_eq!(parse_excel_date_text("2003/1/1"), None);
+        assert_eq!(parse_excel_datetime_text("1/1/03T12:00"), None);
+        assert_eq!(
+            parse_excel_datetime_text("2003-01-01T12:00"),
+            Some(datetime(2003, 1, 1, 12, 0))
+        );
+    }
+
+    #[test]
+    fn temporal_text_parser_rejects_invalid_and_non_dates() {
+        for text in ["2/30/03", "abc", "", "13/13/13", "123-456"] {
+            assert!(
+                parse_excel_datetime_text_to_serial_for(DateSystem::Excel1900, text).is_none(),
+                "{text}"
+            );
+        }
     }
 }

@@ -67,6 +67,37 @@ pub fn to_number_lenient_with_locale(
     }
 }
 
+/// Numeric coercion for arithmetic operators.
+///
+/// This deliberately extends only the operator boundary: numeric text is
+/// parsed first using the engine's invariant locale, then date/time text is
+/// parsed by `formualizer-common` and encoded in the workbook's date system.
+/// Aggregate arguments, comparisons, criteria, and functions such as `N`
+/// continue to use their existing coercion policies.
+pub(crate) fn to_arithmetic_number_with_locale(
+    value: &LiteralValue,
+    loc: &crate::locale::Locale,
+    system: DateSystem,
+) -> Result<f64, ExcelError> {
+    match value {
+        LiteralValue::Text(s) => loc
+            .parse_number_invariant(s)
+            .or_else(|| formualizer_common::parse_excel_datetime_text_to_serial_for(system, s))
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message(format!("Cannot convert '{s}' to arithmetic operand"))
+            }),
+        LiteralValue::Date(_)
+        | LiteralValue::DateTime(_)
+        | LiteralValue::Time(_)
+        | LiteralValue::Duration(_) => value.as_serial_number_for(system).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("Cannot convert date/time to arithmetic operand")
+        }),
+        _ => to_number_strict(value),
+    }
+}
+
 /// Logical coercion.
 /// - Accepts Boolean
 /// - Numbers: nonzero → true, zero → false
