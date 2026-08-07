@@ -549,7 +549,12 @@ fn eval_dget<'a, 'b>(
 
     for row in 1..db_rows {
         if row_matches_criteria(&db_view, row, &criteria_rows) {
-            matching_values.push(db_view.get_cell(row, field_idx));
+            let field_value = db_view.get_cell(row, field_idx);
+            // DGET ignores records whose selected field is genuinely blank.
+            // An explicit empty string is still a value and must be retained.
+            if !matches!(field_value, LiteralValue::Empty) {
+                matching_values.push(field_value);
+            }
         }
     }
 
@@ -647,9 +652,6 @@ fn eval_dcounta<'a, 'b>(
             match &cell_val {
                 LiteralValue::Empty => {
                     // Empty cells are NOT counted
-                }
-                LiteralValue::Text(s) if s.is_empty() => {
-                    // Empty strings are treated as blank and NOT counted
                 }
                 LiteralValue::Error(e) => {
                     // Propagate errors
