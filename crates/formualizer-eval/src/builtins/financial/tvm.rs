@@ -5,7 +5,6 @@ use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
-use formualizer_parse::parser::ASTNodeType;
 
 fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
@@ -332,8 +331,8 @@ impl Function for FvFn {
 /// # Remarks
 /// - `rate` is the discount rate per period.
 /// - Cash-flow sign convention: investments/outflows are negative, returns/inflows are positive.
-/// - Text and blank cells in ranges are ignored; scalar and array values are consumed left-to-right
-///   and direct non-numeric text returns `#VALUE!`.
+/// - Text, blank, and logical cells in references are ignored. Direct scalar and computed-array
+///   values are consumed left-to-right, and direct non-numeric text returns `#VALUE!`.
 /// - Embedded error values inside provided cash-flow values are propagated as errors.
 /// - Returns argument coercion errors for invalid `rate` or direct scalar failures.
 ///
@@ -392,95 +391,61 @@ impl Function for NpvFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let rate = coerce_num(&args[0])?;
+        if args.len() > 255 {
+            return Err(ExcelError::new_value()
+                .with_message("NPV accepts at most 255 total arguments (rate plus 254 values)"));
+        }
 
+        let rate = coerce_num(&args[0])?;
         let mut npv = 0.0;
         let mut period = 1;
 
         for arg in &args[1..] {
+            if arg.is_omitted() {
+                period += 1;
+                continue;
+            }
+
+            // CalcValue::Range describes shape, not provenance: both a cell range and a computed
+            // array (for example TRANSPOSE(...)) use it, while a one-cell reference is Scalar.
+            // ArgumentHandle's reference path retains that distinction, including functions that
+            // genuinely return references, without guessing from the argument's syntax.
+            let reference_argument = arg.has_reference_semantics();
             match arg.value()? {
-                // A range has spreadsheet aggregate semantics: text and blank cells do not
-                // contribute a period, while errors propagate.
                 CalcValue::Range(range) => {
-                    let array_argument = matches!(arg.ast().node_type, ASTNodeType::Array(_));
                     let (rows, cols) = range.dims();
                     for row in 0..rows {
                         for col in 0..cols {
-                            match range.get_cell(row, col) {
-                                LiteralValue::Number(n) => {
-                                    npv += n / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Int(i) => {
-                                    npv += (i as f64) / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Boolean(b) if array_argument => {
-                                    npv += (if b { 1.0 } else { 0.0 }) / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Empty if array_argument => {
-                                    return Err(ExcelError::new_value());
-                                }
-                                LiteralValue::Error(e) => {
-                                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
-                                }
-                                LiteralValue::Text(_) if array_argument => {
-                                    return Err(ExcelError::new_value());
-                                }
-                                _ => {}
-                            }
+                            accumulate_npv_cash_flow(
+                                range.get_cell(row, col),
+                                reference_argument,
+                                rate,
+                                &mut npv,
+                                &mut period,
+                            )?;
                         }
                     }
                 }
-                // Array constants are flattened in row-major order. Their entries have
-                // direct-value semantics (text is invalid, unlike text in a cell range).
                 CalcValue::Scalar(LiteralValue::Array(arr)) => {
                     for row in arr {
                         for cell in row {
-                            match cell {
-                                LiteralValue::Number(n) => {
-                                    npv += n / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Int(i) => {
-                                    npv += (i as f64) / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Boolean(b) => {
-                                    npv += (if b { 1.0 } else { 0.0 }) / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Empty => return Err(ExcelError::new_value()),
-                                LiteralValue::Error(e) => {
-                                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
-                                }
-                                LiteralValue::Text(_) => return Err(ExcelError::new_value()),
-                                _ => return Err(ExcelError::new_value()),
-                            }
+                            accumulate_npv_cash_flow(
+                                cell,
+                                reference_argument,
+                                rate,
+                                &mut npv,
+                                &mut period,
+                            )?;
                         }
                     }
                 }
-                // Unlike range/array contents, direct scalar text is an invalid cash flow.
-                CalcValue::Scalar(LiteralValue::Number(n)) => {
-                    npv += n / (1.0 + rate).powi(period);
-                    period += 1;
-                }
-                CalcValue::Scalar(LiteralValue::Int(i)) => {
-                    npv += (i as f64) / (1.0 + rate).powi(period);
-                    period += 1;
-                }
-                CalcValue::Scalar(LiteralValue::Boolean(b)) => {
-                    npv += (if b { 1.0 } else { 0.0 }) / (1.0 + rate).powi(period);
-                    period += 1;
-                }
-                CalcValue::Scalar(LiteralValue::Empty) => {
-                    period += 1;
-                }
-                CalcValue::Scalar(LiteralValue::Error(e)) => {
-                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
-                }
-                CalcValue::Scalar(_) => return Err(ExcelError::new_value()),
+                CalcValue::Scalar(value) => accumulate_npv_cash_flow(
+                    value,
+                    reference_argument,
+                    rate,
+                    &mut npv,
+                    &mut period,
+                )?,
                 CalcValue::Callable(_) => {
                     return Ok(CalcValue::Scalar(LiteralValue::Error(
                         ExcelError::new(ExcelErrorKind::Calc)
@@ -498,6 +463,32 @@ impl Function for NpvFn {
             ))
         }
     }
+}
+
+fn accumulate_npv_cash_flow(
+    value: LiteralValue,
+    reference_argument: bool,
+    rate: f64,
+    npv: &mut f64,
+    period: &mut i32,
+) -> Result<(), ExcelError> {
+    let numeric = match value {
+        LiteralValue::Number(n) => Some(n),
+        LiteralValue::Int(i) => Some(i as f64),
+        // Excel's NPV documentation says logical values in references are ignored. LibreOffice
+        // 24.2.7 counts them as 1, so this intentionally follows the Excel-targeted rule.
+        LiteralValue::Boolean(_) if reference_argument => None,
+        LiteralValue::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
+        LiteralValue::Text(_) | LiteralValue::Empty if reference_argument => None,
+        LiteralValue::Error(error) => return Err(error),
+        _ => return Err(ExcelError::new_value()),
+    };
+
+    if let Some(value) = numeric {
+        *npv += value / (1.0 + rate).powi(*period);
+        *period += 1;
+    }
+    Ok(())
 }
 
 /// Calculates the number of periods needed to satisfy a cash-flow target.

@@ -318,6 +318,15 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// Returns whether this argument resolves as a spreadsheet reference rather than a value.
+    ///
+    /// This uses the interpreter's reference-resolution path, so reference-returning functions
+    /// are included only when they actually produce a reference. A computed array remains a value
+    /// even though both it and a cell range are represented by [`CalcValue::Range`].
+    pub(crate) fn has_reference_semantics(&self) -> bool {
+        self.reference_attempt().is_some()
+    }
+
     pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         self.cached_value
             .get_or_init(|| self.compute_value())
