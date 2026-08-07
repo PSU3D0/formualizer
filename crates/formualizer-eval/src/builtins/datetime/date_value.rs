@@ -9,16 +9,6 @@ use formualizer_common::{
     time_to_fraction,
 };
 
-fn parse_excel_year(text: &str) -> Option<i32> {
-    let year = text.parse::<i32>().ok()?;
-    match text.len() {
-        2 if year <= 29 => Some(2000 + year),
-        2 => Some(1900 + year),
-        4 => Some(year),
-        _ => None,
-    }
-}
-
 fn parse_legacy_datevalue_text(input: &str) -> Option<NaiveDate> {
     let text = input.trim();
     let parts: Vec<&str> = text.split('/').collect();
@@ -27,24 +17,17 @@ fn parse_legacy_datevalue_text(input: &str) -> Option<NaiveDate> {
             .iter()
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
     {
-        if parts[0].len() == 4 {
-            return NaiveDate::from_ymd_opt(
-                parts[0].parse::<i32>().ok()?,
-                parts[1].parse::<u32>().ok()?,
-                parts[2].parse::<u32>().ok()?,
-            );
-        }
-        let year = parse_excel_year(parts[2])?;
-        return NaiveDate::from_ymd_opt(
-            year,
-            parts[1].parse::<u32>().ok()?,
-            parts[0].parse::<u32>().ok()?,
-        );
+        let normalized = if parts[0].len() == 4 {
+            format!("{}-{}-{}", parts[0], parts[1], parts[2])
+        } else {
+            format!("{}/{}/{}", parts[1], parts[0], parts[2])
+        };
+        return parse_excel_date_text(&normalized);
     }
 
-    let (prefix, year_text) = text.rsplit_once(' ')?;
-    let year = parse_excel_year(year_text)?;
-    NaiveDate::parse_from_str(&format!("{prefix} {year:04}"), "%d %B %Y").ok()
+    let (day_and_month, year) = text.rsplit_once(' ')?;
+    let (day, month) = day_and_month.split_once(' ')?;
+    parse_excel_date_text(&format!("{month} {day}, {year}"))
 }
 use formualizer_macros::func_caps;
 
@@ -375,6 +358,10 @@ mod tests {
         for (formula, expected) in [
             ("=DATEVALUE(\"15/01/2003\")", 37_636.0),
             ("=DATEVALUE(\"2003/1/1\")", 37_622.0),
+            ("=DATEVALUE(\"15/01/29\")", 47_133.0),
+            ("=DATEVALUE(\"15/01/30\")", 10_973.0),
+            ("=DATEVALUE(\"1 January 29\")", 47_119.0),
+            ("=DATEVALUE(\"1 January 30\")", 10_959.0),
         ] {
             assert_eq!(
                 eval_temporal_value_formula(crate::engine::DateSystem::Excel1900, formula),
