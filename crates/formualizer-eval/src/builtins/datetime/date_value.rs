@@ -3,10 +3,49 @@
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
+use chrono::NaiveDate;
 use formualizer_common::{
     ExcelError, LiteralValue, date_to_serial_for, parse_excel_date_text, parse_excel_time_text,
     time_to_fraction,
 };
+
+fn parse_excel_year(text: &str) -> Option<i32> {
+    let year = text.parse::<i32>().ok()?;
+    match text.len() {
+        2 if year <= 29 => Some(2000 + year),
+        2 => Some(1900 + year),
+        4 => Some(year),
+        _ => None,
+    }
+}
+
+fn parse_legacy_datevalue_text(input: &str) -> Option<NaiveDate> {
+    let text = input.trim();
+    let parts: Vec<&str> = text.split('/').collect();
+    if parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        if parts[0].len() == 4 {
+            return NaiveDate::from_ymd_opt(
+                parts[0].parse::<i32>().ok()?,
+                parts[1].parse::<u32>().ok()?,
+                parts[2].parse::<u32>().ok()?,
+            );
+        }
+        let year = parse_excel_year(parts[2])?;
+        return NaiveDate::from_ymd_opt(
+            year,
+            parts[1].parse::<u32>().ok()?,
+            parts[0].parse::<u32>().ok()?,
+        );
+    }
+
+    let (prefix, year_text) = text.rsplit_once(' ')?;
+    let year = parse_excel_year(year_text)?;
+    NaiveDate::parse_from_str(&format!("{prefix} {year:04}"), "%d %B %Y").ok()
+}
 use formualizer_macros::func_caps;
 
 /// Parses a date string and returns its date serial number.
@@ -86,7 +125,9 @@ impl Function for DateValueFn {
             }
         };
 
-        if let Some(date) = parse_excel_date_text(&date_text) {
+        if let Some(date) =
+            parse_excel_date_text(&date_text).or_else(|| parse_legacy_datevalue_text(&date_text))
+        {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
                 date_to_serial_for(system, &date),
             )));
@@ -269,18 +310,78 @@ mod tests {
         }
     }
 
-    fn eval_datevalue_formula(system: crate::engine::DateSystem, formula: &str) -> LiteralValue {
+    fn eval_temporal_value_formula(
+        system: crate::engine::DateSystem,
+        formula: &str,
+    ) -> LiteralValue {
         use crate::engine::{Engine, EvalConfig};
         use crate::interpreter::Interpreter;
         use formualizer_parse::parser::parse;
 
-        let wb = TestWorkbook::new().with_function(Arc::new(DateValueFn));
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(DateValueFn))
+            .with_function(Arc::new(TimeValueFn));
         let engine = Engine::new(wb, EvalConfig::default().with_date_system(system));
         let interpreter = Interpreter::new(&engine, "Sheet1");
         interpreter
             .evaluate_ast(&parse(formula).expect("formula should parse"))
             .expect("formula should evaluate")
             .into_literal()
+    }
+
+    #[test]
+    fn datevalue_and_timevalue_pin_oracle_verified_text_behavior() {
+        use crate::engine::DateSystem;
+        use formualizer_common::ExcelErrorKind;
+
+        let number_cases = [
+            // Two-digit years use the 29/30 window in slash and month-name forms.
+            ("=DATEVALUE(\"1/1/03\")", 37_622.0),
+            ("=DATEVALUE(\"1-Jan-03\")", 37_622.0),
+            // Surrounding and interior whitespace match the LO oracle.
+            ("=DATEVALUE(\" 2003-01-01 \")", 37_622.0),
+            ("=TIMEVALUE(\" 12:00 \")", 0.5),
+            ("=TIMEVALUE(\"12 : 00\")", 0.5),
+        ];
+        for (formula, expected) in number_cases {
+            assert_eq!(
+                eval_temporal_value_formula(DateSystem::Excel1900, formula),
+                LiteralValue::Number(expected),
+                "{formula} (oracle: lo-verified)"
+            );
+        }
+
+        let wb = TestWorkbook::new().with_function(Arc::new(DateValueFn));
+        let ctx = wb.interpreter();
+        let function = ctx.context.get_function("", "DATEVALUE").unwrap();
+        let input = lit(LiteralValue::Text("1/ 15/2003".into()));
+        let error = function
+            .dispatch(
+                &[ArgumentHandle::new(&input, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.kind,
+            ExcelErrorKind::Value,
+            "oracle: lo-verified interior whitespace"
+        );
+    }
+
+    #[test]
+    fn datevalue_retains_preexisting_unambiguous_slash_fallbacks() {
+        // oracle: lo-verified divergence. These shipped DATEVALUE-only forms
+        // remain accepted for compatibility; arithmetic rejects both forms.
+        for (formula, expected) in [
+            ("=DATEVALUE(\"15/01/2003\")", 37_636.0),
+            ("=DATEVALUE(\"2003/1/1\")", 37_622.0),
+        ] {
+            assert_eq!(
+                eval_temporal_value_formula(crate::engine::DateSystem::Excel1900, formula),
+                LiteralValue::Number(expected),
+                "{formula}"
+            );
+        }
     }
 
     /// DATEVALUE emits a serial, so the workbook date system decides the epoch.
@@ -292,7 +393,7 @@ mod tests {
         let parsed = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
             assert_eq!(
-                eval_datevalue_formula(system, "=DATEVALUE(\"2024-01-15\")"),
+                eval_temporal_value_formula(system, "=DATEVALUE(\"2024-01-15\")"),
                 LiteralValue::Number(date_to_serial_for(system, &parsed)),
                 "DATEVALUE under {system:?}"
             );
