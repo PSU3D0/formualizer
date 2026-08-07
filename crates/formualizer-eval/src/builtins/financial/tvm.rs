@@ -5,6 +5,7 @@ use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
+use formualizer_parse::parser::ASTNodeType;
 
 fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
@@ -331,7 +332,8 @@ impl Function for FvFn {
 /// # Remarks
 /// - `rate` is the discount rate per period.
 /// - Cash-flow sign convention: investments/outflows are negative, returns/inflows are positive.
-/// - Non-numeric values are ignored; numeric values in arrays/ranges are consumed left-to-right.
+/// - Text and blank cells in ranges are ignored; scalar and array values are consumed left-to-right
+///   and direct non-numeric text returns `#VALUE!`.
 /// - Embedded error values inside provided cash-flow values are propagated as errors.
 /// - Returns argument coercion errors for invalid `rate` or direct scalar failures.
 ///
@@ -362,7 +364,7 @@ pub struct NpvFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: NPV(arg1: number@scalar, arg2...: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for NpvFn {
@@ -378,8 +380,11 @@ impl Function for NpvFn {
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
-        static SCHEMA: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar(), ArgSchema::any()]);
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut schema = vec![ArgSchema::number_lenient_scalar(), ArgSchema::any()];
+            schema[1].repeating = Some(1);
+            schema
+        });
         &SCHEMA[..]
     }
     fn eval<'a, 'b, 'c>(
@@ -393,20 +398,44 @@ impl Function for NpvFn {
         let mut period = 1;
 
         for arg in &args[1..] {
-            let v = arg.value()?.into_literal();
-            match v {
-                LiteralValue::Number(n) => {
-                    npv += n / (1.0 + rate).powi(period);
-                    period += 1;
+            match arg.value()? {
+                // A range has spreadsheet aggregate semantics: text and blank cells do not
+                // contribute a period, while errors propagate.
+                CalcValue::Range(range) => {
+                    let array_argument = matches!(arg.ast().node_type, ASTNodeType::Array(_));
+                    let (rows, cols) = range.dims();
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            match range.get_cell(row, col) {
+                                LiteralValue::Number(n) => {
+                                    npv += n / (1.0 + rate).powi(period);
+                                    period += 1;
+                                }
+                                LiteralValue::Int(i) => {
+                                    npv += (i as f64) / (1.0 + rate).powi(period);
+                                    period += 1;
+                                }
+                                LiteralValue::Boolean(b) if array_argument => {
+                                    npv += (if b { 1.0 } else { 0.0 }) / (1.0 + rate).powi(period);
+                                    period += 1;
+                                }
+                                LiteralValue::Empty if array_argument => {
+                                    return Err(ExcelError::new_value());
+                                }
+                                LiteralValue::Error(e) => {
+                                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                                }
+                                LiteralValue::Text(_) if array_argument => {
+                                    return Err(ExcelError::new_value());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                 }
-                LiteralValue::Int(i) => {
-                    npv += (i as f64) / (1.0 + rate).powi(period);
-                    period += 1;
-                }
-                LiteralValue::Error(e) => {
-                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
-                }
-                LiteralValue::Array(arr) => {
+                // Array constants are flattened in row-major order. Their entries have
+                // direct-value semantics (text is invalid, unlike text in a cell range).
+                CalcValue::Scalar(LiteralValue::Array(arr)) => {
                     for row in arr {
                         for cell in row {
                             match cell {
@@ -418,19 +447,56 @@ impl Function for NpvFn {
                                     npv += (i as f64) / (1.0 + rate).powi(period);
                                     period += 1;
                                 }
+                                LiteralValue::Boolean(b) => {
+                                    npv += (if b { 1.0 } else { 0.0 }) / (1.0 + rate).powi(period);
+                                    period += 1;
+                                }
+                                LiteralValue::Empty => return Err(ExcelError::new_value()),
                                 LiteralValue::Error(e) => {
                                     return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
                                 }
-                                _ => {} // Skip non-numeric values
+                                LiteralValue::Text(_) => return Err(ExcelError::new_value()),
+                                _ => return Err(ExcelError::new_value()),
                             }
                         }
                     }
                 }
-                _ => {} // Skip non-numeric values
+                // Unlike range/array contents, direct scalar text is an invalid cash flow.
+                CalcValue::Scalar(LiteralValue::Number(n)) => {
+                    npv += n / (1.0 + rate).powi(period);
+                    period += 1;
+                }
+                CalcValue::Scalar(LiteralValue::Int(i)) => {
+                    npv += (i as f64) / (1.0 + rate).powi(period);
+                    period += 1;
+                }
+                CalcValue::Scalar(LiteralValue::Boolean(b)) => {
+                    npv += (if b { 1.0 } else { 0.0 }) / (1.0 + rate).powi(period);
+                    period += 1;
+                }
+                CalcValue::Scalar(LiteralValue::Empty) => {
+                    period += 1;
+                }
+                CalcValue::Scalar(LiteralValue::Error(e)) => {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
+                }
+                CalcValue::Scalar(_) => return Err(ExcelError::new_value()),
+                CalcValue::Callable(_) => {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Calc)
+                            .with_message("LAMBDA value must be invoked"),
+                    )));
+                }
             }
         }
 
-        Ok(CalcValue::Scalar(LiteralValue::Number(npv)))
+        if npv.is_finite() {
+            Ok(CalcValue::Scalar(LiteralValue::Number(npv)))
+        } else {
+            Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ))
+        }
     }
 }
 
