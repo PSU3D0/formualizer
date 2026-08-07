@@ -74,7 +74,7 @@ pub fn to_number_lenient_with_locale(
 /// parsed by `formualizer-common` and encoded in the workbook's date system.
 /// Aggregate arguments, comparisons, criteria, and functions such as `N`
 /// continue to use their existing coercion policies.
-pub fn to_arithmetic_number_with_locale(
+pub(crate) fn to_arithmetic_number_with_locale(
     value: &LiteralValue,
     loc: &crate::locale::Locale,
     system: DateSystem,

@@ -126,7 +126,7 @@ pub fn parse_excel_time_text(input: &str) -> Option<NaiveTime> {
 ///
 /// Date and time components use [`parse_excel_date_text`] and
 /// [`parse_excel_time_text`], so the result is independent of machine locale.
-pub fn parse_excel_datetime_text(input: &str) -> Option<NaiveDateTime> {
+fn parse_excel_datetime_text(input: &str) -> Option<NaiveDateTime> {
     let text = input.trim();
     text.char_indices()
         .filter(|(_, ch)| *ch == 'T' || ch.is_ascii_whitespace())
