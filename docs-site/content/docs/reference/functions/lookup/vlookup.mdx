@@ -11,8 +11,10 @@ description: "VLOOKUP: Looks up a value in the first column of a table and retur
 
 ## Remarks
  - `col_index_num` is 1-based and must be within the table width.
- - `range_lookup` defaults to `FALSE` in this engine (exact match by default).
+ - `range_lookup` defaults to `TRUE`, matching Excel and LibreOffice.
  - When `range_lookup=TRUE`, approximate match logic is used against the first column.
+ - Approximate matching assumes the first column is sorted ascending; unsorted or descending data can return incorrect rows.
+ - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
  - If the lookup value is not found, returns `#N/A`.
  - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
  - A matched empty target cell is materialized as numeric `0`.
@@ -52,7 +54,7 @@ description: "VLOOKUP: Looks up a value in the first column of a table and retur
 ## FAQ
 
 ### What is the default behavior when range_lookup is omitted?
-This engine defaults range_lookup to FALSE, so VLOOKUP performs exact matching unless TRUE is explicitly provided.
+VLOOKUP defaults range_lookup to TRUE, so it performs approximate matching; pass FALSE or 0 for exact matching.
 
 ### What happens if col_index_num points outside the table?
 A numeric out-of-range column index returns #REF!, while a non-numeric col_index_num returns #VALUE!.

@@ -1587,6 +1587,16 @@ fn error_type_code(kind: ExcelErrorKind) -> i64 {
     }
 }
 
+/// [formualizer-docgen:schema:start]
+/// Name: ERROR.TYPE
+/// Type: ErrorTypeFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: ERROR.TYPE(arg1: any@scalar)
+/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for ErrorTypeFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {

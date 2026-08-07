@@ -62,7 +62,7 @@ pub struct ChooseRowsFn;
 /// Variadic: false
 /// Signature: CHOOSE(arg1: number@scalar, arg2: any@scalar)
 /// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberStrict,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
-/// Caps: PURE, LOOKUP
+/// Caps: PURE, LOOKUP, RETURNS_REFERENCE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for ChooseFn {
     fn name(&self) -> &'static str {

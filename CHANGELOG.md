@@ -6,6 +6,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Breaking changes
 
+- VLOOKUP and HLOOKUP now default `range_lookup` to approximate matching (`TRUE`), matching Excel and LibreOffice. Existing formulas that relied on the old exact default should pass `FALSE` or `0` explicitly to keep exact matching; numeric zero and explicitly omitted slots are exact.
+
 #### Parser/SDK 3.0 preparation
 
 - `ASTNodeType` adds the `Omitted` variant for explicitly omitted function-argument slots. Exhaustive Rust matches and AST projections must handle the new node; it remains distinct from empty text and blank-cell values. (#277)
