@@ -49,52 +49,82 @@ fn assert_expected(system: DateSystem, formula: &str, oracle: &str, expected: Ex
 #[test]
 fn date_time_text_arithmetic_oracle_table() {
     let cases = [
-        ("=\"1/1/03\"-\"6/01/2002\"", Expected::Number(214.0)),
-        ("=\"1/1/2003\"-\"6/1/2002\"", Expected::Number(214.0)),
-        ("=\"1/1/03\"+0", Expected::Number(37_622.0)),
-        ("=-\"1/1/03\"", Expected::Number(-37_622.0)),
-        ("=\"1/1/03\"*1", Expected::Number(37_622.0)),
-        ("=\"1/1/03\"/1", Expected::Number(37_622.0)),
-        ("=\"1/1/03\"^1", Expected::Number(37_622.0)),
-        ("=\"1/1/03\"%", Expected::Number(376.22)),
-        ("=\"12:00\"-\"6:00\"", Expected::Number(0.25)),
-        ("=\"1/1/03 12:00\"+0", Expected::Number(37_622.5)),
-        ("=ISNUMBER(\"1/1/03\"+0)", Expected::Boolean(true)),
+        (
+            "=\"1/1/03\"-\"6/01/2002\"",
+            Expected::Number(214.0),
+            Expected::Number(214.0),
+        ),
+        (
+            "=\"1/1/2003\"-\"6/1/2002\"",
+            Expected::Number(214.0),
+            Expected::Number(214.0),
+        ),
+        (
+            "=\"1/1/03\"+0",
+            Expected::Number(37_622.0),
+            Expected::Number(36_160.0),
+        ),
+        (
+            "=-\"1/1/03\"",
+            Expected::Number(-37_622.0),
+            Expected::Number(-36_160.0),
+        ),
+        (
+            "=\"1/1/03\"*1",
+            Expected::Number(37_622.0),
+            Expected::Number(36_160.0),
+        ),
+        (
+            "=\"1/1/03\"/1",
+            Expected::Number(37_622.0),
+            Expected::Number(36_160.0),
+        ),
+        (
+            "=\"1/1/03\"^1",
+            Expected::Number(37_622.0),
+            Expected::Number(36_160.0),
+        ),
+        (
+            "=\"1/1/03\"%",
+            Expected::Number(376.22),
+            Expected::Number(361.6),
+        ),
+        (
+            "=\"12:00\"-\"6:00\"",
+            Expected::Number(0.25),
+            Expected::Number(0.25),
+        ),
+        (
+            "=\"1/1/03 12:00\"+0",
+            Expected::Number(37_622.5),
+            Expected::Number(36_160.5),
+        ),
+        (
+            "=ISNUMBER(\"1/1/03\"+0)",
+            Expected::Boolean(true),
+            Expected::Boolean(true),
+        ),
     ];
 
-    for (formula, expected) in cases {
+    for (formula, expected_1900, expected_1904) in cases {
         assert_expected(
             DateSystem::Excel1900,
             formula,
             "oracle: lo-verified",
-            expected,
+            expected_1900,
+        );
+        assert_expected(
+            DateSystem::Excel1904,
+            formula,
+            "oracle: lo-verified",
+            expected_1904,
         );
     }
 }
 
 #[test]
-fn date_text_arithmetic_honors_workbook_date_system() {
+fn two_digit_year_window_honors_workbook_date_system() {
     let cases = [
-        (
-            DateSystem::Excel1900,
-            "=\"1/1/03\"+0",
-            Expected::Number(37_622.0),
-        ),
-        (
-            DateSystem::Excel1904,
-            "=\"1/1/03\"+0",
-            Expected::Number(36_160.0),
-        ),
-        (
-            DateSystem::Excel1900,
-            "=\"1/1/03 12:00\"+0",
-            Expected::Number(37_622.5),
-        ),
-        (
-            DateSystem::Excel1904,
-            "=\"1/1/03 12:00\"+0",
-            Expected::Number(36_160.5),
-        ),
         (
             DateSystem::Excel1900,
             "=\"1/1/29\"+0",
@@ -160,12 +190,9 @@ fn non_arithmetic_text_semantics_are_unchanged() {
         ("=\"1/1/03\"=37622", Expected::Boolean(false)),
     ];
 
-    for (formula, expected) in cases {
-        assert_expected(
-            DateSystem::Excel1900,
-            formula,
-            "oracle: lo-verified",
-            expected,
-        );
+    for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+        for (formula, expected) in cases {
+            assert_expected(system, formula, "oracle: lo-verified", expected);
+        }
     }
 }
