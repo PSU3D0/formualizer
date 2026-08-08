@@ -98,16 +98,25 @@ run_mutant m15-precedent-dedup-removed "$INSPECT" \
 # the dependency template at the requested cell.
 run_mutant fp-run-region-union "$INSPECT" \
   '/fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/placement\.row/span.domain.iter().next()?.row/g; /fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/placement\.col/span.domain.iter().next()?.col/g' \
-  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+  formula_plane_span_adapter_reports_per_placement_source_ordered_precedents
 run_mutant fp-wrong-placement-row "$INSPECT" \
   '/fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/placement\.row/placement.row.saturating_add(1)/g' \
-  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+  formula_plane_span_adapter_reports_per_placement_source_ordered_precedents
 run_mutant fp-route-span-to-legacy "$INSPECT" \
   '/fn span_placement/,/fn dirty_domain_contains/ s/if self\.engine\.config\.formula_plane_mode !=/if true || self.engine.config.formula_plane_mode !=/' \
-  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+  formula_plane_span_adapter_reports_per_placement_source_ordered_precedents
 run_mutant fp-drop-source-order "$INSPECT" \
   '/fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/for dependency in \&summary\.dependencies/for dependency in summary.dependencies.iter().rev()/' \
-  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+  formula_plane_span_adapter_reports_per_placement_source_ordered_precedents
+run_mutant fp-force-ast-fallback "$INSPECT" \
+  '/fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/        let authority =/        return None; let authority =/' \
+  formula_plane_span_adapter_reports_per_placement_source_ordered_precedents
+run_mutant fp-ignore-whole-span-dirty "$INSPECT" \
+  '/fn span_placement_is_dirty/,/fn instantiate_axis/ s/        if self$/        if false \&\& self/' \
+  dirty_snapshots_cover_whole_span_and_incomplete_closure_fallbacks
+run_mutant fp-ignore-incomplete-dirty-closure "$INSPECT" \
+  's/if closure\.incomplete {/if false \&\& closure.incomplete {/' \
+  dirty_snapshots_cover_whole_span_and_incomplete_closure_fallbacks
 
 # B1 inverse mutants: both must be killed by non-tree-path cycle coverage.
 run_mutant cycle-revert-to-parent-chain "$INSPECT" \

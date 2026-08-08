@@ -119,6 +119,60 @@ fn build_pair(literal: u32) -> (Engine<TestWorkbook>, Engine<TestWorkbook>) {
     (off, authoritative)
 }
 
+fn build_mixed_reader_pair(
+    plane_col_base: u32,
+    legacy_col_base: u32,
+) -> (Engine<TestWorkbook>, Engine<TestWorkbook>) {
+    let build = |mode| {
+        let mut engine = engine(mode);
+        for row in 1..=SPAN_ROWS {
+            engine
+                .set_cell_value(SHEET, row, 1, LiteralValue::Number(f64::from(row)))
+                .unwrap();
+        }
+        engine
+            .define_name(
+                "Rate",
+                NamedDefinition::Literal(LiteralValue::Number(0.25)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        let mut records = Vec::new();
+        for family in 0..3u32 {
+            let column = plane_col_base + family;
+            for row in 1..=SPAN_ROWS {
+                let formula = format!("=$A$1+A{row}+{family}");
+                let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
+                records.push(FormulaIngestRecord::new(
+                    row,
+                    column,
+                    ast_id,
+                    Some(Arc::<str>::from(formula)),
+                ));
+            }
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, records)])
+            .unwrap();
+        for family in 0..3u32 {
+            engine
+                .set_cell_formula(
+                    SHEET,
+                    1,
+                    legacy_col_base + family,
+                    parse("=Rate+$A$1").unwrap(),
+                )
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        engine
+    };
+    (
+        build(FormulaPlaneMode::Off),
+        build(FormulaPlaneMode::AuthoritativeExperimental),
+    )
+}
+
 fn assert_snapshot_parity(
     off: &Engine<TestWorkbook>,
     authoritative: &Engine<TestWorkbook>,
@@ -232,8 +286,7 @@ fn assert_all_five_public_apis_match(
 }
 
 #[test]
-fn formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order()
- {
+fn formula_plane_span_adapter_reports_per_placement_source_ordered_precedents() {
     let (off, authoritative) = build_pair(9);
     let cell = address(64, 3);
     let off_cell = off
@@ -245,9 +298,18 @@ fn formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templa
     assert_eq!(authoritative_cell.cell.formula, off_cell.cell.formula);
     assert!(authoritative_cell.cell.formula.is_some());
 
+    reset_formula_plane_reference_path_counts();
     let report = authoritative
         .precedents(&cell, &PrecedentOptions::default())
         .unwrap();
+    assert_eq!(
+        formula_plane_reference_path_counts(),
+        FormulaPlaneReferencePathCounts {
+            template: 1,
+            ast_fallback: 0,
+        },
+        "accepted affine shapes must use retained source-ordered templates"
+    );
     assert_eq!(report.precedents.len(), 3);
     assert_eq!(
         report.precedents[0].reference,
@@ -379,6 +441,306 @@ fn legacy_and_formula_plane_budget_truncation_and_missing_sheet_errors_are_ident
     assert_eq!(
         off.range_page(&missing_area, &RangePageOptions::default()),
         authoritative.range_page(&missing_area, &RangePageOptions::default())
+    );
+}
+
+#[test]
+fn truncated_dependents_select_the_address_least_discovered_candidates_in_both_modes() {
+    let (off, authoritative) = build_pair(7);
+    for cell in [
+        address(1, 1),
+        address(64, 1),
+        address(64, 2),
+        address(1, 12),
+    ] {
+        for max_results in [1, 2, 3, 4, 5, 8, 16, 64, 119, 120, 121] {
+            assert_dependent_parity(
+                &off,
+                &authoritative,
+                cell.clone(),
+                DependentsOptions::default().with_max_results(max_results),
+            );
+        }
+    }
+
+    for (plane_col_base, legacy_col_base) in [(3, 24), (24, 3)] {
+        let (off, authoritative) = build_mixed_reader_pair(plane_col_base, legacy_col_base);
+        assert_eq!(
+            authoritative
+                .baseline_stats()
+                .formula_plane_active_span_count,
+            3
+        );
+        for max_results in 1..=8 {
+            assert_dependent_parity(
+                &off,
+                &authoritative,
+                address(1, 1),
+                DependentsOptions::default().with_max_results(max_results),
+            );
+        }
+        for max_links in [1, 2, 3, 4, 8, 16, 64] {
+            assert_trace_parity(
+                &off,
+                &authoritative,
+                &[address(1, 1)],
+                TraceOptions::default()
+                    .with_direction(TraceDirection::Dependents)
+                    .with_max_links(max_links)
+                    .with_max_work(100_000),
+            );
+        }
+    }
+}
+
+#[test]
+fn non_binding_work_budgets_are_plane_independent_but_binding_budgets_are_not() {
+    let (off, authoritative) = build_pair(7);
+    for cell in [address(1, 1), address(64, 1), address(64, 2)] {
+        assert_dependent_parity(
+            &off,
+            &authoritative,
+            cell,
+            DependentsOptions::default().with_max_work(100_000),
+        );
+    }
+    assert_trace_parity(
+        &off,
+        &authoritative,
+        &[address(64, 2)],
+        TraceOptions::default()
+            .with_direction(TraceDirection::Dependents)
+            .with_max_work(100_000),
+    );
+
+    let options = DependentsOptions::default().with_max_work(13);
+    let mut legacy = off.dependents(&address(64, 2), &options).unwrap();
+    let mut plane = authoritative.dependents(&address(64, 2), &options).unwrap();
+    legacy.stamp = ZERO_STAMP;
+    plane.stamp = ZERO_STAMP;
+    assert_ne!(
+        legacy, plane,
+        "binding work budgets are representation-dependent"
+    );
+    assert!(
+        legacy.truncation.incomplete || plane.truncation.incomplete,
+        "the documented difference requires a budget that actually binds"
+    );
+}
+
+#[test]
+fn shadow_inspection_remains_on_the_legacy_authority_path() {
+    let build = |mode| {
+        let mut engine = engine(mode);
+        let mut records = Vec::new();
+        for row in 1..=SPAN_ROWS {
+            engine
+                .set_cell_value(SHEET, row, 1, LiteralValue::Number(f64::from(row)))
+                .unwrap();
+            let formula = format!("=A{row}+{row}");
+            let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
+            records.push(FormulaIngestRecord::new(
+                row,
+                3,
+                ast_id,
+                Some(Arc::<str>::from(formula)),
+            ));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, records)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        engine
+    };
+    let off = build(FormulaPlaneMode::Off);
+    let shadow = build(FormulaPlaneMode::Shadow);
+    assert_eq!(shadow.baseline_stats().formula_plane_active_span_count, 0);
+    reset_formula_plane_reference_path_counts();
+    assert_all_five_public_apis_match(&off, &shadow);
+    assert_eq!(
+        formula_plane_reference_path_counts(),
+        FormulaPlaneReferencePathCounts::default()
+    );
+}
+
+#[test]
+fn structural_insert_conservative_staleness_is_documented_and_converges_after_evaluation() {
+    let (mut off, mut authoritative) = build_pair(7);
+    off.insert_rows(SHEET, 60, 1).unwrap();
+    authoritative.insert_rows(SHEET, 60, 1).unwrap();
+
+    for row in [1, 58, 59] {
+        let legacy = off
+            .inspect_cell(&address(row, 4), &SnapshotOptions::default())
+            .unwrap()
+            .cell;
+        let plane = authoritative
+            .inspect_cell(&address(row, 4), &SnapshotOptions::default())
+            .unwrap()
+            .cell;
+        assert_eq!(legacy.staleness, Staleness::Current);
+        assert_eq!(plane.staleness, Staleness::Dirty);
+        assert_eq!(legacy.formula, plane.formula);
+        assert_eq!(legacy.value, plane.value);
+    }
+    assert_snapshot_parity(
+        &off,
+        &authoritative,
+        address(61, 3),
+        SnapshotOptions::default(),
+    );
+
+    off.evaluate_all().unwrap();
+    authoritative.evaluate_all().unwrap();
+    assert_all_five_public_apis_match(&off, &authoritative);
+    assert_dependent_parity(
+        &off,
+        &authoritative,
+        address(64, 2),
+        DependentsOptions::default().with_max_work(100_000),
+    );
+}
+
+#[test]
+fn structural_delete_legacy_whole_column_staleness_bug_is_pinned_for_issue_306() {
+    let (mut off, mut authoritative) = build_pair(7);
+    off.delete_rows(SHEET, 60, 1).unwrap();
+    authoritative.delete_rows(SHEET, 60, 1).unwrap();
+    off.evaluate_all().unwrap();
+    authoritative.evaluate_all().unwrap();
+
+    // Known engine bug #306: legacy delete_rows fails to dirty existing
+    // whole-column readers. The authoritative value is confirmed by a freshly
+    // authored legacy formula over the post-delete data.
+    for engine in [&mut off, &mut authoritative] {
+        engine
+            .set_cell_formula(SHEET, 1, 20, parse("=SUM($B:$B)+A1+7").unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+    }
+    let legacy = off
+        .inspect_cell(&address(1, 4), &SnapshotOptions::default())
+        .unwrap()
+        .cell;
+    let plane = authoritative
+        .inspect_cell(&address(1, 4), &SnapshotOptions::default())
+        .unwrap()
+        .cell;
+    let legacy_oracle = off
+        .inspect_cell(&address(1, 20), &SnapshotOptions::default())
+        .unwrap()
+        .cell;
+    let plane_oracle = authoritative
+        .inspect_cell(&address(1, 20), &SnapshotOptions::default())
+        .unwrap()
+        .cell;
+    assert_eq!(legacy.value, Some(LiteralValue::Number(16_520.0)));
+    assert_eq!(plane.value, Some(LiteralValue::Number(16_400.0)));
+    assert_eq!(legacy_oracle.value, plane_oracle.value);
+    assert_eq!(plane.value, plane_oracle.value);
+    assert_ne!(legacy.value, legacy_oracle.value);
+}
+
+#[test]
+fn reconstructed_ast_fallback_is_used_for_whole_result_summaries() {
+    use crate::formula_plane::producer::{
+        DirtyProjectionRule, SpanReadDependency, SpanReadSummary,
+    };
+    use crate::formula_plane::region_index::Region;
+    use crate::formula_plane::runtime::{NewFormulaSpan, PlacementDomain, ResultRegion};
+
+    let mut authoritative = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    authoritative
+        .set_cell_value(SHEET, 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    let sheet_id = authoritative.sheet_id(SHEET).unwrap();
+    let formula = "=B1+A1+SUM($A$1:$A$3)+9";
+    let ast = parse(formula).unwrap();
+    let ast_id = authoritative.intern_formula_ast(&ast);
+    let domain = PlacementDomain::row_run(sheet_id, 0, SPAN_ROWS - 1, 2);
+    let result_region = Region::from_domain(&domain);
+    let authority = authoritative.graph.formula_authority_mut();
+    let template_id = authority.plane.intern_template(
+        Arc::<str>::from("inspect-whole-result-fallback"),
+        ast_id,
+        1,
+        3,
+        Some(Arc::<str>::from(formula)),
+    );
+    let summary_id = authority.plane.insert_span_read_summary(SpanReadSummary {
+        result_region,
+        dependencies: vec![SpanReadDependency {
+            read_region: Region::point(sheet_id, 0, 0),
+            projection: DirtyProjectionRule::WholeResult,
+        }],
+    });
+    authority.plane.insert_span(NewFormulaSpan {
+        sheet_id,
+        template_id,
+        result_region: ResultRegion::scalar_cells(domain.clone()),
+        domain,
+        intrinsic_mask_id: None,
+        read_summary_id: Some(summary_id),
+        binding_set_id: None,
+        is_constant_result: false,
+    });
+    authority.rebuild_indexes();
+
+    reset_formula_plane_reference_path_counts();
+    let report = authoritative
+        .precedents(&address(64, 3), &PrecedentOptions::default())
+        .unwrap();
+    assert_eq!(
+        formula_plane_reference_path_counts(),
+        FormulaPlaneReferencePathCounts {
+            template: 0,
+            ast_fallback: 1,
+        }
+    );
+    assert_eq!(report.precedents.len(), 3);
+    assert_eq!(
+        report.precedents[0].reference,
+        SemanticReference::Cell(address(64, 2))
+    );
+    assert_eq!(
+        report.precedents[1].reference,
+        SemanticReference::Cell(address(64, 1))
+    );
+}
+
+#[test]
+fn dirty_snapshots_cover_whole_span_and_incomplete_closure_fallbacks() {
+    use crate::engine::graph::WholeSpanDirtyReason;
+    use crate::formula_plane::region_index::Region;
+
+    let (_, mut authoritative) = build_pair(7);
+    authoritative
+        .graph
+        .mark_all_formula_spans_dirty(WholeSpanDirtyReason::GlobalInvalidation);
+    assert_eq!(
+        authoritative
+            .inspect_cell(&address(64, 3), &SnapshotOptions::default())
+            .unwrap()
+            .cell
+            .staleness,
+        Staleness::Dirty
+    );
+
+    let (_, mut authoritative) = build_pair(7);
+    let sheet_id = authoritative.sheet_id(SHEET).unwrap();
+    for row in 0..=100_000 {
+        authoritative
+            .graph
+            .mark_formula_region_dirty(Region::point(sheet_id, row, 49));
+    }
+    assert_eq!(
+        authoritative
+            .inspect_cell(&address(64, 3), &SnapshotOptions::default())
+            .unwrap()
+            .cell
+            .staleness,
+        Staleness::Dirty,
+        "dirty-closure iteration exhaustion must conservatively dirty the placement"
     );
 }
 
