@@ -1,9 +1,9 @@
 //! Read-only, engine-native workbook introspection.
 //!
-//! Reports in this module are owned semantic snapshots. Construction reads the
-//! existing formula/value/dependency authorities only: it never evaluates,
-//! prepares dependency state, creates placeholder vertices, or marks cells
-//! dirty.
+//! Reports in this module are owned semantic snapshots. Inspection performs no
+//! semantic mutation: it never evaluates, prepares dependency state, creates
+//! placeholder vertices, or marks cells dirty. It may warm snapshot-guarded
+//! performance caches such as the row-bounds cache.
 
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
@@ -16,7 +16,6 @@ use formualizer_parse::parser::{
     ASTNode, ReferenceType, SpecialItem, TableReference, TableSpecifier,
 };
 use rustc_hash::FxHashMap;
-use serde::Serialize;
 
 use crate::engine::named_range::NamedDefinition;
 use crate::engine::refs;
@@ -32,13 +31,15 @@ const DEFAULT_MAX_WORK: u64 = 100_000;
 
 /// Correlates a report with the engine mutation and recalculation state from
 /// which it was copied.
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct StateStamp {
     pub mutation_revision: u64,
     pub recalc_epoch: u64,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum Staleness {
     Current,
@@ -46,14 +47,21 @@ pub enum Staleness {
     NeverEvaluated,
 }
 
-#[derive(Serialize, Clone, Debug, Eq, PartialEq, Hash)]
+/// A last-evaluation spill-registry fact.
+///
+/// Consumers must interpret [`SpillRole::Member`] and [`SpillRole::Anchor`]
+/// together with the anchor cell's [`CellSnapshot::staleness`]. A dirty anchor
+/// can retain its prior evaluated extent until recalculation.
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum SpillRole {
     Anchor { extent: RangeAddress },
     Member { anchor: CellAddress },
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct CellSnapshot {
     pub address: CellAddress,
@@ -62,17 +70,21 @@ pub struct CellSnapshot {
     pub value_included: bool,
     pub staleness: Staleness,
     pub volatile: bool,
+    /// Last-evaluation spill role; read it together with the anchor's
+    /// [`CellSnapshot::staleness`], especially when the anchor is dirty.
     pub spill: Option<SpillRole>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct CellSnapshotReport {
     pub stamp: StateStamp,
     pub cell: CellSnapshot,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum NameResolution {
     Cell(CellAddress),
@@ -88,7 +100,8 @@ pub enum NameResolution {
     Unresolved,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum SemanticReference {
     Cell(CellAddress),
@@ -115,14 +128,16 @@ pub enum SemanticReference {
     },
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum Provenance {
     Declared,
     Observed,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum TraceLinkKind {
     Formula { provenance: Provenance },
@@ -130,7 +145,8 @@ pub enum TraceLinkKind {
     SpillReader,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum LinkDisposition {
     Expanded,
@@ -139,28 +155,35 @@ pub enum LinkDisposition {
     Elided,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum OmittedCount {
     Exact(u64),
     AtLeast(u64),
 }
 
-#[derive(Serialize, Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct TruncationReport {
     pub incomplete: bool,
+    /// `None` with `incomplete == true` means that the omitted count is
+    /// unknown. `AtLeast(k)` is emitted only for witnessed `k >= 1` omissions;
+    /// `Exact(k)` remains an exact known count.
     pub omitted: Option<OmittedCount>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Precedent {
     pub reference: SemanticReference,
     pub provenance: Provenance,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct PrecedentReport {
     pub stamp: StateStamp,
@@ -169,16 +192,19 @@ pub struct PrecedentReport {
     pub truncation: TruncationReport,
 }
 
-#[derive(Serialize, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct Dependent {
     pub cell: CellAddress,
-    /// Spill member addresses through which this reader was discovered. For a
-    /// normal cell query this contains the queried cell itself.
+    /// Spill member addresses through which this reader was discovered.
+    /// Empty for an ordinary dependent query; only spill-anchor queries
+    /// populate this vector.
     pub via: Vec<CellAddress>,
 }
 
-#[derive(Serialize, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct DependentsReport {
     pub stamp: StateStamp,
@@ -187,24 +213,28 @@ pub struct DependentsReport {
     pub truncation: TruncationReport,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct TraceNodeId(pub u32);
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum TraceDirection {
     Precedents,
     Dependents,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub struct TraceLinkTarget {
     pub node: TraceNodeId,
     pub disposition: LinkDisposition,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct TraceLink {
     pub reference: SemanticReference,
@@ -213,7 +243,8 @@ pub struct TraceLink {
     pub omitted: Option<OmittedCount>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct TraceNode {
     pub id: TraceNodeId,
@@ -221,49 +252,67 @@ pub struct TraceNode {
     pub links: Vec<TraceLink>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct TraceGraph {
     pub stamp: StateStamp,
     pub direction: TraceDirection,
+    /// One response-local node id per requested root, in request order.
+    /// Duplicate roots retain repeated ids while sharing one materialized node.
     pub roots: Vec<TraceNodeId>,
     pub nodes: Vec<TraceNode>,
     pub truncation: TruncationReport,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct RangePage {
     pub stamp: StateStamp,
     pub declared: RangeArea,
     pub resolved: Option<RangeAddress>,
     pub total: u64,
+    /// Echoes the requested offset, even when it lies beyond `total`; it is not
+    /// a clamped item position.
     pub offset: u64,
     pub items: Vec<CellSnapshot>,
     pub next_offset: Option<u64>,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
+/// Capacity minima that must hold the request's own anchors are hard errors:
+/// trace requires max_nodes >= unique roots (and nonempty roots); range_page
+/// requires limit >= 1. All expansion budgets (max_depth, max_links, max_work,
+/// range_member_budget, max_results) accept zero and degrade to in-band
+/// truncation.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SnapshotOptions {
-    pub include_value: bool,
+    pub include_values: bool,
 }
 
 impl Default for SnapshotOptions {
     fn default() -> Self {
         Self {
-            include_value: true,
+            include_values: true,
         }
     }
 }
 
 impl SnapshotOptions {
-    pub fn with_include_value(mut self, include_value: bool) -> Self {
-        self.include_value = include_value;
+    pub fn with_include_values(mut self, include_values: bool) -> Self {
+        self.include_values = include_values;
         self
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
+/// Capacity minima that must hold the request's own anchors are hard errors:
+/// trace requires max_nodes >= unique roots (and nonempty roots); range_page
+/// requires limit >= 1. All expansion budgets (max_depth, max_links, max_work,
+/// range_member_budget, max_results) accept zero and degrade to in-band
+/// truncation.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PrecedentOptions {
     pub max_links: u32,
     pub max_work: u64,
@@ -290,7 +339,13 @@ impl PrecedentOptions {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
+/// Capacity minima that must hold the request's own anchors are hard errors:
+/// trace requires max_nodes >= unique roots (and nonempty roots); range_page
+/// requires limit >= 1. All expansion budgets (max_depth, max_links, max_work,
+/// range_member_budget, max_results) accept zero and degrade to in-band
+/// truncation.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DependentsOptions {
     pub max_results: u32,
     pub max_work: u64,
@@ -317,10 +372,20 @@ impl DependentsOptions {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
+/// Capacity minima that must hold the request's own anchors are hard errors:
+/// trace requires max_nodes >= unique roots (and nonempty roots); range_page
+/// requires limit >= 1. All expansion budgets (max_depth, max_links, max_work,
+/// range_member_budget, max_results) accept zero and degrade to in-band
+/// truncation.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TraceOptions {
     pub direction: TraceDirection,
+    /// Maximum expansion depth. Depth `N` can still materialize elided target
+    /// nodes at depth `N + 1`, charged against `max_nodes`.
     pub max_depth: u32,
+    /// Global node capacity. It must be at least the number of unique roots;
+    /// all roots are admitted before expansion and duplicates share a node.
     pub max_nodes: u32,
     pub max_links: u32,
     pub max_work: u64,
@@ -379,7 +444,13 @@ impl TraceOptions {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq)]
+/// Capacity minima that must hold the request's own anchors are hard errors:
+/// trace requires max_nodes >= unique roots (and nonempty roots); range_page
+/// requires limit >= 1. All expansion budgets (max_depth, max_links, max_work,
+/// range_member_budget, max_results) accept zero and degrade to in-band
+/// truncation.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RangePageOptions {
     pub offset: u64,
     pub limit: u32,
@@ -420,13 +491,15 @@ impl RangePageOptions {
     }
 }
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[non_exhaustive]
 pub enum InspectionUnavailableReason {
     DeferredDependencyGraph,
 }
 
-#[derive(Serialize, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum InspectError {
     SheetNotFound {
@@ -445,6 +518,8 @@ pub enum InspectError {
         expected: StateStamp,
         actual: StateStamp,
     },
+    /// Currently unreachable in practice; reserved for bounded-allocation
+    /// paths.
     ResourceExhausted {
         resource: &'static str,
     },
@@ -472,7 +547,8 @@ impl fmt::Display for InspectError {
 
 impl Error for InspectError {}
 
-#[derive(Serialize, Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct CellKey {
     sheet_id: SheetId,
     row0: u32,
@@ -567,9 +643,10 @@ impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
                 formualizer_parse::parse(&text).map_err(|error| InspectError::InvalidAddress {
                     message: format!("staged formula at {sheet}!R{row}C{col} is invalid: {error}"),
                 })?;
+            let volatile = self.engine.graph.fp8_parity_is_ast_volatile(&ast);
             return Ok(Some(FormulaView {
                 ast,
-                volatile: false,
+                volatile,
                 dirty: true,
             }));
         }
@@ -869,6 +946,10 @@ impl<R: EvaluationContext> Engine<R> {
         let cached_value = self.read_cell_value(&address.sheet, address.row, address.column);
         let (canonical_formula, volatile, staleness) = match formula {
             Some(view) => {
+                // `read_cell_value` maps LiteralValue::Empty to `None`, which
+                // would classify an evaluated Empty result as NeverEvaluated.
+                // No current builtin caches a true Empty (blank-derived formula
+                // results are normalized), so that state is currently unreachable.
                 let staleness = if cached_value.is_none() {
                     Staleness::NeverEvaluated
                 } else if view.dirty {
@@ -910,7 +991,7 @@ impl<R: EvaluationContext> Engine<R> {
         let (key, _) = self.canonical_cell(cell)?;
         Ok(CellSnapshotReport {
             stamp: self.inspect_stamp(),
-            cell: self.snapshot_for_key(key, options.include_value)?,
+            cell: self.snapshot_for_key(key, options.include_values)?,
         })
     }
 
@@ -1292,6 +1373,10 @@ impl<R: EvaluationContext> Engine<R> {
         let mut known_omitted_dependent = false;
         let max_results = max_results as usize;
 
+        let spill_anchor_query = matches!(
+            source.spill_role(key),
+            Some(InternalSpillRole::Anchor { .. })
+        );
         let members = self.spill_query_members(key);
         for member in members {
             if !work.charge() {
@@ -1312,7 +1397,14 @@ impl<R: EvaluationContext> Engine<R> {
                     known_omitted_dependent = true;
                     return false;
                 }
-                found.insert(address, vec![via.clone()]);
+                found.insert(
+                    address,
+                    if spill_anchor_query {
+                        vec![via.clone()]
+                    } else {
+                        Vec::new()
+                    },
+                );
                 true
             };
 
@@ -1361,7 +1453,7 @@ impl<R: EvaluationContext> Engine<R> {
             if incomplete {
                 TruncationReport {
                     incomplete: true,
-                    omitted: Some(OmittedCount::AtLeast(u64::from(known_omitted_dependent))),
+                    omitted: known_omitted_dependent.then_some(OmittedCount::AtLeast(1)),
                 }
             } else {
                 TruncationReport::default()
@@ -1411,19 +1503,46 @@ impl<R: EvaluationContext> Engine<R> {
         }
     }
 
-    fn is_ancestor(
-        target: TraceNodeId,
-        source: TraceNodeId,
-        parents: &HashMap<TraceNodeId, Option<TraceNodeId>>,
-    ) -> bool {
-        let mut cursor = Some(source);
-        while let Some(node) = cursor {
-            if node == target {
-                return true;
+    /// Classify cycles from the completed materialized graph, independent of
+    /// BFS discovery order. An edge `source -> target` is a cycle edge exactly
+    /// when `target` can reach `source` through materialized links.
+    fn classify_cycle_dispositions(nodes: &mut [TraceNode]) {
+        let adjacency: Vec<Vec<usize>> = nodes
+            .iter()
+            .map(|node| {
+                node.links
+                    .iter()
+                    .flat_map(|link| link.targets.iter())
+                    .map(|target| target.node.0 as usize)
+                    .collect()
+            })
+            .collect();
+        let mut reachability = vec![vec![false; nodes.len()]; nodes.len()];
+        for start in 0..nodes.len() {
+            let mut stack = adjacency[start].clone();
+            while let Some(next) = stack.pop() {
+                if reachability[start][next] {
+                    continue;
+                }
+                reachability[start][next] = true;
+                stack.extend(adjacency[next].iter().copied());
             }
-            cursor = parents.get(&node).copied().flatten();
         }
-        false
+
+        for (source, node) in nodes.iter_mut().enumerate() {
+            for target in node
+                .links
+                .iter_mut()
+                .flat_map(|link| link.targets.iter_mut())
+            {
+                let target_index = target.node.0 as usize;
+                if source == target_index || reachability[target_index][source] {
+                    target.disposition = LinkDisposition::Cycle;
+                } else if target.disposition == LinkDisposition::Cycle {
+                    target.disposition = LinkDisposition::Convergent;
+                }
+            }
+        }
     }
 
     /// Build a bounded response-local BFS DAG.
@@ -1437,9 +1556,21 @@ impl<R: EvaluationContext> Engine<R> {
                 message: "trace requires at least one root".to_string(),
             });
         }
-        if options.max_nodes == 0 {
+        let canonical_roots: Vec<_> = roots
+            .iter()
+            .map(|root| self.canonical_cell(root))
+            .collect::<Result<_, _>>()?;
+        let mut unique_roots = FxHashMap::default();
+        for (key, canonical) in &canonical_roots {
+            unique_roots.entry(canonical.clone()).or_insert(*key);
+        }
+        if unique_roots.len() > options.max_nodes as usize {
             return Err(InspectError::InvalidOptions {
-                message: "max_nodes must be at least one".to_string(),
+                message: format!(
+                    "max_nodes ({}) must hold all {} unique roots",
+                    options.max_nodes,
+                    unique_roots.len()
+                ),
             });
         }
         if options.direction == TraceDirection::Dependents {
@@ -1453,15 +1584,11 @@ impl<R: EvaluationContext> Engine<R> {
         let mut parents: HashMap<TraceNodeId, Option<TraceNodeId>> = HashMap::new();
         let mut truncation = TruncationReport::default();
 
-        for root in roots {
-            let (key, canonical) = self.canonical_cell(root)?;
+        // Admit every unique request root before expansion so `roots[i]`
+        // always corresponds to the caller's `roots[i]`.
+        for (key, canonical) in canonical_roots {
             if let Some(&id) = node_by_address.get(&canonical) {
                 root_ids.push(id);
-                continue;
-            }
-            if nodes.len() >= options.max_nodes as usize {
-                truncation.incomplete = true;
-                merge_omitted(&mut truncation.omitted, OmittedCount::AtLeast(1));
                 continue;
             }
             let id = TraceNodeId(nodes.len() as u32);
@@ -1623,6 +1750,8 @@ impl<R: EvaluationContext> Engine<R> {
             nodes[source_id.0 as usize].links = links;
         }
 
+        Self::classify_cycle_dispositions(&mut nodes);
+
         Ok(TraceGraph {
             stamp: self.inspect_stamp(),
             direction: options.direction,
@@ -1650,14 +1779,11 @@ impl<R: EvaluationContext> Engine<R> {
         truncation: &mut TruncationReport,
     ) -> Result<(), InspectError> {
         if let Some(&target_id) = node_by_address.get(&address) {
-            let disposition = if Self::is_ancestor(target_id, source_id, parents) {
-                LinkDisposition::Cycle
-            } else {
-                LinkDisposition::Convergent
-            };
             link.targets.push(TraceLinkTarget {
                 node: target_id,
-                disposition,
+                // The completed-graph reachability post-pass resolves Cycle
+                // versus Convergent without depending on the BFS parent tree.
+                disposition: LinkDisposition::Convergent,
             });
             return Ok(());
         }
@@ -1688,11 +1814,9 @@ impl<R: EvaluationContext> Engine<R> {
         if can_follow {
             queue.push_back((target_id, key, depth + 1));
         } else {
+            // The target is represented, but its unvisited outgoing links are
+            // unknown without doing the depth-elided work.
             truncation.incomplete = true;
-            // The target is represented, but its unvisited outgoing links may
-            // be empty. Zero is the only honest lower bound without doing the
-            // depth-elided work.
-            merge_omitted(&mut truncation.omitted, OmittedCount::AtLeast(0));
         }
         Ok(())
     }
@@ -1735,7 +1859,9 @@ impl<R: EvaluationContext> Engine<R> {
         for (ancestor, _, _) in &compressed_ancestors {
             link.targets.push(TraceLinkTarget {
                 node: *ancestor,
-                disposition: LinkDisposition::Cycle,
+                // The completed-graph reachability post-pass resolves this
+                // provisional revisit disposition.
+                disposition: LinkDisposition::Convergent,
             });
             attached += 1;
         }

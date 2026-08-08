@@ -278,7 +278,7 @@ fn public_dependents_include_direct_finite_and_infinite_range_readers() {
         report
             .dependents
             .iter()
-            .all(|dependent| dependent.via == vec![address("Model", 20, 1)])
+            .all(|dependent| dependent.via.is_empty())
     );
     let infinite_only = engine
         .dependents(&address("Model", 40, 1), &DependentsOptions::default())
@@ -299,10 +299,7 @@ fn public_dependents_include_direct_finite_and_infinite_range_readers() {
         )
         .unwrap();
     assert!(bounded.truncation.incomplete);
-    assert!(matches!(
-        bounded.truncation.omitted,
-        Some(OmittedCount::AtLeast(_))
-    ));
+    assert_eq!(bounded.truncation.omitted, None);
 }
 
 #[test]
@@ -658,10 +655,7 @@ fn bounded_range_dependent_query_does_not_materialize_a_hundred_thousand_candida
         .unwrap();
     let elapsed = started.elapsed();
     assert!(report.truncation.incomplete);
-    assert!(matches!(
-        report.truncation.omitted,
-        Some(OmittedCount::AtLeast(_))
-    ));
+    assert_eq!(report.truncation.omitted, None);
     assert!(report.dependents.len() <= 64);
     eprintln!("100001-range-dependent bounded query elapsed: {elapsed:?}");
     assert!(
@@ -683,6 +677,7 @@ fn multi_root_trace_reuses_overlapping_nodes_deterministically() {
     let first = engine.trace(&roots, &options).unwrap();
     let second = engine.trace(&roots, &options).unwrap();
     assert_eq!(first, second);
+    #[cfg(feature = "serde")]
     assert_eq!(
         serde_json::to_vec(&first).unwrap(),
         serde_json::to_vec(&second).unwrap()
@@ -695,5 +690,517 @@ fn multi_root_trace_reuses_overlapping_nodes_deterministically() {
             .filter(|node| node.cell.address == address("Model", 1, 1))
             .count(),
         1
+    );
+}
+
+#[test]
+fn cycle_dispositions_are_reachability_based_for_entangled_graphs() {
+    let make = || {
+        Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_cycle(CycleConfig::iterate(1, 0.0)),
+        )
+    };
+    let disposition = |graph: &TraceGraph, from: CellAddress, to: CellAddress| {
+        let target = graph
+            .nodes
+            .iter()
+            .find(|node| node.cell.address == to)
+            .unwrap()
+            .id;
+        graph
+            .nodes
+            .iter()
+            .find(|node| node.cell.address == from)
+            .unwrap()
+            .links
+            .iter()
+            .flat_map(|link| &link.targets)
+            .find(|link_target| link_target.node == target)
+            .unwrap()
+            .disposition
+    };
+
+    let mut three = make();
+    set_formula(&mut three, 1, 1, "=B1+C1");
+    set_formula(&mut three, 1, 2, "=C1");
+    set_formula(&mut three, 1, 3, "=B1");
+    let graph = three
+        .trace(&[address("Model", 1, 1)], &TraceOptions::default())
+        .unwrap();
+    assert_eq!(
+        disposition(&graph, address("Model", 1, 2), address("Model", 1, 3)),
+        LinkDisposition::Cycle
+    );
+    assert_eq!(
+        disposition(&graph, address("Model", 1, 3), address("Model", 1, 2)),
+        LinkDisposition::Cycle
+    );
+
+    let mut diamond = make();
+    set_formula(&mut diamond, 1, 1, "=B1+C1");
+    set_formula(&mut diamond, 1, 2, "=D1");
+    set_formula(&mut diamond, 1, 3, "=D1");
+    set_formula(&mut diamond, 1, 4, "=C1");
+    let graph = diamond
+        .trace(&[address("Model", 1, 1)], &TraceOptions::default())
+        .unwrap();
+    assert_eq!(
+        disposition(&graph, address("Model", 1, 3), address("Model", 1, 4)),
+        LinkDisposition::Cycle
+    );
+    assert_eq!(
+        disposition(&graph, address("Model", 1, 4), address("Model", 1, 3)),
+        LinkDisposition::Cycle
+    );
+}
+
+#[test]
+fn cycle_dispositions_match_independent_reachability_oracle() {
+    fn lcg(state: &mut u64) -> u64 {
+        *state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
+        *state
+    }
+
+    let mut sound_violations = 0usize;
+    let mut completeness_violations = 0usize;
+    for seed in 0u64..80 {
+        let mut random = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(999);
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_cycle(CycleConfig::iterate(1, 0.0)),
+        );
+        engine.add_sheet("Model").unwrap();
+        let count = 5u32;
+        let mut adjacency = vec![Vec::new(); (count + 1) as usize];
+        for row in 1..=count {
+            let target_count = 1 + (lcg(&mut random) % 2) as u32;
+            let mut targets = Vec::new();
+            for _ in 0..target_count {
+                let target = 1 + (lcg(&mut random) % u64::from(count)) as u32;
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+            adjacency[row as usize] = targets.clone();
+            set_formula(
+                &mut engine,
+                row,
+                1,
+                &format!(
+                    "={}",
+                    targets
+                        .iter()
+                        .map(|target| format!("A{target}"))
+                        .collect::<Vec<_>>()
+                        .join("+")
+                ),
+            );
+        }
+        let graph = engine
+            .trace(
+                &[address("Model", 1, 1)],
+                &TraceOptions::default()
+                    .with_max_depth(50)
+                    .with_max_nodes(64),
+            )
+            .unwrap();
+        let reaches = |from: u32, to: u32| {
+            let mut seen = vec![false; (count + 1) as usize];
+            let mut stack = vec![from];
+            while let Some(node) = stack.pop() {
+                for &next in &adjacency[node as usize] {
+                    if next == to {
+                        return true;
+                    }
+                    if !seen[next as usize] {
+                        seen[next as usize] = true;
+                        stack.push(next);
+                    }
+                }
+            }
+            false
+        };
+        for node in &graph.nodes {
+            let source = node.cell.address.row;
+            for target in node.links.iter().flat_map(|link| link.targets.iter()) {
+                let target_row = graph.nodes[target.node.0 as usize].cell.address.row;
+                let oracle_cycle = source == target_row || reaches(target_row, source);
+                let reported_cycle = target.disposition == LinkDisposition::Cycle;
+                sound_violations += usize::from(reported_cycle && !oracle_cycle);
+                completeness_violations += usize::from(oracle_cycle && !reported_cycle);
+            }
+        }
+    }
+    assert_eq!(sound_violations, 0);
+    assert_eq!(completeness_violations, 0);
+}
+
+#[test]
+fn roots_are_admitted_first_and_preserve_request_correspondence() {
+    let mut engine = engine();
+    engine.add_sheet("Model").unwrap();
+    let distinct = [address("Model", 1, 1), address("Model", 1, 2)];
+    assert!(matches!(
+        engine.trace(&distinct, &TraceOptions::default().with_max_nodes(1)),
+        Err(InspectError::InvalidOptions { .. })
+    ));
+
+    let duplicate = [address("Model", 1, 1), address("model", 1, 1)];
+    let graph = engine
+        .trace(&duplicate, &TraceOptions::default().with_max_nodes(1))
+        .unwrap();
+    assert_eq!(graph.roots.len(), duplicate.len());
+    assert_eq!(graph.roots, vec![TraceNodeId(0), TraceNodeId(0)]);
+    assert_eq!(graph.nodes.len(), 1);
+}
+
+#[test]
+fn zero_budget_matrix_obeys_anchor_minimum_convention() {
+    let mut engine = engine();
+    engine
+        .set_cell_value("Model", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Model", 2, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    set_formula(&mut engine, 1, 2, "=SUM(A1:A2)+A1");
+    let root = address("Model", 1, 2);
+
+    assert!(matches!(
+        engine.trace(&[root.clone()], &TraceOptions::default().with_max_nodes(0)),
+        Err(InspectError::InvalidOptions { .. })
+    ));
+    assert!(
+        engine
+            .trace(&[root.clone()], &TraceOptions::default().with_max_depth(0))
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    assert!(
+        engine
+            .trace(&[root.clone()], &TraceOptions::default().with_max_links(0))
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    assert!(
+        engine
+            .trace(&[root.clone()], &TraceOptions::default().with_max_work(0))
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    assert!(
+        engine
+            .trace(
+                &[root.clone()],
+                &TraceOptions::default().with_range_member_budget(0),
+            )
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    assert!(
+        engine
+            .precedents(&root, &PrecedentOptions::default().with_max_links(0))
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    assert!(
+        engine
+            .precedents(&root, &PrecedentOptions::default().with_max_work(0))
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    let results_zero = engine
+        .dependents(
+            &address("Model", 1, 1),
+            &DependentsOptions::default().with_max_results(0),
+        )
+        .unwrap();
+    assert!(results_zero.truncation.incomplete);
+    assert_eq!(
+        results_zero.truncation.omitted,
+        Some(OmittedCount::AtLeast(1))
+    );
+    let work_zero = engine
+        .dependents(
+            &address("Model", 1, 1),
+            &DependentsOptions::default().with_max_work(0),
+        )
+        .unwrap();
+    assert!(work_zero.truncation.incomplete);
+    assert_eq!(work_zero.truncation.omitted, None);
+    let area = RangeArea::new("Model", Some(1), Some(1), Some(2), Some(1)).unwrap();
+    assert!(matches!(
+        engine.range_page(&area, &RangePageOptions::default().with_limit(0)),
+        Err(InspectError::InvalidOptions { .. })
+    ));
+}
+
+#[test]
+fn range_pages_pin_row_major_order_and_exact_termination() {
+    let mut engine = engine();
+    for row in 1..=2 {
+        for column in 1..=3 {
+            engine
+                .set_cell_value(
+                    "Model",
+                    row,
+                    column,
+                    LiteralValue::Number(f64::from(row * 10 + column)),
+                )
+                .unwrap();
+        }
+    }
+    let area = RangeArea::new("Model", Some(1), Some(1), Some(2), Some(3)).unwrap();
+    let page = engine
+        .range_page(&area, &RangePageOptions::default().with_limit(6))
+        .unwrap();
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|item| (item.address.row, item.address.column))
+            .collect::<Vec<_>>(),
+        vec![(1, 1), (1, 2), (1, 3), (2, 1), (2, 2), (2, 3)]
+    );
+    assert_eq!(page.next_offset, None);
+}
+
+#[test]
+fn trace_max_links_is_global_across_nodes() {
+    let mut engine = engine();
+    set_formula(&mut engine, 1, 1, "=B1+C1");
+    set_formula(&mut engine, 1, 2, "=D1");
+    set_formula(&mut engine, 1, 3, "=E1");
+    let graph = engine
+        .trace(
+            &[address("Model", 1, 1)],
+            &TraceOptions::default().with_max_links(3),
+        )
+        .unwrap();
+    let total_links: usize = graph.nodes.iter().map(|node| node.links.len()).sum();
+    assert_eq!(total_links, 3);
+    assert!(graph.truncation.incomplete);
+}
+
+#[test]
+fn spill_dependent_via_is_sorted_and_ordinary_via_is_empty() {
+    let mut engine = engine();
+    set_formula(&mut engine, 1, 1, "={1,2;3,4}");
+    engine.evaluate_all().unwrap();
+    set_formula(&mut engine, 1, 4, "=B2+A2");
+    let spill = engine
+        .dependents(&address("Model", 1, 1), &DependentsOptions::default())
+        .unwrap();
+    let reader = spill
+        .dependents
+        .iter()
+        .find(|dependent| dependent.cell == address("Model", 1, 4))
+        .unwrap();
+    assert_eq!(
+        reader.via,
+        vec![address("Model", 2, 1), address("Model", 2, 2)]
+    );
+    let ordinary = engine
+        .dependents(&address("Model", 2, 1), &DependentsOptions::default())
+        .unwrap();
+    assert!(
+        ordinary
+            .dependents
+            .iter()
+            .all(|dependent| dependent.via.is_empty())
+    );
+}
+
+#[test]
+fn range_stripe_category_dedup_preserves_exact_work_boundary() {
+    let mut config = EvalConfig::default();
+    config.range_expansion_limit = 0;
+    let mut engine = Engine::new(TestWorkbook::new(), config);
+    engine
+        .set_cell_value("Model", 5, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    set_formula(&mut engine, 20, 5, "=SUM(A:A)+SUM(1:10)");
+    let report = engine
+        .dependents(
+            &address("Model", 5, 1),
+            &DependentsOptions::default()
+                .with_max_results(u32::MAX)
+                .with_max_work(4),
+        )
+        .unwrap();
+    assert!(!report.truncation.incomplete);
+    assert_eq!(report.dependents.len(), 1);
+}
+
+#[test]
+fn bounded_dependents_cover_block_stripes_and_cross_sheet_ranges() {
+    let mut config = EvalConfig::default();
+    config.range_expansion_limit = 0;
+    config.enable_block_stripes = true;
+    let mut engine = Engine::new(TestWorkbook::new(), config);
+    engine.add_sheet("Model").unwrap();
+    engine.add_sheet("Other").unwrap();
+    for row in 1..=12 {
+        engine
+            .set_cell_value("Model", row, 1, LiteralValue::Number(f64::from(row)))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Model", 20, 5, parse("=SUM(A5:C9)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Other", 30, 5, parse("=SUM(Model!A5:C9)").unwrap())
+        .unwrap();
+    let report = engine
+        .dependents(
+            &address("Model", 7, 2),
+            &DependentsOptions::default()
+                .with_max_results(u32::MAX)
+                .with_max_work(u64::MAX),
+        )
+        .unwrap();
+    assert_eq!(
+        report
+            .dependents
+            .iter()
+            .map(|dependent| dependent.cell.clone())
+            .collect::<Vec<_>>(),
+        vec![address("Model", 20, 5), address("Other", 30, 5)]
+    );
+}
+
+#[test]
+fn dirty_spill_roles_remain_last_evaluation_facts() {
+    let mut engine = engine();
+    for row in 1..=3 {
+        engine
+            .set_cell_value("Model", row, 1, LiteralValue::Number(f64::from(row)))
+            .unwrap();
+    }
+    set_formula(&mut engine, 1, 3, "=A1:A3");
+    engine.evaluate_all().unwrap();
+    set_formula(&mut engine, 1, 3, "=A1:A1");
+    let anchor = engine
+        .inspect_cell(&address("Model", 1, 3), &SnapshotOptions::default())
+        .unwrap();
+    let member2 = engine
+        .inspect_cell(&address("Model", 2, 3), &SnapshotOptions::default())
+        .unwrap();
+    let member3 = engine
+        .inspect_cell(&address("Model", 3, 3), &SnapshotOptions::default())
+        .unwrap();
+    assert_eq!(anchor.cell.staleness, Staleness::Dirty);
+    assert!(matches!(
+        anchor.cell.spill,
+        Some(SpillRole::Anchor { ref extent }) if extent.end_row == 3
+    ));
+    for member in [member2, member3] {
+        assert_eq!(member.cell.staleness, Staleness::Current);
+        assert!(matches!(member.cell.spill, Some(SpillRole::Member { .. })));
+    }
+}
+
+#[test]
+fn fully_open_semantic_range_uses_the_whole_sheet_extent() {
+    let mut engine = engine();
+    engine
+        .set_cell_value("Model", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Model", 100, 3, LiteralValue::Number(2.0))
+        .unwrap();
+    let area = RangeArea::new("Model", None, None, None, None).unwrap();
+    let page = engine
+        .range_page(&area, &RangePageOptions::default().with_limit(1))
+        .unwrap();
+    let resolved = page.resolved.unwrap();
+    assert_eq!(
+        (
+            resolved.start_row,
+            resolved.start_col,
+            resolved.end_row,
+            resolved.end_col
+        ),
+        (1, 1, 100, 3)
+    );
+    assert_eq!(page.total, 300);
+    assert_eq!(page.items[0].address, address("Model", 1, 1));
+}
+
+#[test]
+fn inspection_cache_warming_does_not_change_evaluation_results() {
+    let build = |inspect_first: bool| {
+        let mut engine = engine();
+        engine
+            .set_cell_value("Model", 1, 1, LiteralValue::Number(1.0))
+            .unwrap();
+        engine
+            .set_cell_value("Model", 10, 1, LiteralValue::Number(2.0))
+            .unwrap();
+        set_formula(&mut engine, 1, 5, "=SUM(A:A)");
+        if inspect_first {
+            let area = RangeArea::new("Model", None, Some(1), None, Some(1)).unwrap();
+            engine
+                .range_page(&area, &RangePageOptions::default())
+                .unwrap();
+            engine
+                .precedents(&address("Model", 1, 5), &PrecedentOptions::default())
+                .unwrap();
+            engine
+                .trace(&[address("Model", 1, 5)], &TraceOptions::default())
+                .unwrap();
+        }
+        engine
+            .set_cell_value("Model", 500, 1, LiteralValue::Number(4.0))
+            .unwrap();
+        if inspect_first {
+            engine
+                .dependents(&address("Model", 500, 1), &DependentsOptions::default())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        engine.get_cell_value("Model", 1, 5)
+    };
+    assert_eq!(build(false), build(true));
+}
+
+#[test]
+fn staged_formula_volatility_uses_the_function_registry() {
+    let config = EvalConfig {
+        defer_graph_building: true,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::new(), config);
+    engine.add_sheet("Model").unwrap();
+    engine.stage_formula_text("Model", 1, 1, "=NOW()".to_string());
+    let report = engine
+        .inspect_cell(&address("Model", 1, 1), &SnapshotOptions::default())
+        .unwrap();
+    assert!(report.cell.volatile);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn stamps_and_options_round_trip_with_serde() {
+    let stamp = StateStamp {
+        mutation_revision: 7,
+        recalc_epoch: 11,
+    };
+    assert_eq!(
+        serde_json::from_str::<StateStamp>(&serde_json::to_string(&stamp).unwrap()).unwrap(),
+        stamp
+    );
+    let options = SnapshotOptions::default().with_include_values(false);
+    assert_eq!(
+        serde_json::from_str::<SnapshotOptions>(&serde_json::to_string(&options).unwrap()).unwrap(),
+        options
     );
 }

@@ -84,9 +84,11 @@ impl DependencyGraph {
                         return false;
                     }
                     *remaining_work -= 1;
+                    // Match collect_range_dependents_for_rect: unresolved
+                    // non-Id locators are interpreted on the query sheet.
                     let range_sheet = match range.sheet {
                         SharedSheetLocator::Id(id) => id,
-                        _ => self.get_vertex_sheet_id(dependent),
+                        _ => sheet_id,
                     };
                     if range_sheet != sheet_id {
                         continue;
