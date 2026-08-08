@@ -294,4 +294,43 @@ mod tests {
         assert_eq!((extent.start_column, extent.end_column), (1, 20));
         assert_eq!(extent.cell_count(), 20);
     }
+
+    #[test]
+    fn graph_compat_eagerly_queries_original_fallback_spans() {
+        use std::cell::RefCell;
+
+        let queries = RefCell::new(Vec::new());
+        let extent = resolve_used_extent(
+            OpenRangeBounds {
+                start_row: None,
+                start_column: None,
+                end_row: None,
+                end_column: None,
+            },
+            ExtentPolicy::GraphCompat {
+                fallback_row: 63,
+                fallback_column: 15,
+            },
+            |first, last| {
+                queries.borrow_mut().push(("rows", first, last));
+                Some((7, 20))
+            },
+            |first, last| {
+                queries.borrow_mut().push(("columns", first, last));
+                Some((3, 9))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(queries.into_inner(), [("rows", 0, 15), ("columns", 0, 63)]);
+        assert_eq!(
+            extent,
+            ResolvedExtent {
+                start_row: 0,
+                start_column: 0,
+                end_row: 20,
+                end_column: 9,
+            }
+        );
+    }
 }

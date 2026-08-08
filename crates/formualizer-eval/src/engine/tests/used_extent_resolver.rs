@@ -32,6 +32,23 @@ fn evaluation_extent(
     )
 }
 
+fn interpreter_probe_extent(
+    engine: &Engine<TestWorkbook>,
+    sheet: &str,
+    bounds: OpenRangeBounds,
+) -> Option<ResolvedExtent> {
+    let fallback = engine.sheet_bounds(sheet);
+    resolve_used_extent(
+        bounds,
+        ExtentPolicy::EvaluationCompat {
+            fallback_row: fallback.map(|value| value.0),
+            fallback_column: fallback.map(|value| value.1),
+        },
+        |first, last| engine.used_rows_for_columns(sheet, first, last),
+        |first, last| engine.used_cols_for_rows(sheet, first, last),
+    )
+}
+
 fn virtual_dependency_extent(
     engine: &Engine<TestWorkbook>,
     sheet: &str,
@@ -355,6 +372,22 @@ fn differential_matrix_covers_empty_formula_only_overlay_only_and_logical_tail()
         formula_only.sheet_store().sheet("Sheet1").unwrap().nrows,
         12
     );
+}
+
+#[test]
+fn interpreter_probe_sheet_bounds_fallback_divergence_is_pinned_not_changed() {
+    let engine = populated_engine(&[], &[], &[]);
+    let whole_column = OpenRangeBounds {
+        start_row: None,
+        start_column: Some(1),
+        end_row: None,
+        end_column: Some(1),
+    };
+
+    let evaluation = evaluation_extent(&engine, "Sheet1", whole_column).unwrap();
+    let interpreter_probe = interpreter_probe_extent(&engine, "Sheet1", whole_column).unwrap();
+    assert_eq!(evaluation.end_row, 64);
+    assert_eq!(interpreter_probe.end_row, 1_048_576);
 }
 
 #[test]
