@@ -1016,7 +1016,7 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
             Region::point(cell.sheet_id, cell.row0, cell.col0),
             candidate_limit,
         );
-        let query = match query {
+        let mut query = match query {
             BoundedRegionQueryResult::Complete(query) => query,
             BoundedRegionQueryResult::Incomplete {
                 observed_candidates,
@@ -1028,6 +1028,22 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
         budget.remaining = budget
             .remaining
             .saturating_sub(query.stats.candidate_count as u64);
+        query.matches.sort_by(|left, right| {
+            let key = |producer| {
+                let FormulaProducerId::Span(span_id) = producer else {
+                    return None;
+                };
+                let span_ref = authority.plane.spans.current_ref(span_id)?;
+                let span = authority.plane.spans.get(span_ref)?;
+                let placement = span.domain.iter().next()?;
+                Some((
+                    self.engine.graph.sheet_name(placement.sheet_id),
+                    placement.row,
+                    placement.col,
+                ))
+            };
+            key(left.value.consumer).cmp(&key(right.value.consumer))
+        });
 
         for matched in query.matches {
             let FormulaProducerId::Span(span_id) = matched.value.consumer else {

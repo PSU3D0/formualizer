@@ -340,6 +340,12 @@ fn legacy_and_formula_plane_budget_truncation_and_missing_sheet_errors_are_ident
         address(64, 1),
         DependentsOptions::default().with_max_work(0),
     );
+    assert_dependent_parity(
+        &off,
+        &authoritative,
+        address(64, 1),
+        DependentsOptions::default().with_max_results(1),
+    );
     assert_trace_parity(
         &off,
         &authoritative,
