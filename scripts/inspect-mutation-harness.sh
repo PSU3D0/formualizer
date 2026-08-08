@@ -92,6 +92,23 @@ run_mutant m15-precedent-dedup-removed "$INSPECT" \
   '/impl<R: EvaluationContext> ReferenceVisitor/,/self.precedents.push/ s/if self$/if false \&\& self/' \
   public_precedents_preserve_source_order_shape_and_first_occurrence
 
+# FormulaPlane adapter mutants. The run-union mutant substitutes one run-wide
+# representative placement for the queried placement, which is the observable
+# failure produced by answering from a run aggregate rather than instantiating
+# the dependency template at the requested cell.
+run_mutant fp-run-region-union "$INSPECT" \
+  '/fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/placement\.row/span.domain.iter().next()?.row/g; /fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/placement\.col/span.domain.iter().next()?.col/g' \
+  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+run_mutant fp-wrong-placement-row "$INSPECT" \
+  '/fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/placement\.row/placement.row.saturating_add(1)/g' \
+  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+run_mutant fp-route-span-to-legacy "$INSPECT" \
+  '/fn span_placement/,/fn dirty_domain_contains/ s/if self\.engine\.config\.formula_plane_mode !=/if true || self.engine.config.formula_plane_mode !=/' \
+  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+run_mutant fp-drop-source-order "$INSPECT" \
+  '/fn instantiated_span_references/,/fn visit_formula_plane_dependents/ s/for dependency in \&summary\.dependencies/for dependency in summary.dependencies.iter().rev()/' \
+  formula_plane_span_adapter_uses_plane_formula_per_placement_dependency_templates_and_source_order
+
 # B1 inverse mutants: both must be killed by non-tree-path cycle coverage.
 run_mutant cycle-revert-to-parent-chain "$INSPECT" \
   's/Self::classify_cycle_dispositions(&mut nodes);/\/\/ parent-chain-only mutant: skip completed-graph post-pass/' \

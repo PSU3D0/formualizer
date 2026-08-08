@@ -3,7 +3,9 @@
 //! Reports in this module are owned semantic snapshots. Inspection performs no
 //! semantic mutation: it never evaluates, prepares dependency state, creates
 //! placeholder vertices, or marks cells dirty. It may warm snapshot-guarded
-//! performance caches such as the row-bounds cache.
+//! performance caches such as the row-bounds cache. Reports are plane-independent:
+//! legacy and authoritative FormulaPlane engines return field-identical semantic
+//! reports for identical logical workbook state, apart from their state stamps.
 
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
