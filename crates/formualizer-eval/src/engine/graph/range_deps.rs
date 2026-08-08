@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::used_extent::{ExtentPolicy, OpenRangeBounds, resolve_used_extent};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -157,28 +158,26 @@ impl DependencyGraph {
             range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
         ) -> Option<(u32, u32, u32, u32)> {
             let (start_row, end_row, start_col, end_col) = range;
-            let row_query = (
-                start_row.unwrap_or(0),
-                end_row.unwrap_or(graph.config.max_open_ended_rows.saturating_sub(1)),
-            );
-            let col_query = (
-                start_col.unwrap_or(0),
-                end_col.unwrap_or(graph.config.max_open_ended_cols.saturating_sub(1)),
-            );
-            let used_rows = graph.used_row_bounds_for_columns(sheet, col_query.0, col_query.1);
-            let used_cols = graph.used_col_bounds_for_rows(sheet, row_query.0, row_query.1);
-            // Runtime range resolution anchors an omitted/open start at the
-            // first Excel row or column. Only an omitted end uses the current
-            // used maximum (then the configured open-ended fallback).
-            let sr = start_row.unwrap_or(0);
-            let er = end_row
-                .or_else(|| used_rows.map(|bounds| bounds.1))
-                .unwrap_or_else(|| graph.config.max_open_ended_rows.saturating_sub(1));
-            let sc = start_col.unwrap_or(0);
-            let ec = end_col
-                .or_else(|| used_cols.map(|bounds| bounds.1))
-                .unwrap_or_else(|| graph.config.max_open_ended_cols.saturating_sub(1));
-            (sr <= er && sc <= ec).then_some((sr, er, sc, ec))
+            let extent = resolve_used_extent(
+                OpenRangeBounds {
+                    start_row,
+                    start_column: start_col,
+                    end_row,
+                    end_column: end_col,
+                },
+                ExtentPolicy::GraphCompat {
+                    fallback_row: graph.config.max_open_ended_rows.saturating_sub(1),
+                    fallback_column: graph.config.max_open_ended_cols.saturating_sub(1),
+                },
+                |first, last| graph.used_row_bounds_for_columns(sheet, first, last),
+                |first, last| graph.used_col_bounds_for_rows(sheet, first, last),
+            )?;
+            Some((
+                extent.start_row,
+                extent.end_row,
+                extent.start_column,
+                extent.end_column,
+            ))
         }
 
         fn selected_region_contains_self(
