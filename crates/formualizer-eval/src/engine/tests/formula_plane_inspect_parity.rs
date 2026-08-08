@@ -107,9 +107,9 @@ fn build_pair(literal: u32) -> (Engine<TestWorkbook>, Engine<TestWorkbook>) {
 
     let off_stats = off.baseline_stats();
     let authoritative_stats = authoritative.baseline_stats();
-    assert!(
-        authoritative_stats.formula_plane_active_span_count > 0,
-        "authoritative parity fixture formed no FormulaPlane spans"
+    assert_eq!(
+        authoritative_stats.formula_plane_active_span_count, 2,
+        "authoritative parity fixture did not retain both FormulaPlane families"
     );
     assert_eq!(off_stats.formula_plane_active_span_count, 0);
     assert_ne!(
@@ -309,11 +309,11 @@ fn formula_plane_per_placement_literal_bindings_preserve_canonical_formula_inspe
     };
     let off = build(FormulaPlaneMode::Off);
     let authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
-    assert!(
+    assert_eq!(
         authoritative
             .baseline_stats()
-            .formula_plane_active_span_count
-            > 0
+            .formula_plane_active_span_count,
+        1
     );
     for row in [1, 64, SPAN_ROWS] {
         assert_snapshot_parity(
