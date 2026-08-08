@@ -120,16 +120,16 @@ pub(crate) fn resolve_used_extent_with_fallback(
         return extent.is_ordered().then_some(extent);
     }
 
-    let (origin, fallback_row, fallback_column, use_used_minimum) = match policy {
+    let (origin, fallback_row, fallback_column, use_used_minimum, allow_fallback) = match policy {
         ExtentPolicy::EvaluationCompat {
             fallback_row,
             fallback_column,
-        } => (1, fallback_row, fallback_column, false),
+        } => (1, fallback_row, fallback_column, false, true),
         ExtentPolicy::VirtualDependencyCompat {
             fallback_row,
             fallback_column,
-        } => (1, fallback_row, fallback_column, true),
-        ExtentPolicy::Semantic => (1, None, None, false),
+        } => (1, fallback_row, fallback_column, true, true),
+        ExtentPolicy::Semantic => (1, None, None, false, false),
         ExtentPolicy::GraphCompat { .. } => unreachable!(),
     };
 
@@ -149,7 +149,10 @@ pub(crate) fn resolve_used_extent_with_fallback(
                 origin
             });
             end_row = Some(used_maximum);
-        } else if let Some(fallback) = fallback_row.or_else(&mut fallback_row_on_demand) {
+        } else if let Some(fallback) = allow_fallback
+            .then(|| fallback_row.or_else(&mut fallback_row_on_demand))
+            .flatten()
+        {
             start_row = Some(origin);
             end_row = Some(fallback);
         } else if !use_used_minimum {
@@ -167,7 +170,10 @@ pub(crate) fn resolve_used_extent_with_fallback(
                 origin
             });
             end_column = Some(used_maximum);
-        } else if let Some(fallback) = fallback_column.or_else(&mut fallback_column_on_demand) {
+        } else if let Some(fallback) = allow_fallback
+            .then(|| fallback_column.or_else(&mut fallback_column_on_demand))
+            .flatten()
+        {
             start_column = Some(origin);
             end_column = Some(fallback);
         } else if !use_used_minimum {
@@ -180,7 +186,11 @@ pub(crate) fn resolve_used_extent_with_fallback(
         let last_column = end_column.unwrap_or(first_column);
         end_row = used_rows_for_columns(first_column, last_column)
             .map(|used| used.1)
-            .or_else(|| fallback_row.or_else(&mut fallback_row_on_demand));
+            .or_else(|| {
+                allow_fallback
+                    .then(|| fallback_row.or_else(&mut fallback_row_on_demand))
+                    .flatten()
+            });
     }
     if end_row.is_some() && start_row.is_none() {
         if use_used_minimum {
@@ -198,7 +208,11 @@ pub(crate) fn resolve_used_extent_with_fallback(
         let last_row = end_row.unwrap_or(first_row);
         end_column = used_columns_for_rows(first_row, last_row)
             .map(|used| used.1)
-            .or_else(|| fallback_column.or_else(&mut fallback_column_on_demand));
+            .or_else(|| {
+                allow_fallback
+                    .then(|| fallback_column.or_else(&mut fallback_column_on_demand))
+                    .flatten()
+            });
     }
     if end_column.is_some() && start_column.is_none() {
         if use_used_minimum {
