@@ -133,20 +133,13 @@ fn collect_plan_reference(
             let (sr, sc, er, ec) = range
                 .finite_bounds()
                 .expect("finite reference must have all bounds");
-            let rows = er.saturating_sub(sr) + 1;
-            let cols = ec.saturating_sub(sc) + 1;
-            let area = rows.saturating_mul(cols);
+            let area = range.saturating_area().expect("finite area");
 
             // Planning's caller-owned policy (historically 16 in the standard
             // planning setup) intentionally differs from graph ingest's default 64.
             if context.policy.expand_small_ranges
-                && area as usize <= context.policy.range_expansion_limit
+                && area <= context.policy.range_expansion_limit as u64
             {
-                let dep_sheet = range
-                    .sheet
-                    .name()
-                    .map(|name| context.sheet_reg.id_for(name))
-                    .unwrap_or(context.current_sheet);
                 let row_abs = range.start_row_abs && range.end_row_abs;
                 let col_abs = range.start_col_abs && range.end_col_abs;
                 for row in sr..=er {
@@ -433,6 +426,67 @@ mod tests {
     use crate::engine::arena::DataStore;
     use crate::engine::sheet_registry::SheetRegistry;
     use formualizer_parse::parse;
+
+    #[test]
+    fn overflow_sized_ranges_stay_compressed_in_plan() {
+        for formula in [
+            "=SUM(A1:XFD262143)",
+            "=SUM(A1:XFD262144)",
+            "=SUM(A1:XFD1048576)",
+        ] {
+            let ast = parse(formula).unwrap();
+            let policy = CollectPolicy {
+                expand_small_ranges: true,
+                range_expansion_limit: 64,
+                include_names: true,
+            };
+            let mut registry = SheetRegistry::new();
+            let plan = build_dependency_plan(
+                &mut registry,
+                std::iter::once(("Sheet1", 1, 1, &ast)),
+                &policy,
+                None,
+            )
+            .unwrap();
+            assert!(plan.per_formula_cells[0].is_empty(), "{formula}");
+            assert_eq!(plan.per_formula_ranges[0].len(), 1, "{formula}");
+        }
+    }
+
+    #[test]
+    fn tree_plan_handles_deep_left_associative_formula_without_call_stack_growth() {
+        let terms = if cfg!(debug_assertions) {
+            20_000
+        } else {
+            100_000
+        };
+        let formula = format!(
+            "={}",
+            std::iter::repeat_n("A1", terms)
+                .collect::<Vec<_>>()
+                .join("+")
+        );
+        let ast = parse(&formula).unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: true,
+            range_expansion_limit: 16,
+            include_names: true,
+        };
+        let mut registry = SheetRegistry::new();
+        let plan = build_dependency_plan(
+            &mut registry,
+            std::iter::once(("Sheet1", 1, 1, &ast)),
+            &policy,
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.global_cells.len(), 1);
+        assert_eq!(plan.per_formula_cells[0].len(), terms);
+
+        // ASTNode owns a recursively boxed tree, so avoid making this traversal
+        // test depend on the standard library's recursive drop implementation.
+        std::mem::forget(ast);
+    }
 
     #[test]
     fn mixed_arena_plan_matches_tree_plan_for_basic_refs() {

@@ -393,17 +393,27 @@ mod differential {
     use formualizer_parse::parse;
     use proptest::prelude::*;
 
+    fn configure_graph(graph: &mut DependencyGraph) -> SheetId {
+        let sheet = graph.sheet_reg.id_for("Sheet1");
+        graph.sheet_reg.id_for("Sheet2");
+        graph.sheet_reg.id_for("Missing");
+        graph
+            .define_name(
+                "NamedThing",
+                crate::engine::named_range::NamedDefinition::Literal(LiteralValue::Number(1.0)),
+                crate::engine::named_range::NameScope::Workbook,
+            )
+            .unwrap();
+        sheet
+    }
+
     fn graphs(limit: usize) -> (DependencyGraph, DependencyGraph, SheetId) {
         let config = EvalConfig::default().with_range_expansion_limit(limit);
         let mut legacy = DependencyGraph::new_with_config(config.clone());
         let mut consolidated = DependencyGraph::new_with_config(config);
-        let legacy_sheet = legacy.sheet_reg.id_for("Sheet1");
-        let consolidated_sheet = consolidated.sheet_reg.id_for("Sheet1");
+        let legacy_sheet = configure_graph(&mut legacy);
+        let consolidated_sheet = configure_graph(&mut consolidated);
         assert_eq!(legacy_sheet, consolidated_sheet);
-        assert_eq!(
-            legacy.sheet_reg.id_for("Sheet2"),
-            consolidated.sheet_reg.id_for("Sheet2")
-        );
         (legacy, consolidated, legacy_sheet)
     }
 
@@ -433,31 +443,32 @@ mod differential {
         })
     }
 
-    fn assert_formula_parity(formula: &str, limit: usize) {
+    fn assert_formula_parity(formula: &str, limit: usize) -> bool {
         let ast = parse(formula).unwrap_or_else(|error| panic!("{formula}: {error}"));
         let (mut legacy, mut consolidated, sheet) = graphs(limit);
         let old = normalize(legacy.legacy_extract_dependencies(&ast, sheet));
+        let succeeded = old.is_ok();
         let new = normalize(consolidated.extract_dependencies(&ast, sheet));
         assert_eq!(old, new, "tree formula={formula}, limit={limit}");
 
         let config = EvalConfig::default().with_range_expansion_limit(limit);
         let mut arena = DependencyGraph::new_with_config(config);
-        let arena_sheet = arena.sheet_reg.id_for("Sheet1");
-        arena.sheet_reg.id_for("Sheet2");
+        let arena_sheet = configure_graph(&mut arena);
         let ast_id = arena.data_store.store_ast(&ast, &arena.sheet_reg);
         let arena_result = normalize(arena.extract_dependencies_arena(ast_id, arena_sheet));
         assert_eq!(old, arena_result, "arena formula={formula}, limit={limit}");
+        succeeded
     }
 
     #[test]
     fn frozen_walk_matches_all_reference_classes_and_error_outcomes() {
         let formulas = [
             "=SUM(A1,$B2,C$3,$D$4)",
-            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
+            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A1:1,A:A,1:1)",
             "=SUM(Sheet2!A1,NamedThing,Table1[#Data])",
             "=SUM([book]Sheet!A1,[book]Sheet!A1:B2)",
             "=SUM(Sheet1:Sheet2!A1,Sheet1:Sheet2!B2:C3)",
-            "=SUM({A1,B2;C3,#REF!},IF(D4,,E5))",
+            "=SUM({A1,B2;C3,D4},IF(D4,,E5))",
             "=SUM(D4:B2)",
             "=Missing!A1",
         ];
@@ -465,6 +476,30 @@ mod differential {
             for limit in [0, 1, 4, 16, 64] {
                 assert_formula_parity(formula, limit);
             }
+        }
+    }
+
+    #[test]
+    fn overflow_sized_ranges_stay_compressed_in_graph() {
+        // The frozen oracle intentionally retains base's wrapping u32 multiply,
+        // so overflow inputs are covered by direct behavior pins rather than
+        // differential comparison (the debug oracle would panic).
+        for formula in [
+            "=SUM(A1:XFD262143)",
+            "=SUM(A1:XFD262144)",
+            "=SUM(A1:XFD1048576)",
+        ] {
+            let ast = parse(formula).unwrap();
+            let mut graph = DependencyGraph::new_with_config(
+                EvalConfig::default().with_range_expansion_limit(64),
+            );
+            let sheet = configure_graph(&mut graph);
+            let (dependencies, ranges, placeholders, names) =
+                graph.extract_dependencies(&ast, sheet).unwrap();
+            assert!(dependencies.is_empty(), "{formula}");
+            assert_eq!(ranges.len(), 1, "{formula}");
+            assert!(placeholders.is_empty(), "{formula}");
+            assert!(names.is_empty(), "{formula}");
         }
     }
 
@@ -477,22 +512,27 @@ mod differential {
             Just("A1:B2"),
             Just("B2:E6"),
             Just("A1:A"),
+            Just("A1:1"),
             Just("A:A"),
             Just("1:1"),
             Just("Sheet2!E5"),
             Just("Sheet2!A1:C3"),
             Just("Missing!A1"),
             Just("NamedThing"),
-            Just("Table1[#Data]"),
             Just("Sheet1:Sheet2!A1"),
             Just("IF(A1,,B2)"),
             Just("SUM(A1,SUM(B2,SUM(C3,D4)))"),
-            Just("SUM({A1,B2;C3,#N/A})"),
+            Just("SUM({A1,B2;C3,D4})"),
         ]
     }
 
+    // Fixed seeds make CI failures reproducible without committing persistence artifacts.
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(256))]
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x4752_4150),
+            ..ProptestConfig::default()
+        })]
 
         #[test]
         fn generated_formulas_match_frozen_graph_walk(
@@ -500,7 +540,10 @@ mod differential {
             limit in prop_oneof![Just(0usize), Just(1), Just(4), Just(16), Just(64)],
         ) {
             let formula = format!("={}", atoms.join("+"));
-            assert_formula_parity(&formula, limit);
+            assert!(
+                assert_formula_parity(&formula, limit),
+                "generated graph fixture must exercise full successful outcomes"
+            );
         }
     }
 }

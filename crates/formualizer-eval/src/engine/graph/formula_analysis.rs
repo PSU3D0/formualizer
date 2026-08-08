@@ -128,13 +128,11 @@ fn collect_graph_reference(
             if range.is_reversed() {
                 return Err(ExcelError::new(ExcelErrorKind::Ref));
             }
-            let height = er.saturating_sub(sr) + 1;
-            let width = ec.saturating_sub(sc) + 1;
-            let size = (width * height) as usize;
+            let area = range.saturating_area().expect("finite area");
 
             // Graph ingest's configured default is 64. This policy intentionally
             // remains independent from dependency planning's historical 16.
-            if size <= context.graph.config.range_expansion_limit {
+            if area <= context.graph.config.range_expansion_limit as u64 {
                 let sheet_id = match range.sheet.name() {
                     Some(name) => context.graph.resolve_existing_sheet_id(name)?,
                     None => context.current_sheet_id,

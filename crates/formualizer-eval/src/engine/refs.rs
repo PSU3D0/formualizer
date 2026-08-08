@@ -161,114 +161,104 @@ pub(crate) fn visit_tree_references<C>(
     local_binding_style: fn(&C, &str, usize) -> LocalBindingStyle,
     visitor: fn(&mut C, SemanticReference<'_>) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
-    let mut local_scopes = Vec::new();
-    visit_tree_node(
-        ast,
-        context,
-        local_binding_style,
-        visitor,
-        &mut local_scopes,
-    )
-}
-
-fn visit_tree_node<C>(
-    ast: &ASTNode,
-    context: &mut C,
-    local_binding_style: fn(&C, &str, usize) -> LocalBindingStyle,
-    visitor: fn(&mut C, SemanticReference<'_>) -> Result<(), ExcelError>,
-    local_scopes: &mut Vec<FxHashSet<String>>,
-) -> Result<(), ExcelError> {
-    match &ast.node_type {
-        ASTNodeType::Reference { reference, .. } => {
-            if let ReferenceType::NamedRange(name) = reference
-                && !local_scopes.is_empty()
-            {
-                let key = name.to_ascii_uppercase();
-                if local_scopes.iter().rev().any(|scope| scope.contains(&key)) {
-                    return Ok(());
-                }
-            }
-            visitor(context, classify(reference))
-        }
-        ASTNodeType::BinaryOp { left, right, .. } => {
-            visit_tree_node(left, context, local_binding_style, visitor, local_scopes)?;
-            visit_tree_node(right, context, local_binding_style, visitor, local_scopes)
-        }
-        ASTNodeType::UnaryOp { expr, .. } => {
-            visit_tree_node(expr, context, local_binding_style, visitor, local_scopes)
-        }
-        ASTNodeType::Function { name, args } => {
-            match local_binding_style(context, name, args.len()) {
-                LocalBindingStyle::LocalBindingPairs if args.len() >= 3 && args.len() % 2 == 1 => {
-                    local_scopes.push(FxHashSet::default());
-                    for pair_idx in (0..args.len() - 1).step_by(2) {
-                        visit_tree_node(
-                            &args[pair_idx + 1],
-                            context,
-                            local_binding_style,
-                            visitor,
-                            local_scopes,
-                        )?;
-                        if let ASTNodeType::Reference {
-                            reference: ReferenceType::NamedRange(local_name),
-                            ..
-                        } = &args[pair_idx].node_type
-                            && let Some(scope) = local_scopes.last_mut()
-                        {
-                            scope.insert(local_name.to_ascii_uppercase());
-                        }
-                    }
-                    visit_tree_node(
-                        &args[args.len() - 1],
-                        context,
-                        local_binding_style,
-                        visitor,
-                        local_scopes,
-                    )?;
-                    local_scopes.pop();
-                    Ok(())
-                }
-                LocalBindingStyle::LambdaParameters => {
-                    if let Some(body) = args.last() {
-                        let mut scope = FxHashSet::default();
-                        for parameter in &args[..args.len().saturating_sub(1)] {
-                            if let ASTNodeType::Reference {
-                                reference: ReferenceType::NamedRange(name),
-                                ..
-                            } = &parameter.node_type
-                            {
-                                scope.insert(name.to_ascii_uppercase());
-                            }
-                        }
-                        local_scopes.push(scope);
-                        visit_tree_node(body, context, local_binding_style, visitor, local_scopes)?;
-                        local_scopes.pop();
-                    }
-                    Ok(())
-                }
-                _ => {
-                    for arg in args {
-                        visit_tree_node(arg, context, local_binding_style, visitor, local_scopes)?;
-                    }
-                    Ok(())
-                }
-            }
-        }
-        ASTNodeType::Call { callee, args } => {
-            visit_tree_node(callee, context, local_binding_style, visitor, local_scopes)?;
-            for arg in args {
-                visit_tree_node(arg, context, local_binding_style, visitor, local_scopes)?;
-            }
-            Ok(())
-        }
-        ASTNodeType::Array(rows) => {
-            for item in rows.iter().flatten() {
-                visit_tree_node(item, context, local_binding_style, visitor, local_scopes)?;
-            }
-            Ok(())
-        }
-        ASTNodeType::Literal(_) | ASTNodeType::Omitted => Ok(()),
+    enum Frame<'a> {
+        Node(&'a ASTNode),
+        AddBinding(&'a str),
+        ExitScope,
     }
+
+    let mut local_scopes: Vec<FxHashSet<String>> = Vec::new();
+    let mut stack = vec![Frame::Node(ast)];
+    while let Some(frame) = stack.pop() {
+        let ast = match frame {
+            Frame::AddBinding(name) => {
+                if let Some(scope) = local_scopes.last_mut() {
+                    scope.insert(name.to_ascii_uppercase());
+                }
+                continue;
+            }
+            Frame::ExitScope => {
+                local_scopes.pop();
+                continue;
+            }
+            Frame::Node(ast) => ast,
+        };
+
+        match &ast.node_type {
+            ASTNodeType::Reference { reference, .. } => {
+                if let ReferenceType::NamedRange(name) = reference
+                    && !local_scopes.is_empty()
+                {
+                    let key = name.to_ascii_uppercase();
+                    if local_scopes.iter().rev().any(|scope| scope.contains(&key)) {
+                        continue;
+                    }
+                }
+                visitor(context, classify(reference))?;
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                stack.push(Frame::Node(right));
+                stack.push(Frame::Node(left));
+            }
+            ASTNodeType::UnaryOp { expr, .. } => stack.push(Frame::Node(expr)),
+            ASTNodeType::Function { name, args } => {
+                match local_binding_style(context, name, args.len()) {
+                    LocalBindingStyle::LocalBindingPairs
+                        if args.len() >= 3 && args.len() % 2 == 1 =>
+                    {
+                        local_scopes.push(FxHashSet::default());
+                        stack.push(Frame::ExitScope);
+                        stack.push(Frame::Node(&args[args.len() - 1]));
+                        for pair_idx in (0..args.len() - 1).step_by(2).rev() {
+                            if let ASTNodeType::Reference {
+                                reference: ReferenceType::NamedRange(local_name),
+                                ..
+                            } = &args[pair_idx].node_type
+                            {
+                                stack.push(Frame::AddBinding(local_name));
+                            }
+                            stack.push(Frame::Node(&args[pair_idx + 1]));
+                        }
+                    }
+                    LocalBindingStyle::LambdaParameters => {
+                        if let Some(body) = args.last() {
+                            let mut scope = FxHashSet::default();
+                            for parameter in &args[..args.len().saturating_sub(1)] {
+                                if let ASTNodeType::Reference {
+                                    reference: ReferenceType::NamedRange(name),
+                                    ..
+                                } = &parameter.node_type
+                                {
+                                    scope.insert(name.to_ascii_uppercase());
+                                }
+                            }
+                            local_scopes.push(scope);
+                            stack.push(Frame::ExitScope);
+                            stack.push(Frame::Node(body));
+                        }
+                    }
+                    _ => {
+                        for arg in args.iter().rev() {
+                            stack.push(Frame::Node(arg));
+                        }
+                    }
+                }
+            }
+            ASTNodeType::Call { callee, args } => {
+                for arg in args.iter().rev() {
+                    stack.push(Frame::Node(arg));
+                }
+                stack.push(Frame::Node(callee));
+            }
+            ASTNodeType::Array(rows) => {
+                for item in rows.iter().rev().flat_map(|row| row.iter().rev()) {
+                    stack.push(Frame::Node(item));
+                }
+            }
+            ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn visit_arena_references<C>(
@@ -373,7 +363,7 @@ mod tests {
     #[test]
     fn classifies_in_source_order_without_expanding_ranges() {
         let ast = parse(
-            "=SUM($A1,Sheet2!B$2,C3:D4,A1:A,A:A,1:1,NamedThing,Table1[#Data],[book]Sheet!A1,Sheet1:Sheet3!E5)",
+            "=SUM($A1,Sheet2!B$2,$C3:D$4,A1:A,A:A,1:1,NamedThing,Table1[#Data],[book]Sheet!A1,Sheet1:Sheet3!E5)",
         )
         .unwrap();
         let mut seen = Seen::default();
@@ -382,7 +372,10 @@ mod tests {
         assert_eq!(seen.0.len(), 10);
         assert!(seen.0[0].starts_with("cell:Current:1:1:false:true"));
         assert!(seen.0[1].starts_with("cell:Name(\"Sheet2\"):2:2:true:false"));
-        assert!(seen.0[2].starts_with("finite:Current:Some((3, 3, 4, 4))"));
+        assert_eq!(
+            seen.0[2],
+            "finite:Current:Some((3, 3, 4, 4)):false:true:true:false"
+        );
         assert!(seen.0[3].starts_with("open:Current:Some(1):Some(1):None:Some(1)"));
         assert!(seen.0[6].starts_with("name:NamedThing"));
         assert!(seen.0[7].starts_with("table:Table1"));
@@ -409,5 +402,33 @@ mod tests {
         }
         visit_tree_references(&ast, &mut observed, none, capture).unwrap();
         assert_eq!(observed, Some((true, Some(1))));
+    }
+
+    #[test]
+    fn finite_range_area_uses_u64_at_and_above_u32_boundary() {
+        fn capture(
+            observed: &mut Option<u64>,
+            reference: SemanticReference<'_>,
+        ) -> Result<(), ExcelError> {
+            let SemanticReference::FiniteRange(range) = reference else {
+                panic!("expected finite range")
+            };
+            *observed = range.saturating_area();
+            Ok(())
+        }
+        fn none(_: &Option<u64>, _: &str, _: usize) -> LocalBindingStyle {
+            LocalBindingStyle::None
+        }
+
+        for (formula, expected) in [
+            ("=A1:XFD262143", 4_294_950_912),
+            ("=A1:XFD262144", 4_294_967_296),
+            ("=A1:XFD1048576", 17_179_869_184),
+        ] {
+            let ast = parse(formula).unwrap();
+            let mut observed = None;
+            visit_tree_references(&ast, &mut observed, none, capture).unwrap();
+            assert_eq!(observed, Some(expected), "{formula}");
+        }
     }
 }

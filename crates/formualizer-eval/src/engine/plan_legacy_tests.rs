@@ -460,10 +460,52 @@ mod differential {
         assert_eq!(old.offsets, new.offsets);
     }
 
+    fn fixture_registry() -> SheetRegistry {
+        let mut registry = SheetRegistry::new();
+        registry.id_for("Sheet1");
+        registry.id_for("Sheet2");
+        registry
+    }
+
+    fn sorted_sheet_names(registry: &SheetRegistry) -> Vec<String> {
+        let mut names: Vec<_> = registry
+            .all_sheets()
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn registry_delta(before: &[String], registry: &SheetRegistry) -> Vec<String> {
+        sorted_sheet_names(registry)
+            .into_iter()
+            .filter(|name| !before.contains(name))
+            .collect()
+    }
+
+    fn assert_outcome_eq(
+        formula: &str,
+        path: &str,
+        old: Result<DependencyPlan, ExcelError>,
+        new: Result<DependencyPlan, ExcelError>,
+    ) {
+        match (old, new) {
+            (Ok(old), Ok(new)) => assert_plan_eq(&old, &new),
+            (Err(old), Err(new)) => assert_eq!(old, new, "{path} formula={formula}"),
+            (old, new) => {
+                panic!("plan outcome mismatch for {path} formula={formula}: {old:?} != {new:?}")
+            }
+        }
+    }
+
     fn assert_formula_parity(formula: &str, policy: CollectPolicy) {
         let ast = parse(formula).unwrap_or_else(|error| panic!("{formula}: {error}"));
-        let mut old_registry = SheetRegistry::new();
-        let mut new_registry = SheetRegistry::new();
+
+        let mut old_registry = fixture_registry();
+        let mut new_registry = fixture_registry();
+        let tree_before = sorted_sheet_names(&old_registry);
+        assert_eq!(tree_before, sorted_sheet_names(&new_registry));
         let old = legacy_build_dependency_plan(
             &mut old_registry,
             std::iter::once(("Sheet1", 10, 10, &ast)),
@@ -476,25 +518,57 @@ mod differential {
             &policy,
             None,
         );
-        match (old, new) {
-            (Ok(old), Ok(new)) => assert_plan_eq(&old, &new),
-            (Err(old), Err(new)) => assert_eq!(old, new),
-            (old, new) => panic!("plan outcome mismatch for {formula}: {old:?} != {new:?}"),
-        }
+        assert_outcome_eq(formula, "tree", old, new);
+        assert_eq!(
+            registry_delta(&tree_before, &old_registry),
+            registry_delta(&tree_before, &new_registry),
+            "tree registry delta formula={formula}"
+        );
+
+        let mut old_arena_registry = fixture_registry();
+        let mut new_arena_registry = fixture_registry();
+        let arena_before = sorted_sheet_names(&old_arena_registry);
+        assert_eq!(arena_before, sorted_sheet_names(&new_arena_registry));
+        let mut old_store = DataStore::new();
+        let old_ast_id = old_store.store_ast(&ast, &old_arena_registry);
+        let mut new_store = DataStore::new();
+        let new_ast_id = new_store.store_ast(&ast, &new_arena_registry);
+        let old_arena = legacy_build_dependency_plan_mixed(
+            &mut old_arena_registry,
+            &old_store,
+            std::iter::once(("Sheet1", 10, 10, DependencyPlanAst::Arena(old_ast_id))),
+            &policy,
+            None,
+        );
+        let new_arena = build_dependency_plan_mixed(
+            &mut new_arena_registry,
+            &new_store,
+            std::iter::once(("Sheet1", 10, 10, DependencyPlanAst::Arena(new_ast_id))),
+            &policy,
+            None,
+        );
+        assert_outcome_eq(formula, "arena", old_arena, new_arena);
+        assert_eq!(
+            registry_delta(&arena_before, &old_arena_registry),
+            registry_delta(&arena_before, &new_arena_registry),
+            "arena registry delta formula={formula}"
+        );
     }
 
     #[test]
     fn frozen_plan_matches_reference_classes_and_reversed_range_quirk() {
         let formulas = [
             "=SUM(A1,$B2,C$3,$D$4)",
-            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
+            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A1:1,A:A,1:1)",
             "=SUM(Sheet2!A1,NamedThing,Table1[#Data])",
             "=SUM([book]Sheet!A1,[book]Sheet!A1:B2)",
             "=SUM(Sheet1:Sheet2!A1,Sheet1:Sheet2!B2:C3)",
-            "=SUM({A1,B2;C3,#REF!},IF(D4,,E5))",
+            "=SUM({A1,B2;C3,D4},IF(D4,,E5))",
             // Existing planner behavior: with expansion enabled this reversed
             // range contributes no cells rather than returning #REF!.
             "=SUM(D4:B2)",
+            "=Ghost!D4:B2",
+            "=Sheet2!D4:B2",
         ];
         for formula in formulas {
             for limit in [0, 1, 4, 16, 64] {
@@ -518,6 +592,7 @@ mod differential {
             Just("A1:B2"),
             Just("B2:E6"),
             Just("A1:A"),
+            Just("A1:1"),
             Just("A:A"),
             Just("1:1"),
             Just("Sheet2!E5"),
@@ -527,13 +602,18 @@ mod differential {
             Just("Sheet1:Sheet2!A1"),
             Just("IF(A1,,B2)"),
             Just("SUM(A1,SUM(B2,SUM(C3,D4)))"),
-            Just("SUM({A1,B2;C3,#N/A})"),
+            Just("SUM({A1,B2;C3,D4})"),
             Just("D4:B2"),
         ]
     }
 
+    // Fixed seeds make CI failures reproducible without committing persistence artifacts.
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(256))]
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x504c_414e),
+            ..ProptestConfig::default()
+        })]
 
         #[test]
         fn generated_formulas_match_frozen_plan(

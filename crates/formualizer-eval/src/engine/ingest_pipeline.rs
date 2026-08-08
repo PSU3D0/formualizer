@@ -447,8 +447,10 @@ impl<'a> IngestPipeline<'a> {
 
                 // This ingest policy intentionally remains independent from the
                 // dependency planner's historical default limit of 16.
-                let size = range.saturating_area().expect("finite area") as usize;
-                if self.policy.expand_small_ranges && size <= self.policy.range_expansion_limit {
+                let area = range.saturating_area().expect("finite area");
+                if self.policy.expand_small_ranges
+                    && area <= self.policy.range_expansion_limit as u64
+                {
                     let sheet_id =
                         self.resolve_reference_sheet(range.sheet.name(), current_sheet_id)?;
                     for row in sr..=er {
@@ -2149,12 +2151,12 @@ mod tests {
         let mut pipeline = engine.ingest_pipeline();
         let formulas = [
             "=SUM(A1,$B2,C$3,$D$4)",
-            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
+            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A1:1,A:A,1:1)",
             "=SUM(Sheet2!A1,NamedThing)",
             "=Table1[#Data]",
             "=SUM([book]Sheet!A1,[book]Sheet!A1:B2)",
             "=SUM(Sheet1:Sheet2!A1,Sheet1:Sheet2!B2:C3)",
-            "=SUM({A1,B2;C3,#REF!},IF(D4,,E5))",
+            "=SUM({A1,B2;C3,D4},IF(D4,,E5))",
             "=LET(x,A1,y,B2,x+y+C3)",
             "=LAMBDA(x,y,x+y+A1)",
             "=SUM(D4:B2)",
@@ -2169,6 +2171,33 @@ mod tests {
         }
     }
 
+    #[test]
+    fn overflow_sized_ranges_stay_compressed_in_ingest() {
+        // The frozen oracle intentionally retains base's wrapping u32 multiply,
+        // so overflow inputs are covered by direct behavior pins rather than
+        // differential comparison (the debug oracle would panic).
+        ensure_builtins_registered();
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_range_expansion_limit(64),
+        );
+        let sheet = engine.graph.sheet_id_mut("Sheet1");
+        let mut pipeline = engine.ingest_pipeline();
+        for formula in [
+            "=SUM(A1:XFD262143)",
+            "=SUM(A1:XFD262144)",
+            "=SUM(A1:XFD1048576)",
+        ] {
+            let ast = parse(formula).unwrap();
+            let mut plan = DependencyPlanRow::default();
+            pipeline
+                .collect_dependencies_tree(&ast, sheet, &mut plan)
+                .unwrap();
+            assert!(plan.direct_cell_deps.is_empty(), "{formula}");
+            assert_eq!(plan.range_deps.len(), 1, "{formula}");
+        }
+    }
+
     fn dependency_atom() -> impl Strategy<Value = &'static str> {
         prop_oneof![
             Just("A1"),
@@ -2177,6 +2206,7 @@ mod tests {
             Just("A1:B2"),
             Just("B2:E6"),
             Just("A1:A"),
+            Just("A1:1"),
             Just("A:A"),
             Just("1:1"),
             Just("Sheet2!E5"),
@@ -2187,15 +2217,20 @@ mod tests {
             Just("Sheet1:Sheet2!A1"),
             Just("IF(A1,,B2)"),
             Just("SUM(A1,SUM(B2,SUM(C3,D4)))"),
-            Just("SUM({A1,B2;C3,#N/A})"),
+            Just("SUM({A1,B2;C3,D4})"),
             Just("D4:B2"),
             Just("LET(x,A1,y,B2,x+y+C3)"),
             Just("LAMBDA(x,y,x+y+A1)"),
         ]
     }
 
+    // Fixed seeds make CI failures reproducible without committing persistence artifacts.
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(256))]
+        #![proptest_config(ProptestConfig {
+            cases: 256,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x494e_4745),
+            ..ProptestConfig::default()
+        })]
 
         #[test]
         fn generated_formulas_match_frozen_ingest_walk(
