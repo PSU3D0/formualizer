@@ -5,11 +5,11 @@
 //! placeholder vertices, or marks cells dirty. It may warm snapshot-guarded
 //! performance caches such as the row-bounds cache. Reports are plane-independent:
 //! legacy and authoritative FormulaPlane engines return field-identical semantic
-//! reports for identical logical workbook state, apart from their state stamps,
-//! except that (a) after structural edits and before re-evaluation, FormulaPlane
-//! may conservatively report per-cell staleness as [`Staleness::Dirty`] where the
-//! legacy engine reports [`Staleness::Current`], and (b) a binding `max_work`
-//! budget may discover representation-dependent prefixes.
+//! reports for identical logical workbook state, apart from their state stamps.
+//! Two exceptions apply: (a) after structural edits and before re-evaluation,
+//! per-cell staleness may be more conservative ([`Staleness::Dirty`]) under
+//! FormulaPlane authority than legacy; and (b) reports produced under a binding
+//! `max_work` budget are representation-dependent in how much they discover.
 
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;

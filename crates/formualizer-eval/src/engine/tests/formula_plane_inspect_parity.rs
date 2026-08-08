@@ -522,10 +522,16 @@ fn non_binding_work_budgets_are_plane_independent_but_binding_budgets_are_not() 
         legacy, plane,
         "binding work budgets are representation-dependent"
     );
-    assert!(
-        legacy.truncation.incomplete || plane.truncation.incomplete,
-        "the documented difference requires a budget that actually binds"
+    assert_eq!(legacy.dependents.len(), 6);
+    assert_eq!(plane.dependents.len(), 10);
+    assert_eq!(
+        legacy.truncation,
+        TruncationReport {
+            incomplete: true,
+            omitted: None,
+        }
     );
+    assert_eq!(legacy.truncation, plane.truncation);
 }
 
 #[test]
