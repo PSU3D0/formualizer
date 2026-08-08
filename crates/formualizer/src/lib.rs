@@ -2,6 +2,11 @@
 //! sensible defaults. Downstream users can depend on this crate and opt into
 //! specific layers via feature flags while keeping access to the underlying
 //! crates when deeper integration is required.
+//!
+//! Inspection DTOs are currently types-only through this facade. Until the
+//! workbook and language-binding integrations land, use `formualizer-eval`
+//! directly to call the engine inspection methods; the facade intentionally
+//! does not re-export `Engine`.
 
 #[cfg(feature = "common")]
 pub use formualizer_common as common;

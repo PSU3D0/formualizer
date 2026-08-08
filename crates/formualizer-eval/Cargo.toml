@@ -26,8 +26,8 @@ only_used_in_recursion = "allow"
 [dependencies]
 formualizer-parse = { workspace = true }
 formualizer-macros  = { workspace = true }
-formualizer-common = { workspace = true, features = ["serde"] }
-serde = { workspace = true, features = ["derive"] }
+formualizer-common = { workspace = true }
+serde = { workspace = true, features = ["derive"], optional = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
 # default-features = false: SmallRng + seeded PRNG only; no OsRng / getrandom at runtime.
@@ -102,6 +102,7 @@ required-features = ["test-support"]
 # Included in default for native + wasm-js consumers; disable for portable wasm guests.
 default = ["system-clock"]
 system-clock = ["chrono/clock"]
+serde = ["dep:serde", "formualizer-common/serde"]
 
 # js-runtime: opt into browser/wasm-bindgen execution environment.
 # Activates web-time (performance.now Instant), JS-backed getrandom entropy,

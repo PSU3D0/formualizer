@@ -65,7 +65,7 @@ feature_profile() {
       printf '%s\n' 'serde'
       ;;
     formualizer-eval)
-      printf '%s\n' 'system-clock,tracing,tracing_chrome,perf_instrumentation,formula_plane_diagnostics'
+      printf '%s\n' 'system-clock,serde,tracing,tracing_chrome,perf_instrumentation,formula_plane_diagnostics'
       ;;
     formualizer-workbook)
       printf '%s\n' 'system-clock,json,csv,calamine,umya,mmap,io_builtins,import_range,webservice,tracing,perf_instrumentation,compression,calamine_integration,umya_integration,wasm_plugins,wasm_runtime_wasmtime'
