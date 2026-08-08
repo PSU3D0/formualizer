@@ -284,6 +284,48 @@ fn legacy_and_formula_plane_all_five_inspection_apis_are_field_exact_across_span
 }
 
 #[test]
+fn formula_plane_per_placement_literal_bindings_preserve_canonical_formula_inspection_parity() {
+    let build = |mode| {
+        let mut engine = engine(mode);
+        let mut records = Vec::with_capacity(SPAN_ROWS as usize);
+        for row in 1..=SPAN_ROWS {
+            engine
+                .set_cell_value(SHEET, row, 1, LiteralValue::Number(f64::from(row)))
+                .unwrap();
+            let formula = format!("=A{row}+{row}");
+            let ast_id = engine.intern_formula_ast(&parse(&formula).unwrap());
+            records.push(FormulaIngestRecord::new(
+                row,
+                3,
+                ast_id,
+                Some(Arc::<str>::from(formula)),
+            ));
+        }
+        engine
+            .ingest_formula_batches(vec![FormulaIngestBatch::new(SHEET, records)])
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        engine
+    };
+    let off = build(FormulaPlaneMode::Off);
+    let authoritative = build(FormulaPlaneMode::AuthoritativeExperimental);
+    assert!(
+        authoritative
+            .baseline_stats()
+            .formula_plane_active_span_count
+            > 0
+    );
+    for row in [1, 64, SPAN_ROWS] {
+        assert_snapshot_parity(
+            &off,
+            &authoritative,
+            address(row, 3),
+            SnapshotOptions::default(),
+        );
+    }
+}
+
+#[test]
 fn legacy_and_formula_plane_budget_truncation_and_missing_sheet_errors_are_identical() {
     let (off, authoritative) = build_pair(3);
     assert_precedent_parity(
