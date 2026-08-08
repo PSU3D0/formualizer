@@ -219,9 +219,15 @@ fn empty_cells_have_empty_public_traces_and_deferred_reverse_state_is_explicit()
         .unwrap();
     assert_eq!(trace.nodes.len(), 1);
     assert!(trace.nodes[0].links.is_empty());
+    assert!(matches!(
+        engine.inspect_cell(&address("Missing", 1, 1), &SnapshotOptions::default()),
+        Err(InspectError::SheetNotFound { .. })
+    ));
 
-    let mut config = EvalConfig::default();
-    config.defer_graph_building = true;
+    let config = EvalConfig {
+        defer_graph_building: true,
+        ..EvalConfig::default()
+    };
     let mut deferred = Engine::new(TestWorkbook::new(), config);
     deferred.add_sheet("Model").unwrap();
     deferred.stage_formula_text("Model", 1, 2, "=A1".to_string());
@@ -237,8 +243,10 @@ fn empty_cells_have_empty_public_traces_and_deferred_reverse_state_is_explicit()
 
 #[test]
 fn public_dependents_include_direct_finite_and_infinite_range_readers() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 0;
+    let config = EvalConfig {
+        range_expansion_limit: 0,
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(TestWorkbook::new(), config);
     engine
         .set_cell_value("Model", 20, 1, LiteralValue::Number(3.0))
@@ -336,6 +344,15 @@ fn whole_column_empty_extent_and_revision_checked_paging_are_semantic() {
             ..
         }
     ));
+    let empty_column_page = engine
+        .range_page(
+            &RangeArea::new("Model", None, Some(1), None, Some(1)).unwrap(),
+            &RangePageOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(empty_column_page.total, 0);
+    assert_eq!(empty_column_page.resolved, None);
+    assert!(empty_column_page.items.is_empty());
 
     let area = RangeArea::new("model", Some(1), Some(2), Some(2), Some(2)).unwrap();
     let first = engine
@@ -410,6 +427,18 @@ fn spill_roles_links_readers_and_pages_use_public_entry_points() {
         .find(|dependent| dependent.cell == address("Model", 1, 4))
         .unwrap();
     assert_eq!(reader.via, vec![address("Model", 2, 2)]);
+    let dependent_trace = engine
+        .trace(
+            &[address("Model", 1, 1)],
+            &TraceOptions::default().with_direction(TraceDirection::Dependents),
+        )
+        .unwrap();
+    assert!(
+        dependent_trace.nodes[0]
+            .links
+            .iter()
+            .any(|link| link.kind == TraceLinkKind::SpillReader)
+    );
 
     let page = engine
         .range_page(
@@ -434,42 +463,47 @@ fn every_public_inspection_call_is_state_preserving_and_stamped() {
     let cell = address("Model", 1, 2);
     let area = RangeArea::new("Model", Some(1), Some(1), Some(1), Some(2)).unwrap();
 
-    let before_stats = engine.baseline_stats();
-    let before_revision = engine.inspection_mutation_revision();
-    let before_recalc = engine.recalc_epoch;
-    let before_sheets = engine.graph.sheet_reg().all_sheets();
-    let before_spills = engine.graph.spill_registry_counts();
+    let state = |engine: &Engine<TestWorkbook>| {
+        (
+            engine.baseline_stats(),
+            engine.inspection_mutation_revision(),
+            engine.recalc_epoch,
+            engine.graph.sheet_reg().all_sheets(),
+            engine.graph.spill_registry_counts(),
+        )
+    };
+    let before = state(&engine);
 
     let snapshot = engine
         .inspect_cell(&cell, &SnapshotOptions::default())
         .unwrap();
+    assert_eq!(state(&engine), before);
     let precedents = engine
         .precedents(&cell, &PrecedentOptions::default())
         .unwrap();
+    assert_eq!(state(&engine), before);
     let dependents = engine
         .dependents(&address("Model", 1, 1), &DependentsOptions::default())
         .unwrap();
+    assert_eq!(state(&engine), before);
     let trace = engine
         .trace(std::slice::from_ref(&cell), &TraceOptions::default())
         .unwrap();
+    assert_eq!(state(&engine), before);
     let page = engine
         .range_page(&area, &RangePageOptions::default())
         .unwrap();
+    assert_eq!(state(&engine), before);
 
     let expected_stamp = StateStamp {
-        mutation_revision: before_revision,
-        recalc_epoch: before_recalc,
+        mutation_revision: before.1,
+        recalc_epoch: before.2,
     };
     assert_eq!(snapshot.stamp, expected_stamp);
     assert_eq!(precedents.stamp, expected_stamp);
     assert_eq!(dependents.stamp, expected_stamp);
     assert_eq!(trace.stamp, expected_stamp);
     assert_eq!(page.stamp, expected_stamp);
-    assert_eq!(engine.baseline_stats(), before_stats);
-    assert_eq!(engine.inspection_mutation_revision(), before_revision);
-    assert_eq!(engine.recalc_epoch, before_recalc);
-    assert_eq!(engine.graph.sheet_reg().all_sheets(), before_sheets);
-    assert_eq!(engine.graph.spill_registry_counts(), before_spills);
 }
 
 #[test]
@@ -583,8 +617,10 @@ fn dirty_trace_pairs_current_formula_with_cached_value_and_stamp() {
 #[test]
 fn bounded_range_dependent_query_does_not_materialize_a_hundred_thousand_candidates() {
     const FORMULAS: u32 = 100_001;
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 0;
+    let config = EvalConfig {
+        range_expansion_limit: 0,
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(TestWorkbook::new(), config);
     engine.add_sheet("Model").unwrap();
     let ast = parse("=SUM(A:A)").unwrap();
@@ -631,6 +667,10 @@ fn multi_root_trace_reuses_overlapping_nodes_deterministically() {
     let first = engine.trace(&roots, &options).unwrap();
     let second = engine.trace(&roots, &options).unwrap();
     assert_eq!(first, second);
+    assert_eq!(
+        serde_json::to_vec(&first).unwrap(),
+        serde_json::to_vec(&second).unwrap()
+    );
     assert_eq!(first.roots.len(), 2);
     assert_eq!(
         first
