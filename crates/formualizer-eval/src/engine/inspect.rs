@@ -29,7 +29,6 @@ use crate::traits::EvaluationContext;
 
 const DEFAULT_MAX_LINKS: u32 = 256;
 const DEFAULT_MAX_WORK: u64 = 100_000;
-const MAX_RANGE_PAGE_LIMIT: u32 = 1_000_000;
 
 /// Correlates a report with the engine mutation and recalculation state from
 /// which it was copied.
@@ -1290,6 +1289,7 @@ impl<R: EvaluationContext> Engine<R> {
         let source = self.inspect_source();
         let mut found: FxHashMap<CellAddress, Vec<CellAddress>> = FxHashMap::default();
         let mut incomplete = false;
+        let mut known_omitted_dependent = false;
         let max_results = max_results as usize;
 
         let members = self.spill_query_members(key);
@@ -1309,6 +1309,7 @@ impl<R: EvaluationContext> Engine<R> {
                 }
                 if found.len() >= max_results {
                     incomplete = true;
+                    known_omitted_dependent = true;
                     return false;
                 }
                 found.insert(address, vec![via.clone()]);
@@ -1360,7 +1361,7 @@ impl<R: EvaluationContext> Engine<R> {
             if incomplete {
                 TruncationReport {
                     incomplete: true,
-                    omitted: Some(OmittedCount::AtLeast(1)),
+                    omitted: Some(OmittedCount::AtLeast(u64::from(known_omitted_dependent))),
                 }
             } else {
                 TruncationReport::default()
@@ -1790,13 +1791,6 @@ impl<R: EvaluationContext> Engine<R> {
         if options.limit == 0 {
             return Err(InspectError::InvalidOptions {
                 message: "range page limit must be at least one".to_string(),
-            });
-        }
-        if options.limit > MAX_RANGE_PAGE_LIMIT {
-            return Err(InspectError::InvalidOptions {
-                message: format!(
-                    "range page limit exceeds the per-call maximum of {MAX_RANGE_PAGE_LIMIT}"
-                ),
             });
         }
         let stamp = self.inspect_stamp();

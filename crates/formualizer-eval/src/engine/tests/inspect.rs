@@ -276,6 +276,17 @@ fn public_dependents_include_direct_finite_and_infinite_range_readers() {
             .iter()
             .all(|dependent| dependent.via == vec![address("Model", 20, 1)])
     );
+    let infinite_only = engine
+        .dependents(&address("Model", 40, 1), &DependentsOptions::default())
+        .unwrap();
+    assert_eq!(
+        infinite_only
+            .dependents
+            .iter()
+            .map(|dependent| dependent.cell.clone())
+            .collect::<Vec<_>>(),
+        vec![address("Model", 3, 2)]
+    );
 
     let bounded = engine
         .dependents(
@@ -648,6 +659,7 @@ fn bounded_range_dependent_query_does_not_materialize_a_hundred_thousand_candida
         Some(OmittedCount::AtLeast(_))
     ));
     assert!(report.dependents.len() <= 64);
+    eprintln!("100001-range-dependent bounded query elapsed: {elapsed:?}");
     assert!(
         elapsed < std::time::Duration::from_secs(2),
         "bounded query took {elapsed:?}"

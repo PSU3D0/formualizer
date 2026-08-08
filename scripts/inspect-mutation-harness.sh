@@ -52,7 +52,7 @@ run_mutant spill-via-dropped \
   '/let mut dependents: Vec<_>/,/dependents.sort_by/ s/Dependent { cell, via }/Dependent { cell, via: Vec::new() }/' \
   spill_roles_links_readers_and_pages_use_public_entry_points
 run_mutant omitted-lower-bound-as-exact \
-  '/fn collect_dependents/,/pub fn dependents/ s/OmittedCount::AtLeast(1)/OmittedCount::Exact(1)/g' \
+  '/fn collect_dependents/,/pub fn dependents/ s/OmittedCount::AtLeast/OmittedCount::Exact/g' \
   public_dependents_include_direct_finite_and_infinite_range_readers
 
 cp "$BACKUP" "$SOURCE"
