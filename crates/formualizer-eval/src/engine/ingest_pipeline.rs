@@ -707,7 +707,7 @@ pub(crate) struct IngestedFormula {
     pub(crate) formula_text: Option<Arc<str>>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct DependencyPlanRow {
     pub(crate) direct_cell_deps: Vec<CellRef>,
     pub(crate) range_deps: Vec<SharedRangeRef<'static>>,
@@ -1634,6 +1634,8 @@ mod tests {
     use crate::engine::{Engine, EvalConfig};
     use crate::test_workbook::TestWorkbook;
     use formualizer_parse::parser::parse;
+    use proptest::prelude::*;
+    use rustc_hash::FxHashSet;
 
     fn empty_names() -> NameRegistryView<'static> {
         NameRegistryView::new(|_, _| None)
@@ -1829,5 +1831,388 @@ mod tests {
             .unwrap();
         assert_eq!(ingested.placement, placement);
         assert_ne!(ingested.canonical_hash, 0);
+    }
+
+    // Frozen from `engine/ingest_pipeline.rs` at `ccfeaf83`. Only method names
+    // were prefixed so the legacy and consolidated walks can run side by side.
+    impl<'a> IngestPipeline<'a> {
+        fn legacy_collect_dependencies_tree(
+            &mut self,
+            ast: &ASTNode,
+            current_sheet_id: SheetId,
+            plan: &mut DependencyPlanRow,
+            local_scopes: &mut Vec<FxHashSet<String>>,
+        ) -> Result<(), ExcelError> {
+            match &ast.node_type {
+                ASTNodeType::Reference { reference, .. } => {
+                    self.legacy_collect_reference(reference, current_sheet_id, plan, local_scopes)
+                }
+                ASTNodeType::BinaryOp { left, right, .. } => {
+                    self.legacy_collect_dependencies_tree(
+                        left,
+                        current_sheet_id,
+                        plan,
+                        local_scopes,
+                    )?;
+                    self.legacy_collect_dependencies_tree(
+                        right,
+                        current_sheet_id,
+                        plan,
+                        local_scopes,
+                    )
+                }
+                ASTNodeType::UnaryOp { expr, .. } => self.legacy_collect_dependencies_tree(
+                    expr,
+                    current_sheet_id,
+                    plan,
+                    local_scopes,
+                ),
+                ASTNodeType::Function { name, args } => {
+                    use crate::function_contract::FunctionArgumentDependencyContract as Arguments;
+                    let argument_contract = self
+                        .function_provider
+                        .function_semantic_identity("", name, args.len())
+                        .filter(|identity| {
+                            identity.contract.environment
+                            == crate::function_contract::FunctionEnvironmentSemantics::LocalBindings
+                        })
+                        .and_then(|identity| identity.contract.precision)
+                        .map(|precision| precision.arguments);
+                    match argument_contract {
+                        Some(Arguments::LocalBindingPairs)
+                            if args.len() >= 3 && args.len() % 2 == 1 =>
+                        {
+                            local_scopes.push(FxHashSet::default());
+                            for pair_idx in (0..args.len() - 1).step_by(2) {
+                                self.legacy_collect_dependencies_tree(
+                                    &args[pair_idx + 1],
+                                    current_sheet_id,
+                                    plan,
+                                    local_scopes,
+                                )?;
+                                if let ASTNodeType::Reference {
+                                    reference: ReferenceType::NamedRange(local_name),
+                                    ..
+                                } = &args[pair_idx].node_type
+                                    && let Some(scope) = local_scopes.last_mut()
+                                {
+                                    scope.insert(local_name.to_ascii_uppercase());
+                                }
+                            }
+                            self.legacy_collect_dependencies_tree(
+                                &args[args.len() - 1],
+                                current_sheet_id,
+                                plan,
+                                local_scopes,
+                            )?;
+                            local_scopes.pop();
+                            Ok(())
+                        }
+                        Some(Arguments::LambdaParameters) => {
+                            if let Some(body) = args.last() {
+                                let mut lambda_scope = FxHashSet::default();
+                                for param in &args[..args.len().saturating_sub(1)] {
+                                    if let ASTNodeType::Reference {
+                                        reference: ReferenceType::NamedRange(param_name),
+                                        ..
+                                    } = &param.node_type
+                                    {
+                                        lambda_scope.insert(param_name.to_ascii_uppercase());
+                                    }
+                                }
+                                local_scopes.push(lambda_scope);
+                                self.legacy_collect_dependencies_tree(
+                                    body,
+                                    current_sheet_id,
+                                    plan,
+                                    local_scopes,
+                                )?;
+                                local_scopes.pop();
+                            }
+                            Ok(())
+                        }
+                        _ => {
+                            for arg in args {
+                                self.legacy_collect_dependencies_tree(
+                                    arg,
+                                    current_sheet_id,
+                                    plan,
+                                    local_scopes,
+                                )?;
+                            }
+                            Ok(())
+                        }
+                    }
+                }
+                ASTNodeType::Call { callee, args } => {
+                    self.legacy_collect_dependencies_tree(
+                        callee,
+                        current_sheet_id,
+                        plan,
+                        local_scopes,
+                    )?;
+                    for arg in args {
+                        self.legacy_collect_dependencies_tree(
+                            arg,
+                            current_sheet_id,
+                            plan,
+                            local_scopes,
+                        )?;
+                    }
+                    Ok(())
+                }
+                ASTNodeType::Array(rows) => {
+                    for row in rows {
+                        for item in row {
+                            self.legacy_collect_dependencies_tree(
+                                item,
+                                current_sheet_id,
+                                plan,
+                                local_scopes,
+                            )?;
+                        }
+                    }
+                    Ok(())
+                }
+                ASTNodeType::Literal(_) | ASTNodeType::Omitted => Ok(()),
+            }
+        }
+
+        fn legacy_collect_reference(
+            &mut self,
+            reference: &ReferenceType,
+            current_sheet_id: SheetId,
+            plan: &mut DependencyPlanRow,
+            local_scopes: &[FxHashSet<String>],
+        ) -> Result<(), ExcelError> {
+            match reference {
+                ReferenceType::External(ext) => match ext.kind {
+                    ExternalRefKind::Cell { .. } => {
+                        let name = ext.raw.as_str();
+                        if self.sources.resolve_scalar(name).is_some() {
+                            plan.source_refs.push(name.to_string());
+                            Ok(())
+                        } else {
+                            Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined name: {name}")))
+                        }
+                    }
+                    ExternalRefKind::Range { .. } => {
+                        let name = ext.raw.as_str();
+                        if self.sources.resolve_table(name).is_some() {
+                            plan.source_refs.push(name.to_string());
+                            Ok(())
+                        } else {
+                            Err(ExcelError::new(ExcelErrorKind::Name)
+                                .with_message(format!("Undefined table: {name}")))
+                        }
+                    }
+                },
+                ReferenceType::Cell {
+                    sheet, row, col, ..
+                } => {
+                    let sheet_id =
+                        self.resolve_reference_sheet(sheet.as_deref(), current_sheet_id)?;
+                    plan.direct_cell_deps.push(CellRef::new(
+                        sheet_id,
+                        Coord::from_excel(*row, *col, true, true),
+                    ));
+                    Ok(())
+                }
+                ReferenceType::Range {
+                    sheet,
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    ..
+                } => {
+                    let has_unbounded = start_row.is_none()
+                        || end_row.is_none()
+                        || start_col.is_none()
+                        || end_col.is_none();
+                    if has_unbounded {
+                        if let Some(SharedRef::Range(range)) = reference.to_sheet_ref_lossy() {
+                            let owned = range.into_owned();
+                            let sheet_id =
+                                self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
+                            plan.range_deps.push(SharedRangeRef {
+                                sheet: SharedSheetLocator::Id(sheet_id),
+                                start_row: owned.start_row,
+                                start_col: owned.start_col,
+                                end_row: owned.end_row,
+                                end_col: owned.end_col,
+                            });
+                        }
+                        return Ok(());
+                    }
+
+                    let (Some(sr), Some(sc), Some(er), Some(ec)) =
+                        (*start_row, *start_col, *end_row, *end_col)
+                    else {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref));
+                    };
+                    if sr > er || sc > ec {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref));
+                    }
+
+                    let height = er.saturating_sub(sr) + 1;
+                    let width = ec.saturating_sub(sc) + 1;
+                    let size = (width * height) as usize;
+                    if self.policy.expand_small_ranges && size <= self.policy.range_expansion_limit
+                    {
+                        let sheet_id =
+                            self.resolve_reference_sheet(sheet.as_deref(), current_sheet_id)?;
+                        for row in sr..=er {
+                            for col in sc..=ec {
+                                plan.direct_cell_deps.push(CellRef::new(
+                                    sheet_id,
+                                    Coord::from_excel(row, col, true, true),
+                                ));
+                            }
+                        }
+                    } else if let Some(SharedRef::Range(range)) = reference.to_sheet_ref_lossy() {
+                        let owned = range.into_owned();
+                        let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
+                        plan.range_deps.push(SharedRangeRef {
+                            sheet: SharedSheetLocator::Id(sheet_id),
+                            start_row: owned.start_row,
+                            start_col: owned.start_col,
+                            end_row: owned.end_row,
+                            end_col: owned.end_col,
+                        });
+                    }
+                    Ok(())
+                }
+                ReferenceType::NamedRange(name) => {
+                    let key = name.to_ascii_uppercase();
+                    if local_scopes.iter().rev().any(|scope| scope.contains(&key)) {
+                        return Ok(());
+                    }
+                    if self.names.resolve(name, current_sheet_id).is_some() {
+                        plan.resolved_named_refs.push(name.to_string());
+                    } else if self.sources.resolve_scalar(name).is_some() {
+                        plan.source_refs.push(name.to_string());
+                    } else {
+                        plan.named_refs.push(name.to_string());
+                    }
+                    Ok(())
+                }
+                ReferenceType::Table(tref) => {
+                    if self.tables.resolve(&tref.name).is_some() {
+                        plan.table_refs.push(tref.name.clone());
+                        Ok(())
+                    } else if self.sources.resolve_table(&tref.name).is_some() {
+                        plan.source_refs.push(tref.name.clone());
+                        Ok(())
+                    } else {
+                        Err(ExcelError::new(ExcelErrorKind::Name)
+                            .with_message(format!("Undefined table: {}", tref.name)))
+                    }
+                }
+                ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => Ok(()),
+            }
+        }
+    }
+
+    fn assert_ingest_walk_parity(
+        pipeline: &mut IngestPipeline<'_>,
+        ast: &ASTNode,
+        current_sheet: SheetId,
+    ) {
+        use rustc_hash::FxHashSet;
+
+        let mut old = DependencyPlanRow::default();
+        let mut local_scopes: Vec<FxHashSet<String>> = Vec::new();
+        let old_result = pipeline.legacy_collect_dependencies_tree(
+            ast,
+            current_sheet,
+            &mut old,
+            &mut local_scopes,
+        );
+        let mut new = DependencyPlanRow::default();
+        let new_result = pipeline.collect_dependencies_tree(ast, current_sheet, &mut new);
+        assert_eq!(old_result, new_result);
+        if old_result.is_ok() {
+            old.dedup_and_sort();
+            new.dedup_and_sort();
+            assert_eq!(old, new);
+        }
+    }
+
+    #[test]
+    fn frozen_ingest_walk_matches_reference_classes_scopes_and_errors() {
+        ensure_builtins_registered();
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        let sheet = engine.graph.sheet_id_mut("Sheet1");
+        engine.graph.sheet_id_mut("Sheet2");
+        let mut pipeline = engine.ingest_pipeline();
+        let formulas = [
+            "=SUM(A1,$B2,C$3,$D$4)",
+            "=SUM(A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
+            "=SUM(Sheet2!A1,NamedThing)",
+            "=Table1[#Data]",
+            "=SUM([book]Sheet!A1,[book]Sheet!A1:B2)",
+            "=SUM(Sheet1:Sheet2!A1,Sheet1:Sheet2!B2:C3)",
+            "=SUM({A1,B2;C3,#REF!},IF(D4,,E5))",
+            "=LET(x,A1,y,B2,x+y+C3)",
+            "=LAMBDA(x,y,x+y+A1)",
+            "=SUM(D4:B2)",
+            "=Missing!A1",
+        ];
+        for formula in formulas {
+            let ast = parse(formula).unwrap();
+            for limit in [0, 1, 4, 16, 64] {
+                pipeline.policy.range_expansion_limit = limit;
+                assert_ingest_walk_parity(&mut pipeline, &ast, sheet);
+            }
+        }
+    }
+
+    fn dependency_atom() -> impl Strategy<Value = &'static str> {
+        prop_oneof![
+            Just("A1"),
+            Just("$B2"),
+            Just("C$3"),
+            Just("A1:B2"),
+            Just("B2:E6"),
+            Just("A1:A"),
+            Just("A:A"),
+            Just("1:1"),
+            Just("Sheet2!E5"),
+            Just("Sheet2!A1:C3"),
+            Just("Missing!A1"),
+            Just("NamedThing"),
+            Just("Table1[#Data]"),
+            Just("Sheet1:Sheet2!A1"),
+            Just("IF(A1,,B2)"),
+            Just("SUM(A1,SUM(B2,SUM(C3,D4)))"),
+            Just("SUM({A1,B2;C3,#N/A})"),
+            Just("D4:B2"),
+            Just("LET(x,A1,y,B2,x+y+C3)"),
+            Just("LAMBDA(x,y,x+y+A1)"),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn generated_formulas_match_frozen_ingest_walk(
+            atoms in prop::collection::vec(dependency_atom(), 1..8),
+            limit in prop_oneof![Just(0usize), Just(1), Just(4), Just(16), Just(64)],
+        ) {
+            ensure_builtins_registered();
+            let formula = format!("={}", atoms.join("+"));
+            let ast = parse(&formula).unwrap_or_else(|error| panic!("{formula}: {error}"));
+            let mut engine = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig::default().with_range_expansion_limit(limit),
+            );
+            let sheet = engine.graph.sheet_id_mut("Sheet1");
+            engine.graph.sheet_id_mut("Sheet2");
+            let mut pipeline = engine.ingest_pipeline();
+            assert_ingest_walk_parity(&mut pipeline, &ast, sheet);
+        }
     }
 }
