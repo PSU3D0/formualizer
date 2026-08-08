@@ -867,9 +867,10 @@ fn range_area_equal_to_expansion_limit_uses_direct_edges() {
     engine
         .set_cell_formula("Sheet1", 1, 8, parse("=SUM(A2:B9)").unwrap())
         .unwrap();
+    engine.insert_rows("Sheet1", 1, 1).unwrap();
 
-    assert_structural_parity(&engine, 0xc0de_0010, 0);
-    assert_behavioral_parity(&mut engine, 0xc0de_0010, 0, 2);
+    assert_structural_parity(&engine, 0xc0de_0010, 1);
+    assert_behavioral_parity(&mut engine, 0xc0de_0010, 1, 2);
 }
 
 #[test]
