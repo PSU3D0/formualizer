@@ -22,7 +22,9 @@ use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::target_preparation::{
     StagedFormulaIndex, StagedFormulaLease, StagedPackageLease,
 };
-use crate::engine::used_extent::{ExtentPolicy, OpenRangeBounds, resolve_used_extent};
+use crate::engine::used_extent::{
+    ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
+};
 use crate::engine::virtual_deps::{DynamicRefVirtualDepProvider, VirtualDepBuilder};
 use crate::engine::{
     CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
@@ -23124,6 +23126,46 @@ where
     }
 }
 
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    /// Semantic used coordinates exclude graph-only dependency placeholders.
+    ///
+    /// Non-empty base/overlay/computed cells come from Arrow storage, while
+    /// scalar and array formulas come from graph formula kinds even before
+    /// their results are materialized. The legacy graph fallback is omitted:
+    /// `load_packed_to_vertex` entries are either represented by those sources
+    /// or are `Empty` dependency placeholders, not a third value authority.
+    pub(crate) fn semantic_used_rows_for_columns(
+        &self,
+        sheet: &str,
+        start_col: u32,
+        end_col: u32,
+    ) -> Option<(u32, u32)> {
+        let arrow_bounds = self
+            .sheet_store()
+            .sheet(sheet)
+            .and_then(|_| self.arrow_used_row_bounds(sheet, start_col, end_col));
+        let formula_bounds = self.formula_row_bounds_for_columns(sheet, start_col, end_col);
+        Self::union_used_bounds(arrow_bounds, formula_bounds)
+    }
+
+    pub(crate) fn semantic_used_cols_for_rows(
+        &self,
+        sheet: &str,
+        start_row: u32,
+        end_row: u32,
+    ) -> Option<(u32, u32)> {
+        let arrow_bounds = self
+            .sheet_store()
+            .sheet(sheet)
+            .and_then(|_| self.arrow_used_col_bounds(sheet, start_row, end_row));
+        let formula_bounds = self.formula_col_bounds_for_rows(sheet, start_row, end_row);
+        Self::union_used_bounds(arrow_bounds, formula_bounds)
+    }
+}
+
 // Override EvaluationContext to provide thread pool access
 impl<R> crate::traits::EvaluationContext for Engine<R>
 where
@@ -23542,13 +23584,7 @@ where
                     .map(|r| r.end.coord.col() + 1)
                     .or_else(|| range.end_col.map(|b| b.index + 1));
 
-                let fallback = self.sheet_bounds(sheet_name).map(|_| {
-                    (
-                        self.config.max_open_ended_rows,
-                        self.config.max_open_ended_cols,
-                    )
-                });
-                let extent = resolve_used_extent(
+                let extent = resolve_used_extent_with_fallback(
                     OpenRangeBounds {
                         start_row: sr,
                         start_column: sc,
@@ -23556,8 +23592,16 @@ where
                         end_column: ec,
                     },
                     ExtentPolicy::EvaluationCompat {
-                        fallback_row: fallback.map(|bounds| bounds.0),
-                        fallback_column: fallback.map(|bounds| bounds.1),
+                        fallback_row: None,
+                        fallback_column: None,
+                    },
+                    || {
+                        self.sheet_bounds(sheet_name)
+                            .map(|_| self.config.max_open_ended_rows)
+                    },
+                    || {
+                        self.sheet_bounds(sheet_name)
+                            .map(|_| self.config.max_open_ended_cols)
                     },
                     |first, last| self.used_rows_for_columns(sheet_name, first, last),
                     |first, last| self.used_cols_for_rows(sheet_name, first, last),

@@ -12,8 +12,54 @@ use std::{borrow::Cow, sync::Arc};
 use crate::engine::arena::ast::SheetKey;
 use crate::engine::arena::{AstNodeData, AstNodeId, CompactRefType, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
-use crate::engine::used_extent::{ExtentPolicy, OpenRangeBounds, resolve_used_extent};
+use crate::engine::used_extent::{
+    ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
+};
 use crate::formula_plane::template_canonical::LiteralSlotId;
+
+pub(crate) fn probe_range_dimensions<C: EvaluationContext + ?Sized>(
+    context: &C,
+    current_sheet: &str,
+    reference: &ReferenceType,
+) -> Option<(u32, u32)> {
+    match reference {
+        ReferenceType::Range {
+            sheet,
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } => {
+            let sheet_name = sheet.as_deref().unwrap_or(current_sheet);
+            let extent = resolve_used_extent_with_fallback(
+                OpenRangeBounds {
+                    start_row: *start_row,
+                    start_column: *start_col,
+                    end_row: *end_row,
+                    end_column: *end_col,
+                },
+                ExtentPolicy::EvaluationCompat {
+                    fallback_row: None,
+                    fallback_column: None,
+                },
+                || context.sheet_bounds(sheet_name).map(|bounds| bounds.0),
+                || context.sheet_bounds(sheet_name).map(|bounds| bounds.1),
+                |first, last| context.used_rows_for_columns(sheet_name, first, last),
+                |first, last| context.used_cols_for_rows(sheet_name, first, last),
+            );
+            let Some(extent) = extent else {
+                return Some((0, 0));
+            };
+            Some((
+                extent.end_row - extent.start_row + 1,
+                extent.end_column - extent.start_column + 1,
+            ))
+        }
+        ReferenceType::Cell { .. } => Some((1, 1)),
+        _ => None,
+    }
+}
 
 #[derive(Clone)]
 pub enum LocalBinding {
@@ -683,45 +729,8 @@ impl<'a> Interpreter<'a> {
         // Provide the planner with a lightweight range-dimension probe and function lookup
         // so it can select chunked reduction and arg-parallel strategies where appropriate.
         let current_sheet = self.current_sheet.to_string();
-        let range_probe = |reference: &ReferenceType| -> Option<(u32, u32)> {
-            // Mirror Engine::resolve_range_storage bound normalization without materialising
-            use formualizer_parse::parser::ReferenceType as RT;
-            match reference {
-                RT::Range {
-                    sheet,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                    ..
-                } => {
-                    let sheet_name = sheet.as_deref().unwrap_or(&current_sheet);
-                    let fallback = self.context.sheet_bounds(sheet_name);
-                    let extent = resolve_used_extent(
-                        OpenRangeBounds {
-                            start_row: *start_row,
-                            start_column: *start_col,
-                            end_row: *end_row,
-                            end_column: *end_col,
-                        },
-                        ExtentPolicy::EvaluationCompat {
-                            fallback_row: fallback.map(|bounds| bounds.0),
-                            fallback_column: fallback.map(|bounds| bounds.1),
-                        },
-                        |first, last| self.context.used_rows_for_columns(sheet_name, first, last),
-                        |first, last| self.context.used_cols_for_rows(sheet_name, first, last),
-                    );
-                    let Some(extent) = extent else {
-                        return Some((0, 0));
-                    };
-                    Some((
-                        extent.end_row - extent.start_row + 1,
-                        extent.end_column - extent.start_column + 1,
-                    ))
-                }
-                RT::Cell { .. } => Some((1, 1)),
-                _ => None,
-            }
+        let range_probe = |reference: &ReferenceType| {
+            probe_range_dimensions(self.context, &current_sheet, reference)
         };
         let fn_lookup = |ns: &str, name: &str| self.context.get_function(ns, name);
 

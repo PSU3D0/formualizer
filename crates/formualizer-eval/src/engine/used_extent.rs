@@ -57,6 +57,36 @@ pub(crate) enum ExtentPolicy {
 pub(crate) fn resolve_used_extent(
     bounds: OpenRangeBounds,
     policy: ExtentPolicy,
+    used_rows_for_columns: impl FnMut(u32, u32) -> Option<(u32, u32)>,
+    used_columns_for_rows: impl FnMut(u32, u32) -> Option<(u32, u32)>,
+) -> Option<ResolvedExtent> {
+    let (fallback_row, fallback_column) = match policy {
+        ExtentPolicy::EvaluationCompat {
+            fallback_row,
+            fallback_column,
+        }
+        | ExtentPolicy::VirtualDependencyCompat {
+            fallback_row,
+            fallback_column,
+        } => (fallback_row, fallback_column),
+        ExtentPolicy::GraphCompat { .. } | ExtentPolicy::Semantic => (None, None),
+    };
+    resolve_used_extent_with_fallback(
+        bounds,
+        policy,
+        move || fallback_row,
+        move || fallback_column,
+        used_rows_for_columns,
+        used_columns_for_rows,
+    )
+}
+
+/// Resolve an open range while obtaining compatibility fallbacks only on demand.
+pub(crate) fn resolve_used_extent_with_fallback(
+    bounds: OpenRangeBounds,
+    policy: ExtentPolicy,
+    mut fallback_row_on_demand: impl FnMut() -> Option<u32>,
+    mut fallback_column_on_demand: impl FnMut() -> Option<u32>,
     mut used_rows_for_columns: impl FnMut(u32, u32) -> Option<(u32, u32)>,
     mut used_columns_for_rows: impl FnMut(u32, u32) -> Option<(u32, u32)>,
 ) -> Option<ResolvedExtent> {
@@ -119,10 +149,10 @@ pub(crate) fn resolve_used_extent(
                 origin
             });
             end_row = Some(used_maximum);
-        } else if let Some(fallback) = fallback_row {
+        } else if let Some(fallback) = fallback_row.or_else(&mut fallback_row_on_demand) {
             start_row = Some(origin);
             end_row = Some(fallback);
-        } else {
+        } else if !use_used_minimum {
             start_row = Some(origin);
         }
     }
@@ -137,10 +167,10 @@ pub(crate) fn resolve_used_extent(
                 origin
             });
             end_column = Some(used_maximum);
-        } else if let Some(fallback) = fallback_column {
+        } else if let Some(fallback) = fallback_column.or_else(&mut fallback_column_on_demand) {
             start_column = Some(origin);
             end_column = Some(fallback);
-        } else {
+        } else if !use_used_minimum {
             start_column = Some(origin);
         }
     }
@@ -150,7 +180,7 @@ pub(crate) fn resolve_used_extent(
         let last_column = end_column.unwrap_or(first_column);
         end_row = used_rows_for_columns(first_column, last_column)
             .map(|used| used.1)
-            .or(fallback_row);
+            .or_else(|| fallback_row.or_else(&mut fallback_row_on_demand));
     }
     if end_row.is_some() && start_row.is_none() {
         if use_used_minimum {
@@ -168,7 +198,7 @@ pub(crate) fn resolve_used_extent(
         let last_row = end_row.unwrap_or(first_row);
         end_column = used_columns_for_rows(first_row, last_row)
             .map(|used| used.1)
-            .or(fallback_column);
+            .or_else(|| fallback_column.or_else(&mut fallback_column_on_demand));
     }
     if end_column.is_some() && start_column.is_none() {
         if use_used_minimum {
@@ -293,6 +323,55 @@ mod tests {
         .unwrap();
         assert_eq!((extent.start_column, extent.end_column), (1, 20));
         assert_eq!(extent.cell_count(), 20);
+    }
+
+    #[test]
+    fn compatibility_fallbacks_are_loaded_only_when_needed() {
+        use std::cell::Cell;
+
+        let row_calls = Cell::new(0);
+        let column_calls = Cell::new(0);
+        let extent = resolve_used_extent_with_fallback(
+            OpenRangeBounds {
+                start_row: Some(2),
+                start_column: Some(3),
+                end_row: Some(4),
+                end_column: Some(5),
+            },
+            ExtentPolicy::EvaluationCompat {
+                fallback_row: None,
+                fallback_column: None,
+            },
+            || {
+                row_calls.set(row_calls.get() + 1);
+                Some(64)
+            },
+            || {
+                column_calls.set(column_calls.get() + 1);
+                Some(16)
+            },
+            |_, _| None,
+            |_, _| None,
+        )
+        .unwrap();
+        assert_eq!((extent.end_row, extent.end_column), (4, 5));
+        assert_eq!((row_calls.get(), column_calls.get()), (0, 0));
+    }
+
+    #[test]
+    fn row_ordered_column_inverted_extent_is_rejected() {
+        let extent = resolve_used_extent(
+            OpenRangeBounds {
+                start_row: Some(2),
+                start_column: Some(9),
+                end_row: Some(3),
+                end_column: Some(4),
+            },
+            ExtentPolicy::Semantic,
+            |_, _| None,
+            |_, _| None,
+        );
+        assert_eq!(extent, None);
     }
 
     #[test]

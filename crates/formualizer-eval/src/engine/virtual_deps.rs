@@ -1,7 +1,9 @@
 use crate::engine::VertexId;
 use crate::engine::VertexKind;
 use crate::engine::eval::Engine;
-use crate::engine::used_extent::{ExtentPolicy, OpenRangeBounds, resolve_used_extent};
+use crate::engine::used_extent::{
+    ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent_with_fallback,
+};
 use crate::formula_plane::region_index::Region;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
@@ -79,13 +81,7 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
         end_row: Option<u32>,
         end_col: Option<u32>,
     ) {
-        let fallback = self.engine.sheet_bounds(sheet_name).map(|_| {
-            (
-                self.engine.config.max_open_ended_rows,
-                self.engine.config.max_open_ended_cols,
-            )
-        });
-        let Some(extent) = resolve_used_extent(
+        let Some(extent) = resolve_used_extent_with_fallback(
             OpenRangeBounds {
                 start_row,
                 start_column: start_col,
@@ -93,8 +89,18 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
                 end_column: end_col,
             },
             ExtentPolicy::EvaluationCompat {
-                fallback_row: fallback.map(|bounds| bounds.0),
-                fallback_column: fallback.map(|bounds| bounds.1),
+                fallback_row: None,
+                fallback_column: None,
+            },
+            || {
+                self.engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| self.engine.config.max_open_ended_rows)
+            },
+            || {
+                self.engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| self.engine.config.max_open_ended_cols)
             },
             |first, last| self.engine.used_rows_for_columns(sheet_name, first, last),
             |first, last| self.engine.used_cols_for_rows(sheet_name, first, last),
@@ -260,6 +266,37 @@ impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> 
 pub struct RangeVirtualDepProvider;
 
 impl RangeVirtualDepProvider {
+    pub(crate) fn resolve_range<R: EvaluationContext>(
+        engine: &Engine<R>,
+        sheet_name: &str,
+        range: &formualizer_common::SheetRangeRef<'_>,
+    ) -> Option<ResolvedExtent> {
+        resolve_used_extent_with_fallback(
+            OpenRangeBounds {
+                start_row: range.start_row.map(|bound| bound.index + 1),
+                start_column: range.start_col.map(|bound| bound.index + 1),
+                end_row: range.end_row.map(|bound| bound.index + 1),
+                end_column: range.end_col.map(|bound| bound.index + 1),
+            },
+            ExtentPolicy::VirtualDependencyCompat {
+                fallback_row: None,
+                fallback_column: None,
+            },
+            || {
+                engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| engine.config.max_open_ended_rows)
+            },
+            || {
+                engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| engine.config.max_open_ended_cols)
+            },
+            |first, last| engine.used_rows_for_columns(sheet_name, first, last),
+            |first, last| engine.used_cols_for_rows(sheet_name, first, last),
+        )
+    }
+
     pub fn get_virtual_deps<R: EvaluationContext>(
         engine: &Engine<R>,
         v: VertexId,
@@ -274,26 +311,7 @@ impl RangeVirtualDepProvider {
                 };
                 let sheet_name = engine.graph.sheet_name(sheet_id);
 
-                let fallback = engine.sheet_bounds(sheet_name).map(|_| {
-                    (
-                        engine.config.max_open_ended_rows,
-                        engine.config.max_open_ended_cols,
-                    )
-                });
-                let Some(extent) = resolve_used_extent(
-                    OpenRangeBounds {
-                        start_row: r.start_row.map(|bound| bound.index + 1),
-                        start_column: r.start_col.map(|bound| bound.index + 1),
-                        end_row: r.end_row.map(|bound| bound.index + 1),
-                        end_column: r.end_col.map(|bound| bound.index + 1),
-                    },
-                    ExtentPolicy::VirtualDependencyCompat {
-                        fallback_row: fallback.map(|bounds| bounds.0),
-                        fallback_column: fallback.map(|bounds| bounds.1),
-                    },
-                    |first, last| engine.used_rows_for_columns(sheet_name, first, last),
-                    |first, last| engine.used_cols_for_rows(sheet_name, first, last),
-                ) else {
+                let Some(extent) = Self::resolve_range(engine, sheet_name, r) else {
                     continue;
                 };
                 let sr = extent.start_row;
