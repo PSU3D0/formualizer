@@ -31,7 +31,6 @@ use formualizer_parse::parser::{
     ASTNode, ASTNodeType, CollectPolicy, ExternalRefKind, ReferenceType, SpecialItem,
     TableSpecifier,
 };
-use rustc_hash::FxHashSet;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -240,13 +239,7 @@ impl<'a> IngestPipeline<'a> {
                     .then_some(self.function_provider),
             );
         let mut dep_plan = DependencyPlanRow::default();
-        let mut local_scopes = Vec::new();
-        self.collect_dependencies_tree(
-            &ast_for_oracles,
-            placement.sheet_id,
-            &mut dep_plan,
-            &mut local_scopes,
-        )?;
+        self.collect_dependencies_tree(&ast_for_oracles, placement.sheet_id, &mut dep_plan)?;
         dep_plan.volatile = self.ast_is_volatile(&ast_for_oracles);
         dep_plan.dynamic = metadata.labels.has_flag(CanonicalLabels::FLAG_DYNAMIC);
         dep_plan.dedup_and_sort();
@@ -341,124 +334,66 @@ impl<'a> IngestPipeline<'a> {
         ast: &ASTNode,
         current_sheet_id: SheetId,
         plan: &mut DependencyPlanRow,
-        local_scopes: &mut Vec<FxHashSet<String>>,
     ) -> Result<(), ExcelError> {
-        match &ast.node_type {
-            ASTNodeType::Reference { reference, .. } => {
-                self.collect_reference(reference, current_sheet_id, plan, local_scopes)
-            }
-            ASTNodeType::BinaryOp { left, right, .. } => {
-                self.collect_dependencies_tree(left, current_sheet_id, plan, local_scopes)?;
-                self.collect_dependencies_tree(right, current_sheet_id, plan, local_scopes)
-            }
-            ASTNodeType::UnaryOp { expr, .. } => {
-                self.collect_dependencies_tree(expr, current_sheet_id, plan, local_scopes)
-            }
-            ASTNodeType::Function { name, args } => {
-                use crate::function_contract::FunctionArgumentDependencyContract as Arguments;
-                let argument_contract = self
-                    .function_provider
-                    .function_semantic_identity("", name, args.len())
-                    .filter(|identity| {
-                        identity.contract.environment
-                            == crate::function_contract::FunctionEnvironmentSemantics::LocalBindings
-                    })
-                    .and_then(|identity| identity.contract.precision)
-                    .map(|precision| precision.arguments);
-                match argument_contract {
-                    Some(Arguments::LocalBindingPairs)
-                        if args.len() >= 3 && args.len() % 2 == 1 =>
-                    {
-                        local_scopes.push(FxHashSet::default());
-                        for pair_idx in (0..args.len() - 1).step_by(2) {
-                            self.collect_dependencies_tree(
-                                &args[pair_idx + 1],
-                                current_sheet_id,
-                                plan,
-                                local_scopes,
-                            )?;
-                            if let ASTNodeType::Reference {
-                                reference: ReferenceType::NamedRange(local_name),
-                                ..
-                            } = &args[pair_idx].node_type
-                                && let Some(scope) = local_scopes.last_mut()
-                            {
-                                scope.insert(local_name.to_ascii_uppercase());
-                            }
-                        }
-                        self.collect_dependencies_tree(
-                            &args[args.len() - 1],
-                            current_sheet_id,
-                            plan,
-                            local_scopes,
-                        )?;
-                        local_scopes.pop();
-                        Ok(())
-                    }
-                    Some(Arguments::LambdaParameters) => {
-                        if let Some(body) = args.last() {
-                            let mut lambda_scope = FxHashSet::default();
-                            for param in &args[..args.len().saturating_sub(1)] {
-                                if let ASTNodeType::Reference {
-                                    reference: ReferenceType::NamedRange(param_name),
-                                    ..
-                                } = &param.node_type
-                                {
-                                    lambda_scope.insert(param_name.to_ascii_uppercase());
-                                }
-                            }
-                            local_scopes.push(lambda_scope);
-                            self.collect_dependencies_tree(
-                                body,
-                                current_sheet_id,
-                                plan,
-                                local_scopes,
-                            )?;
-                            local_scopes.pop();
-                        }
-                        Ok(())
-                    }
-                    _ => {
-                        for arg in args {
-                            self.collect_dependencies_tree(
-                                arg,
-                                current_sheet_id,
-                                plan,
-                                local_scopes,
-                            )?;
-                        }
-                        Ok(())
-                    }
-                }
-            }
-            ASTNodeType::Call { callee, args } => {
-                self.collect_dependencies_tree(callee, current_sheet_id, plan, local_scopes)?;
-                for arg in args {
-                    self.collect_dependencies_tree(arg, current_sheet_id, plan, local_scopes)?;
-                }
-                Ok(())
-            }
-            ASTNodeType::Array(rows) => {
-                for row in rows {
-                    for item in row {
-                        self.collect_dependencies_tree(item, current_sheet_id, plan, local_scopes)?;
-                    }
-                }
-                Ok(())
-            }
-            ASTNodeType::Literal(_) | ASTNodeType::Omitted => Ok(()),
+        struct Context<'pipeline, 'plan, 'engine> {
+            pipeline: &'pipeline mut IngestPipeline<'engine>,
+            current_sheet_id: SheetId,
+            plan: &'plan mut DependencyPlanRow,
         }
+
+        fn local_binding_style(
+            context: &Context<'_, '_, '_>,
+            name: &str,
+            arity: usize,
+        ) -> crate::engine::refs::LocalBindingStyle {
+            use crate::engine::refs::LocalBindingStyle;
+            use crate::function_contract::FunctionArgumentDependencyContract as Arguments;
+
+            context
+                .pipeline
+                .function_provider
+                .function_semantic_identity("", name, arity)
+                .filter(|identity| {
+                    identity.contract.environment
+                        == crate::function_contract::FunctionEnvironmentSemantics::LocalBindings
+                })
+                .and_then(|identity| identity.contract.precision)
+                .map_or(LocalBindingStyle::None, |precision| {
+                    match precision.arguments {
+                        Arguments::LocalBindingPairs => LocalBindingStyle::LocalBindingPairs,
+                        Arguments::LambdaParameters => LocalBindingStyle::LambdaParameters,
+                        _ => LocalBindingStyle::None,
+                    }
+                })
+        }
+
+        fn consume(
+            context: &mut Context<'_, '_, '_>,
+            reference: crate::engine::refs::SemanticReference<'_>,
+        ) -> Result<(), ExcelError> {
+            context
+                .pipeline
+                .collect_reference(reference, context.current_sheet_id, context.plan)
+        }
+
+        let mut context = Context {
+            pipeline: self,
+            current_sheet_id,
+            plan,
+        };
+        crate::engine::refs::visit_tree_references(ast, &mut context, local_binding_style, consume)
     }
 
     fn collect_reference(
         &mut self,
-        reference: &ReferenceType,
+        reference: crate::engine::refs::SemanticReference<'_>,
         current_sheet_id: SheetId,
         plan: &mut DependencyPlanRow,
-        local_scopes: &[FxHashSet<String>],
     ) -> Result<(), ExcelError> {
+        use crate::engine::refs::SemanticReference;
+
         match reference {
-            ReferenceType::External(ext) => match ext.kind {
+            SemanticReference::ExternalSource(ext) => match ext.kind {
                 ExternalRefKind::Cell { .. } => {
                     let name = ext.raw.as_str();
                     if self.sources.resolve_scalar(name).is_some() {
@@ -480,67 +415,16 @@ impl<'a> IngestPipeline<'a> {
                     }
                 }
             },
-            ReferenceType::Cell {
-                sheet, row, col, ..
-            } => {
-                let sheet_id = self.resolve_reference_sheet(sheet.as_deref(), current_sheet_id)?;
+            SemanticReference::Cell(cell) => {
+                let sheet_id = self.resolve_reference_sheet(cell.sheet.name(), current_sheet_id)?;
                 plan.direct_cell_deps.push(CellRef::new(
                     sheet_id,
-                    Coord::from_excel(*row, *col, true, true),
+                    Coord::from_excel(cell.row, cell.col, true, true),
                 ));
                 Ok(())
             }
-            ReferenceType::Range {
-                sheet,
-                start_row,
-                start_col,
-                end_row,
-                end_col,
-                ..
-            } => {
-                let has_unbounded = start_row.is_none()
-                    || end_row.is_none()
-                    || start_col.is_none()
-                    || end_col.is_none();
-                if has_unbounded {
-                    if let Some(SharedRef::Range(range)) = reference.to_sheet_ref_lossy() {
-                        let owned = range.into_owned();
-                        let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
-                        plan.range_deps.push(SharedRangeRef {
-                            sheet: SharedSheetLocator::Id(sheet_id),
-                            start_row: owned.start_row,
-                            start_col: owned.start_col,
-                            end_row: owned.end_row,
-                            end_col: owned.end_col,
-                        });
-                    }
-                    return Ok(());
-                }
-
-                let (Some(sr), Some(sc), Some(er), Some(ec)) =
-                    (*start_row, *start_col, *end_row, *end_col)
-                else {
-                    return Err(ExcelError::new(ExcelErrorKind::Ref));
-                };
-                if sr > er || sc > ec {
-                    return Err(ExcelError::new(ExcelErrorKind::Ref));
-                }
-
-                let height = er.saturating_sub(sr) + 1;
-                let width = ec.saturating_sub(sc) + 1;
-                let size = (width * height) as usize;
-                if self.policy.expand_small_ranges && size <= self.policy.range_expansion_limit {
-                    let sheet_id =
-                        self.resolve_reference_sheet(sheet.as_deref(), current_sheet_id)?;
-                    for row in sr..=er {
-                        for col in sc..=ec {
-                            plan.direct_cell_deps.push(CellRef::new(
-                                sheet_id,
-                                Coord::from_excel(row, col, true, true),
-                            ));
-                        }
-                    }
-                } else if let Some(SharedRef::Range(range)) = reference.to_sheet_ref_lossy() {
+            SemanticReference::OpenRange(range) => {
+                if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
                     let owned = range.into_owned();
                     let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
                     plan.range_deps.push(SharedRangeRef {
@@ -553,11 +437,42 @@ impl<'a> IngestPipeline<'a> {
                 }
                 Ok(())
             }
-            ReferenceType::NamedRange(name) => {
-                let key = name.to_ascii_uppercase();
-                if local_scopes.iter().rev().any(|scope| scope.contains(&key)) {
-                    return Ok(());
+            SemanticReference::FiniteRange(range) => {
+                let (sr, sc, er, ec) = range
+                    .finite_bounds()
+                    .expect("finite reference must have all bounds");
+                if range.is_reversed() {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref));
                 }
+
+                // This ingest policy intentionally remains independent from the
+                // dependency planner's historical default limit of 16.
+                let size = range.saturating_area().expect("finite area") as usize;
+                if self.policy.expand_small_ranges && size <= self.policy.range_expansion_limit {
+                    let sheet_id =
+                        self.resolve_reference_sheet(range.sheet.name(), current_sheet_id)?;
+                    for row in sr..=er {
+                        for col in sc..=ec {
+                            plan.direct_cell_deps.push(CellRef::new(
+                                sheet_id,
+                                Coord::from_excel(row, col, true, true),
+                            ));
+                        }
+                    }
+                } else if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
+                    let owned = range.into_owned();
+                    let sheet_id = self.resolve_shared_sheet(owned.sheet, current_sheet_id)?;
+                    plan.range_deps.push(SharedRangeRef {
+                        sheet: SharedSheetLocator::Id(sheet_id),
+                        start_row: owned.start_row,
+                        start_col: owned.start_col,
+                        end_row: owned.end_row,
+                        end_col: owned.end_col,
+                    });
+                }
+                Ok(())
+            }
+            SemanticReference::Name(name) => {
                 if self.names.resolve(name, current_sheet_id).is_some() {
                     plan.resolved_named_refs.push(name.to_string());
                 } else if self.sources.resolve_scalar(name).is_some() {
@@ -567,7 +482,7 @@ impl<'a> IngestPipeline<'a> {
                 }
                 Ok(())
             }
-            ReferenceType::Table(tref) => {
+            SemanticReference::Table(tref) => {
                 if self.tables.resolve(&tref.name).is_some() {
                     plan.table_refs.push(tref.name.clone());
                     Ok(())
@@ -579,7 +494,7 @@ impl<'a> IngestPipeline<'a> {
                         .with_message(format!("Undefined table: {}", tref.name)))
                 }
             }
-            ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => Ok(()),
+            SemanticReference::ThreeDimensional(_) | SemanticReference::Unsupported(_) => Ok(()),
         }
     }
 
