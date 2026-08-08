@@ -1,5 +1,6 @@
 mod active_span_gate_audit;
 mod arena_debug;
+mod ast_edge_invariant;
 mod cancellation;
 mod change_log;
 mod changelog_replay;
