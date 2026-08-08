@@ -1,3 +1,5 @@
+#![allow(clippy::type_complexity)]
+
 //! Differential oracle frozen from `ccfeaf83`.
 //!
 //! The legacy methods below are a test-only extraction of
