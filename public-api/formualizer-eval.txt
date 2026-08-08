@@ -1302,6 +1302,12 @@ pub formualizer_eval::engine::eval::Engine::recalc_epoch: u64
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::begin_bulk_ingest(&mut self) -> formualizer_eval::engine::ingest_builder::BulkIngestBuilder<'_>
 pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, &formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::arena::ast::AstNodeId
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::action<T>(&mut self, impl core::convert::AsRef<str>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::action_atomic<T>(&mut self, impl core::convert::Into<alloc::string::String>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -2686,6 +2692,537 @@ impl core::clone::Clone for formualizer_eval::engine::ingest_builder::BulkIngest
 pub fn formualizer_eval::engine::ingest_builder::BulkIngestSummary::clone(&self) -> formualizer_eval::engine::ingest_builder::BulkIngestSummary
 impl core::fmt::Debug for formualizer_eval::engine::ingest_builder::BulkIngestSummary
 pub fn formualizer_eval::engine::ingest_builder::BulkIngestSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod formualizer_eval::engine::inspect
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::InspectError
+pub formualizer_eval::engine::inspect::InspectError::DependencyStateUnavailable
+pub formualizer_eval::engine::inspect::InspectError::DependencyStateUnavailable::reason: formualizer_eval::engine::inspect::InspectionUnavailableReason
+pub formualizer_eval::engine::inspect::InspectError::InvalidAddress
+pub formualizer_eval::engine::inspect::InspectError::InvalidAddress::message: alloc::string::String
+pub formualizer_eval::engine::inspect::InspectError::InvalidOptions
+pub formualizer_eval::engine::inspect::InspectError::InvalidOptions::message: alloc::string::String
+pub formualizer_eval::engine::inspect::InspectError::ResourceExhausted
+pub formualizer_eval::engine::inspect::InspectError::ResourceExhausted::resource: &'static str
+pub formualizer_eval::engine::inspect::InspectError::RevisionMismatch
+pub formualizer_eval::engine::inspect::InspectError::RevisionMismatch::actual: formualizer_eval::engine::inspect::StateStamp
+pub formualizer_eval::engine::inspect::InspectError::RevisionMismatch::expected: formualizer_eval::engine::inspect::StateStamp
+pub formualizer_eval::engine::inspect::InspectError::SheetNotFound
+pub formualizer_eval::engine::inspect::InspectError::SheetNotFound::sheet: alloc::string::String
+impl core::clone::Clone for formualizer_eval::engine::inspect::InspectError
+pub fn formualizer_eval::engine::inspect::InspectError::clone(&self) -> formualizer_eval::engine::inspect::InspectError
+impl core::cmp::Eq for formualizer_eval::engine::inspect::InspectError
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::InspectError
+pub fn formualizer_eval::engine::inspect::InspectError::eq(&self, &formualizer_eval::engine::inspect::InspectError) -> bool
+impl core::error::Error for formualizer_eval::engine::inspect::InspectError
+impl core::fmt::Debug for formualizer_eval::engine::inspect::InspectError
+pub fn formualizer_eval::engine::inspect::InspectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_eval::engine::inspect::InspectError
+pub fn formualizer_eval::engine::inspect::InspectError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::InspectError
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::InspectError
+pub fn formualizer_eval::engine::inspect::InspectError::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::InspectionUnavailableReason
+pub formualizer_eval::engine::inspect::InspectionUnavailableReason::DeferredDependencyGraph
+impl core::clone::Clone for formualizer_eval::engine::inspect::InspectionUnavailableReason
+pub fn formualizer_eval::engine::inspect::InspectionUnavailableReason::clone(&self) -> formualizer_eval::engine::inspect::InspectionUnavailableReason
+impl core::cmp::Eq for formualizer_eval::engine::inspect::InspectionUnavailableReason
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::InspectionUnavailableReason
+pub fn formualizer_eval::engine::inspect::InspectionUnavailableReason::eq(&self, &formualizer_eval::engine::inspect::InspectionUnavailableReason) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::InspectionUnavailableReason
+pub fn formualizer_eval::engine::inspect::InspectionUnavailableReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::InspectionUnavailableReason
+pub fn formualizer_eval::engine::inspect::InspectionUnavailableReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::InspectionUnavailableReason
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::InspectionUnavailableReason
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::InspectionUnavailableReason
+pub fn formualizer_eval::engine::inspect::InspectionUnavailableReason::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::LinkDisposition
+pub formualizer_eval::engine::inspect::LinkDisposition::Convergent
+pub formualizer_eval::engine::inspect::LinkDisposition::Cycle
+pub formualizer_eval::engine::inspect::LinkDisposition::Elided
+pub formualizer_eval::engine::inspect::LinkDisposition::Expanded
+impl core::clone::Clone for formualizer_eval::engine::inspect::LinkDisposition
+pub fn formualizer_eval::engine::inspect::LinkDisposition::clone(&self) -> formualizer_eval::engine::inspect::LinkDisposition
+impl core::cmp::Eq for formualizer_eval::engine::inspect::LinkDisposition
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::LinkDisposition
+pub fn formualizer_eval::engine::inspect::LinkDisposition::eq(&self, &formualizer_eval::engine::inspect::LinkDisposition) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::LinkDisposition
+pub fn formualizer_eval::engine::inspect::LinkDisposition::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::LinkDisposition
+pub fn formualizer_eval::engine::inspect::LinkDisposition::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::LinkDisposition
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::LinkDisposition
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::LinkDisposition
+pub fn formualizer_eval::engine::inspect::LinkDisposition::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::NameResolution
+pub formualizer_eval::engine::inspect::NameResolution::Cell(formualizer_common::grid_address::CellAddress)
+pub formualizer_eval::engine::inspect::NameResolution::Formula
+pub formualizer_eval::engine::inspect::NameResolution::Formula::formula: alloc::string::String
+pub formualizer_eval::engine::inspect::NameResolution::Formula::value: core::option::Option<formualizer_common::value::LiteralValue>
+pub formualizer_eval::engine::inspect::NameResolution::Literal(formualizer_common::value::LiteralValue)
+pub formualizer_eval::engine::inspect::NameResolution::Range
+pub formualizer_eval::engine::inspect::NameResolution::Range::declared: formualizer_common::grid_address::RangeArea
+pub formualizer_eval::engine::inspect::NameResolution::Range::resolved: core::option::Option<formualizer_common::range::RangeAddress>
+pub formualizer_eval::engine::inspect::NameResolution::Unresolved
+impl core::clone::Clone for formualizer_eval::engine::inspect::NameResolution
+pub fn formualizer_eval::engine::inspect::NameResolution::clone(&self) -> formualizer_eval::engine::inspect::NameResolution
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::NameResolution
+pub fn formualizer_eval::engine::inspect::NameResolution::eq(&self, &formualizer_eval::engine::inspect::NameResolution) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::NameResolution
+pub fn formualizer_eval::engine::inspect::NameResolution::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::NameResolution
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::NameResolution
+pub fn formualizer_eval::engine::inspect::NameResolution::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::OmittedCount
+pub formualizer_eval::engine::inspect::OmittedCount::AtLeast(u64)
+pub formualizer_eval::engine::inspect::OmittedCount::Exact(u64)
+impl core::clone::Clone for formualizer_eval::engine::inspect::OmittedCount
+pub fn formualizer_eval::engine::inspect::OmittedCount::clone(&self) -> formualizer_eval::engine::inspect::OmittedCount
+impl core::cmp::Eq for formualizer_eval::engine::inspect::OmittedCount
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::OmittedCount
+pub fn formualizer_eval::engine::inspect::OmittedCount::eq(&self, &formualizer_eval::engine::inspect::OmittedCount) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::OmittedCount
+pub fn formualizer_eval::engine::inspect::OmittedCount::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::OmittedCount
+pub fn formualizer_eval::engine::inspect::OmittedCount::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::OmittedCount
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::OmittedCount
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::OmittedCount
+pub fn formualizer_eval::engine::inspect::OmittedCount::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::Provenance
+pub formualizer_eval::engine::inspect::Provenance::Declared
+pub formualizer_eval::engine::inspect::Provenance::Observed
+impl core::clone::Clone for formualizer_eval::engine::inspect::Provenance
+pub fn formualizer_eval::engine::inspect::Provenance::clone(&self) -> formualizer_eval::engine::inspect::Provenance
+impl core::cmp::Eq for formualizer_eval::engine::inspect::Provenance
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::Provenance
+pub fn formualizer_eval::engine::inspect::Provenance::eq(&self, &formualizer_eval::engine::inspect::Provenance) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::Provenance
+pub fn formualizer_eval::engine::inspect::Provenance::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::Provenance
+pub fn formualizer_eval::engine::inspect::Provenance::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::Provenance
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::Provenance
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::Provenance
+pub fn formualizer_eval::engine::inspect::Provenance::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::SemanticReference
+pub formualizer_eval::engine::inspect::SemanticReference::Cell(formualizer_common::grid_address::CellAddress)
+pub formualizer_eval::engine::inspect::SemanticReference::External
+pub formualizer_eval::engine::inspect::SemanticReference::External::raw: alloc::string::String
+pub formualizer_eval::engine::inspect::SemanticReference::Name
+pub formualizer_eval::engine::inspect::SemanticReference::Name::name: alloc::string::String
+pub formualizer_eval::engine::inspect::SemanticReference::Name::resolution: formualizer_eval::engine::inspect::NameResolution
+pub formualizer_eval::engine::inspect::SemanticReference::Range
+pub formualizer_eval::engine::inspect::SemanticReference::Range::cell_count: u64
+pub formualizer_eval::engine::inspect::SemanticReference::Range::declared: formualizer_common::grid_address::RangeArea
+pub formualizer_eval::engine::inspect::SemanticReference::Range::resolved: core::option::Option<formualizer_common::range::RangeAddress>
+pub formualizer_eval::engine::inspect::SemanticReference::Table
+pub formualizer_eval::engine::inspect::SemanticReference::Table::name: alloc::string::String
+pub formualizer_eval::engine::inspect::SemanticReference::Table::resolved: formualizer_common::range::RangeAddress
+pub formualizer_eval::engine::inspect::SemanticReference::Table::specifier: alloc::string::String
+pub formualizer_eval::engine::inspect::SemanticReference::Unsupported
+pub formualizer_eval::engine::inspect::SemanticReference::Unsupported::reason: alloc::string::String
+pub formualizer_eval::engine::inspect::SemanticReference::Unsupported::text: alloc::string::String
+impl core::clone::Clone for formualizer_eval::engine::inspect::SemanticReference
+pub fn formualizer_eval::engine::inspect::SemanticReference::clone(&self) -> formualizer_eval::engine::inspect::SemanticReference
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::SemanticReference
+pub fn formualizer_eval::engine::inspect::SemanticReference::eq(&self, &formualizer_eval::engine::inspect::SemanticReference) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::SemanticReference
+pub fn formualizer_eval::engine::inspect::SemanticReference::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::SemanticReference
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::SemanticReference
+pub fn formualizer_eval::engine::inspect::SemanticReference::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::SpillRole
+pub formualizer_eval::engine::inspect::SpillRole::Anchor
+pub formualizer_eval::engine::inspect::SpillRole::Anchor::extent: formualizer_common::range::RangeAddress
+pub formualizer_eval::engine::inspect::SpillRole::Member
+pub formualizer_eval::engine::inspect::SpillRole::Member::anchor: formualizer_common::grid_address::CellAddress
+impl core::clone::Clone for formualizer_eval::engine::inspect::SpillRole
+pub fn formualizer_eval::engine::inspect::SpillRole::clone(&self) -> formualizer_eval::engine::inspect::SpillRole
+impl core::cmp::Eq for formualizer_eval::engine::inspect::SpillRole
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::SpillRole
+pub fn formualizer_eval::engine::inspect::SpillRole::eq(&self, &formualizer_eval::engine::inspect::SpillRole) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::SpillRole
+pub fn formualizer_eval::engine::inspect::SpillRole::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::SpillRole
+pub fn formualizer_eval::engine::inspect::SpillRole::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::SpillRole
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::SpillRole
+pub fn formualizer_eval::engine::inspect::SpillRole::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::Staleness
+pub formualizer_eval::engine::inspect::Staleness::Current
+pub formualizer_eval::engine::inspect::Staleness::Dirty
+pub formualizer_eval::engine::inspect::Staleness::NeverEvaluated
+impl core::clone::Clone for formualizer_eval::engine::inspect::Staleness
+pub fn formualizer_eval::engine::inspect::Staleness::clone(&self) -> formualizer_eval::engine::inspect::Staleness
+impl core::cmp::Eq for formualizer_eval::engine::inspect::Staleness
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::Staleness
+pub fn formualizer_eval::engine::inspect::Staleness::eq(&self, &formualizer_eval::engine::inspect::Staleness) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::Staleness
+pub fn formualizer_eval::engine::inspect::Staleness::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::Staleness
+pub fn formualizer_eval::engine::inspect::Staleness::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::Staleness
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::Staleness
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::Staleness
+pub fn formualizer_eval::engine::inspect::Staleness::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::TraceDirection
+pub formualizer_eval::engine::inspect::TraceDirection::Dependents
+pub formualizer_eval::engine::inspect::TraceDirection::Precedents
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceDirection
+pub fn formualizer_eval::engine::inspect::TraceDirection::clone(&self) -> formualizer_eval::engine::inspect::TraceDirection
+impl core::cmp::Eq for formualizer_eval::engine::inspect::TraceDirection
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceDirection
+pub fn formualizer_eval::engine::inspect::TraceDirection::eq(&self, &formualizer_eval::engine::inspect::TraceDirection) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceDirection
+pub fn formualizer_eval::engine::inspect::TraceDirection::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::TraceDirection
+pub fn formualizer_eval::engine::inspect::TraceDirection::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::TraceDirection
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceDirection
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceDirection
+pub fn formualizer_eval::engine::inspect::TraceDirection::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::engine::inspect::TraceDirection
+pub fn formualizer_eval::engine::inspect::TraceDirection::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub enum formualizer_eval::engine::inspect::TraceLinkKind
+pub formualizer_eval::engine::inspect::TraceLinkKind::Formula
+pub formualizer_eval::engine::inspect::TraceLinkKind::Formula::provenance: formualizer_eval::engine::inspect::Provenance
+pub formualizer_eval::engine::inspect::TraceLinkKind::SpillAnchor
+pub formualizer_eval::engine::inspect::TraceLinkKind::SpillReader
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceLinkKind
+pub fn formualizer_eval::engine::inspect::TraceLinkKind::clone(&self) -> formualizer_eval::engine::inspect::TraceLinkKind
+impl core::cmp::Eq for formualizer_eval::engine::inspect::TraceLinkKind
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceLinkKind
+pub fn formualizer_eval::engine::inspect::TraceLinkKind::eq(&self, &formualizer_eval::engine::inspect::TraceLinkKind) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceLinkKind
+pub fn formualizer_eval::engine::inspect::TraceLinkKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::TraceLinkKind
+pub fn formualizer_eval::engine::inspect::TraceLinkKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::TraceLinkKind
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceLinkKind
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceLinkKind
+pub fn formualizer_eval::engine::inspect::TraceLinkKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::CellSnapshot
+pub formualizer_eval::engine::inspect::CellSnapshot::address: formualizer_common::grid_address::CellAddress
+pub formualizer_eval::engine::inspect::CellSnapshot::formula: core::option::Option<alloc::string::String>
+pub formualizer_eval::engine::inspect::CellSnapshot::spill: core::option::Option<formualizer_eval::engine::inspect::SpillRole>
+pub formualizer_eval::engine::inspect::CellSnapshot::staleness: formualizer_eval::engine::inspect::Staleness
+pub formualizer_eval::engine::inspect::CellSnapshot::value: core::option::Option<formualizer_common::value::LiteralValue>
+pub formualizer_eval::engine::inspect::CellSnapshot::value_included: bool
+pub formualizer_eval::engine::inspect::CellSnapshot::volatile: bool
+impl core::clone::Clone for formualizer_eval::engine::inspect::CellSnapshot
+pub fn formualizer_eval::engine::inspect::CellSnapshot::clone(&self) -> formualizer_eval::engine::inspect::CellSnapshot
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::CellSnapshot
+pub fn formualizer_eval::engine::inspect::CellSnapshot::eq(&self, &formualizer_eval::engine::inspect::CellSnapshot) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::CellSnapshot
+pub fn formualizer_eval::engine::inspect::CellSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::CellSnapshot
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::CellSnapshot
+pub fn formualizer_eval::engine::inspect::CellSnapshot::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::CellSnapshotReport
+pub formualizer_eval::engine::inspect::CellSnapshotReport::cell: formualizer_eval::engine::inspect::CellSnapshot
+pub formualizer_eval::engine::inspect::CellSnapshotReport::stamp: formualizer_eval::engine::inspect::StateStamp
+impl core::clone::Clone for formualizer_eval::engine::inspect::CellSnapshotReport
+pub fn formualizer_eval::engine::inspect::CellSnapshotReport::clone(&self) -> formualizer_eval::engine::inspect::CellSnapshotReport
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::CellSnapshotReport
+pub fn formualizer_eval::engine::inspect::CellSnapshotReport::eq(&self, &formualizer_eval::engine::inspect::CellSnapshotReport) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::CellSnapshotReport
+pub fn formualizer_eval::engine::inspect::CellSnapshotReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::CellSnapshotReport
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::CellSnapshotReport
+pub fn formualizer_eval::engine::inspect::CellSnapshotReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::Dependent
+pub formualizer_eval::engine::inspect::Dependent::cell: formualizer_common::grid_address::CellAddress
+pub formualizer_eval::engine::inspect::Dependent::via: alloc::vec::Vec<formualizer_common::grid_address::CellAddress>
+impl core::clone::Clone for formualizer_eval::engine::inspect::Dependent
+pub fn formualizer_eval::engine::inspect::Dependent::clone(&self) -> formualizer_eval::engine::inspect::Dependent
+impl core::cmp::Eq for formualizer_eval::engine::inspect::Dependent
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::Dependent
+pub fn formualizer_eval::engine::inspect::Dependent::eq(&self, &formualizer_eval::engine::inspect::Dependent) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::Dependent
+pub fn formualizer_eval::engine::inspect::Dependent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::Dependent
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::Dependent
+pub fn formualizer_eval::engine::inspect::Dependent::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_eval::engine::inspect::DependentsOptions
+pub formualizer_eval::engine::inspect::DependentsOptions::max_results: u32
+pub formualizer_eval::engine::inspect::DependentsOptions::max_work: u64
+impl formualizer_eval::engine::inspect::DependentsOptions
+pub fn formualizer_eval::engine::inspect::DependentsOptions::with_max_results(self, u32) -> Self
+pub fn formualizer_eval::engine::inspect::DependentsOptions::with_max_work(self, u64) -> Self
+impl core::clone::Clone for formualizer_eval::engine::inspect::DependentsOptions
+pub fn formualizer_eval::engine::inspect::DependentsOptions::clone(&self) -> formualizer_eval::engine::inspect::DependentsOptions
+impl core::cmp::Eq for formualizer_eval::engine::inspect::DependentsOptions
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::DependentsOptions
+pub fn formualizer_eval::engine::inspect::DependentsOptions::eq(&self, &formualizer_eval::engine::inspect::DependentsOptions) -> bool
+impl core::default::Default for formualizer_eval::engine::inspect::DependentsOptions
+pub fn formualizer_eval::engine::inspect::DependentsOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::inspect::DependentsOptions
+pub fn formualizer_eval::engine::inspect::DependentsOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::inspect::DependentsOptions
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::DependentsOptions
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::DependentsOptions
+pub fn formualizer_eval::engine::inspect::DependentsOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::engine::inspect::DependentsOptions
+pub fn formualizer_eval::engine::inspect::DependentsOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::DependentsReport
+pub formualizer_eval::engine::inspect::DependentsReport::cell: formualizer_common::grid_address::CellAddress
+pub formualizer_eval::engine::inspect::DependentsReport::dependents: alloc::vec::Vec<formualizer_eval::engine::inspect::Dependent>
+pub formualizer_eval::engine::inspect::DependentsReport::stamp: formualizer_eval::engine::inspect::StateStamp
+pub formualizer_eval::engine::inspect::DependentsReport::truncation: formualizer_eval::engine::inspect::TruncationReport
+impl core::clone::Clone for formualizer_eval::engine::inspect::DependentsReport
+pub fn formualizer_eval::engine::inspect::DependentsReport::clone(&self) -> formualizer_eval::engine::inspect::DependentsReport
+impl core::cmp::Eq for formualizer_eval::engine::inspect::DependentsReport
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::DependentsReport
+pub fn formualizer_eval::engine::inspect::DependentsReport::eq(&self, &formualizer_eval::engine::inspect::DependentsReport) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::DependentsReport
+pub fn formualizer_eval::engine::inspect::DependentsReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::DependentsReport
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::DependentsReport
+pub fn formualizer_eval::engine::inspect::DependentsReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::Precedent
+pub formualizer_eval::engine::inspect::Precedent::provenance: formualizer_eval::engine::inspect::Provenance
+pub formualizer_eval::engine::inspect::Precedent::reference: formualizer_eval::engine::inspect::SemanticReference
+impl core::clone::Clone for formualizer_eval::engine::inspect::Precedent
+pub fn formualizer_eval::engine::inspect::Precedent::clone(&self) -> formualizer_eval::engine::inspect::Precedent
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::Precedent
+pub fn formualizer_eval::engine::inspect::Precedent::eq(&self, &formualizer_eval::engine::inspect::Precedent) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::Precedent
+pub fn formualizer_eval::engine::inspect::Precedent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::Precedent
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::Precedent
+pub fn formualizer_eval::engine::inspect::Precedent::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_eval::engine::inspect::PrecedentOptions
+pub formualizer_eval::engine::inspect::PrecedentOptions::max_links: u32
+pub formualizer_eval::engine::inspect::PrecedentOptions::max_work: u64
+impl formualizer_eval::engine::inspect::PrecedentOptions
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::with_max_links(self, u32) -> Self
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::with_max_work(self, u64) -> Self
+impl core::clone::Clone for formualizer_eval::engine::inspect::PrecedentOptions
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::clone(&self) -> formualizer_eval::engine::inspect::PrecedentOptions
+impl core::cmp::Eq for formualizer_eval::engine::inspect::PrecedentOptions
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::PrecedentOptions
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::eq(&self, &formualizer_eval::engine::inspect::PrecedentOptions) -> bool
+impl core::default::Default for formualizer_eval::engine::inspect::PrecedentOptions
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::inspect::PrecedentOptions
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::inspect::PrecedentOptions
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::PrecedentOptions
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::PrecedentOptions
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::engine::inspect::PrecedentOptions
+pub fn formualizer_eval::engine::inspect::PrecedentOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::PrecedentReport
+pub formualizer_eval::engine::inspect::PrecedentReport::cell: formualizer_common::grid_address::CellAddress
+pub formualizer_eval::engine::inspect::PrecedentReport::precedents: alloc::vec::Vec<formualizer_eval::engine::inspect::Precedent>
+pub formualizer_eval::engine::inspect::PrecedentReport::stamp: formualizer_eval::engine::inspect::StateStamp
+pub formualizer_eval::engine::inspect::PrecedentReport::truncation: formualizer_eval::engine::inspect::TruncationReport
+impl core::clone::Clone for formualizer_eval::engine::inspect::PrecedentReport
+pub fn formualizer_eval::engine::inspect::PrecedentReport::clone(&self) -> formualizer_eval::engine::inspect::PrecedentReport
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::PrecedentReport
+pub fn formualizer_eval::engine::inspect::PrecedentReport::eq(&self, &formualizer_eval::engine::inspect::PrecedentReport) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::PrecedentReport
+pub fn formualizer_eval::engine::inspect::PrecedentReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::PrecedentReport
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::PrecedentReport
+pub fn formualizer_eval::engine::inspect::PrecedentReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::RangePage
+pub formualizer_eval::engine::inspect::RangePage::declared: formualizer_common::grid_address::RangeArea
+pub formualizer_eval::engine::inspect::RangePage::items: alloc::vec::Vec<formualizer_eval::engine::inspect::CellSnapshot>
+pub formualizer_eval::engine::inspect::RangePage::next_offset: core::option::Option<u64>
+pub formualizer_eval::engine::inspect::RangePage::offset: u64
+pub formualizer_eval::engine::inspect::RangePage::resolved: core::option::Option<formualizer_common::range::RangeAddress>
+pub formualizer_eval::engine::inspect::RangePage::stamp: formualizer_eval::engine::inspect::StateStamp
+pub formualizer_eval::engine::inspect::RangePage::total: u64
+impl core::clone::Clone for formualizer_eval::engine::inspect::RangePage
+pub fn formualizer_eval::engine::inspect::RangePage::clone(&self) -> formualizer_eval::engine::inspect::RangePage
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::RangePage
+pub fn formualizer_eval::engine::inspect::RangePage::eq(&self, &formualizer_eval::engine::inspect::RangePage) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::RangePage
+pub fn formualizer_eval::engine::inspect::RangePage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::RangePage
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::RangePage
+pub fn formualizer_eval::engine::inspect::RangePage::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_eval::engine::inspect::RangePageOptions
+pub formualizer_eval::engine::inspect::RangePageOptions::expected_stamp: core::option::Option<formualizer_eval::engine::inspect::StateStamp>
+pub formualizer_eval::engine::inspect::RangePageOptions::include_values: bool
+pub formualizer_eval::engine::inspect::RangePageOptions::limit: u32
+pub formualizer_eval::engine::inspect::RangePageOptions::offset: u64
+impl formualizer_eval::engine::inspect::RangePageOptions
+pub fn formualizer_eval::engine::inspect::RangePageOptions::with_expected_stamp(self, formualizer_eval::engine::inspect::StateStamp) -> Self
+pub fn formualizer_eval::engine::inspect::RangePageOptions::with_include_values(self, bool) -> Self
+pub fn formualizer_eval::engine::inspect::RangePageOptions::with_limit(self, u32) -> Self
+pub fn formualizer_eval::engine::inspect::RangePageOptions::with_offset(self, u64) -> Self
+impl core::clone::Clone for formualizer_eval::engine::inspect::RangePageOptions
+pub fn formualizer_eval::engine::inspect::RangePageOptions::clone(&self) -> formualizer_eval::engine::inspect::RangePageOptions
+impl core::cmp::Eq for formualizer_eval::engine::inspect::RangePageOptions
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::RangePageOptions
+pub fn formualizer_eval::engine::inspect::RangePageOptions::eq(&self, &formualizer_eval::engine::inspect::RangePageOptions) -> bool
+impl core::default::Default for formualizer_eval::engine::inspect::RangePageOptions
+pub fn formualizer_eval::engine::inspect::RangePageOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::inspect::RangePageOptions
+pub fn formualizer_eval::engine::inspect::RangePageOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::inspect::RangePageOptions
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::RangePageOptions
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::RangePageOptions
+pub fn formualizer_eval::engine::inspect::RangePageOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::engine::inspect::RangePageOptions
+pub fn formualizer_eval::engine::inspect::RangePageOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_eval::engine::inspect::SnapshotOptions
+pub formualizer_eval::engine::inspect::SnapshotOptions::include_values: bool
+impl formualizer_eval::engine::inspect::SnapshotOptions
+pub fn formualizer_eval::engine::inspect::SnapshotOptions::with_include_values(self, bool) -> Self
+impl core::clone::Clone for formualizer_eval::engine::inspect::SnapshotOptions
+pub fn formualizer_eval::engine::inspect::SnapshotOptions::clone(&self) -> formualizer_eval::engine::inspect::SnapshotOptions
+impl core::cmp::Eq for formualizer_eval::engine::inspect::SnapshotOptions
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::SnapshotOptions
+pub fn formualizer_eval::engine::inspect::SnapshotOptions::eq(&self, &formualizer_eval::engine::inspect::SnapshotOptions) -> bool
+impl core::default::Default for formualizer_eval::engine::inspect::SnapshotOptions
+pub fn formualizer_eval::engine::inspect::SnapshotOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::inspect::SnapshotOptions
+pub fn formualizer_eval::engine::inspect::SnapshotOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::inspect::SnapshotOptions
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::SnapshotOptions
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::SnapshotOptions
+pub fn formualizer_eval::engine::inspect::SnapshotOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::engine::inspect::SnapshotOptions
+pub fn formualizer_eval::engine::inspect::SnapshotOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_eval::engine::inspect::StateStamp
+pub formualizer_eval::engine::inspect::StateStamp::mutation_revision: u64
+pub formualizer_eval::engine::inspect::StateStamp::recalc_epoch: u64
+impl core::clone::Clone for formualizer_eval::engine::inspect::StateStamp
+pub fn formualizer_eval::engine::inspect::StateStamp::clone(&self) -> formualizer_eval::engine::inspect::StateStamp
+impl core::cmp::Eq for formualizer_eval::engine::inspect::StateStamp
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::StateStamp
+pub fn formualizer_eval::engine::inspect::StateStamp::eq(&self, &formualizer_eval::engine::inspect::StateStamp) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::StateStamp
+pub fn formualizer_eval::engine::inspect::StateStamp::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::StateStamp
+pub fn formualizer_eval::engine::inspect::StateStamp::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::StateStamp
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::StateStamp
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::StateStamp
+pub fn formualizer_eval::engine::inspect::StateStamp::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::engine::inspect::StateStamp
+pub fn formualizer_eval::engine::inspect::StateStamp::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::TraceGraph
+pub formualizer_eval::engine::inspect::TraceGraph::direction: formualizer_eval::engine::inspect::TraceDirection
+pub formualizer_eval::engine::inspect::TraceGraph::nodes: alloc::vec::Vec<formualizer_eval::engine::inspect::TraceNode>
+pub formualizer_eval::engine::inspect::TraceGraph::roots: alloc::vec::Vec<formualizer_eval::engine::inspect::TraceNodeId>
+pub formualizer_eval::engine::inspect::TraceGraph::stamp: formualizer_eval::engine::inspect::StateStamp
+pub formualizer_eval::engine::inspect::TraceGraph::truncation: formualizer_eval::engine::inspect::TruncationReport
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceGraph
+pub fn formualizer_eval::engine::inspect::TraceGraph::clone(&self) -> formualizer_eval::engine::inspect::TraceGraph
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceGraph
+pub fn formualizer_eval::engine::inspect::TraceGraph::eq(&self, &formualizer_eval::engine::inspect::TraceGraph) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceGraph
+pub fn formualizer_eval::engine::inspect::TraceGraph::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceGraph
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceGraph
+pub fn formualizer_eval::engine::inspect::TraceGraph::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::TraceLink
+pub formualizer_eval::engine::inspect::TraceLink::kind: formualizer_eval::engine::inspect::TraceLinkKind
+pub formualizer_eval::engine::inspect::TraceLink::omitted: core::option::Option<formualizer_eval::engine::inspect::OmittedCount>
+pub formualizer_eval::engine::inspect::TraceLink::reference: formualizer_eval::engine::inspect::SemanticReference
+pub formualizer_eval::engine::inspect::TraceLink::targets: alloc::vec::Vec<formualizer_eval::engine::inspect::TraceLinkTarget>
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceLink
+pub fn formualizer_eval::engine::inspect::TraceLink::clone(&self) -> formualizer_eval::engine::inspect::TraceLink
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceLink
+pub fn formualizer_eval::engine::inspect::TraceLink::eq(&self, &formualizer_eval::engine::inspect::TraceLink) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceLink
+pub fn formualizer_eval::engine::inspect::TraceLink::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceLink
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceLink
+pub fn formualizer_eval::engine::inspect::TraceLink::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::TraceLinkTarget
+pub formualizer_eval::engine::inspect::TraceLinkTarget::disposition: formualizer_eval::engine::inspect::LinkDisposition
+pub formualizer_eval::engine::inspect::TraceLinkTarget::node: formualizer_eval::engine::inspect::TraceNodeId
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceLinkTarget
+pub fn formualizer_eval::engine::inspect::TraceLinkTarget::clone(&self) -> formualizer_eval::engine::inspect::TraceLinkTarget
+impl core::cmp::Eq for formualizer_eval::engine::inspect::TraceLinkTarget
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceLinkTarget
+pub fn formualizer_eval::engine::inspect::TraceLinkTarget::eq(&self, &formualizer_eval::engine::inspect::TraceLinkTarget) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceLinkTarget
+pub fn formualizer_eval::engine::inspect::TraceLinkTarget::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::TraceLinkTarget
+pub fn formualizer_eval::engine::inspect::TraceLinkTarget::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::TraceLinkTarget
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceLinkTarget
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceLinkTarget
+pub fn formualizer_eval::engine::inspect::TraceLinkTarget::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::TraceNode
+pub formualizer_eval::engine::inspect::TraceNode::cell: formualizer_eval::engine::inspect::CellSnapshot
+pub formualizer_eval::engine::inspect::TraceNode::id: formualizer_eval::engine::inspect::TraceNodeId
+pub formualizer_eval::engine::inspect::TraceNode::links: alloc::vec::Vec<formualizer_eval::engine::inspect::TraceLink>
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceNode
+pub fn formualizer_eval::engine::inspect::TraceNode::clone(&self) -> formualizer_eval::engine::inspect::TraceNode
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceNode
+pub fn formualizer_eval::engine::inspect::TraceNode::eq(&self, &formualizer_eval::engine::inspect::TraceNode) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceNode
+pub fn formualizer_eval::engine::inspect::TraceNode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceNode
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceNode
+pub fn formualizer_eval::engine::inspect::TraceNode::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_eval::engine::inspect::TraceNodeId(pub u32)
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceNodeId
+pub fn formualizer_eval::engine::inspect::TraceNodeId::clone(&self) -> formualizer_eval::engine::inspect::TraceNodeId
+impl core::cmp::Eq for formualizer_eval::engine::inspect::TraceNodeId
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceNodeId
+pub fn formualizer_eval::engine::inspect::TraceNodeId::eq(&self, &formualizer_eval::engine::inspect::TraceNodeId) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceNodeId
+pub fn formualizer_eval::engine::inspect::TraceNodeId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::inspect::TraceNodeId
+pub fn formualizer_eval::engine::inspect::TraceNodeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::inspect::TraceNodeId
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceNodeId
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceNodeId
+pub fn formualizer_eval::engine::inspect::TraceNodeId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_eval::engine::inspect::TraceOptions
+pub formualizer_eval::engine::inspect::TraceOptions::direction: formualizer_eval::engine::inspect::TraceDirection
+pub formualizer_eval::engine::inspect::TraceOptions::include_values: bool
+pub formualizer_eval::engine::inspect::TraceOptions::max_depth: u32
+pub formualizer_eval::engine::inspect::TraceOptions::max_links: u32
+pub formualizer_eval::engine::inspect::TraceOptions::max_nodes: u32
+pub formualizer_eval::engine::inspect::TraceOptions::max_work: u64
+pub formualizer_eval::engine::inspect::TraceOptions::range_member_budget: u32
+impl formualizer_eval::engine::inspect::TraceOptions
+pub fn formualizer_eval::engine::inspect::TraceOptions::with_direction(self, formualizer_eval::engine::inspect::TraceDirection) -> Self
+pub fn formualizer_eval::engine::inspect::TraceOptions::with_include_values(self, bool) -> Self
+pub fn formualizer_eval::engine::inspect::TraceOptions::with_max_depth(self, u32) -> Self
+pub fn formualizer_eval::engine::inspect::TraceOptions::with_max_links(self, u32) -> Self
+pub fn formualizer_eval::engine::inspect::TraceOptions::with_max_nodes(self, u32) -> Self
+pub fn formualizer_eval::engine::inspect::TraceOptions::with_max_work(self, u64) -> Self
+pub fn formualizer_eval::engine::inspect::TraceOptions::with_range_member_budget(self, u32) -> Self
+impl core::clone::Clone for formualizer_eval::engine::inspect::TraceOptions
+pub fn formualizer_eval::engine::inspect::TraceOptions::clone(&self) -> formualizer_eval::engine::inspect::TraceOptions
+impl core::cmp::Eq for formualizer_eval::engine::inspect::TraceOptions
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TraceOptions
+pub fn formualizer_eval::engine::inspect::TraceOptions::eq(&self, &formualizer_eval::engine::inspect::TraceOptions) -> bool
+impl core::default::Default for formualizer_eval::engine::inspect::TraceOptions
+pub fn formualizer_eval::engine::inspect::TraceOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TraceOptions
+pub fn formualizer_eval::engine::inspect::TraceOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::inspect::TraceOptions
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TraceOptions
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TraceOptions
+pub fn formualizer_eval::engine::inspect::TraceOptions::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::engine::inspect::TraceOptions
+pub fn formualizer_eval::engine::inspect::TraceOptions::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+#[non_exhaustive] pub struct formualizer_eval::engine::inspect::TruncationReport
+pub formualizer_eval::engine::inspect::TruncationReport::incomplete: bool
+pub formualizer_eval::engine::inspect::TruncationReport::omitted: core::option::Option<formualizer_eval::engine::inspect::OmittedCount>
+impl core::clone::Clone for formualizer_eval::engine::inspect::TruncationReport
+pub fn formualizer_eval::engine::inspect::TruncationReport::clone(&self) -> formualizer_eval::engine::inspect::TruncationReport
+impl core::cmp::Eq for formualizer_eval::engine::inspect::TruncationReport
+impl core::cmp::PartialEq for formualizer_eval::engine::inspect::TruncationReport
+pub fn formualizer_eval::engine::inspect::TruncationReport::eq(&self, &formualizer_eval::engine::inspect::TruncationReport) -> bool
+impl core::default::Default for formualizer_eval::engine::inspect::TruncationReport
+pub fn formualizer_eval::engine::inspect::TruncationReport::default() -> formualizer_eval::engine::inspect::TruncationReport
+impl core::fmt::Debug for formualizer_eval::engine::inspect::TruncationReport
+pub fn formualizer_eval::engine::inspect::TruncationReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::inspect::TruncationReport
+impl serde_core::ser::Serialize for formualizer_eval::engine::inspect::TruncationReport
+pub fn formualizer_eval::engine::inspect::TruncationReport::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 pub mod formualizer_eval::engine::interval_tree
 pub struct formualizer_eval::engine::interval_tree::BTreeEntry<'a, T: core::clone::Clone + core::cmp::Eq + core::hash::Hash>
 impl<'a, T: core::clone::Clone + core::cmp::Eq + core::hash::Hash> formualizer_eval::engine::interval_tree::BTreeEntry<'a, T>
@@ -5366,6 +5903,12 @@ pub formualizer_eval::engine::Engine::recalc_epoch: u64
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::begin_bulk_ingest(&mut self) -> formualizer_eval::engine::ingest_builder::BulkIngestBuilder<'_>
 pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, &formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::arena::ast::AstNodeId
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
+pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::action<T>(&mut self, impl core::convert::AsRef<str>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::action_atomic<T>(&mut self, impl core::convert::Into<alloc::string::String>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -6582,6 +7125,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::GridExtent
 pub fn formualizer_eval::formula_plane::GridExtent::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::GridExtent
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::GridExtent
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::GridExtent
+pub fn formualizer_eval::formula_plane::GridExtent::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::GridExtent
+pub fn formualizer_eval::formula_plane::GridExtent::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::grid::RangeCardinality
 pub formualizer_eval::formula_plane::grid::RangeCardinality::Bounded
 pub formualizer_eval::formula_plane::grid::RangeCardinality::Bounded::cols: u32
@@ -6603,6 +7150,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::RangeCardinality
 pub fn formualizer_eval::formula_plane::RangeCardinality::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::RangeCardinality
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::RangeCardinality
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::RangeCardinality
+pub fn formualizer_eval::formula_plane::RangeCardinality::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::RangeCardinality
+pub fn formualizer_eval::formula_plane::RangeCardinality::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::grid::GridShape
 pub formualizer_eval::formula_plane::grid::GridShape::cols: u32
 pub formualizer_eval::formula_plane::grid::GridShape::rows: u32
@@ -6617,6 +7168,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::GridShape
 pub fn formualizer_eval::formula_plane::GridShape::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::GridShape
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::GridShape
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::GridShape
+pub fn formualizer_eval::formula_plane::GridShape::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::GridShape
+pub fn formualizer_eval::formula_plane::GridShape::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub mod formualizer_eval::formula_plane::ids
 pub struct formualizer_eval::formula_plane::ids::DependencyShapeFingerprint
 pub formualizer_eval::formula_plane::ids::DependencyShapeFingerprint::hi: u64
@@ -6632,6 +7187,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::DependencyShapeFinger
 pub fn formualizer_eval::formula_plane::DependencyShapeFingerprint::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::DependencyShapeFingerprint
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::DependencyShapeFingerprint
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::DependencyShapeFingerprint
+pub fn formualizer_eval::formula_plane::DependencyShapeFingerprint::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::DependencyShapeFingerprint
+pub fn formualizer_eval::formula_plane::DependencyShapeFingerprint::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::ids::FormulaFingerprint
 pub formualizer_eval::formula_plane::ids::FormulaFingerprint::hi: u64
 pub formualizer_eval::formula_plane::ids::FormulaFingerprint::lo: u64
@@ -6646,6 +7205,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::FormulaFingerprint
 pub fn formualizer_eval::formula_plane::FormulaFingerprint::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::FormulaFingerprint
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::FormulaFingerprint
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::FormulaFingerprint
+pub fn formualizer_eval::formula_plane::FormulaFingerprint::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::FormulaFingerprint
+pub fn formualizer_eval::formula_plane::FormulaFingerprint::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::ids::FormulaRunId(_)
 impl formualizer_eval::formula_plane::FormulaRunId
 pub const fn formualizer_eval::formula_plane::FormulaRunId::as_u32(self) -> u32
@@ -6664,6 +7227,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::FormulaRunId
 pub fn formualizer_eval::formula_plane::FormulaRunId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::FormulaRunId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::FormulaRunId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::FormulaRunId
+pub fn formualizer_eval::formula_plane::FormulaRunId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::FormulaRunId
+pub fn formualizer_eval::formula_plane::FormulaRunId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::ids::FormulaTemplateId(_)
 impl formualizer_eval::formula_plane::FormulaTemplateId
 pub const fn formualizer_eval::formula_plane::FormulaTemplateId::as_u32(self) -> u32
@@ -6682,6 +7249,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::FormulaTemplateId
 pub fn formualizer_eval::formula_plane::FormulaTemplateId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::FormulaTemplateId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::FormulaTemplateId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::FormulaTemplateId
+pub fn formualizer_eval::formula_plane::FormulaTemplateId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::FormulaTemplateId
+pub fn formualizer_eval::formula_plane::FormulaTemplateId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub mod formualizer_eval::formula_plane::partition
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::partition::PartitionId(_)
 impl core::clone::Clone for formualizer_eval::formula_plane::PartitionId
@@ -6695,6 +7266,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::PartitionId
 pub fn formualizer_eval::formula_plane::PartitionId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::PartitionId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::PartitionId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::PartitionId
+pub fn formualizer_eval::formula_plane::PartitionId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::PartitionId
+pub fn formualizer_eval::formula_plane::PartitionId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub mod formualizer_eval::formula_plane::span_counters
 pub enum formualizer_eval::formula_plane::span_counters::CandidateRunOrientation
 pub formualizer_eval::formula_plane::span_counters::CandidateRunOrientation::Column
@@ -7078,6 +7653,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualReferenceError
 pub fn formualizer_eval::formula_plane::VirtualReferenceErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualReferenceErrorKind
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualReferenceErrorKind
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualReferenceErrorKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceErrorKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualReferenceErrorKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceErrorKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::virtual_ref::VirtualReferenceKind
 pub formualizer_eval::formula_plane::virtual_ref::VirtualReferenceKind::Column
 pub formualizer_eval::formula_plane::virtual_ref::VirtualReferenceKind::DataFrame
@@ -7095,6 +7674,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualReferenceKind
 pub fn formualizer_eval::formula_plane::VirtualReferenceKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualReferenceKind
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualReferenceKind
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualReferenceKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualReferenceKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::virtual_ref::VirtualReferenceVolatility
 pub formualizer_eval::formula_plane::virtual_ref::VirtualReferenceVolatility::Immutable
 pub formualizer_eval::formula_plane::virtual_ref::VirtualReferenceVolatility::Versioned
@@ -7110,6 +7693,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualReferenceVolat
 pub fn formualizer_eval::formula_plane::VirtualReferenceVolatility::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualReferenceVolatility
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualReferenceVolatility
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualReferenceVolatility
+pub fn formualizer_eval::formula_plane::VirtualReferenceVolatility::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualReferenceVolatility
+pub fn formualizer_eval::formula_plane::VirtualReferenceVolatility::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::virtual_ref::VirtualProviderVersion
 pub formualizer_eval::formula_plane::virtual_ref::VirtualProviderVersion::fingerprint_hi: u64
 pub formualizer_eval::formula_plane::virtual_ref::VirtualProviderVersion::fingerprint_lo: u64
@@ -7124,6 +7711,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualProviderVersio
 pub fn formualizer_eval::formula_plane::VirtualProviderVersion::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualProviderVersion
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualProviderVersion
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualProviderVersion
+pub fn formualizer_eval::formula_plane::VirtualProviderVersion::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualProviderVersion
+pub fn formualizer_eval::formula_plane::VirtualProviderVersion::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::virtual_ref::VirtualRangeId(_)
 impl core::clone::Clone for formualizer_eval::formula_plane::VirtualRangeId
 pub fn formualizer_eval::formula_plane::VirtualRangeId::clone(&self) -> formualizer_eval::formula_plane::VirtualRangeId
@@ -7136,6 +7727,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualRangeId
 pub fn formualizer_eval::formula_plane::VirtualRangeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualRangeId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualRangeId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualRangeId
+pub fn formualizer_eval::formula_plane::VirtualRangeId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualRangeId
+pub fn formualizer_eval::formula_plane::VirtualRangeId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::virtual_ref::VirtualSourceId(_)
 impl core::clone::Clone for formualizer_eval::formula_plane::VirtualSourceId
 pub fn formualizer_eval::formula_plane::VirtualSourceId::clone(&self) -> formualizer_eval::formula_plane::VirtualSourceId
@@ -7148,6 +7743,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualSourceId
 pub fn formualizer_eval::formula_plane::VirtualSourceId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualSourceId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualSourceId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualSourceId
+pub fn formualizer_eval::formula_plane::VirtualSourceId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualSourceId
+pub fn formualizer_eval::formula_plane::VirtualSourceId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::virtual_ref::VirtualSourceKey
 pub formualizer_eval::formula_plane::virtual_ref::VirtualSourceKey::name: alloc::string::String
 pub formualizer_eval::formula_plane::virtual_ref::VirtualSourceKey::namespace: alloc::string::String
@@ -7161,6 +7760,10 @@ pub fn formualizer_eval::formula_plane::VirtualSourceKey::fmt(&self, &mut core::
 impl core::hash::Hash for formualizer_eval::formula_plane::VirtualSourceKey
 pub fn formualizer_eval::formula_plane::VirtualSourceKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualSourceKey
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualSourceKey
+pub fn formualizer_eval::formula_plane::VirtualSourceKey::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualSourceKey
+pub fn formualizer_eval::formula_plane::VirtualSourceKey::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::CandidateRunOrientation
 pub formualizer_eval::formula_plane::CandidateRunOrientation::Column
 pub formualizer_eval::formula_plane::CandidateRunOrientation::Row
@@ -7230,6 +7833,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::GridExtent
 pub fn formualizer_eval::formula_plane::GridExtent::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::GridExtent
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::GridExtent
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::GridExtent
+pub fn formualizer_eval::formula_plane::GridExtent::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::GridExtent
+pub fn formualizer_eval::formula_plane::GridExtent::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::RangeCardinality
 pub formualizer_eval::formula_plane::RangeCardinality::Bounded
 pub formualizer_eval::formula_plane::RangeCardinality::Bounded::cols: u32
@@ -7251,6 +7858,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::RangeCardinality
 pub fn formualizer_eval::formula_plane::RangeCardinality::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::RangeCardinality
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::RangeCardinality
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::RangeCardinality
+pub fn formualizer_eval::formula_plane::RangeCardinality::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::RangeCardinality
+pub fn formualizer_eval::formula_plane::RangeCardinality::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::SpanGapKind
 pub formualizer_eval::formula_plane::SpanGapKind::Exception
 pub formualizer_eval::formula_plane::SpanGapKind::Exception::other_template_id: formualizer_eval::formula_plane::FormulaTemplateId
@@ -7309,6 +7920,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualReferenceError
 pub fn formualizer_eval::formula_plane::VirtualReferenceErrorKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualReferenceErrorKind
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualReferenceErrorKind
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualReferenceErrorKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceErrorKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualReferenceErrorKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceErrorKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::VirtualReferenceKind
 pub formualizer_eval::formula_plane::VirtualReferenceKind::Column
 pub formualizer_eval::formula_plane::VirtualReferenceKind::DataFrame
@@ -7326,6 +7941,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualReferenceKind
 pub fn formualizer_eval::formula_plane::VirtualReferenceKind::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualReferenceKind
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualReferenceKind
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualReferenceKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceKind::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualReferenceKind
+pub fn formualizer_eval::formula_plane::VirtualReferenceKind::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub enum formualizer_eval::formula_plane::VirtualReferenceVolatility
 pub formualizer_eval::formula_plane::VirtualReferenceVolatility::Immutable
 pub formualizer_eval::formula_plane::VirtualReferenceVolatility::Versioned
@@ -7341,6 +7960,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualReferenceVolat
 pub fn formualizer_eval::formula_plane::VirtualReferenceVolatility::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualReferenceVolatility
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualReferenceVolatility
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualReferenceVolatility
+pub fn formualizer_eval::formula_plane::VirtualReferenceVolatility::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualReferenceVolatility
+pub fn formualizer_eval::formula_plane::VirtualReferenceVolatility::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::CandidateFormulaRun
 pub formualizer_eval::formula_plane::CandidateFormulaRun::end_index: u32
 pub formualizer_eval::formula_plane::CandidateFormulaRun::fixed_index: u32
@@ -7372,6 +7995,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::DependencyShapeFinger
 pub fn formualizer_eval::formula_plane::DependencyShapeFingerprint::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::DependencyShapeFingerprint
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::DependencyShapeFingerprint
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::DependencyShapeFingerprint
+pub fn formualizer_eval::formula_plane::DependencyShapeFingerprint::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::DependencyShapeFingerprint
+pub fn formualizer_eval::formula_plane::DependencyShapeFingerprint::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::FormulaFingerprint
 pub formualizer_eval::formula_plane::FormulaFingerprint::hi: u64
 pub formualizer_eval::formula_plane::FormulaFingerprint::lo: u64
@@ -7386,6 +8013,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::FormulaFingerprint
 pub fn formualizer_eval::formula_plane::FormulaFingerprint::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::FormulaFingerprint
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::FormulaFingerprint
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::FormulaFingerprint
+pub fn formualizer_eval::formula_plane::FormulaFingerprint::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::FormulaFingerprint
+pub fn formualizer_eval::formula_plane::FormulaFingerprint::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::FormulaPlaneCandidateCell
 pub formualizer_eval::formula_plane::FormulaPlaneCandidateCell::col: u32
 pub formualizer_eval::formula_plane::FormulaPlaneCandidateCell::dynamic: bool
@@ -7456,6 +8087,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::FormulaRunId
 pub fn formualizer_eval::formula_plane::FormulaRunId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::FormulaRunId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::FormulaRunId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::FormulaRunId
+pub fn formualizer_eval::formula_plane::FormulaRunId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::FormulaRunId
+pub fn formualizer_eval::formula_plane::FormulaRunId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::FormulaRunStore
 pub formualizer_eval::formula_plane::FormulaRunStore::arena: formualizer_eval::formula_plane::FormulaTemplateArena
 pub formualizer_eval::formula_plane::FormulaRunStore::gaps: alloc::vec::Vec<formualizer_eval::formula_plane::SpanGapDescriptor>
@@ -7559,6 +8194,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::FormulaTemplateId
 pub fn formualizer_eval::formula_plane::FormulaTemplateId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::FormulaTemplateId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::FormulaTemplateId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::FormulaTemplateId
+pub fn formualizer_eval::formula_plane::FormulaTemplateId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::FormulaTemplateId
+pub fn formualizer_eval::formula_plane::FormulaTemplateId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::Fp2aCounterDelta
 pub formualizer_eval::formula_plane::Fp2aCounterDelta::field: &'static str
 pub formualizer_eval::formula_plane::Fp2aCounterDelta::fp2a_value: i64
@@ -7597,6 +8236,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::GridShape
 pub fn formualizer_eval::formula_plane::GridShape::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::GridShape
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::GridShape
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::GridShape
+pub fn formualizer_eval::formula_plane::GridShape::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::GridShape
+pub fn formualizer_eval::formula_plane::GridShape::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::PartitionId(_)
 impl core::clone::Clone for formualizer_eval::formula_plane::PartitionId
 pub fn formualizer_eval::formula_plane::PartitionId::clone(&self) -> formualizer_eval::formula_plane::PartitionId
@@ -7609,6 +8252,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::PartitionId
 pub fn formualizer_eval::formula_plane::PartitionId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::PartitionId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::PartitionId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::PartitionId
+pub fn formualizer_eval::formula_plane::PartitionId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::PartitionId
+pub fn formualizer_eval::formula_plane::PartitionId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::SpanGapDescriptor
 pub formualizer_eval::formula_plane::SpanGapDescriptor::col: u32
 pub formualizer_eval::formula_plane::SpanGapDescriptor::kind: formualizer_eval::formula_plane::SpanGapKind
@@ -7712,6 +8359,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualProviderVersio
 pub fn formualizer_eval::formula_plane::VirtualProviderVersion::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualProviderVersion
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualProviderVersion
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualProviderVersion
+pub fn formualizer_eval::formula_plane::VirtualProviderVersion::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualProviderVersion
+pub fn formualizer_eval::formula_plane::VirtualProviderVersion::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::VirtualRangeId(_)
 impl core::clone::Clone for formualizer_eval::formula_plane::VirtualRangeId
 pub fn formualizer_eval::formula_plane::VirtualRangeId::clone(&self) -> formualizer_eval::formula_plane::VirtualRangeId
@@ -7724,6 +8375,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualRangeId
 pub fn formualizer_eval::formula_plane::VirtualRangeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualRangeId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualRangeId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualRangeId
+pub fn formualizer_eval::formula_plane::VirtualRangeId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualRangeId
+pub fn formualizer_eval::formula_plane::VirtualRangeId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[repr(transparent)] pub struct formualizer_eval::formula_plane::VirtualSourceId(_)
 impl core::clone::Clone for formualizer_eval::formula_plane::VirtualSourceId
 pub fn formualizer_eval::formula_plane::VirtualSourceId::clone(&self) -> formualizer_eval::formula_plane::VirtualSourceId
@@ -7736,6 +8391,10 @@ impl core::hash::Hash for formualizer_eval::formula_plane::VirtualSourceId
 pub fn formualizer_eval::formula_plane::VirtualSourceId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::formula_plane::VirtualSourceId
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualSourceId
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualSourceId
+pub fn formualizer_eval::formula_plane::VirtualSourceId::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualSourceId
+pub fn formualizer_eval::formula_plane::VirtualSourceId::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_eval::formula_plane::VirtualSourceKey
 pub formualizer_eval::formula_plane::VirtualSourceKey::name: alloc::string::String
 pub formualizer_eval::formula_plane::VirtualSourceKey::namespace: alloc::string::String
@@ -7749,6 +8408,10 @@ pub fn formualizer_eval::formula_plane::VirtualSourceKey::fmt(&self, &mut core::
 impl core::hash::Hash for formualizer_eval::formula_plane::VirtualSourceKey
 pub fn formualizer_eval::formula_plane::VirtualSourceKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::formula_plane::VirtualSourceKey
+impl serde_core::ser::Serialize for formualizer_eval::formula_plane::VirtualSourceKey
+pub fn formualizer_eval::formula_plane::VirtualSourceKey::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_eval::formula_plane::VirtualSourceKey
+pub fn formualizer_eval::formula_plane::VirtualSourceKey::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub const formualizer_eval::formula_plane::DEFAULT_CANDIDATE_ROW_BLOCK_SIZE: u32
 pub const formualizer_eval::formula_plane::DEFAULT_GAP_SCAN_MAX_PER_AXIS_GROUP: u64
 pub fn formualizer_eval::formula_plane::build_formula_run_store(&[formualizer_eval::formula_plane::FormulaPlaneCandidateCell], formualizer_eval::formula_plane::FormulaRunStoreBuildOptions) -> formualizer_eval::formula_plane::FormulaRunStore

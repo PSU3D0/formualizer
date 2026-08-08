@@ -4041,6 +4041,19 @@ impl DependencyGraph {
         self.edges.in_edges_merged(vertex_id)
     }
 
+    /// Bounded, delta-aware incoming-edge visitor used by read-only
+    /// introspection. Unlike `get_dependents`, this never constructs the full
+    /// in-degree before the caller's work limit can stop discovery.
+    pub(crate) fn visit_direct_dependents_bounded(
+        &self,
+        vertex_id: VertexId,
+        remaining_work: &mut u64,
+        visitor: &mut dyn FnMut(VertexId) -> bool,
+    ) -> bool {
+        self.edges
+            .visit_in_edges_bounded(vertex_id, remaining_work, visitor)
+    }
+
     // Internal helper methods for Milestone 0.4
 
     /// Internal: Create a snapshot of vertex state for rollback

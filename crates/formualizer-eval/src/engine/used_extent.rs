@@ -45,7 +45,6 @@ pub(crate) enum ExtentPolicy {
     },
     /// Inspection semantics: anchor omitted starts at 1, clamp omitted ends to
     /// used maxima, and return no extent for an empty constrained area.
-    #[allow(dead_code)]
     Semantic,
 }
 
@@ -90,6 +89,25 @@ pub(crate) fn resolve_used_extent_with_fallback(
     mut used_rows_for_columns: impl FnMut(u32, u32) -> Option<(u32, u32)>,
     mut used_columns_for_rows: impl FnMut(u32, u32) -> Option<(u32, u32)>,
 ) -> Option<ResolvedExtent> {
+    // A fully-open semantic area must resolve each axis independently over the
+    // whole sheet. The compatibility policies intentionally retain their
+    // frozen sequential 1x1 bootstrap behavior.
+    if policy == ExtentPolicy::Semantic
+        && bounds.start_row.is_none()
+        && bounds.start_column.is_none()
+        && bounds.end_row.is_none()
+        && bounds.end_column.is_none()
+    {
+        let (_, end_row) = used_rows_for_columns(1, u32::MAX)?;
+        let (_, end_column) = used_columns_for_rows(1, u32::MAX)?;
+        return Some(ResolvedExtent {
+            start_row: 1,
+            start_column: 1,
+            end_row,
+            end_column,
+        });
+    }
+
     if let ExtentPolicy::GraphCompat {
         fallback_row,
         fallback_column,
@@ -337,6 +355,44 @@ mod tests {
         .unwrap();
         assert_eq!((extent.start_column, extent.end_column), (1, 20));
         assert_eq!(extent.cell_count(), 20);
+    }
+
+    #[test]
+    fn semantic_fully_open_area_resolves_axes_independently() {
+        use std::cell::RefCell;
+
+        let queries = RefCell::new(Vec::new());
+        let extent = resolve_used_extent(
+            OpenRangeBounds {
+                start_row: None,
+                start_column: None,
+                end_row: None,
+                end_column: None,
+            },
+            ExtentPolicy::Semantic,
+            |first, last| {
+                queries.borrow_mut().push(("rows", first, last));
+                Some((1, 100))
+            },
+            |first, last| {
+                queries.borrow_mut().push(("columns", first, last));
+                Some((1, 3))
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            extent,
+            ResolvedExtent {
+                start_row: 1,
+                start_column: 1,
+                end_row: 100,
+                end_column: 3,
+            }
+        );
+        assert_eq!(
+            queries.into_inner(),
+            [("rows", 1, u32::MAX), ("columns", 1, u32::MAX)]
+        );
     }
 
     #[test]

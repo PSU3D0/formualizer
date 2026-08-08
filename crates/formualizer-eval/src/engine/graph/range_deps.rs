@@ -21,6 +21,96 @@ impl RangeSelfUse {
 }
 
 impl DependencyGraph {
+    /// Visit compressed-range formula dependents covering one cell without
+    /// materializing the stripe union used by dirty propagation.
+    ///
+    /// This path is intentionally parallel to
+    /// `collect_range_dependents_for_rect`: scheduling keeps its existing
+    /// behavior, while inspection can stop before a pathological stripe has
+    /// been copied into an unbounded candidate set. Work is charged for every
+    /// stripe candidate and every compressed range exact-check.
+    pub(crate) fn visit_range_dependents_covering_bounded(
+        &self,
+        sheet_id: SheetId,
+        row0: u32,
+        col0: u32,
+        remaining_work: &mut u64,
+        visitor: &mut dyn FnMut(VertexId) -> bool,
+    ) -> bool {
+        if self.stripe_to_dependents.is_empty() {
+            return true;
+        }
+
+        let mut seen = FxHashSet::default();
+        let keys = [
+            StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Column,
+                index: col0,
+            },
+            StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Row,
+                index: row0,
+            },
+            StripeKey {
+                sheet_id,
+                stripe_type: StripeType::Block,
+                index: block_index(row0, col0),
+            },
+        ];
+
+        for key in keys {
+            if key.stripe_type == StripeType::Block && !self.config.enable_block_stripes {
+                continue;
+            }
+            let Some(candidates) = self.stripe_to_dependents.get(&key) else {
+                continue;
+            };
+            for &dependent in candidates {
+                if *remaining_work == 0 {
+                    return false;
+                }
+                *remaining_work -= 1;
+                if !seen.insert(dependent) {
+                    continue;
+                }
+                let Some(ranges) = self.formula_to_range_deps.get(&dependent) else {
+                    continue;
+                };
+                let mut covered = false;
+                for range in ranges {
+                    if *remaining_work == 0 {
+                        return false;
+                    }
+                    *remaining_work -= 1;
+                    // Match collect_range_dependents_for_rect: unresolved
+                    // non-Id locators are interpreted on the query sheet.
+                    let range_sheet = match range.sheet {
+                        SharedSheetLocator::Id(id) => id,
+                        _ => sheet_id,
+                    };
+                    if range_sheet != sheet_id {
+                        continue;
+                    }
+                    let start_row = range.start_row.map(|bound| bound.index).unwrap_or(0);
+                    let end_row = range.end_row.map(|bound| bound.index).unwrap_or(u32::MAX);
+                    let start_col = range.start_col.map(|bound| bound.index).unwrap_or(0);
+                    let end_col = range.end_col.map(|bound| bound.index).unwrap_or(u32::MAX);
+                    if start_row <= row0 && row0 <= end_row && start_col <= col0 && col0 <= end_col
+                    {
+                        covered = true;
+                        break;
+                    }
+                }
+                if covered && !visitor(dependent) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Public wrapper to add range-dependent edges.
     pub fn add_range_edges(
         &mut self,

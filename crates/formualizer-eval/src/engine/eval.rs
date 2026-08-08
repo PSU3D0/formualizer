@@ -4363,6 +4363,11 @@ where
         }
     }
 
+    /// Mutation revision captured by read-only engine reports.
+    pub(crate) fn inspection_mutation_revision(&self) -> u64 {
+        self.snapshot_id.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     #[cfg(test)]
     pub(crate) fn used_axis_bounds_cache_stats(&self) -> (usize, usize, usize, usize) {
         self.used_axis_bounds_cache
