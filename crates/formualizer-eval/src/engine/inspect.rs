@@ -1503,6 +1503,7 @@ impl<R: EvaluationContext> Engine<R> {
                             can_follow,
                             depth,
                             options,
+                            false,
                             &mut nodes,
                             &mut node_by_address,
                             &mut parents,
@@ -1544,6 +1545,7 @@ impl<R: EvaluationContext> Engine<R> {
                                 can_follow,
                                 depth,
                                 options,
+                                false,
                                 &mut nodes,
                                 &mut node_by_address,
                                 &mut parents,
@@ -1607,6 +1609,7 @@ impl<R: EvaluationContext> Engine<R> {
                         can_follow,
                         depth,
                         options,
+                        false,
                         &mut nodes,
                         &mut node_by_address,
                         &mut parents,
@@ -1638,6 +1641,7 @@ impl<R: EvaluationContext> Engine<R> {
         can_follow: bool,
         depth: u32,
         options: &TraceOptions,
+        defer_missing_omission: bool,
         nodes: &mut Vec<TraceNode>,
         node_by_address: &mut FxHashMap<CellAddress, TraceNodeId>,
         parents: &mut HashMap<TraceNodeId, Option<TraceNodeId>>,
@@ -1660,7 +1664,9 @@ impl<R: EvaluationContext> Engine<R> {
         if nodes.len() >= options.max_nodes as usize {
             link.omitted = Some(OmittedCount::AtLeast(1));
             truncation.incomplete = true;
-            merge_omitted(&mut truncation.omitted, OmittedCount::AtLeast(1));
+            if !defer_missing_omission {
+                merge_omitted(&mut truncation.omitted, OmittedCount::AtLeast(1));
+            }
             return Ok(());
         }
         let target_id = TraceNodeId(nodes.len() as u32);
@@ -1683,7 +1689,10 @@ impl<R: EvaluationContext> Engine<R> {
             queue.push_back((target_id, key, depth + 1));
         } else {
             truncation.incomplete = true;
-            merge_omitted(&mut truncation.omitted, OmittedCount::AtLeast(1));
+            // The target is represented, but its unvisited outgoing links may
+            // be empty. Zero is the only honest lower bound without doing the
+            // depth-elided work.
+            merge_omitted(&mut truncation.omitted, OmittedCount::AtLeast(0));
         }
         Ok(())
     }
@@ -1759,6 +1768,7 @@ impl<R: EvaluationContext> Engine<R> {
                     can_follow,
                     depth,
                     options,
+                    true,
                     nodes,
                     node_by_address,
                     parents,

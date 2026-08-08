@@ -183,6 +183,10 @@ fn trace_budgets_are_global_and_have_boundary_exactness() {
         .unwrap();
     assert_eq!(node_limited.nodes.len(), 1);
     assert!(node_limited.truncation.incomplete);
+    assert_eq!(
+        node_limited.truncation.omitted,
+        Some(OmittedCount::AtLeast(4))
+    );
 }
 
 #[test]
