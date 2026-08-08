@@ -22,7 +22,13 @@ use crate::engine::refs;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent,
 };
-use crate::engine::{Engine, VertexId, VertexKind};
+use crate::engine::{Engine, FormulaPlaneMode, VertexId, VertexKind};
+use crate::formula_plane::producer::{
+    AxisProjection, DirtyProjectionRule, FormulaProducerId, ProducerDirtyDomain, ProjectionResult,
+    compute_dirty_closure,
+};
+use crate::formula_plane::region_index::{BoundedRegionQueryResult, Region, RegionKey};
+use crate::formula_plane::runtime::{FormulaResolution, FormulaSpanRef, PlacementCoord};
 use crate::reference::{CellRef, Coord};
 use crate::traits::EvaluationContext;
 
@@ -632,6 +638,54 @@ impl<R: EvaluationContext> LegacyInspectSource<'_, R> {
     }
 }
 
+fn visit_formula_ast_references(
+    ast: &ASTNode,
+    visitor: &mut dyn ReferenceVisitor,
+) -> Result<(), InspectError> {
+    struct Context<'a> {
+        visitor: &'a mut dyn ReferenceVisitor,
+        stopped: bool,
+    }
+    fn local_bindings(_: &Context<'_>, name: &str, _: usize) -> refs::LocalBindingStyle {
+        match name
+            .rsplit('.')
+            .next()
+            .unwrap_or(name)
+            .to_ascii_uppercase()
+            .as_str()
+        {
+            "LET" => refs::LocalBindingStyle::LocalBindingPairs,
+            "LAMBDA" => refs::LocalBindingStyle::LambdaParameters,
+            _ => refs::LocalBindingStyle::None,
+        }
+    }
+    fn consume(
+        context: &mut Context<'_>,
+        reference: refs::SemanticReference<'_>,
+    ) -> Result<(), ExcelError> {
+        if context.visitor.visit(reference) {
+            Ok(())
+        } else {
+            context.stopped = true;
+            Err(ExcelError::new(ExcelErrorKind::NImpl)
+                .with_message("inspection visitor requested stop"))
+        }
+    }
+
+    let mut context = Context {
+        visitor,
+        stopped: false,
+    };
+    let result = refs::visit_tree_references(ast, &mut context, local_bindings, consume);
+    if context.stopped {
+        Ok(())
+    } else {
+        result.map_err(|error| InspectError::InvalidAddress {
+            message: error.to_string(),
+        })
+    }
+}
+
 impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
     fn formula_at(&self, cell: CellKey) -> Result<Option<FormulaView>, InspectError> {
         let sheet = self.engine.graph.sheet_name(cell.sheet_id);
@@ -673,49 +727,7 @@ impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
             return Ok(());
         };
 
-        struct Context<'a> {
-            visitor: &'a mut dyn ReferenceVisitor,
-            stopped: bool,
-        }
-        fn local_bindings(_: &Context<'_>, name: &str, _: usize) -> refs::LocalBindingStyle {
-            match name
-                .rsplit('.')
-                .next()
-                .unwrap_or(name)
-                .to_ascii_uppercase()
-                .as_str()
-            {
-                "LET" => refs::LocalBindingStyle::LocalBindingPairs,
-                "LAMBDA" => refs::LocalBindingStyle::LambdaParameters,
-                _ => refs::LocalBindingStyle::None,
-            }
-        }
-        fn consume(
-            context: &mut Context<'_>,
-            reference: refs::SemanticReference<'_>,
-        ) -> Result<(), ExcelError> {
-            if context.visitor.visit(reference) {
-                Ok(())
-            } else {
-                context.stopped = true;
-                Err(ExcelError::new(ExcelErrorKind::NImpl)
-                    .with_message("inspection visitor requested stop"))
-            }
-        }
-
-        let mut context = Context {
-            visitor,
-            stopped: false,
-        };
-        let result =
-            refs::visit_tree_references(&formula.ast, &mut context, local_bindings, consume);
-        if context.stopped {
-            Ok(())
-        } else {
-            result.map_err(|error| InspectError::InvalidAddress {
-                message: error.to_string(),
-            })
-        }
+        visit_formula_ast_references(&formula.ast, visitor)
     }
 
     fn visit_dependents_covering(
@@ -796,6 +808,328 @@ impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
     }
 }
 
+/// Inspection adapter at the same graph-owned formula-authority router used by
+/// evaluation and `Engine::get_cell`. Active span placements are answered from
+/// FormulaPlane; overlays, rejected formulas, and the legacy tail delegate to
+/// `LegacyInspectSource`.
+struct FormulaPlaneInspectSource<'a, R> {
+    engine: &'a Engine<R>,
+    legacy: LegacyInspectSource<'a, R>,
+}
+
+impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
+    fn new(engine: &'a Engine<R>) -> Self {
+        Self {
+            engine,
+            legacy: LegacyInspectSource { engine },
+        }
+    }
+
+    fn cell_ref(&self, key: CellKey) -> CellRef {
+        CellRef::new(key.sheet_id, Coord::new(key.row0, key.col0, true, true))
+    }
+
+    fn span_placement(&self, key: CellKey) -> Option<(FormulaSpanRef, PlacementCoord)> {
+        if self.engine.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+            return None;
+        }
+        let placement = PlacementCoord::new(key.sheet_id, key.row0, key.col0);
+        let legacy_vertex = self.engine.graph.get_vertex_for_cell(&self.cell_ref(key));
+        let handle = self
+            .engine
+            .graph
+            .formula_authority()
+            .plane
+            .resolve_formula_at(placement, legacy_vertex);
+        match handle.resolution {
+            FormulaResolution::SpanPlacement {
+                span, placement, ..
+            } => Some((span, placement)),
+            FormulaResolution::StagedFormula { .. }
+            | FormulaResolution::Overlay(_)
+            | FormulaResolution::LegacyVertex(_)
+            | FormulaResolution::Empty
+            | FormulaResolution::Stale => None,
+        }
+    }
+
+    fn dirty_domain_contains(dirty: &ProducerDirtyDomain, placement: PlacementCoord) -> bool {
+        match dirty {
+            ProducerDirtyDomain::Whole => true,
+            ProducerDirtyDomain::Cells(cells) => cells.contains(&RegionKey::from(placement)),
+            ProducerDirtyDomain::Regions(regions) => {
+                let key = RegionKey::from(placement);
+                regions.iter().any(|region| region.contains_key(key))
+            }
+        }
+    }
+
+    fn span_placement_is_dirty(&self, span_ref: FormulaSpanRef, placement: PlacementCoord) -> bool {
+        if self
+            .engine
+            .graph
+            .pending_formula_dirty_whole_spans()
+            .any(|pending| pending == span_ref)
+        {
+            return true;
+        }
+        if self
+            .engine
+            .graph
+            .pending_formula_dirty_span_regions()
+            .any(|(pending, region)| {
+                pending == span_ref && region.contains_key(RegionKey::from(placement))
+            })
+        {
+            return true;
+        }
+
+        let changed = self
+            .engine
+            .graph
+            .pending_formula_dirty_regions()
+            .collect::<Vec<_>>();
+        if changed.is_empty() {
+            return false;
+        }
+        let authority = self.engine.graph.formula_authority();
+        let closure = compute_dirty_closure(&authority.consumer_reads, changed, |producer| {
+            authority.producer_results.producer_result_region(producer)
+        });
+        if closure.incomplete {
+            return true;
+        }
+        let producer = FormulaProducerId::Span(span_ref.id);
+        closure.work.iter().any(|work| {
+            work.producer == producer && Self::dirty_domain_contains(&work.dirty, placement)
+        }) || closure
+            .fallbacks
+            .iter()
+            .any(|fallback| fallback.consumer == producer)
+    }
+
+    fn instantiate_axis(projection: AxisProjection, placement: u32) -> Option<(u32, bool)> {
+        match projection {
+            AxisProjection::Relative { offset } => {
+                let value = i64::from(placement).checked_add(offset)?;
+                let value = u32::try_from(value).ok()?.checked_add(1)?;
+                Some((value, false))
+            }
+            AxisProjection::Absolute { index } => index.checked_add(1).map(|value| (value, true)),
+        }
+    }
+
+    fn instantiated_span_references(
+        &self,
+        span_ref: FormulaSpanRef,
+        placement: PlacementCoord,
+    ) -> Option<Vec<ReferenceType>> {
+        let authority = self.engine.graph.formula_authority();
+        let span = authority.plane.spans.get(span_ref)?;
+        let summary = authority
+            .plane
+            .span_read_summaries
+            .get(span.read_summary_id?)?;
+        let mut references = Vec::with_capacity(summary.dependencies.len());
+        for dependency in &summary.dependencies {
+            let sheet = Some(
+                self.engine
+                    .graph
+                    .sheet_name(dependency.read_region.sheet_id())
+                    .to_string(),
+            );
+            let reference = match dependency.projection {
+                DirtyProjectionRule::AffineCell { row, col } => {
+                    let (row, row_abs) = Self::instantiate_axis(row, placement.row)?;
+                    let (col, col_abs) = Self::instantiate_axis(col, placement.col)?;
+                    ReferenceType::Cell {
+                        sheet,
+                        row,
+                        col,
+                        row_abs,
+                        col_abs,
+                    }
+                }
+                DirtyProjectionRule::AffineRange {
+                    row_start,
+                    row_end,
+                    col_start,
+                    col_end,
+                } => {
+                    let (start_row, start_row_abs) =
+                        Self::instantiate_axis(row_start, placement.row)?;
+                    let (end_row, end_row_abs) = Self::instantiate_axis(row_end, placement.row)?;
+                    let (start_col, start_col_abs) =
+                        Self::instantiate_axis(col_start, placement.col)?;
+                    let (end_col, end_col_abs) = Self::instantiate_axis(col_end, placement.col)?;
+                    ReferenceType::Range {
+                        sheet,
+                        start_row: Some(start_row),
+                        start_col: Some(start_col),
+                        end_row: Some(end_row),
+                        end_col: Some(end_col),
+                        start_row_abs,
+                        start_col_abs,
+                        end_row_abs,
+                        end_col_abs,
+                    }
+                }
+                DirtyProjectionRule::WholeColumnRange { col_start, col_end } => {
+                    let (start_col, start_col_abs) =
+                        Self::instantiate_axis(col_start, placement.col)?;
+                    let (end_col, end_col_abs) = Self::instantiate_axis(col_end, placement.col)?;
+                    ReferenceType::Range {
+                        sheet,
+                        start_row: None,
+                        start_col: Some(start_col),
+                        end_row: None,
+                        end_col: Some(end_col),
+                        start_row_abs: true,
+                        start_col_abs,
+                        end_row_abs: true,
+                        end_col_abs,
+                    }
+                }
+                // WholeResult is scheduler-only and does not retain declared
+                // reference shape. The caller uses the AST fallback instead.
+                DirtyProjectionRule::WholeResult => return None,
+            };
+            references.push(reference);
+        }
+        Some(references)
+    }
+
+    fn visit_formula_plane_dependents(
+        &self,
+        cell: CellKey,
+        budget: &mut WorkBudget,
+        visitor: &mut dyn DependentVisitor,
+    ) -> QueryCompleteness {
+        if self.engine.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
+            return QueryCompleteness::Complete;
+        }
+        let authority = self.engine.graph.formula_authority();
+        let candidate_limit = usize::try_from(budget.remaining).unwrap_or(usize::MAX);
+        let query = authority.consumer_reads.query_changed_region_bounded(
+            Region::point(cell.sheet_id, cell.row0, cell.col0),
+            candidate_limit,
+        );
+        let query = match query {
+            BoundedRegionQueryResult::Complete(query) => query,
+            BoundedRegionQueryResult::Incomplete {
+                observed_candidates,
+            } => {
+                budget.remaining = budget.remaining.saturating_sub(observed_candidates as u64);
+                return QueryCompleteness::Incomplete;
+            }
+        };
+        budget.remaining = budget
+            .remaining
+            .saturating_sub(query.stats.candidate_count as u64);
+
+        for matched in query.matches {
+            let FormulaProducerId::Span(span_id) = matched.value.consumer else {
+                continue;
+            };
+            let Some(span_ref) = authority.plane.spans.current_ref(span_id) else {
+                continue;
+            };
+            let Some(span) = authority.plane.spans.get(span_ref) else {
+                continue;
+            };
+            let whole = ProducerDirtyDomain::Whole;
+            let dirty = match &matched.value.dirty {
+                ProjectionResult::Exact(dirty) | ProjectionResult::Conservative { dirty, .. } => {
+                    dirty
+                }
+                ProjectionResult::NoIntersection => continue,
+                ProjectionResult::Unsupported(_) => &whole,
+            };
+            for placement in span.domain.iter() {
+                if !Self::dirty_domain_contains(dirty, placement) {
+                    continue;
+                }
+                if !budget.charge()
+                    || !visitor.visit(CellKey {
+                        sheet_id: placement.sheet_id,
+                        row0: placement.row,
+                        col0: placement.col,
+                    })
+                {
+                    return QueryCompleteness::Incomplete;
+                }
+            }
+        }
+        QueryCompleteness::Complete
+    }
+}
+
+impl<R: EvaluationContext> InspectSource for FormulaPlaneInspectSource<'_, R> {
+    fn formula_at(&self, cell: CellKey) -> Result<Option<FormulaView>, InspectError> {
+        let Some((span_ref, placement)) = self.span_placement(cell) else {
+            return self.legacy.formula_at(cell);
+        };
+        let sheet = self.engine.graph.sheet_name(cell.sheet_id);
+        // Reuse the per-placement reconstruction used by the public cell read
+        // path, keeping canonical text and structural relocation identical.
+        let ast = self
+            .engine
+            .get_cell(sheet, cell.row0 + 1, cell.col0 + 1)
+            .and_then(|(ast, _)| ast);
+        Ok(ast.map(|ast| FormulaView {
+            ast,
+            volatile: false,
+            dirty: self.span_placement_is_dirty(span_ref, placement),
+        }))
+    }
+
+    fn visit_declared_references(
+        &self,
+        cell: CellKey,
+        visitor: &mut dyn ReferenceVisitor,
+    ) -> Result<(), InspectError> {
+        let Some((span_ref, placement)) = self.span_placement(cell) else {
+            return self.legacy.visit_declared_references(cell, visitor);
+        };
+        let Some(references) = self.instantiated_span_references(span_ref, placement) else {
+            // Missing/stale summaries and WholeResult cannot answer a per-cell
+            // shape query; reconstruct and walk the FormulaPlane AST instead.
+            let Some(formula) = self.formula_at(cell)? else {
+                return Ok(());
+            };
+            return visit_formula_ast_references(&formula.ast, visitor);
+        };
+        for reference in &references {
+            if !visitor.visit(refs::classify(reference)) {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    fn visit_dependents_covering(
+        &self,
+        cell: CellKey,
+        budget: &mut WorkBudget,
+        visitor: &mut dyn DependentVisitor,
+    ) -> Result<QueryCompleteness, InspectError> {
+        if self
+            .legacy
+            .visit_dependents_covering(cell, budget, visitor)?
+            == QueryCompleteness::Incomplete
+        {
+            return Ok(QueryCompleteness::Incomplete);
+        }
+        Ok(self.visit_formula_plane_dependents(cell, budget, visitor))
+    }
+
+    fn spill_role(&self, cell: CellKey) -> Option<InternalSpillRole> {
+        // FormulaPlane rejects spill-capable formulas; spill facts remain in
+        // the graph-owned last-evaluation registry for both authorities.
+        self.legacy.spill_role(cell)
+    }
+}
+
 fn merge_omitted(target: &mut Option<OmittedCount>, addition: OmittedCount) {
     *target = Some(match (target.take(), addition) {
         (None, value) => value,
@@ -825,8 +1159,8 @@ impl<R: EvaluationContext> Engine<R> {
         }
     }
 
-    fn inspect_source(&self) -> LegacyInspectSource<'_, R> {
-        LegacyInspectSource { engine: self }
+    fn inspect_source(&self) -> FormulaPlaneInspectSource<'_, R> {
+        FormulaPlaneInspectSource::new(self)
     }
 
     fn canonical_cell(
@@ -1386,7 +1720,7 @@ impl<R: EvaluationContext> Engine<R> {
             let mut record = |dependent_key: CellKey| {
                 let address = self.address_for_key(dependent_key);
                 if let Some(via_members) = found.get_mut(&address) {
-                    if !via_members.contains(&via) {
+                    if spill_anchor_query && !via_members.contains(&via) {
                         via_members.push(via.clone());
                     }
                     return true;
