@@ -11,6 +11,7 @@ pub mod coord_hash;
 pub mod date_serial;
 pub mod error;
 pub mod function;
+pub mod grid_address;
 pub mod range;
 pub mod value;
 
@@ -20,5 +21,6 @@ pub use coord_hash::*;
 pub use date_serial::*;
 pub use error::*;
 pub use function::*;
+pub use grid_address::*;
 pub use range::*;
 pub use value::*;

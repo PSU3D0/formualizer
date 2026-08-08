@@ -6,6 +6,43 @@ use std::fmt;
 
 use crate::coord::{A1ParseError, CoordError, RelativeCoord};
 
+/// Format a sheet name for use before `!` in an A1 reference.
+///
+/// Names that require quoting follow the same rules as canonical formula
+/// rendering. Embedded apostrophes are escaped by doubling them.
+pub fn format_a1_sheet_name(name: &str) -> Cow<'_, str> {
+    if !sheet_name_needs_quoting(name) {
+        return Cow::Borrowed(name);
+    }
+    Cow::Owned(format!("'{}'", name.replace('\'', "''")))
+}
+
+fn sheet_name_needs_quoting(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    if name.as_bytes()[0].is_ascii_digit() {
+        return true;
+    }
+
+    for &byte in name.as_bytes() {
+        match byte {
+            b' ' | b'!' | b'"' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+'
+            | b',' | b'-' | b'.' | b'/' | b':' | b';' | b'<' | b'=' | b'>' | b'?' | b'@' | b'['
+            | b'\\' | b']' | b'^' | b'`' | b'{' | b'|' | b'}' | b'~' => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    matches!(
+        name.to_uppercase().as_str(),
+        "TRUE" | "FALSE" | "NULL" | "REF" | "DIV" | "NAME" | "NUM" | "VALUE" | "N/A"
+    )
+}
+
 /// Stable sheet identifier used across the workspace.
 pub type SheetId = u16;
 
