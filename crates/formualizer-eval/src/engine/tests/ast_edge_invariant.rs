@@ -4,15 +4,23 @@
 //! AST (classified by `engine::refs`) are represented by exactly the formula's outgoing graph
 //! dependencies. A cell is represented by a direct edge (including an empty placeholder), a
 //! finite range at or below `range_expansion_limit` by one edge per cell, a larger or open range
-//! by one compressed range dependency backed by the stripe indexes, and a name or table by an
-//! edge to its resolving vertex. Exact parity matters in both directions: a missing dependency can
-//! leave a value silently stale, while a phantom dependency causes spurious recalculation.
+//! by one compressed range dependency, and a name or table by an edge to its resolving vertex.
+//! `get_range_dependencies` exposes a stored pre-stripe copy, so stripe-index integrity is covered
+//! behaviorally rather than by the structural comparison. Exact parity matters in both directions:
+//! a missing dependency can leave a value silently stale, while a phantom dependency causes
+//! spurious recalculation.
 //!
 //! The structural checker compares those representations after edit operations. The behavioral
 //! checker independently mutates sampled AST-referenced cells through `Engine`, requires the
 //! formula to become dirty, and undoes the mutation through the changelog. Structural failures
 //! diagnose the representation; behavioral failures are the scheduling ground truth. If only one
 //! fails, its panic reports both the formula and sampled cell so the disagreement is actionable.
+//! Campaigns deliberately use this dirty-flag proxy as their oracle and never call `evaluate_all`;
+//! value-level consequences are pinned in the dedicated ignored finding tests.
+//!
+//! The missing-edge direction silently contributes an empty expected set for unresolvable sheets,
+//! names, or tables; reversed ranges; and external, three-dimensional, or unsupported references.
+//! It is therefore vacuous for those references, while the phantom-edge direction remains covered.
 //!
 //! Campaign seeds are fixed constants below. They are intentionally not persisted: a failure
 //! prints its seed and operation index, which is enough to replay the deterministic campaign while
@@ -323,6 +331,10 @@ fn assert_behavioral_parity(
         if !engine.graph.vertex_exists(formula) {
             continue;
         }
+        let formula_cell = engine
+            .graph
+            .get_cell_ref(formula)
+            .expect("formula vertex must retain its address during a value probe");
         let sheet = engine
             .graph
             .sheet_name(referenced_cell.sheet_id)
@@ -341,7 +353,8 @@ fn assert_behavioral_parity(
             .expect("behavioral probe mutation must succeed");
         assert!(
             engine.graph.vertex_exists(formula) && engine.graph.is_dirty(formula),
-            "AST/edge behavioral divergence: seed={seed:#x} operation={operation} formula={formula:?} referenced_cell={} (structural checker passed)",
+            "AST/edge behavioral divergence: seed={seed:#x} operation={operation} formula={} referenced_cell={} (structural checker passed)",
+            engine.graph.to_a1(formula_cell),
             engine.graph.to_a1(referenced_cell),
         );
 
@@ -360,6 +373,12 @@ struct Campaign {
     expansion_limit: usize,
     assert_every: usize,
     behavior_samples: usize,
+}
+
+#[derive(Default)]
+struct CampaignStats {
+    undo: usize,
+    redo: usize,
 }
 
 fn random_sheet<'a>(rng: &mut SmallRng, sheets: &'a [String]) -> &'a str {
@@ -390,7 +409,7 @@ fn reset_history(log: &mut ChangeLog, undo: &mut UndoEngine, can_redo: &mut bool
     *can_redo = false;
 }
 
-fn run_campaign(campaign: Campaign) {
+fn run_campaign(campaign: Campaign) -> CampaignStats {
     let config = EvalConfig::default().with_range_expansion_limit(campaign.expansion_limit);
     let mut engine = Engine::new(TestWorkbook::new(), config);
     let mut sheets = vec!["Sheet1".to_string(), "Sheet2".to_string()];
@@ -425,14 +444,23 @@ fn run_campaign(campaign: Campaign) {
     let mut log = ChangeLog::new();
     let mut undo = UndoEngine::new();
     let mut can_redo = false;
+    let mut stats = CampaignStats::default();
 
     for operation in 0..campaign.operations {
+        let force_redo = can_redo && rng.gen_bool(0.4);
+        if force_redo {
+            engine.redo_logged(&mut undo, &mut log).unwrap();
+            can_redo = false;
+            stats.redo += 1;
+        }
+
         let choice = rng.gen_range(0..100);
         let sheet = random_sheet(&mut rng, &sheets).to_string();
         let row = rng.gen_range(1..=MAX_ROW);
         let col = rng.gen_range(1..=MAX_COL);
 
         match choice {
+            _ if force_redo => {}
             0..=13 => {
                 engine
                     .action_with_logger(&mut log, "campaign-set-value", |action| {
@@ -458,7 +486,16 @@ fn run_campaign(campaign: Campaign) {
                 can_redo = false;
             }
             30..=40 => {
-                let edit_sheet = if sheet == "Sheet1" { "Sheet2" } else { &sheet };
+                let active_symbol_edge = engine
+                    .graph
+                    .formula_vertices()
+                    .into_iter()
+                    .any(|formula| !ast_shape(&engine.graph, formula).shape.symbols.is_empty());
+                let edit_sheet = if sheet == "Sheet1" && active_symbol_edge {
+                    "Sheet2"
+                } else {
+                    &sheet
+                };
                 engine
                     .action_with_logger(&mut log, "campaign-insert-rows", |action| {
                         action.insert_rows(edit_sheet, row, 1).map(|_| ())
@@ -472,7 +509,16 @@ fn run_campaign(campaign: Campaign) {
                 reset_history(&mut log, &mut undo, &mut can_redo);
             }
             52..=61 => {
-                let edit_sheet = if sheet == "Sheet1" { "Sheet2" } else { &sheet };
+                let active_symbol_edge = engine
+                    .graph
+                    .formula_vertices()
+                    .into_iter()
+                    .any(|formula| !ast_shape(&engine.graph, formula).shape.symbols.is_empty());
+                let edit_sheet = if sheet == "Sheet1" && active_symbol_edge {
+                    "Sheet2"
+                } else {
+                    &sheet
+                };
                 engine
                     .action_with_logger(&mut log, "campaign-insert-columns", |action| {
                         action.insert_columns(edit_sheet, col, 1).map(|_| ())
@@ -543,10 +589,12 @@ fn run_campaign(campaign: Campaign) {
             90..=95 if !log.is_empty() => {
                 engine.undo_logged(&mut undo, &mut log).unwrap();
                 can_redo = true;
+                stats.undo += 1;
             }
             96..=99 if can_redo => {
                 engine.redo_logged(&mut undo, &mut log).unwrap();
                 can_redo = false;
+                stats.redo += 1;
             }
             _ => {
                 engine
@@ -566,16 +614,21 @@ fn run_campaign(campaign: Campaign) {
             );
         }
     }
+    stats
 }
 
 // T2 finding AST_EDGE_UNDO_STRUCTURAL_ADJUSTMENT: see the matching T2 worker-report entry.
-// Undo moves the referenced cell edge back but leaves the cross-sheet AST at its inserted-row
-// coordinate, splitting scheduling from evaluation.
+// Undo leaves populated data shifted, restores the AST to B6, and mis-restores its edge to B5.
 #[test]
-#[ignore = "known T2 divergence: undoing row insertion leaves adjusted AST and edge split"]
-fn undoing_row_insertion_restores_cross_sheet_ast_and_edge_together() {
+#[ignore = "known T2 divergence: undoing populated row insertion leaves data shifted and edge above AST"]
+fn undoing_populated_row_insertion_restores_data_ast_and_edge_together() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine.add_sheet("Sheet2").unwrap();
+    for row in 1..=8 {
+        engine
+            .set_cell_value("Sheet2", row, 2, LiteralValue::Number(f64::from(row * 10)))
+            .unwrap();
+    }
     engine
         .set_cell_formula("Sheet1", 6, 4, parse("='Sheet2'!B6*2").unwrap())
         .unwrap();
@@ -585,50 +638,100 @@ fn undoing_row_insertion_restores_cross_sheet_ast_and_edge_together() {
             action.insert_rows("Sheet2", 1, 1).map(|_| ())
         })
         .unwrap();
-    assert_structural_parity(&engine, 0xc0de_0007, 0);
+    assert_structural_parity(&engine, 0x0adc_0303, 0);
 
     let mut undo = UndoEngine::new();
     engine.undo_logged(&mut undo, &mut log).unwrap();
 
-    assert_structural_parity(&engine, 0xc0de_0007, 1);
+    let shifted_values: Vec<_> = (2..=9)
+        .map(|row| engine.get_cell_value("Sheet2", row, 2))
+        .collect();
+    let expected_shifted_values: Vec<_> = (1..=8)
+        .map(|row| Some(LiteralValue::Number(f64::from(row * 10))))
+        .collect();
+    assert_eq!(shifted_values, expected_shifted_values);
+
+    let formula = engine.graph.formula_vertices()[0];
+    let ast = ast_shape(&engine.graph, formula);
+    let actual = graph_shape(&engine.graph, formula);
+    let sheet2 = engine.sheet_id("Sheet2").unwrap();
+    let b5 = CellRef::new(sheet2, Coord::from_excel(5, 2, true, true));
+    let b6 = CellRef::new(sheet2, Coord::from_excel(6, 2, true, true));
+    assert_eq!(actual.cells, BTreeSet::from([b5]));
+    assert_eq!(ast.shape.cells, BTreeSet::from([b6]));
+    let structural_failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_structural_parity(&engine, 0x0adc_0303, 1);
+    }));
+    assert!(
+        structural_failure.is_err(),
+        "the structural checker must detect the B5/B6 split"
+    );
+
+    engine.graph.mark_vertex_dirty(formula);
+    engine.evaluate_all().unwrap();
+    let evaluated = engine.get_cell_value("Sheet1", 6, 4);
+    eprintln!(
+        "AST_EDGE_UNDO_STRUCTURAL_ADJUSTMENT: values B2:B9={shifted_values:?}; edge=Sheet2!B5; AST=Sheet2!B6; D6={evaluated:?}; correct D6=120"
+    );
+    assert_eq!(
+        evaluated,
+        Some(LiteralValue::Number(120.0)),
+        "undo must restore the data and evaluate Sheet1!D6 from the restored Sheet2!B6 value"
+    );
 }
 
 // T2 finding AST_EDGE_UNRELATED_DELETE_NAME: see the matching entry in the T2 worker report.
-// Deleting a column on the default sheet removes a workbook-name vertex and strands formulas on
-// other sheets, even when the name resolves to a cell on another sheet.
+// GitHub issue #302's review extension covers both default-sheet row and column deletes. Either
+// shape removes a workbook-name edge and strands formulas on another sheet.
 #[test]
-#[ignore = "known T2 divergence: unrelated default-sheet delete drops a name edge"]
-fn deleting_unrelated_default_sheet_column_preserves_cross_sheet_name_edge() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
-    engine.add_sheet("Sheet2").unwrap();
-    let target = CellRef::new(
-        engine.sheet_id("Sheet2").unwrap(),
-        Coord::from_excel(2, 6, true, true),
+#[ignore = "known T2 divergence: unrelated default-sheet row or column delete drops a name edge"]
+fn deleting_unrelated_default_sheet_row_or_column_preserves_cross_sheet_name_edge() {
+    fn dependencies_after_delete(delete_row: bool) -> usize {
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        engine.add_sheet("Sheet2").unwrap();
+        let target = CellRef::new(
+            engine.sheet_id("Sheet2").unwrap(),
+            Coord::from_excel(2, 6, true, true),
+        );
+        engine
+            .define_name(
+                "Tracked",
+                NamedDefinition::Cell(target),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet2", 10, 6, parse("=Tracked+1").unwrap())
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+            .unwrap();
+        assert_structural_parity(&engine, 0xc0de_0006, 0);
+        if delete_row {
+            engine.delete_rows("Sheet1", 1, 1).unwrap();
+        } else {
+            engine.delete_columns("Sheet1", 1, 1).unwrap();
+        }
+        engine
+            .graph
+            .get_dependencies(engine.graph.formula_vertices()[0])
+            .len()
+    }
+
+    let after_column_delete = dependencies_after_delete(false);
+    let after_row_delete = dependencies_after_delete(true);
+    assert_eq!(after_column_delete, 0);
+    assert_eq!(after_row_delete, 0);
+    assert!(
+        after_column_delete > 0 && after_row_delete > 0,
+        "default-sheet row and column deletes must both preserve the cross-sheet name edge"
     );
-    engine
-        .define_name(
-            "Tracked",
-            NamedDefinition::Cell(target),
-            NameScope::Workbook,
-        )
-        .unwrap();
-    engine
-        .set_cell_formula("Sheet2", 10, 6, parse("=Tracked+1").unwrap())
-        .unwrap();
-    engine
-        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
-        .unwrap();
-    assert_structural_parity(&engine, 0xc0de_0006, 0);
-
-    engine.delete_columns("Sheet1", 1, 1).unwrap();
-
-    assert_structural_parity(&engine, 0xc0de_0006, 1);
 }
 
 // T2 finding AST_EDGE_UNDO_EMPTY_PLACEHOLDER: see the matching entry in the T2 worker report.
-// Undo removes a referenced empty placeholder instead of restoring its dependency role.
+// GitHub issue #301's review extension confirms that redo also fails to rebuild the edge.
 #[test]
-#[ignore = "known T2 divergence: undoing a write to a referenced empty placeholder drops its edge"]
+#[ignore = "known T2 divergence: undo and redo of an empty-placeholder write drop its edge"]
 fn undoing_value_write_to_referenced_empty_placeholder_preserves_formula_edge() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine
@@ -644,8 +747,24 @@ fn undoing_value_write_to_referenced_empty_placeholder_preserves_formula_edge() 
         .unwrap();
     let mut undo = UndoEngine::new();
     engine.undo_logged(&mut undo, &mut log).unwrap();
+    let formula = engine.graph.formula_vertices()[0];
+    assert!(engine.graph.get_dependencies(formula).is_empty());
 
-    assert_structural_parity(&engine, 0xc0de_0005, 1);
+    engine.redo_logged(&mut undo, &mut log).unwrap();
+    let dependencies_after_redo = engine.graph.get_dependencies(formula);
+    assert!(dependencies_after_redo.is_empty());
+    let formulas = engine.graph.formula_vertices();
+    engine.graph.clear_dirty_flags(&formulas);
+    engine
+        .set_cell_value("Sheet1", 6, 3, LiteralValue::Number(555.0))
+        .unwrap();
+    assert!(!engine.graph.is_dirty(formula));
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 4, 4), None);
+    assert!(
+        !dependencies_after_redo.is_empty(),
+        "redo must rebuild the C6 edge so a later C6 write dirties and evaluates D4"
+    );
 }
 
 #[test]
@@ -680,9 +799,22 @@ fn randomized_structural_edits_keep_ast_and_graph_dependencies_exact() {
             behavior_samples: 2,
         },
     ];
-    for campaign in campaigns {
-        run_campaign(campaign);
-    }
+    let stats = campaigns
+        .into_iter()
+        .fold(CampaignStats::default(), |mut total, campaign| {
+            let campaign_stats = run_campaign(campaign);
+            total.undo += campaign_stats.undo;
+            total.redo += campaign_stats.redo;
+            total
+        });
+    eprintln!(
+        "campaign history operations realized: undo={} redo={}",
+        stats.undo, stats.redo
+    );
+    assert!(
+        stats.redo > 0,
+        "default campaigns must realize at least one redo operation"
+    );
 }
 
 #[test]
@@ -726,6 +858,18 @@ fn row_and_column_adjustment_keeps_compressed_ranges_in_ast_edge_parity() {
     engine.delete_columns("Sheet1", 4, 1).unwrap();
     assert_structural_parity(&engine, 0xc0de_0001, 4);
     assert_behavioral_parity(&mut engine, 0xc0de_0001, 4, 2);
+}
+
+#[test]
+fn range_area_equal_to_expansion_limit_uses_direct_edges() {
+    let config = EvalConfig::default().with_range_expansion_limit(16);
+    let mut engine = Engine::new(TestWorkbook::new(), config);
+    engine
+        .set_cell_formula("Sheet1", 1, 8, parse("=SUM(A2:B9)").unwrap())
+        .unwrap();
+
+    assert_structural_parity(&engine, 0xc0de_0010, 0);
+    assert_behavioral_parity(&mut engine, 0xc0de_0010, 0, 2);
 }
 
 #[test]
