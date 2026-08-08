@@ -485,7 +485,7 @@ mod differential {
         // so overflow inputs are covered by direct behavior pins rather than
         // differential comparison (the debug oracle would panic).
         for formula in [
-            "=SUM(A1:XFD262143)",
+            "=SUM(A1:FLA983055)",
             "=SUM(A1:XFD262144)",
             "=SUM(A1:XFD1048576)",
         ] {

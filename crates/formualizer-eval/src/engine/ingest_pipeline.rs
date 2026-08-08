@@ -2184,7 +2184,7 @@ mod tests {
         let sheet = engine.graph.sheet_id_mut("Sheet1");
         let mut pipeline = engine.ingest_pipeline();
         for formula in [
-            "=SUM(A1:XFD262143)",
+            "=SUM(A1:FLA983055)",
             "=SUM(A1:XFD262144)",
             "=SUM(A1:XFD1048576)",
         ] {

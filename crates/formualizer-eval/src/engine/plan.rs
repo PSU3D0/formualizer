@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn overflow_sized_ranges_stay_compressed_in_plan() {
         for formula in [
-            "=SUM(A1:XFD262143)",
+            "=SUM(A1:FLA983055)",
             "=SUM(A1:XFD262144)",
             "=SUM(A1:XFD1048576)",
         ] {
