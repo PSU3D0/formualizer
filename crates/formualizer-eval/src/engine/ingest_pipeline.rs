@@ -2149,7 +2149,7 @@ mod tests {
         let mut pipeline = engine.ingest_pipeline();
         let formulas = [
             "=SUM(A1,$B2,C$3,$D$4)",
-            "=SUM(A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
+            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
             "=SUM(Sheet2!A1,NamedThing)",
             "=Table1[#Data]",
             "=SUM([book]Sheet!A1,[book]Sheet!A1:B2)",

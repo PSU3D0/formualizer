@@ -443,7 +443,7 @@ mod differential {
     fn frozen_walk_matches_all_reference_classes_and_error_outcomes() {
         let formulas = [
             "=SUM(A1,$B2,C$3,$D$4)",
-            "=SUM(A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
+            "=SUM(A1:A1,A1:B2,Sheet2!C3:D4,A1:A,A:A,1:1)",
             "=SUM(Sheet2!A1,NamedThing,Table1[#Data])",
             "=SUM([book]Sheet!A1,[book]Sheet!A1:B2)",
             "=SUM(Sheet1:Sheet2!A1,Sheet1:Sheet2!B2:C3)",
