@@ -55,6 +55,10 @@ All notable changes to Formualizer will be documented in this file.
 - Narrowed the published eval API to stable table metadata, reference-adjustment conveniences, builtin loading/date compatibility helpers, and opaque Formula Plane descriptors; test-only helpers now require the non-default `test-support` feature. (#259)
 - Upgraded Calamine-backed XLSX loading to Calamine 0.36 and a single-pass value/formula metadata stream, preserving formula-only worksheet dimensions, cached-value semantics, load limits, shared-formula relocation, and malformed-family fallback.
 
+### Testing / internal
+
+- Added a fixed-seed AST-to-edge parity harness covering structural edits, compressed ranges, symbol vertices, dirty propagation, and mutation-tested edge-maintenance failures.
+
 ### Fixed
 
 - Whole-surface ranges whose cell count overflows `u32` are now always kept as compressed range dependencies instead of panicking or attempting expansion.
