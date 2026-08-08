@@ -438,7 +438,15 @@ mod differential {
         let (mut legacy, mut consolidated, sheet) = graphs(limit);
         let old = normalize(legacy.legacy_extract_dependencies(&ast, sheet));
         let new = normalize(consolidated.extract_dependencies(&ast, sheet));
-        assert_eq!(old, new, "formula={formula}, limit={limit}");
+        assert_eq!(old, new, "tree formula={formula}, limit={limit}");
+
+        let config = EvalConfig::default().with_range_expansion_limit(limit);
+        let mut arena = DependencyGraph::new_with_config(config);
+        let arena_sheet = arena.sheet_reg.id_for("Sheet1");
+        arena.sheet_reg.id_for("Sheet2");
+        let ast_id = arena.data_store.store_ast(&ast, &arena.sheet_reg);
+        let arena_result = normalize(arena.extract_dependencies_arena(ast_id, arena_sheet));
+        assert_eq!(old, arena_result, "arena formula={formula}, limit={limit}");
     }
 
     #[test]
