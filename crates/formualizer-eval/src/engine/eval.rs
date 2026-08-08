@@ -22,6 +22,9 @@ use crate::engine::spill::{RegionLockManager, SpillMeta, SpillShape};
 use crate::engine::target_preparation::{
     StagedFormulaIndex, StagedFormulaLease, StagedPackageLease,
 };
+use crate::engine::used_extent::{
+    ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
+};
 use crate::engine::virtual_deps::{DynamicRefVirtualDepProvider, VirtualDepBuilder};
 use crate::engine::{
     CycleDetection, CyclePolicy, DependencyGraph, EvalConfig, EvaluationRequestKind,
@@ -23123,6 +23126,46 @@ where
     }
 }
 
+impl<R> Engine<R>
+where
+    R: EvaluationContext,
+{
+    /// Semantic used coordinates exclude graph-only dependency placeholders.
+    ///
+    /// Non-empty base/overlay/computed cells come from Arrow storage, while
+    /// scalar and array formulas come from graph formula kinds even before
+    /// their results are materialized. The legacy graph fallback is omitted:
+    /// `load_packed_to_vertex` entries are either represented by those sources
+    /// or are `Empty` dependency placeholders, not a third value authority.
+    pub(crate) fn semantic_used_rows_for_columns(
+        &self,
+        sheet: &str,
+        start_col: u32,
+        end_col: u32,
+    ) -> Option<(u32, u32)> {
+        let arrow_bounds = self
+            .sheet_store()
+            .sheet(sheet)
+            .and_then(|_| self.arrow_used_row_bounds(sheet, start_col, end_col));
+        let formula_bounds = self.formula_row_bounds_for_columns(sheet, start_col, end_col);
+        Self::union_used_bounds(arrow_bounds, formula_bounds)
+    }
+
+    pub(crate) fn semantic_used_cols_for_rows(
+        &self,
+        sheet: &str,
+        start_row: u32,
+        end_row: u32,
+    ) -> Option<(u32, u32)> {
+        let arrow_bounds = self
+            .sheet_store()
+            .sheet(sheet)
+            .and_then(|_| self.arrow_used_col_bounds(sheet, start_row, end_row));
+        let formula_bounds = self.formula_col_bounds_for_rows(sheet, start_row, end_row);
+        Self::union_used_bounds(arrow_bounds, formula_bounds)
+    }
+}
+
 // Override EvaluationContext to provide thread pool access
 impl<R> crate::traits::EvaluationContext for Engine<R>
 where
@@ -23524,76 +23567,55 @@ where
                     None
                 };
 
-                let mut sr = bounded_range
+                let sr = bounded_range
                     .as_ref()
                     .map(|r| r.start.coord.row() + 1)
                     .or_else(|| range.start_row.map(|b| b.index + 1));
-                let mut sc = bounded_range
+                let sc = bounded_range
                     .as_ref()
                     .map(|r| r.start.coord.col() + 1)
                     .or_else(|| range.start_col.map(|b| b.index + 1));
-                let mut er = bounded_range
+                let er = bounded_range
                     .as_ref()
                     .map(|r| r.end.coord.row() + 1)
                     .or_else(|| range.end_row.map(|b| b.index + 1));
-                let mut ec = bounded_range
+                let ec = bounded_range
                     .as_ref()
                     .map(|r| r.end.coord.col() + 1)
                     .or_else(|| range.end_col.map(|b| b.index + 1));
 
-                if sr.is_none() && er.is_none() {
-                    // Full-column reference: anchor at row 1
-                    let scv = sc.unwrap_or(1);
-                    let ecv = ec.unwrap_or(scv);
-                    sr = Some(1);
-                    if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
-                        er = Some(max_r);
-                    } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                        er = Some(self.config.max_open_ended_rows);
-                    }
-                }
-                if sc.is_none() && ec.is_none() {
-                    // Full-row reference: anchor at column 1
-                    let srv = sr.unwrap_or(1);
-                    let erv = er.unwrap_or(srv);
-                    sc = Some(1);
-                    if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
-                        ec = Some(max_c);
-                    } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                        ec = Some(self.config.max_open_ended_cols);
-                    }
-                }
-                if sr.is_some() && er.is_none() {
-                    let scv = sc.unwrap_or(1);
-                    let ecv = ec.unwrap_or(scv);
-                    if let Some((_, max_r)) = self.used_rows_for_columns(sheet_name, scv, ecv) {
-                        er = Some(max_r);
-                    } else if let Some((max_rows, _)) = self.sheet_bounds(sheet_name) {
-                        er = Some(self.config.max_open_ended_rows);
-                    }
-                }
-                if er.is_some() && sr.is_none() {
-                    // Open start: anchor at row 1
-                    sr = Some(1);
-                }
-                if sc.is_some() && ec.is_none() {
-                    let srv = sr.unwrap_or(1);
-                    let erv = er.unwrap_or(srv);
-                    if let Some((_, max_c)) = self.used_cols_for_rows(sheet_name, srv, erv) {
-                        ec = Some(max_c);
-                    } else if let Some((_, max_cols)) = self.sheet_bounds(sheet_name) {
-                        ec = Some(self.config.max_open_ended_cols);
-                    }
-                }
-                if ec.is_some() && sc.is_none() {
-                    // Open start: anchor at column 1
-                    sc = Some(1);
-                }
-
-                let sr = sr.unwrap_or(1);
-                let sc = sc.unwrap_or(1);
-                let er = er.unwrap_or(sr.saturating_sub(1));
-                let ec = ec.unwrap_or(sc.saturating_sub(1));
+                let extent = resolve_used_extent_with_fallback(
+                    OpenRangeBounds {
+                        start_row: sr,
+                        start_column: sc,
+                        end_row: er,
+                        end_column: ec,
+                    },
+                    ExtentPolicy::EvaluationCompat {
+                        fallback_row: None,
+                        fallback_column: None,
+                    },
+                    || {
+                        self.sheet_bounds(sheet_name)
+                            .map(|_| self.config.max_open_ended_rows)
+                    },
+                    || {
+                        self.sheet_bounds(sheet_name)
+                            .map(|_| self.config.max_open_ended_cols)
+                    },
+                    |first, last| self.used_rows_for_columns(sheet_name, first, last),
+                    |first, last| self.used_cols_for_rows(sheet_name, first, last),
+                );
+                let (sr, sc, er, ec) = extent
+                    .map(|extent| {
+                        (
+                            extent.start_row,
+                            extent.start_column,
+                            extent.end_row,
+                            extent.end_column,
+                        )
+                    })
+                    .unwrap_or((1, 1, 0, 0));
 
                 if self.force_materialize_range_views {
                     if er < sr || ec < sc {

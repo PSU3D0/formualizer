@@ -28,6 +28,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- Added binding-neutral `CellAddress` and open-ended `RangeArea` types to `formualizer-common`, with checked in-grid 1-based construction, finite `RangeAddress` conversions, serde support, and total canonical quoted-sheet A1 display for cells, including `#REF!` sentinels for unchecked zero coordinates and unbounded bijective base-26 rendering beyond XFD. `TryFrom<RangeAddress> for CellAddress` now consistently reports `SheetAddressError`.
 - Tables can be defined at runtime, without a serialise-and-reload round trip: `Workbook::define_table` (Rust), `Workbook.addTable` (WASM) and `Workbook.add_table` (Python), plus `tables()` / `getTables()` to list them. Tables are metadata over cells that already exist, so populate the region first; structured references resolve immediately afterwards and edits inside the region propagate. Definitions are validated up front -- unknown sheet, 1-based range violations, an inverted range, a header row with no data rows, and a header count that does not match the range width are all rejected by name rather than silently producing a table whose columns read outside its own range. The WASM binding rejects unknown keys instead of ignoring them and ships `TableDefinition`/`TableMetadata` TypeScript interfaces. (#212)
 - Documented the JSON workbook format in `docs/json-workbook-format.md`, including the previously undocumented `tables` entry, the adjacently tagged cell-value shape, and the trap that a `tables` key outside a sheet is silently ignored. The worked example and the documented defaults are covered by tests. (#212)
 - Added canonical checked Excel 1900/1904 date-serial conversion APIs to `formualizer-common`, including separate display semantics for serials 0 and 60 and source-compatible Excel-1900 wrappers for the existing common API.
@@ -49,6 +50,7 @@ All notable changes to Formualizer will be documented in this file.
 ### Improved
 
 - Consolidated the engine's graph, ingest, and planning AST dependency walks behind one crate-private semantic reference collector without changing their independent policies or behavior.
+- Consolidated whole-axis and partially open used-extent resolution behind one internal policy-driven resolver while preserving the distinct runtime, virtual-dependency, graph, and semantic policies.
 - Narrowed the published eval API to stable table metadata, reference-adjustment conveniences, builtin loading/date compatibility helpers, and opaque Formula Plane descriptors; test-only helpers now require the non-default `test-support` feature. (#259)
 - Upgraded Calamine-backed XLSX loading to Calamine 0.36 and a single-pass value/formula metadata stream, preserving formula-only worksheet dimensions, cached-value semantics, load limits, shared-formula relocation, and malformed-family fallback.
 

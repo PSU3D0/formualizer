@@ -1,6 +1,9 @@
 use crate::engine::VertexId;
 use crate::engine::VertexKind;
 use crate::engine::eval::Engine;
+use crate::engine::used_extent::{
+    ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent_with_fallback,
+};
 use crate::formula_plane::region_index::Region;
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
@@ -78,65 +81,40 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
         end_row: Option<u32>,
         end_col: Option<u32>,
     ) {
-        let mut sr = start_row;
-        let mut sc = start_col;
-        let mut er = end_row;
-        let mut ec = end_col;
-
-        if sr.is_none() && er.is_none() {
-            let scv = sc.unwrap_or(1u32);
-            let ecv = ec.unwrap_or(scv);
-            sr = Some(1);
-            if let Some((_, max_r)) = self.engine.used_rows_for_columns(sheet_name, scv, ecv) {
-                er = Some(max_r);
-            } else if self.engine.sheet_bounds(sheet_name).is_some() {
-                er = Some(self.engine.config.max_open_ended_rows);
-            }
-        }
-        if sc.is_none() && ec.is_none() {
-            let srv = sr.unwrap_or(1u32);
-            let erv = er.unwrap_or(srv);
-            sc = Some(1);
-            if let Some((_, max_c)) = self.engine.used_cols_for_rows(sheet_name, srv, erv) {
-                ec = Some(max_c);
-            } else if self.engine.sheet_bounds(sheet_name).is_some() {
-                ec = Some(self.engine.config.max_open_ended_cols);
-            }
-        }
-        if sr.is_some() && er.is_none() {
-            let scv = sc.unwrap_or(1u32);
-            let ecv = ec.unwrap_or(scv);
-            if let Some((_, max_r)) = self.engine.used_rows_for_columns(sheet_name, scv, ecv) {
-                er = Some(max_r);
-            } else if self.engine.sheet_bounds(sheet_name).is_some() {
-                er = Some(self.engine.config.max_open_ended_rows);
-            }
-        }
-        if er.is_some() && sr.is_none() {
-            sr = Some(1);
-        }
-        if sc.is_some() && ec.is_none() {
-            let srv = sr.unwrap_or(1u32);
-            let erv = er.unwrap_or(srv);
-            if let Some((_, max_c)) = self.engine.used_cols_for_rows(sheet_name, srv, erv) {
-                ec = Some(max_c);
-            } else if self.engine.sheet_bounds(sheet_name).is_some() {
-                ec = Some(self.engine.config.max_open_ended_cols);
-            }
-        }
-        if ec.is_some() && sc.is_none() {
-            sc = Some(1);
-        }
-
-        let sr = sr.unwrap_or(1);
-        let sc = sc.unwrap_or(1);
-        let er = er.unwrap_or(sr.saturating_sub(1));
-        let ec = ec.unwrap_or(sc.saturating_sub(1));
-        if er < sr || ec < sc {
+        let Some(extent) = resolve_used_extent_with_fallback(
+            OpenRangeBounds {
+                start_row,
+                start_column: start_col,
+                end_row,
+                end_column: end_col,
+            },
+            ExtentPolicy::EvaluationCompat {
+                fallback_row: None,
+                fallback_column: None,
+            },
+            || {
+                self.engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| self.engine.config.max_open_ended_rows)
+            },
+            || {
+                self.engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| self.engine.config.max_open_ended_cols)
+            },
+            |first, last| self.engine.used_rows_for_columns(sheet_name, first, last),
+            |first, last| self.engine.used_cols_for_rows(sheet_name, first, last),
+        ) else {
             return;
-        }
+        };
 
-        self.collect_formula_vertices_in_rect(sheet_name, sr, sc, er, ec);
+        self.collect_formula_vertices_in_rect(
+            sheet_name,
+            extent.start_row,
+            extent.start_column,
+            extent.end_row,
+            extent.end_column,
+        );
     }
 }
 
@@ -288,6 +266,37 @@ impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> 
 pub struct RangeVirtualDepProvider;
 
 impl RangeVirtualDepProvider {
+    pub(crate) fn resolve_range<R: EvaluationContext>(
+        engine: &Engine<R>,
+        sheet_name: &str,
+        range: &formualizer_common::SheetRangeRef<'_>,
+    ) -> Option<ResolvedExtent> {
+        resolve_used_extent_with_fallback(
+            OpenRangeBounds {
+                start_row: range.start_row.map(|bound| bound.index + 1),
+                start_column: range.start_col.map(|bound| bound.index + 1),
+                end_row: range.end_row.map(|bound| bound.index + 1),
+                end_column: range.end_col.map(|bound| bound.index + 1),
+            },
+            ExtentPolicy::VirtualDependencyCompat {
+                fallback_row: None,
+                fallback_column: None,
+            },
+            || {
+                engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| engine.config.max_open_ended_rows)
+            },
+            || {
+                engine
+                    .sheet_bounds(sheet_name)
+                    .map(|_| engine.config.max_open_ended_cols)
+            },
+            |first, last| engine.used_rows_for_columns(sheet_name, first, last),
+            |first, last| engine.used_cols_for_rows(sheet_name, first, last),
+        )
+    }
+
     pub fn get_virtual_deps<R: EvaluationContext>(
         engine: &Engine<R>,
         v: VertexId,
@@ -302,78 +311,13 @@ impl RangeVirtualDepProvider {
                 };
                 let sheet_name = engine.graph.sheet_name(sheet_id);
 
-                let mut sr = r.start_row.map(|b| b.index + 1);
-                let mut sc = r.start_col.map(|b| b.index + 1);
-                let mut er = r.end_row.map(|b| b.index + 1);
-                let mut ec = r.end_col.map(|b| b.index + 1);
-
-                if sr.is_none() && er.is_none() {
-                    let scv = sc.unwrap_or(1u32);
-                    let ecv = ec.unwrap_or(scv);
-                    if let Some((min_r, max_r)) = engine.used_rows_for_columns(sheet_name, scv, ecv)
-                    {
-                        sr = Some(min_r);
-                        er = Some(max_r);
-                    } else if let Some((_max_rows, _)) = engine.sheet_bounds(sheet_name) {
-                        sr = Some(1);
-                        er = Some(engine.config.max_open_ended_rows);
-                    }
-                }
-                if sc.is_none() && ec.is_none() {
-                    let srv = sr.unwrap_or(1u32);
-                    let erv = er.unwrap_or(srv);
-                    if let Some((min_c, max_c)) = engine.used_cols_for_rows(sheet_name, srv, erv) {
-                        sc = Some(min_c);
-                        ec = Some(max_c);
-                    } else if let Some((_, _max_cols)) = engine.sheet_bounds(sheet_name) {
-                        sc = Some(1);
-                        ec = Some(engine.config.max_open_ended_cols);
-                    }
-                }
-                if sr.is_some() && er.is_none() {
-                    let scv = sc.unwrap_or(1u32);
-                    let ecv = ec.unwrap_or(scv);
-                    if let Some((_, max_r)) = engine.used_rows_for_columns(sheet_name, scv, ecv) {
-                        er = Some(max_r);
-                    } else if let Some((_max_rows, _)) = engine.sheet_bounds(sheet_name) {
-                        er = Some(engine.config.max_open_ended_rows);
-                    }
-                }
-                if er.is_some() && sr.is_none() {
-                    let scv = sc.unwrap_or(1u32);
-                    let ecv = ec.unwrap_or(scv);
-                    if let Some((min_r, _)) = engine.used_rows_for_columns(sheet_name, scv, ecv) {
-                        sr = Some(min_r);
-                    } else {
-                        sr = Some(1);
-                    }
-                }
-                if sc.is_some() && ec.is_none() {
-                    let srv = sr.unwrap_or(1u32);
-                    let erv = er.unwrap_or(srv);
-                    if let Some((_, max_c)) = engine.used_cols_for_rows(sheet_name, srv, erv) {
-                        ec = Some(max_c);
-                    } else if let Some((_, _max_cols)) = engine.sheet_bounds(sheet_name) {
-                        ec = Some(engine.config.max_open_ended_cols);
-                    }
-                }
-                if ec.is_some() && sc.is_none() {
-                    let srv = sr.unwrap_or(1u32);
-                    let erv = er.unwrap_or(srv);
-                    if let Some((min_c, _)) = engine.used_cols_for_rows(sheet_name, srv, erv) {
-                        sc = Some(min_c);
-                    } else {
-                        sc = Some(1);
-                    }
-                }
-
-                let sr = sr.unwrap_or(1);
-                let sc = sc.unwrap_or(1);
-                let er = er.unwrap_or(sr.saturating_sub(1));
-                let ec = ec.unwrap_or(sc.saturating_sub(1));
-                if er < sr || ec < sc {
+                let Some(extent) = Self::resolve_range(engine, sheet_name, r) else {
                     continue;
-                }
+                };
+                let sr = extent.start_row;
+                let sc = extent.start_column;
+                let er = extent.end_row;
+                let ec = extent.end_column;
 
                 if let Some(index) = engine.graph.sheet_index(sheet_id) {
                     let sr0 = sr.saturating_sub(1);

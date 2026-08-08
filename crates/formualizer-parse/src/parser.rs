@@ -350,36 +350,8 @@ impl Display for SpecialItem {
     }
 }
 
-/// Check if a sheet name needs to be quoted in Excel formulas
 fn sheet_name_needs_quoting(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-
-    let bytes = name.as_bytes();
-
-    // Check if starts with a digit
-    if bytes[0].is_ascii_digit() {
-        return true;
-    }
-
-    // Check for any special characters that require quoting
-    // This includes: space, !, ", #, $, %, &, ', (, ), *, +, comma, -, ., /, :, ;, <, =, >, ?, @, [, \, ], ^, `, {, |, }, ~
-    for &byte in bytes {
-        match byte {
-            b' ' | b'!' | b'"' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+'
-            | b',' | b'-' | b'.' | b'/' | b':' | b';' | b'<' | b'=' | b'>' | b'?' | b'@' | b'['
-            | b'\\' | b']' | b'^' | b'`' | b'{' | b'|' | b'}' | b'~' => return true,
-            _ => {}
-        }
-    }
-
-    // Check for Excel reserved words (case-insensitive)
-    let upper = name.to_uppercase();
-    matches!(
-        upper.as_str(),
-        "TRUE" | "FALSE" | "NULL" | "REF" | "DIV" | "NAME" | "NUM" | "VALUE" | "N/A"
-    )
+    formualizer_common::a1_sheet_name_needs_quoting(name)
 }
 
 #[derive(Debug, Clone)]
@@ -1012,13 +984,10 @@ impl Display for ReferenceType {
                     let row_str = Self::format_row(*row, *row_abs);
 
                     if let Some(sheet_name) = sheet {
-                        if sheet_name_needs_quoting(sheet_name) {
-                            // Escape any single quotes in the sheet name by doubling them
-                            let escaped_name = sheet_name.replace('\'', "''");
-                            format!("'{escaped_name}'!{col_str}{row_str}")
-                        } else {
-                            format!("{sheet_name}!{col_str}{row_str}")
-                        }
+                        format!(
+                            "{}!{col_str}{row_str}",
+                            formualizer_common::format_a1_sheet_name(sheet_name)
+                        )
                     } else {
                         format!("{col_str}{row_str}")
                     }
@@ -1061,13 +1030,10 @@ impl Display for ReferenceType {
                     let range_part = format!("{start_ref}:{end_ref}");
 
                     if let Some(sheet_name) = sheet {
-                        if sheet_name_needs_quoting(sheet_name) {
-                            // Escape any single quotes in the sheet name by doubling them
-                            let escaped_name = sheet_name.replace('\'', "''");
-                            format!("'{escaped_name}'!{range_part}")
-                        } else {
-                            format!("{sheet_name}!{range_part}")
-                        }
+                        format!(
+                            "{}!{range_part}",
+                            formualizer_common::format_a1_sheet_name(sheet_name)
+                        )
                     } else {
                         range_part
                     }

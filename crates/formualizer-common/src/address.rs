@@ -6,6 +6,46 @@ use std::fmt;
 
 use crate::coord::{A1ParseError, CoordError, RelativeCoord};
 
+/// Format a sheet name for use before `!` in an A1 reference.
+///
+/// Names that require quoting follow the same rules as canonical formula
+/// rendering. Embedded apostrophes are escaped by doubling them.
+pub fn format_a1_sheet_name(name: &str) -> Cow<'_, str> {
+    if !a1_sheet_name_needs_quoting(name) {
+        return Cow::Borrowed(name);
+    }
+    Cow::Owned(format!("'{}'", name.replace('\'', "''")))
+}
+
+/// Return whether canonical A1 rendering must quote a sheet name.
+///
+/// This is the allocation-free predicate used by [`format_a1_sheet_name`].
+pub fn a1_sheet_name_needs_quoting(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    if name.as_bytes()[0].is_ascii_digit() {
+        return true;
+    }
+
+    for &byte in name.as_bytes() {
+        match byte {
+            b' ' | b'!' | b'"' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+'
+            | b',' | b'-' | b'.' | b'/' | b':' | b';' | b'<' | b'=' | b'>' | b'?' | b'@' | b'['
+            | b'\\' | b']' | b'^' | b'`' | b'{' | b'|' | b'}' | b'~' => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+
+    matches!(
+        name.to_uppercase().as_str(),
+        "TRUE" | "FALSE" | "NULL" | "REF" | "DIV" | "NAME" | "NUM" | "VALUE" | "N/A"
+    )
+}
+
 /// Stable sheet identifier used across the workspace.
 pub type SheetId = u16;
 
@@ -105,6 +145,12 @@ impl PackedSheetCell {
 pub enum SheetAddressError {
     /// Encountered a 0 or underflowed 1-based index when converting to 0-based.
     ZeroIndex,
+    /// A row exceeded the 1,048,576-row spreadsheet grid.
+    RowOutOfBounds,
+    /// A column exceeded the 16,384-column spreadsheet grid.
+    ColumnOutOfBounds,
+    /// Attempted to convert a multi-cell range into a cell address.
+    NonSingleCellRange,
     /// Start/end coordinates were not ordered (start <= end).
     RangeOrder,
     /// Attempted to combine references with different sheet locators.
@@ -124,6 +170,15 @@ impl fmt::Display for SheetAddressError {
         match self {
             SheetAddressError::ZeroIndex => {
                 write!(f, "row and column indices must be 1-based (>= 1)")
+            }
+            SheetAddressError::RowOutOfBounds => {
+                write!(f, "row index exceeds the 1,048,576-row grid")
+            }
+            SheetAddressError::ColumnOutOfBounds => {
+                write!(f, "column index exceeds the 16,384-column grid")
+            }
+            SheetAddressError::NonSingleCellRange => {
+                write!(f, "range must contain exactly one cell")
             }
             SheetAddressError::RangeOrder => {
                 write!(

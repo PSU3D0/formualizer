@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::used_extent::{ExtentPolicy, OpenRangeBounds, resolve_used_extent};
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 
@@ -87,6 +88,34 @@ impl DependencyGraph {
         }
     }
 
+    pub(crate) fn compressed_range_resolved_bounds(
+        &self,
+        sheet: SheetId,
+        range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
+    ) -> Option<(u32, u32, u32, u32)> {
+        let (start_row, end_row, start_col, end_col) = range;
+        let extent = resolve_used_extent(
+            OpenRangeBounds {
+                start_row,
+                start_column: start_col,
+                end_row,
+                end_column: end_col,
+            },
+            ExtentPolicy::GraphCompat {
+                fallback_row: self.config.max_open_ended_rows.saturating_sub(1),
+                fallback_column: self.config.max_open_ended_cols.saturating_sub(1),
+            },
+            |first, last| self.used_row_bounds_for_columns(sheet, first, last),
+            |first, last| self.used_col_bounds_for_rows(sheet, first, last),
+        )?;
+        Some((
+            extent.start_row,
+            extent.end_row,
+            extent.start_column,
+            extent.end_column,
+        ))
+    }
+
     /// Classify whether every occurrence of one compressed range that covers
     /// the formula cell is narrowed away from that cell by a statically
     /// resolvable `INDEX`. The range dependency itself remains conservative so
@@ -151,36 +180,6 @@ impl DependencyGraph {
                 && end_col.map(|index| index.saturating_sub(1)) == range.3
         }
 
-        fn resolved_bounds(
-            graph: &DependencyGraph,
-            sheet: SheetId,
-            range: (Option<u32>, Option<u32>, Option<u32>, Option<u32>),
-        ) -> Option<(u32, u32, u32, u32)> {
-            let (start_row, end_row, start_col, end_col) = range;
-            let row_query = (
-                start_row.unwrap_or(0),
-                end_row.unwrap_or(graph.config.max_open_ended_rows.saturating_sub(1)),
-            );
-            let col_query = (
-                start_col.unwrap_or(0),
-                end_col.unwrap_or(graph.config.max_open_ended_cols.saturating_sub(1)),
-            );
-            let used_rows = graph.used_row_bounds_for_columns(sheet, col_query.0, col_query.1);
-            let used_cols = graph.used_col_bounds_for_rows(sheet, row_query.0, row_query.1);
-            // Runtime range resolution anchors an omitted/open start at the
-            // first Excel row or column. Only an omitted end uses the current
-            // used maximum (then the configured open-ended fallback).
-            let sr = start_row.unwrap_or(0);
-            let er = end_row
-                .or_else(|| used_rows.map(|bounds| bounds.1))
-                .unwrap_or_else(|| graph.config.max_open_ended_rows.saturating_sub(1));
-            let sc = start_col.unwrap_or(0);
-            let ec = end_col
-                .or_else(|| used_cols.map(|bounds| bounds.1))
-                .unwrap_or_else(|| graph.config.max_open_ended_cols.saturating_sub(1));
-            (sr <= er && sc <= ec).then_some((sr, er, sc, ec))
-        }
-
         fn selected_region_contains_self(
             graph: &DependencyGraph,
             dependent: VertexId,
@@ -189,7 +188,7 @@ impl DependencyGraph {
             position: i64,
             explicit_col: Option<i64>,
         ) -> Option<bool> {
-            let (sr, er, sc, ec) = resolved_bounds(graph, range_sheet, range)?;
+            let (sr, er, sc, ec) = graph.compressed_range_resolved_bounds(range_sheet, range)?;
             let (row, col) = match explicit_col {
                 Some(col) => (position, col),
                 None if sr == er => (1, position),

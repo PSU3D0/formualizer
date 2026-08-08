@@ -31,6 +31,7 @@ pub mod row_visibility;
 pub mod scheduler;
 pub mod spill;
 mod target_preparation;
+pub(crate) mod used_extent;
 pub mod vertex;
 pub mod virtual_deps;
 
