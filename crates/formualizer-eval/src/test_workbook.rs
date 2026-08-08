@@ -32,6 +32,8 @@ pub struct TestWorkbook {
     aliases: HashMap<(String, String), (String, String)>,
     planning_revision: Option<Arc<std::sync::atomic::AtomicU64>>,
     cancellation_token: Option<crate::engine::CancelToken>,
+    #[cfg(test)]
+    sheet_bounds_calls: Option<Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 impl Default for TestWorkbook {
@@ -44,6 +46,8 @@ impl Default for TestWorkbook {
             aliases: HashMap::new(),
             planning_revision: Some(Arc::new(std::sync::atomic::AtomicU64::new(0))),
             cancellation_token: None,
+            #[cfg(test)]
+            sheet_bounds_calls: None,
         }
     }
 }
@@ -84,6 +88,15 @@ impl TestWorkbook {
     #[cfg(test)]
     pub(crate) fn with_cancellation_token(mut self, token: crate::engine::CancelToken) -> Self {
         self.cancellation_token = Some(token);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_sheet_bounds_counter(
+        mut self,
+        counter: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        self.sheet_bounds_calls = Some(counter);
         self
     }
 
@@ -335,6 +348,10 @@ impl EvaluationContext for TestWorkbook {
     }
 
     fn sheet_bounds(&self, _sheet: &str) -> Option<(u32, u32)> {
+        #[cfg(test)]
+        if let Some(counter) = &self.sheet_bounds_calls {
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         Some((1_048_576, 16_384))
     }
 

@@ -3,7 +3,10 @@ use crate::arrow_store::OverlayValue;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, ResolvedExtent, resolve_used_extent,
 };
+use crate::engine::virtual_deps::{DynamicRefCollector, RangeVirtualDepProvider};
 use crate::engine::{Engine, FormulaPlaneMode};
+use crate::formula_plane::region_index::Region;
+use crate::interpreter::probe_range_dimensions;
 use crate::test_workbook::TestWorkbook;
 use crate::traits::EvaluationContext;
 use formualizer_common::LiteralValue;
@@ -46,6 +49,19 @@ fn interpreter_probe_extent(
         },
         |first, last| engine.used_rows_for_columns(sheet, first, last),
         |first, last| engine.used_cols_for_rows(sheet, first, last),
+    )
+}
+
+fn semantic_extent(
+    engine: &Engine<TestWorkbook>,
+    sheet: &str,
+    bounds: OpenRangeBounds,
+) -> Option<ResolvedExtent> {
+    resolve_used_extent(
+        bounds,
+        ExtentPolicy::Semantic,
+        |first, last| engine.semantic_used_rows_for_columns(sheet, first, last),
+        |first, last| engine.semantic_used_cols_for_rows(sheet, first, last),
     )
 }
 
@@ -223,51 +239,20 @@ fn frozen_virtual_dependency_extent_ccfeaf83(
     })
 }
 
-fn range_matrix() -> [OpenRangeBounds; 7] {
-    [
-        OpenRangeBounds {
-            start_row: None,
-            start_column: Some(1),
-            end_row: None,
-            end_column: Some(3),
-        },
-        OpenRangeBounds {
-            start_row: Some(2),
-            start_column: None,
-            end_row: Some(9),
-            end_column: None,
-        },
-        OpenRangeBounds {
-            start_row: Some(4),
-            start_column: Some(2),
-            end_row: None,
-            end_column: Some(5),
-        },
-        OpenRangeBounds {
-            start_row: None,
-            start_column: Some(2),
-            end_row: Some(20),
-            end_column: Some(5),
-        },
-        OpenRangeBounds {
-            start_row: Some(3),
-            start_column: Some(3),
-            end_row: Some(20),
-            end_column: None,
-        },
-        OpenRangeBounds {
-            start_row: Some(3),
-            start_column: None,
-            end_row: Some(20),
-            end_column: Some(7),
-        },
-        OpenRangeBounds {
-            start_row: Some(2),
-            start_column: Some(2),
-            end_row: Some(8),
-            end_column: Some(6),
-        },
-    ]
+fn range_matrix() -> [OpenRangeBounds; 16] {
+    let mut ranges = [OpenRangeBounds {
+        start_row: None,
+        start_column: None,
+        end_row: None,
+        end_column: None,
+    }; 16];
+    for (index, bounds) in ranges.iter_mut().enumerate() {
+        bounds.start_row = ((index & 0b1000) != 0).then_some(2);
+        bounds.start_column = ((index & 0b0100) != 0).then_some(2);
+        bounds.end_row = ((index & 0b0010) != 0).then_some(8);
+        bounds.end_column = ((index & 0b0001) != 0).then_some(6);
+    }
+    ranges
 }
 
 fn populated_engine(
@@ -362,8 +347,22 @@ fn differential_matrix_covers_empty_formula_only_overlay_only_and_logical_tail()
         }
     }
 
+    for bounds in range_matrix() {
+        assert_eq!(
+            evaluation_extent(&empty, "Missing", bounds),
+            frozen_evaluation_extent_ccfeaf83(&empty, "Missing", bounds)
+        );
+        assert_eq!(
+            virtual_dependency_extent(&empty, "Missing", bounds),
+            frozen_virtual_dependency_extent_ccfeaf83(&empty, "Missing", bounds)
+        );
+    }
+
     let whole_column =
         ReferenceType::range(Some("Sheet1".to_string()), None, Some(2), None, Some(2));
+    let empty_view = empty.resolve_range_view(&whole_column, "Sheet1").unwrap();
+    assert_eq!((empty_view.start_row(), empty_view.end_row()), (0, 63));
+
     let view = formula_only
         .resolve_range_view(&whole_column, "Sheet1")
         .unwrap();
@@ -388,6 +387,51 @@ fn interpreter_probe_sheet_bounds_fallback_divergence_is_pinned_not_changed() {
     let interpreter_probe = interpreter_probe_extent(&engine, "Sheet1", whole_column).unwrap();
     assert_eq!(evaluation.end_row, 64);
     assert_eq!(interpreter_probe.end_row, 1_048_576);
+
+    let production_reference =
+        ReferenceType::range(Some("Sheet1".to_string()), None, Some(1), None, Some(1));
+    assert_eq!(
+        probe_range_dimensions(&engine, "Sheet1", &production_reference),
+        Some((1_048_576, 1))
+    );
+}
+
+#[test]
+fn interpreter_production_probe_loads_sheet_bounds_only_for_fallback() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let context = TestWorkbook::new().with_sheet_bounds_counter(Arc::clone(&calls));
+    let bounded = ReferenceType::range(None, Some(1), Some(1), Some(2), Some(2));
+    assert_eq!(
+        probe_range_dimensions(&context, "Sheet1", &bounded),
+        Some((2, 2))
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    let whole_column = ReferenceType::range(None, None, Some(1), None, Some(1));
+    assert_eq!(
+        probe_range_dimensions(&context, "Sheet1", &whole_column),
+        Some((1_048_576, 1))
+    );
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn interpreter_production_probe_rejects_column_inversion_without_underflow() {
+    let engine = populated_engine(&[], &[], &[]);
+    let inverted = ReferenceType::range(
+        Some("Sheet1".to_string()),
+        Some(2),
+        Some(9),
+        Some(3),
+        Some(4),
+    );
+    assert_eq!(
+        probe_range_dimensions(&engine, "Sheet1", &inverted),
+        Some((0, 0))
+    );
 }
 
 #[test]
@@ -406,4 +450,129 @@ fn virtual_dependency_used_minimum_divergence_is_pinned_not_changed() {
         (virtual_dependency.start_row, virtual_dependency.end_row),
         (8, 20)
     );
+}
+
+#[test]
+fn graph_compressed_self_use_path_keeps_row_and_column_fallback_caps() {
+    let mut engine = populated_engine(&[], &[], &[]);
+    engine
+        .set_cell_value("Sheet1", 20, 30, LiteralValue::Int(1))
+        .unwrap();
+    let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
+    assert_eq!(
+        engine
+            .graph
+            .compressed_range_resolved_bounds(sheet_id, (None, None, None, None)),
+        Some((0, 63, 0, 29))
+    );
+}
+
+#[test]
+fn virtual_dependency_production_provider_keeps_used_minimum_policy() {
+    let mut engine = populated_engine(&[(8, 2)], &[], &[]);
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=SUM(B:B)").unwrap())
+        .unwrap();
+    let address = engine.graph.make_cell_ref("Sheet1", 1, 1);
+    let vertex = *engine.graph.get_vertex_id_for_address(&address).unwrap();
+    let range = engine.graph.get_range_dependencies(vertex).unwrap()[0].clone();
+
+    assert!(RangeVirtualDepProvider::get_virtual_deps(&engine, vertex).is_empty());
+    let extent = RangeVirtualDepProvider::resolve_range(&engine, "Sheet1", &range).unwrap();
+    assert_eq!((extent.start_row, extent.end_row), (8, 8));
+}
+
+#[test]
+fn dynamic_collector_production_path_keeps_evaluation_policy() {
+    let engine = populated_engine(&[(8, 2)], &[], &[(20, 2)]);
+    let collector = DynamicRefCollector::new(&engine, "Sheet1");
+    let whole_column =
+        ReferenceType::range(Some("Sheet1".to_string()), None, Some(2), None, Some(2));
+    collector
+        .resolve_range_view(&whole_column, "Sheet1")
+        .unwrap();
+
+    let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
+    let regions = collector.collected_regions.lock().unwrap();
+    assert!(regions.contains(&Region::rect(sheet_id, 0, 19, 1, 1).normalized()));
+    assert!(!regions.contains(&Region::rect(sheet_id, 7, 19, 1, 1).normalized()));
+}
+
+#[test]
+fn semantic_engine_source_excludes_dangling_reference_placeholders() {
+    let mut engine = populated_engine(&[], &[], &[]);
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Z1000").unwrap())
+        .unwrap();
+    let whole_z = OpenRangeBounds {
+        start_row: None,
+        start_column: Some(26),
+        end_row: None,
+        end_column: Some(26),
+    };
+
+    assert_eq!(
+        engine.used_rows_for_columns("Sheet1", 26, 26),
+        Some((1000, 1000))
+    );
+    let semantic = semantic_extent(&engine, "Sheet1", whole_z);
+    assert_eq!(semantic, None);
+    assert_eq!(semantic.map(ResolvedExtent::cell_count).unwrap_or(0), 0);
+
+    let evaluation = evaluation_extent(&engine, "Sheet1", whole_z).unwrap();
+    assert_eq!((evaluation.start_row, evaluation.end_row), (1, 1000));
+}
+
+#[test]
+fn semantic_engine_source_includes_formula_only_and_overlay_only_cells() {
+    let formula_only = populated_engine(&[], &[], &[(31, 2)]);
+    let formula_extent = semantic_extent(
+        &formula_only,
+        "Sheet1",
+        OpenRangeBounds {
+            start_row: None,
+            start_column: Some(2),
+            end_row: None,
+            end_column: Some(2),
+        },
+    )
+    .unwrap();
+    assert_eq!((formula_extent.start_row, formula_extent.end_row), (1, 31));
+
+    let overlay_only = populated_engine(&[], &[(11, 4)], &[]);
+    let overlay_extent = semantic_extent(
+        &overlay_only,
+        "Sheet1",
+        OpenRangeBounds {
+            start_row: None,
+            start_column: Some(4),
+            end_row: None,
+            end_column: Some(4),
+        },
+    )
+    .unwrap();
+    assert_eq!((overlay_extent.start_row, overlay_extent.end_row), (1, 11));
+}
+
+#[test]
+fn semantic_engine_source_treats_placeholder_only_sheet_as_empty() {
+    let mut engine = populated_engine(&[], &[], &[]);
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Z1000").unwrap())
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Empty)
+        .unwrap();
+
+    let extent = semantic_extent(
+        &engine,
+        "Sheet1",
+        OpenRangeBounds {
+            start_row: None,
+            start_column: None,
+            end_row: None,
+            end_column: None,
+        },
+    );
+    assert_eq!(extent, None);
 }
