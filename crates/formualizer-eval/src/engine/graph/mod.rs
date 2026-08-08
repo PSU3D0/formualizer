@@ -25,6 +25,8 @@ pub struct GraphInstrumentation {
 mod ast_utils;
 pub mod editor;
 mod formula_analysis;
+#[cfg(test)]
+mod formula_analysis_legacy_tests;
 mod formula_dirty;
 mod names;
 pub(crate) mod prepared_legacy_graph;

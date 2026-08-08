@@ -20,7 +20,10 @@ pub mod live_edges;
 pub mod live_graph;
 pub mod lookup_index_cache;
 pub mod plan;
+#[cfg(test)]
+mod plan_legacy_tests;
 pub mod range_view;
+pub(crate) mod refs;
 pub mod resource_ledger;
 pub mod resource_observability;
 pub(crate) mod result_finalization;

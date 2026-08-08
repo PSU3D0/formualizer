@@ -48,11 +48,13 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Improved
 
+- Consolidated the engine's graph, ingest, and planning AST dependency walks behind one crate-private semantic reference collector without changing their independent policies or behavior.
 - Narrowed the published eval API to stable table metadata, reference-adjustment conveniences, builtin loading/date compatibility helpers, and opaque Formula Plane descriptors; test-only helpers now require the non-default `test-support` feature. (#259)
 - Upgraded Calamine-backed XLSX loading to Calamine 0.36 and a single-pass value/formula metadata stream, preserving formula-only worksheet dimensions, cached-value semantics, load limits, shared-formula relocation, and malformed-family fallback.
 
 ### Fixed
 
+- Whole-surface ranges whose cell count overflows `u32` are now always kept as compressed range dependencies instead of panicking or attempting expansion.
 - Lookup wildcards now let `*` consume zero or more characters instead of at most one, including multi-star backtracking, `?` adjacency, `~` escapes, case-insensitive Unicode text, and exact-mode VLOOKUP/HLOOKUP/MATCH plus wildcard-mode XLOOKUP/XMATCH. (#284)
 - `NPV` now accepts up to 254 scalar, reference, and array cash-flow arguments in argument order. Text, blank, and logical cells in references are ignored without consuming periods, direct text and computed-array text return `#VALUE!`, omitted slots count as zero, errors propagate, and `rate=-1` returns `#NUM!`. (#293)
 - Arithmetic operators now coerce supported en-US date, time, and datetime text operands to serial numbers using the workbook's 1900 or 1904 date system. Two-digit years in slash and English month-name forms use the Excel 29/30 window, ISO dates require a four-digit year, slash dates use month/day/year ordering, and `T` is restricted to ISO datetimes; aggregate, comparison, criteria, `N`, and concatenation text semantics remain unchanged. (#289)

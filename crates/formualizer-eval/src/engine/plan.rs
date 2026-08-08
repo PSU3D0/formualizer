@@ -1,11 +1,11 @@
 use crate::SheetId;
-use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
+use crate::engine::arena::{AstNodeId, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::Coord as AbsCoord;
 use formualizer_common::CoordBuildHasher;
 use formualizer_common::ExcelError;
 use formualizer_common::PackedSheetCell;
-use formualizer_parse::parser::{CollectPolicy, ReferenceType};
+use formualizer_parse::parser::CollectPolicy;
 use std::collections::HashMap;
 
 /// Compact range descriptor used during planning (engine-only)
@@ -63,103 +63,173 @@ pub enum DependencyPlanAst<'a> {
     Arena(AstNodeId),
 }
 
-fn collect_references_arena(
-    data_store: &DataStore,
-    ast_id: AstNodeId,
-    sheet_reg: &SheetRegistry,
-    policy: &CollectPolicy,
-) -> Result<Vec<ReferenceType>, ExcelError> {
-    let mut out = Vec::new();
-    let mut stack = Vec::with_capacity(8);
-    stack.push(ast_id);
+type EnsureVertexPoolIndex<'a> = dyn FnMut(&mut DependencyPlan, (SheetId, AbsCoord)) -> u32 + 'a;
 
-    while let Some(node_id) = stack.pop() {
-        let Some(node) = data_store.get_node(node_id) else {
-            return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Value)
-                .with_message("Missing interned formula AST"));
-        };
+struct PlanReferenceContext<'a> {
+    sheet_reg: &'a mut SheetRegistry,
+    data_store: Option<&'a DataStore>,
+    current_sheet: SheetId,
+    policy: &'a CollectPolicy,
+    plan: &'a mut DependencyPlan,
+    cell_index: &'a mut HashMap<PackedSheetCell, u32, CoordBuildHasher>,
+    ensure_vertex_pool_index: &'a mut EnsureVertexPoolIndex<'a>,
+    per_cells: &'a mut Vec<u32>,
+    per_ranges: &'a mut Vec<RangeKey>,
+    per_names: &'a mut Vec<String>,
+    per_tables: &'a mut Vec<String>,
+    flags: &'a mut FormulaFlags,
+}
 
-        match node {
-            AstNodeData::Reference { ref_type, .. } => {
-                let reference = data_store.reconstruct_reference_type_for_eval(ref_type, sheet_reg);
-                match reference {
-                    ReferenceType::Range {
-                        sheet,
-                        start_row,
-                        start_col,
-                        end_row,
-                        end_col,
-                        start_row_abs,
-                        start_col_abs,
-                        end_row_abs,
-                        end_col_abs,
-                    } => {
-                        if policy.expand_small_ranges
-                            && let (Some(sr), Some(sc), Some(er), Some(ec)) =
-                                (start_row, start_col, end_row, end_col)
-                        {
-                            let rows = er.saturating_sub(sr) + 1;
-                            let cols = ec.saturating_sub(sc) + 1;
-                            let area = rows.saturating_mul(cols);
-                            if area as usize <= policy.range_expansion_limit {
-                                let row_abs = start_row_abs && end_row_abs;
-                                let col_abs = start_col_abs && end_col_abs;
-                                for r in sr..=er {
-                                    for c in sc..=ec {
-                                        out.push(ReferenceType::Cell {
-                                            sheet: sheet.clone(),
-                                            row: r,
-                                            col: c,
-                                            row_abs,
-                                            col_abs,
-                                        });
-                                    }
-                                }
-                                continue;
-                            }
-                        }
-                        out.push(ReferenceType::Range {
-                            sheet,
-                            start_row,
-                            start_col,
-                            end_row,
-                            end_col,
-                            start_row_abs,
-                            start_col_abs,
-                            end_row_abs,
-                            end_col_abs,
-                        });
-                    }
-                    ReferenceType::NamedRange(_) if !policy.include_names => {}
-                    other => out.push(other),
+fn no_local_bindings(
+    _: &PlanReferenceContext<'_>,
+    _: &str,
+    _: usize,
+) -> crate::engine::refs::LocalBindingStyle {
+    crate::engine::refs::LocalBindingStyle::None
+}
+
+fn plan_data_store<'context>(context: &'context PlanReferenceContext<'_>) -> &'context DataStore {
+    context
+        .data_store
+        .expect("arena traversal requires a data store")
+}
+
+fn plan_sheet_registry<'context>(
+    context: &'context PlanReferenceContext<'_>,
+) -> &'context SheetRegistry {
+    context.sheet_reg
+}
+
+fn collect_plan_reference(
+    context: &mut PlanReferenceContext<'_>,
+    reference: crate::engine::refs::SemanticReference<'_>,
+) -> Result<(), ExcelError> {
+    use crate::engine::refs::SemanticReference;
+
+    match reference {
+        SemanticReference::Cell(cell) => {
+            let dep_sheet = cell
+                .sheet
+                .name()
+                .map(|name| context.sheet_reg.id_for(name))
+                .unwrap_or(context.current_sheet);
+            let key = (dep_sheet, AbsCoord::from_excel(cell.row, cell.col));
+            let packed = PackedSheetCell::try_new(dep_sheet, key.1.row(), key.1.col())
+                .expect("plan dependency coordinate must fit PackedSheetCell");
+            let idx = match context.cell_index.get(&packed) {
+                Some(&idx) => idx,
+                None => {
+                    let new_idx = context.plan.global_cells.len() as u32;
+                    context.plan.global_cells.push(key);
+                    context.cell_index.insert(packed, new_idx);
+                    let pool_idx = (context.ensure_vertex_pool_index)(context.plan, key);
+                    context.plan.global_cell_pool_indices.push(pool_idx);
+                    new_idx
                 }
-            }
-            AstNodeData::UnaryOp { expr_id, .. } => stack.push(*expr_id),
-            AstNodeData::BinaryOp {
-                left_id, right_id, ..
-            } => {
-                stack.push(*right_id);
-                stack.push(*left_id);
-            }
-            AstNodeData::Function { .. } => {
-                if let Some(args) = data_store.get_args(node_id) {
-                    for arg in args.iter().rev() {
-                        stack.push(*arg);
-                    }
-                }
-            }
-            AstNodeData::Array { .. } => {
-                if let Some((_, _, elems)) = data_store.get_array_elems(node_id) {
-                    for elem in elems.iter().rev() {
-                        stack.push(*elem);
-                    }
-                }
-            }
-            AstNodeData::Literal(_) | AstNodeData::Omitted => {}
+            };
+            context.per_cells.push(idx);
         }
-    }
+        SemanticReference::FiniteRange(range) => {
+            let (sr, sc, er, ec) = range
+                .finite_bounds()
+                .expect("finite reference must have all bounds");
+            let area = range.saturating_area().expect("finite area");
 
-    Ok(out)
+            // Planning's caller-owned policy (historically 16 in the standard
+            // planning setup) intentionally differs from graph ingest's default 64.
+            if context.policy.expand_small_ranges
+                && area <= context.policy.range_expansion_limit as u64
+            {
+                let row_abs = range.start_row_abs && range.end_row_abs;
+                let col_abs = range.start_col_abs && range.end_col_abs;
+                for row in sr..=er {
+                    for col in sc..=ec {
+                        collect_plan_reference(
+                            context,
+                            SemanticReference::Cell(crate::engine::refs::CellReference {
+                                original: range.original,
+                                sheet: range.sheet,
+                                row,
+                                col,
+                                row_abs,
+                                col_abs,
+                            }),
+                        )?;
+                    }
+                }
+            } else {
+                let dep_sheet = range
+                    .sheet
+                    .name()
+                    .map(|name| context.sheet_reg.id_for(name))
+                    .unwrap_or(context.current_sheet);
+                context.per_ranges.push(RangeKey::Rect {
+                    sheet: dep_sheet,
+                    start: AbsCoord::from_excel(sr, sc),
+                    end: AbsCoord::from_excel(er, ec),
+                });
+            }
+        }
+        SemanticReference::OpenRange(range) => {
+            let dep_sheet = range
+                .sheet
+                .name()
+                .map(|name| context.sheet_reg.id_for(name))
+                .unwrap_or(context.current_sheet);
+            match (
+                range.start_row,
+                range.start_col,
+                range.end_row,
+                range.end_col,
+            ) {
+                (None, Some(col), None, Some(end_col)) if col == end_col => {
+                    context.per_ranges.push(RangeKey::WholeCol {
+                        sheet: dep_sheet,
+                        col,
+                    })
+                }
+                (Some(row), None, Some(end_row), None) if row == end_row => {
+                    context.per_ranges.push(RangeKey::WholeRow {
+                        sheet: dep_sheet,
+                        row,
+                    })
+                }
+                _ => context.per_ranges.push(RangeKey::OpenRect {
+                    sheet: dep_sheet,
+                    start: range
+                        .start_row
+                        .zip(range.start_col)
+                        .map(|(row, col)| AbsCoord::from_excel(row, col)),
+                    end: range
+                        .end_row
+                        .zip(range.end_col)
+                        .map(|(row, col)| AbsCoord::from_excel(row, col)),
+                }),
+            }
+        }
+        SemanticReference::ExternalSource(external) => match external.kind {
+            formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
+                *context.flags |= F_HAS_NAMES;
+                context.per_names.push(external.raw.clone());
+            }
+            formualizer_parse::parser::ExternalRefKind::Range { .. } => {
+                *context.flags |= F_HAS_TABLES;
+                context.per_tables.push(external.raw.clone());
+            }
+        },
+        SemanticReference::Name(name) => {
+            if context.policy.include_names {
+                *context.flags |= F_HAS_NAMES;
+                context.per_names.push(name.to_string());
+            }
+        }
+        SemanticReference::Table(table) => {
+            *context.flags |= F_HAS_TABLES;
+            context.per_tables.push(table.name.clone());
+        }
+        SemanticReference::ThreeDimensional(_) | SemanticReference::Unsupported(_) => {}
+    }
+    Ok(())
 }
 
 /// Build a compact dependency plan from ASTs without mutating the graph.
@@ -222,100 +292,27 @@ where
         let mut per_names: Vec<String> = Vec::new();
         let mut per_tables: Vec<String> = Vec::new();
 
-        // Collect references using core collector (may expand small ranges per policy)
-        let refs = ast.collect_references(policy);
-        for r in refs {
-            match r {
-                ReferenceType::Cell {
-                    sheet, row, col, ..
-                } => {
-                    let dep_sheet = sheet
-                        .as_deref()
-                        .map(|name| sheet_reg.id_for(name))
-                        .unwrap_or(sheet_id);
-                    let key = (dep_sheet, AbsCoord::from_excel(row, col));
-                    let packed = PackedSheetCell::try_new(dep_sheet, key.1.row(), key.1.col())
-                        .expect("plan dependency coordinate must fit PackedSheetCell");
-                    let idx = match cell_index.get(&packed) {
-                        Some(&idx) => idx,
-                        None => {
-                            let new_idx = plan.global_cells.len() as u32;
-                            plan.global_cells.push(key);
-                            cell_index.insert(packed, new_idx);
-                            let pool_idx = ensure_vertex_pool_index(&mut plan, key);
-                            plan.global_cell_pool_indices.push(pool_idx);
-                            new_idx
-                        }
-                    };
-                    per_cells.push(idx);
-                }
-                ReferenceType::Range {
-                    sheet,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                    ..
-                } => {
-                    let dep_sheet = sheet
-                        .as_deref()
-                        .map(|name| sheet_reg.id_for(name))
-                        .unwrap_or(sheet_id);
-                    match (start_row, start_col, end_row, end_col) {
-                        (Some(sr), Some(sc), Some(er), Some(ec)) => {
-                            per_ranges.push(RangeKey::Rect {
-                                sheet: dep_sheet,
-                                start: AbsCoord::from_excel(sr, sc),
-                                end: AbsCoord::from_excel(er, ec),
-                            })
-                        }
-                        (None, Some(c), None, Some(ec)) if c == ec => {
-                            per_ranges.push(RangeKey::WholeCol {
-                                sheet: dep_sheet,
-                                col: c,
-                            })
-                        }
-                        (Some(r), None, Some(er), None) if r == er => {
-                            per_ranges.push(RangeKey::WholeRow {
-                                sheet: dep_sheet,
-                                row: r,
-                            })
-                        }
-                        _ => per_ranges.push(RangeKey::OpenRect {
-                            sheet: dep_sheet,
-                            start: start_row
-                                .zip(start_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
-                            end: end_row
-                                .zip(end_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
-                        }),
-                    }
-                }
-                ReferenceType::External(ext) => match ext.kind {
-                    formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
-                        flags |= F_HAS_NAMES;
-                        per_names.push(ext.raw.clone());
-                    }
-                    formualizer_parse::parser::ExternalRefKind::Range { .. } => {
-                        flags |= F_HAS_TABLES;
-                        per_tables.push(ext.raw.clone());
-                    }
-                },
-                ReferenceType::NamedRange(name) => {
-                    // Resolution handled later; mark via flags if caller cares
-                    flags |= F_HAS_NAMES;
-                    per_names.push(name);
-                }
-                ReferenceType::Table(tref) => {
-                    flags |= F_HAS_TABLES;
-                    per_tables.push(tref.name);
-                }
-                // 3D refs are parsed but not yet planned. They neither create
-                // dependencies nor participate in the cell/range plan; the
-                // evaluator will surface #N/IMPL! when one is encountered.
-                ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {}
-            }
+        {
+            let mut context = PlanReferenceContext {
+                sheet_reg,
+                data_store: None,
+                current_sheet: sheet_id,
+                policy,
+                plan: &mut plan,
+                cell_index: &mut cell_index,
+                ensure_vertex_pool_index: &mut ensure_vertex_pool_index,
+                per_cells: &mut per_cells,
+                per_ranges: &mut per_ranges,
+                per_names: &mut per_names,
+                per_tables: &mut per_tables,
+                flags: &mut flags,
+            };
+            crate::engine::refs::visit_tree_references(
+                ast,
+                &mut context,
+                no_local_bindings,
+                collect_plan_reference,
+            )?;
         }
 
         plan.per_formula_cells.push(per_cells);
@@ -381,99 +378,35 @@ where
         let mut per_names: Vec<String> = Vec::new();
         let mut per_tables: Vec<String> = Vec::new();
 
-        let refs = match ast {
-            DependencyPlanAst::Tree(ast) => ast.collect_references(policy).into_iter().collect(),
-            DependencyPlanAst::Arena(ast_id) => {
-                collect_references_arena(data_store, ast_id, sheet_reg, policy)?
-            }
-        };
-        for r in refs {
-            match r {
-                ReferenceType::Cell {
-                    sheet, row, col, ..
-                } => {
-                    let dep_sheet = sheet
-                        .as_deref()
-                        .map(|name| sheet_reg.id_for(name))
-                        .unwrap_or(sheet_id);
-                    let key = (dep_sheet, AbsCoord::from_excel(row, col));
-                    let packed = PackedSheetCell::try_new(dep_sheet, key.1.row(), key.1.col())
-                        .expect("plan dependency coordinate must fit PackedSheetCell");
-                    let idx = match cell_index.get(&packed) {
-                        Some(&idx) => idx,
-                        None => {
-                            let new_idx = plan.global_cells.len() as u32;
-                            plan.global_cells.push(key);
-                            cell_index.insert(packed, new_idx);
-                            let pool_idx = ensure_vertex_pool_index(&mut plan, key);
-                            plan.global_cell_pool_indices.push(pool_idx);
-                            new_idx
-                        }
-                    };
-                    per_cells.push(idx);
-                }
-                ReferenceType::Range {
-                    sheet,
-                    start_row,
-                    start_col,
-                    end_row,
-                    end_col,
-                    ..
-                } => {
-                    let dep_sheet = sheet
-                        .as_deref()
-                        .map(|name| sheet_reg.id_for(name))
-                        .unwrap_or(sheet_id);
-                    match (start_row, start_col, end_row, end_col) {
-                        (Some(sr), Some(sc), Some(er), Some(ec)) => {
-                            per_ranges.push(RangeKey::Rect {
-                                sheet: dep_sheet,
-                                start: AbsCoord::from_excel(sr, sc),
-                                end: AbsCoord::from_excel(er, ec),
-                            })
-                        }
-                        (None, Some(c), None, Some(ec)) if c == ec => {
-                            per_ranges.push(RangeKey::WholeCol {
-                                sheet: dep_sheet,
-                                col: c,
-                            })
-                        }
-                        (Some(r), None, Some(er), None) if r == er => {
-                            per_ranges.push(RangeKey::WholeRow {
-                                sheet: dep_sheet,
-                                row: r,
-                            })
-                        }
-                        _ => per_ranges.push(RangeKey::OpenRect {
-                            sheet: dep_sheet,
-                            start: start_row
-                                .zip(start_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
-                            end: end_row
-                                .zip(end_col)
-                                .map(|(r, c)| AbsCoord::from_excel(r, c)),
-                        }),
-                    }
-                }
-                ReferenceType::External(ext) => match ext.kind {
-                    formualizer_parse::parser::ExternalRefKind::Cell { .. } => {
-                        flags |= F_HAS_NAMES;
-                        per_names.push(ext.raw.clone());
-                    }
-                    formualizer_parse::parser::ExternalRefKind::Range { .. } => {
-                        flags |= F_HAS_TABLES;
-                        per_tables.push(ext.raw.clone());
-                    }
-                },
-                ReferenceType::NamedRange(name) => {
-                    flags |= F_HAS_NAMES;
-                    per_names.push(name);
-                }
-                ReferenceType::Table(tref) => {
-                    flags |= F_HAS_TABLES;
-                    per_tables.push(tref.name);
-                }
-                ReferenceType::Cell3D { .. } | ReferenceType::Range3D { .. } => {}
+        {
+            let mut context = PlanReferenceContext {
+                sheet_reg,
+                data_store: Some(data_store),
+                current_sheet: sheet_id,
+                policy,
+                plan: &mut plan,
+                cell_index: &mut cell_index,
+                ensure_vertex_pool_index: &mut ensure_vertex_pool_index,
+                per_cells: &mut per_cells,
+                per_ranges: &mut per_ranges,
+                per_names: &mut per_names,
+                per_tables: &mut per_tables,
+                flags: &mut flags,
+            };
+            match ast {
+                DependencyPlanAst::Tree(ast) => crate::engine::refs::visit_tree_references(
+                    ast,
+                    &mut context,
+                    no_local_bindings,
+                    collect_plan_reference,
+                )?,
+                DependencyPlanAst::Arena(ast_id) => crate::engine::refs::visit_arena_references(
+                    ast_id,
+                    &mut context,
+                    plan_data_store,
+                    plan_sheet_registry,
+                    collect_plan_reference,
+                )?,
             }
         }
 
@@ -493,6 +426,67 @@ mod tests {
     use crate::engine::arena::DataStore;
     use crate::engine::sheet_registry::SheetRegistry;
     use formualizer_parse::parse;
+
+    #[test]
+    fn overflow_sized_ranges_stay_compressed_in_plan() {
+        for formula in [
+            "=SUM(A1:FLA983055)",
+            "=SUM(A1:XFD262144)",
+            "=SUM(A1:XFD1048576)",
+        ] {
+            let ast = parse(formula).unwrap();
+            let policy = CollectPolicy {
+                expand_small_ranges: true,
+                range_expansion_limit: 64,
+                include_names: true,
+            };
+            let mut registry = SheetRegistry::new();
+            let plan = build_dependency_plan(
+                &mut registry,
+                std::iter::once(("Sheet1", 1, 1, &ast)),
+                &policy,
+                None,
+            )
+            .unwrap();
+            assert!(plan.per_formula_cells[0].is_empty(), "{formula}");
+            assert_eq!(plan.per_formula_ranges[0].len(), 1, "{formula}");
+        }
+    }
+
+    #[test]
+    fn tree_plan_handles_deep_left_associative_formula_without_call_stack_growth() {
+        let terms = if cfg!(debug_assertions) {
+            20_000
+        } else {
+            100_000
+        };
+        let formula = format!(
+            "={}",
+            std::iter::repeat_n("A1", terms)
+                .collect::<Vec<_>>()
+                .join("+")
+        );
+        let ast = parse(&formula).unwrap();
+        let policy = CollectPolicy {
+            expand_small_ranges: true,
+            range_expansion_limit: 16,
+            include_names: true,
+        };
+        let mut registry = SheetRegistry::new();
+        let plan = build_dependency_plan(
+            &mut registry,
+            std::iter::once(("Sheet1", 1, 1, &ast)),
+            &policy,
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.global_cells.len(), 1);
+        assert_eq!(plan.per_formula_cells[0].len(), terms);
+
+        // ASTNode owns a recursively boxed tree, so avoid making this traversal
+        // test depend on the standard library's recursive drop implementation.
+        std::mem::forget(ast);
+    }
 
     #[test]
     fn mixed_arena_plan_matches_tree_plan_for_basic_refs() {

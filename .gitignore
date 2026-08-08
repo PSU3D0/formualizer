@@ -1,4 +1,5 @@
 target/
+proptest-regressions/
 **/.claude/settings.local.json
 repomix-output.xml
 *.md
