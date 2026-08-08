@@ -351,10 +351,7 @@ impl Display for SpecialItem {
 }
 
 fn sheet_name_needs_quoting(name: &str) -> bool {
-    matches!(
-        formualizer_common::format_a1_sheet_name(name),
-        std::borrow::Cow::Owned(_)
-    )
+    formualizer_common::a1_sheet_name_needs_quoting(name)
 }
 
 #[derive(Debug, Clone)]

@@ -1,11 +1,14 @@
 pub mod formualizer_common
 pub mod formualizer_common::address
 #[non_exhaustive] pub enum formualizer_common::address::SheetAddressError
+pub formualizer_common::address::SheetAddressError::ColumnOutOfBounds
 pub formualizer_common::address::SheetAddressError::Coord(formualizer_common::CoordError)
 pub formualizer_common::address::SheetAddressError::MismatchedSheets
 pub formualizer_common::address::SheetAddressError::MissingSheetName
+pub formualizer_common::address::SheetAddressError::NonSingleCellRange
 pub formualizer_common::address::SheetAddressError::Parse(formualizer_common::A1ParseError)
 pub formualizer_common::address::SheetAddressError::RangeOrder
+pub formualizer_common::address::SheetAddressError::RowOutOfBounds
 pub formualizer_common::address::SheetAddressError::UnboundedRange
 pub formualizer_common::address::SheetAddressError::ZeroIndex
 impl core::clone::Clone for formualizer_common::SheetAddressError
@@ -159,6 +162,7 @@ pub fn formualizer_common::SheetRangeRef<'a>::fmt(&self, &mut core::fmt::Formatt
 impl<'a> core::hash::Hash for formualizer_common::SheetRangeRef<'a>
 pub fn formualizer_common::SheetRangeRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::address::a1_sheet_name_needs_quoting(&str) -> bool
 pub fn formualizer_common::address::format_a1_sheet_name(&str) -> alloc::borrow::Cow<'_, str>
 pub type formualizer_common::address::SheetId = u16
 pub mod formualizer_common::coord
@@ -640,7 +644,7 @@ pub fn formualizer_common::CellAddress::eq(&self, &formualizer_common::CellAddre
 impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
 impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
-pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::SheetAddressError
 pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
 impl core::fmt::Debug for formualizer_common::CellAddress
 pub fn formualizer_common::CellAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -697,7 +701,7 @@ pub fn formualizer_common::RangeAddress::eq(&self, &formualizer_common::RangeAdd
 impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
 impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
-pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::SheetAddressError
 pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
 impl core::fmt::Debug for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1056,11 +1060,14 @@ pub fn formualizer_common::ResourceExhaustionReason::serialize<__S>(&self, __S) 
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::ResourceExhaustionReason
 pub fn formualizer_common::ResourceExhaustionReason::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 #[non_exhaustive] pub enum formualizer_common::SheetAddressError
+pub formualizer_common::SheetAddressError::ColumnOutOfBounds
 pub formualizer_common::SheetAddressError::Coord(formualizer_common::CoordError)
 pub formualizer_common::SheetAddressError::MismatchedSheets
 pub formualizer_common::SheetAddressError::MissingSheetName
+pub formualizer_common::SheetAddressError::NonSingleCellRange
 pub formualizer_common::SheetAddressError::Parse(formualizer_common::A1ParseError)
 pub formualizer_common::SheetAddressError::RangeOrder
+pub formualizer_common::SheetAddressError::RowOutOfBounds
 pub formualizer_common::SheetAddressError::UnboundedRange
 pub formualizer_common::SheetAddressError::ZeroIndex
 impl core::clone::Clone for formualizer_common::SheetAddressError
@@ -1165,7 +1172,7 @@ pub fn formualizer_common::CellAddress::eq(&self, &formualizer_common::CellAddre
 impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
 impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
-pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::SheetAddressError
 pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
 impl core::fmt::Debug for formualizer_common::CellAddress
 pub fn formualizer_common::CellAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1375,7 +1382,7 @@ pub fn formualizer_common::RangeAddress::eq(&self, &formualizer_common::RangeAdd
 impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
 impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
-pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::SheetAddressError
 pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
 impl core::fmt::Debug for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -1529,6 +1536,7 @@ pub fn formualizer_common::SheetRangeRef<'a>::fmt(&self, &mut core::fmt::Formatt
 impl<'a> core::hash::Hash for formualizer_common::SheetRangeRef<'a>
 pub fn formualizer_common::SheetRangeRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::a1_sheet_name_needs_quoting(&str) -> bool
 pub fn formualizer_common::col_index_from_letters_1based(&str) -> core::result::Result<u32, formualizer_common::A1ParseError>
 pub fn formualizer_common::col_letters_from_1based(u32) -> core::result::Result<alloc::string::String, formualizer_common::A1ParseError>
 pub fn formualizer_common::date_to_serial_for(formualizer_common::DateSystem, &chrono::naive::date::NaiveDate) -> f64
