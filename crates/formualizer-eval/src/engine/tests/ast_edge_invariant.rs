@@ -22,6 +22,15 @@
 //! names, or tables; reversed ranges; and external, three-dimensional, or unsupported references.
 //! It is therefore vacuous for those references, while the phantom-edge direction remains covered.
 //!
+//! Pinned T2 findings, each an `#[ignore]`d test asserting the intended invariant and failing on
+//! the live divergence: `AST_EDGE_UNDO_STRUCTURAL_ADJUSTMENT` (undo of a populated row insert
+//! leaves data shifted and the edge one row above the AST reference),
+//! `AST_EDGE_UNRELATED_DELETE_NAME` (a default-sheet row or column delete drops a cross-sheet
+//! workbook-name edge), `AST_EDGE_UNDO_EMPTY_PLACEHOLDER` (undo and redo of a write to a
+//! referenced empty placeholder drop its edge), and `AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID`
+//! (a default-sheet insert shifts a name vertex onto an addressable cell, so later references to
+//! that address bind to the name vertex instead of the cell).
+//!
 //! Campaign seeds are fixed constants below. They are intentionally not persisted: a failure
 //! prints its seed and operation index, which is enough to replay the deterministic campaign while
 //! keeping the repository free of generated failure corpora.
@@ -403,6 +412,38 @@ fn random_formula(rng: &mut SmallRng, sheets: &[String], current_sheet: &str) ->
     }
 }
 
+/// The workbook name's vertex physically occupies a cell on the default sheet. A default-sheet
+/// insert at or above that cell shifts the vertex onto an addressable grid cell, after which any
+/// later reference to that address binds to the name vertex instead of the cell — finding
+/// `AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID`, pinned by
+/// `default_sheet_insertion_keeps_the_name_vertex_off_the_addressable_grid`. Campaigns keep their
+/// default-sheet inserts strictly below and to the right of the name vertex so they exercise the
+/// healthy shape; every other default-sheet edit, including formula and value overwrite of shifted
+/// formulas, stays in play.
+fn insert_clear_of_name_vertex(
+    engine: &Engine<TestWorkbook>,
+    sheet: &str,
+    row: u32,
+    col: u32,
+) -> (u32, u32) {
+    let Some(sheet_id) = engine.sheet_id(sheet) else {
+        return (row, col);
+    };
+    let Some(named) = engine.graph.resolve_name_entry("Tracked", sheet_id) else {
+        return (row, col);
+    };
+    let Some(anchor) = engine.graph.get_cell_ref(named.vertex) else {
+        return (row, col);
+    };
+    if anchor.sheet_id != sheet_id {
+        return (row, col);
+    }
+    (
+        row.max(anchor.coord.row() + 2),
+        col.max(anchor.coord.col() + 2),
+    )
+}
+
 fn reset_history(log: &mut ChangeLog, undo: &mut UndoEngine, can_redo: &mut bool) {
     log.clear();
     *undo = UndoEngine::new();
@@ -445,9 +486,6 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
     let mut undo = UndoEngine::new();
     let mut can_redo = false;
     let mut stats = CampaignStats::default();
-    // Default-sheet inserts are covered, but later overwriting a formula shifted by one exposes a
-    // separate unpinned interaction. Keep those vertices out of subsequent formula/value writes.
-    let mut shifted_formulas = BTreeSet::new();
 
     for operation in 0..campaign.operations {
         let force_redo = can_redo && rng.gen_bool(0.4);
@@ -458,39 +496,9 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
         }
 
         let choice = rng.gen_range(0..100);
-        let mut sheet = random_sheet(&mut rng, &sheets).to_string();
-        let mut row = rng.gen_range(1..=MAX_ROW);
-        let mut col = rng.gen_range(1..=MAX_COL);
-        let selected = CellRef::new(
-            engine.sheet_id(&sheet).unwrap(),
-            Coord::from_excel(row, col, true, true),
-        );
-        if engine
-            .graph
-            .get_vertex_for_cell(&selected)
-            .is_some_and(|vertex| shifted_formulas.contains(&vertex))
-        {
-            'replacement: for candidate_sheet in &sheets {
-                for candidate_row in 1..=MAX_ROW {
-                    for candidate_col in 1..=MAX_COL {
-                        let candidate = CellRef::new(
-                            engine.sheet_id(candidate_sheet).unwrap(),
-                            Coord::from_excel(candidate_row, candidate_col, true, true),
-                        );
-                        if engine
-                            .graph
-                            .get_vertex_for_cell(&candidate)
-                            .is_none_or(|vertex| !shifted_formulas.contains(&vertex))
-                        {
-                            sheet = candidate_sheet.clone();
-                            row = candidate_row;
-                            col = candidate_col;
-                            break 'replacement;
-                        }
-                    }
-                }
-            }
-        }
+        let sheet = random_sheet(&mut rng, &sheets).to_string();
+        let row = rng.gen_range(1..=MAX_ROW);
+        let col = rng.gen_range(1..=MAX_COL);
 
         match choice {
             _ if force_redo => {}
@@ -519,17 +527,10 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 can_redo = false;
             }
             30..=40 => {
-                if sheet == "Sheet1" {
-                    shifted_formulas.extend(engine.graph.formula_vertices().into_iter().filter(
-                        |formula| {
-                            engine.graph.get_vertex_sheet_id(*formula)
-                                == engine.sheet_id("Sheet1").unwrap()
-                        },
-                    ));
-                }
+                let (insert_row, _) = insert_clear_of_name_vertex(&engine, &sheet, row, col);
                 engine
                     .action_with_logger(&mut log, "campaign-insert-rows", |action| {
-                        action.insert_rows(&sheet, row, 1).map(|_| ())
+                        action.insert_rows(&sheet, insert_row, 1).map(|_| ())
                     })
                     .unwrap();
                 reset_history(&mut log, &mut undo, &mut can_redo);
@@ -540,17 +541,10 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 reset_history(&mut log, &mut undo, &mut can_redo);
             }
             52..=61 => {
-                if sheet == "Sheet1" {
-                    shifted_formulas.extend(engine.graph.formula_vertices().into_iter().filter(
-                        |formula| {
-                            engine.graph.get_vertex_sheet_id(*formula)
-                                == engine.sheet_id("Sheet1").unwrap()
-                        },
-                    ));
-                }
+                let (_, insert_col) = insert_clear_of_name_vertex(&engine, &sheet, row, col);
                 engine
                     .action_with_logger(&mut log, "campaign-insert-columns", |action| {
-                        action.insert_columns(&sheet, col, 1).map(|_| ())
+                        action.insert_columns(&sheet, insert_col, 1).map(|_| ())
                     })
                     .unwrap();
                 reset_history(&mut log, &mut undo, &mut can_redo);
@@ -561,12 +555,7 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 reset_history(&mut log, &mut undo, &mut can_redo);
             }
             72..=79 => {
-                let formulas: Vec<_> = engine
-                    .graph
-                    .formula_vertices()
-                    .into_iter()
-                    .filter(|formula| !shifted_formulas.contains(formula))
-                    .collect();
+                let formulas = engine.graph.formula_vertices();
                 if let Some(formula) = formulas.get(rng.gen_range(0..formulas.len().max(1))) {
                     let target = engine.graph.get_cell_ref(*formula).unwrap();
                     let target_sheet = engine.graph.sheet_name(target.sheet_id).to_string();
@@ -798,6 +787,131 @@ fn undoing_value_write_to_referenced_empty_placeholder_preserves_formula_edge() 
     assert!(
         !dependencies_after_redo.is_empty(),
         "redo must rebuild the C6 edge so a later C6 write dirties and evaluates D4"
+    );
+}
+
+// T2 finding AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID: see the matching T2 worker-report entry.
+// A workbook name's vertex physically occupies `Sheet1!$A$1` and is deliberately kept out of the
+// cell index while it sits there. A default-sheet insert at or above it shifts the vertex onto an
+// addressable grid cell and publishes it in the cell index, so every reference resolved afterwards
+// binds to the name vertex instead of the cell: a phantom symbol edge plus a missing direct cell
+// edge. No overwrite is involved, and the referring formula need not be one the insert shifted.
+#[test]
+#[ignore = "known T2 divergence: a default-sheet insert shifts a name vertex onto an addressable cell"]
+fn default_sheet_insertion_keeps_the_name_vertex_off_the_addressable_grid() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.add_sheet("Sheet2").unwrap();
+    let sheet1 = engine.sheet_id("Sheet1").unwrap();
+    let sheet2 = engine.sheet_id("Sheet2").unwrap();
+    // The name's target lives on Sheet2, so the default-sheet insert cannot move the target and
+    // every value below is attributable to the vertex placement alone.
+    engine
+        .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(7.0))
+        .unwrap();
+    engine
+        .define_name(
+            "Tracked",
+            NamedDefinition::Cell(CellRef::new(sheet2, Coord::from_excel(4, 4, true, true))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet2", 1, 1, parse("=Tracked+1").unwrap())
+        .unwrap();
+    assert_structural_parity(&engine, 0xc0de_0007, 0);
+
+    let name_vertex = engine
+        .graph
+        .resolve_name_entry("Tracked", sheet2)
+        .expect("workbook name must resolve")
+        .vertex;
+    let a1 = CellRef::new(sheet1, Coord::from_excel(1, 1, true, true));
+    let a2 = CellRef::new(sheet1, Coord::from_excel(2, 1, true, true));
+    assert_eq!(engine.graph.get_cell_ref(name_vertex), Some(a1));
+    assert_eq!(engine.graph.get_vertex_for_cell(&a1), None);
+
+    engine.insert_rows("Sheet1", 1, 1).unwrap();
+    assert_eq!(engine.graph.get_cell_ref(name_vertex), Some(a2));
+    assert_eq!(engine.graph.get_vertex_for_cell(&a2), Some(name_vertex));
+
+    // A brand-new formula on a cell the insertion never touched, referencing the shifted address.
+    engine
+        .set_cell_formula("Sheet1", 7, 7, parse("=A2+1").unwrap())
+        .unwrap();
+    let referring = engine
+        .graph
+        .get_vertex_for_cell(&CellRef::new(sheet1, Coord::from_excel(7, 7, true, true)))
+        .expect("the referring formula must exist");
+    let actual = graph_shape(&engine.graph, referring);
+    let expected_cells = {
+        let expected = ast_shape(&engine.graph, referring);
+        assert!(expected.shape.symbols.is_empty());
+        expected.shape.cells.clone()
+    };
+    assert_eq!(actual.symbols, BTreeSet::from([name_vertex]));
+    assert!(actual.cells.is_empty());
+    assert_eq!(expected_cells, BTreeSet::from([a2]));
+    let structural_failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_structural_parity(&engine, 0xc0de_0007, 1);
+    }));
+    assert!(
+        structural_failure.is_err(),
+        "the structural checker must detect the phantom name edge and the missing A2 edge"
+    );
+
+    // Consequence 1: the referring formula is now a dependent of the name, so editing the name's
+    // target spuriously dirties a formula that never mentions the name.
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 7, 7),
+        Some(LiteralValue::Number(1.0))
+    );
+    let formulas = engine.graph.formula_vertices();
+    engine.graph.clear_dirty_flags(&formulas);
+    engine
+        .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(70.0))
+        .unwrap();
+    let spuriously_dirty = engine.graph.is_dirty(referring);
+    assert!(spuriously_dirty);
+    engine.evaluate_all().unwrap();
+
+    // Consequence 2: an ordinary data write at the shifted address overwrites the name's own
+    // vertex, so the name entry now resolves to a plain default-sheet cell.
+    engine
+        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(500.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.graph.get_vertex_kind(name_vertex), VertexKind::Cell);
+
+    // Consequence 3: deleting the row the hijacked vertex now occupies strands the name, and
+    // `=Tracked+1` stops tracking its own target.
+    engine.delete_rows("Sheet1", 2, 1).unwrap();
+    engine.evaluate_all().unwrap();
+    let tracked_formula = engine
+        .graph
+        .get_vertex_for_cell(&CellRef::new(sheet2, Coord::from_excel(1, 1, true, true)))
+        .expect("the name-consuming formula must exist");
+    assert!(engine.graph.get_dependencies(tracked_formula).is_empty());
+    let formulas = engine.graph.formula_vertices();
+    engine.graph.clear_dirty_flags(&formulas);
+    engine
+        .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(700.0))
+        .unwrap();
+    assert!(!engine.graph.is_dirty(tracked_formula));
+    engine.evaluate_all().unwrap();
+    let evaluated = engine.get_cell_value("Sheet2", 1, 1);
+    eprintln!(
+        "AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID: name vertex Sheet1!$A$1 -> Sheet1!$A$2; \
+Sheet1!G7 deps={:?} AST cells={:?}; name-target edit dirties Sheet1!G7={spuriously_dirty}; \
+name vertex kind after Sheet1!A2=500 is Cell; Sheet2!A1={evaluated:?}; correct Sheet2!A1=701",
+        actual.symbols, expected_cells,
+    );
+    assert_eq!(
+        evaluated,
+        Some(LiteralValue::Number(701.0)),
+        "a default-sheet insert must not park the name vertex on an addressable cell: \
+Sheet1!G7 must take a direct Sheet1!A2 edge, the name target must not dirty it, and \
+`=Tracked+1` must still recompute from Sheet2!D4"
     );
 }
 

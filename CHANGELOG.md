@@ -58,6 +58,7 @@ All notable changes to Formualizer will be documented in this file.
 ### Testing / internal
 
 - Added a fixed-seed AST-to-edge parity harness covering structural edits, compressed ranges, symbol vertices, dirty propagation, and mutation-tested edge-maintenance failures.
+- Pinned a fourth AST-to-edge finding, `AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID`: a default-sheet row or column insert shifts a workbook-name vertex off its `Sheet1!$A$1` home onto an addressable cell, so references resolved afterwards bind to the name vertex instead of the cell. The campaign carve-out for default-sheet inserts is narrowed to that shape, restoring formula and value overwrite coverage on the default sheet.
 
 ### Fixed
 
