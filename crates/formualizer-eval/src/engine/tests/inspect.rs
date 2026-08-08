@@ -870,26 +870,18 @@ fn zero_budget_matrix_obeys_anchor_minimum_convention() {
     let root = address("Model", 1, 2);
 
     assert!(matches!(
-        engine.trace(&[root.clone()], &TraceOptions::default().with_max_nodes(0)),
+        engine.trace(
+            std::slice::from_ref(&root),
+            &TraceOptions::default().with_max_nodes(0),
+        ),
         Err(InspectError::InvalidOptions { .. })
     ));
     assert!(
         engine
-            .trace(&[root.clone()], &TraceOptions::default().with_max_depth(0))
-            .unwrap()
-            .truncation
-            .incomplete
-    );
-    assert!(
-        engine
-            .trace(&[root.clone()], &TraceOptions::default().with_max_links(0))
-            .unwrap()
-            .truncation
-            .incomplete
-    );
-    assert!(
-        engine
-            .trace(&[root.clone()], &TraceOptions::default().with_max_work(0))
+            .trace(
+                std::slice::from_ref(&root),
+                &TraceOptions::default().with_max_depth(0),
+            )
             .unwrap()
             .truncation
             .incomplete
@@ -897,7 +889,27 @@ fn zero_budget_matrix_obeys_anchor_minimum_convention() {
     assert!(
         engine
             .trace(
-                &[root.clone()],
+                std::slice::from_ref(&root),
+                &TraceOptions::default().with_max_links(0),
+            )
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    assert!(
+        engine
+            .trace(
+                std::slice::from_ref(&root),
+                &TraceOptions::default().with_max_work(0),
+            )
+            .unwrap()
+            .truncation
+            .incomplete
+    );
+    assert!(
+        engine
+            .trace(
+                std::slice::from_ref(&root),
                 &TraceOptions::default().with_range_member_budget(0),
             )
             .unwrap()
@@ -1021,8 +1033,10 @@ fn spill_dependent_via_is_sorted_and_ordinary_via_is_empty() {
 
 #[test]
 fn range_stripe_category_dedup_preserves_exact_work_boundary() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 0;
+    let config = EvalConfig {
+        range_expansion_limit: 0,
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(TestWorkbook::new(), config);
     engine
         .set_cell_value("Model", 5, 1, LiteralValue::Number(1.0))
@@ -1042,9 +1056,11 @@ fn range_stripe_category_dedup_preserves_exact_work_boundary() {
 
 #[test]
 fn bounded_dependents_cover_block_stripes_and_cross_sheet_ranges() {
-    let mut config = EvalConfig::default();
-    config.range_expansion_limit = 0;
-    config.enable_block_stripes = true;
+    let config = EvalConfig {
+        range_expansion_limit: 0,
+        enable_block_stripes: true,
+        ..EvalConfig::default()
+    };
     let mut engine = Engine::new(TestWorkbook::new(), config);
     engine.add_sheet("Model").unwrap();
     engine.add_sheet("Other").unwrap();
