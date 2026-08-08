@@ -142,6 +142,7 @@ mod function_closure_tranche_a_oracles;
 mod indirect;
 mod info_reference_context;
 mod let_lambda;
+mod npv_variadic;
 mod offset_dynamic;
 mod omitted_arguments;
 mod open_ended_bounds_caps;

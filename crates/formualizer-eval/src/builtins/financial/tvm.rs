@@ -331,7 +331,8 @@ impl Function for FvFn {
 /// # Remarks
 /// - `rate` is the discount rate per period.
 /// - Cash-flow sign convention: investments/outflows are negative, returns/inflows are positive.
-/// - Non-numeric values are ignored; numeric values in arrays/ranges are consumed left-to-right.
+/// - Text, blank, and logical cells in references are ignored. Direct scalar and computed-array
+///   values are consumed left-to-right, and direct non-numeric text returns `#VALUE!`.
 /// - Embedded error values inside provided cash-flow values are propagated as errors.
 /// - Returns argument coercion errors for invalid `rate` or direct scalar failures.
 ///
@@ -362,7 +363,7 @@ pub struct NpvFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: NPV(arg1: number@scalar, arg2...: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=Some(1),default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for NpvFn {
@@ -378,8 +379,11 @@ impl Function for NpvFn {
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
-        static SCHEMA: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar(), ArgSchema::any()]);
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            let mut schema = vec![ArgSchema::number_lenient_scalar(), ArgSchema::any()];
+            schema[1].repeating = Some(1);
+            schema
+        });
         &SCHEMA[..]
     }
     fn eval<'a, 'b, 'c>(
@@ -387,51 +391,104 @@ impl Function for NpvFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let rate = coerce_num(&args[0])?;
+        if args.len() > 255 {
+            return Err(ExcelError::new_value()
+                .with_message("NPV accepts at most 255 total arguments (rate plus 254 values)"));
+        }
 
+        let rate = coerce_num(&args[0])?;
         let mut npv = 0.0;
         let mut period = 1;
 
         for arg in &args[1..] {
-            let v = arg.value()?.into_literal();
-            match v {
-                LiteralValue::Number(n) => {
-                    npv += n / (1.0 + rate).powi(period);
-                    period += 1;
-                }
-                LiteralValue::Int(i) => {
-                    npv += (i as f64) / (1.0 + rate).powi(period);
-                    period += 1;
-                }
-                LiteralValue::Error(e) => {
-                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
-                }
-                LiteralValue::Array(arr) => {
-                    for row in arr {
-                        for cell in row {
-                            match cell {
-                                LiteralValue::Number(n) => {
-                                    npv += n / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Int(i) => {
-                                    npv += (i as f64) / (1.0 + rate).powi(period);
-                                    period += 1;
-                                }
-                                LiteralValue::Error(e) => {
-                                    return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
-                                }
-                                _ => {} // Skip non-numeric values
-                            }
+            if arg.is_omitted() {
+                period += 1;
+                continue;
+            }
+
+            // CalcValue::Range describes shape, not provenance: both a cell range and a computed
+            // array (for example TRANSPOSE(...)) use it, while a one-cell reference is Scalar.
+            // ArgumentHandle's reference path retains that distinction, including functions that
+            // genuinely return references, without guessing from the argument's syntax.
+            let reference_argument = arg.has_reference_semantics();
+            match arg.value()? {
+                CalcValue::Range(range) => {
+                    let (rows, cols) = range.dims();
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            accumulate_npv_cash_flow(
+                                range.get_cell(row, col),
+                                reference_argument,
+                                rate,
+                                &mut npv,
+                                &mut period,
+                            )?;
                         }
                     }
                 }
-                _ => {} // Skip non-numeric values
+                CalcValue::Scalar(LiteralValue::Array(arr)) => {
+                    for row in arr {
+                        for cell in row {
+                            accumulate_npv_cash_flow(
+                                cell,
+                                reference_argument,
+                                rate,
+                                &mut npv,
+                                &mut period,
+                            )?;
+                        }
+                    }
+                }
+                CalcValue::Scalar(value) => accumulate_npv_cash_flow(
+                    value,
+                    reference_argument,
+                    rate,
+                    &mut npv,
+                    &mut period,
+                )?,
+                CalcValue::Callable(_) => {
+                    return Ok(CalcValue::Scalar(LiteralValue::Error(
+                        ExcelError::new(ExcelErrorKind::Calc)
+                            .with_message("LAMBDA value must be invoked"),
+                    )));
+                }
             }
         }
 
-        Ok(CalcValue::Scalar(LiteralValue::Number(npv)))
+        if npv.is_finite() {
+            Ok(CalcValue::Scalar(LiteralValue::Number(npv)))
+        } else {
+            Ok(CalcValue::Scalar(
+                LiteralValue::Error(ExcelError::new_num()),
+            ))
+        }
     }
+}
+
+fn accumulate_npv_cash_flow(
+    value: LiteralValue,
+    reference_argument: bool,
+    rate: f64,
+    npv: &mut f64,
+    period: &mut i32,
+) -> Result<(), ExcelError> {
+    let numeric = match value {
+        LiteralValue::Number(n) => Some(n),
+        LiteralValue::Int(i) => Some(i as f64),
+        // Excel's NPV documentation says logical values in references are ignored. LibreOffice
+        // 24.2.7 counts them as 1, so this intentionally follows the Excel-targeted rule.
+        LiteralValue::Boolean(_) if reference_argument => None,
+        LiteralValue::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
+        LiteralValue::Text(_) | LiteralValue::Empty if reference_argument => None,
+        LiteralValue::Error(error) => return Err(error),
+        _ => return Err(ExcelError::new_value()),
+    };
+
+    if let Some(value) = numeric {
+        *npv += value / (1.0 + rate).powi(*period);
+        *period += 1;
+    }
+    Ok(())
 }
 
 /// Calculates the number of periods needed to satisfy a cash-flow target.
