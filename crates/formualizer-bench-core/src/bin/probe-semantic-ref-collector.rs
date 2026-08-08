@@ -5,14 +5,18 @@
 //! and interleave binaries from the revisions being compared.
 
 #[cfg(feature = "formualizer_runner")]
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 #[cfg(feature = "formualizer_runner")]
-use anyhow::Result;
+use anyhow::{Result, ensure};
 #[cfg(feature = "formualizer_runner")]
 use clap::{Parser, ValueEnum};
 #[cfg(feature = "formualizer_runner")]
-use formualizer_eval::engine::{EvalConfig, FormulaPlaneMode};
+use formualizer_eval::engine::{
+    EngineBaselineStats, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
+};
+#[cfg(feature = "formualizer_runner")]
+use formualizer_parse::parse;
 #[cfg(feature = "formualizer_runner")]
 use formualizer_workbook::{LiteralValue, Workbook, WorkbookConfig};
 #[cfg(feature = "formualizer_runner")]
@@ -30,18 +34,25 @@ fn main() -> Result<()> {
     let mut workbook = workbook(cli.mode);
     seed(&mut workbook, cli.formulas)?;
 
-    let ingest_start = Instant::now();
-    for row in 1..=cli.formulas {
-        workbook.set_formula("Bench", row, 30, &formula(cli.workload, row, false))?;
-    }
-    let ingest_ms = ingest_start.elapsed().as_secs_f64() * 1_000.0;
+    let (ingest_ms, edit_ms, stats_after_ingest) = if matches!(cli.workload, Workload::SpanIngest) {
+        bulk_span_ingest(&mut workbook, cli.mode, cli.formulas, cli.edits)?
+    } else {
+        let ingest_start = Instant::now();
+        for row in 1..=cli.formulas {
+            workbook.set_formula("Bench", row, 30, &formula(cli.workload, row, false))?;
+        }
+        let ingest_ms = ingest_start.elapsed().as_secs_f64() * 1_000.0;
+        let stats_after_ingest = workbook.engine().baseline_stats();
 
-    let edit_start = Instant::now();
-    for edit in 0..cli.edits {
-        let row = edit % cli.formulas + 1;
-        workbook.set_formula("Bench", row, 30, &formula(cli.workload, row, true))?;
-    }
-    let edit_ms = edit_start.elapsed().as_secs_f64() * 1_000.0;
+        let edit_start = Instant::now();
+        for edit in 0..cli.edits {
+            let row = edit % cli.formulas + 1;
+            workbook.set_formula("Bench", row, 30, &formula(cli.workload, row, true))?;
+        }
+        let edit_ms = edit_start.elapsed().as_secs_f64() * 1_000.0;
+        (ingest_ms, edit_ms, stats_after_ingest)
+    };
+    let stats_after_edit = workbook.engine().baseline_stats();
 
     println!(
         "{}",
@@ -52,6 +63,9 @@ fn main() -> Result<()> {
             edits: cli.edits,
             ingest_ms,
             edit_ms,
+            fp_spans_after_ingest: stats_after_ingest.formula_plane_active_span_count,
+            fp_spans_after_edit: stats_after_edit.formula_plane_active_span_count,
+            fp_candidates_after_edit: stats_after_edit.formula_plane_structural_span_candidates,
         })?
     );
     Ok(())
@@ -86,6 +100,7 @@ enum Workload {
     CompressedRanges,
     DeepNesting,
     CrossSheet,
+    SpanIngest,
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -97,6 +112,71 @@ struct Report {
     edits: u32,
     ingest_ms: f64,
     edit_ms: f64,
+    fp_spans_after_ingest: usize,
+    fp_spans_after_edit: usize,
+    fp_candidates_after_edit: u64,
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn span_batch(workbook: &mut Workbook, rows: u32, edited: bool) -> Result<FormulaIngestBatch> {
+    let mut records = Vec::with_capacity(rows as usize);
+    for row in 1..=rows {
+        let text = formula(Workload::SpanIngest, row, edited);
+        let ast = parse(&text)?;
+        let ast_id = workbook.engine_mut().intern_formula_ast(&ast);
+        records.push(FormulaIngestRecord::new(
+            row,
+            30,
+            ast_id,
+            Some(Arc::<str>::from(text)),
+        ));
+    }
+    Ok(FormulaIngestBatch::new("Bench", records))
+}
+
+#[cfg(feature = "formualizer_runner")]
+fn bulk_span_ingest(
+    workbook: &mut Workbook,
+    mode: Mode,
+    formulas: u32,
+    edits: u32,
+) -> Result<(f64, f64, EngineBaselineStats)> {
+    ensure!(
+        edits <= formulas,
+        "span-ingest requires edits ({edits}) <= formulas ({formulas})"
+    );
+    let initial = span_batch(workbook, formulas, false)?;
+    let ingest_start = Instant::now();
+    workbook
+        .engine_mut()
+        .ingest_formula_batches(vec![initial])?;
+    let ingest_ms = ingest_start.elapsed().as_secs_f64() * 1_000.0;
+    let stats_after_ingest = workbook.engine().baseline_stats();
+    if matches!(mode, Mode::Authoritative) {
+        ensure!(
+            stats_after_ingest.formula_plane_active_span_count > 0,
+            "authoritative bulk ingest formed no FormulaPlane spans"
+        );
+    }
+
+    let replacements = span_batch(workbook, edits, true)?;
+    let edit_start = Instant::now();
+    workbook
+        .engine_mut()
+        .ingest_formula_batches(vec![replacements])?;
+    let edit_ms = edit_start.elapsed().as_secs_f64() * 1_000.0;
+    if matches!(mode, Mode::Authoritative) {
+        ensure!(
+            workbook
+                .engine()
+                .baseline_stats()
+                .formula_plane_active_span_count
+                > 0,
+            "authoritative bulk edit retained no FormulaPlane spans"
+        );
+    }
+
+    Ok((ingest_ms, edit_ms, stats_after_ingest))
 }
 
 #[cfg(feature = "formualizer_runner")]
@@ -156,5 +236,6 @@ fn formula(workload: Workload, row: u32, edited: bool) -> String {
             row + 3,
             row + 1
         ),
+        Workload::SpanIngest => format!("=SUM(A{row}:D{})+{delta}", row + 3),
     }
 }
