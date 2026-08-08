@@ -159,6 +159,7 @@ pub fn formualizer_common::SheetRangeRef<'a>::fmt(&self, &mut core::fmt::Formatt
 impl<'a> core::hash::Hash for formualizer_common::SheetRangeRef<'a>
 pub fn formualizer_common::SheetRangeRef<'a>::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl<'a> core::marker::StructuralPartialEq for formualizer_common::SheetRangeRef<'a>
+pub fn formualizer_common::address::format_a1_sheet_name(&str) -> alloc::borrow::Cow<'_, str>
 pub type formualizer_common::address::SheetId = u16
 pub mod formualizer_common::coord
 #[non_exhaustive] pub enum formualizer_common::coord::A1ParseError
@@ -622,6 +623,60 @@ impl core::fmt::Debug for formualizer_common::CoercionPolicy
 pub fn formualizer_common::CoercionPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_common::CoercionPolicy
 impl core::marker::StructuralPartialEq for formualizer_common::CoercionPolicy
+pub mod formualizer_common::grid_address
+pub struct formualizer_common::grid_address::CellAddress
+pub formualizer_common::grid_address::CellAddress::column: u32
+pub formualizer_common::grid_address::CellAddress::row: u32
+pub formualizer_common::grid_address::CellAddress::sheet: alloc::string::String
+impl formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::from_finite(&formualizer_common::RangeAddress) -> core::option::Option<Self>
+pub fn formualizer_common::CellAddress::new(impl core::convert::Into<alloc::string::String>, u32, u32) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::CellAddress::to_finite(&self) -> formualizer_common::RangeAddress
+impl core::clone::Clone for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::clone(&self) -> formualizer_common::CellAddress
+impl core::cmp::Eq for formualizer_common::CellAddress
+impl core::cmp::PartialEq for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::eq(&self, &formualizer_common::CellAddress) -> bool
+impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
+impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::CellAddress
+impl serde_core::ser::Serialize for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::grid_address::RangeArea
+pub formualizer_common::grid_address::RangeArea::end_column: core::option::Option<u32>
+pub formualizer_common::grid_address::RangeArea::end_row: core::option::Option<u32>
+pub formualizer_common::grid_address::RangeArea::sheet: alloc::string::String
+pub formualizer_common::grid_address::RangeArea::start_column: core::option::Option<u32>
+pub formualizer_common::grid_address::RangeArea::start_row: core::option::Option<u32>
+impl formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::from_finite(&formualizer_common::RangeAddress) -> Self
+pub fn formualizer_common::RangeArea::new(impl core::convert::Into<alloc::string::String>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::RangeArea::to_finite(&self) -> core::option::Option<formualizer_common::RangeAddress>
+impl core::clone::Clone for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::clone(&self) -> formualizer_common::RangeArea
+impl core::cmp::Eq for formualizer_common::RangeArea
+impl core::cmp::PartialEq for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::eq(&self, &formualizer_common::RangeArea) -> bool
+impl core::fmt::Debug for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::RangeArea
+impl serde_core::ser::Serialize for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub mod formualizer_common::range
 pub struct formualizer_common::range::RangeAddress
 pub formualizer_common::range::RangeAddress::end_col: u32
@@ -639,6 +694,11 @@ pub fn formualizer_common::RangeAddress::clone(&self) -> formualizer_common::Ran
 impl core::cmp::Eq for formualizer_common::RangeAddress
 impl core::cmp::PartialEq for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::eq(&self, &formualizer_common::RangeAddress) -> bool
+impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
+impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
 impl core::fmt::Debug for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for formualizer_common::RangeAddress
@@ -1089,6 +1149,35 @@ impl core::hash::Hash for formualizer_common::AxisBound
 pub fn formualizer_common::AxisBound::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_common::AxisBound
 impl core::marker::StructuralPartialEq for formualizer_common::AxisBound
+pub struct formualizer_common::CellAddress
+pub formualizer_common::CellAddress::column: u32
+pub formualizer_common::CellAddress::row: u32
+pub formualizer_common::CellAddress::sheet: alloc::string::String
+impl formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::from_finite(&formualizer_common::RangeAddress) -> core::option::Option<Self>
+pub fn formualizer_common::CellAddress::new(impl core::convert::Into<alloc::string::String>, u32, u32) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::CellAddress::to_finite(&self) -> formualizer_common::RangeAddress
+impl core::clone::Clone for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::clone(&self) -> formualizer_common::CellAddress
+impl core::cmp::Eq for formualizer_common::CellAddress
+impl core::cmp::PartialEq for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::eq(&self, &formualizer_common::CellAddress) -> bool
+impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
+impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
+impl core::fmt::Debug for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::CellAddress
+impl serde_core::ser::Serialize for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::CellAddress
+pub fn formualizer_common::CellAddress::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_common::Coord(_)
 impl formualizer_common::Coord
 pub const formualizer_common::Coord::INVALID: Self
@@ -1283,6 +1372,11 @@ pub fn formualizer_common::RangeAddress::clone(&self) -> formualizer_common::Ran
 impl core::cmp::Eq for formualizer_common::RangeAddress
 impl core::cmp::PartialEq for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::eq(&self, &formualizer_common::RangeAddress) -> bool
+impl core::convert::From<formualizer_common::CellAddress> for formualizer_common::RangeAddress
+pub fn formualizer_common::RangeAddress::from(formualizer_common::CellAddress) -> Self
+impl core::convert::TryFrom<formualizer_common::RangeAddress> for formualizer_common::CellAddress
+pub type formualizer_common::CellAddress::Error = formualizer_common::RangeAddress
+pub fn formualizer_common::CellAddress::try_from(formualizer_common::RangeAddress) -> core::result::Result<Self, Self::Error>
 impl core::fmt::Debug for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for formualizer_common::RangeAddress
@@ -1297,6 +1391,30 @@ pub type formualizer_common::RangeAddress::Error = formualizer_common::SheetAddr
 pub fn formualizer_common::RangeAddress::try_from(formualizer_common::SheetRangeRef<'a>) -> core::result::Result<Self, Self::Error>
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::RangeAddress
 pub fn formualizer_common::RangeAddress::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub struct formualizer_common::RangeArea
+pub formualizer_common::RangeArea::end_column: core::option::Option<u32>
+pub formualizer_common::RangeArea::end_row: core::option::Option<u32>
+pub formualizer_common::RangeArea::sheet: alloc::string::String
+pub formualizer_common::RangeArea::start_column: core::option::Option<u32>
+pub formualizer_common::RangeArea::start_row: core::option::Option<u32>
+impl formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::from_finite(&formualizer_common::RangeAddress) -> Self
+pub fn formualizer_common::RangeArea::new(impl core::convert::Into<alloc::string::String>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>, core::option::Option<u32>) -> core::result::Result<Self, formualizer_common::SheetAddressError>
+pub fn formualizer_common::RangeArea::to_finite(&self) -> core::option::Option<formualizer_common::RangeAddress>
+impl core::clone::Clone for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::clone(&self) -> formualizer_common::RangeArea
+impl core::cmp::Eq for formualizer_common::RangeArea
+impl core::cmp::PartialEq for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::eq(&self, &formualizer_common::RangeArea) -> bool
+impl core::fmt::Debug for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_common::RangeArea
+impl serde_core::ser::Serialize for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_common::RangeArea
+pub fn formualizer_common::RangeArea::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
 pub struct formualizer_common::RelativeCoord(_)
 impl formualizer_common::RelativeCoord
 pub fn formualizer_common::RelativeCoord::as_u64(self) -> u64
@@ -1417,6 +1535,7 @@ pub fn formualizer_common::date_to_serial_for(formualizer_common::DateSystem, &c
 pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::datetime_to_serial_for(formualizer_common::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::format_a1_sheet_name(&str) -> alloc::borrow::Cow<'_, str>
 pub fn formualizer_common::max_excel_serial_for(formualizer_common::DateSystem) -> f64
 pub fn formualizer_common::parse_a1_1based(&str) -> core::result::Result<(u32, u32, bool, bool), formualizer_common::A1ParseError>
 pub fn formualizer_common::parse_excel_date_text(&str) -> core::option::Option<chrono::naive::date::NaiveDate>
