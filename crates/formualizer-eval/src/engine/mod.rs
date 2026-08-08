@@ -15,6 +15,7 @@ pub mod graph;
 pub mod ingest;
 pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;
+pub mod inspect;
 pub mod journal;
 pub mod live_edges;
 pub mod live_graph;

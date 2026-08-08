@@ -26,7 +26,8 @@ only_used_in_recursion = "allow"
 [dependencies]
 formualizer-parse = { workspace = true }
 formualizer-macros  = { workspace = true }
-formualizer-common = { workspace = true }
+formualizer-common = { workspace = true, features = ["serde"] }
+serde = { workspace = true, features = ["derive"] }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
 # default-features = false: SmallRng + seeded PRNG only; no OsRng / getrandom at runtime.

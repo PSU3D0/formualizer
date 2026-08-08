@@ -731,6 +731,48 @@ impl CsrMutableEdges {
         }
     }
 
+    /// Visit incoming edges without materializing the complete in-degree.
+    ///
+    /// The caller-owned budget is charged once for every base or delta entry
+    /// examined. `false` means an entry remained when the budget was
+    /// exhausted. Pending removals are filtered and pending additions are read
+    /// through the reverse delta index, so this has the same delta-aware
+    /// semantics as [`Self::in_edges_merged`]. A duplicate base/addition pair
+    /// may be presented twice; bounded semantic callers already deduplicate by
+    /// address and charging the duplicate is the conservative accounting rule.
+    pub(crate) fn visit_in_edges_bounded(
+        &self,
+        v: VertexId,
+        remaining_work: &mut u64,
+        visitor: &mut dyn FnMut(VertexId) -> bool,
+    ) -> bool {
+        let removals = self.delta.removals_in.get(&v);
+        for &source in self.base.in_edges(v) {
+            if *remaining_work == 0 {
+                return false;
+            }
+            *remaining_work -= 1;
+            if removals.is_some_and(|set| set.contains(&source)) {
+                continue;
+            }
+            if !visitor(source) {
+                return false;
+            }
+        }
+        if let Some(additions) = self.delta.additions_in.get(&v) {
+            for &source in additions {
+                if *remaining_work == 0 {
+                    return false;
+                }
+                *remaining_work -= 1;
+                if !visitor(source) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Get the current delta size
     pub fn delta_size(&self) -> usize {
         self.delta.op_count()

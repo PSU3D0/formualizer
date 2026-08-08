@@ -26,7 +26,8 @@ pub use sheetport_spec;
 
 #[cfg(feature = "common")]
 pub use formualizer_common::{
-    ErrorContext, ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue, RangeAddress,
+    CellAddress, ErrorContext, ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue,
+    RangeAddress, RangeArea,
 };
 
 #[cfg(feature = "parse")]
@@ -58,6 +59,15 @@ pub use formualizer_workbook::{
 
 #[cfg(feature = "eval")]
 pub use formualizer_eval::engine::{DateSystem, EvalConfig};
+
+#[cfg(feature = "eval")]
+pub use formualizer_eval::engine::inspect::{
+    CellSnapshot, CellSnapshotReport, Dependent, DependentsOptions, DependentsReport, InspectError,
+    InspectionUnavailableReason, LinkDisposition, NameResolution, OmittedCount, Precedent,
+    PrecedentOptions, PrecedentReport, Provenance, RangePage, RangePageOptions, SemanticReference,
+    SnapshotOptions, SpillRole, Staleness, StateStamp, TraceDirection, TraceGraph, TraceLink,
+    TraceLinkKind, TraceLinkTarget, TraceNode, TraceNodeId, TraceOptions, TruncationReport,
+};
 
 #[cfg(feature = "eval")]
 pub use formualizer_eval::engine::eval::EvalPlan;
