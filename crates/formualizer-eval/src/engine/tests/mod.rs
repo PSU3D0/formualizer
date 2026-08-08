@@ -124,6 +124,7 @@ mod formula_plane_demotion_correctness;
 mod formula_plane_dirty_domain_preservation;
 mod formula_plane_index_promotion;
 mod formula_plane_ingest_shadow;
+mod formula_plane_inspect_parity;
 mod formula_plane_literal_param_memo;
 mod formula_plane_lookup_family_promotion;
 mod formula_plane_lookup_semantics;
