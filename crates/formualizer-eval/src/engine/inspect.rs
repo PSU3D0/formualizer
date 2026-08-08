@@ -5,7 +5,11 @@
 //! placeholder vertices, or marks cells dirty. It may warm snapshot-guarded
 //! performance caches such as the row-bounds cache. Reports are plane-independent:
 //! legacy and authoritative FormulaPlane engines return field-identical semantic
-//! reports for identical logical workbook state, apart from their state stamps.
+//! reports for identical logical workbook state, apart from their state stamps,
+//! except that (a) after structural edits and before re-evaluation, FormulaPlane
+//! may conservatively report per-cell staleness as [`Staleness::Dirty`] where the
+//! legacy engine reports [`Staleness::Current`], and (b) a binding `max_work`
+//! budget may discover representation-dependent prefixes.
 
 use std::collections::{HashMap, VecDeque};
 use std::error::Error;
@@ -36,6 +40,52 @@ use crate::traits::EvaluationContext;
 
 const DEFAULT_MAX_LINKS: u32 = 256;
 const DEFAULT_MAX_WORK: u64 = 100_000;
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct FormulaPlaneReferencePathCounts {
+    pub(crate) template: u32,
+    pub(crate) ast_fallback: u32,
+}
+
+#[cfg(test)]
+thread_local! {
+    static FORMULA_PLANE_REFERENCE_PATH_COUNTS:
+        std::cell::Cell<FormulaPlaneReferencePathCounts> = const {
+            std::cell::Cell::new(FormulaPlaneReferencePathCounts {
+                template: 0,
+                ast_fallback: 0,
+            })
+        };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_formula_plane_reference_path_counts() {
+    FORMULA_PLANE_REFERENCE_PATH_COUNTS.with(|counts| counts.set(Default::default()));
+}
+
+#[cfg(test)]
+pub(crate) fn formula_plane_reference_path_counts() -> FormulaPlaneReferencePathCounts {
+    FORMULA_PLANE_REFERENCE_PATH_COUNTS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn record_formula_plane_template_path() {
+    FORMULA_PLANE_REFERENCE_PATH_COUNTS.with(|counts| {
+        let mut current = counts.get();
+        current.template += 1;
+        counts.set(current);
+    });
+}
+
+#[cfg(test)]
+fn record_formula_plane_ast_fallback_path() {
+    FORMULA_PLANE_REFERENCE_PATH_COUNTS.with(|counts| {
+        let mut current = counts.get();
+        current.ast_fallback += 1;
+        counts.set(current);
+    });
+}
 
 /// Correlates a report with the engine mutation and recalculation state from
 /// which it was copied.
@@ -355,6 +405,10 @@ impl PrecedentOptions {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DependentsOptions {
+    /// Maximum returned dependents. When discovery finds more candidates, the
+    /// address-least `max_results` candidates are retained in canonical sheet,
+    /// row, column order. Discovery remains independently bounded by
+    /// [`DependentsOptions::max_work`].
     pub max_results: u32,
     pub max_work: u64,
 }
@@ -832,6 +886,9 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
     }
 
     fn span_placement(&self, key: CellKey) -> Option<(FormulaSpanRef, PlacementCoord)> {
+        // Defensive even though Shadow currently retains no active spans: this
+        // gate also protects dependent-index routing if Shadow ever retains
+        // spans or consumer-read entries.
         if self.engine.config.formula_plane_mode != FormulaPlaneMode::AuthoritativeExperimental {
             return None;
         }
@@ -998,6 +1055,8 @@ impl<'a, R: EvaluationContext> FormulaPlaneInspectSource<'a, R> {
             };
             references.push(reference);
         }
+        #[cfg(test)]
+        record_formula_plane_template_path();
         Some(references)
     }
 
@@ -1096,6 +1155,8 @@ impl<R: EvaluationContext> InspectSource for FormulaPlaneInspectSource<'_, R> {
             .and_then(|(ast, _)| ast);
         Ok(ast.map(|ast| FormulaView {
             ast,
+            // Canonical admission rejects CanonicalRejectReason::VolatileFunction,
+            // using the same function-registry volatility capability as legacy.
             volatile: false,
             dirty: self.span_placement_is_dirty(span_ref, placement),
         }))
@@ -1110,6 +1171,8 @@ impl<R: EvaluationContext> InspectSource for FormulaPlaneInspectSource<'_, R> {
             return self.legacy.visit_declared_references(cell, visitor);
         };
         let Some(references) = self.instantiated_span_references(span_ref, placement) else {
+            #[cfg(test)]
+            record_formula_plane_ast_fallback_path();
             // Missing/stale summaries and WholeResult cannot answer a per-cell
             // shape query; reconstruct and walk the FormulaPlane AST instead.
             let Some(formula) = self.formula_at(cell)? else {
@@ -1721,7 +1784,6 @@ impl<R: EvaluationContext> Engine<R> {
         let source = self.inspect_source();
         let mut found: FxHashMap<CellAddress, Vec<CellAddress>> = FxHashMap::default();
         let mut incomplete = false;
-        let mut known_omitted_dependent = false;
         let max_results = max_results as usize;
 
         let spill_anchor_query = matches!(
@@ -1742,11 +1804,6 @@ impl<R: EvaluationContext> Engine<R> {
                         via_members.push(via.clone());
                     }
                     return true;
-                }
-                if found.len() >= max_results {
-                    incomplete = true;
-                    known_omitted_dependent = true;
-                    return false;
                 }
                 found.insert(
                     address,
@@ -1799,6 +1856,11 @@ impl<R: EvaluationContext> Engine<R> {
             })
             .collect();
         dependents.sort_by(|left, right| address_cmp(&left.cell, &right.cell));
+        let known_omitted_dependent = dependents.len() > max_results;
+        if known_omitted_dependent {
+            dependents.truncate(max_results);
+            incomplete = true;
+        }
         Ok((
             dependents,
             if incomplete {
