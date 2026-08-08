@@ -518,8 +518,7 @@ pub enum InspectError {
         expected: StateStamp,
         actual: StateStamp,
     },
-    /// Currently unreachable in practice; reserved for bounded-allocation
-    /// paths.
+    /// currently unreachable in practice; reserved for bounded-allocation paths
     ResourceExhausted {
         resource: &'static str,
     },
