@@ -570,6 +570,11 @@ fn dirty_trace_pairs_current_formula_with_cached_value_and_stamp() {
         .trace(&[address("Model", 1, 1)], &TraceOptions::default())
         .unwrap();
     assert_ne!(graph.stamp, old_stamp);
+    assert_eq!(graph.stamp.recalc_epoch, engine.recalc_epoch);
+    assert_eq!(
+        graph.stamp.mutation_revision,
+        engine.inspection_mutation_revision()
+    );
     assert_eq!(graph.nodes[0].cell.formula.as_deref(), Some("=2"));
     assert_eq!(graph.nodes[0].cell.value, Some(LiteralValue::Number(1.0)));
     assert_eq!(graph.nodes[0].cell.staleness, Staleness::Dirty);
