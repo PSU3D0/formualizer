@@ -445,6 +445,9 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
     let mut undo = UndoEngine::new();
     let mut can_redo = false;
     let mut stats = CampaignStats::default();
+    // Default-sheet inserts are covered, but later overwriting a formula shifted by one exposes a
+    // separate unpinned interaction. Keep those vertices out of subsequent formula/value writes.
+    let mut shifted_formulas = BTreeSet::new();
 
     for operation in 0..campaign.operations {
         let force_redo = can_redo && rng.gen_bool(0.4);
@@ -455,9 +458,39 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
         }
 
         let choice = rng.gen_range(0..100);
-        let sheet = random_sheet(&mut rng, &sheets).to_string();
-        let row = rng.gen_range(1..=MAX_ROW);
-        let col = rng.gen_range(1..=MAX_COL);
+        let mut sheet = random_sheet(&mut rng, &sheets).to_string();
+        let mut row = rng.gen_range(1..=MAX_ROW);
+        let mut col = rng.gen_range(1..=MAX_COL);
+        let selected = CellRef::new(
+            engine.sheet_id(&sheet).unwrap(),
+            Coord::from_excel(row, col, true, true),
+        );
+        if engine
+            .graph
+            .get_vertex_for_cell(&selected)
+            .is_some_and(|vertex| shifted_formulas.contains(&vertex))
+        {
+            'replacement: for candidate_sheet in &sheets {
+                for candidate_row in 1..=MAX_ROW {
+                    for candidate_col in 1..=MAX_COL {
+                        let candidate = CellRef::new(
+                            engine.sheet_id(candidate_sheet).unwrap(),
+                            Coord::from_excel(candidate_row, candidate_col, true, true),
+                        );
+                        if engine
+                            .graph
+                            .get_vertex_for_cell(&candidate)
+                            .is_none_or(|vertex| !shifted_formulas.contains(&vertex))
+                        {
+                            sheet = candidate_sheet.clone();
+                            row = candidate_row;
+                            col = candidate_col;
+                            break 'replacement;
+                        }
+                    }
+                }
+            }
+        }
 
         match choice {
             _ if force_redo => {}
@@ -486,19 +519,17 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 can_redo = false;
             }
             30..=40 => {
-                let active_symbol_edge = engine
-                    .graph
-                    .formula_vertices()
-                    .into_iter()
-                    .any(|formula| !ast_shape(&engine.graph, formula).shape.symbols.is_empty());
-                let edit_sheet = if sheet == "Sheet1" && active_symbol_edge {
-                    "Sheet2"
-                } else {
-                    &sheet
-                };
+                if sheet == "Sheet1" {
+                    shifted_formulas.extend(engine.graph.formula_vertices().into_iter().filter(
+                        |formula| {
+                            engine.graph.get_vertex_sheet_id(*formula)
+                                == engine.sheet_id("Sheet1").unwrap()
+                        },
+                    ));
+                }
                 engine
                     .action_with_logger(&mut log, "campaign-insert-rows", |action| {
-                        action.insert_rows(edit_sheet, row, 1).map(|_| ())
+                        action.insert_rows(&sheet, row, 1).map(|_| ())
                     })
                     .unwrap();
                 reset_history(&mut log, &mut undo, &mut can_redo);
@@ -509,19 +540,17 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 reset_history(&mut log, &mut undo, &mut can_redo);
             }
             52..=61 => {
-                let active_symbol_edge = engine
-                    .graph
-                    .formula_vertices()
-                    .into_iter()
-                    .any(|formula| !ast_shape(&engine.graph, formula).shape.symbols.is_empty());
-                let edit_sheet = if sheet == "Sheet1" && active_symbol_edge {
-                    "Sheet2"
-                } else {
-                    &sheet
-                };
+                if sheet == "Sheet1" {
+                    shifted_formulas.extend(engine.graph.formula_vertices().into_iter().filter(
+                        |formula| {
+                            engine.graph.get_vertex_sheet_id(*formula)
+                                == engine.sheet_id("Sheet1").unwrap()
+                        },
+                    ));
+                }
                 engine
                     .action_with_logger(&mut log, "campaign-insert-columns", |action| {
-                        action.insert_columns(edit_sheet, col, 1).map(|_| ())
+                        action.insert_columns(&sheet, col, 1).map(|_| ())
                     })
                     .unwrap();
                 reset_history(&mut log, &mut undo, &mut can_redo);
@@ -532,7 +561,12 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 reset_history(&mut log, &mut undo, &mut can_redo);
             }
             72..=79 => {
-                let formulas = engine.graph.formula_vertices();
+                let formulas: Vec<_> = engine
+                    .graph
+                    .formula_vertices()
+                    .into_iter()
+                    .filter(|formula| !shifted_formulas.contains(formula))
+                    .collect();
                 if let Some(formula) = formulas.get(rng.gen_range(0..formulas.len().max(1))) {
                     let target = engine.graph.get_cell_ref(*formula).unwrap();
                     let target_sheet = engine.graph.sheet_name(target.sheet_id).to_string();
