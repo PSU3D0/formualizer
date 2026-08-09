@@ -1,6 +1,7 @@
 use crate::Workbook;
 use crate::errors::inspect_error_to_js;
 use crate::utils::js_error;
+use crate::workbook::{BindingValue, binding_value};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
@@ -351,37 +352,33 @@ enum WireTaggedValue {
     Pending,
 }
 
-impl From<&LiteralValue> for WireTraceValue {
-    fn from(value: &LiteralValue) -> Self {
+impl From<BindingValue> for WireTraceValue {
+    fn from(value: BindingValue) -> Self {
         match value {
-            LiteralValue::Empty => Self::Null(()),
-            LiteralValue::Boolean(value) => Self::Boolean(*value),
-            LiteralValue::Int(value) => Self::Number(*value as f64),
-            LiteralValue::Number(value) => Self::Number(*value),
-            LiteralValue::Text(value) => Self::Text(value.clone()),
-            LiteralValue::Array(rows) => Self::Array(
-                rows.iter()
-                    .map(|row| row.iter().map(Self::from).collect())
+            BindingValue::Empty => Self::Null(()),
+            BindingValue::Boolean(value) => Self::Boolean(value),
+            BindingValue::Number(value) => Self::Number(value),
+            BindingValue::Text(value) => Self::Text(value),
+            BindingValue::Array(rows) => Self::Array(
+                rows.into_iter()
+                    .map(|row| row.into_iter().map(Self::from).collect())
                     .collect(),
             ),
-            LiteralValue::Error(error) => Self::Tagged(WireTaggedValue::Error {
-                code: error.kind.to_string(),
-                message: error.message.clone(),
-            }),
-            LiteralValue::Date(value) => Self::Tagged(WireTaggedValue::Date {
-                value: value.to_string(),
-            }),
-            LiteralValue::DateTime(value) => Self::Tagged(WireTaggedValue::Datetime {
-                value: value.to_string(),
-            }),
-            LiteralValue::Time(value) => Self::Tagged(WireTaggedValue::Time {
-                value: value.to_string(),
-            }),
-            LiteralValue::Duration(value) => Self::Tagged(WireTaggedValue::Duration {
-                value: format!("{value:?}"),
-            }),
-            LiteralValue::Pending => Self::Tagged(WireTaggedValue::Pending),
+            BindingValue::Error { code, message, .. } => {
+                Self::Tagged(WireTaggedValue::Error { code, message })
+            }
+            BindingValue::Date(value) => Self::Tagged(WireTaggedValue::Date { value }),
+            BindingValue::DateTime(value) => Self::Tagged(WireTaggedValue::Datetime { value }),
+            BindingValue::Time(value) => Self::Tagged(WireTaggedValue::Time { value }),
+            BindingValue::Duration(value) => Self::Tagged(WireTaggedValue::Duration { value }),
+            BindingValue::Pending => Self::Tagged(WireTaggedValue::Pending),
         }
+    }
+}
+
+impl From<&LiteralValue> for WireTraceValue {
+    fn from(value: &LiteralValue) -> Self {
+        binding_value(value).into()
     }
 }
 
