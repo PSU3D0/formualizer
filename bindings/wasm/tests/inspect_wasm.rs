@@ -212,7 +212,7 @@ fn cell(sheet: &str, row: u32, column: u32) -> Value {
 }
 
 #[wasm_bindgen_test]
-fn inspection_reports_have_exact_public_shapes_and_semantics() {
+fn snapshot_precedent_dependent_and_range_page_reports_have_exact_shapes() {
     let workbook = fixture();
 
     let snapshot = json_value(
@@ -581,7 +581,7 @@ fn trace_cycle_dispositions_and_budget_tags_are_exact() {
 }
 
 #[wasm_bindgen_test]
-fn dirty_transition_options_stamps_and_error_mapping_are_pinned() {
+fn dirty_transition_snapshot_option_stamp_guard_and_common_errors_are_pinned() {
     let workbook = fixture();
     let before = json_value(
         workbook
