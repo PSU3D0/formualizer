@@ -378,31 +378,77 @@ pub(crate) fn js_to_literal(value: &JsValue) -> formualizer::LiteralValue {
     LiteralValue::Text(format!("{value:?}"))
 }
 
-pub(crate) fn literal_to_js(v: &formualizer::LiteralValue) -> JsValue {
-    match v {
-        formualizer::LiteralValue::Empty => JsValue::NULL,
-        formualizer::LiteralValue::Boolean(b) => JsValue::from_bool(*b),
-        formualizer::LiteralValue::Int(i) => JsValue::from_f64(*i as f64),
-        formualizer::LiteralValue::Number(n) => JsValue::from_f64(*n),
-        formualizer::LiteralValue::Text(s) => JsValue::from_str(s),
-        formualizer::LiteralValue::Date(d) => JsValue::from_str(&d.to_string()),
-        formualizer::LiteralValue::DateTime(dt) => JsValue::from_str(&dt.to_string()),
-        formualizer::LiteralValue::Time(t) => JsValue::from_str(&t.to_string()),
-        formualizer::LiteralValue::Duration(dur) => JsValue::from_str(&format!("{dur:?}")),
-        formualizer::LiteralValue::Array(values) => {
+pub(crate) enum BindingValue {
+    Empty,
+    Boolean(bool),
+    Number(f64),
+    Text(String),
+    Array(Vec<Vec<BindingValue>>),
+    Date(String),
+    DateTime(String),
+    Time(String),
+    Duration(String),
+    Pending,
+    Error {
+        display: String,
+        code: String,
+        message: Option<String>,
+    },
+}
+
+pub(crate) fn binding_value(value: &formualizer::LiteralValue) -> BindingValue {
+    match value {
+        formualizer::LiteralValue::Empty => BindingValue::Empty,
+        formualizer::LiteralValue::Boolean(value) => BindingValue::Boolean(*value),
+        formualizer::LiteralValue::Int(value) => BindingValue::Number(*value as f64),
+        formualizer::LiteralValue::Number(value) => BindingValue::Number(*value),
+        formualizer::LiteralValue::Text(value) => BindingValue::Text(value.clone()),
+        formualizer::LiteralValue::Array(rows) => BindingValue::Array(
+            rows.iter()
+                .map(|row| row.iter().map(binding_value).collect())
+                .collect(),
+        ),
+        formualizer::LiteralValue::Date(value) => BindingValue::Date(value.to_string()),
+        formualizer::LiteralValue::DateTime(value) => BindingValue::DateTime(value.to_string()),
+        formualizer::LiteralValue::Time(value) => BindingValue::Time(value.to_string()),
+        formualizer::LiteralValue::Duration(value) => BindingValue::Duration(format!("{value:?}")),
+        formualizer::LiteralValue::Pending => BindingValue::Pending,
+        formualizer::LiteralValue::Error(error) => BindingValue::Error {
+            display: error.to_string(),
+            code: error.kind.to_string(),
+            message: error.message.clone(),
+        },
+    }
+}
+
+fn binding_value_to_js(value: BindingValue) -> JsValue {
+    match value {
+        BindingValue::Empty => JsValue::NULL,
+        BindingValue::Boolean(value) => JsValue::from_bool(value),
+        BindingValue::Number(value) => JsValue::from_f64(value),
+        BindingValue::Text(value)
+        | BindingValue::Date(value)
+        | BindingValue::DateTime(value)
+        | BindingValue::Time(value)
+        | BindingValue::Duration(value) => JsValue::from_str(&value),
+        BindingValue::Array(rows) => {
             let outer = js_sys::Array::new();
-            for row in values {
-                let arr = js_sys::Array::new();
+            for row in rows {
+                let array = js_sys::Array::new();
                 for cell in row {
-                    arr.push(&literal_to_js(cell));
+                    array.push(&binding_value_to_js(cell));
                 }
-                outer.push(&arr);
+                outer.push(&array);
             }
             outer.into()
         }
-        formualizer::LiteralValue::Pending => JsValue::from_str("Pending"),
-        formualizer::LiteralValue::Error(err) => JsValue::from_str(&err.to_string()),
+        BindingValue::Pending => JsValue::from_str("Pending"),
+        BindingValue::Error { display, .. } => JsValue::from_str(&display),
     }
+}
+
+pub(crate) fn literal_to_js(value: &formualizer::LiteralValue) -> JsValue {
+    binding_value_to_js(binding_value(value))
 }
 
 fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
@@ -451,7 +497,11 @@ extern "C" {
 }
 
 /// Reject own enumerable keys that are not in `allowed`.
-fn reject_unknown_keys(value: &JsValue, context: &str, allowed: &[&str]) -> Result<(), JsValue> {
+pub(crate) fn reject_unknown_keys(
+    value: &JsValue,
+    context: &str,
+    allowed: &[&str],
+) -> Result<(), JsValue> {
     if !value.is_object() {
         return Err(js_error(format!("{context}: expected an object")));
     }

@@ -3,6 +3,7 @@ use wasm_bindgen::prelude::*;
 mod ast;
 mod dialect;
 mod errors;
+mod inspect;
 mod parser;
 mod reference;
 mod sheetport;

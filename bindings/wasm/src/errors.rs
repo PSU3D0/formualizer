@@ -6,6 +6,26 @@ pub(crate) fn workbook_error_to_js(error: formualizer::workbook::IoError) -> JsV
     workbook_error_ref_to_js(&error)
 }
 
+pub(crate) fn inspect_error_to_js(error: formualizer::InspectError) -> JsValue {
+    use formualizer::InspectError;
+
+    let code = match &error {
+        InspectError::SheetNotFound { .. } => "SHEET_NOT_FOUND",
+        InspectError::InvalidAddress { .. } => "INVALID_ADDRESS",
+        InspectError::InvalidOptions { .. } => "INVALID_OPTIONS",
+        InspectError::DependencyStateUnavailable { .. } => "DEPENDENCY_STATE_UNAVAILABLE",
+        InspectError::RevisionMismatch { .. } => "REVISION_MISMATCH",
+        InspectError::ResourceExhausted { .. } => "RESOURCE_EXHAUSTED",
+        _ => "INSPECT_ERROR",
+    };
+    let js_error = js_sys::Error::new(&error.to_string());
+    let object = js_error.unchecked_ref::<js_sys::Object>();
+    set_string(object, "code", code);
+    set_string(object, "kind", "InspectError");
+    set_string(object, "inspect_code", code);
+    js_error.into()
+}
+
 pub(crate) fn workbook_error_ref_to_js(error: &formualizer::workbook::IoError) -> JsValue {
     match error {
         formualizer::workbook::IoError::Engine(error) => {

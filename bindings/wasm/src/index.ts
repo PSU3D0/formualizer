@@ -272,6 +272,284 @@ export type CellScalar = null | undefined | boolean | number | string;
 export type CellArray = CellScalar[] | CellScalar[][];
 export type CellValue = CellScalar | CellArray;
 
+/** An owned, absolute, 1-based workbook address. */
+export interface CellAddress {
+  sheet: string;
+  row: number;
+  column: number;
+}
+
+/**
+ * An owned, absolute range whose null bounds denote open sides. The runtime
+ * input also accepts omitted bounds as open; this shared input/output shape
+ * keeps them required because reports always emit all four keys.
+ */
+export interface RangeArea {
+  sheet: string;
+  startRow: number | null;
+  startColumn: number | null;
+  endRow: number | null;
+  endColumn: number | null;
+}
+
+/** A finite, inclusive, 1-based range. */
+export interface FiniteRangeAddress {
+  sheet: string;
+  startRow: number;
+  startColumn: number;
+  endRow: number;
+  endColumn: number;
+}
+
+/**
+ * Correlates an owned report with engine state. Both u64 counters are decimal
+ * strings so identity remains exact beyond JavaScript's safe-integer range.
+ */
+export interface StateStamp {
+  mutationRevision: string;
+  recalcEpoch: string;
+}
+
+export interface TraceErrorValue {
+  kind: 'error';
+  code: string;
+  message?: string;
+}
+
+export interface TraceTemporalValue {
+  /** `time` is engine-reachable but current WASM ingestion promotes it to `datetime`. */
+  kind: 'date' | 'datetime' | 'time' | 'duration';
+  /** Duration currently uses `TimeDelta { secs: N, nanos: N }`, inherited from workbook values. */
+  value: string;
+}
+
+export interface TracePendingValue {
+  kind: 'pending';
+}
+
+/**
+ * Inspection value shape. Ordinary primitives and two-dimensional arrays use
+ * the existing workbook value convention; errors and ambiguous non-JSON
+ * values use stable tagged objects.
+ */
+export type TraceValue =
+  | null
+  | boolean
+  | number
+  | string
+  | TraceValue[][]
+  | TraceErrorValue
+  | TraceTemporalValue
+  | TracePendingValue;
+
+export type Staleness = 'current' | 'dirty' | 'neverEvaluated';
+
+export type SpillRole =
+  | { role: 'anchor'; extent: FiniteRangeAddress }
+  | { role: 'member'; anchor: CellAddress };
+
+export interface CellSnapshot {
+  address: CellAddress;
+  /** Canonical formula text, not the original whitespace. */
+  formula: string | null;
+  /**
+   * Null for an empty value, when excluded, and for `neverEvaluated` cells;
+   * inspect `valueIncluded` and `staleness` to distinguish those cases.
+   */
+  value: TraceValue | null;
+  valueIncluded: boolean;
+  staleness: Staleness;
+  volatile: boolean;
+  spill: SpillRole | null;
+}
+
+export interface CellSnapshotReport {
+  stamp: StateStamp;
+  cell: CellSnapshot;
+}
+
+export type NameResolution =
+  | { kind: 'cell'; address: CellAddress }
+  | { kind: 'range'; declared: RangeArea; resolved: FiniteRangeAddress | null }
+  | { kind: 'literal'; value: TraceValue }
+  /** Engine-reachable, but unavailable through current WASM ingestion paths. */
+  | { kind: 'formula'; formula: string; value: TraceValue | null }
+  | { kind: 'unresolved' };
+
+export type SemanticReference =
+  | { kind: 'cell'; address: CellAddress }
+  | {
+      kind: 'range';
+      declared: RangeArea;
+      resolved: FiniteRangeAddress | null;
+      /** Grid-bounded and therefore represented exactly as a JS number. */
+      cellCount: number;
+    }
+  | { kind: 'name'; name: string; resolution: NameResolution }
+  | {
+      kind: 'table';
+      name: string;
+      specifier: string;
+      resolved: FiniteRangeAddress;
+    }
+  | { kind: 'external'; raw: string }
+  | { kind: 'unsupported'; text: string; reason: string };
+
+/** `observed` is reserved for forward compatibility and is not emitted by phase-1 core. */
+export type Provenance = 'declared' | 'observed';
+export type TraceLinkKind = 'formula' | 'spillAnchor' | 'spillReader';
+export type LinkDisposition = 'expanded' | 'convergent' | 'cycle' | 'elided';
+
+/** Counts are decimal u64 strings, including lower bounds. */
+export type OmittedCount =
+  | { kind: 'exact'; count: string }
+  | { kind: 'atLeast'; count: string };
+
+/**
+ * Budget exhaustion degrades in-band. `incomplete: true` with `omitted: null`
+ * means the omitted count is unknown rather than zero.
+ */
+export interface TruncationReport {
+  incomplete: boolean;
+  omitted: OmittedCount | null;
+}
+
+export interface Precedent {
+  reference: SemanticReference;
+  provenance: Provenance;
+}
+
+export interface PrecedentReport {
+  stamp: StateStamp;
+  cell: CellAddress;
+  precedents: Precedent[];
+  truncation: TruncationReport;
+}
+
+export interface Dependent {
+  cell: CellAddress;
+  /** Spill member addresses used to discover a spill-anchor reader. */
+  via: CellAddress[];
+}
+
+export interface DependentsReport {
+  stamp: StateStamp;
+  cell: CellAddress;
+  dependents: Dependent[];
+  truncation: TruncationReport;
+}
+
+export type TraceDirection = 'precedents' | 'dependents';
+
+export interface TraceLinkTarget {
+  /** Response-local node id; never reuse it as an engine input. */
+  node: number;
+  disposition: LinkDisposition;
+}
+
+export interface TraceLink {
+  reference: SemanticReference;
+  kind: TraceLinkKind;
+  /** Present only when `kind` is `formula`. */
+  provenance?: Provenance;
+  targets: TraceLinkTarget[];
+  omitted: OmittedCount | null;
+}
+
+export interface TraceNode {
+  /** Response-local node id. */
+  id: number;
+  cell: CellSnapshot;
+  links: TraceLink[];
+}
+
+export interface TraceGraph {
+  stamp: StateStamp;
+  direction: TraceDirection;
+  /** One response-local id per requested root, preserving request order. */
+  roots: number[];
+  nodes: TraceNode[];
+  truncation: TruncationReport;
+}
+
+export interface RangePage {
+  stamp: StateStamp;
+  declared: RangeArea;
+  resolved: FiniteRangeAddress | null;
+  total: number;
+  /** Echoes the requested row-major offset, even when beyond `total`. */
+  offset: number;
+  items: CellSnapshot[];
+  /** Null means this page completed the resolved area. */
+  nextOffset: number | null;
+}
+
+export interface SnapshotOptions {
+  /** Defaults to true. */
+  includeValues?: boolean;
+}
+
+export interface PrecedentOptions {
+  /** Defaults to 256; zero degrades to in-band truncation. */
+  maxLinks?: number;
+  /** Defaults to 100,000; non-negative safe integer, with exhaustion in-band. */
+  maxWork?: number;
+}
+
+export interface DependentsOptions {
+  /**
+   * Maximum output count. When bounded, the result retains the address-least N
+   * candidates discovered within `maxWork`, in canonical sheet/row/column order.
+   * Defaults to 256; zero is allowed.
+   */
+  maxResults?: number;
+  /** Defaults to 100,000; non-negative safe integer, with exhaustion in-band. */
+  maxWork?: number;
+}
+
+/** Trace requires a non-empty roots array. */
+export interface TraceOptions {
+  /** Defaults to `precedents`. */
+  direction?: TraceDirection;
+  /** Defaults to 6; zero degrades to elided links. */
+  maxDepth?: number;
+  /** Defaults to 512 and must be at least the number of unique roots. */
+  maxNodes?: number;
+  /** Defaults to 1,024; zero degrades to in-band truncation. */
+  maxLinks?: number;
+  /** Defaults to 100,000; non-negative safe integer, with exhaustion in-band. */
+  maxWork?: number;
+  /** Defaults to 256; global range-member expansion budget for the whole call. */
+  rangeMemberBudget?: number;
+  /** Defaults to true. */
+  includeValues?: boolean;
+}
+
+export interface RangePageOptions {
+  /** Defaults to 0; zero-based row-major non-negative safe integer. */
+  offset?: number;
+  /** Defaults to 100 and must be at least 1. */
+  limit?: number;
+  /** Defaults to true. */
+  includeValues?: boolean;
+  /** Defaults to unchecked; a mismatch throws `REVISION_MISMATCH`. */
+  expectedStamp?: StateStamp;
+}
+
+/** Stable machine-readable properties carried by thrown inspection errors. */
+export interface InspectJsError extends Error {
+  kind: 'InspectError';
+  code:
+    | 'SHEET_NOT_FOUND'
+    | 'INVALID_ADDRESS'
+    | 'INVALID_OPTIONS'
+    | 'DEPENDENCY_STATE_UNAVAILABLE'
+    | 'REVISION_MISMATCH'
+    | 'RESOURCE_EXHAUSTED'
+    | 'INSPECT_ERROR';
+  inspect_code: InspectJsError['code'];
+}
+
 export interface CustomFunctionOptions {
   minArgs?: number;
   maxArgs?: number | null;
@@ -363,6 +641,11 @@ export interface WorkbookApi extends wasm.Workbook {
   unregisterFunction(name: string): void;
   listFunctions(): RegisteredFunctionInfo[];
   lastCycleTelemetry(): CycleTelemetry;
+  inspectCell(cell: CellAddress, options?: SnapshotOptions): CellSnapshotReport;
+  precedents(cell: CellAddress, options?: PrecedentOptions): PrecedentReport;
+  dependents(cell: CellAddress, options?: DependentsOptions): DependentsReport;
+  trace(roots: CellAddress[], options?: TraceOptions): TraceGraph;
+  rangePage(area: RangeArea, options?: RangePageOptions): RangePage;
 }
 
 export type XlsxBytesSource = Uint8Array | ArrayBufferLike;
