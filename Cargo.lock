@@ -3082,6 +3082,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd274650b21d4bfc26a0a47587962c1edb425f69287324355cd040c3ea66071c"
 dependencies = [
  "chrono",
+ "inventory",
  "libc",
  "once_cell",
  "portable-atomic",
