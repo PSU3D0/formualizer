@@ -950,3 +950,43 @@ impl Workbook {
         report_to_js(&wire)
     }
 }
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn stamp_and_omitted_u64_values_cross_as_exact_decimal_strings() {
+        let above_safe_integer = 9_007_199_254_740_993_u64;
+        let stamp = report_to_js(&WireStateStamp::from(StateStamp {
+            mutation_revision: above_safe_integer,
+            recalc_epoch: above_safe_integer + 1,
+        }))
+        .unwrap();
+        for (key, expected) in [
+            ("mutationRevision", above_safe_integer),
+            ("recalcEpoch", above_safe_integer + 1),
+        ] {
+            assert_eq!(
+                js_sys::Reflect::get(&stamp, &JsValue::from_str(key))
+                    .unwrap()
+                    .as_string()
+                    .unwrap(),
+                expected.to_string()
+            );
+        }
+        assert!(!stamp.is_instance_of::<js_sys::Map>());
+
+        let omitted =
+            report_to_js(&wire_omitted(OmittedCount::AtLeast(above_safe_integer)).unwrap())
+                .unwrap();
+        assert_eq!(
+            js_sys::Reflect::get(&omitted, &JsValue::from_str("count"))
+                .unwrap()
+                .as_string()
+                .unwrap(),
+            above_safe_integer.to_string()
+        );
+    }
+}
