@@ -497,7 +497,11 @@ extern "C" {
 }
 
 /// Reject own enumerable keys that are not in `allowed`.
-fn reject_unknown_keys(value: &JsValue, context: &str, allowed: &[&str]) -> Result<(), JsValue> {
+pub(crate) fn reject_unknown_keys(
+    value: &JsValue,
+    context: &str,
+    allowed: &[&str],
+) -> Result<(), JsValue> {
     if !value.is_object() {
         return Err(js_error(format!("{context}: expected an object")));
     }

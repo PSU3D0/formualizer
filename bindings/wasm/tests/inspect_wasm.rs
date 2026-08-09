@@ -53,9 +53,78 @@ const FIXTURE: &str = r#"{
   }
 }"#;
 
+const VARIANT_FIXTURE: &str = r#"{
+  "version": 1,
+  "defined_names": [
+    {
+      "name": "MyRange",
+      "scope": "workbook",
+      "definition": {
+        "type": "range",
+        "address": {
+          "sheet": "Model",
+          "start_row": 1,
+          "start_col": 1,
+          "end_row": 2,
+          "end_col": 1
+        }
+      }
+    }
+  ],
+  "sheets": {
+    "Model": {
+      "tables": [
+        {
+          "name": "Table1",
+          "sheet": "Model",
+          "range": [10, 1, 12, 2],
+          "headers": ["Item", "Amount"],
+          "header_row": true,
+          "totals_row": false
+        }
+      ],
+      "cells": [
+        {"row": 1, "col": 1, "value": {"type": "Int", "value": 10}},
+        {"row": 2, "col": 1, "value": {"type": "Int", "value": 20}},
+        {"row": 1, "col": 3, "formula": "=SUM(MyRange)"},
+        {"row": 2, "col": 3, "formula": "=NoSuchName+1"},
+        {"row": 3, "col": 3, "formula": "=SUM(Table1[Amount])"},
+        {"row": 6, "col": 1, "value": {"type": "DateTime", "value": "2025-01-15T12:34:56"}},
+        {"row": 7, "col": 1, "value": {"type": "Duration", "value": 3661}},
+        {"row": 8, "col": 1, "value": {"type": "Boolean", "value": true}},
+        {"row": 9, "col": 1, "value": {"type": "Pending"}},
+        {"row": 10, "col": 1, "value": {"type": "Text", "value": "Item"}},
+        {"row": 10, "col": 2, "value": {"type": "Text", "value": "Amount"}},
+        {"row": 11, "col": 1, "value": {"type": "Text", "value": "widget"}},
+        {"row": 11, "col": 2, "value": {"type": "Int", "value": 5}},
+        {"row": 12, "col": 1, "value": {"type": "Text", "value": "gadget"}},
+        {"row": 12, "col": 2, "value": {"type": "Int", "value": 6}}
+      ]
+    },
+    "Other": {"cells": [{"row": 1, "col": 1, "value": {"type": "Int", "value": 42}}]}
+  }
+}"#;
+
 fn fixture() -> Workbook {
     let workbook = Workbook::from_json(FIXTURE.to_string()).unwrap();
     workbook.evaluate_all().unwrap();
+    workbook
+}
+
+fn variant_fixture() -> Workbook {
+    let workbook = Workbook::from_json(VARIANT_FIXTURE.to_string()).unwrap();
+    workbook.evaluate_all().unwrap();
+    workbook
+        .set_formula("Model".to_string(), 4, 3, "='[1]Sheet1'!A1".to_string())
+        .unwrap();
+    workbook
+        .set_formula(
+            "Model".to_string(),
+            5,
+            3,
+            "=SUM(Model:Other!A1)".to_string(),
+        )
+        .unwrap();
     workbook
 }
 
@@ -109,6 +178,24 @@ fn json_value(value: JsValue) -> Value {
         .as_string()
         .unwrap();
     serde_json::from_str(&text).unwrap()
+}
+
+fn assert_inspect_error(error: JsValue, code: &str) -> String {
+    let error: js_sys::Error = error.dyn_into().unwrap();
+    for (key, expected) in [
+        ("kind", "InspectError"),
+        ("code", code),
+        ("inspect_code", code),
+    ] {
+        assert_eq!(
+            Reflect::get(error.as_ref(), &JsValue::from_str(key))
+                .unwrap()
+                .as_string()
+                .as_deref(),
+            Some(expected)
+        );
+    }
+    error.message().as_string().unwrap()
 }
 
 fn stamp_shape(value: &Value) {
@@ -289,30 +376,40 @@ fn inspection_reports_have_exact_public_shapes_and_semantics() {
             .unwrap(),
     );
     stamp_shape(&page);
+    let page_stamp = page["stamp"].clone();
     assert_eq!(
-        page["declared"],
+        page,
         json!({
-            "sheet": "Model", "startRow": 1, "startColumn": 1,
-            "endRow": 2, "endColumn": 2
+            "stamp": page_stamp,
+            "declared": {
+                "sheet": "Model", "startRow": 1, "startColumn": 1,
+                "endRow": 2, "endColumn": 2
+            },
+            "resolved": {
+                "sheet": "Model", "startRow": 1, "startColumn": 1,
+                "endRow": 2, "endColumn": 2
+            },
+            "total": 4,
+            "offset": 0,
+            "items": [
+                {
+                    "address": cell("Model", 1, 1), "formula": null, "value": 10,
+                    "valueIncluded": true, "staleness": "current", "volatile": false,
+                    "spill": null
+                },
+                {
+                    "address": cell("Model", 1, 2), "formula": "=A1 + 1", "value": 11,
+                    "valueIncluded": true, "staleness": "current", "volatile": false,
+                    "spill": null
+                },
+                {
+                    "address": cell("Model", 2, 1), "formula": null, "value": 20,
+                    "valueIncluded": true, "staleness": "current", "volatile": false,
+                    "spill": null
+                }
+            ],
+            "nextOffset": 3
         })
-    );
-    assert_eq!(page["resolved"], page["declared"]);
-    assert_eq!(page["total"], 4.0);
-    assert_eq!(page["offset"], 0.0);
-    assert_eq!(page["nextOffset"], 3.0);
-    let item_addresses: Vec<_> = page["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["address"].clone())
-        .collect();
-    assert_eq!(
-        item_addresses,
-        vec![
-            cell("Model", 1, 1),
-            cell("Model", 1, 2),
-            cell("Model", 2, 1)
-        ]
     );
 
     let spill = json_value(
@@ -368,7 +465,7 @@ fn trace_cycle_dispositions_and_budget_tags_are_exact() {
     let trace = json_value(
         workbook
             .trace_js(
-                roots,
+                roots.into(),
                 Some(options(&[
                     ("maxDepth", JsValue::from_f64(4.0)),
                     ("maxNodes", JsValue::from_f64(8.0)),
@@ -404,7 +501,7 @@ fn trace_cycle_dispositions_and_budget_tags_are_exact() {
 
     let diamond_roots = Array::new();
     diamond_roots.push(&address("Model", 1, 11));
-    let diamond = json_value(workbook.trace_js(diamond_roots, None).unwrap());
+    let diamond = json_value(workbook.trace_js(diamond_roots.into(), None).unwrap());
     let a1_dispositions: Vec<_> = diamond["nodes"]
         .as_array()
         .unwrap()
@@ -420,7 +517,7 @@ fn trace_cycle_dispositions_and_budget_tags_are_exact() {
 
     let spill_roots = Array::new();
     spill_roots.push(&address("Model", 2, 5));
-    let spill_trace = json_value(workbook.trace_js(spill_roots, None).unwrap());
+    let spill_trace = json_value(workbook.trace_js(spill_roots.into(), None).unwrap());
     assert_eq!(spill_trace["nodes"][0]["links"][0]["kind"], "spillAnchor");
     assert!(
         spill_trace["nodes"][0]["links"][0]
@@ -433,7 +530,7 @@ fn trace_cycle_dispositions_and_budget_tags_are_exact() {
     let dependent_trace = json_value(
         workbook
             .trace_js(
-                anchor_roots,
+                anchor_roots.into(),
                 Some(options(&[("direction", JsValue::from_str("dependents"))])),
             )
             .unwrap(),
@@ -449,7 +546,7 @@ fn trace_cycle_dispositions_and_budget_tags_are_exact() {
     let range_limited = json_value(
         workbook
             .trace_js(
-                range_roots,
+                range_roots.into(),
                 Some(options(&[("rangeMemberBudget", JsValue::from_f64(1.0))])),
             )
             .unwrap(),
@@ -468,7 +565,7 @@ fn trace_cycle_dispositions_and_budget_tags_are_exact() {
     let elided = json_value(
         workbook
             .trace_js(
-                roots,
+                roots.into(),
                 Some(options(&[("maxDepth", JsValue::from_f64(0.0))])),
             )
             .unwrap(),
@@ -567,4 +664,446 @@ fn dirty_transition_options_stamps_and_error_mapping_are_pinned() {
         "SHEET_NOT_FOUND"
     );
     assert!(error.message().as_string().unwrap().contains("Missing"));
+
+    let error = workbook
+        .range_page_js(
+            area("Model", Some(1), Some(1), Some(1), Some(1)),
+            Some(options(&[("limit", JsValue::from_f64(0.0))])),
+        )
+        .unwrap_err();
+    assert!(assert_inspect_error(error, "INVALID_OPTIONS").contains("at least one"));
+}
+
+#[wasm_bindgen_test]
+fn unknown_keys_are_rejected_for_every_inspection_input_object() {
+    let workbook = fixture();
+
+    let cases = [
+        workbook
+            .inspect_cell_js(
+                address("Model", 1, 1),
+                Some(options(&[("includevalues", JsValue::FALSE)])),
+            )
+            .unwrap_err(),
+        workbook
+            .precedents_js(
+                address("Model", 1, 2),
+                Some(options(&[("maxlinks", JsValue::from_f64(1.0))])),
+            )
+            .unwrap_err(),
+        workbook
+            .dependents_js(
+                address("Model", 1, 1),
+                Some(options(&[("maxresults", JsValue::from_f64(2.0))])),
+            )
+            .unwrap_err(),
+        workbook
+            .trace_js(
+                Array::of1(&address("Model", 1, 2)).into(),
+                Some(options(&[("maxdepth", JsValue::from_f64(0.0))])),
+            )
+            .unwrap_err(),
+        workbook
+            .range_page_js(
+                area("Model", Some(1), Some(1), Some(2), Some(2)),
+                Some(options(&[("Offset", JsValue::from_f64(2.0))])),
+            )
+            .unwrap_err(),
+    ];
+    for error in cases {
+        assert!(assert_inspect_error(error, "INVALID_OPTIONS").contains("unknown field"));
+    }
+
+    let cell_with_extra = options(&[
+        ("sheet", JsValue::from_str("Model")),
+        ("row", JsValue::from_f64(1.0)),
+        ("column", JsValue::from_f64(1.0)),
+        ("rubbish", JsValue::from_f64(9.0)),
+    ]);
+    assert!(
+        assert_inspect_error(
+            workbook.inspect_cell_js(cell_with_extra, None).unwrap_err(),
+            "INVALID_ADDRESS"
+        )
+        .contains("unknown field `rubbish`")
+    );
+
+    let area_with_extra = options(&[
+        ("sheet", JsValue::from_str("Model")),
+        ("startRow", JsValue::from_f64(1.0)),
+        ("startColumn", JsValue::from_f64(1.0)),
+        ("endRow", JsValue::from_f64(1.0)),
+        ("endColumn", JsValue::from_f64(1.0)),
+        ("zzz", JsValue::TRUE),
+    ]);
+    assert!(
+        assert_inspect_error(
+            workbook.range_page_js(area_with_extra, None).unwrap_err(),
+            "INVALID_ADDRESS"
+        )
+        .contains("unknown field `zzz`")
+    );
+
+    let lower_case_stamp = options(&[
+        ("mutationRevision", JsValue::from_str("999")),
+        ("recalcEpoch", JsValue::from_str("1")),
+    ]);
+    let error = workbook
+        .range_page_js(
+            area("Model", Some(1), Some(1), Some(1), Some(1)),
+            Some(options(&[("expectedstamp", lower_case_stamp)])),
+        )
+        .unwrap_err();
+    assert!(assert_inspect_error(error, "INVALID_OPTIONS").contains("expectedstamp"));
+
+    let stamp_with_extra = options(&[
+        ("mutationRevision", JsValue::from_str("1")),
+        ("recalcEpoch", JsValue::from_str("1")),
+        ("extra", JsValue::TRUE),
+    ]);
+    let error = workbook
+        .range_page_js(
+            area("Model", Some(1), Some(1), Some(1), Some(1)),
+            Some(options(&[("expectedStamp", stamp_with_extra)])),
+        )
+        .unwrap_err();
+    assert!(assert_inspect_error(error, "INVALID_OPTIONS").contains("unknown field `extra`"));
+}
+
+#[wasm_bindgen_test]
+fn binding_validation_errors_are_typed_and_coded() {
+    let workbook = fixture();
+    let oversized = |row: f64, column: f64| {
+        options(&[
+            ("sheet", JsValue::from_str("Model")),
+            ("row", JsValue::from_f64(row)),
+            ("column", JsValue::from_f64(column)),
+        ])
+    };
+
+    for input in [
+        address("Model", 0, 1),
+        oversized(2_000_000.0, 1.0),
+        oversized(1.0, 20_000.0),
+        oversized(4_294_967_295.0, 1.0),
+        oversized(4_294_967_296.0, 1.0),
+        JsValue::NULL,
+        JsValue::from_str("Model!A1"),
+    ] {
+        assert_inspect_error(
+            workbook.inspect_cell_js(input, None).unwrap_err(),
+            "INVALID_ADDRESS",
+        );
+    }
+
+    for invalid_area in [
+        area("Model", Some(0), Some(1), Some(1), Some(1)),
+        area("Model", Some(5), Some(1), Some(1), Some(1)),
+        options(&[
+            ("startRow", JsValue::from_f64(1.0)),
+            ("startColumn", JsValue::from_f64(1.0)),
+            ("endRow", JsValue::from_f64(1.0)),
+            ("endColumn", JsValue::from_f64(1.0)),
+        ]),
+    ] {
+        assert_inspect_error(
+            workbook.range_page_js(invalid_area, None).unwrap_err(),
+            "INVALID_ADDRESS",
+        );
+    }
+
+    let missing_sheet_roots = Array::of1(&address("Nope", 1, 1));
+    assert_inspect_error(
+        workbook
+            .trace_js(missing_sheet_roots.into(), None)
+            .unwrap_err(),
+        "SHEET_NOT_FOUND",
+    );
+    let non_object_roots = Array::of1(&JsValue::from_str("A1"));
+    assert_inspect_error(
+        workbook
+            .trace_js(non_object_roots.into(), None)
+            .unwrap_err(),
+        "INVALID_ADDRESS",
+    );
+
+    for roots in [
+        JsValue::NULL,
+        options(&[("0", address("Model", 1, 1))]),
+        JsValue::from_str("A1"),
+    ] {
+        let message = assert_inspect_error(
+            workbook.trace_js(roots, None).unwrap_err(),
+            "INVALID_OPTIONS",
+        );
+        assert!(message.contains("expected an array"));
+    }
+
+    assert_inspect_error(
+        workbook
+            .precedents_js(
+                address("Model", 1, 2),
+                Some(options(&[("maxLinks", JsValue::from_f64(-1.0))])),
+            )
+            .unwrap_err(),
+        "INVALID_OPTIONS",
+    );
+    assert_inspect_error(
+        workbook
+            .range_page_js(
+                area("Model", Some(1), Some(1), Some(1), Some(1)),
+                Some(options(&[("offset", JsValue::from_f64(-1.0))])),
+            )
+            .unwrap_err(),
+        "INVALID_OPTIONS",
+    );
+    let numeric_stamp = options(&[
+        ("mutationRevision", JsValue::from_f64(5.0)),
+        ("recalcEpoch", JsValue::from_f64(1.0)),
+    ]);
+    let message = assert_inspect_error(
+        workbook
+            .range_page_js(
+                area("Model", Some(1), Some(1), Some(1), Some(1)),
+                Some(options(&[("expectedStamp", numeric_stamp)])),
+            )
+            .unwrap_err(),
+        "INVALID_OPTIONS",
+    );
+    assert!(message.contains("range page options"));
+}
+
+#[wasm_bindgen_test]
+fn every_inspection_option_and_survivor_shape_is_pinned() {
+    let workbook = fixture();
+    workbook
+        .set_formula(
+            "Model".to_string(),
+            8,
+            12,
+            "=SUM(Model!B10:C20)".to_string(),
+        )
+        .unwrap();
+    workbook.evaluate_all().unwrap();
+    let asymmetric = json_value(
+        workbook
+            .precedents_js(address("Model", 8, 12), None)
+            .unwrap(),
+    );
+    assert_eq!(
+        asymmetric["precedents"][0]["reference"]["declared"],
+        json!({
+            "sheet": "Model", "startRow": 10, "startColumn": 2,
+            "endRow": 20, "endColumn": 3
+        })
+    );
+
+    let spill_dependents = json_value(
+        workbook
+            .dependents_js(address("Model", 1, 4), None)
+            .unwrap(),
+    );
+    assert_eq!(
+        spill_dependents["dependents"],
+        json!([{"cell": cell("Model", 1, 6), "via": [cell("Model", 2, 5)]}])
+    );
+
+    let roots = Array::new();
+    roots.push(&address("Model", 1, 2));
+    roots.push(&address("Model", 1, 2));
+    roots.push(&address("Model", 1, 11));
+    let multi_root = json_value(workbook.trace_js(roots.into(), None).unwrap());
+    assert_eq!(multi_root["roots"], json!([0, 0, 1]));
+    assert_eq!(
+        multi_root["nodes"][0]["cell"]["address"],
+        cell("Model", 1, 2)
+    );
+    assert_eq!(
+        multi_root["nodes"][1]["cell"]["address"],
+        cell("Model", 1, 11)
+    );
+
+    let precedent_work_zero = json_value(
+        workbook
+            .precedents_js(
+                address("Model", 2, 2),
+                Some(options(&[("maxWork", JsValue::from_f64(0.0))])),
+            )
+            .unwrap(),
+    );
+    assert_eq!(precedent_work_zero["precedents"], json!([]));
+    assert_eq!(
+        precedent_work_zero["truncation"],
+        json!({"incomplete": true, "omitted": {"kind": "atLeast", "count": "1"}})
+    );
+
+    let dependent_work_zero = json_value(
+        workbook
+            .dependents_js(
+                address("Model", 1, 1),
+                Some(options(&[("maxWork", JsValue::from_f64(0.0))])),
+            )
+            .unwrap(),
+    );
+    assert_eq!(dependent_work_zero["dependents"], json!([]));
+    assert_eq!(
+        dependent_work_zero["truncation"],
+        json!({"incomplete": true, "omitted": null})
+    );
+
+    let trace_case = |entries: &[(&str, JsValue)]| {
+        let roots = Array::of1(&address("Model", 1, 11));
+        json_value(
+            workbook
+                .trace_js(roots.into(), Some(options(entries)))
+                .unwrap(),
+        )
+    };
+    let node_limited = trace_case(&[("maxNodes", JsValue::from_f64(1.0))]);
+    assert_eq!(node_limited["nodes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        node_limited["truncation"],
+        json!({"incomplete": true, "omitted": {"kind": "atLeast", "count": "2"}})
+    );
+    assert_eq!(node_limited["nodes"][0]["links"][0]["targets"], json!([]));
+    assert_eq!(node_limited["nodes"][0]["links"][1]["targets"], json!([]));
+
+    for field in ["maxLinks", "maxWork"] {
+        let limited = trace_case(&[(field, JsValue::from_f64(0.0))]);
+        assert_eq!(limited["nodes"].as_array().unwrap().len(), 1);
+        assert_eq!(limited["nodes"][0]["links"], json!([]));
+        assert_eq!(
+            limited["truncation"],
+            json!({"incomplete": true, "omitted": {"kind": "atLeast", "count": "1"}})
+        );
+    }
+
+    let roots = Array::of1(&address("Model", 1, 2));
+    let without_values = json_value(
+        workbook
+            .trace_js(
+                roots.into(),
+                Some(options(&[("includeValues", JsValue::FALSE)])),
+            )
+            .unwrap(),
+    );
+    let value_shapes: Vec<_> = without_values["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|node| {
+            json!([
+                node["cell"]["valueIncluded"].clone(),
+                node["cell"]["value"].clone()
+            ])
+        })
+        .collect();
+    assert_eq!(
+        value_shapes,
+        vec![json!([false, null]), json!([false, null])]
+    );
+
+    let offset_page = json_value(
+        workbook
+            .range_page_js(
+                area("Model", Some(1), Some(1), Some(2), Some(2)),
+                Some(options(&[
+                    ("offset", JsValue::from_f64(2.0)),
+                    ("limit", JsValue::from_f64(2.0)),
+                ])),
+            )
+            .unwrap(),
+    );
+    assert_eq!(offset_page["offset"], 2);
+    assert_eq!(offset_page["items"][0]["address"], cell("Model", 2, 1));
+    assert_eq!(offset_page["items"][1]["address"], cell("Model", 2, 2));
+    assert_eq!(offset_page["nextOffset"], Value::Null);
+
+    let no_value_page = json_value(
+        workbook
+            .range_page_js(
+                area("Model", Some(1), Some(1), Some(1), Some(2)),
+                Some(options(&[("includeValues", JsValue::FALSE)])),
+            )
+            .unwrap(),
+    );
+    assert_eq!(
+        no_value_page["items"],
+        json!([
+            {
+                "address": cell("Model", 1, 1), "formula": null, "value": null,
+                "valueIncluded": false, "staleness": "current", "volatile": false,
+                "spill": null
+            },
+            {
+                "address": cell("Model", 1, 2), "formula": "=A1 + 1", "value": null,
+                "valueIncluded": false, "staleness": "current", "volatile": false,
+                "spill": null
+            }
+        ])
+    );
+}
+
+#[wasm_bindgen_test]
+fn reachable_reference_and_value_variants_are_pinned() {
+    let workbook = variant_fixture();
+
+    let name_range = json_value(
+        workbook
+            .precedents_js(address("Model", 1, 3), None)
+            .unwrap(),
+    );
+    assert_eq!(
+        name_range["precedents"][0]["reference"]["resolution"],
+        json!({
+            "kind": "range",
+            "declared": {
+                "sheet": "Model", "startRow": 1, "startColumn": 1,
+                "endRow": 2, "endColumn": 1
+            },
+            "resolved": {
+                "sheet": "Model", "startRow": 1, "startColumn": 1,
+                "endRow": 2, "endColumn": 1
+            }
+        })
+    );
+    let unresolved = json_value(
+        workbook
+            .precedents_js(address("Model", 2, 3), None)
+            .unwrap(),
+    );
+    assert_eq!(
+        unresolved["precedents"][0]["reference"]["resolution"],
+        json!({"kind": "unresolved"})
+    );
+    for (row, expected_kind) in [(3, "table"), (4, "external"), (5, "unsupported")] {
+        let report = json_value(
+            workbook
+                .precedents_js(address("Model", row, 3), None)
+                .unwrap(),
+        );
+        assert_eq!(report["precedents"][0]["reference"]["kind"], expected_kind);
+    }
+
+    for (row, expected) in [
+        (
+            6,
+            json!({"kind": "datetime", "value": "2025-01-15 12:34:56"}),
+        ),
+        (
+            7,
+            json!({"kind": "duration", "value": "TimeDelta { secs: 3661, nanos: 0 }"}),
+        ),
+        (8, json!(true)),
+        (9, json!({"kind": "pending"})),
+        (30, Value::Null),
+    ] {
+        let report = json_value(
+            workbook
+                .inspect_cell_js(address("Model", row, 1), None)
+                .unwrap(),
+        );
+        assert_eq!(report["cell"]["value"], expected);
+        assert_eq!(report["cell"]["valueIncluded"], true);
+    }
 }

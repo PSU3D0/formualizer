@@ -1,9 +1,9 @@
 use crate::Workbook;
 use crate::errors::inspect_error_to_js;
 use crate::utils::js_error;
-use crate::workbook::{BindingValue, binding_value};
+use crate::workbook::{BindingValue, binding_value, reject_unknown_keys};
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::{JsCast, prelude::*};
 
 use formualizer::{
     CellAddress, CellSnapshot, DependentsOptions, InspectError, LinkDisposition, LiteralValue,
@@ -13,6 +13,53 @@ use formualizer::{
 };
 
 const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+const CELL_ADDRESS_KEYS: &[&str] = &["sheet", "row", "column"];
+const RANGE_AREA_KEYS: &[&str] = &["sheet", "startRow", "startColumn", "endRow", "endColumn"];
+const SNAPSHOT_OPTION_KEYS: &[&str] = &["includeValues"];
+const PRECEDENT_OPTION_KEYS: &[&str] = &["maxLinks", "maxWork"];
+const DEPENDENTS_OPTION_KEYS: &[&str] = &["maxResults", "maxWork"];
+const TRACE_OPTION_KEYS: &[&str] = &[
+    "direction",
+    "maxDepth",
+    "maxNodes",
+    "maxLinks",
+    "maxWork",
+    "rangeMemberBudget",
+    "includeValues",
+];
+const RANGE_PAGE_OPTION_KEYS: &[&str] = &["offset", "limit", "includeValues", "expectedStamp"];
+const STATE_STAMP_KEYS: &[&str] = &["mutationRevision", "recalcEpoch"];
+
+#[derive(Clone, Copy)]
+enum ValidationKind {
+    Address,
+    Options,
+}
+
+fn validation_error(kind: ValidationKind, message: impl Into<String>) -> JsValue {
+    let message = message.into();
+    match kind {
+        ValidationKind::Address => inspect_error_to_js(InspectError::InvalidAddress { message }),
+        ValidationKind::Options => inspect_error_to_js(InspectError::InvalidOptions { message }),
+    }
+}
+
+fn js_error_message(error: JsValue) -> String {
+    error
+        .dyn_ref::<js_sys::Error>()
+        .and_then(|error| error.message().as_string())
+        .or_else(|| error.as_string())
+        .unwrap_or_else(|| "input validation failed".to_string())
+}
+
+fn serde_error_message(error: serde_wasm_bindgen::Error) -> String {
+    let message = error.to_string();
+    message
+        .strip_prefix("Error: ")
+        .unwrap_or(&message)
+        .to_string()
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -26,8 +73,9 @@ impl TryFrom<JsCellAddress> for CellAddress {
     type Error = JsValue;
 
     fn try_from(value: JsCellAddress) -> Result<Self, Self::Error> {
-        CellAddress::new(value.sheet, value.row, value.column)
-            .map_err(|error| js_error(format!("invalid cell address: {error}")))
+        CellAddress::new(value.sheet, value.row, value.column).map_err(|error| {
+            validation_error(ValidationKind::Address, format!("cell address: {error}"))
+        })
     }
 }
 
@@ -52,7 +100,7 @@ impl TryFrom<JsRangeArea> for RangeArea {
             value.end_row,
             value.end_column,
         )
-        .map_err(|error| js_error(format!("invalid range area: {error}")))
+        .map_err(|error| validation_error(ValidationKind::Address, format!("range area: {error}")))
     }
 }
 
@@ -117,9 +165,10 @@ impl TryFrom<JsStateStamp> for StateStamp {
     fn try_from(value: JsStateStamp) -> Result<Self, Self::Error> {
         let parse = |field: &str, raw: String| {
             raw.parse::<u64>().map_err(|_| {
-                js_error(format!(
-                    "invalid expectedStamp.{field}: expected a decimal u64 string"
-                ))
+                validation_error(
+                    ValidationKind::Options,
+                    format!("expectedStamp.{field}: expected a decimal u64 string"),
+                )
             })
         };
         Ok(Self {
@@ -138,32 +187,44 @@ struct JsRangePageOptions {
     expected_stamp: Option<JsStateStamp>,
 }
 
-fn parse_object<T: for<'de> Deserialize<'de>>(raw: JsValue, context: &str) -> Result<T, JsValue> {
-    serde_wasm_bindgen::from_value(raw)
-        .map_err(|error| js_error(format!("invalid {context}: {error}")))
+fn parse_object<T: for<'de> Deserialize<'de>>(
+    raw: JsValue,
+    context: &str,
+    allowed: &[&str],
+    kind: ValidationKind,
+) -> Result<T, JsValue> {
+    reject_unknown_keys(&raw, context, allowed)
+        .map_err(|error| validation_error(kind, js_error_message(error)))?;
+    serde_wasm_bindgen::from_value(raw).map_err(|error| {
+        validation_error(kind, format!("{context}: {}", serde_error_message(error)))
+    })
 }
 
 fn parse_options<T: for<'de> Deserialize<'de> + Default>(
     raw: Option<JsValue>,
     context: &str,
+    allowed: &[&str],
 ) -> Result<T, JsValue> {
     match raw {
-        Some(value) if !value.is_null() && !value.is_undefined() => parse_object(value, context),
+        Some(value) if !value.is_null() && !value.is_undefined() => {
+            parse_object(value, context, allowed, ValidationKind::Options)
+        }
         _ => Ok(T::default()),
     }
 }
 
 fn parse_safe_u64(value: f64, field: &str) -> Result<u64, JsValue> {
     if !value.is_finite() || value.fract() != 0.0 || !(0.0..=JS_MAX_SAFE_INTEGER).contains(&value) {
-        return Err(js_error(format!(
-            "invalid {field}: expected a non-negative safe integer"
-        )));
+        return Err(validation_error(
+            ValidationKind::Options,
+            format!("{field}: expected a non-negative safe integer"),
+        ));
     }
     Ok(value as u64)
 }
 
 fn snapshot_options(raw: Option<JsValue>) -> Result<SnapshotOptions, JsValue> {
-    let raw: JsSnapshotOptions = parse_options(raw, "snapshot options")?;
+    let raw: JsSnapshotOptions = parse_options(raw, "snapshot options", SNAPSHOT_OPTION_KEYS)?;
     let mut options = SnapshotOptions::default();
     if let Some(value) = raw.include_values {
         options = options.with_include_values(value);
@@ -172,7 +233,7 @@ fn snapshot_options(raw: Option<JsValue>) -> Result<SnapshotOptions, JsValue> {
 }
 
 fn precedent_options(raw: Option<JsValue>) -> Result<PrecedentOptions, JsValue> {
-    let raw: JsPrecedentOptions = parse_options(raw, "precedent options")?;
+    let raw: JsPrecedentOptions = parse_options(raw, "precedent options", PRECEDENT_OPTION_KEYS)?;
     let mut options = PrecedentOptions::default();
     if let Some(value) = raw.max_links {
         options = options.with_max_links(value);
@@ -184,7 +245,8 @@ fn precedent_options(raw: Option<JsValue>) -> Result<PrecedentOptions, JsValue> 
 }
 
 fn dependents_options(raw: Option<JsValue>) -> Result<DependentsOptions, JsValue> {
-    let raw: JsDependentsOptions = parse_options(raw, "dependents options")?;
+    let raw: JsDependentsOptions =
+        parse_options(raw, "dependents options", DEPENDENTS_OPTION_KEYS)?;
     let mut options = DependentsOptions::default();
     if let Some(value) = raw.max_results {
         options = options.with_max_results(value);
@@ -196,7 +258,7 @@ fn dependents_options(raw: Option<JsValue>) -> Result<DependentsOptions, JsValue
 }
 
 fn trace_options(raw: Option<JsValue>) -> Result<TraceOptions, JsValue> {
-    let raw: JsTraceOptions = parse_options(raw, "trace options")?;
+    let raw: JsTraceOptions = parse_options(raw, "trace options", TRACE_OPTION_KEYS)?;
     let mut options = TraceOptions::default();
     if let Some(value) = raw.direction {
         options = options.with_direction(value.into());
@@ -223,7 +285,26 @@ fn trace_options(raw: Option<JsValue>) -> Result<TraceOptions, JsValue> {
 }
 
 fn range_page_options(raw: Option<JsValue>) -> Result<RangePageOptions, JsValue> {
-    let raw: JsRangePageOptions = parse_options(raw, "range page options")?;
+    if let Some(value) = raw.as_ref()
+        && !value.is_null()
+        && !value.is_undefined()
+    {
+        reject_unknown_keys(value, "range page options", RANGE_PAGE_OPTION_KEYS)
+            .map_err(|error| validation_error(ValidationKind::Options, js_error_message(error)))?;
+        let expected_stamp = js_sys::Reflect::get(value, &JsValue::from_str("expectedStamp"))
+            .map_err(|_| {
+                validation_error(
+                    ValidationKind::Options,
+                    "range page options: could not read expectedStamp",
+                )
+            })?;
+        if !expected_stamp.is_null() && !expected_stamp.is_undefined() {
+            reject_unknown_keys(&expected_stamp, "expectedStamp", STATE_STAMP_KEYS).map_err(
+                |error| validation_error(ValidationKind::Options, js_error_message(error)),
+            )?;
+        }
+    }
+    let raw: JsRangePageOptions = parse_options(raw, "range page options", RANGE_PAGE_OPTION_KEYS)?;
     let mut options = RangePageOptions::default();
     if let Some(value) = raw.offset {
         options = options.with_offset(parse_safe_u64(value, "offset")?);
@@ -543,6 +624,7 @@ fn wire_reference(value: &SemanticReference) -> Result<WireSemanticReference, Js
         } => Ok(WireSemanticReference::Range {
             declared: declared.into(),
             resolved: resolved.as_ref().map(Into::into),
+            // Grid-bounded to 1,048,576 * 16,384, well below 2^53.
             cell_count: *cell_count as f64,
         }),
         SemanticReference::Name { name, resolution } => Ok(WireSemanticReference::Name {
@@ -765,7 +847,13 @@ impl Workbook {
         cell: JsValue,
         options: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
-        let cell: CellAddress = parse_object::<JsCellAddress>(cell, "cell address")?.try_into()?;
+        let cell: CellAddress = parse_object::<JsCellAddress>(
+            cell,
+            "cell address",
+            CELL_ADDRESS_KEYS,
+            ValidationKind::Address,
+        )?
+        .try_into()?;
         let options = snapshot_options(options)?;
         let workbook_arc = self.inner_arc();
         let workbook = workbook_arc
@@ -789,7 +877,13 @@ impl Workbook {
         cell: JsValue,
         options: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
-        let cell: CellAddress = parse_object::<JsCellAddress>(cell, "cell address")?.try_into()?;
+        let cell: CellAddress = parse_object::<JsCellAddress>(
+            cell,
+            "cell address",
+            CELL_ADDRESS_KEYS,
+            ValidationKind::Address,
+        )?
+        .try_into()?;
         let options = precedent_options(options)?;
         let workbook_arc = self.inner_arc();
         let workbook = workbook_arc
@@ -825,7 +919,13 @@ impl Workbook {
         cell: JsValue,
         options: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
-        let cell: CellAddress = parse_object::<JsCellAddress>(cell, "cell address")?.try_into()?;
+        let cell: CellAddress = parse_object::<JsCellAddress>(
+            cell,
+            "cell address",
+            CELL_ADDRESS_KEYS,
+            ValidationKind::Address,
+        )?
+        .try_into()?;
         let options = dependents_options(options)?;
         let workbook_arc = self.inner_arc();
         let workbook = workbook_arc
@@ -853,15 +953,22 @@ impl Workbook {
 
     /// Build a bounded, owned trace graph for one or more roots.
     #[wasm_bindgen(js_name = "trace")]
-    pub fn trace_js(
-        &self,
-        roots: js_sys::Array,
-        options: Option<JsValue>,
-    ) -> Result<JsValue, JsValue> {
+    pub fn trace_js(&self, roots: JsValue, options: Option<JsValue>) -> Result<JsValue, JsValue> {
+        if !js_sys::Array::is_array(&roots) {
+            return Err(validation_error(
+                ValidationKind::Options,
+                "trace roots: expected an array",
+            ));
+        }
+        let roots: js_sys::Array = roots.unchecked_into();
         let mut parsed_roots = Vec::with_capacity(roots.length() as usize);
         for (index, root) in roots.iter().enumerate() {
-            let root =
-                parse_object::<JsCellAddress>(root, &format!("trace root at index {index}"))?;
+            let root = parse_object::<JsCellAddress>(
+                root,
+                &format!("trace root at index {index}"),
+                CELL_ADDRESS_KEYS,
+                ValidationKind::Address,
+            )?;
             parsed_roots.push(root.try_into()?);
         }
         let options = trace_options(options)?;
@@ -924,7 +1031,13 @@ impl Workbook {
         area: JsValue,
         options: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
-        let area: RangeArea = parse_object::<JsRangeArea>(area, "range area")?.try_into()?;
+        let area: RangeArea = parse_object::<JsRangeArea>(
+            area,
+            "range area",
+            RANGE_AREA_KEYS,
+            ValidationKind::Address,
+        )?
+        .try_into()?;
         let options = range_page_options(options)?;
         let workbook_arc = self.inner_arc();
         let workbook = workbook_arc
@@ -938,13 +1051,16 @@ impl Workbook {
             stamp: report.stamp.into(),
             declared: (&report.declared).into(),
             resolved: report.resolved.as_ref().map(Into::into),
+            // A resolved grid area contains at most 2^34 cells.
             total: report.total as f64,
+            // Binding validation restricts the caller's offset to <= 2^53 - 1.
             offset: report.offset as f64,
             items: report
                 .items
                 .iter()
                 .map(wire_cell)
                 .collect::<Result<_, JsValue>>()?,
+            // Core bounds next_offset by the grid-bounded total.
             next_offset: report.next_offset.map(|offset| offset as f64),
         };
         report_to_js(&wire)
@@ -958,6 +1074,8 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn stamp_and_omitted_u64_values_cross_as_exact_decimal_strings() {
+        // A public call cannot feasibly advance revisions beyond 2^53 in a test;
+        // direct wire construction proves the only precision-sensitive boundary.
         let above_safe_integer = 9_007_199_254_740_993_u64;
         let stamp = report_to_js(&WireStateStamp::from(StateStamp {
             mutation_revision: above_safe_integer,
