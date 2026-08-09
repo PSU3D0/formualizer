@@ -1093,6 +1093,63 @@ pub struct Engine<R> {
 
 /// Minimal edit surface used by `Engine::action`.
 ///
+fn substitute_formula_plane_literal_slots(ast: &ASTNode, binding: &[LiteralValue]) -> ASTNode {
+    fn visit(ast: &ASTNode, binding: &[LiteralValue], next: &mut usize, in_array: bool) -> ASTNode {
+        let node_type = match &ast.node_type {
+            ASTNodeType::Literal(_) if !in_array => {
+                let value = binding.get(*next).cloned().unwrap_or(LiteralValue::Empty);
+                *next = next.saturating_add(1);
+                ASTNodeType::Literal(value)
+            }
+            ASTNodeType::Literal(value) => ASTNodeType::Literal(value.clone()),
+            ASTNodeType::Omitted => ASTNodeType::Omitted,
+            ASTNodeType::Reference {
+                original,
+                reference,
+            } => ASTNodeType::Reference {
+                original: original.clone(),
+                reference: reference.clone(),
+            },
+            ASTNodeType::UnaryOp { op, expr } => ASTNodeType::UnaryOp {
+                op: op.clone(),
+                expr: Box::new(visit(expr, binding, next, in_array)),
+            },
+            ASTNodeType::BinaryOp { op, left, right } => ASTNodeType::BinaryOp {
+                op: op.clone(),
+                left: Box::new(visit(left, binding, next, in_array)),
+                right: Box::new(visit(right, binding, next, in_array)),
+            },
+            ASTNodeType::Function { name, args } => ASTNodeType::Function {
+                name: name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| visit(arg, binding, next, in_array))
+                    .collect(),
+            },
+            ASTNodeType::Call { callee, args } => ASTNodeType::Call {
+                callee: Box::new(visit(callee, binding, next, in_array)),
+                args: args
+                    .iter()
+                    .map(|arg| visit(arg, binding, next, in_array))
+                    .collect(),
+            },
+            ASTNodeType::Array(rows) => ASTNodeType::Array(
+                rows.iter()
+                    .map(|row| {
+                        row.iter()
+                            .map(|cell| visit(cell, binding, next, true))
+                            .collect()
+                    })
+                    .collect(),
+            ),
+        };
+        ASTNode::new(node_type, ast.source_token.clone())
+    }
+
+    let mut next = 0;
+    visit(ast, binding, &mut next, false)
+}
+
 /// This wrapper is intentionally thin for ticket 614 (commit-only): it delegates to existing
 /// `Engine` edit methods and does not create changelog boundaries or implement rollback.
 impl<R: EvaluationContext> Engine<R> {
@@ -16870,6 +16927,33 @@ where
         asheet.range_view(sr0, sc0, er0, ec0)
     }
 
+    pub(crate) fn formula_plane_span_ast_at(
+        &self,
+        span_ref: FormulaSpanRef,
+        placement: PlacementCoord,
+    ) -> Option<ASTNode> {
+        let authority = self.graph.formula_authority();
+        let span = authority.plane.spans.get(span_ref)?;
+        let relocation = span.ast_relocation;
+        let mut ast = self
+            .graph
+            .data_store()
+            .retrieve_ast(relocation.ast_id, self.graph.sheet_reg())?;
+        if let Some(binding_set_id) = span.binding_set_id {
+            let binding_set = authority.plane.binding_sets.get(binding_set_id)?;
+            if !binding_set.is_single_literal_binding() {
+                let binding =
+                    binding_set.literal_bindings_for_placement(&span.domain, placement)?;
+                ast = substitute_formula_plane_literal_slots(&ast, binding.as_ref());
+            }
+        }
+        let row = placement.row.checked_add(1)?;
+        let col = placement.col.checked_add(1)?;
+        let row_delta = i64::from(row) - i64::from(relocation.anchor_row);
+        let col_delta = i64::from(col) - i64::from(relocation.anchor_col);
+        relocate_ast_for_template_placement(&ast, row_delta, col_delta).ok()
+    }
+
     /// Get formula AST (if any) and current stored value for a cell
     pub fn get_cell(
         &self,
@@ -16893,17 +16977,7 @@ where
                 // Span authority wins before graph lookup. Missing or invalid
                 // relocation state is fail-closed: never expose a stale legacy
                 // vertex for a coordinate owned by a span.
-                let authority = self.graph.formula_authority();
-                let ast = authority.plane.spans.get(span).and_then(|record| {
-                    let relocation = record.ast_relocation;
-                    let ast = self
-                        .graph
-                        .data_store()
-                        .retrieve_ast(relocation.ast_id, self.graph.sheet_reg())?;
-                    let row_delta = i64::from(row) - i64::from(relocation.anchor_row);
-                    let col_delta = i64::from(col) - i64::from(relocation.anchor_col);
-                    relocate_ast_for_template_placement(&ast, row_delta, col_delta).ok()
-                });
+                let ast = self.formula_plane_span_ast_at(span, placement);
                 return Some((ast, v));
             }
             crate::formula_plane::runtime::FormulaResolution::Overlay(overlay_ref) => {
