@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use formualizer::common::{
-    CellAddress, RangeAddress, RangeArea, col_index_from_letters_1based, format_a1_sheet_name,
+    CellAddress, RangeAddress, RangeArea, col_index_from_letters_1based, col_letters_from_1based,
+    format_a1_sheet_name,
 };
 use formualizer::eval::engine::inspect as core;
 use pyo3::prelude::*;
@@ -10,7 +12,9 @@ use pyo3::types::{PyDict, PyList};
 #[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pyclass_enum, gen_stub_pymethods};
 
-use crate::errors::inspect_error_to_pyerr;
+use crate::errors::{
+    inspect_error_to_pyerr, invalid_inspection_address, unknown_inspection_variant,
+};
 use crate::value::literal_to_py;
 use crate::workbook::PyWorkbook;
 
@@ -26,18 +30,14 @@ fn address_text(address: &CellAddress) -> String {
 
 fn range_text(range: &RangeAddress) -> String {
     let sheet = format_a1_sheet_name(&range.sheet);
-    let start = CellAddress {
-        sheet: range.sheet.clone(),
-        row: range.start_row,
-        column: range.start_col,
+    let endpoint = |row, column| {
+        format!(
+            "{}{row}",
+            col_letters_from_1based(column).unwrap_or_else(|_| "#REF!".to_string())
+        )
     };
-    let end = CellAddress {
-        sheet: range.sheet.clone(),
-        row: range.end_row,
-        column: range.end_col,
-    };
-    let start = start.to_string().split_once('!').unwrap().1.to_string();
-    let end = end.to_string().split_once('!').unwrap().1.to_string();
+    let start = endpoint(range.start_row, range.start_col);
+    let end = endpoint(range.end_row, range.end_col);
     format!("{sheet}!{start}:{end}")
 }
 
@@ -85,15 +85,16 @@ fn split_sheet(input: &str) -> Result<(String, &str), PyErr> {
         }
         index += 1;
     }
+    if quoted {
+        return Err(invalid_inspection_address("unterminated sheet quote"));
+    }
     let index = split.ok_or_else(|| {
-        PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "address must be sheet-qualified, for example 'Sheet1!A1'",
-        )
+        invalid_inspection_address("address must be sheet-qualified, for example 'Sheet1!A1'")
     })?;
     let raw_sheet = &input[..index];
     let reference = &input[index + 1..];
     if raw_sheet.is_empty() || reference.is_empty() {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+        return Err(invalid_inspection_address(
             "address must contain a sheet and A1 reference",
         ));
     }
@@ -119,24 +120,24 @@ fn parse_endpoint(input: &str) -> Result<(Option<u32>, Option<u32>), PyErr> {
     if !digits.bytes().all(|byte| byte.is_ascii_digit())
         || (letters.is_empty() && digits.is_empty())
     {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+        return Err(invalid_inspection_address(format!(
             "invalid A1 endpoint: {input}"
         )));
     }
-    let column =
-        if letters.is_empty() {
-            None
-        } else {
-            Some(col_index_from_letters_1based(letters).map_err(|error| {
-                PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string())
-            })?)
-        };
+    let column = if letters.is_empty() {
+        None
+    } else {
+        Some(
+            col_index_from_letters_1based(letters)
+                .map_err(|error| invalid_inspection_address(error.to_string()))?,
+        )
+    };
     let row = if digits.is_empty() {
         None
     } else {
-        let row = digits.parse::<u32>().map_err(|_| {
-            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("invalid row: {digits}"))
-        })?;
+        let row = digits
+            .parse::<u32>()
+            .map_err(|_| invalid_inspection_address(format!("invalid row: {digits}")))?;
         Some(row)
     };
     Ok((row, column))
@@ -145,17 +146,15 @@ fn parse_endpoint(input: &str) -> Result<(Option<u32>, Option<u32>), PyErr> {
 pub(crate) fn parse_cell(input: &str) -> PyResult<CellAddress> {
     let (sheet, reference) = split_sheet(input)?;
     if reference.contains(':') {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "expected one cell, not a range",
-        ));
+        return Err(invalid_inspection_address("expected one cell, not a range"));
     }
     let (row, column) = parse_endpoint(reference)?;
     CellAddress::new(
         sheet,
-        row.ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("missing row"))?,
-        column.ok_or_else(|| PyErr::new::<pyo3::exceptions::PyValueError, _>("missing column"))?,
+        row.ok_or_else(|| invalid_inspection_address("missing row"))?,
+        column.ok_or_else(|| invalid_inspection_address("missing column"))?,
     )
-    .map_err(|error| PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string()))
+    .map_err(|error| invalid_inspection_address(error.to_string()))
 }
 
 pub(crate) fn parse_area(input: &str) -> PyResult<RangeArea> {
@@ -163,14 +162,61 @@ pub(crate) fn parse_area(input: &str) -> PyResult<RangeArea> {
     let (start, end) = reference.split_once(':').unwrap_or((reference, reference));
     let (start_row, start_column) = parse_endpoint(start)?;
     let (end_row, end_column) = parse_endpoint(end)?;
-    if (start_row.is_some() != end_row.is_some()) && start_column.is_none() && end_column.is_none()
-    {
-        return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
-            "invalid range bounds",
-        ));
+    if start_column.is_some() != end_column.is_some() {
+        return Err(invalid_inspection_address("invalid range bounds"));
     }
     RangeArea::new(sheet, start_row, start_column, end_row, end_column)
-        .map_err(|error| PyErr::new::<pyo3::exceptions::PyValueError, _>(error.to_string()))
+        .map_err(|error| invalid_inspection_address(error.to_string()))
+}
+
+fn python_hash(value: &impl Hash) -> isize {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish() as isize
+}
+
+fn unhashable(name: &str) -> PyErr {
+    PyErr::new::<pyo3::exceptions::PyTypeError, _>(format!("unhashable type: '{name}'"))
+}
+
+macro_rules! value_semantics_hash {
+    ($wrapper:ty, $python:literal) => {
+        #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
+        #[pymethods]
+        impl $wrapper {
+            fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+                other
+                    .extract::<PyRef<'_, Self>>()
+                    .is_ok_and(|other| self.inner == other.inner)
+            }
+            fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
+                !self.__eq__(other)
+            }
+            fn __hash__(&self) -> isize {
+                python_hash(&self.inner)
+            }
+        }
+    };
+}
+
+macro_rules! value_semantics_unhashable {
+    ($wrapper:ty, $python:literal) => {
+        #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
+        #[pymethods]
+        impl $wrapper {
+            fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+                other
+                    .extract::<PyRef<'_, Self>>()
+                    .is_ok_and(|other| self.inner == other.inner)
+            }
+            fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
+                !self.__eq__(other)
+            }
+            fn __hash__(&self) -> PyResult<isize> {
+                Err(unhashable($python))
+            }
+        }
+    };
 }
 
 macro_rules! binding_enum {
@@ -191,15 +237,15 @@ macro_rules! binding_enum {
     };
 }
 
-binding_enum!(PyStaleness, "Staleness", core::Staleness, { Current, Dirty, NeverEvaluated });
-binding_enum!(PyProvenance, "Provenance", core::Provenance, { Declared, Observed });
-binding_enum!(PyLinkDisposition, "LinkDisposition", core::LinkDisposition, { Expanded, Convergent, Cycle, Elided });
+binding_enum!(PyStaleness, "Staleness", core::Staleness, { Current, Dirty, NeverEvaluated, Unknown });
+binding_enum!(PyProvenance, "Provenance", core::Provenance, { Declared, Observed, Unknown });
+binding_enum!(PyLinkDisposition, "LinkDisposition", core::LinkDisposition, { Expanded, Convergent, Cycle, Elided, Unknown });
 binding_enum!(PyTraceDirection, "TraceDirection", core::TraceDirection, { Precedents, Dependents });
-binding_enum!(PyOmittedCountKind, "OmittedCountKind", core::OmittedCount, { Exact, AtLeast });
-binding_enum!(PySpillRoleKind, "SpillRoleKind", core::SpillRole, { Anchor, Member });
-binding_enum!(PyReferenceKind, "ReferenceKind", core::SemanticReference, { Cell, Range, Name, Table, External, Unsupported });
-binding_enum!(PyNameResolutionKind, "NameResolutionKind", core::NameResolution, { Cell, Range, Literal, Formula, Unresolved });
-binding_enum!(PyTraceLinkKindType, "TraceLinkKindType", core::TraceLinkKind, { Formula, SpillAnchor, SpillReader });
+binding_enum!(PyOmittedCountKind, "OmittedCountKind", core::OmittedCount, { Exact, AtLeast, Unknown });
+binding_enum!(PySpillRoleKind, "SpillRoleKind", core::SpillRole, { Anchor, Member, Unknown });
+binding_enum!(PyReferenceKind, "ReferenceKind", core::SemanticReference, { Cell, Range, Name, Table, External, Unsupported, Unknown });
+binding_enum!(PyNameResolutionKind, "NameResolutionKind", core::NameResolution, { Cell, Range, Literal, Formula, Unresolved, Unknown });
+binding_enum!(PyTraceLinkKindType, "TraceLinkKindType", core::TraceLinkKind, { Formula, SpillAnchor, SpillReader, Unknown });
 
 impl From<core::Staleness> for PyStaleness {
     fn from(value: core::Staleness) -> Self {
@@ -207,7 +253,7 @@ impl From<core::Staleness> for PyStaleness {
             core::Staleness::Current => Self::Current,
             core::Staleness::Dirty => Self::Dirty,
             core::Staleness::NeverEvaluated => Self::NeverEvaluated,
-            _ => Self::NeverEvaluated,
+            _ => Self::Unknown,
         }
     }
 }
@@ -216,7 +262,7 @@ impl From<core::Provenance> for PyProvenance {
         match value {
             core::Provenance::Declared => Self::Declared,
             core::Provenance::Observed => Self::Observed,
-            _ => Self::Observed,
+            _ => Self::Unknown,
         }
     }
 }
@@ -227,16 +273,18 @@ impl From<core::LinkDisposition> for PyLinkDisposition {
             core::LinkDisposition::Convergent => Self::Convergent,
             core::LinkDisposition::Cycle => Self::Cycle,
             core::LinkDisposition::Elided => Self::Elided,
-            _ => Self::Elided,
+            _ => Self::Unknown,
         }
     }
 }
-impl From<core::TraceDirection> for PyTraceDirection {
-    fn from(value: core::TraceDirection) -> Self {
+impl TryFrom<core::TraceDirection> for PyTraceDirection {
+    type Error = PyErr;
+
+    fn try_from(value: core::TraceDirection) -> Result<Self, Self::Error> {
         match value {
-            core::TraceDirection::Precedents => Self::Precedents,
-            core::TraceDirection::Dependents => Self::Dependents,
-            _ => Self::Dependents,
+            core::TraceDirection::Precedents => Ok(Self::Precedents),
+            core::TraceDirection::Dependents => Ok(Self::Dependents),
+            _ => Err(unknown_inspection_variant("TraceDirection")),
         }
     }
 }
@@ -276,6 +324,7 @@ impl PyStateStamp {
     fn recalc_epoch(&self) -> u64 {
         self.inner.recalc_epoch
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("mutation_revision", self.inner.mutation_revision)?;
@@ -315,16 +364,18 @@ impl PyOmittedCount {
         match self.inner {
             core::OmittedCount::Exact(_) => PyOmittedCountKind::Exact,
             core::OmittedCount::AtLeast(_) => PyOmittedCountKind::AtLeast,
-            _ => PyOmittedCountKind::AtLeast,
+            _ => PyOmittedCountKind::Unknown,
         }
     }
+    /// The known exact count or witnessed lower bound; `None` for an unknown future variant.
     #[getter]
-    fn count(&self) -> u64 {
+    fn count(&self) -> Option<u64> {
         match self.inner {
-            core::OmittedCount::Exact(value) | core::OmittedCount::AtLeast(value) => value,
-            _ => 0,
+            core::OmittedCount::Exact(value) | core::OmittedCount::AtLeast(value) => Some(value),
+            _ => None,
         }
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("kind", self.kind().__str__())?;
@@ -333,7 +384,7 @@ impl PyOmittedCount {
     }
     fn __repr__(&self) -> String {
         format!(
-            "OmittedCount(kind={}, count={})",
+            "OmittedCount(kind={}, count={:?})",
             self.kind().__str__(),
             self.count()
         )
@@ -367,6 +418,7 @@ impl PyTruncationReport {
     fn omitted(&self) -> Option<PyOmittedCount> {
         self.inner.omitted.map(Into::into)
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         truncation_dict(py, &self.inner)
     }
@@ -413,7 +465,7 @@ impl PySpillRole {
         match self.inner {
             core::SpillRole::Anchor { .. } => PySpillRoleKind::Anchor,
             core::SpillRole::Member { .. } => PySpillRoleKind::Member,
-            _ => PySpillRoleKind::Member,
+            _ => PySpillRoleKind::Unknown,
         }
     }
     #[getter]
@@ -430,6 +482,7 @@ impl PySpillRole {
             _ => None,
         }
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("kind", self.kind().__str__())?;
@@ -493,6 +546,7 @@ impl PyCellSnapshot {
     fn spill(&self) -> Option<PySpillRole> {
         self.inner.spill.clone().map(Into::into)
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         cell_dict(py, &self.inner)
     }
@@ -551,6 +605,7 @@ impl PyCellSnapshotReport {
     fn cell(&self) -> PyCellSnapshot {
         self.inner.cell.clone().into()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("stamp", self.stamp().to_dict(py)?)?;
@@ -593,7 +648,7 @@ impl PyNameResolution {
             core::NameResolution::Literal(_) => PyNameResolutionKind::Literal,
             core::NameResolution::Formula { .. } => PyNameResolutionKind::Formula,
             core::NameResolution::Unresolved => PyNameResolutionKind::Unresolved,
-            _ => PyNameResolutionKind::Unresolved,
+            _ => PyNameResolutionKind::Unknown,
         }
     }
     #[getter]
@@ -634,6 +689,7 @@ impl PyNameResolution {
             _ => Ok(None),
         }
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("kind", self.kind().__str__())?;
@@ -677,7 +733,7 @@ impl PySemanticReference {
             core::SemanticReference::Table { .. } => PyReferenceKind::Table,
             core::SemanticReference::External { .. } => PyReferenceKind::External,
             core::SemanticReference::Unsupported { .. } => PyReferenceKind::Unsupported,
-            _ => PyReferenceKind::Unsupported,
+            _ => PyReferenceKind::Unknown,
         }
     }
     #[getter]
@@ -752,6 +808,7 @@ impl PySemanticReference {
             _ => None,
         }
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         reference_dict(py, &self.inner)
     }
@@ -807,6 +864,7 @@ impl PyPrecedent {
     fn provenance(&self) -> PyProvenance {
         self.inner.provenance.into()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("reference", self.reference().to_dict(py)?)?;
@@ -862,6 +920,7 @@ impl PyPrecedentReport {
     fn truncation(&self) -> PyTruncationReport {
         self.inner.truncation.clone().into()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("stamp", self.stamp().to_dict(py)?)?;
@@ -911,6 +970,7 @@ impl PyDependent {
     fn via(&self) -> Vec<String> {
         self.inner.via.iter().map(address_text).collect()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("cell", self.cell())?;
@@ -966,6 +1026,7 @@ impl PyDependentsReport {
     fn truncation(&self) -> PyTruncationReport {
         self.inner.truncation.clone().into()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("stamp", self.stamp().to_dict(py)?)?;
@@ -1014,6 +1075,24 @@ impl TraceGraphData {
     }
 }
 
+fn trace_node_index(graph: &TraceGraphData, id: core::TraceNodeId) -> PyResult<usize> {
+    // Core assigns TraceNodeId(nodes.len()) immediately before each push in
+    // inspect.rs trace_precedents/trace_dependents and indexes IDs the same way.
+    let index = id.0 as usize;
+    graph
+        .graph
+        .nodes
+        .get(index)
+        .filter(|node| node.id == id)
+        .map(|_| index)
+        .ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "invalid trace node id {}: response node index invariant was violated",
+                id.0
+            ))
+        })
+}
+
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
 #[pyclass(
     name = "TraceNode",
@@ -1051,6 +1130,7 @@ impl PyTraceNode {
             })
             .collect()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("id", self.id())?;
@@ -1091,7 +1171,7 @@ impl PyTraceLinkKind {
             core::TraceLinkKind::Formula { .. } => PyTraceLinkKindType::Formula,
             core::TraceLinkKind::SpillAnchor => PyTraceLinkKindType::SpillAnchor,
             core::TraceLinkKind::SpillReader => PyTraceLinkKindType::SpillReader,
-            _ => PyTraceLinkKindType::SpillReader,
+            _ => PyTraceLinkKindType::Unknown,
         }
     }
     #[getter]
@@ -1101,6 +1181,7 @@ impl PyTraceLinkKind {
             _ => None,
         }
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("kind", self.kind().__str__())?;
@@ -1139,6 +1220,7 @@ impl PyTraceLinkTarget {
     fn disposition(&self) -> PyLinkDisposition {
         self.disposition.into()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("node", self.graph.addresses[self.node].clone())?;
@@ -1194,14 +1276,16 @@ impl PyTraceLink {
         }
     }
     #[getter]
-    fn targets(&self) -> Vec<PyTraceLinkTarget> {
+    fn targets(&self) -> PyResult<Vec<PyTraceLinkTarget>> {
         self.core()
             .targets
             .iter()
-            .map(|target| PyTraceLinkTarget {
-                graph: self.graph.clone(),
-                node: target.node.0 as usize,
-                disposition: target.disposition,
+            .map(|target| {
+                Ok(PyTraceLinkTarget {
+                    graph: self.graph.clone(),
+                    node: trace_node_index(&self.graph, target.node)?,
+                    disposition: target.disposition,
+                })
             })
             .collect()
     }
@@ -1209,13 +1293,14 @@ impl PyTraceLink {
     fn omitted(&self) -> Option<PyOmittedCount> {
         self.core().omitted.map(Into::into)
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("source", self.source().address())?;
         out.set_item("reference", self.reference().to_dict(py)?)?;
         out.set_item("kind", self.kind().to_dict(py)?)?;
         let targets = PyList::empty(py);
-        for target in self.targets() {
+        for target in self.targets()? {
             targets.append(target.to_dict(py)?)?;
         }
         out.set_item("targets", targets)?;
@@ -1253,14 +1338,55 @@ impl PyTraceNodes {
         self.graph.graph.nodes.len()
     }
     fn __getitem__(&self, address: &str) -> PyResult<PyTraceNode> {
+        let original = address;
+        let address = address_text(&parse_cell(address)?);
+        let address = address.as_str();
         let index =
             self.graph.by_address.get(address).copied().ok_or_else(|| {
-                PyErr::new::<pyo3::exceptions::PyKeyError, _>(address.to_string())
+                PyErr::new::<pyo3::exceptions::PyKeyError, _>(original.to_string())
             })?;
         Ok(PyTraceNode {
             graph: self.graph.clone(),
             index,
         })
+    }
+    #[pyo3(signature = (address, default=None))]
+    fn get(&self, py: Python<'_>, address: &str, default: Option<PyObject>) -> PyResult<PyObject> {
+        let canonical = address_text(&parse_cell(address)?);
+        match self.graph.by_address.get(&canonical).copied() {
+            Some(index) => Ok(Py::new(
+                py,
+                PyTraceNode {
+                    graph: self.graph.clone(),
+                    index,
+                },
+            )?
+            .into_any()),
+            None => Ok(default.unwrap_or_else(|| py.None())),
+        }
+    }
+    fn keys(&self) -> Vec<String> {
+        self.graph.addresses.clone()
+    }
+    fn values(&self) -> Vec<PyTraceNode> {
+        (0..self.graph.graph.nodes.len())
+            .map(|index| PyTraceNode {
+                graph: self.graph.clone(),
+                index,
+            })
+            .collect()
+    }
+    fn items(&self) -> Vec<(String, PyTraceNode)> {
+        self.graph
+            .addresses
+            .iter()
+            .cloned()
+            .zip(self.values())
+            .collect()
+    }
+    fn __contains__(&self, address: &str) -> PyResult<bool> {
+        let canonical = address_text(&parse_cell(address)?);
+        Ok(self.graph.by_address.contains_key(&canonical))
     }
     fn __iter__(&self) -> PyTraceNodesIter {
         PyTraceNodesIter {
@@ -1331,8 +1457,8 @@ impl PyTraceGraph {
         self.inner.graph.stamp.into()
     }
     #[getter]
-    fn direction(&self) -> PyTraceDirection {
-        self.inner.graph.direction.into()
+    fn direction(&self) -> PyResult<PyTraceDirection> {
+        self.inner.graph.direction.try_into()
     }
     #[getter]
     fn nodes(&self) -> PyTraceNodes {
@@ -1341,14 +1467,16 @@ impl PyTraceGraph {
         }
     }
     #[getter]
-    fn roots(&self) -> Vec<PyTraceNode> {
+    fn roots(&self) -> PyResult<Vec<PyTraceNode>> {
         self.inner
             .graph
             .roots
             .iter()
-            .map(|id| PyTraceNode {
-                graph: self.inner.clone(),
-                index: id.0 as usize,
+            .map(|id| {
+                Ok(PyTraceNode {
+                    graph: self.inner.clone(),
+                    index: trace_node_index(&self.inner, *id)?,
+                })
             })
             .collect()
     }
@@ -1372,13 +1500,14 @@ impl PyTraceGraph {
     fn truncation(&self) -> PyTruncationReport {
         self.inner.graph.truncation.clone().into()
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("stamp", self.stamp().to_dict(py)?)?;
-        out.set_item("direction", self.direction().__str__())?;
+        out.set_item("direction", self.direction()?.__str__())?;
         out.set_item(
             "roots",
-            self.roots()
+            self.roots()?
                 .iter()
                 .map(PyTraceNode::address)
                 .collect::<Vec<_>>(),
@@ -1464,6 +1593,7 @@ impl PyRangePage {
     fn next_offset(&self) -> Option<u64> {
         self.inner.next_offset
     }
+    /// Return a nested dict whose schema matches this report and its nested reports.
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let out = PyDict::new(py);
         out.set_item("stamp", self.stamp().to_dict(py)?)?;
@@ -1487,6 +1617,86 @@ impl PyRangePage {
             self.inner.offset,
             self.inner.next_offset.is_some()
         )
+    }
+}
+
+value_semantics_hash!(PyStateStamp, "StateStamp");
+value_semantics_hash!(PyOmittedCount, "OmittedCount");
+value_semantics_hash!(PySpillRole, "SpillRole");
+value_semantics_hash!(PyTraceLinkKind, "TraceLinkKind");
+value_semantics_unhashable!(PyTruncationReport, "TruncationReport");
+value_semantics_unhashable!(PyCellSnapshot, "CellSnapshot");
+value_semantics_unhashable!(PyCellSnapshotReport, "CellSnapshotReport");
+value_semantics_unhashable!(PyNameResolution, "NameResolution");
+value_semantics_unhashable!(PySemanticReference, "SemanticReference");
+value_semantics_unhashable!(PyPrecedent, "Precedent");
+value_semantics_unhashable!(PyPrecedentReport, "PrecedentReport");
+value_semantics_unhashable!(PyDependent, "Dependent");
+value_semantics_unhashable!(PyDependentsReport, "DependentsReport");
+value_semantics_unhashable!(PyRangePage, "RangePage");
+
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
+#[pymethods]
+impl PyTraceNode {
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+        other.extract::<PyRef<'_, Self>>().is_ok_and(|other| {
+            self.graph.graph.nodes[self.index] == other.graph.graph.nodes[other.index]
+        })
+    }
+    fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
+        !self.__eq__(other)
+    }
+    fn __hash__(&self) -> PyResult<isize> {
+        Err(unhashable("TraceNode"))
+    }
+}
+
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
+#[pymethods]
+impl PyTraceLinkTarget {
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+        other.extract::<PyRef<'_, Self>>().is_ok_and(|other| {
+            self.graph.graph.nodes[self.node].id == other.graph.graph.nodes[other.node].id
+                && self.disposition == other.disposition
+        })
+    }
+    fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
+        !self.__eq__(other)
+    }
+    fn __hash__(&self) -> isize {
+        python_hash(&(self.graph.graph.nodes[self.node].id, self.disposition))
+    }
+}
+
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
+#[pymethods]
+impl PyTraceLink {
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+        other
+            .extract::<PyRef<'_, Self>>()
+            .is_ok_and(|other| self.core() == other.core())
+    }
+    fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
+        !self.__eq__(other)
+    }
+    fn __hash__(&self) -> PyResult<isize> {
+        Err(unhashable("TraceLink"))
+    }
+}
+
+#[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
+#[pymethods]
+impl PyTraceGraph {
+    fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
+        other
+            .extract::<PyRef<'_, Self>>()
+            .is_ok_and(|other| self.inner.graph == other.inner.graph)
+    }
+    fn __ne__(&self, other: &Bound<'_, PyAny>) -> bool {
+        !self.__eq__(other)
+    }
+    fn __hash__(&self) -> PyResult<isize> {
+        Err(unhashable("TraceGraph"))
     }
 }
 
@@ -1630,5 +1840,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTraceNodesIter>()?;
     m.add_class::<PyTraceGraph>()?;
     m.add_class::<PyRangePage>()?;
+    let mapping = m.py().import("collections.abc")?.getattr("Mapping")?;
+    mapping.call_method1("register", (m.getattr("TraceNodes")?,))?;
     Ok(())
 }

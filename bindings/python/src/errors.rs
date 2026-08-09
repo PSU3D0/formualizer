@@ -123,6 +123,28 @@ pub(crate) fn workbook_error_to_pyerr(error: formualizer::workbook::IoError) -> 
     }
 }
 
+fn inspection_error_with_code<T>(message: impl Into<String>, code: &str) -> PyErr
+where
+    T: pyo3::PyTypeInfo,
+{
+    let pyerr = PyErr::new::<T, _>(message.into());
+    Python::attach(|py| {
+        let _ = pyerr.value(py).setattr("code", code);
+    });
+    pyerr
+}
+
+pub(crate) fn invalid_inspection_address(message: impl Into<String>) -> PyErr {
+    inspection_error_with_code::<InvalidInspectionAddressError>(message, "invalid_address")
+}
+
+pub(crate) fn unknown_inspection_variant(name: &str) -> PyErr {
+    inspection_error_with_code::<InspectionError>(
+        format!("unknown inspection variant: {name}"),
+        "unknown_variant",
+    )
+}
+
 /// Convert engine inspection failures into a stable, distinguishable exception
 /// hierarchy. Every exception also carries a short `code` attribute.
 pub(crate) fn inspect_error_to_pyerr(
@@ -161,6 +183,14 @@ pub(crate) fn inspect_error_to_pyerr(
         let _ = pyerr.value(py).setattr("code", code);
         if let InspectError::SheetNotFound { sheet } = &error {
             let _ = pyerr.value(py).setattr("sheet", sheet);
+        }
+        if let InspectError::RevisionMismatch { expected, actual } = &error {
+            let _ = pyerr
+                .value(py)
+                .setattr("expected", crate::inspect::PyStateStamp::from(*expected));
+            let _ = pyerr
+                .value(py)
+                .setattr("actual", crate::inspect::PyStateStamp::from(*actual));
         }
     });
     pyerr
