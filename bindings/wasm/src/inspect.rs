@@ -1,0 +1,955 @@
+use crate::Workbook;
+use crate::errors::inspect_error_to_js;
+use crate::utils::js_error;
+use serde::{Deserialize, Serialize};
+use wasm_bindgen::prelude::*;
+
+use formualizer::{
+    CellAddress, CellSnapshot, DependentsOptions, InspectError, LinkDisposition, LiteralValue,
+    NameResolution, OmittedCount, PrecedentOptions, Provenance, RangeArea, RangePageOptions,
+    SemanticReference, SnapshotOptions, SpillRole, Staleness, StateStamp, TraceDirection,
+    TraceLinkKind, TraceOptions,
+};
+
+const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsCellAddress {
+    sheet: String,
+    row: u32,
+    column: u32,
+}
+
+impl TryFrom<JsCellAddress> for CellAddress {
+    type Error = JsValue;
+
+    fn try_from(value: JsCellAddress) -> Result<Self, Self::Error> {
+        CellAddress::new(value.sheet, value.row, value.column)
+            .map_err(|error| js_error(format!("invalid cell address: {error}")))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsRangeArea {
+    sheet: String,
+    start_row: Option<u32>,
+    start_column: Option<u32>,
+    end_row: Option<u32>,
+    end_column: Option<u32>,
+}
+
+impl TryFrom<JsRangeArea> for RangeArea {
+    type Error = JsValue;
+
+    fn try_from(value: JsRangeArea) -> Result<Self, Self::Error> {
+        RangeArea::new(
+            value.sheet,
+            value.start_row,
+            value.start_column,
+            value.end_row,
+            value.end_column,
+        )
+        .map_err(|error| js_error(format!("invalid range area: {error}")))
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsSnapshotOptions {
+    include_values: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsPrecedentOptions {
+    max_links: Option<u32>,
+    max_work: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsDependentsOptions {
+    max_results: Option<u32>,
+    max_work: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum JsTraceDirection {
+    Precedents,
+    Dependents,
+}
+
+impl From<JsTraceDirection> for TraceDirection {
+    fn from(value: JsTraceDirection) -> Self {
+        match value {
+            JsTraceDirection::Precedents => Self::Precedents,
+            JsTraceDirection::Dependents => Self::Dependents,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsTraceOptions {
+    direction: Option<JsTraceDirection>,
+    max_depth: Option<u32>,
+    max_nodes: Option<u32>,
+    max_links: Option<u32>,
+    max_work: Option<f64>,
+    range_member_budget: Option<u32>,
+    include_values: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsStateStamp {
+    mutation_revision: String,
+    recalc_epoch: String,
+}
+
+impl TryFrom<JsStateStamp> for StateStamp {
+    type Error = JsValue;
+
+    fn try_from(value: JsStateStamp) -> Result<Self, Self::Error> {
+        let parse = |field: &str, raw: String| {
+            raw.parse::<u64>().map_err(|_| {
+                js_error(format!(
+                    "invalid expectedStamp.{field}: expected a decimal u64 string"
+                ))
+            })
+        };
+        Ok(Self {
+            mutation_revision: parse("mutationRevision", value.mutation_revision)?,
+            recalc_epoch: parse("recalcEpoch", value.recalc_epoch)?,
+        })
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct JsRangePageOptions {
+    offset: Option<f64>,
+    limit: Option<u32>,
+    include_values: Option<bool>,
+    expected_stamp: Option<JsStateStamp>,
+}
+
+fn parse_object<T: for<'de> Deserialize<'de>>(raw: JsValue, context: &str) -> Result<T, JsValue> {
+    serde_wasm_bindgen::from_value(raw)
+        .map_err(|error| js_error(format!("invalid {context}: {error}")))
+}
+
+fn parse_options<T: for<'de> Deserialize<'de> + Default>(
+    raw: Option<JsValue>,
+    context: &str,
+) -> Result<T, JsValue> {
+    match raw {
+        Some(value) if !value.is_null() && !value.is_undefined() => parse_object(value, context),
+        _ => Ok(T::default()),
+    }
+}
+
+fn parse_safe_u64(value: f64, field: &str) -> Result<u64, JsValue> {
+    if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > JS_MAX_SAFE_INTEGER {
+        return Err(js_error(format!(
+            "invalid {field}: expected a non-negative safe integer"
+        )));
+    }
+    Ok(value as u64)
+}
+
+fn snapshot_options(raw: Option<JsValue>) -> Result<SnapshotOptions, JsValue> {
+    let raw: JsSnapshotOptions = parse_options(raw, "snapshot options")?;
+    let mut options = SnapshotOptions::default();
+    if let Some(value) = raw.include_values {
+        options = options.with_include_values(value);
+    }
+    Ok(options)
+}
+
+fn precedent_options(raw: Option<JsValue>) -> Result<PrecedentOptions, JsValue> {
+    let raw: JsPrecedentOptions = parse_options(raw, "precedent options")?;
+    let mut options = PrecedentOptions::default();
+    if let Some(value) = raw.max_links {
+        options = options.with_max_links(value);
+    }
+    if let Some(value) = raw.max_work {
+        options = options.with_max_work(parse_safe_u64(value, "maxWork")?);
+    }
+    Ok(options)
+}
+
+fn dependents_options(raw: Option<JsValue>) -> Result<DependentsOptions, JsValue> {
+    let raw: JsDependentsOptions = parse_options(raw, "dependents options")?;
+    let mut options = DependentsOptions::default();
+    if let Some(value) = raw.max_results {
+        options = options.with_max_results(value);
+    }
+    if let Some(value) = raw.max_work {
+        options = options.with_max_work(parse_safe_u64(value, "maxWork")?);
+    }
+    Ok(options)
+}
+
+fn trace_options(raw: Option<JsValue>) -> Result<TraceOptions, JsValue> {
+    let raw: JsTraceOptions = parse_options(raw, "trace options")?;
+    let mut options = TraceOptions::default();
+    if let Some(value) = raw.direction {
+        options = options.with_direction(value.into());
+    }
+    if let Some(value) = raw.max_depth {
+        options = options.with_max_depth(value);
+    }
+    if let Some(value) = raw.max_nodes {
+        options = options.with_max_nodes(value);
+    }
+    if let Some(value) = raw.max_links {
+        options = options.with_max_links(value);
+    }
+    if let Some(value) = raw.max_work {
+        options = options.with_max_work(parse_safe_u64(value, "maxWork")?);
+    }
+    if let Some(value) = raw.range_member_budget {
+        options = options.with_range_member_budget(value);
+    }
+    if let Some(value) = raw.include_values {
+        options = options.with_include_values(value);
+    }
+    Ok(options)
+}
+
+fn range_page_options(raw: Option<JsValue>) -> Result<RangePageOptions, JsValue> {
+    let raw: JsRangePageOptions = parse_options(raw, "range page options")?;
+    let mut options = RangePageOptions::default();
+    if let Some(value) = raw.offset {
+        options = options.with_offset(parse_safe_u64(value, "offset")?);
+    }
+    if let Some(value) = raw.limit {
+        options = options.with_limit(value);
+    }
+    if let Some(value) = raw.include_values {
+        options = options.with_include_values(value);
+    }
+    if let Some(value) = raw.expected_stamp {
+        options = options.with_expected_stamp(value.try_into()?);
+    }
+    Ok(options)
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireStateStamp {
+    mutation_revision: String,
+    recalc_epoch: String,
+}
+
+impl From<StateStamp> for WireStateStamp {
+    fn from(value: StateStamp) -> Self {
+        Self {
+            mutation_revision: value.mutation_revision.to_string(),
+            recalc_epoch: value.recalc_epoch.to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireCellAddress {
+    sheet: String,
+    row: u32,
+    column: u32,
+}
+
+impl From<&CellAddress> for WireCellAddress {
+    fn from(value: &CellAddress) -> Self {
+        Self {
+            sheet: value.sheet.clone(),
+            row: value.row,
+            column: value.column,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireRangeArea {
+    sheet: String,
+    start_row: Option<u32>,
+    start_column: Option<u32>,
+    end_row: Option<u32>,
+    end_column: Option<u32>,
+}
+
+impl From<&RangeArea> for WireRangeArea {
+    fn from(value: &RangeArea) -> Self {
+        Self {
+            sheet: value.sheet.clone(),
+            start_row: value.start_row,
+            start_column: value.start_column,
+            end_row: value.end_row,
+            end_column: value.end_column,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireRangeAddress {
+    sheet: String,
+    start_row: u32,
+    start_column: u32,
+    end_row: u32,
+    end_column: u32,
+}
+
+impl From<&formualizer::common::RangeAddress> for WireRangeAddress {
+    fn from(value: &formualizer::common::RangeAddress) -> Self {
+        Self {
+            sheet: value.sheet.clone(),
+            start_row: value.start_row,
+            start_column: value.start_col,
+            end_row: value.end_row,
+            end_column: value.end_col,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+enum WireTraceValue {
+    Null(()),
+    Boolean(bool),
+    Number(f64),
+    Text(String),
+    Array(Vec<Vec<WireTraceValue>>),
+    Tagged(WireTaggedValue),
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum WireTaggedValue {
+    Error {
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    Date {
+        value: String,
+    },
+    Datetime {
+        value: String,
+    },
+    Time {
+        value: String,
+    },
+    Duration {
+        value: String,
+    },
+    Pending,
+}
+
+impl From<&LiteralValue> for WireTraceValue {
+    fn from(value: &LiteralValue) -> Self {
+        match value {
+            LiteralValue::Empty => Self::Null(()),
+            LiteralValue::Boolean(value) => Self::Boolean(*value),
+            LiteralValue::Int(value) => Self::Number(*value as f64),
+            LiteralValue::Number(value) => Self::Number(*value),
+            LiteralValue::Text(value) => Self::Text(value.clone()),
+            LiteralValue::Array(rows) => Self::Array(
+                rows.iter()
+                    .map(|row| row.iter().map(Self::from).collect())
+                    .collect(),
+            ),
+            LiteralValue::Error(error) => Self::Tagged(WireTaggedValue::Error {
+                code: error.kind.to_string(),
+                message: error.message.clone(),
+            }),
+            LiteralValue::Date(value) => Self::Tagged(WireTaggedValue::Date {
+                value: value.to_string(),
+            }),
+            LiteralValue::DateTime(value) => Self::Tagged(WireTaggedValue::Datetime {
+                value: value.to_string(),
+            }),
+            LiteralValue::Time(value) => Self::Tagged(WireTaggedValue::Time {
+                value: value.to_string(),
+            }),
+            LiteralValue::Duration(value) => Self::Tagged(WireTaggedValue::Duration {
+                value: format!("{value:?}"),
+            }),
+            LiteralValue::Pending => Self::Tagged(WireTaggedValue::Pending),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WireStaleness {
+    Current,
+    Dirty,
+    NeverEvaluated,
+}
+
+fn wire_staleness(value: Staleness) -> Result<WireStaleness, JsValue> {
+    match value {
+        Staleness::Current => Ok(WireStaleness::Current),
+        Staleness::Dirty => Ok(WireStaleness::Dirty),
+        Staleness::NeverEvaluated => Ok(WireStaleness::NeverEvaluated),
+        _ => Err(js_error("unsupported staleness variant")),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "role", rename_all = "camelCase")]
+enum WireSpillRole {
+    Anchor { extent: WireRangeAddress },
+    Member { anchor: WireCellAddress },
+}
+
+fn wire_spill(value: &SpillRole) -> Result<WireSpillRole, JsValue> {
+    match value {
+        SpillRole::Anchor { extent } => Ok(WireSpillRole::Anchor {
+            extent: extent.into(),
+        }),
+        SpillRole::Member { anchor } => Ok(WireSpillRole::Member {
+            anchor: anchor.into(),
+        }),
+        _ => Err(js_error("unsupported spill role variant")),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireCellSnapshot {
+    address: WireCellAddress,
+    formula: Option<String>,
+    value: Option<WireTraceValue>,
+    value_included: bool,
+    staleness: WireStaleness,
+    volatile: bool,
+    spill: Option<WireSpillRole>,
+}
+
+fn wire_cell(value: &CellSnapshot) -> Result<WireCellSnapshot, JsValue> {
+    Ok(WireCellSnapshot {
+        address: (&value.address).into(),
+        formula: value.formula.clone(),
+        value: value.value.as_ref().map(Into::into),
+        value_included: value.value_included,
+        staleness: wire_staleness(value.staleness)?,
+        volatile: value.volatile,
+        spill: value.spill.as_ref().map(wire_spill).transpose()?,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WireProvenance {
+    Declared,
+    Observed,
+}
+
+fn wire_provenance(value: Provenance) -> Result<WireProvenance, JsValue> {
+    match value {
+        Provenance::Declared => Ok(WireProvenance::Declared),
+        Provenance::Observed => Ok(WireProvenance::Observed),
+        _ => Err(js_error("unsupported provenance variant")),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum WireNameResolution {
+    Cell {
+        address: WireCellAddress,
+    },
+    Range {
+        declared: WireRangeArea,
+        resolved: Option<WireRangeAddress>,
+    },
+    Literal {
+        value: WireTraceValue,
+    },
+    Formula {
+        formula: String,
+        value: Option<WireTraceValue>,
+    },
+    Unresolved,
+}
+
+fn wire_name_resolution(value: &NameResolution) -> Result<WireNameResolution, JsValue> {
+    match value {
+        NameResolution::Cell(address) => Ok(WireNameResolution::Cell {
+            address: address.into(),
+        }),
+        NameResolution::Range { declared, resolved } => Ok(WireNameResolution::Range {
+            declared: declared.into(),
+            resolved: resolved.as_ref().map(Into::into),
+        }),
+        NameResolution::Literal(value) => Ok(WireNameResolution::Literal {
+            value: value.into(),
+        }),
+        NameResolution::Formula { formula, value } => Ok(WireNameResolution::Formula {
+            formula: formula.clone(),
+            value: value.as_ref().map(Into::into),
+        }),
+        NameResolution::Unresolved => Ok(WireNameResolution::Unresolved),
+        _ => Err(js_error("unsupported name resolution variant")),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum WireSemanticReference {
+    Cell {
+        address: WireCellAddress,
+    },
+    Range {
+        declared: WireRangeArea,
+        resolved: Option<WireRangeAddress>,
+        cell_count: f64,
+    },
+    Name {
+        name: String,
+        resolution: WireNameResolution,
+    },
+    Table {
+        name: String,
+        specifier: String,
+        resolved: WireRangeAddress,
+    },
+    External {
+        raw: String,
+    },
+    Unsupported {
+        text: String,
+        reason: String,
+    },
+}
+
+fn wire_reference(value: &SemanticReference) -> Result<WireSemanticReference, JsValue> {
+    match value {
+        SemanticReference::Cell(address) => Ok(WireSemanticReference::Cell {
+            address: address.into(),
+        }),
+        SemanticReference::Range {
+            declared,
+            resolved,
+            cell_count,
+        } => Ok(WireSemanticReference::Range {
+            declared: declared.into(),
+            resolved: resolved.as_ref().map(Into::into),
+            cell_count: *cell_count as f64,
+        }),
+        SemanticReference::Name { name, resolution } => Ok(WireSemanticReference::Name {
+            name: name.clone(),
+            resolution: wire_name_resolution(resolution)?,
+        }),
+        SemanticReference::Table {
+            name,
+            specifier,
+            resolved,
+        } => Ok(WireSemanticReference::Table {
+            name: name.clone(),
+            specifier: specifier.clone(),
+            resolved: resolved.into(),
+        }),
+        SemanticReference::External { raw } => {
+            Ok(WireSemanticReference::External { raw: raw.clone() })
+        }
+        SemanticReference::Unsupported { text, reason } => Ok(WireSemanticReference::Unsupported {
+            text: text.clone(),
+            reason: reason.clone(),
+        }),
+        _ => Err(js_error("unsupported semantic reference variant")),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum WireOmittedCount {
+    Exact { count: String },
+    AtLeast { count: String },
+}
+
+fn wire_omitted(value: OmittedCount) -> Result<WireOmittedCount, JsValue> {
+    match value {
+        OmittedCount::Exact(count) => Ok(WireOmittedCount::Exact {
+            count: count.to_string(),
+        }),
+        OmittedCount::AtLeast(count) => Ok(WireOmittedCount::AtLeast {
+            count: count.to_string(),
+        }),
+        _ => Err(js_error("unsupported omitted count variant")),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireTruncation {
+    incomplete: bool,
+    omitted: Option<WireOmittedCount>,
+}
+
+fn wire_truncation(value: &formualizer::TruncationReport) -> Result<WireTruncation, JsValue> {
+    Ok(WireTruncation {
+        incomplete: value.incomplete,
+        omitted: value.omitted.map(wire_omitted).transpose()?,
+    })
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireCellSnapshotReport {
+    stamp: WireStateStamp,
+    cell: WireCellSnapshot,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WirePrecedent {
+    reference: WireSemanticReference,
+    provenance: WireProvenance,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WirePrecedentReport {
+    stamp: WireStateStamp,
+    cell: WireCellAddress,
+    precedents: Vec<WirePrecedent>,
+    truncation: WireTruncation,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireDependent {
+    cell: WireCellAddress,
+    via: Vec<WireCellAddress>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireDependentsReport {
+    stamp: WireStateStamp,
+    cell: WireCellAddress,
+    dependents: Vec<WireDependent>,
+    truncation: WireTruncation,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WireDirection {
+    Precedents,
+    Dependents,
+}
+
+fn wire_direction(value: TraceDirection) -> Result<WireDirection, JsValue> {
+    match value {
+        TraceDirection::Precedents => Ok(WireDirection::Precedents),
+        TraceDirection::Dependents => Ok(WireDirection::Dependents),
+        _ => Err(js_error("unsupported trace direction variant")),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WireDisposition {
+    Expanded,
+    Convergent,
+    Cycle,
+    Elided,
+}
+
+fn wire_disposition(value: LinkDisposition) -> Result<WireDisposition, JsValue> {
+    match value {
+        LinkDisposition::Expanded => Ok(WireDisposition::Expanded),
+        LinkDisposition::Convergent => Ok(WireDisposition::Convergent),
+        LinkDisposition::Cycle => Ok(WireDisposition::Cycle),
+        LinkDisposition::Elided => Ok(WireDisposition::Elided),
+        _ => Err(js_error("unsupported link disposition variant")),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum WireLinkKind {
+    Formula,
+    SpillAnchor,
+    SpillReader,
+}
+
+fn wire_link_kind(value: TraceLinkKind) -> Result<(WireLinkKind, Option<WireProvenance>), JsValue> {
+    match value {
+        TraceLinkKind::Formula { provenance } => {
+            Ok((WireLinkKind::Formula, Some(wire_provenance(provenance)?)))
+        }
+        TraceLinkKind::SpillAnchor => Ok((WireLinkKind::SpillAnchor, None)),
+        TraceLinkKind::SpillReader => Ok((WireLinkKind::SpillReader, None)),
+        _ => Err(js_error("unsupported trace link kind variant")),
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireTraceLinkTarget {
+    node: u32,
+    disposition: WireDisposition,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireTraceLink {
+    reference: WireSemanticReference,
+    kind: WireLinkKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provenance: Option<WireProvenance>,
+    targets: Vec<WireTraceLinkTarget>,
+    omitted: Option<WireOmittedCount>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireTraceNode {
+    id: u32,
+    cell: WireCellSnapshot,
+    links: Vec<WireTraceLink>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireTraceGraph {
+    stamp: WireStateStamp,
+    direction: WireDirection,
+    roots: Vec<u32>,
+    nodes: Vec<WireTraceNode>,
+    truncation: WireTruncation,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WireRangePage {
+    stamp: WireStateStamp,
+    declared: WireRangeArea,
+    resolved: Option<WireRangeAddress>,
+    total: f64,
+    offset: f64,
+    items: Vec<WireCellSnapshot>,
+    next_offset: Option<f64>,
+}
+
+fn report_to_js<T: Serialize>(report: &T) -> Result<JsValue, JsValue> {
+    report
+        .serialize(
+            &serde_wasm_bindgen::Serializer::new()
+                .serialize_maps_as_objects(true)
+                .serialize_missing_as_null(true),
+        )
+        .map_err(|error| js_error(format!("inspection serialization failed: {error}")))
+}
+
+fn map_inspect_error(error: InspectError) -> JsValue {
+    inspect_error_to_js(error)
+}
+
+#[wasm_bindgen]
+impl Workbook {
+    /// Return an owned, read-only snapshot of one cell.
+    #[wasm_bindgen(js_name = "inspectCell")]
+    pub fn inspect_cell_js(
+        &self,
+        cell: JsValue,
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        let cell: CellAddress = parse_object::<JsCellAddress>(cell, "cell address")?.try_into()?;
+        let options = snapshot_options(options)?;
+        let workbook_arc = self.inner_arc();
+        let workbook = workbook_arc
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let report = workbook
+            .engine()
+            .inspect_cell(&cell, &options)
+            .map_err(map_inspect_error)?;
+        let wire = WireCellSnapshotReport {
+            stamp: report.stamp.into(),
+            cell: wire_cell(&report.cell)?,
+        };
+        report_to_js(&wire)
+    }
+
+    /// Return source-ordered, first-occurrence-deduplicated declared precedents.
+    #[wasm_bindgen(js_name = "precedents")]
+    pub fn precedents_js(
+        &self,
+        cell: JsValue,
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        let cell: CellAddress = parse_object::<JsCellAddress>(cell, "cell address")?.try_into()?;
+        let options = precedent_options(options)?;
+        let workbook_arc = self.inner_arc();
+        let workbook = workbook_arc
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let report = workbook
+            .engine()
+            .precedents(&cell, &options)
+            .map_err(map_inspect_error)?;
+        let precedents = report
+            .precedents
+            .iter()
+            .map(|precedent| {
+                Ok(WirePrecedent {
+                    reference: wire_reference(&precedent.reference)?,
+                    provenance: wire_provenance(precedent.provenance)?,
+                })
+            })
+            .collect::<Result<_, JsValue>>()?;
+        let wire = WirePrecedentReport {
+            stamp: report.stamp.into(),
+            cell: (&report.cell).into(),
+            precedents,
+            truncation: wire_truncation(&report.truncation)?,
+        };
+        report_to_js(&wire)
+    }
+
+    /// Return bounded dependents in canonical address order.
+    #[wasm_bindgen(js_name = "dependents")]
+    pub fn dependents_js(
+        &self,
+        cell: JsValue,
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        let cell: CellAddress = parse_object::<JsCellAddress>(cell, "cell address")?.try_into()?;
+        let options = dependents_options(options)?;
+        let workbook_arc = self.inner_arc();
+        let workbook = workbook_arc
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let report = workbook
+            .engine()
+            .dependents(&cell, &options)
+            .map_err(map_inspect_error)?;
+        let wire = WireDependentsReport {
+            stamp: report.stamp.into(),
+            cell: (&report.cell).into(),
+            dependents: report
+                .dependents
+                .iter()
+                .map(|dependent| WireDependent {
+                    cell: (&dependent.cell).into(),
+                    via: dependent.via.iter().map(Into::into).collect(),
+                })
+                .collect(),
+            truncation: wire_truncation(&report.truncation)?,
+        };
+        report_to_js(&wire)
+    }
+
+    /// Build a bounded, owned trace graph for one or more roots.
+    #[wasm_bindgen(js_name = "trace")]
+    pub fn trace_js(
+        &self,
+        roots: js_sys::Array,
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        let mut parsed_roots = Vec::with_capacity(roots.length() as usize);
+        for (index, root) in roots.iter().enumerate() {
+            let root =
+                parse_object::<JsCellAddress>(root, &format!("trace root at index {index}"))?;
+            parsed_roots.push(root.try_into()?);
+        }
+        let options = trace_options(options)?;
+        let workbook_arc = self.inner_arc();
+        let workbook = workbook_arc
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let report = workbook
+            .engine()
+            .trace(&parsed_roots, &options)
+            .map_err(map_inspect_error)?;
+        let nodes = report
+            .nodes
+            .iter()
+            .map(|node| {
+                let links = node
+                    .links
+                    .iter()
+                    .map(|link| {
+                        let (kind, provenance) = wire_link_kind(link.kind)?;
+                        Ok(WireTraceLink {
+                            reference: wire_reference(&link.reference)?,
+                            kind,
+                            provenance,
+                            targets: link
+                                .targets
+                                .iter()
+                                .map(|target| {
+                                    Ok(WireTraceLinkTarget {
+                                        node: target.node.0,
+                                        disposition: wire_disposition(target.disposition)?,
+                                    })
+                                })
+                                .collect::<Result<_, JsValue>>()?,
+                            omitted: link.omitted.map(wire_omitted).transpose()?,
+                        })
+                    })
+                    .collect::<Result<_, JsValue>>()?;
+                Ok(WireTraceNode {
+                    id: node.id.0,
+                    cell: wire_cell(&node.cell)?,
+                    links,
+                })
+            })
+            .collect::<Result<_, JsValue>>()?;
+        let wire = WireTraceGraph {
+            stamp: report.stamp.into(),
+            direction: wire_direction(report.direction)?,
+            roots: report.roots.iter().map(|root| root.0).collect(),
+            nodes,
+            truncation: wire_truncation(&report.truncation)?,
+        };
+        report_to_js(&wire)
+    }
+
+    /// Return a row-major page over a finite or semantically resolved open area.
+    #[wasm_bindgen(js_name = "rangePage")]
+    pub fn range_page_js(
+        &self,
+        area: JsValue,
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        let area: RangeArea = parse_object::<JsRangeArea>(area, "range area")?.try_into()?;
+        let options = range_page_options(options)?;
+        let workbook_arc = self.inner_arc();
+        let workbook = workbook_arc
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        let report = workbook
+            .engine()
+            .range_page(&area, &options)
+            .map_err(map_inspect_error)?;
+        let wire = WireRangePage {
+            stamp: report.stamp.into(),
+            declared: (&report.declared).into(),
+            resolved: report.resolved.as_ref().map(Into::into),
+            total: report.total as f64,
+            offset: report.offset as f64,
+            items: report
+                .items
+                .iter()
+                .map(wire_cell)
+                .collect::<Result<_, JsValue>>()?,
+            next_offset: report.next_offset.map(|offset| offset as f64),
+        };
+        report_to_js(&wire)
+    }
+}
