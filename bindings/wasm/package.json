@@ -25,8 +25,9 @@
     "build:wasm": "wasm-pack build --target bundler --out-dir pkg --release && rm -f pkg/.gitignore",
     "build:ts": "tsc -p tsconfig.json",
     "prepack": "npm run build",
-    "test": "wasm-pack test --node",
-    "clean": "rm -rf dist pkg"
+    "test": "wasm-pack test --node && npm run test:inspect-conformance",
+    "test:inspect-conformance": "node scripts/inspect-ts-conformance.mjs",
+    "clean": "rm -rf dist pkg pkg-node"
   },
   "keywords": [
     "excel",

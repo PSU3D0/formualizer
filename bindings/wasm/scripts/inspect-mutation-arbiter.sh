@@ -63,6 +63,33 @@ run_mutant swap-sheet-error-code "$ERRORS" \
 run_mutant drop-formula-provenance "$INSPECT" \
   's/Ok((WireLinkKind::Formula, Some(wire_provenance(provenance)?)))/Ok((WireLinkKind::Formula, None))/'
 
+# Fresh adversarial battery F1-F7, F12, F13, and F16. F8 is excluded because
+# no current engine error carries a distinct display string and message-free
+# code/display are near-equivalent. F18 is equivalent: core never emits an
+# omitted count with incomplete=false.
+run_mutant F1-swap-rangearea-start-fields "$INSPECT" \
+  '/impl From<&RangeArea> for WireRangeArea/,/^}/ { s/start_row: value.start_row/start_row: value.start_column/; s/start_column: value.start_column/start_column: value.start_row/; }'
+run_mutant F2-ignore-rangepage-offset "$INSPECT" \
+  's/options = options.with_offset(parse_safe_u64(value, "offset")?)/options = options.with_offset(parse_safe_u64(value, "offset")? * 0)/'
+run_mutant F3-drop-dependent-via "$INSPECT" \
+  's/via: dependent.via.iter().map(Into::into).collect()/via: Vec::new()/'
+run_mutant F4-reverse-trace-roots "$INSPECT" \
+  's/report.roots.iter().map(|root| root.0)/report.roots.iter().rev().map(|root| root.0)/'
+run_mutant F5-ignore-trace-include-values "$INSPECT" \
+  '/fn trace_options/,/^}/ { s/if let Some(value) = raw.include_values/if let Some(_value) = raw.include_values/; s/options = options.with_include_values(value)/options = options.with_include_values(true)/; }'
+run_mutant F6-ignore-trace-max-nodes "$INSPECT" \
+  '/fn trace_options/,/^}/ s/options = options.with_max_nodes(value)/options = options.with_max_nodes(value.max(512))/'
+run_mutant F7-ignore-precedent-max-work "$INSPECT" \
+  '/fn precedent_options/,/^}/ s/options = options.with_max_work(parse_safe_u64(value, "maxWork")?)/let _ = parse_safe_u64(value, "maxWork")?/'
+run_mutant F12-ignore-rangepage-include-values "$INSPECT" \
+  '/fn range_page_options/,/^}/ { s/if let Some(value) = raw.include_values/if let Some(_value) = raw.include_values/; s/options = options.with_include_values(value)/options = options.with_include_values(true)/; }'
+run_mutant F13-ignore-dependents-max-work "$INSPECT" \
+  '/fn dependents_options/,/^}/ s/options = options.with_max_work(parse_safe_u64(value, "maxWork")?)/let _ = parse_safe_u64(value, "maxWork")?/'
+run_mutant F16-invalid-options-code-swap "$ERRORS" \
+  's/InspectError::InvalidOptions { .. } => "INVALID_OPTIONS"/InspectError::InvalidOptions { .. } => "SHEET_NOT_FOUND"/'
+run_mutant skip-explicit-unknown-key-enforcement "$INSPECT" \
+  '/fn parse_object/,/^}/ s/reject_unknown_keys(&raw, context, allowed)/Ok(())/'
+
 restore
 if grep -q 'SURVIVED\|HARNESS ERROR' "$RESULTS"; then
   echo "WASM inspection mutation gate failed" >&2
