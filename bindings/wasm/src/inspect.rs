@@ -154,7 +154,7 @@ fn parse_options<T: for<'de> Deserialize<'de> + Default>(
 }
 
 fn parse_safe_u64(value: f64, field: &str) -> Result<u64, JsValue> {
-    if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > JS_MAX_SAFE_INTEGER {
+    if !value.is_finite() || value.fract() != 0.0 || !(0.0..=JS_MAX_SAFE_INTEGER).contains(&value) {
         return Err(js_error(format!(
             "invalid {field}: expected a non-negative safe integer"
         )));
