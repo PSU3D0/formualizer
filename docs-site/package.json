@@ -15,7 +15,7 @@
   "dependencies": {
     "formualizer": "^0.6.0",
     "fumadocs-core": "16.7.13",
-    "fumadocs-mdx": "14.2.12",
+    "fumadocs-mdx": "15.0.13",
     "fumadocs-ui": "16.7.7",
     "lucide-react": "^0.570.0",
     "next": "16.2.11",
