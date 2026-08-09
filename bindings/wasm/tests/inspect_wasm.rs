@@ -874,6 +874,74 @@ fn binding_validation_errors_are_typed_and_coded() {
 }
 
 #[wasm_bindgen_test]
+fn reachable_inspect_error_codes_are_explicit() {
+    let workbook = fixture();
+    let current = json_value(
+        workbook
+            .inspect_cell_js(address("Model", 1, 1), None)
+            .unwrap(),
+    );
+    let expected_stamp = options(&[
+        ("mutationRevision", JsValue::from_str("0")),
+        ("recalcEpoch", JsValue::from_str("0")),
+    ]);
+    let mut errors = vec![
+        workbook
+            .inspect_cell_js(address("Missing", 1, 1), None)
+            .unwrap_err(),
+        workbook
+            .inspect_cell_js(address("Model", 0, 1), None)
+            .unwrap_err(),
+        workbook
+            .range_page_js(
+                area("Model", Some(1), Some(1), Some(1), Some(1)),
+                Some(options(&[("limit", JsValue::from_f64(0.0))])),
+            )
+            .unwrap_err(),
+        workbook
+            .range_page_js(
+                area("Model", Some(1), Some(1), Some(1), Some(1)),
+                Some(options(&[("expectedStamp", expected_stamp)])),
+            )
+            .unwrap_err(),
+    ];
+    assert_ne!(current["stamp"]["mutationRevision"], "0");
+    workbook
+        .set_formula("Model".to_string(), 20, 1, "=A1+1".to_string())
+        .unwrap();
+    errors.push(
+        workbook
+            .dependents_js(address("Model", 1, 1), None)
+            .unwrap_err(),
+    );
+
+    let mut codes: Vec<_> = errors
+        .into_iter()
+        .map(|error| {
+            let code = Reflect::get(&error, &JsValue::from_str("code"))
+                .unwrap()
+                .as_string()
+                .unwrap();
+            assert_inspect_error(error, &code);
+            code
+        })
+        .collect();
+    codes.sort();
+    assert_eq!(
+        codes,
+        vec![
+            "DEPENDENCY_STATE_UNAVAILABLE",
+            "INVALID_ADDRESS",
+            "INVALID_OPTIONS",
+            "REVISION_MISMATCH",
+            "SHEET_NOT_FOUND",
+        ]
+    );
+    // RESOURCE_EXHAUSTED requires an infeasible allocation failure today;
+    // INSPECT_ERROR is the forward-compatible fallback for future core variants.
+}
+
+#[wasm_bindgen_test]
 fn every_inspection_option_and_survivor_shape_is_pinned() {
     let workbook = fixture();
     workbook
