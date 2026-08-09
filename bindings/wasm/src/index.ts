@@ -279,7 +279,11 @@ export interface CellAddress {
   column: number;
 }
 
-/** An owned, absolute range whose null bounds denote open sides. */
+/**
+ * An owned, absolute range whose null bounds denote open sides. The runtime
+ * input also accepts omitted bounds as open; this shared input/output shape
+ * keeps them required because reports always emit all four keys.
+ */
 export interface RangeArea {
   sheet: string;
   startRow: number | null;
@@ -313,7 +317,9 @@ export interface TraceErrorValue {
 }
 
 export interface TraceTemporalValue {
+  /** `time` is engine-reachable but current WASM ingestion promotes it to `datetime`. */
   kind: 'date' | 'datetime' | 'time' | 'duration';
+  /** Duration currently uses `TimeDelta { secs: N, nanos: N }`, inherited from workbook values. */
   value: string;
 }
 
@@ -346,7 +352,10 @@ export interface CellSnapshot {
   address: CellAddress;
   /** Canonical formula text, not the original whitespace. */
   formula: string | null;
-  /** Null for an empty value and when excluded; inspect `valueIncluded`. */
+  /**
+   * Null for an empty value, when excluded, and for `neverEvaluated` cells;
+   * inspect `valueIncluded` and `staleness` to distinguish those cases.
+   */
   value: TraceValue | null;
   valueIncluded: boolean;
   staleness: Staleness;
@@ -363,6 +372,7 @@ export type NameResolution =
   | { kind: 'cell'; address: CellAddress }
   | { kind: 'range'; declared: RangeArea; resolved: FiniteRangeAddress | null }
   | { kind: 'literal'; value: TraceValue }
+  /** Engine-reachable, but unavailable through current WASM ingestion paths. */
   | { kind: 'formula'; formula: string; value: TraceValue | null }
   | { kind: 'unresolved' };
 
@@ -385,6 +395,7 @@ export type SemanticReference =
   | { kind: 'external'; raw: string }
   | { kind: 'unsupported'; text: string; reason: string };
 
+/** `observed` is reserved for forward compatibility and is not emitted by phase-1 core. */
 export type Provenance = 'declared' | 'observed';
 export type TraceLinkKind = 'formula' | 'spillAnchor' | 'spillReader';
 export type LinkDisposition = 'expanded' | 'convergent' | 'cycle' | 'elided';
@@ -479,8 +490,9 @@ export interface SnapshotOptions {
 }
 
 export interface PrecedentOptions {
+  /** Defaults to 256; zero degrades to in-band truncation. */
   maxLinks?: number;
-  /** Non-negative safe integer work budget; exhaustion is in-band. */
+  /** Defaults to 100,000; non-negative safe integer, with exhaustion in-band. */
   maxWork?: number;
 }
 
@@ -488,30 +500,39 @@ export interface DependentsOptions {
   /**
    * Maximum output count. When bounded, the result retains the address-least N
    * candidates discovered within `maxWork`, in canonical sheet/row/column order.
+   * Defaults to 256; zero is allowed.
    */
   maxResults?: number;
-  /** Non-negative safe integer discovery budget; exhaustion is in-band. */
+  /** Defaults to 100,000; non-negative safe integer, with exhaustion in-band. */
   maxWork?: number;
 }
 
+/** Trace requires a non-empty roots array. */
 export interface TraceOptions {
+  /** Defaults to `precedents`. */
   direction?: TraceDirection;
+  /** Defaults to 6; zero degrades to elided links. */
   maxDepth?: number;
+  /** Defaults to 512 and must be at least the number of unique roots. */
   maxNodes?: number;
+  /** Defaults to 1,024; zero degrades to in-band truncation. */
   maxLinks?: number;
-  /** Non-negative safe integer traversal budget; exhaustion is in-band. */
+  /** Defaults to 100,000; non-negative safe integer, with exhaustion in-band. */
   maxWork?: number;
-  /** Global range-member expansion budget for the whole call. */
+  /** Defaults to 256; global range-member expansion budget for the whole call. */
   rangeMemberBudget?: number;
+  /** Defaults to true. */
   includeValues?: boolean;
 }
 
 export interface RangePageOptions {
-  /** Zero-based row-major offset, supplied as a non-negative safe integer. */
+  /** Defaults to 0; zero-based row-major non-negative safe integer. */
   offset?: number;
+  /** Defaults to 100 and must be at least 1. */
   limit?: number;
+  /** Defaults to true. */
   includeValues?: boolean;
-  /** A mismatch throws an InspectError with code `REVISION_MISMATCH`. */
+  /** Defaults to unchecked; a mismatch throws `REVISION_MISMATCH`. */
   expectedStamp?: StateStamp;
 }
 
