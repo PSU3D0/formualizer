@@ -38,7 +38,7 @@ run_mutant() {
 }
 
 mutate_drop_field() {
-  sed -i '0,/fn value_included(&self) -> bool {/!b;n;s/self.inner.value_included/false/' "$INSPECT"
+  sed -i '/fn value_included(&self) -> bool {/,/^    }/ s/self.inner.value_included/false/' "$INSPECT"
 }
 mutate_wrong_order() {
   sed -i '/fn dependents(&self) -> Vec<PyDependent>/,/^    }/ s/\.into_iter()/\.into_iter().rev()/' "$INSPECT"
