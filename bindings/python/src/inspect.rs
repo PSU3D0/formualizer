@@ -1467,18 +1467,26 @@ impl PyTraceGraph {
         }
     }
     #[getter]
+    #[rustfmt::skip]
     fn roots(&self) -> PyResult<Vec<PyTraceNode>> {
+        let checked_indices = self
+            .inner
+            .graph
+            .roots
+            .iter()
+            .map(|id| Ok((*id, trace_node_index(&self.inner, *id)?)))
+            .collect::<PyResult<HashMap<_, _>>>()?;
+        let nodes =
         self.inner
             .graph
             .roots
             .iter()
-            .map(|id| {
-                Ok(PyTraceNode {
-                    graph: self.inner.clone(),
-                    index: trace_node_index(&self.inner, *id)?,
-                })
+            .map(|id| PyTraceNode {
+                graph: self.inner.clone(),
+                index: checked_indices[id],
             })
-            .collect()
+            .collect();
+        Ok(nodes)
     }
     #[getter]
     fn links(&self) -> Vec<PyTraceLink> {

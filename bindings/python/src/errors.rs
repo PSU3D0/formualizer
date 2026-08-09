@@ -129,7 +129,8 @@ where
 {
     let pyerr = PyErr::new::<T, _>(message.into());
     Python::attach(|py| {
-        let _ = pyerr.value(py).setattr("code", code);
+        let value = pyerr.value(py);
+        let _ = value.setattr("code", code);
     });
     pyerr
 }
