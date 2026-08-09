@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Python bindings
+
+- Added immutable, typed reports for `Workbook.inspect_cell`, `precedents`, `dependents`, `trace`, and `range_page`, including A1-keyed trace-node access, bounded representations, serialization helpers, state stamps, and inspection-specific exceptions.
+
 ### Breaking changes
 
 - VLOOKUP and HLOOKUP now default `range_lookup` to approximate matching (`TRUE`), matching Excel and LibreOffice. Existing formulas that relied on the old exact default should pass `FALSE` or `0` explicitly to keep exact matching; numeric zero and explicitly omitted slots are exact.

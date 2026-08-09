@@ -183,7 +183,7 @@ impl PyWorkbookConfig {
 )]
 #[derive(Clone)]
 pub struct PyWorkbook {
-    inner: std::sync::Arc<std::sync::RwLock<formualizer::workbook::Workbook>>,
+    pub(crate) inner: std::sync::Arc<std::sync::RwLock<formualizer::workbook::Workbook>>,
     // Compatibility cache for old sheet API used by some wrappers
     pub(crate) sheets: std::sync::Arc<std::sync::RwLock<SheetCache>>,
     cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,

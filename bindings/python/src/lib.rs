@@ -33,6 +33,7 @@ mod ast;
 mod engine;
 mod enums;
 mod errors;
+mod inspect;
 mod parser;
 mod reference;
 mod sheet; // retain for compatibility
@@ -241,6 +242,7 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register all submodules
     enums::register(m)?;
     errors::register(m)?;
+    inspect::register(m)?;
     token::register(m)?;
     tokenizer::register(m)?;
     ast::register(m)?;

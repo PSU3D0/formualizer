@@ -13,6 +13,25 @@ pyo3::create_exception!(formualizer, ParserError, PyException);
 pyo3::create_exception!(formualizer, FormualizerHostError, PyException);
 // Raised when evaluating a cell returns an Excel error value
 pyo3::create_exception!(formualizer, ExcelEvaluationError, PyException);
+pyo3::create_exception!(formualizer, InspectionError, PyException);
+pyo3::create_exception!(formualizer, SheetNotFoundError, InspectionError);
+pyo3::create_exception!(formualizer, InvalidInspectionAddressError, InspectionError);
+pyo3::create_exception!(formualizer, InvalidInspectionOptionsError, InspectionError);
+pyo3::create_exception!(
+    formualizer,
+    DependencyStateUnavailableError,
+    InspectionError
+);
+pyo3::create_exception!(
+    formualizer,
+    InspectionRevisionMismatchError,
+    InspectionError
+);
+pyo3::create_exception!(
+    formualizer,
+    InspectionResourceExhaustedError,
+    InspectionError
+);
 
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
@@ -102,6 +121,80 @@ pub(crate) fn workbook_error_to_pyerr(error: formualizer::workbook::IoError) -> 
         formualizer::workbook::IoError::Engine(error) => excel_error_to_pyerr(error),
         other => PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(other.to_string()),
     }
+}
+
+fn inspection_error_with_code<T>(message: impl Into<String>, code: &str) -> PyErr
+where
+    T: pyo3::PyTypeInfo,
+{
+    let pyerr = PyErr::new::<T, _>(message.into());
+    Python::attach(|py| {
+        let value = pyerr.value(py);
+        let _ = value.setattr("code", code);
+    });
+    pyerr
+}
+
+pub(crate) fn invalid_inspection_address(message: impl Into<String>) -> PyErr {
+    inspection_error_with_code::<InvalidInspectionAddressError>(message, "invalid_address")
+}
+
+pub(crate) fn unknown_inspection_variant(name: &str) -> PyErr {
+    inspection_error_with_code::<InspectionError>(
+        format!("unknown inspection variant: {name}"),
+        "unknown_variant",
+    )
+}
+
+/// Convert engine inspection failures into a stable, distinguishable exception
+/// hierarchy. Every exception also carries a short `code` attribute.
+pub(crate) fn inspect_error_to_pyerr(
+    error: formualizer::eval::engine::inspect::InspectError,
+) -> PyErr {
+    use formualizer::eval::engine::inspect::InspectError;
+
+    let (pyerr, code) = match &error {
+        InspectError::SheetNotFound { .. } => (
+            SheetNotFoundError::new_err(error.to_string()),
+            "sheet_not_found",
+        ),
+        InspectError::InvalidAddress { .. } => (
+            InvalidInspectionAddressError::new_err(error.to_string()),
+            "invalid_address",
+        ),
+        InspectError::InvalidOptions { .. } => (
+            InvalidInspectionOptionsError::new_err(error.to_string()),
+            "invalid_options",
+        ),
+        InspectError::DependencyStateUnavailable { .. } => (
+            DependencyStateUnavailableError::new_err(error.to_string()),
+            "dependency_state_unavailable",
+        ),
+        InspectError::RevisionMismatch { .. } => (
+            InspectionRevisionMismatchError::new_err(error.to_string()),
+            "revision_mismatch",
+        ),
+        InspectError::ResourceExhausted { .. } => (
+            InspectionResourceExhaustedError::new_err(error.to_string()),
+            "resource_exhausted",
+        ),
+        _ => (InspectionError::new_err(error.to_string()), "unknown"),
+    };
+    Python::attach(|py| {
+        let _ = pyerr.value(py).setattr("code", code);
+        if let InspectError::SheetNotFound { sheet } = &error {
+            let _ = pyerr.value(py).setattr("sheet", sheet);
+        }
+        if let InspectError::RevisionMismatch { expected, actual } = &error {
+            let _ = pyerr
+                .value(py)
+                .setattr("expected", crate::inspect::PyStateStamp::from(*expected));
+            let _ = pyerr
+                .value(py)
+                .setattr("actual", crate::inspect::PyStateStamp::from(*actual));
+        }
+    });
+    pyerr
 }
 
 // Helper functions to create errors with position information
@@ -360,6 +453,31 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add(
         "ExcelEvaluationError",
         m.py().get_type::<ExcelEvaluationError>(),
+    )?;
+    m.add("InspectionError", m.py().get_type::<InspectionError>())?;
+    m.add(
+        "SheetNotFoundError",
+        m.py().get_type::<SheetNotFoundError>(),
+    )?;
+    m.add(
+        "InvalidInspectionAddressError",
+        m.py().get_type::<InvalidInspectionAddressError>(),
+    )?;
+    m.add(
+        "InvalidInspectionOptionsError",
+        m.py().get_type::<InvalidInspectionOptionsError>(),
+    )?;
+    m.add(
+        "DependencyStateUnavailableError",
+        m.py().get_type::<DependencyStateUnavailableError>(),
+    )?;
+    m.add(
+        "InspectionRevisionMismatchError",
+        m.py().get_type::<InspectionRevisionMismatchError>(),
+    )?;
+    m.add(
+        "InspectionResourceExhaustedError",
+        m.py().get_type::<InspectionResourceExhaustedError>(),
     )?;
     m.add_class::<PyExcelError>()?;
     Ok(())

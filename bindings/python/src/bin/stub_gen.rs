@@ -46,6 +46,18 @@ fn main() -> Result<()> {
 
     for (generated, corrected) in [
         (
+            "def __eq__(self, other: typing.Any)",
+            "def __eq__(self, other: typing.Any, /)",
+        ),
+        (
+            "def __ne__(self, other: typing.Any)",
+            "def __ne__(self, other: typing.Any, /)",
+        ),
+        (
+            "def __contains__(self, address: builtins.str)",
+            "def __contains__(self, address: builtins.str, /)",
+        ),
+        (
             "def __getitem__(self, index: builtins.int)",
             "def __getitem__(self, index: builtins.int, /)",
         ),
@@ -53,17 +65,28 @@ fn main() -> Result<()> {
             "def __getitem__(self, name: builtins.str)",
             "def __getitem__(self, name: builtins.str, /)",
         ),
+        (
+            "def __getitem__(self, address: builtins.str)",
+            "def __getitem__(self, address: builtins.str, /)",
+        ),
     ] {
         assert!(
             contents.contains(generated),
             "generated stub is missing the expected magic-method signature: {generated}"
         );
-        contents = contents.replacen(generated, corrected, 1);
+        contents = contents.replace(generated, corrected);
     }
 
-    let additional_public_exports = r#"    "ExcelEvaluationError",
+    let additional_public_exports = r#"    "DependencyStateUnavailableError",
+    "ExcelEvaluationError",
     "FormualizerHostError",
+    "InspectionError",
+    "InspectionResourceExhaustedError",
+    "InspectionRevisionMismatchError",
+    "InvalidInspectionAddressError",
+    "InvalidInspectionOptionsError",
     "ParserError",
+    "SheetNotFoundError",
     "PyFormulaDialect",
     "PyRefWalker",
     "PyToken",
@@ -93,6 +116,15 @@ class TokenizerError(Exception): ...
 class ParserError(Exception): ...
 class FormualizerHostError(Exception): ...
 class ExcelEvaluationError(Exception): ...
+class InspectionError(Exception): ...
+class SheetNotFoundError(InspectionError): ...
+class InvalidInspectionAddressError(InspectionError): ...
+class InvalidInspectionOptionsError(InspectionError): ...
+class DependencyStateUnavailableError(InspectionError): ...
+class InspectionRevisionMismatchError(InspectionError):
+    expected: StateStamp
+    actual: StateStamp
+class InspectionResourceExhaustedError(InspectionError): ...
 class SheetPortError(Exception): ...
 class SheetPortManifestError(SheetPortError): ...
 class SheetPortConstraintError(SheetPortError): ...
@@ -109,6 +141,21 @@ PyRefWalker = RefWalker
 PyTokenType = TokenType
 PyTokenSubType = TokenSubType
 PyFormulaDialect = FormulaDialect
+
+# Private type-check sentinels make a deleted generated member a mypy error,
+# while stubtest still rejects invented members that are absent at runtime.
+if typing.TYPE_CHECKING:
+    _inspection_enum_members = (
+        Staleness.Current, Staleness.Dirty, Staleness.NeverEvaluated, Staleness.Unknown,
+        Provenance.Declared, Provenance.Observed, Provenance.Unknown,
+        LinkDisposition.Expanded, LinkDisposition.Convergent, LinkDisposition.Cycle, LinkDisposition.Elided, LinkDisposition.Unknown,
+        TraceDirection.Precedents, TraceDirection.Dependents,
+        OmittedCountKind.Exact, OmittedCountKind.AtLeast, OmittedCountKind.Unknown,
+        SpillRoleKind.Anchor, SpillRoleKind.Member, SpillRoleKind.Unknown,
+        ReferenceKind.Cell, ReferenceKind.Range, ReferenceKind.Name, ReferenceKind.Table, ReferenceKind.External, ReferenceKind.Unsupported, ReferenceKind.Unknown,
+        NameResolutionKind.Cell, NameResolutionKind.Range, NameResolutionKind.Literal, NameResolutionKind.Formula, NameResolutionKind.Unresolved, NameResolutionKind.Unknown,
+        TraceLinkKindType.Formula, TraceLinkKindType.SpillAnchor, TraceLinkKindType.SpillReader, TraceLinkKindType.Unknown,
+    )
 "#,
     );
     let all_start = contents

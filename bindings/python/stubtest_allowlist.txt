@@ -1,4 +1,15 @@
-# pyo3-stub-gen emits valid Enum-member declarations (`Member = ...`), but
-# mypy.stubtest compares their inferred Ellipsis type against the PyO3 runtime
-# singleton type. Keep this narrow exception until upstream handles PyO3 enums.
-formualizer(\.formualizer_py)?\.(Py)?(FormulaDialect|TokenSubType|TokenType|WorkbookMode)\..*
+# PyO3 enum singleton declarations are inferred as EllipsisType by mypy.
+# Match only the exact generated members; private stub sentinels catch deletions.
+formualizer\.formualizer_py\.FormulaDialect\.(Excel|OpenFormula)$
+formualizer\.formualizer_py\.LinkDisposition\.(Expanded|Convergent|Cycle|Elided|Unknown)$
+formualizer\.formualizer_py\.NameResolutionKind\.(Cell|Range|Literal|Formula|Unresolved|Unknown)$
+formualizer\.formualizer_py\.OmittedCountKind\.(Exact|AtLeast|Unknown)$
+formualizer\.formualizer_py\.Provenance\.(Declared|Observed|Unknown)$
+formualizer\.formualizer_py\.ReferenceKind\.(Cell|Range|Name|Table|External|Unsupported|Unknown)$
+formualizer\.formualizer_py\.SpillRoleKind\.(Anchor|Member|Unknown)$
+formualizer\.formualizer_py\.Staleness\.(Current|Dirty|NeverEvaluated|Unknown)$
+formualizer\.formualizer_py\.TokenSubType\.(None_|Text|Number|Logical|Error|Range|Open|Close|Arg|Row)$
+formualizer\.formualizer_py\.TokenType\.(Literal|Operand|Func|Array|Paren|Sep|OpPrefix|OpInfix|OpPostfix|Whitespace)$
+formualizer\.formualizer_py\.TraceDirection\.(Precedents|Dependents)$
+formualizer\.formualizer_py\.TraceLinkKindType\.(Formula|SpillAnchor|SpillReader|Unknown)$
+formualizer\.formualizer_py\.WorkbookMode\.(Ephemeral|Interactive)$

@@ -32,7 +32,7 @@ tracing_chrome = ["tracing", "formualizer/tracing_chrome"]
 allocator-jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
-pyo3 = { workspace = true, features = ["chrono", "abi3-py310"] }
+pyo3 = { workspace = true, features = ["chrono", "abi3-py310", "multiple-pymethods"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }
 
