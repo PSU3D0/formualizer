@@ -4,6 +4,34 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+## [0.8.0] - 2026-08-10
+
+### Engine introspection (new)
+
+- Added `formualizer_eval::engine::inspect`, a public, engine-native introspection API: `inspect_cell`, `precedents`, `dependents`, `trace`, and `range_page`. Reports are owned, stamped snapshots addressed in A1 space, bounded by explicit `max_work` discovery budgets that degrade in band rather than failing, with truncation reported through `TruncationReport`/`OmittedCount`. Declared references come from the formula authority rather than the dependency graph, so precedent shape and source order survive; the graph supplies reverse reachability and state. Cycle classification is complete, not merely sound: a reachability post-pass guarantees that an unmarked link is safe to expand. Bounded `dependents` selection is canonical — the address-least N of the candidates discovered within budget — so truncated reports do not depend on internal representation.
+- Reports are plane-independent: legacy and authoritative FormulaPlane engines return field-identical reports for identical logical workbook state, apart from state stamps, with two documented exceptions — per-cell staleness may be more conservative under FormulaPlane authority after structural edits and before re-evaluation, and reports produced under a binding `max_work` budget are representation-dependent in how much they discover.
+- Python bindings expose all five entry points with keyword options matching core defaults, immutable typed reports, `Arc`-backed trace graphs whose node handles outlive their parents, A1-keyed mapping access, bounded `__repr__`, `to_dict()`, value equality and hashing where the core defines them, and a typed exception hierarchy carrying stable codes. Every output enum carries an explicit `Unknown` member so future core variants can never masquerade as a specific known one.
+- WASM bindings expose the same surface with owned maps-as-objects reports, decimal-string `u64` stamps and omitted counts, stable tagged enum and value shapes, typed inspection errors including binding-side input validation, and an explicit hand-written TypeScript surface checked against real runtime output by a committed conformance gate.
+
+### Added
+
+- `formualizer_common::{CellAddress, RangeArea}` grid address types with validated construction and total `Display`, plus `address::format_a1_sheet_name` and `a1_sheet_name_needs_quoting`.
+- A unified used-extent resolver behind explicit `ExtentPolicy` variants, replacing roughly two dozen ad hoc extent derivations while preserving each site's documented behaviour.
+- A streaming, source-ordered semantic reference collector (`engine::refs`) now used by the graph, ingest, and plan-expansion paths, replacing three independent walks.
+
+### Fixed
+
+- Omitted function-argument slots are represented in the AST and evaluated as Excel does, instead of being silently treated as empty text or blank cells. (#277)
+- `DCOUNTA` and `DGET` no longer mishandle empty-text criteria. (#281)
+- `VLOOKUP` and `HLOOKUP` default `range_lookup` to approximate matching, matching Excel and LibreOffice. (#280)
+- Formula results reached through a truly blank cell publish numeric `0`. (#279)
+- Date and time text values coerce correctly in arithmetic. (#289)
+- Wildcard `*` matching in criteria is correct for all patterns, verified by 64,687,036 differential comparisons against two independent reference implementations. (#284)
+- `NPV` accepts variadic value arguments with Excel's reference and array semantics, verified against 804 corpus workbook cells. (#293)
+- Saturating area arithmetic at three reference-collection sites, and heap-based iteration replacing recursion in reference collection, so deeply nested formulas no longer risk stack exhaustion.
+- `Engine::get_cell` returned the anchor placement's literals for parameterized span families under FormulaPlane authority, producing wrong formula text.
+
+
 ### Python bindings
 
 - Added immutable, typed reports for `Workbook.inspect_cell`, `precedents`, `dependents`, `trace`, and `range_page`, including A1-keyed trace-node access, bounded representations, serialization helpers, state stamps, and inspection-specific exceptions.
@@ -386,7 +414,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/PSU3D0/formualizer/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/PSU3D0/formualizer/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/PSU3D0/formualizer/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/PSU3D0/formualizer/compare/v0.5.9...v0.6.0
