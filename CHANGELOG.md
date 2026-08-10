@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Arithmetic on a date-typed cell no longer returns `#NUM!` when the result falls outside the representable date range. `Date`/`DateTime` operands keep their temporal tag when the resulting serial is representable, and degrade to a plain number when it is not, instead of manufacturing a numeric-domain error. This most visibly affected `end_date - start_date` accrual expressions whenever the period ran backwards: a perfectly ordinary negative day count became `#NUM!` and propagated through every downstream cell. NaN and infinity operands continue to error. Reported externally with a full reproduction and LibreOffice cross-check. (#310)
+
 ## [0.8.0] - 2026-08-10
 
 ### Engine introspection (new)

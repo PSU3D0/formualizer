@@ -1190,6 +1190,16 @@ impl<'a> Interpreter<'a> {
                 )
             };
 
+            // Excel has no date type at the formula level: `date + number` is
+            // plain numeric addition, and the result only *displays* as a date
+            // because the cell inherits a date number format. We keep the
+            // temporal tag when the result is representable, because that is
+            // what lets typed date values survive a round trip, but a serial no
+            // date can represent is still an ordinary number. Erroring there
+            // invents a numeric-domain failure out of arithmetic Excel performs
+            // without complaint -- notably every negative serial, which the
+            // standard `end_date - start_date` accrual idiom produces whenever
+            // the period runs backwards.
             let serial_to_literal = |serial: f64| -> LiteralValue {
                 match crate::coercion::sanitize_numeric(serial) {
                     Ok(serial) => {
@@ -1201,9 +1211,13 @@ impl<'a> Interpreter<'a> {
                                     DateTime(dt)
                                 }
                             }
-                            Err(e) => Error(e),
+                            // Not representable as a date: degrade to the
+                            // plain serial rather than manufacturing #NUM!.
+                            Err(_) => Number(serial),
                         }
                     }
+                    // NaN and infinity are genuine numeric-domain failures and
+                    // keep their error.
                     Err(e) => Error(e),
                 }
             };
