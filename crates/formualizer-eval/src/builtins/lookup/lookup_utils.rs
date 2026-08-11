@@ -117,9 +117,10 @@ pub fn equals_maybe_wildcard(
 ///
 /// The legacy approximate lookups (`MATCH` with `match_type` 1/-1,
 /// `VLOOKUP`/`HLOOKUP` with `range_lookup` TRUE) consider only entries in the
-/// needle's value class. A blank cell, or an entry of another class such as a
-/// text header sitting above a column of numbers, is skipped: it is neither
-/// out-of-order data nor a matchable position.
+/// needle's comparable value set. A blank cell, or an incomparable entry such
+/// as a text header sitting above a column of numbers, is skipped: it is neither
+/// out-of-order data nor a matchable position. Errors are handled separately
+/// and propagate rather than being classified as skippable.
 pub fn is_searchable_for_approximate(value: &LiteralValue, needle: &LiteralValue) -> bool {
     !matches!(value, LiteralValue::Empty) && cmp_for_lookup(value, needle).is_some()
 }
@@ -137,7 +138,13 @@ pub struct SearchedVector<'a> {
 }
 
 impl<'a> SearchedVector<'a> {
-    pub fn new(values: &'a [LiteralValue], needle: &LiteralValue) -> Self {
+    pub fn new(values: &'a [LiteralValue], needle: &LiteralValue) -> Result<Self, ExcelError> {
+        if let Some(error) = values.iter().find_map(|value| match value {
+            LiteralValue::Error(error) => Some(error.clone()),
+            _ => None,
+        }) {
+            return Err(error);
+        }
         let first_skipped = values
             .iter()
             .position(|v| !is_searchable_for_approximate(v, needle));
@@ -149,7 +156,7 @@ impl<'a> SearchedVector<'a> {
             );
             positions
         });
-        Self { values, positions }
+        Ok(Self { values, positions })
     }
 
     pub fn len(&self) -> usize {
