@@ -15,7 +15,7 @@
 //! - Type coercion: current simple: numbers vs numeric text coerced; text comparison case-insensitive? Excel is case-insensitive for MATCH (without wildcards). We implement case-insensitive for now.
 //!   TODO(excel-nuance): refine boolean/text/number coercion differences.
 
-use super::lookup_utils::{cmp_for_lookup, find_exact_index, is_sorted_ascending};
+use super::lookup_utils::{SearchedVector, cmp_for_lookup, find_exact_index};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function;
@@ -24,18 +24,38 @@ use formualizer_common::ArgKind;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
+/// Approximate search over a lookup vector, returning a position in the
+/// *original* vector.
+///
+/// Entries the search must ignore — blanks, and entries outside the needle's
+/// value class — are projected out first, so they neither occupy a matchable
+/// position nor disturb the binary search's ordering assumption.
 fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32) -> Option<usize> {
     if mode == 0 || slice.is_empty() {
+        return None;
+    }
+    let searched = SearchedVector::new(slice, needle);
+    binary_search_searched(&searched, needle, mode).map(|i| searched.original_position(i))
+}
+
+/// Same search, but over an already-projected vector and returning an index
+/// into that projection.
+fn binary_search_searched(
+    searched: &SearchedVector<'_>,
+    needle: &LiteralValue,
+    mode: i32,
+) -> Option<usize> {
+    if mode == 0 || searched.is_empty() {
         return None;
     }
     // Only ascending binary search currently (mode 1); descending path kept linear for now.
     if mode == 1 {
         // largest <= needle
         let mut lo = 0usize;
-        let mut hi = slice.len();
+        let mut hi = searched.len();
         while lo < hi {
             let mid = (lo + hi) / 2;
-            match cmp_for_lookup(&slice[mid], needle) {
+            match cmp_for_lookup(searched.get(mid), needle) {
                 Some(c) => {
                     if c > 0 {
                         hi = mid;
@@ -52,8 +72,8 @@ fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32)
     } else {
         // -1 mode handled via linear fallback since semantics differ (smallest >=)
         let mut best: Option<usize> = None;
-        for (i, v) in slice.iter().enumerate() {
-            if let Some(c) = cmp_for_lookup(v, needle) {
+        for i in 0..searched.len() {
+            if let Some(c) = cmp_for_lookup(searched.get(i), needle) {
                 if c == 0 {
                     return Some(i);
                 }
@@ -267,13 +287,16 @@ impl Function for MatchFn {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
 
+                    // Project out the entries an approximate search ignores
+                    // (blanks and entries outside the needle's value class)
+                    // before both the sortedness guard and the search itself.
+                    let searched = SearchedVector::new(&values, &lookup_value);
+
                     // Lightweight unsorted detection for approximate modes
                     let is_sorted = if mt == 1 {
-                        is_sorted_ascending(&values)
+                        searched.is_sorted_ascending()
                     } else if mt == -1 {
-                        values
-                            .windows(2)
-                            .all(|w| cmp_for_lookup(&w[0], &w[1]).is_some_and(|c| c >= 0))
+                        searched.is_sorted_descending()
                     } else {
                         true
                     };
@@ -282,32 +305,31 @@ impl Function for MatchFn {
                             ExcelError::new(ExcelErrorKind::Na),
                         )));
                     }
-                    let idx = if values.len() < 8 {
+                    let idx = if searched.len() < 8 {
                         // linear small
-                        let mut best: Option<(usize, &LiteralValue)> = None;
-                        for (i, v) in values.iter().enumerate() {
-                            if let Some(c) = cmp_for_lookup(v, &lookup_value) {
+                        let mut best: Option<usize> = None;
+                        for i in 0..searched.len() {
+                            if let Some(c) = cmp_for_lookup(searched.get(i), &lookup_value) {
                                 // compare candidate to needle
                                 if mt == 1 {
                                     // v <= needle
-                                    if (c == 0 || c == -1)
-                                        && (best.is_none() || i > best.unwrap().0)
+                                    if (c == 0 || c == -1) && (best.is_none() || i > best.unwrap())
                                     {
-                                        best = Some((i, v));
+                                        best = Some(i);
                                     }
                                 } else {
                                     // -1, v >= needle
-                                    if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap().0)
-                                    {
-                                        best = Some((i, v));
+                                    if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap()) {
+                                        best = Some(i);
                                     }
                                 }
                             }
                         }
-                        best.map(|(i, _)| i)
+                        best
                     } else {
-                        binary_search_match(&values, &lookup_value, mt)
+                        binary_search_searched(&searched, &lookup_value, mt)
                     };
+                    let idx = idx.map(|i| searched.original_position(i));
                     match idx {
                         Some(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
                             (i + 1) as i64,
