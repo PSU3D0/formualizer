@@ -16,6 +16,7 @@
 
 use super::lookup_utils::cmp_for_lookup;
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
+use crate::engine::DateSystem;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
@@ -24,7 +25,11 @@ use formualizer_macros::func_caps;
 /// Binary-search style approximate match (largest value <= needle) for
 /// ascending-sorted data.  Mirrors the helper in `core.rs` but is kept local
 /// to avoid coupling the legacy path to core internals.
-fn approx_match_ascending(slice: &[LiteralValue], needle: &LiteralValue) -> Option<usize> {
+fn approx_match_ascending(
+    slice: &[LiteralValue],
+    needle: &LiteralValue,
+    date_system: DateSystem,
+) -> Option<usize> {
     if slice.is_empty() {
         return None;
     }
@@ -32,7 +37,7 @@ fn approx_match_ascending(slice: &[LiteralValue], needle: &LiteralValue) -> Opti
     let mut hi: usize = slice.len();
     while lo < hi {
         let mid = (lo + hi) / 2;
-        match cmp_for_lookup(&slice[mid], needle) {
+        match cmp_for_lookup(&slice[mid], needle, date_system) {
             Some(c) if c > 0 => hi = mid,
             Some(_) => lo = mid + 1,
             None => hi = mid,
@@ -211,7 +216,7 @@ impl Function for LookupFn {
         };
 
         // Approximate match – largest <= needle
-        let match_idx = approx_match_ascending(&search_vec, &lookup_value);
+        let match_idx = approx_match_ascending(&search_vec, &lookup_value, ctx.date_system());
         let match_idx = match match_idx {
             Some(i) => i,
             None => {
@@ -340,7 +345,10 @@ mod tests {
 
     #[test]
     fn approx_empty_slice() {
-        assert_eq!(approx_match_ascending(&[], &LiteralValue::Int(1)), None);
+        assert_eq!(
+            approx_match_ascending(&[], &LiteralValue::Int(1), DateSystem::Excel1900),
+            None
+        );
     }
 
     #[test]
@@ -350,7 +358,10 @@ mod tests {
             LiteralValue::Int(20),
             LiteralValue::Int(30),
         ];
-        assert_eq!(approx_match_ascending(&vals, &LiteralValue::Int(5)), None);
+        assert_eq!(
+            approx_match_ascending(&vals, &LiteralValue::Int(5), DateSystem::Excel1900),
+            None
+        );
     }
 
     #[test]
@@ -361,7 +372,7 @@ mod tests {
             LiteralValue::Int(30),
         ];
         assert_eq!(
-            approx_match_ascending(&vals, &LiteralValue::Int(20)),
+            approx_match_ascending(&vals, &LiteralValue::Int(20), DateSystem::Excel1900),
             Some(1)
         );
     }
@@ -374,7 +385,7 @@ mod tests {
             LiteralValue::Int(30),
         ];
         assert_eq!(
-            approx_match_ascending(&vals, &LiteralValue::Int(25)),
+            approx_match_ascending(&vals, &LiteralValue::Int(25), DateSystem::Excel1900),
             Some(1)
         );
     }
@@ -387,7 +398,7 @@ mod tests {
             LiteralValue::Int(30),
         ];
         assert_eq!(
-            approx_match_ascending(&vals, &LiteralValue::Int(100)),
+            approx_match_ascending(&vals, &LiteralValue::Int(100), DateSystem::Excel1900),
             Some(2)
         );
     }
