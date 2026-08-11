@@ -1009,6 +1009,14 @@ impl<'g> VertexEditor<'g> {
                 coord.row() >= start && coord.row() < start + count
             })
             .collect();
+        let range_dependents = self
+            .graph
+            .compressed_range_dependents_intersecting_deleted_rows(
+                sheet_id,
+                start,
+                start.saturating_add(count).saturating_sub(1).max(start),
+            );
+        self.graph.mark_dirty_many(&range_dependents);
 
         for id in vertices_to_delete {
             self.remove_vertex(id)?;
@@ -1253,6 +1261,14 @@ impl<'g> VertexEditor<'g> {
                 coord.col() >= start && coord.col() < start + count
             })
             .collect();
+        let range_dependents = self
+            .graph
+            .compressed_range_dependents_intersecting_deleted_columns(
+                sheet_id,
+                start,
+                start.saturating_add(count).saturating_sub(1).max(start),
+            );
+        self.graph.mark_dirty_many(&range_dependents);
 
         for id in vertices_to_delete {
             self.remove_vertex(id)?;

@@ -21,6 +21,64 @@ impl RangeSelfUse {
 }
 
 impl DependencyGraph {
+    pub(crate) fn compressed_range_dependents_intersecting_deleted_rows(
+        &self,
+        sheet_id: SheetId,
+        start_row: u32,
+        end_row: u32,
+    ) -> Vec<VertexId> {
+        self.formula_to_range_deps
+            .iter()
+            .filter_map(|(&dependent, ranges)| {
+                ranges
+                    .iter()
+                    .any(|range| {
+                        let range_sheet_id = match range.sheet {
+                            SharedSheetLocator::Id(id) => id,
+                            // Formula analysis normalizes ingested locators to Id, so this
+                            // fallback is unreachable today; match the sibling query semantics.
+                            _ => sheet_id,
+                        };
+                        let range_start = range.start_row.map(|bound| bound.index).unwrap_or(0);
+                        let range_end = range.end_row.map(|bound| bound.index).unwrap_or(u32::MAX);
+                        range_sheet_id == sheet_id
+                            && range_start <= end_row
+                            && range_end >= start_row
+                    })
+                    .then_some(dependent)
+            })
+            .collect()
+    }
+
+    pub(crate) fn compressed_range_dependents_intersecting_deleted_columns(
+        &self,
+        sheet_id: SheetId,
+        start_col: u32,
+        end_col: u32,
+    ) -> Vec<VertexId> {
+        self.formula_to_range_deps
+            .iter()
+            .filter_map(|(&dependent, ranges)| {
+                ranges
+                    .iter()
+                    .any(|range| {
+                        let range_sheet_id = match range.sheet {
+                            SharedSheetLocator::Id(id) => id,
+                            // Formula analysis normalizes ingested locators to Id, so this
+                            // fallback is unreachable today; match the sibling query semantics.
+                            _ => sheet_id,
+                        };
+                        let range_start = range.start_col.map(|bound| bound.index).unwrap_or(0);
+                        let range_end = range.end_col.map(|bound| bound.index).unwrap_or(u32::MAX);
+                        range_sheet_id == sheet_id
+                            && range_start <= end_col
+                            && range_end >= start_col
+                    })
+                    .then_some(dependent)
+            })
+            .collect()
+    }
+
     /// Visit compressed-range formula dependents covering one cell without
     /// materializing the stripe union used by dirty propagation.
     ///

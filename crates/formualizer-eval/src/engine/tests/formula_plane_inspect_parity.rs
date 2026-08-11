@@ -608,16 +608,15 @@ fn structural_insert_conservative_staleness_is_documented_and_converges_after_ev
 }
 
 #[test]
-fn structural_delete_legacy_whole_column_staleness_bug_is_pinned_for_issue_306() {
+fn structural_delete_whole_column_values_match_fresh_formula_and_formula_plane_for_issue_306() {
     let (mut off, mut authoritative) = build_pair(7);
     off.delete_rows(SHEET, 60, 1).unwrap();
     authoritative.delete_rows(SHEET, 60, 1).unwrap();
     off.evaluate_all().unwrap();
     authoritative.evaluate_all().unwrap();
 
-    // Known engine bug #306: legacy delete_rows fails to dirty existing
-    // whole-column readers. The authoritative value is confirmed by a freshly
-    // authored legacy formula over the post-delete data.
+    // Confirm both authorities against a freshly authored formula over the
+    // post-delete data.
     for engine in [&mut off, &mut authoritative] {
         engine
             .set_cell_formula(SHEET, 1, 20, parse("=SUM($B:$B)+A1+7").unwrap())
@@ -640,11 +639,11 @@ fn structural_delete_legacy_whole_column_staleness_bug_is_pinned_for_issue_306()
         .inspect_cell(&address(1, 20), &SnapshotOptions::default())
         .unwrap()
         .cell;
-    assert_eq!(legacy.value, Some(LiteralValue::Number(16_520.0)));
+    assert_eq!(legacy.value, Some(LiteralValue::Number(16_400.0)));
     assert_eq!(plane.value, Some(LiteralValue::Number(16_400.0)));
     assert_eq!(legacy_oracle.value, plane_oracle.value);
+    assert_eq!(legacy.value, legacy_oracle.value);
     assert_eq!(plane.value, plane_oracle.value);
-    assert_ne!(legacy.value, legacy_oracle.value);
 }
 
 #[test]
