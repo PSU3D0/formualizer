@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+## [0.8.1] - 2026-08-11
+
 ### Fixed
 
 - Row and column deletion now recalculates formulas that read affected whole-column, whole-row, or other compressed open ranges, instead of returning stale pre-deletion values while reporting them as current. Insertion still does not invalidate position-sensitive open-range readers such as `MATCH` and `INDEX`; that pre-existing gap is tracked separately. (#306)
@@ -419,7 +421,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/PSU3D0/formualizer/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/PSU3D0/formualizer/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/PSU3D0/formualizer/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/PSU3D0/formualizer/compare/v0.6.0...v0.7.0
