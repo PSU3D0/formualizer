@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::builtins::lookup::lookup_utils::cmp_for_lookup;
-use crate::engine::range_view::RangeView;
+use crate::engine::{DateSystem, range_view::RangeView};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct LookupIndexKey {
@@ -57,18 +57,21 @@ impl Hash for LookupHashKey {
 }
 
 impl LookupHashKey {
-    pub(crate) fn from_literal(value: &LiteralValue) -> Option<Self> {
+    pub(crate) fn from_literal(value: &LiteralValue, date_system: DateSystem) -> Option<Self> {
         match value {
             LiteralValue::Number(n) => Some(Self::Number(normalize_f64_bits(*n))),
             LiteralValue::Int(i) => Some(Self::Number(normalize_f64_bits(*i as f64))),
             LiteralValue::Text(s) => Some(Self::Text(s.to_lowercase().into_boxed_str())),
             LiteralValue::Boolean(b) => Some(Self::Boolean(*b)),
             LiteralValue::Empty => Some(Self::Empty),
+            // Temporal values are numbers in Excel: key them by their serial so
+            // an exact lookup finds them whether the needle or the cell (or
+            // both) carry a temporal type rather than a plain numeric.
+            LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => value
+                .as_serial_number_for(date_system)
+                .map(|serial| Self::Number(normalize_f64_bits(serial))),
             LiteralValue::Error(_)
             | LiteralValue::Array(_)
-            | LiteralValue::Date(_)
-            | LiteralValue::DateTime(_)
-            | LiteralValue::Time(_)
             | LiteralValue::Duration(_)
             | LiteralValue::Pending => None,
         }
@@ -96,6 +99,7 @@ pub struct DuplicateIndices {
 
 pub struct LookupIndex {
     pub(crate) len: usize,
+    date_system: DateSystem,
     pub(crate) bytes: usize,
     pub(crate) entries: FxHashMap<LookupHashKey, DuplicateIndices>,
     pub(crate) cell_values: Box<[LiteralValue]>,
@@ -106,6 +110,7 @@ impl LookupIndex {
     pub(crate) fn build(
         view: &RangeView<'_>,
         axis: LookupAxis,
+        date_system: DateSystem,
     ) -> Result<BuildOutcome, ExcelError> {
         let (rows, cols) = view.dims();
         let len = match axis {
@@ -142,7 +147,7 @@ impl LookupIndex {
             if matches!(value, LiteralValue::Empty) && first_empty.is_none() {
                 first_empty = Some(idx);
             }
-            if let Some(key) = LookupHashKey::from_literal(&value) {
+            if let Some(key) = LookupHashKey::from_literal(&value, date_system) {
                 let dups = entries.entry(key).or_insert_with(|| DuplicateIndices {
                     first: idx,
                     last: idx,
@@ -164,6 +169,7 @@ impl LookupIndex {
         let bytes = estimate_bytes(len, entries.len());
         Ok(BuildOutcome::Built(Self {
             len,
+            date_system,
             bytes,
             entries,
             cell_values: cell_values.into_boxed_slice(),
@@ -172,10 +178,10 @@ impl LookupIndex {
     }
 
     pub(crate) fn find_first_exact(&self, needle: &LiteralValue) -> Option<usize> {
-        let hash_key = LookupHashKey::from_literal(needle)?;
+        let hash_key = LookupHashKey::from_literal(needle, self.date_system)?;
         if let Some(dups) = self.entries.get(&hash_key) {
             for &idx in &dups.all {
-                if cmp_for_lookup(needle, &self.cell_values[idx]) == Some(0) {
+                if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
                     return Some(idx);
                 }
             }
@@ -189,10 +195,10 @@ impl LookupIndex {
     }
 
     pub(crate) fn find_last_exact(&self, needle: &LiteralValue) -> Option<usize> {
-        let hash_key = LookupHashKey::from_literal(needle)?;
+        let hash_key = LookupHashKey::from_literal(needle, self.date_system)?;
         if let Some(dups) = self.entries.get(&hash_key) {
             for &idx in dups.all.iter().rev() {
-                if cmp_for_lookup(needle, &self.cell_values[idx]) == Some(0) {
+                if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
                     return Some(idx);
                 }
             }

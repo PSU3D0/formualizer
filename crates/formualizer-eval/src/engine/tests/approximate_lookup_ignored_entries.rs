@@ -13,7 +13,8 @@
 
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
-use formualizer_common::{ExcelErrorKind, LiteralValue};
+use chrono::NaiveDate;
+use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
 
 fn eval(engine: &mut Engine<TestWorkbook>, formula: &str) -> Option<LiteralValue> {
@@ -32,13 +33,15 @@ fn assert_number(value: Option<LiteralValue>, expected: f64, formula: &str) {
     }
 }
 
-fn assert_na(value: Option<LiteralValue>, formula: &str) {
+fn assert_error(value: Option<LiteralValue>, expected: ExcelErrorKind, formula: &str) {
     match value {
-        Some(LiteralValue::Error(e)) => {
-            assert_eq!(e.kind, ExcelErrorKind::Na, "{formula}")
-        }
-        other => panic!("{formula}: expected #N/A, got {other:?}"),
+        Some(LiteralValue::Error(e)) => assert_eq!(e.kind, expected, "{formula}"),
+        other => panic!("{formula}: expected {expected:?}, got {other:?}"),
     }
+}
+
+fn assert_na(value: Option<LiteralValue>, formula: &str) {
+    assert_error(value, ExcelErrorKind::Na, formula);
 }
 
 /// A: 1..5 in rows 1-5, rows 6-10 never written (blank).
@@ -268,5 +271,262 @@ fn exact_match_over_a_blank_tail_is_unaffected() {
         eval(&mut engine, "=MATCH(3,A1:A10,0)"),
         3.0,
         "MATCH(3,A1:A10,0)",
+    );
+}
+
+#[test]
+fn approximate_lookups_propagate_errors_in_any_lookup_position() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div));
+
+    for (row, value) in [
+        LiteralValue::Int(1),
+        LiteralValue::Int(2),
+        error.clone(),
+        LiteralValue::Int(9),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        engine
+            .set_cell_value("Sheet1", row as u32 + 1, 1, value)
+            .unwrap();
+        engine
+            .set_cell_value(
+                "Sheet1",
+                row as u32 + 1,
+                2,
+                LiteralValue::Int((row as i64 + 1) * 10),
+            )
+            .unwrap();
+    }
+    assert_error(
+        eval(&mut engine, "=MATCH(5,A1:A4,1)"),
+        ExcelErrorKind::Div,
+        "MATCH ascending deciding error",
+    );
+    assert_error(
+        eval(&mut engine, "=VLOOKUP(5,A1:B4,2,TRUE)"),
+        ExcelErrorKind::Div,
+        "VLOOKUP deciding error",
+    );
+
+    // Move the error beyond a key that already disqualifies the final row. The
+    // implemented Excel rule is range-wide propagation, not search-path-dependent.
+    engine
+        .set_cell_value("Sheet1", 3, 1, LiteralValue::Int(9))
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 4, 1, error.clone())
+        .unwrap();
+    assert_error(
+        eval(&mut engine, "=MATCH(5,A1:A4,1)"),
+        ExcelErrorKind::Div,
+        "MATCH ascending non-deciding error",
+    );
+    assert_error(
+        eval(&mut engine, "=VLOOKUP(5,A1:B4,2,TRUE)"),
+        ExcelErrorKind::Div,
+        "VLOOKUP non-deciding error",
+    );
+
+    for (col, value) in [
+        LiteralValue::Int(1),
+        LiteralValue::Int(2),
+        LiteralValue::Int(9),
+        error.clone(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        engine
+            .set_cell_value("Sheet1", 10, col as u32 + 1, value)
+            .unwrap();
+        engine
+            .set_cell_value(
+                "Sheet1",
+                11,
+                col as u32 + 1,
+                LiteralValue::Int((col as i64 + 1) * 10),
+            )
+            .unwrap();
+    }
+    assert_error(
+        eval(&mut engine, "=HLOOKUP(5,A10:D11,2,TRUE)"),
+        ExcelErrorKind::Div,
+        "HLOOKUP non-deciding error",
+    );
+
+    for (row, value) in [
+        LiteralValue::Int(9),
+        error,
+        LiteralValue::Int(2),
+        LiteralValue::Int(1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        engine
+            .set_cell_value("Sheet1", row as u32 + 1, 5, value)
+            .unwrap();
+    }
+    assert_error(
+        eval(&mut engine, "=MATCH(5,E1:E4,-1)"),
+        ExcelErrorKind::Div,
+        "MATCH descending deciding error",
+    );
+}
+
+#[test]
+fn approximate_match_propagates_materialized_pre_1900_date_error() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, date) in [(1899, 1, 1), (1899, 6, 1), (1900, 3, 1), (2024, 1, 1)]
+        .into_iter()
+        .enumerate()
+    {
+        engine
+            .set_cell_value(
+                "Sheet1",
+                row as u32 + 1,
+                1,
+                LiteralValue::Date(NaiveDate::from_ymd_opt(date.0, date.1, date.2).unwrap()),
+            )
+            .unwrap();
+    }
+    assert_error(
+        eval(&mut engine, "=MATCH(50000,A1:A4,1)"),
+        ExcelErrorKind::Num,
+        "MATCH over pre-1900 date errors",
+    );
+}
+
+#[test]
+fn ascending_duplicates_are_sorted_and_return_the_last_original_position() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, value) in [(1, 1), (2, 2), (4, 2), (6, 2), (8, 5)] {
+        engine
+            .set_cell_value("Sheet1", row, 8, LiteralValue::Int(value))
+            .unwrap();
+    }
+    assert_number(
+        eval(&mut engine, "=MATCH(3,H1:H8,1)"),
+        6.0,
+        "MATCH duplicate ascending keys",
+    );
+}
+
+#[test]
+fn vlookup_maps_a_projected_match_back_to_the_original_row() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Text("Key".into()))
+        .unwrap();
+    for value in 1..=5i64 {
+        engine
+            .set_cell_value("Sheet1", value as u32 + 1, 1, LiteralValue::Int(value))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", value as u32 + 1, 2, LiteralValue::Int(value * 10))
+            .unwrap();
+    }
+    assert_number(
+        eval(&mut engine, "=VLOOKUP(3.5,A1:B6,2,TRUE)"),
+        30.0,
+        "VLOOKUP original-position remap",
+    );
+}
+
+#[test]
+fn searchable_count_selects_the_small_descending_linear_path() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, value) in (1..=5i64).rev().enumerate() {
+        engine
+            .set_cell_value("Sheet1", row as u32 + 1, 5, LiteralValue::Int(value))
+            .unwrap();
+    }
+    assert_number(
+        eval(&mut engine, "=MATCH(3.5,E1:E10,-1)"),
+        2.0,
+        "MATCH threshold uses searchable count",
+    );
+}
+
+#[test]
+fn descending_binary_search_returns_the_last_qualifying_position() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, value) in (1..=10i64).rev().enumerate() {
+        engine
+            .set_cell_value("Sheet1", row as u32 + 1, 1, LiteralValue::Int(value))
+            .unwrap();
+    }
+    assert_number(
+        eval(&mut engine, "=MATCH(3.5,A1:A10,-1)"),
+        7.0,
+        "MATCH descending binary boundary",
+    );
+    assert_number(
+        eval(&mut engine, "=MATCH(3,A1:A10,-1)"),
+        8.0,
+        "MATCH descending exact-hit masking control",
+    );
+}
+
+#[test]
+fn descending_binary_search_skips_interior_blanks_without_shifting_the_answer() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, value) in [
+        (1, 9),
+        (2, 8),
+        (3, 7),
+        (5, 6),
+        (6, 5),
+        (7, 4),
+        (9, 3),
+        (10, 2),
+        (11, 1),
+    ] {
+        engine
+            .set_cell_value("Sheet1", row, 7, LiteralValue::Int(value))
+            .unwrap();
+    }
+    assert_number(
+        eval(&mut engine, "=MATCH(5.5,G1:G11,-1)"),
+        5.0,
+        "MATCH descending with interior blanks",
+    );
+}
+
+#[test]
+fn searchable_count_keeps_duplicate_tie_break_on_small_descending_data() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, value) in [(1, 5), (2, 4), (3, 4), (4, 3), (5, 2)] {
+        engine
+            .set_cell_value("Sheet1", row, 5, LiteralValue::Int(value))
+            .unwrap();
+    }
+    assert_number(
+        eval(&mut engine, "=MATCH(4,E1:E10,-1)"),
+        3.0,
+        "MATCH threshold preserves descending duplicate tie-break",
+    );
+}
+
+#[test]
+fn searchable_count_not_range_extent_controls_descending_tie_break() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, value) in [(1, 5), (3, 4), (4, 4), (6, 3), (8, 2)] {
+        engine
+            .set_cell_value("Sheet1", row, 5, LiteralValue::Int(value))
+            .unwrap();
+    }
+    for row in [2, 5, 7, 9, 10] {
+        engine
+            .set_cell_value("Sheet1", row, 5, LiteralValue::Text("skip".into()))
+            .unwrap();
+    }
+    assert_number(
+        eval(&mut engine, "=MATCH(4,E1:E10,-1)"),
+        4.0,
+        "MATCH threshold uses projected length, not range extent",
     );
 }
