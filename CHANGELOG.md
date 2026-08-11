@@ -4,8 +4,11 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+## [0.8.2] - 2026-08-11
+
 ### Fixed
 
+- Python wheels evaluate `TODAY()` and `NOW()` against the host clock. The binding did not enable the `system-clock` feature, so the engine fell back to a fixed clock at the UTC epoch and every volatile date/time builtin answered 1970-01-01 in every published wheel — silently, with no error and no type difference, so any ageing bucket or accrual-to-date returned a plausible wrong number. Reported externally. (#318)
 - Temporal values compare as workbook-date-system serials across exact and approximate lookup paths, including warm lookup indexes. (#316)
 - Approximate `MATCH`, `VLOOKUP`, and `HLOOKUP` skip blank and incomparable entries without losing original-range positions, while propagating lookup-range errors. (#317)
 - Descending approximate `MATCH` returns the last qualifying entry for ranges with eight or more searchable values, including ranges with interior blanks. (#320)
@@ -427,7 +430,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/PSU3D0/formualizer/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/PSU3D0/formualizer/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/PSU3D0/formualizer/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/PSU3D0/formualizer/compare/v0.7.0...v0.7.1
