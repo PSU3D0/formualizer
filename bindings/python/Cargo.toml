@@ -37,7 +37,11 @@ chrono = { workspace = true }
 serde_json = { workspace = true }
 
 [target.'cfg(not(target_os = "emscripten"))'.dependencies]
-formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya"] }
+# `system-clock` is required for TODAY()/NOW() to read the wall clock. Without
+# it the engine falls back to the FixedClock at the UTC epoch and every
+# volatile date/time builtin answers 1970-01-01. The emscripten target below is
+# left as-is: ambient wall-clock time is not part of the portable wasm profile.
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "system-clock"] }
 pyo3-stub-gen = "0.23.0"
 
 # Pyodide 0.29's wasm-EH sysroot is pinned to Rust 1.86, while Calamine 0.36
