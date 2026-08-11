@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::engine::graph::editor::undo_engine::UndoEngine;
+use crate::engine::inspect::{SnapshotOptions, Staleness};
 use crate::engine::{
     ChangeLog, Engine, EvalConfig, FormulaIngestBatch, FormulaIngestRecord, FormulaPlaneMode,
 };
@@ -248,18 +249,22 @@ fn delete_rows_recomputes_only_formulas_depending_on_deleted_region() {
     let mut engine = Engine::new(workbook, EvalConfig::default().with_parallel(false));
     for row in 1..=100 {
         engine
-            .set_cell_value(SHEET, row, 2, LiteralValue::Number(f64::from(row)))
+            .set_cell_value("Data", row, 2, LiteralValue::Number(f64::from(row)))
             .unwrap();
-        engine
-            .set_cell_value(SHEET, row, 26, LiteralValue::Number(f64::from(row)))
-            .unwrap();
+    }
+    for row in 1..=12 {
+        for col in 21..=26 {
+            engine
+                .set_cell_value("Data", row, col, LiteralValue::Number(f64::from(row)))
+                .unwrap();
+        }
     }
     engine
         .set_cell_formula(
             SHEET,
             1,
             4,
-            parse("=ISSUE306_AFFECTED()+SUM($B:$B)").unwrap(),
+            parse("=ISSUE306_AFFECTED()+SUM(Data!$B:$B)").unwrap(),
         )
         .unwrap();
     engine
@@ -267,14 +272,16 @@ fn delete_rows_recomputes_only_formulas_depending_on_deleted_region() {
             SHEET,
             1,
             5,
-            parse("=ISSUE306_UNAFFECTED()+SUM(Z1:Z10)").unwrap(),
+            // Area 72 exceeds the default expansion limit (64), so this is a
+            // compressed registration on the edited sheet, disjoint from row 60.
+            parse("=ISSUE306_UNAFFECTED()+SUM(Data!U1:Z12)").unwrap(),
         )
         .unwrap();
     engine.evaluate_all().unwrap();
     assert_eq!(affected_calls.load(Ordering::SeqCst), 1);
     assert_eq!(unaffected_calls.load(Ordering::SeqCst), 1);
 
-    engine.delete_rows(SHEET, 60, 1).unwrap();
+    engine.delete_rows("Data", 60, 1).unwrap();
     engine.evaluate_all().unwrap();
 
     assert_eq!(affected_calls.load(Ordering::SeqCst), 2);
@@ -361,4 +368,314 @@ fn undo_of_logged_delete_restores_whole_column_reader_value() {
     engine.evaluate_all().unwrap();
 
     assert_eq!(number(&engine, 1, 4), 16_520.0);
+}
+
+fn out_formula_vertex(engine: &Engine<TestWorkbook>, row: u32) -> crate::engine::vertex::VertexId {
+    *engine
+        .graph
+        .get_vertex_id_for_address(&engine.graph.make_cell_ref("Out", row, 1))
+        .expect("formula vertex")
+}
+
+fn assert_exact_vertices(
+    engine: &Engine<TestWorkbook>,
+    mut actual: Vec<crate::engine::vertex::VertexId>,
+    expected_rows: &[u32],
+) {
+    let mut expected = expected_rows
+        .iter()
+        .map(|&row| out_formula_vertex(engine, row))
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn compressed_delete_queries_select_exact_shape_and_boundary_matrix() {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_parallel(false),
+    );
+    engine
+        .set_cell_value("Data", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine
+        .set_cell_value("Other", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+
+    // Every range below is compressed. Formulas live on Out so Data references
+    // also cover the cross-sheet-positive case; rows 8 and 9 are the negative case.
+    let cases = [
+        "=SUM(Data!$B:$B)",
+        "=SUM(Data!$2:$2)",
+        "=SUM(Data!B:B65)",
+        "=SUM(Data!B66:B)",
+        "=SUM(Data!Z1:Z65)",
+        "=SUM(Data!Z100:Z300)",
+        "=SUM(Data!U1:Z12)",
+        "=SUM(Other!$B:$B)",
+        "=SUM(Other!Z1:Z65)",
+        "=SUM(Data!$AH:$AN)",
+    ];
+    for (index, formula) in cases.into_iter().enumerate() {
+        engine
+            .set_cell_formula("Out", index as u32 + 1, 1, parse(formula).unwrap())
+            .unwrap();
+    }
+
+    let data = engine.sheet_id("Data").unwrap();
+    // Row windows touch each finite range's exact upper and lower boundaries,
+    // and include whole-column, multi-column-open, half-open, and bounded shapes.
+    for (start, end, expected_rows) in [
+        (0, 0, vec![1, 3, 5, 7, 10]),
+        (64, 64, vec![1, 3, 5, 10]),
+        (65, 65, vec![1, 4, 10]),
+        (64, 66, vec![1, 3, 4, 5, 10]),
+        (349, 349, vec![1, 4, 10]),
+    ] {
+        assert_exact_vertices(
+            &engine,
+            engine
+                .graph
+                .compressed_range_dependents_intersecting_deleted_rows(data, start, end),
+            &expected_rows,
+        );
+    }
+
+    // Column windows likewise pin both inclusive boundaries and exact exclusion
+    // immediately outside the referenced interval.
+    for (start, end, expected_rows) in [
+        (0, 0, vec![2]),
+        (1, 1, vec![1, 2, 3, 4]),
+        (25, 25, vec![2, 5, 6, 7]),
+        (33, 39, vec![2, 10]),
+        (51, 51, vec![2]),
+    ] {
+        assert_exact_vertices(
+            &engine,
+            engine
+                .graph
+                .compressed_range_dependents_intersecting_deleted_columns(data, start, end),
+            &expected_rows,
+        );
+    }
+}
+
+#[test]
+fn half_open_upper_boundary_delete_recomputes_against_fresh_oracle() {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_parallel(false),
+    );
+    for row in 1..=200 {
+        engine
+            .set_cell_value("Data", row, 2, LiteralValue::Number(f64::from(row)))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Out", 1, 1, parse("=SUM(Data!B:B65)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Out", 1, 1),
+        Some(LiteralValue::Number(2_145.0))
+    );
+
+    engine.delete_rows("Data", 65, 1).unwrap();
+    engine.evaluate_all().unwrap();
+    engine
+        .set_cell_formula("Out", 1, 2, parse("=SUM(Data!B:B65)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    // The fully bounded analogue is dirtied by ReferenceAdjuster, masking this
+    // boundary. This half-open shape leaves its AST unchanged, so only the query
+    // pins the inclusive range_end == deleted-start overlap.
+    assert_eq!(
+        engine.get_cell_value("Out", 1, 1),
+        Some(LiteralValue::Number(2_146.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Out", 1, 1),
+        engine.get_cell_value("Out", 1, 2)
+    );
+}
+
+#[test]
+fn delete_rows_marks_open_range_reader_dirty_before_recalculation() {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_parallel(false),
+    );
+    for row in 1..=200 {
+        engine
+            .set_cell_value("Data", row, 2, LiteralValue::Number(f64::from(row)))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Out", 1, 1, parse("=SUM(Data!$B:$B)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    engine.delete_rows("Data", 65, 1).unwrap();
+
+    let inspected = engine
+        .inspect_cell(
+            &formualizer_common::CellAddress::new("Out", 1, 1).unwrap(),
+            &SnapshotOptions::default(),
+        )
+        .unwrap()
+        .cell;
+    assert_eq!(inspected.value, Some(LiteralValue::Number(20_100.0)));
+    assert_eq!(inspected.staleness, Staleness::Dirty);
+}
+
+#[test]
+fn unrelated_sheet_deletes_do_not_recompute_open_range_readers_on_either_axis() {
+    let row_calls = Arc::new(AtomicUsize::new(0));
+    let col_calls = Arc::new(AtomicUsize::new(0));
+    let workbook = TestWorkbook::new()
+        .with_function(Arc::new(CountFn {
+            name: "ISSUE306_OTHER_SHEET_ROW",
+            calls: Arc::clone(&row_calls),
+        }))
+        .with_function(Arc::new(CountFn {
+            name: "ISSUE306_OTHER_SHEET_COL",
+            calls: Arc::clone(&col_calls),
+        }));
+    let mut engine = Engine::new(workbook, EvalConfig::default().with_parallel(false));
+    for index in 1..=100 {
+        for sheet in ["Data", "Other"] {
+            engine
+                .set_cell_value(sheet, index, 2, LiteralValue::Number(f64::from(index)))
+                .unwrap();
+            engine
+                .set_cell_value(sheet, 2, index, LiteralValue::Number(f64::from(index)))
+                .unwrap();
+        }
+    }
+    engine
+        .set_cell_formula(
+            "Out",
+            1,
+            1,
+            parse("=ISSUE306_OTHER_SHEET_ROW()+SUM(Data!$B:$B)").unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Out",
+            2,
+            1,
+            parse("=ISSUE306_OTHER_SHEET_COL()+SUM(Data!$2:$2)").unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(row_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(col_calls.load(Ordering::SeqCst), 1);
+
+    engine.delete_rows("Other", 60, 1).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(row_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(col_calls.load(Ordering::SeqCst), 1);
+
+    engine.delete_columns("Other", 60, 1).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(row_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(col_calls.load(Ordering::SeqCst), 1);
+}
+
+// Pre-existing on main; follow-up #XXX tracks position-sensitive open-range
+// readers that insertion leaves current over stale values.
+#[test]
+#[ignore = "pending insert open-range invalidation follow-up #XXX"]
+fn insert_rows_dirties_match_over_whole_column() {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_parallel(false),
+    );
+    for row in 1..=200 {
+        engine
+            .set_cell_value("Data", row, 2, LiteralValue::Number(f64::from(row * 10)))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Out", 1, 1, parse("=MATCH(500,Data!$B:$B,0)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    engine.insert_rows("Data", 2, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    let inspected = engine
+        .inspect_cell(
+            &formualizer_common::CellAddress::new("Out", 1, 1).unwrap(),
+            &SnapshotOptions::default(),
+        )
+        .unwrap()
+        .cell;
+    assert_eq!(inspected.staleness, Staleness::Current);
+    assert_eq!(inspected.value, Some(LiteralValue::Number(51.0)));
+}
+
+// Pre-existing on main; follow-up #XXX tracks this insertion invalidation gap.
+#[test]
+#[ignore = "pending insert open-range invalidation follow-up #XXX"]
+fn insert_rows_dirties_index_over_whole_column() {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_parallel(false),
+    );
+    for row in 1..=200 {
+        engine
+            .set_cell_value("Data", row, 2, LiteralValue::Number(f64::from(row * 10)))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Out", 1, 1, parse("=INDEX(Data!$B:$B,7)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    engine.insert_rows("Data", 2, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    let inspected = engine
+        .inspect_cell(
+            &formualizer_common::CellAddress::new("Out", 1, 1).unwrap(),
+            &SnapshotOptions::default(),
+        )
+        .unwrap()
+        .cell;
+    assert_eq!(inspected.staleness, Staleness::Current);
+    assert_eq!(inspected.value, Some(LiteralValue::Number(60.0)));
+}
+
+// Pre-existing on main; follow-up #XXX tracks the symmetric column case.
+#[test]
+#[ignore = "pending insert open-range invalidation follow-up #XXX"]
+fn insert_columns_dirties_index_over_whole_row() {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_parallel(false),
+    );
+    for col in 1..=200 {
+        engine
+            .set_cell_value("Data", 2, col, LiteralValue::Number(f64::from(200 + col)))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Out", 1, 1, parse("=INDEX(Data!$2:$2,7)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    engine.insert_columns("Data", 3, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    let inspected = engine
+        .inspect_cell(
+            &formualizer_common::CellAddress::new("Out", 1, 1).unwrap(),
+            &SnapshotOptions::default(),
+        )
+        .unwrap()
+        .cell;
+    assert_eq!(inspected.staleness, Staleness::Current);
+    assert_eq!(inspected.value, Some(LiteralValue::Number(206.0)));
 }

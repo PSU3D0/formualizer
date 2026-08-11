@@ -35,7 +35,9 @@ impl DependencyGraph {
                     .any(|range| {
                         let range_sheet_id = match range.sheet {
                             SharedSheetLocator::Id(id) => id,
-                            _ => self.get_vertex_sheet_id(dependent),
+                            // Formula analysis normalizes ingested locators to Id, so this
+                            // fallback is unreachable today; match the sibling query semantics.
+                            _ => sheet_id,
                         };
                         let range_start = range.start_row.map(|bound| bound.index).unwrap_or(0);
                         let range_end = range.end_row.map(|bound| bound.index).unwrap_or(u32::MAX);
@@ -62,7 +64,9 @@ impl DependencyGraph {
                     .any(|range| {
                         let range_sheet_id = match range.sheet {
                             SharedSheetLocator::Id(id) => id,
-                            _ => self.get_vertex_sheet_id(dependent),
+                            // Formula analysis normalizes ingested locators to Id, so this
+                            // fallback is unreachable today; match the sibling query semantics.
+                            _ => sheet_id,
                         };
                         let range_start = range.start_col.map(|bound| bound.index).unwrap_or(0);
                         let range_end = range.end_col.map(|bound| bound.index).unwrap_or(u32::MAX);

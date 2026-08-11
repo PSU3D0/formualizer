@@ -1014,7 +1014,7 @@ impl<'g> VertexEditor<'g> {
             .compressed_range_dependents_intersecting_deleted_rows(
                 sheet_id,
                 start,
-                start.saturating_add(count).saturating_sub(1),
+                start.saturating_add(count).saturating_sub(1).max(start),
             );
         self.graph.mark_dirty_many(&range_dependents);
 
@@ -1266,7 +1266,7 @@ impl<'g> VertexEditor<'g> {
             .compressed_range_dependents_intersecting_deleted_columns(
                 sheet_id,
                 start,
-                start.saturating_add(count).saturating_sub(1),
+                start.saturating_add(count).saturating_sub(1).max(start),
             );
         self.graph.mark_dirty_many(&range_dependents);
 
