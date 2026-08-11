@@ -586,10 +586,10 @@ fn unrelated_sheet_deletes_do_not_recompute_open_range_readers_on_either_axis() 
     assert_eq!(col_calls.load(Ordering::SeqCst), 1);
 }
 
-// Pre-existing on main; follow-up #XXX tracks position-sensitive open-range
+// Pre-existing on main; follow-up #313 tracks position-sensitive open-range
 // readers that insertion leaves current over stale values.
 #[test]
-#[ignore = "pending insert open-range invalidation follow-up #XXX"]
+#[ignore = "pending insert open-range invalidation follow-up #313"]
 fn insert_rows_dirties_match_over_whole_column() {
     let mut engine = Engine::new(
         TestWorkbook::new(),
@@ -618,9 +618,9 @@ fn insert_rows_dirties_match_over_whole_column() {
     assert_eq!(inspected.value, Some(LiteralValue::Number(51.0)));
 }
 
-// Pre-existing on main; follow-up #XXX tracks this insertion invalidation gap.
+// Pre-existing on main; follow-up #313 tracks this insertion invalidation gap.
 #[test]
-#[ignore = "pending insert open-range invalidation follow-up #XXX"]
+#[ignore = "pending insert open-range invalidation follow-up #313"]
 fn insert_rows_dirties_index_over_whole_column() {
     let mut engine = Engine::new(
         TestWorkbook::new(),
@@ -649,9 +649,9 @@ fn insert_rows_dirties_index_over_whole_column() {
     assert_eq!(inspected.value, Some(LiteralValue::Number(60.0)));
 }
 
-// Pre-existing on main; follow-up #XXX tracks the symmetric column case.
+// Pre-existing on main; follow-up #313 tracks the symmetric column case.
 #[test]
-#[ignore = "pending insert open-range invalidation follow-up #XXX"]
+#[ignore = "pending insert open-range invalidation follow-up #313"]
 fn insert_columns_dirties_index_over_whole_row() {
     let mut engine = Engine::new(
         TestWorkbook::new(),
