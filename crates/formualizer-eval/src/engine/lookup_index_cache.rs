@@ -64,11 +64,14 @@ impl LookupHashKey {
             LiteralValue::Text(s) => Some(Self::Text(s.to_lowercase().into_boxed_str())),
             LiteralValue::Boolean(b) => Some(Self::Boolean(*b)),
             LiteralValue::Empty => Some(Self::Empty),
+            // Temporal values are numbers in Excel: key them by their serial so
+            // an exact lookup finds them whether the needle or the cell (or
+            // both) carry a temporal type rather than a plain numeric.
+            LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => value
+                .as_serial_number()
+                .map(|serial| Self::Number(normalize_f64_bits(serial))),
             LiteralValue::Error(_)
             | LiteralValue::Array(_)
-            | LiteralValue::Date(_)
-            | LiteralValue::DateTime(_)
-            | LiteralValue::Time(_)
             | LiteralValue::Duration(_)
             | LiteralValue::Pending => None,
         }

@@ -9,6 +9,10 @@ use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 /// - Number / Int: numeric
 /// - Text: parsed if it looks numeric (lenient)
 /// - Boolean: TRUE=1, FALSE=0
+/// - Date / DateTime / Time: the Excel serial number. Excel has no date type
+///   at the formula level -- a date cell holds a serial carrying a date number
+///   format -- so a temporal value must order against plain numerics and
+///   against other temporal values exactly as two numbers do.
 /// - Empty: treated as 0
 pub fn value_to_f64_lenient(v: &LiteralValue) -> Option<f64> {
     match v {
@@ -16,6 +20,9 @@ pub fn value_to_f64_lenient(v: &LiteralValue) -> Option<f64> {
         LiteralValue::Int(i) => Some(*i as f64),
         LiteralValue::Text(s) => s.parse::<f64>().ok(),
         LiteralValue::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),
+        LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => {
+            v.as_serial_number()
+        }
         LiteralValue::Empty => Some(0.0),
         _ => None,
     }
@@ -354,6 +361,15 @@ pub fn find_exact_index_in_view(
         LiteralValue::Boolean(b) => find_exact_boolean_in_view(view, *b, vertical),
         LiteralValue::Empty => find_exact_empty_in_view(view, vertical),
         LiteralValue::Error(e) => Err(e.clone()),
+        // A temporal needle searches the numeric lane by serial: the arrow
+        // store keeps dates and times as serials under a temporal type tag,
+        // so an exact lookup for a date must not fall through to "no match".
+        LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => {
+            match needle.as_serial_number() {
+                Some(serial) => find_exact_number_in_view(view, serial, vertical),
+                None => Ok(None),
+            }
+        }
         _ => Ok(None),
     }
 }
