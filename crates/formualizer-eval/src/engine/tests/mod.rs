@@ -188,4 +188,5 @@ mod scc_runtime_cycles;
 mod scc_runtime_property;
 mod short_circuit_dispatch;
 
+mod approximate_lookup_ignored_entries;
 mod temporal_lookup_semantics;

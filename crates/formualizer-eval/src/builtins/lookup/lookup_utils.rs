@@ -120,6 +120,86 @@ pub fn equals_maybe_wildcard(
     PreparedLookupMatcher::new(pattern, wildcard).matches(candidate)
 }
 
+/// Whether Excel's approximate search visits `value` when looking for `needle`.
+///
+/// The legacy approximate lookups (`MATCH` with `match_type` 1/-1,
+/// `VLOOKUP`/`HLOOKUP` with `range_lookup` TRUE) consider only entries in the
+/// needle's comparable value set. A blank cell, or an incomparable entry such
+/// as a text header sitting above a column of numbers, is skipped: it is neither
+/// out-of-order data nor a matchable position. Errors are handled separately
+/// and propagate rather than being classified as skippable.
+pub fn is_searchable_for_approximate(value: &LiteralValue, needle: &LiteralValue) -> bool {
+    !matches!(value, LiteralValue::Empty) && cmp_for_lookup(value, needle).is_some()
+}
+
+/// A lookup vector projected onto the entries an approximate search visits.
+///
+/// Positions are only materialized when something is actually skipped, so the
+/// common case — a vector that is entirely in the needle's class — borrows the
+/// original slice and allocates nothing. Indices returned by a search over this
+/// projection are mapped back with [`SearchedVector::original_position`],
+/// because Excel counts the answer from the top of the *original* range.
+pub struct SearchedVector<'a> {
+    values: &'a [LiteralValue],
+    positions: Option<Vec<usize>>,
+}
+
+impl<'a> SearchedVector<'a> {
+    pub fn new(values: &'a [LiteralValue], needle: &LiteralValue) -> Result<Self, ExcelError> {
+        if let Some(error) = values.iter().find_map(|value| match value {
+            LiteralValue::Error(error) => Some(error.clone()),
+            _ => None,
+        }) {
+            return Err(error);
+        }
+        let first_skipped = values
+            .iter()
+            .position(|v| !is_searchable_for_approximate(v, needle));
+        let positions = first_skipped.map(|skip| {
+            let mut positions: Vec<usize> = (0..skip).collect();
+            positions.extend(
+                ((skip + 1)..values.len())
+                    .filter(|&i| is_searchable_for_approximate(&values[i], needle)),
+            );
+            positions
+        });
+        Ok(Self { values, positions })
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.positions {
+            Some(positions) => positions.len(),
+            None => self.values.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn get(&self, index: usize) -> &'a LiteralValue {
+        &self.values[self.original_position(index)]
+    }
+
+    /// Map an index in this projection back to its row in the original range.
+    pub fn original_position(&self, index: usize) -> usize {
+        match &self.positions {
+            Some(positions) => positions[index],
+            None => index,
+        }
+    }
+
+    pub fn is_sorted_ascending(&self) -> bool {
+        (1..self.len())
+            .all(|i| cmp_for_lookup(self.get(i - 1), self.get(i)).is_some_and(|c| c <= 0))
+    }
+
+    pub fn is_sorted_descending(&self) -> bool {
+        (1..self.len())
+            .all(|i| cmp_for_lookup(self.get(i - 1), self.get(i)).is_some_and(|c| c >= 0))
+    }
+}
+
 /// Detect ascending sort (strict or equal allowed) for slice according to cmp_for_lookup.
 pub fn is_sorted_ascending(values: &[LiteralValue]) -> bool {
     values

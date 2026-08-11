@@ -9,13 +9,13 @@
 //!   incorrectly. Excel documents approximate results on unsorted data as "may not be correct"
 //!   rather than an error, so the unguarded path matches Excel; LibreOffice instead returns #N/A.
 //!   See issue #283 before changing either behavior.
-//! - Binary search used for approximate modes for efficiency; linear scan for exact or when data small (<8 elements) to avoid overhead.
+//! - Binary search used for approximate modes for efficiency; linear scan for exact or when data has fewer than 8 searchable elements to avoid overhead.
 //! - VLOOKUP/HLOOKUP wrap MATCH logic; VLOOKUP: vertical first column; HLOOKUP: horizontal first row.
-//! - Error propagation: if lookup_value is error -> propagate. If table/range contains errors in non-deciding positions, they don't matter unless selected.
+//! - Error propagation: if the lookup value or any entry in an approximate lookup vector is an error, that error propagates.
 //! - Type coercion: current simple: numbers vs numeric text coerced; text comparison case-insensitive? Excel is case-insensitive for MATCH (without wildcards). We implement case-insensitive for now.
 //!   TODO(excel-nuance): refine boolean/text/number coercion differences.
 
-use super::lookup_utils::{cmp_for_lookup, find_exact_index, is_sorted_ascending};
+use super::lookup_utils::{SearchedVector, cmp_for_lookup, find_exact_index};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function;
@@ -24,18 +24,43 @@ use formualizer_common::ArgKind;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
-fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32) -> Option<usize> {
+/// Approximate search over a lookup vector, returning a position in the
+/// *original* vector.
+///
+/// Entries the search must ignore — blanks, and entries outside the needle's
+/// value class — are projected out first, so they neither occupy a matchable
+/// position nor disturb the binary search's ordering assumption. Errors are
+/// not ignored: any error in the lookup vector is returned before searching.
+fn binary_search_match(
+    slice: &[LiteralValue],
+    needle: &LiteralValue,
+    mode: i32,
+) -> Result<Option<usize>, ExcelError> {
     if mode == 0 || slice.is_empty() {
+        return Ok(None);
+    }
+    let searched = SearchedVector::new(slice, needle)?;
+    Ok(binary_search_searched(&searched, needle, mode).map(|i| searched.original_position(i)))
+}
+
+/// Same search, but over an already-projected vector and returning an index
+/// into that projection.
+fn binary_search_searched(
+    searched: &SearchedVector<'_>,
+    needle: &LiteralValue,
+    mode: i32,
+) -> Option<usize> {
+    if mode == 0 || searched.is_empty() {
         return None;
     }
     // Only ascending binary search currently (mode 1); descending path kept linear for now.
     if mode == 1 {
         // largest <= needle
         let mut lo = 0usize;
-        let mut hi = slice.len();
+        let mut hi = searched.len();
         while lo < hi {
             let mid = (lo + hi) / 2;
-            match cmp_for_lookup(&slice[mid], needle) {
+            match cmp_for_lookup(searched.get(mid), needle) {
                 Some(c) => {
                     if c > 0 {
                         hi = mid;
@@ -43,21 +68,21 @@ fn binary_search_match(slice: &[LiteralValue], needle: &LiteralValue, mode: i32)
                         lo = mid + 1;
                     }
                 }
-                None => {
-                    hi = mid;
-                }
+                None => unreachable!(
+                    "SearchedVector contains only entries comparable with the lookup value"
+                ),
             }
         }
         if lo == 0 { None } else { Some(lo - 1) }
     } else {
         // -1 mode handled via linear fallback since semantics differ (smallest >=)
         let mut best: Option<usize> = None;
-        for (i, v) in slice.iter().enumerate() {
-            if let Some(c) = cmp_for_lookup(v, needle) {
+        for i in 0..searched.len() {
+            if let Some(c) = cmp_for_lookup(searched.get(i), needle) {
                 if c == 0 {
                     return Some(i);
                 }
-                if c >= 0 && best.is_none_or(|b| i < b) {
+                if c >= 0 && best.is_none_or(|b| i > b) {
                     best = Some(i);
                 }
             }
@@ -267,13 +292,23 @@ impl Function for MatchFn {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                     }
 
+                    // Project out the entries an approximate search ignores
+                    // (blanks and entries outside the needle's value class)
+                    // before both the sortedness guard and the search itself.
+                    let searched = match SearchedVector::new(&values, &lookup_value) {
+                        Ok(searched) => searched,
+                        Err(error) => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                error,
+                            )));
+                        }
+                    };
+
                     // Lightweight unsorted detection for approximate modes
                     let is_sorted = if mt == 1 {
-                        is_sorted_ascending(&values)
+                        searched.is_sorted_ascending()
                     } else if mt == -1 {
-                        values
-                            .windows(2)
-                            .all(|w| cmp_for_lookup(&w[0], &w[1]).is_some_and(|c| c >= 0))
+                        searched.is_sorted_descending()
                     } else {
                         true
                     };
@@ -282,32 +317,31 @@ impl Function for MatchFn {
                             ExcelError::new(ExcelErrorKind::Na),
                         )));
                     }
-                    let idx = if values.len() < 8 {
+                    let idx = if searched.len() < 8 {
                         // linear small
-                        let mut best: Option<(usize, &LiteralValue)> = None;
-                        for (i, v) in values.iter().enumerate() {
-                            if let Some(c) = cmp_for_lookup(v, &lookup_value) {
+                        let mut best: Option<usize> = None;
+                        for i in 0..searched.len() {
+                            if let Some(c) = cmp_for_lookup(searched.get(i), &lookup_value) {
                                 // compare candidate to needle
                                 if mt == 1 {
                                     // v <= needle
-                                    if (c == 0 || c == -1)
-                                        && (best.is_none() || i > best.unwrap().0)
+                                    if (c == 0 || c == -1) && (best.is_none() || i > best.unwrap())
                                     {
-                                        best = Some((i, v));
+                                        best = Some(i);
                                     }
                                 } else {
                                     // -1, v >= needle
-                                    if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap().0)
-                                    {
-                                        best = Some((i, v));
+                                    if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap()) {
+                                        best = Some(i);
                                     }
                                 }
                             }
                         }
-                        best.map(|(i, _)| i)
+                        best
                     } else {
-                        binary_search_match(&values, &lookup_value, mt)
+                        binary_search_searched(&searched, &lookup_value, mt)
                     };
+                    let idx = idx.map(|i| searched.original_position(i));
                     match idx {
                         Some(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
                             (i + 1) as i64,
@@ -344,7 +378,7 @@ impl Function for MatchFn {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                 find_exact_index(&values, &lookup_value, wildcard_mode)
             } else {
-                binary_search_match(&values, &lookup_value, mt)
+                binary_search_match(&values, &lookup_value, mt)?
             };
             match idx {
                 Some(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
@@ -557,7 +591,7 @@ impl Function for VLookupFn {
                 if first_col.is_empty() {
                     None
                 } else {
-                    binary_search_match(&first_col, &lookup_value, 1)
+                    binary_search_match(&first_col, &lookup_value, 1)?
                 }
             };
 
@@ -604,7 +638,7 @@ impl Function for VLookupFn {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                 find_exact_index(&first_col, &lookup_value, wildcard_mode)
             } else {
-                binary_search_match(&first_col, &lookup_value, 1)
+                binary_search_match(&first_col, &lookup_value, 1)?
             };
 
             match row_idx_opt {
@@ -799,7 +833,7 @@ impl Function for HLookupFn {
                     }
                     Ok(())
                 })?;
-                binary_search_match(&first_row, &lookup_value, 1)
+                binary_search_match(&first_row, &lookup_value, 1)?
             } else {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                 if !wildcard_mode
@@ -851,7 +885,7 @@ impl Function for HLookupFn {
             // First row values for lookup
             let first_row: Vec<LiteralValue> = table.first().cloned().unwrap_or_default();
             let col_idx_opt = if approximate {
-                binary_search_match(&first_row, &lookup_value, 1)
+                binary_search_match(&first_row, &lookup_value, 1)?
             } else {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                 find_exact_index(&first_row, &lookup_value, wildcard_mode)
