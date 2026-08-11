@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Temporal values compare as workbook-date-system serials across exact and approximate lookup paths, including warm lookup indexes. (#316)
 - Approximate `MATCH`, `VLOOKUP`, and `HLOOKUP` skip blank and incomparable entries without losing original-range positions, while propagating lookup-range errors. (#317)
 - Descending approximate `MATCH` returns the last qualifying entry for ranges with eight or more searchable values, including ranges with interior blanks. (#320)
 

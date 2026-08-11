@@ -10,8 +10,8 @@
 
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
-use chrono::{NaiveDate, NaiveTime};
-use formualizer_common::LiteralValue;
+use chrono::{Duration, NaiveDate, NaiveTime};
+use formualizer_common::{DateSystem, ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
 
 fn date(y: i32, m: u32, d: u32) -> LiteralValue {
@@ -25,8 +25,11 @@ const JAN_1_2024: f64 = 45292.0;
 /// Column B: numeric payload 10..50.
 /// Column C: the same keys written as plain numeric serials.
 /// D1: a date-typed needle cell (2024-01-03).
-fn build_date_engine() -> Engine<TestWorkbook> {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+fn build_date_engine_for(date_system: DateSystem) -> Engine<TestWorkbook> {
+    let mut engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_date_system(date_system),
+    );
     for i in 1..=5u32 {
         engine
             .set_cell_value("Sheet1", i, 1, date(2024, 1, i))
@@ -49,6 +52,10 @@ fn build_date_engine() -> Engine<TestWorkbook> {
     engine
 }
 
+fn build_date_engine() -> Engine<TestWorkbook> {
+    build_date_engine_for(DateSystem::Excel1900)
+}
+
 fn eval(engine: &mut Engine<TestWorkbook>, formula: &str) -> Option<LiteralValue> {
     engine
         .set_cell_formula("Sheet1", 1, 10, parse(formula).unwrap())
@@ -62,6 +69,13 @@ fn assert_number(value: Option<LiteralValue>, expected: f64, formula: &str) {
         Some(LiteralValue::Int(i)) => assert_eq!(i as f64, expected, "{formula}"),
         Some(LiteralValue::Number(n)) => assert!((n - expected).abs() < 1e-9, "{formula} => {n}"),
         other => panic!("{formula}: expected {expected}, got {other:?}"),
+    }
+}
+
+fn assert_na(value: Option<LiteralValue>, formula: &str) {
+    match value {
+        Some(LiteralValue::Error(error)) => assert_eq!(error.kind, ExcelErrorKind::Na, "{formula}"),
+        other => panic!("{formula}: expected #N/A, got {other:?}"),
     }
 }
 
@@ -178,5 +192,182 @@ fn match_exact_finds_a_time_typed_key_by_its_serial_fraction() {
         eval(&mut engine, "=MATCH(0.5,A1:A3,0)"),
         2.0,
         "MATCH(0.5,A1:A3,0)",
+    );
+}
+
+#[test]
+fn temporal_lookup_semantics_follow_both_workbook_date_systems() {
+    for (system, correct_serial, wrong_serial) in [
+        (DateSystem::Excel1900, 45294.0, 43832.0),
+        (DateSystem::Excel1904, 43832.0, 45294.0),
+    ] {
+        let mut engine = build_date_engine_for(system);
+        engine
+            .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(wrong_serial))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 6, LiteralValue::Number(correct_serial))
+            .unwrap();
+
+        for (formula, expected) in [
+            ("=MATCH(D1,A1:A5,0)", 3.0),
+            ("=MATCH(D1,A1:A5,1)", 3.0),
+            ("=VLOOKUP(D1,A1:B5,2,FALSE)", 30.0),
+            ("=VLOOKUP(D1,A1:B5,2,TRUE)", 30.0),
+            ("=XLOOKUP(D1,A1:A5,B1:B5)", 30.0),
+            ("=MATCH(D1,F1:F2,0)", 2.0),
+        ] {
+            assert_number(eval(&mut engine, formula), expected, formula);
+        }
+        assert_na(
+            eval(&mut engine, "=MATCH(D1,F1:F1,0)"),
+            "date-system false-positive guard",
+        );
+    }
+}
+
+#[test]
+fn approximate_temporal_needles_preserve_time_fractions() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    for (row, hour) in [(1, 6), (2, 12), (3, 18)] {
+        engine
+            .set_cell_value(
+                "Sheet1",
+                row,
+                6,
+                LiteralValue::Time(NaiveTime::from_hms_opt(hour, 0, 0).unwrap()),
+            )
+            .unwrap();
+    }
+    engine
+        .set_cell_value(
+            "Sheet1",
+            1,
+            4,
+            LiteralValue::Time(NaiveTime::from_hms_opt(14, 24, 0).unwrap()),
+        )
+        .unwrap();
+    engine
+        .set_cell_value(
+            "Sheet1",
+            3,
+            4,
+            LiteralValue::Time(NaiveTime::from_hms_opt(12, 0, 0).unwrap()),
+        )
+        .unwrap();
+    engine
+        .set_cell_value(
+            "Sheet1",
+            2,
+            4,
+            LiteralValue::DateTime(
+                NaiveDate::from_ymd_opt(2024, 1, 3)
+                    .unwrap()
+                    .and_hms_opt(10, 10, 10)
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    engine
+        .set_cell_value(
+            "Sheet1",
+            4,
+            6,
+            LiteralValue::DateTime(
+                NaiveDate::from_ymd_opt(2024, 1, 3)
+                    .unwrap()
+                    .and_hms_opt(10, 10, 10)
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+    for (row, serial) in [(1, 0.25), (2, 0.5), (3, 0.75)] {
+        engine
+            .set_cell_value("Sheet1", row, 7, LiteralValue::Number(serial))
+            .unwrap();
+    }
+
+    assert_number(
+        eval(&mut engine, "=MATCH(D1,F1:F3,1)"),
+        2.0,
+        "MATCH temporal Time needle approximate",
+    );
+    assert_number(
+        eval(&mut engine, "=MATCH(D2,F4:F4,1)"),
+        1.0,
+        "MATCH temporal DateTime needle approximate",
+    );
+    assert_number(
+        eval(&mut engine, "=MATCH(D3,G1:G3,0)"),
+        2.0,
+        "MATCH fractional temporal needle exact view path",
+    );
+}
+
+#[test]
+fn warm_lookup_hash_index_keys_fractional_temporal_serials() {
+    for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_date_system(system),
+        );
+        let start = NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 30, 0)
+            .unwrap();
+        let target = start + Duration::hours(149);
+        for row in 1..=200u32 {
+            engine
+                .set_cell_value(
+                    "Sheet1",
+                    row,
+                    1,
+                    LiteralValue::DateTime(start + Duration::hours((row - 1) as i64)),
+                )
+                .unwrap();
+            engine
+                .set_cell_value("Sheet1", row, 2, LiteralValue::Int(row as i64 * 10))
+                .unwrap();
+        }
+        let target_serial = LiteralValue::DateTime(target)
+            .as_serial_number_for(system)
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 4, LiteralValue::Number(target_serial))
+            .unwrap();
+        for row in 1..=8u32 {
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    row,
+                    5,
+                    parse("=VLOOKUP($D$1,$A$1:$B$200,2,FALSE)").unwrap(),
+                )
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        let cache = engine.last_lookup_index_cache_report();
+        assert!(
+            cache.builds >= 1,
+            "lookup hash index did not warm: {cache:?}"
+        );
+        assert!(cache.hits >= 1, "lookup hash index was not used: {cache:?}");
+        for row in 1..=8u32 {
+            assert_number(
+                engine.get_cell_value("Sheet1", row, 5),
+                1500.0,
+                "warm hash-index VLOOKUP",
+            );
+        }
+    }
+}
+
+#[test]
+fn date_vlookup_with_a_blank_tail_returns_the_date_rows_payload() {
+    let mut engine = build_date_engine();
+    assert_number(
+        eval(&mut engine, "=VLOOKUP(D1,A1:B10,2,TRUE)"),
+        30.0,
+        "VLOOKUP date column with blank tail",
     );
 }

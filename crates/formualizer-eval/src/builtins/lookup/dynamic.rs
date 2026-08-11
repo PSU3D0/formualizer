@@ -313,7 +313,7 @@ impl Function for XLookupFn {
 
         let mut found: Option<usize> = None;
         let needle = lookup_value;
-        let prepared_matcher = PreparedLookupMatcher::new(&needle, wildcard);
+        let prepared_matcher = PreparedLookupMatcher::new(&needle, wildcard, _ctx.date_system());
         if match_mode == 0 || wildcard {
             if match_mode == 0 && search_mode == 1 && lookup_rows > 0 && lookup_cols > 0 {
                 let axis = if vertical {
@@ -328,11 +328,16 @@ impl Function for XLookupFn {
                         &lookup_view,
                         &needle,
                         false,
+                        _ctx.date_system(),
                     )?;
                 }
             } else if search_mode == 1 && lookup_rows > 0 && lookup_cols > 0 {
-                found =
-                    super::lookup_utils::find_exact_index_in_view(&lookup_view, &needle, wildcard)?;
+                found = super::lookup_utils::find_exact_index_in_view(
+                    &lookup_view,
+                    &needle,
+                    wildcard,
+                    _ctx.date_system(),
+                )?;
             } else if search_mode == -1 {
                 for i in (0..lookup_len).rev() {
                     let cand = if vertical {
@@ -361,7 +366,7 @@ impl Function for XLookupFn {
                 }
             }
         } else if match_mode == -1 || match_mode == 1 {
-            let needle_num = value_to_f64_lenient(&needle);
+            let needle_num = value_to_f64_lenient(&needle, _ctx.date_system());
             let mut best_idx: Option<usize> = None;
             let mut best_val: f64 = if match_mode == -1 {
                 f64::NEG_INFINITY
@@ -378,7 +383,8 @@ impl Function for XLookupFn {
                 };
 
                 if let Some(p) = prev.as_ref() {
-                    let sorted_ok = cmp_for_lookup(p, &cand).is_some_and(|o| o <= 0);
+                    let sorted_ok =
+                        cmp_for_lookup(p, &cand, _ctx.date_system()).is_some_and(|o| o <= 0);
                     if !sorted_ok {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                             ExcelError::new(ExcelErrorKind::Na),
@@ -387,12 +393,14 @@ impl Function for XLookupFn {
                 }
                 prev = Some(cand.clone());
 
-                if cmp_for_lookup(&cand, &needle).is_some_and(|o| o == 0) {
+                if cmp_for_lookup(&cand, &needle, _ctx.date_system()).is_some_and(|o| o == 0) {
                     found = Some(i);
                     break;
                 }
 
-                if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(&cand)) {
+                if let (Some(nn), Some(vv)) =
+                    (needle_num, value_to_f64_lenient(&cand, _ctx.date_system()))
+                {
                     if match_mode == -1 {
                         if vv <= nn && vv > best_val {
                             best_val = vv;
@@ -653,7 +661,7 @@ impl Function for XMatchFn {
 
         let wildcard = match_mode == 2;
         let needle = lookup_value;
-        let prepared_matcher = PreparedLookupMatcher::new(&needle, wildcard);
+        let prepared_matcher = PreparedLookupMatcher::new(&needle, wildcard, _ctx.date_system());
 
         let mut found: Option<usize> = None;
 
@@ -666,6 +674,7 @@ impl Function for XMatchFn {
                         &lookup_view,
                         &needle,
                         wildcard,
+                        _ctx.date_system(),
                     )?;
                 }
             } else if search_mode == -1 || search_mode == -2 {
@@ -697,7 +706,7 @@ impl Function for XMatchFn {
             }
         } else if match_mode == -1 || match_mode == 1 {
             // Approximate match: -1 = exact or next smaller, 1 = exact or next larger
-            let needle_num = value_to_f64_lenient(&needle);
+            let needle_num = value_to_f64_lenient(&needle, _ctx.date_system());
             let mut best_idx: Option<usize> = None;
             let mut best_val: f64 = if match_mode == -1 {
                 f64::NEG_INFINITY
@@ -726,9 +735,9 @@ impl Function for XMatchFn {
                     };
                     if let Some(p) = prev.as_ref() {
                         let sorted_ok = if ascending {
-                            cmp_for_lookup(p, &cand).is_some_and(|o| o <= 0)
+                            cmp_for_lookup(p, &cand, _ctx.date_system()).is_some_and(|o| o <= 0)
                         } else {
-                            cmp_for_lookup(p, &cand).is_some_and(|o| o >= 0)
+                            cmp_for_lookup(p, &cand, _ctx.date_system()).is_some_and(|o| o >= 0)
                         };
                         if !sorted_ok {
                             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
@@ -747,12 +756,14 @@ impl Function for XMatchFn {
                     lookup_view.get_cell(0, i)
                 };
 
-                if cmp_for_lookup(&cand, &needle).is_some_and(|o| o == 0) {
+                if cmp_for_lookup(&cand, &needle, _ctx.date_system()).is_some_and(|o| o == 0) {
                     found = Some(i);
                     break;
                 }
 
-                if let (Some(nn), Some(vv)) = (needle_num, value_to_f64_lenient(&cand)) {
+                if let (Some(nn), Some(vv)) =
+                    (needle_num, value_to_f64_lenient(&cand, _ctx.date_system()))
+                {
                     if match_mode == -1 {
                         // exact or next smaller
                         if vv <= nn && vv > best_val {
@@ -982,7 +993,7 @@ impl Function for SortFn {
             columns.sort_by(|a, b| {
                 let val_a = &a.1[sort_row_idx];
                 let val_b = &b.1[sort_row_idx];
-                let cmp = cmp_for_lookup(val_a, val_b).unwrap_or(0);
+                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
                 if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
             });
 
@@ -1018,7 +1029,7 @@ impl Function for SortFn {
             row_data.sort_by(|a, b| {
                 let val_a = &a[sort_col_idx];
                 let val_b = &b[sort_col_idx];
-                let cmp = cmp_for_lookup(val_a, val_b).unwrap_or(0);
+                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
                 if ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) }
             });
 
@@ -1250,7 +1261,7 @@ impl Function for SortByFn {
             for (by_values, ascending) in &sort_criteria {
                 let val_a = &by_values[a.0];
                 let val_b = &by_values[b.0];
-                let cmp = cmp_for_lookup(val_a, val_b).unwrap_or(0);
+                let cmp = cmp_for_lookup(val_a, val_b, _ctx.date_system()).unwrap_or(0);
                 if cmp != 0 {
                     return if *ascending { cmp.cmp(&0) } else { 0.cmp(&cmp) };
                 }

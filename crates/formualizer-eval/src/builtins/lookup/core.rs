@@ -17,7 +17,7 @@
 
 use super::lookup_utils::{SearchedVector, cmp_for_lookup, find_exact_index};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
-use crate::engine::lookup_index_cache::LookupAxis;
+use crate::engine::{DateSystem, lookup_index_cache::LookupAxis};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::ArgKind;
@@ -35,12 +35,14 @@ fn binary_search_match(
     slice: &[LiteralValue],
     needle: &LiteralValue,
     mode: i32,
+    date_system: DateSystem,
 ) -> Result<Option<usize>, ExcelError> {
     if mode == 0 || slice.is_empty() {
         return Ok(None);
     }
-    let searched = SearchedVector::new(slice, needle)?;
-    Ok(binary_search_searched(&searched, needle, mode).map(|i| searched.original_position(i)))
+    let searched = SearchedVector::new(slice, needle, date_system)?;
+    Ok(binary_search_searched(&searched, needle, mode, date_system)
+        .map(|i| searched.original_position(i)))
 }
 
 /// Same search, but over an already-projected vector and returning an index
@@ -49,6 +51,7 @@ fn binary_search_searched(
     searched: &SearchedVector<'_>,
     needle: &LiteralValue,
     mode: i32,
+    date_system: DateSystem,
 ) -> Option<usize> {
     if mode == 0 || searched.is_empty() {
         return None;
@@ -60,7 +63,7 @@ fn binary_search_searched(
         let mut hi = searched.len();
         while lo < hi {
             let mid = (lo + hi) / 2;
-            match cmp_for_lookup(searched.get(mid), needle) {
+            match cmp_for_lookup(searched.get(mid), needle, date_system) {
                 Some(c) => {
                     if c > 0 {
                         hi = mid;
@@ -78,7 +81,7 @@ fn binary_search_searched(
         // -1 mode handled via linear fallback since semantics differ (smallest >=)
         let mut best: Option<usize> = None;
         for i in 0..searched.len() {
-            if let Some(c) = cmp_for_lookup(searched.get(i), needle) {
+            if let Some(c) = cmp_for_lookup(searched.get(i), needle, date_system) {
                 if c == 0 {
                     return Some(i);
                 }
@@ -273,6 +276,7 @@ impl Function for MatchFn {
                             &rv,
                             &lookup_value,
                             wildcard_mode,
+                            ctx.date_system(),
                         )? {
                             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
                                 (idx + 1) as i64,
@@ -295,14 +299,15 @@ impl Function for MatchFn {
                     // Project out the entries an approximate search ignores
                     // (blanks and entries outside the needle's value class)
                     // before both the sortedness guard and the search itself.
-                    let searched = match SearchedVector::new(&values, &lookup_value) {
-                        Ok(searched) => searched,
-                        Err(error) => {
-                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                                error,
-                            )));
-                        }
-                    };
+                    let searched =
+                        match SearchedVector::new(&values, &lookup_value, ctx.date_system()) {
+                            Ok(searched) => searched,
+                            Err(error) => {
+                                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                    error,
+                                )));
+                            }
+                        };
 
                     // Lightweight unsorted detection for approximate modes
                     let is_sorted = if mt == 1 {
@@ -321,7 +326,9 @@ impl Function for MatchFn {
                         // linear small
                         let mut best: Option<usize> = None;
                         for i in 0..searched.len() {
-                            if let Some(c) = cmp_for_lookup(searched.get(i), &lookup_value) {
+                            if let Some(c) =
+                                cmp_for_lookup(searched.get(i), &lookup_value, ctx.date_system())
+                            {
                                 // compare candidate to needle
                                 if mt == 1 {
                                     // v <= needle
@@ -339,7 +346,7 @@ impl Function for MatchFn {
                         }
                         best
                     } else {
-                        binary_search_searched(&searched, &lookup_value, mt)
+                        binary_search_searched(&searched, &lookup_value, mt, ctx.date_system())
                     };
                     let idx = idx.map(|i| searched.original_position(i));
                     match idx {
@@ -376,9 +383,9 @@ impl Function for MatchFn {
             };
             let idx = if mt == 0 {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
-                find_exact_index(&values, &lookup_value, wildcard_mode)
+                find_exact_index(&values, &lookup_value, wildcard_mode, ctx.date_system())
             } else {
-                binary_search_match(&values, &lookup_value, mt)?
+                binary_search_match(&values, &lookup_value, mt, ctx.date_system())?
             };
             match idx {
                 Some(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
@@ -579,6 +586,7 @@ impl Function for VLookupFn {
                         &first_col_view,
                         &lookup_value,
                         wildcard_mode,
+                        ctx.date_system(),
                     )?
                 }
             } else {
@@ -591,7 +599,7 @@ impl Function for VLookupFn {
                 if first_col.is_empty() {
                     None
                 } else {
-                    binary_search_match(&first_col, &lookup_value, 1)?
+                    binary_search_match(&first_col, &lookup_value, 1, ctx.date_system())?
                 }
             };
 
@@ -636,9 +644,9 @@ impl Function for VLookupFn {
                 table.iter().filter_map(|r| r.first().cloned()).collect();
             let row_idx_opt = if !approximate {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
-                find_exact_index(&first_col, &lookup_value, wildcard_mode)
+                find_exact_index(&first_col, &lookup_value, wildcard_mode, ctx.date_system())
             } else {
-                binary_search_match(&first_col, &lookup_value, 1)?
+                binary_search_match(&first_col, &lookup_value, 1, ctx.date_system())?
             };
 
             match row_idx_opt {
@@ -833,7 +841,7 @@ impl Function for HLookupFn {
                     }
                     Ok(())
                 })?;
-                binary_search_match(&first_row, &lookup_value, 1)?
+                binary_search_match(&first_row, &lookup_value, 1, ctx.date_system())?
             } else {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                 if !wildcard_mode
@@ -845,6 +853,7 @@ impl Function for HLookupFn {
                         &first_row_view,
                         &lookup_value,
                         wildcard_mode,
+                        ctx.date_system(),
                     )?
                 }
             };
@@ -885,10 +894,10 @@ impl Function for HLookupFn {
             // First row values for lookup
             let first_row: Vec<LiteralValue> = table.first().cloned().unwrap_or_default();
             let col_idx_opt = if approximate {
-                binary_search_match(&first_row, &lookup_value, 1)?
+                binary_search_match(&first_row, &lookup_value, 1, ctx.date_system())?
             } else {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
-                find_exact_index(&first_row, &lookup_value, wildcard_mode)
+                find_exact_index(&first_row, &lookup_value, wildcard_mode, ctx.date_system())
             };
 
             match col_idx_opt {

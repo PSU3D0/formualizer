@@ -3646,7 +3646,7 @@ where
             self.lookup_index_cache.note_skipped_volatile();
             return None;
         }
-        match LookupIndex::build(view, axis).ok()? {
+        match LookupIndex::build(view, axis, self.config.date_system).ok()? {
             BuildOutcome::Built(index) => self.lookup_index_cache.insert_if_room(key, index),
             BuildOutcome::ErrorInLookupAxis => {
                 self.lookup_index_cache.note_skipped_error();
