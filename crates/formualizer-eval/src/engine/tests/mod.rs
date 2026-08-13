@@ -200,6 +200,6 @@ mod short_circuit_dispatch;
 
 mod approximate_lookup_ignored_entries;
 mod temporal_lookup_semantics;
-
 mod format_channel_t1;
+mod cell_hyperlink_sheet;
 mod xlookup_excel_parity;
