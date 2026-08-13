@@ -3,7 +3,10 @@
 use crate::args::ArgSchema;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
-use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{
+    DateSystem, ExcelError, ExcelErrorKind, LiteralValue, date_to_serial_for,
+    datetime_to_serial_for,
+};
 use formualizer_macros::func_caps;
 
 fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
@@ -19,6 +22,14 @@ fn coerce_literal_num(v: &LiteralValue) -> Result<f64, ExcelError> {
         LiteralValue::Empty => Ok(0.0),
         LiteralValue::Error(e) => Err(e.clone()),
         _ => Err(ExcelError::new_value()),
+    }
+}
+
+fn coerce_literal_date_serial(v: &LiteralValue, system: DateSystem) -> Result<f64, ExcelError> {
+    match v {
+        LiteralValue::Date(d) => Ok(date_to_serial_for(system, d)),
+        LiteralValue::DateTime(dt) => Ok(datetime_to_serial_for(system, dt)),
+        other => coerce_literal_num(other),
     }
 }
 
@@ -1878,7 +1889,7 @@ impl Function for XnpvFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
         let rate = coerce_num(&args[0])?;
 
@@ -1927,20 +1938,20 @@ impl Function for XnpvFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_num(&cell) {
+                            if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
                                 dates.push(n);
                             }
                         }
                     }
                 }
-                other => dates.push(coerce_literal_num(&other)?),
+                other => dates.push(coerce_literal_date_serial(&other, ctx.date_system())?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_num(&cell) {
+                        if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
                             dates.push(n);
                         }
                     }
@@ -2072,7 +2083,7 @@ impl Function for XirrFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
         // Collect values
         let mut values = Vec::new();
@@ -2119,20 +2130,20 @@ impl Function for XirrFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_num(&cell) {
+                            if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
                                 dates.push(n);
                             }
                         }
                     }
                 }
-                other => dates.push(coerce_literal_num(&other)?),
+                other => dates.push(coerce_literal_date_serial(&other, ctx.date_system())?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_num(&cell) {
+                        if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
                             dates.push(n);
                         }
                     }

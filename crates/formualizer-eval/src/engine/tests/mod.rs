@@ -148,6 +148,7 @@ mod info_reference_context;
 mod inspect;
 mod let_lambda;
 mod npv_variadic;
+mod xnpv_xirr_dates;
 mod offset_dynamic;
 mod omitted_arguments;
 mod open_ended_bounds_caps;
