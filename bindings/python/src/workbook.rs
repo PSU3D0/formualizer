@@ -36,6 +36,15 @@ fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
     Ok(())
 }
 
+/// Map a poisoned-lock error to a workbook `IoError` so it can cross the thread
+/// boundary of a `py.detach` region without touching Python objects.
+fn lock_error_to_io<E: std::fmt::Display>(e: &E) -> formualizer::workbook::IoError {
+    formualizer::workbook::IoError::Backend {
+        backend: "lock".to_string(),
+        message: e.to_string(),
+    }
+}
+
 struct PyCustomFnHandler {
     callback: PyObject,
 }
@@ -776,29 +785,29 @@ impl PyWorkbook {
     ) -> PyResult<PyObject> {
         validate_cell_coords(row, col)?;
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-        let v = wb
-            .evaluate_cell(sheet, row, col)
-            .map_err(workbook_error_to_pyerr)?;
+        let res = py.detach(|| {
+            self.inner
+                .write()
+                .map_err(|e| lock_error_to_io(&e))?
+                .evaluate_cell(sheet, row, col)
+        });
+        let v = res.map_err(workbook_error_to_pyerr)?;
         literal_to_py(py, &v)
     }
 
-    pub fn evaluate_all(&self) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-
+    pub fn evaluate_all(&self, py: Python<'_>) -> PyResult<()> {
         // Ensure flag is reset before starting
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
-            self.cancel_flag.clone(),
-        ))
+        py.detach(|| {
+            self.inner
+                .write()
+                .map_err(|e| lock_error_to_io(&e))?
+                .evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
+                    self.cancel_flag.clone(),
+                ))
+        })
         .map_err(workbook_error_to_pyerr)?;
         Ok(())
     }
@@ -850,11 +859,6 @@ impl PyWorkbook {
             target_vec.push((sheet, row, col));
         }
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
-
         // Ensure flag is reset
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -865,11 +869,16 @@ impl PyWorkbook {
             .map(|(s, r, c)| (s.as_str(), *r, *c))
             .collect();
 
-        let results = wb
-            .evaluate_cells_cancellable(
-                &refs,
-                formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
-            )
+        let results = py
+            .detach(|| {
+                self.inner
+                    .write()
+                    .map_err(|e| lock_error_to_io(&e))?
+                    .evaluate_cells_cancellable(
+                        &refs,
+                        formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+                    )
+            })
             .map_err(workbook_error_to_pyerr)?;
 
         let py_results = pyo3::types::PyList::empty(py);
