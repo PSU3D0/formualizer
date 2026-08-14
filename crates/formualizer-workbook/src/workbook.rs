@@ -2578,6 +2578,23 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
+        // Pre-allocate the Arrow sheet to the full batch extent ONCE, so the
+        // per-cell `mirror_value_to_overlay` → `ensure_row_capacity` → `grow_len_to`
+        // (which rebuilds the whole column's type-tag/lanes on every call) is
+        // amortized to O(N) instead of O(N²). Mirrors set_formulas_inner.
+        // The extent comes from the cells the batch actually writes. Trailing
+        // empty rows write nothing, so counting them reserves rows past the real
+        // extent -- and for a batch anchored at the last grid row it reserves a
+        // row that cannot exist, inflating the reported sheet dimensions.
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
+            && width > 0
+        {
+            let end_row = start_row.saturating_add(last_row_idx as u32);
+            let end_col = start_col.saturating_add((width - 1) as u32);
+            self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
+        }
+
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2677,14 +2694,18 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<String>],
     ) -> Result<(), IoError> {
-        let height = rows.len();
+        // The extent comes from the cells the batch actually writes. Trailing
+        // empty rows write nothing, so counting them reserves rows past the real
+        // extent -- and for a batch anchored at the last grid row it reserves a
+        // row that cannot exist, inflating the reported sheet dimensions.
         let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-        if height == 0 || width == 0 {
-            return Ok(());
+        if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
+            && width > 0
+        {
+            let end_row = start_row.saturating_add(last_row_idx as u32);
+            let end_col = start_col.saturating_add((width - 1) as u32);
+            self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
         }
-        let end_row = start_row.saturating_add((height - 1) as u32);
-        let end_col = start_col.saturating_add((width - 1) as u32);
-        self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
 
         if self.engine.config.defer_graph_building {
             // Per-cell staged-formula deltas (see #126). Capture each cell's prior

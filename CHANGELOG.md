@@ -4,6 +4,14 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Performance
+
+- `Workbook::set_values` — the batch path behind `Sheet.setValues` in the JS/WASM binding — pre-allocates the Arrow sheet to the batch extent once instead of growing it a row at a time. Each per-cell growth rebuilt the whole column's type-tag array and every present lane, so a batch of N cells did O(N²) work. Measured natively on a single numeric column: 20,000 rows went from 835 ms to 126 ms, a 6.6× improvement, with per-cell cost flat rather than growing with N. Contributed externally. (#335)
+
+### Fixed
+
+- Batch writes no longer report a sheet extent larger than the cells they wrote. `set_formulas` computed its pre-allocation from the row count including trailing empty rows, which write nothing, so a batch ending in an empty row reported one row too many — and a batch anchored at the last grid row reported row 1,048,577, which cannot exist. `set_values` inherited the same computation when it gained pre-allocation. Both now derive the extent from the last row that actually contains cells. (#335)
+
 ### Fixed
 
 - Date-typed cells are treated as the numbers they are throughout the financial and statistical builtins. Excel has no separate date type on the sheet — a date cell holds a serial and is only formatted as a date — but three copy-pasted private coercion helpers plus two range collectors had no date arm, so `Date`/`DateTime`/`Time`/`Duration` cells were dropped or rejected. The consequences ranged from loud to invisible: `PRICE`, `YIELD`, `ACCRINT`, `ACCRINTM`, `TBILLPRICE`, `TBILLEQ`, `TBILLYIELD` returned `#VALUE!` when handed the date cells a workbook loaded from XLSX actually contains in their `settlement`/`maturity`/`issue` arguments; `NPV` returned `#VALUE!`; `XNPV`/`XIRR` returned `#NUM!` on their `values` argument; and `IRR`, `MIRR`, `MEDIAN`, `STDEV`, `VAR`, `LARGE`, `SMALL`, `PRODUCT`, `DEVSQ`, `PERCENTILE`, `QUARTILE`, `CORREL`, `SLOPE`, `RSQ`, `COVARIANCE`, `MAXA`, `MINA`, `AVERAGEA`, `STDEVA`, `VARA` and their siblings returned a *different number* with no error at all — while `SUM`, `AVERAGE` and `COUNT` over the very same range counted the date. All of these now agree with the numerically identical serial. (#328)
