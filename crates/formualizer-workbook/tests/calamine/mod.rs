@@ -34,3 +34,5 @@ mod row_visibility;
 mod semantic_epoch_replay;
 #[cfg(feature = "calamine")]
 mod shared_formulas;
+#[cfg(feature = "calamine")]
+mod sheet_load;

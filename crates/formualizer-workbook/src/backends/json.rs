@@ -682,12 +682,13 @@ where
             formualizer_eval::engine::DateSystem::Excel1900
         };
 
-        // Ensure all sheets exist in the graph first
-        for name in self.data.sheets.keys() {
-            engine
-                .add_sheet(name)
-                .map_err(|e| IoError::from_backend("json", e))?;
-        }
+        // Ensure all sheets exist in the graph first. Single seam for sheet
+        // registration across every backend: folds the engine's seeded default
+        // sheet into the file's first sheet on a fresh engine and rejects
+        // duplicate names (#332).
+        engine
+            .adopt_file_sheets(self.data.sheets.keys().map(|n| n.as_str()))
+            .map_err(|e| IoError::from_backend("json", e))?;
 
         // Declare external sources (SourceVertex) before ingesting formulas.
         for src in &self.data.sources {

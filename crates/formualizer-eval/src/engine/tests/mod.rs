@@ -1,4 +1,5 @@
 mod active_span_gate_audit;
+mod adopt_file_sheets;
 mod arena_debug;
 mod ast_edge_invariant;
 mod cancellation;

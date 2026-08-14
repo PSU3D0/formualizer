@@ -4,6 +4,16 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- **Loading a file no longer leaves a phantom default sheet, so sheet indices shift.** A freshly constructed `Workbook`/`Engine` is seeded with one default sheet (`Sheet1`), and every backend loader appended the file's sheets alongside it. Loading a workbook whose sheets were `Data` and `Extra` produced `sheet_names() == ["Sheet1", "Data", "Extra"]` — a sheet that does not exist in the file — and `SHEET()` on the file's first sheet returned `2` instead of `1`. The default sheet is now folded into the file's first sheet, so the same load produces `["Data", "Extra"]` with `SHEET()` returning `1` and `2`. This affects the calamine, umya, json and csv backends alike; previously only csv was accidentally immune, because its sheet name is `Sheet1` by default and so always collided with the seeded one. (#332)
+
+  Concretely, for any file whose first sheet is not named `Sheet1`: `Workbook::sheet_names()` (and `wb.sheet_names` in the Python and WASM bindings) loses the leading `"Sheet1"`; `SHEET()` and `SHEETS()` return one less than before; engine `SheetId`s shift down by one (`Data#1` becomes `Data#0`); and a saved artifact no longer carries the injected empty sheet — measured, `to_xlsx_bytes()` after a calamine load wrote `["Sheet1", "Data", "Extra"]` into the output file and now writes `["Data", "Extra"]`. Sheets are addressed by name everywhere they are persisted (the JSON document format keys sheets by name, SheetPort manifests bind by sheet name), so no stored artifact embeds an index that this changes; the change is confined to in-memory ids, `SHEET()`/`SHEETS()` values, `sheet_names()` output, and the sheet list written into saved files.
+
+  The fold happens only when the engine is otherwise untouched — one sheet, the default one, with no cells, no named ranges, no staged formulas and no row-visibility state. `EngineLoadStream::stream_into_engine` is public and takes a caller-supplied engine; when that engine already holds user content, the default sheet is left exactly as it is and the file's sheets are added alongside it, so existing data is never renamed away or overwritten. All four backends now route sheet registration through one shared entry point, `Engine::adopt_file_sheets`.
+
+- **A file containing two sheets whose names differ only by case is now rejected at load** with `#VALUE!: Duplicate sheet name in workbook`. Sheet names are unique and case-insensitive in Excel, and `add_sheet` is idempotent, so such a file previously merged the two sheets silently and let the second sheet's cells overwrite the first's. (#332)
+
 ### Performance
 
 - `Workbook::set_values` — the batch path behind `Sheet.setValues` in the JS/WASM binding — pre-allocates the Arrow sheet to the batch extent once instead of growing it a row at a time. Each per-cell growth rebuilt the whole column's type-tag array and every present lane, so a batch of N cells did O(N²) work. Measured natively on a single numeric column: 20,000 rows went from 835 ms to 126 ms, a 6.6× improvement, with per-cell cost flat rather than growing with N. Contributed externally. (#335)
