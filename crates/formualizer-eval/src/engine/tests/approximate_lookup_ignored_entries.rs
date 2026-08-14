@@ -10,6 +10,12 @@
 //! text column -- are skipped. They neither make the vector look unsorted nor
 //! occupy a matchable position, and the returned index is still the position
 //! in the *original* range, not in the compacted one.
+//!
+//! Error cells are skipped on exactly the same terms (issue #326, oracle rows
+//! reproduced in `issue_326_error_skip_oracle.rs`): they are projected out of
+//! the search, cannot be returned, never break sortedness, and are not
+//! propagated even when a bisection probe lands on one. A range with nothing
+//! searchable left yields #N/A.
 
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
@@ -275,10 +281,11 @@ fn exact_match_over_a_blank_tail_is_unaffected() {
 }
 
 #[test]
-fn approximate_lookups_propagate_errors_in_any_lookup_position() {
+fn approximate_lookups_skip_error_entries_in_any_lookup_position() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div));
 
+    // A = 1, 2, #DIV/0!, 9 with B = 10, 20, 30, 40.
     for (row, value) in [
         LiteralValue::Int(1),
         LiteralValue::Int(2),
@@ -300,34 +307,37 @@ fn approximate_lookups_propagate_errors_in_any_lookup_position() {
             )
             .unwrap();
     }
-    assert_error(
+    // The error sits where the search decides. Excel projects it out and
+    // answers from the surviving entries: the largest value <= 5 is the 2 in
+    // row 2, counted in the original range.
+    assert_number(
         eval(&mut engine, "=MATCH(5,A1:A4,1)"),
-        ExcelErrorKind::Div,
-        "MATCH ascending deciding error",
+        2.0,
+        "MATCH ascending skips a deciding error",
     );
-    assert_error(
+    assert_number(
         eval(&mut engine, "=VLOOKUP(5,A1:B4,2,TRUE)"),
-        ExcelErrorKind::Div,
-        "VLOOKUP deciding error",
+        20.0,
+        "VLOOKUP skips a deciding error",
     );
 
-    // Move the error beyond a key that already disqualifies the final row. The
-    // implemented Excel rule is range-wide propagation, not search-path-dependent.
+    // Move the error past a key that already disqualifies the final row: the
+    // answer is unchanged, so skipping is not search-path dependent.
     engine
         .set_cell_value("Sheet1", 3, 1, LiteralValue::Int(9))
         .unwrap();
     engine
         .set_cell_value("Sheet1", 4, 1, error.clone())
         .unwrap();
-    assert_error(
+    assert_number(
         eval(&mut engine, "=MATCH(5,A1:A4,1)"),
-        ExcelErrorKind::Div,
-        "MATCH ascending non-deciding error",
+        2.0,
+        "MATCH ascending skips a non-deciding error",
     );
-    assert_error(
+    assert_number(
         eval(&mut engine, "=VLOOKUP(5,A1:B4,2,TRUE)"),
-        ExcelErrorKind::Div,
-        "VLOOKUP non-deciding error",
+        20.0,
+        "VLOOKUP skips a non-deciding error",
     );
 
     for (col, value) in [
@@ -351,12 +361,13 @@ fn approximate_lookups_propagate_errors_in_any_lookup_position() {
             )
             .unwrap();
     }
-    assert_error(
+    assert_number(
         eval(&mut engine, "=HLOOKUP(5,A10:D11,2,TRUE)"),
-        ExcelErrorKind::Div,
-        "HLOOKUP non-deciding error",
+        20.0,
+        "HLOOKUP skips a non-deciding error",
     );
 
+    // Descending: 9, #DIV/0!, 2, 1. The smallest entry >= 5 is the 9 in row 1.
     for (row, value) in [
         LiteralValue::Int(9),
         error,
@@ -370,15 +381,34 @@ fn approximate_lookups_propagate_errors_in_any_lookup_position() {
             .set_cell_value("Sheet1", row as u32 + 1, 5, value)
             .unwrap();
     }
-    assert_error(
+    assert_number(
         eval(&mut engine, "=MATCH(5,E1:E4,-1)"),
-        ExcelErrorKind::Div,
-        "MATCH descending deciding error",
+        1.0,
+        "MATCH descending skips a deciding error",
+    );
+
+    // An all-error range has nothing searchable: #N/A, not the error.
+    for row in 1..=3u32 {
+        engine
+            .set_cell_value(
+                "Sheet1",
+                row,
+                6,
+                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)),
+            )
+            .unwrap();
+    }
+    assert_na(eval(&mut engine, "=MATCH(5,F1:F3,1)"), "all-error range");
+
+    // Exact mode never matches an error cell.
+    assert_na(
+        eval(&mut engine, "=MATCH(5,F1:F3,0)"),
+        "exact mode over errors",
     );
 }
 
 #[test]
-fn approximate_match_propagates_materialized_pre_1900_date_error() {
+fn approximate_match_skips_materialized_pre_1900_date_error() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     for (row, date) in [(1899, 1, 1), (1899, 6, 1), (1900, 3, 1), (2024, 1, 1)]
         .into_iter()
@@ -393,10 +423,13 @@ fn approximate_match_propagates_materialized_pre_1900_date_error() {
             )
             .unwrap();
     }
-    assert_error(
+    // The three pre-1900 dates materialize as #NUM!. Excel projects error cells
+    // out of an approximate search, so the only searchable entry is the 2024
+    // date in row 4, and the needle lands on it.
+    assert_number(
         eval(&mut engine, "=MATCH(50000,A1:A4,1)"),
-        ExcelErrorKind::Num,
-        "MATCH over pre-1900 date errors",
+        4.0,
+        "MATCH skips pre-1900 date errors",
     );
 }
 
@@ -506,7 +539,7 @@ fn searchable_count_keeps_duplicate_tie_break_on_small_descending_data() {
     }
     assert_number(
         eval(&mut engine, "=MATCH(4,E1:E10,-1)"),
-        3.0,
+        2.0,
         "MATCH threshold preserves descending duplicate tie-break",
     );
 }
@@ -526,7 +559,7 @@ fn searchable_count_not_range_extent_controls_descending_tie_break() {
     }
     assert_number(
         eval(&mut engine, "=MATCH(4,E1:E10,-1)"),
-        4.0,
+        3.0,
         "MATCH threshold uses projected length, not range extent",
     );
 }

@@ -164,12 +164,6 @@ impl<'a> SearchedVector<'a> {
         needle: &LiteralValue,
         date_system: DateSystem,
     ) -> Result<Self, ExcelError> {
-        if let Some(error) = values.iter().find_map(|value| match value {
-            LiteralValue::Error(error) => Some(error.clone()),
-            _ => None,
-        }) {
-            return Err(error);
-        }
         let first_skipped = values
             .iter()
             .position(|v| !is_searchable_for_approximate(v, needle, date_system));
