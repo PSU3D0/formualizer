@@ -4,6 +4,11 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Approximate `MATCH`, `VLOOKUP`, and `HLOOKUP` skip error cells in the lookup range instead of propagating them. 0.8.2 introduced range-wide propagation, which diverged from desktop Excel on 8 of 10 measured oracle rows: a single `#DIV/0!` anywhere in a lookup column poisoned every approximate lookup over that column, where Excel answers normally. Error cells are projected out of the search exactly like blanks and other-class entries — they cannot be returned, do not break sortedness, and are not propagated even when a bisection probe lands on one. A range with nothing searchable left yields `#N/A`, and exact mode still never matches an error cell. Oracle contributed by an external reporter running desktop Excel 16.105.3 under AppleScript automation. (#326)
+- Descending approximate `MATCH` returns the *first* entry of an exact-match run rather than the last, matching Excel; the last qualifying entry is still returned when the needle falls between two values. This affected ranges with fewer than eight searchable entries, whose linear path lacked the exact-match rule the bisection path already had. (#326)
+
 ## [0.8.2] - 2026-08-11
 
 ### Fixed

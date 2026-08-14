@@ -337,8 +337,16 @@ impl Function for MatchFn {
                                         best = Some(i);
                                     }
                                 } else {
-                                    // -1, v >= needle
-                                    if (c == 0 || c == 1) && (best.is_none() || i > best.unwrap()) {
+                                    // -1, v >= needle. Excel returns the *first*
+                                    // entry of an exact-match run on a descending
+                                    // range, but the *last* entry that still
+                                    // qualifies when the needle falls between two
+                                    // values. This mirrors the >= 8 path.
+                                    if c == 0 {
+                                        best = Some(i);
+                                        break;
+                                    }
+                                    if c == 1 && (best.is_none() || i > best.unwrap()) {
                                         best = Some(i);
                                     }
                                 }
