@@ -2610,6 +2610,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::named_range_by_vertex(&
 pub fn formualizer_eval::engine::graph::DependencyGraph::named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&alloc::string::String, &formualizer_eval::engine::named_range::NamedRange)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedDefinition>
 pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry_in_scope(&self, &str, formualizer_eval::engine::named_range::NameScope) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
 pub fn formualizer_eval::engine::graph::DependencyGraph::sheet_named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&(formualizer_eval::reference::SheetId, alloc::string::String), &formualizer_eval::engine::named_range::NamedRange)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph
@@ -4416,6 +4417,7 @@ pub fn formualizer_eval::engine::sheet_registry::SheetRegistry::name(&self, form
 pub fn formualizer_eval::engine::sheet_registry::SheetRegistry::new() -> Self
 pub fn formualizer_eval::engine::sheet_registry::SheetRegistry::remove(&mut self, formualizer_eval::reference::SheetId) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::sheet_registry::SheetRegistry::rename(&mut self, formualizer_eval::reference::SheetId, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::sheet_registry::SheetRegistry::resolve_locator(&self, &formualizer_eval::reference::SharedSheetLocator<'_>, formualizer_eval::reference::SheetId) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
 impl core::default::Default for formualizer_eval::engine::sheet_registry::SheetRegistry
 pub fn formualizer_eval::engine::sheet_registry::SheetRegistry::default() -> formualizer_eval::engine::sheet_registry::SheetRegistry
 impl core::fmt::Debug for formualizer_eval::engine::sheet_registry::SheetRegistry
@@ -5878,6 +5880,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::named_range_by_vertex(&
 pub fn formualizer_eval::engine::graph::DependencyGraph::named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&alloc::string::String, &formualizer_eval::engine::named_range::NamedRange)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedDefinition>
 pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resolve_name_entry_in_scope(&self, &str, formualizer_eval::engine::named_range::NameScope) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
 pub fn formualizer_eval::engine::graph::DependencyGraph::sheet_named_ranges_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&(formualizer_eval::reference::SheetId, alloc::string::String), &formualizer_eval::engine::named_range::NamedRange)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_name(&mut self, &str, formualizer_eval::engine::named_range::NamedDefinition, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph

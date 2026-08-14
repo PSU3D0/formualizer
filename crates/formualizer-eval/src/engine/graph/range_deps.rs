@@ -33,12 +33,14 @@ impl DependencyGraph {
                 ranges
                     .iter()
                     .any(|range| {
-                        let range_sheet_id = match range.sheet {
-                            SharedSheetLocator::Id(id) => id,
-                            // Formula analysis normalizes ingested locators to Id, so this
-                            // fallback is unreachable today; match the sibling query semantics.
-                            _ => sheet_id,
-                        };
+                        // `Current` is the dependent formula's own sheet. An
+                        // unresolvable sheet name keeps the dependent in the
+                        // candidate set (over-approximating is safe here;
+                        // dropping it would silently lose a dependent).
+                        let range_sheet_id = self
+                            .sheet_reg
+                            .resolve_locator(&range.sheet, self.get_vertex_sheet_id(dependent))
+                            .unwrap_or(sheet_id);
                         let range_start = range.start_row.map(|bound| bound.index).unwrap_or(0);
                         let range_end = range.end_row.map(|bound| bound.index).unwrap_or(u32::MAX);
                         range_sheet_id == sheet_id
@@ -62,12 +64,11 @@ impl DependencyGraph {
                 ranges
                     .iter()
                     .any(|range| {
-                        let range_sheet_id = match range.sheet {
-                            SharedSheetLocator::Id(id) => id,
-                            // Formula analysis normalizes ingested locators to Id, so this
-                            // fallback is unreachable today; match the sibling query semantics.
-                            _ => sheet_id,
-                        };
+                        // See the row query above.
+                        let range_sheet_id = self
+                            .sheet_reg
+                            .resolve_locator(&range.sheet, self.get_vertex_sheet_id(dependent))
+                            .unwrap_or(sheet_id);
                         let range_start = range.start_col.map(|bound| bound.index).unwrap_or(0);
                         let range_end = range.end_col.map(|bound| bound.index).unwrap_or(u32::MAX);
                         range_sheet_id == sheet_id
@@ -142,12 +143,13 @@ impl DependencyGraph {
                         return false;
                     }
                     *remaining_work -= 1;
-                    // Match collect_range_dependents_for_rect: unresolved
-                    // non-Id locators are interpreted on the query sheet.
-                    let range_sheet = match range.sheet {
-                        SharedSheetLocator::Id(id) => id,
-                        _ => sheet_id,
-                    };
+                    // `Current` is the dependent formula's own sheet; an
+                    // unresolvable sheet name is interpreted on the query sheet
+                    // so the dependent is not silently dropped.
+                    let range_sheet = self
+                        .sheet_reg
+                        .resolve_locator(&range.sheet, self.get_vertex_sheet_id(dependent))
+                        .unwrap_or(sheet_id);
                     if range_sheet != sheet_id {
                         continue;
                     }
@@ -462,10 +464,13 @@ impl DependencyGraph {
             .insert(dependent, ranges.to_vec());
 
         for range in ranges {
-            let sheet_id = match range.sheet {
-                SharedSheetLocator::Id(id) => id,
-                _ => current_sheet_id,
-            };
+            // `current_sheet_id` is the dependent formula's sheet, which is what
+            // `Current` means. An unresolvable sheet name falls back to it so a
+            // stripe is still registered rather than the edge being dropped.
+            let sheet_id = self
+                .sheet_reg
+                .resolve_locator(&range.sheet, current_sheet_id)
+                .unwrap_or(current_sheet_id);
 
             let s_row = range.start_row.map(|b| b.index);
             let e_row = range.end_row.map(|b| b.index);
@@ -685,10 +690,11 @@ impl DependencyGraph {
             .insert(dependent, shared_ranges.clone());
 
         for range in &shared_ranges {
-            let sheet_id = match range.sheet {
-                SharedSheetLocator::Id(id) => id,
-                _ => current_sheet_id,
-            };
+            // See add_range_dependent_edges.
+            let sheet_id = self
+                .sheet_reg
+                .resolve_locator(&range.sheet, current_sheet_id)
+                .unwrap_or(current_sheet_id);
 
             let s_row = range.start_row.map(|b| b.index);
             let e_row = range.end_row.map(|b| b.index);

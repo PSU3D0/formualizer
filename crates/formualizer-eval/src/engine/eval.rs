@@ -4045,22 +4045,73 @@ where
         self.graph.resolve_name_entry(name, current_sheet)
     }
 
-    pub fn has_name(&self, name: &str, scope_sheet: Option<&str>) -> bool {
-        let current_sheet = scope_sheet
-            .and_then(|sheet| self.graph.sheet_id(sheet))
-            .unwrap_or_else(|| self.graph.default_sheet_id());
-        self.graph.resolve_name_entry(name, current_sheet).is_some()
+    /// The [`NameScope`] an optional scope-sheet argument denotes.
+    ///
+    /// `None` means **workbook scope**, not "the default sheet": a caller that
+    /// supplies no sheet context is asking about workbook-scoped names only.
+    /// An unknown sheet name is a malformed query and errors rather than
+    /// silently degrading to another sheet's scope (issue #110).
+    ///
+    /// This is the one owned derivation from `Option<&str>` to a name scope;
+    /// every scope-taking entry point routes through it.
+    pub(crate) fn name_query_scope(
+        &self,
+        scope_sheet: Option<&str>,
+    ) -> Result<NameScope, ExcelError> {
+        match scope_sheet {
+            None => Ok(NameScope::Workbook),
+            Some(sheet) => self
+                .graph
+                .sheet_id(sheet)
+                .map(NameScope::Sheet)
+                .ok_or_else(|| {
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message(format!("name scope sheet not found: {sheet}"))
+                }),
+        }
     }
 
+    /// Whether `name` resolves in the scope denoted by `scope_sheet`.
+    ///
+    /// `scope_sheet == None` asks about workbook scope only; a name scoped to a
+    /// single sheet (including the default sheet) does not answer it. An unknown
+    /// sheet name resolves nothing.
+    /// Resolve a [`SharedSheetLocator`](crate::reference::SharedSheetLocator)
+    /// against an explicit context sheet.
+    ///
+    /// Thin forwarder to
+    /// [`SheetRegistry::resolve_locator`](crate::engine::sheet_registry::SheetRegistry::resolve_locator),
+    /// the single owned derivation. `Current` resolves to `context_sheet`, never
+    /// to the workbook's default sheet.
+    fn resolve_sheet_locator(
+        &self,
+        locator: &crate::reference::SharedSheetLocator<'_>,
+        context_sheet: SheetId,
+    ) -> Result<SheetId, ExcelError> {
+        self.graph
+            .sheet_reg()
+            .resolve_locator(locator, context_sheet)
+    }
+
+    pub fn has_name(&self, name: &str, scope_sheet: Option<&str>) -> bool {
+        let Ok(scope) = self.name_query_scope(scope_sheet) else {
+            return false;
+        };
+        self.graph
+            .resolve_name_entry_in_scope(name, scope)
+            .is_some()
+    }
+
+    /// The current value of `name` in the scope denoted by `scope_sheet`.
+    ///
+    /// Scoping follows [`Self::has_name`]: `None` is workbook scope only.
     pub fn resolved_name_value(
         &self,
         name: &str,
         scope_sheet: Option<&str>,
     ) -> Option<LiteralValue> {
-        let current_sheet = scope_sheet
-            .and_then(|sheet| self.graph.sheet_id(sheet))
-            .unwrap_or_else(|| self.graph.default_sheet_id());
-        let entry = self.graph.resolve_name_entry(name, current_sheet)?;
+        let scope = self.name_query_scope(scope_sheet).ok()?;
+        let entry = self.graph.resolve_name_entry_in_scope(name, scope)?;
         self.graph.get_value(entry.vertex)
     }
 
@@ -9843,11 +9894,8 @@ where
                     )?;
                 }
                 crate::engine::EvaluationTarget::Name { name, scope_sheet } => {
-                    let sheet_id = scope_sheet
-                        .as_deref()
-                        .and_then(|sheet| self.graph.sheet_id(sheet))
-                        .unwrap_or_else(|| self.graph.default_sheet_id());
-                    if let Some(entry) = self.graph.resolve_name_entry(name, sheet_id) {
+                    let scope = self.name_query_scope(scope_sheet.as_deref())?;
+                    if let Some(entry) = self.graph.resolve_name_entry_in_scope(name, scope) {
                         roots
                             .push(TargetProducer::Symbol(entry.vertex))
                             .map_err(|_| {
@@ -10048,14 +10096,8 @@ where
                     normalized.push(target.clone());
                 }
                 crate::engine::EvaluationTarget::Name { name, scope_sheet } => {
-                    let current_sheet = match scope_sheet {
-                        Some(sheet) => self.graph.sheet_id(sheet).ok_or_else(|| {
-                            ExcelError::new(ExcelErrorKind::Ref)
-                                .with_message(format!("name scope sheet not found: {sheet}"))
-                        })?,
-                        None => self.graph.default_sheet_id(),
-                    };
-                    if let Some(entry) = self.graph.resolve_name_entry(name, current_sheet) {
+                    let name_scope = self.name_query_scope(scope_sheet.as_deref())?;
+                    if let Some(entry) = self.graph.resolve_name_entry_in_scope(name, name_scope) {
                         symbol_vertices.push_back(entry.vertex);
                     } else {
                         Self::widen_target_preparation(
@@ -10280,25 +10322,20 @@ where
                     {
                         for range in range_dependencies {
                             self.target_preparation_checkpoint(options.deadline, 1)?;
-                            let sheet_id = match range.sheet {
-                                crate::reference::SharedSheetLocator::Id(id) => id,
-                                crate::reference::SharedSheetLocator::Current => {
-                                    self.graph.get_vertex_sheet_id(vertex)
+                            // `Current` is the sheet the formula lives on.
+                            let context_sheet = self.graph.get_vertex_sheet_id(vertex);
+                            let Ok(sheet_id) =
+                                self.resolve_sheet_locator(&range.sheet, context_sheet)
+                            else {
+                                if Self::widen_target_preparation(
+                                    options.opaque_policy,
+                                    &mut scope,
+                                    &mut reasons,
+                                    OpaqueReason::UnresolvedCrossSheetBinding,
+                                )? {
+                                    break;
                                 }
-                                crate::reference::SharedSheetLocator::Name(ref name) => {
-                                    let Some(id) = self.graph.sheet_id(name) else {
-                                        if Self::widen_target_preparation(
-                                            options.opaque_policy,
-                                            &mut scope,
-                                            &mut reasons,
-                                            OpaqueReason::UnresolvedCrossSheetBinding,
-                                        )? {
-                                            break;
-                                        }
-                                        continue;
-                                    };
-                                    id
-                                }
+                                continue;
                             };
                             let sheet = self.graph.sheet_name(sheet_id).to_string();
                             regions.push_back(PreparationRegion {
@@ -10367,9 +10404,26 @@ where
                                 }
                                 for range in range_deps {
                                     self.target_preparation_checkpoint(options.deadline, 1)?;
-                                    let sheet_id = match range.sheet {
-                                        crate::reference::SharedSheetLocator::Id(id) => id,
-                                        _ => self.graph.default_sheet_id(),
+                                    // `Current` is the sheet this name's formula
+                                    // was interpreted on, which is the sheet its
+                                    // vertex is placed on -- the same derivation
+                                    // the formula-vertex arm above uses. It is
+                                    // never the workbook default sheet, and an
+                                    // unresolvable `Name` widens instead of
+                                    // silently landing on some other sheet.
+                                    let context_sheet = self.graph.get_vertex_sheet_id(vertex);
+                                    let Ok(sheet_id) =
+                                        self.resolve_sheet_locator(&range.sheet, context_sheet)
+                                    else {
+                                        if Self::widen_target_preparation(
+                                            options.opaque_policy,
+                                            &mut scope,
+                                            &mut reasons,
+                                            OpaqueReason::UnresolvedCrossSheetBinding,
+                                        )? {
+                                            break;
+                                        }
+                                        continue;
                                     };
                                     regions.push_back(PreparationRegion {
                                         sheet: self.graph.sheet_name(sheet_id).to_string(),
@@ -10577,21 +10631,18 @@ where
                     }
                     for range in &ingested.dep_plan.range_deps {
                         self.target_preparation_checkpoint(options.deadline, 1)?;
-                        let dependency_sheet = match &range.sheet {
-                            crate::reference::SharedSheetLocator::Id(id) => *id,
-                            crate::reference::SharedSheetLocator::Current => package.sheet_id,
-                            crate::reference::SharedSheetLocator::Name(name) => {
-                                let Some(id) = self.graph.sheet_id(name) else {
-                                    Self::widen_target_preparation(
-                                        options.opaque_policy,
-                                        &mut scope,
-                                        &mut reasons,
-                                        OpaqueReason::UnresolvedCrossSheetBinding,
-                                    )?;
-                                    continue;
-                                };
-                                id
-                            }
+                        // `Current` is the sheet the staged package's formula
+                        // lives on.
+                        let Ok(dependency_sheet) =
+                            self.resolve_sheet_locator(&range.sheet, package.sheet_id)
+                        else {
+                            Self::widen_target_preparation(
+                                options.opaque_policy,
+                                &mut scope,
+                                &mut reasons,
+                                OpaqueReason::UnresolvedCrossSheetBinding,
+                            )?;
+                            continue;
                         };
                         regions.push_back(PreparationRegion {
                             sheet: self.graph.sheet_name(dependency_sheet).to_string(),
@@ -10816,25 +10867,20 @@ where
                 }
                 for range in &ingested.dep_plan.range_deps {
                     self.target_preparation_checkpoint(options.deadline, 1)?;
-                    let sheet_id = match range.sheet {
-                        crate::reference::SharedSheetLocator::Id(id) => id,
-                        crate::reference::SharedSheetLocator::Current => sheet_id,
-                        crate::reference::SharedSheetLocator::Name(ref name) => {
-                            let Some(id) = self.graph.sheet_id(name) else {
-                                Self::widen_target_preparation(
-                                    options.opaque_policy,
-                                    &mut scope,
-                                    &mut reasons,
-                                    OpaqueReason::UnresolvedCrossSheetBinding,
-                                )?;
-                                continue;
-                            };
-                            id
-                        }
+                    // `Current` is the sheet the staged formula lives on.
+                    let Ok(dependency_sheet) = self.resolve_sheet_locator(&range.sheet, sheet_id)
+                    else {
+                        Self::widen_target_preparation(
+                            options.opaque_policy,
+                            &mut scope,
+                            &mut reasons,
+                            OpaqueReason::UnresolvedCrossSheetBinding,
+                        )?;
+                        continue;
                     };
                     regions.push_back(PreparationRegion {
-                        sheet: self.graph.sheet_name(sheet_id).to_string(),
-                        sheet_id,
+                        sheet: self.graph.sheet_name(dependency_sheet).to_string(),
+                        sheet_id: dependency_sheet,
                         start_row: range.start_row.map_or(1, |bound| bound.index + 1),
                         start_col: range.start_col.map_or(1, |bound| bound.index + 1),
                         end_row: range
@@ -19017,9 +19063,12 @@ where
                     units = units.saturating_add(index_units(point));
                 }
             }
+            let vertex_sheet = self.graph.get_vertex_sheet_id(vertex);
             if let Some(ranges) = self.graph.get_range_dependencies(vertex) {
                 for range in ranges {
-                    if let Ok(Some(region)) = self.shared_range_to_region_pattern(range) {
+                    if let Ok(Some(region)) =
+                        self.shared_range_to_region_pattern(range, vertex_sheet)
+                    {
                         entry_count = entry_count.saturating_add(1);
                         units = units.saturating_add(index_units(region));
                     }
@@ -19077,7 +19126,9 @@ where
             }
             if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
                 for range in ranges {
-                    let region = self.shared_range_to_region_pattern(range).ok()??;
+                    let region = self
+                        .shared_range_to_region_pattern(range, cell.sheet_id)
+                        .ok()??;
                     if span_boundary_sheets.contains(&region.sheet_id()) {
                         return None;
                     }
@@ -19468,7 +19519,9 @@ where
                 }
                 if let Some(ranges) = self.graph.get_range_dependencies(*vertex) {
                     for range in ranges {
-                        let Some(read_region) = self.shared_range_to_region_pattern(range)? else {
+                        let Some(read_region) =
+                            self.shared_range_to_region_pattern(range, cell.sheet_id)?
+                        else {
                             legacy_reads_complete = false;
                             continue;
                         };
@@ -20672,15 +20725,27 @@ impl<R> Engine<R>
 where
     R: EvaluationContext,
 {
+    /// The [`Region`] a compressed range dependency covers.
+    ///
+    /// `context_sheet` is the sheet the dependency's formula lives on, which is
+    /// what a `Current` locator means. It must be supplied by the caller: this
+    /// method has no way to recover it, and substituting the workbook default
+    /// sheet pointed the region at an unrelated sheet (issue #110). `None` means
+    /// "no region pattern"; callers treat that as an incomplete summary and fall
+    /// back to the conservative global path.
     fn shared_range_to_region_pattern(
         &self,
         range: &crate::reference::SharedRangeRef<'static>,
+        context_sheet: SheetId,
     ) -> Result<Option<Region>, ExcelError> {
-        use crate::reference::SharedSheetLocator;
-        let sheet_id = match range.sheet {
-            SharedSheetLocator::Id(id) => id,
-            SharedSheetLocator::Current => self.graph.default_sheet_id(),
-            SharedSheetLocator::Name(_) => return Ok(None),
+        assert!(
+            matches!(range.sheet, crate::reference::SharedSheetLocator::Id(_)),
+            "PROBE: non-Id locator reached shared_range_to_region_pattern: {:?}",
+            range.sheet
+        );
+        let Ok(sheet_id) = self.resolve_sheet_locator(&range.sheet, context_sheet) else {
+            // Unresolvable sheet name: no trustworthy region.
+            return Ok(None);
         };
         match (
             range.start_row,
@@ -23636,9 +23701,14 @@ where
                 let formualizer_common::SheetRef::Range(range) = shared else {
                     return Err(ExcelError::new(ExcelErrorKind::Ref));
                 };
+                // No context sheet is available here, so an unresolved locator
+                // is #REF! rather than a guess (issue #110).
                 let sheet_id = match range.sheet {
                     formualizer_common::SheetLocator::Id(id) => id,
-                    _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+                    formualizer_common::SheetLocator::Current
+                    | formualizer_common::SheetLocator::Name(_) => {
+                        return Err(ExcelError::new(ExcelErrorKind::Ref));
+                    }
                 };
                 let sheet_name = self.graph.sheet_name(sheet_id);
 
