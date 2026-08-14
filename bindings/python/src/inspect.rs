@@ -20,10 +20,6 @@ use crate::workbook::PyWorkbook;
 
 type PyObject = Py<PyAny>;
 
-fn lock_error(error: impl std::fmt::Display) -> PyErr {
-    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {error}"))
-}
-
 fn address_text(address: &CellAddress) -> String {
     address.to_string()
 }
@@ -1715,7 +1711,7 @@ impl PyWorkbook {
     #[pyo3(signature = (address, *, include_values=true))]
     fn inspect_cell(&self, address: &str, include_values: bool) -> PyResult<PyCellSnapshotReport> {
         let address = parse_cell(address)?;
-        let wb = self.inner.read().map_err(lock_error)?;
+        let wb = self.read_inner()?;
         wb.engine()
             .inspect_cell(
                 &address,
@@ -1736,7 +1732,7 @@ impl PyWorkbook {
         let options = core::PrecedentOptions::default()
             .with_max_links(max_links)
             .with_max_work(max_work);
-        let wb = self.inner.read().map_err(lock_error)?;
+        let wb = self.read_inner()?;
         wb.engine()
             .precedents(&address, &options)
             .map(Into::into)
@@ -1754,7 +1750,7 @@ impl PyWorkbook {
         let options = core::DependentsOptions::default()
             .with_max_results(max_results)
             .with_max_work(max_work);
-        let wb = self.inner.read().map_err(lock_error)?;
+        let wb = self.read_inner()?;
         wb.engine()
             .dependents(&address, &options)
             .map(Into::into)
@@ -1786,7 +1782,7 @@ impl PyWorkbook {
             .with_max_work(max_work)
             .with_range_member_budget(range_member_budget)
             .with_include_values(include_values);
-        let wb = self.inner.read().map_err(lock_error)?;
+        let wb = self.read_inner()?;
         wb.engine()
             .trace(&roots, &options)
             .map(Into::into)
@@ -1810,7 +1806,7 @@ impl PyWorkbook {
         if let Some(stamp) = expected_stamp {
             options = options.with_expected_stamp(stamp.inner);
         }
-        let wb = self.inner.read().map_err(lock_error)?;
+        let wb = self.read_inner()?;
         wb.engine()
             .range_page(&area, &options)
             .map(Into::into)

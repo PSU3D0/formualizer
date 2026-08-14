@@ -1,26 +1,23 @@
 //! Bond pricing functions: ACCRINT, ACCRINTM, PRICE, YIELD
 
 use crate::args::ArgSchema;
+use crate::coercion::to_serial_strict;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use chrono::{Datelike, NaiveDate};
 use formualizer_common::{ExcelError, LiteralValue, try_serial_to_date_for};
 use formualizer_macros::func_caps;
 
+/// Numeric coercion for bond arguments.
+///
+/// `settlement`, `maturity` and `issue` are date arguments, and a workbook
+/// loaded from XLSX holds genuine `Date` cells there. The previous local
+/// copy of the value -> number policy had no date arm, so `PRICE(A1,B1,...)`
+/// over date cells returned `#VALUE!` (see #328). Delegates to the central
+/// [`crate::coercion::to_serial_strict`].
 fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
-    coerce_literal_num(&v)
-}
-
-fn coerce_literal_num(v: &LiteralValue) -> Result<f64, ExcelError> {
-    match v {
-        LiteralValue::Number(f) => Ok(*f),
-        LiteralValue::Int(i) => Ok(*i as f64),
-        LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
-        LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e.clone()),
-        _ => Err(ExcelError::new_value()),
-    }
+    to_serial_strict(&v, arg.date_system())
 }
 
 /// Day count basis calculation

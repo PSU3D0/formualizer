@@ -53,6 +53,33 @@ pub fn to_serial_lenient(value: &LiteralValue, system: DateSystem) -> Result<f64
     }
 }
 
+/// Strict numeric coercion that resolves temporal values in a date system.
+///
+/// Identical to [`to_number_strict`] except that date-bearing literals are
+/// converted to serials using the workbook's date system instead of the
+/// implicit Excel-1900 default. Unlike [`to_serial_lenient`] it does **not**
+/// parse numeric text, so callers that reject text today keep rejecting it.
+///
+/// This is the coercion financial builtins want for arguments Excel treats as
+/// plain numbers on the sheet: a date cell *is* a number there, so a
+/// `Date`/`DateTime`/`Time`/`Duration` literal must become its serial rather
+/// than being dropped or rejected.
+pub(crate) fn to_serial_strict(
+    value: &LiteralValue,
+    system: DateSystem,
+) -> Result<f64, ExcelError> {
+    match value {
+        LiteralValue::Date(_)
+        | LiteralValue::DateTime(_)
+        | LiteralValue::Time(_)
+        | LiteralValue::Duration(_) => value.as_serial_number_for(system).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Value)
+                .with_message("Cannot convert to date/time serial")
+        }),
+        _ => to_number_strict(value),
+    }
+}
+
 /// Context-aware lenient numeric coercion using locale.
 pub fn to_number_lenient_with_locale(
     value: &LiteralValue,

@@ -305,6 +305,15 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// Workbook date system in force for the evaluation this argument belongs to.
+    ///
+    /// Lets value-collecting helpers resolve date literals to serials without
+    /// threading a `DateSystem` (or the whole `FunctionContext`) through every
+    /// call site.
+    pub(crate) fn date_system(&self) -> crate::engine::DateSystem {
+        self.interp.context.date_system()
+    }
+
     /// Returns whether this handle represents an explicitly omitted argument slot.
     ///
     /// This is false for absent arguments, explicit empty text, and blank references.

@@ -9,7 +9,15 @@ while waiting on the parallel layer, and the worker blocked on
 The workbook is sized so a single evaluation layer contains many formula
 vertices, which forces the engine's parallel layer to run on rayon worker
 threads and reproduces the deadlock on the broken binding.
+
+These tests are timeout-bounded. A deadlock cannot be interrupted from Python
+(the GIL holder is blocked in native code, so neither a signal handler nor a
+pure-Python watchdog ever runs), which is why the suite configures
+pytest-timeout with `timeout_method = "thread"`: on expiry it dumps every
+thread's stack and kills the process, turning a would-be six-hour CI hang into
+a bounded failure with the deadlock cycle printed.
 """
+
 import datetime
 from pathlib import Path
 
@@ -62,7 +70,7 @@ def make_loaded_workbook(tmp: Path) -> fz.Workbook:
         datetime.date(2024, 10, 1),
         datetime.date(2025, 1, 1),
     ]
-    for i, (value, date) in enumerate(zip(values, dates)):
+    for i, (value, date) in enumerate(zip(values, dates, strict=True)):
         ws.cell(row=2 + i, column=2, value=value)
         cell = ws.cell(row=2 + i, column=3, value=date)
         cell.number_format = "yyyy-mm-dd"
@@ -82,17 +90,17 @@ def register_xnpv(wb: fz.Workbook) -> None:
     )
 
 
+@pytest.mark.timeout(60)
 def test_custom_function_on_loaded_workbook_evaluate_all(tmp_path: Path):
     wb = make_loaded_workbook(tmp_path)
     register_xnpv(wb)
 
     wb.evaluate_all()
     for row in (3, 42, 121):
-        assert wb.get_value("Sheet1", row, 4) == pytest.approx(
-            _NPV_VALUE, rel=1e-9
-        )
+        assert wb.get_value("Sheet1", row, 4) == pytest.approx(_NPV_VALUE, rel=1e-9)
 
 
+@pytest.mark.timeout(60)
 def test_custom_function_on_loaded_workbook_evaluate_cell(tmp_path: Path):
     wb = make_loaded_workbook(tmp_path)
     register_xnpv(wb)
@@ -101,22 +109,36 @@ def test_custom_function_on_loaded_workbook_evaluate_cell(tmp_path: Path):
     assert value == pytest.approx(_NPV_VALUE, rel=1e-9)
 
 
+@pytest.mark.timeout(60)
 def test_custom_function_on_loaded_workbook_evaluate_cells(tmp_path: Path):
     wb = make_loaded_workbook(tmp_path)
     register_xnpv(wb)
 
-    results = wb.evaluate_cells(
-        [("Sheet1", 3, 4), ("Sheet1", 121, 4)]
-    )
+    results = wb.evaluate_cells([("Sheet1", 3, 4), ("Sheet1", 121, 4)])
     assert results[0] == pytest.approx(_NPV_VALUE, rel=1e-9)
     assert results[1] == pytest.approx(_NPV_VALUE, rel=1e-9)
 
 
-def test_native_xnpv_still_errors_without_override(tmp_path: Path):
+@pytest.mark.timeout(60)
+def test_native_xnpv_handles_date_cells_without_the_override(tmp_path: Path):
+    """The native XNPV must agree with the Python override on this fixture.
+
+    This started life as ``test_native_xnpv_still_errors_without_override``,
+    asserting ``#NUM!`` - true when #327 was written, because the native XNPV
+    dropped the ``Date`` cells in ``C2:C6`` and hit its length guard. #328
+    landed the date-serial coercion right afterwards, so on plain ``main``
+    (baf5b363) that assertion is already failing::
+
+        assert isinstance(value, dict)
+        E   assert False
+        E    +  where False = isinstance(308.1871372025822, dict)
+
+    The guard the original test wanted - "the override is not masking a change
+    in the native function" - is preserved by pinning the native result to the
+    same oracle constant the override produces.
+    """
     wb = make_loaded_workbook(tmp_path)
 
     wb.evaluate_all()
     value = wb.get_value("Sheet1", 3, 4)
-    assert isinstance(value, dict)
-    assert value.get("type") == "Error"
-    assert value.get("kind") == "Num"
+    assert value == pytest.approx(_NPV_VALUE, rel=1e-9)

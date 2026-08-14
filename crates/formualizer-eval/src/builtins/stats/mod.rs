@@ -67,11 +67,24 @@ fn collect_numeric_stats(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError
         }
 
         if let Ok(view) = a.range_view() {
+            let date_system = a.date_system();
             view.for_each_cell(&mut |v| {
                 match v {
                     LiteralValue::Error(e) => return Err(e.clone()),
                     LiteralValue::Number(n) => out.push(*n),
                     LiteralValue::Int(i) => out.push(*i as f64),
+                    // A date cell is a number on the sheet: SUM/AVERAGE/COUNT
+                    // already include it, so dropping it here made MEDIAN,
+                    // STDEV, LARGE, CORREL, ... silently disagree with SUM
+                    // over the very same range.
+                    LiteralValue::Date(_)
+                    | LiteralValue::DateTime(_)
+                    | LiteralValue::Time(_)
+                    | LiteralValue::Duration(_) => {
+                        if let Ok(n) = crate::coercion::to_serial_strict(v, date_system) {
+                            out.push(n);
+                        }
+                    }
                     _ => {}
                 }
                 Ok(())
@@ -8342,6 +8355,7 @@ fn collect_numeric_a(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError> {
         }
 
         if let Ok(view) = a.range_view() {
+            let date_system = a.date_system();
             view.for_each_cell(&mut |v| {
                 match v {
                     LiteralValue::Error(e) => return Err(e.clone()),
@@ -8350,6 +8364,16 @@ fn collect_numeric_a(args: &[ArgumentHandle]) -> Result<Vec<f64>, ExcelError> {
                     LiteralValue::Boolean(b) => out.push(if *b { 1.0 } else { 0.0 }),
                     LiteralValue::Text(_) => out.push(0.0),
                     LiteralValue::Empty => {} // skip blanks
+                    // Date-bearing cells are numbers; MAXA/MINA returned 0.0
+                    // over an all-date range before this arm existed.
+                    LiteralValue::Date(_)
+                    | LiteralValue::DateTime(_)
+                    | LiteralValue::Time(_)
+                    | LiteralValue::Duration(_) => {
+                        if let Ok(n) = crate::coercion::to_serial_strict(v, date_system) {
+                            out.push(n);
+                        }
+                    }
                     _ => {}
                 }
                 Ok(())

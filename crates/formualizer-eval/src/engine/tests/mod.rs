@@ -149,7 +149,6 @@ mod info_reference_context;
 mod inspect;
 mod let_lambda;
 mod npv_variadic;
-mod xnpv_xirr_dates;
 mod offset_dynamic;
 mod omitted_arguments;
 mod open_ended_bounds_caps;
@@ -165,6 +164,7 @@ mod used_bounds_cache;
 mod used_extent_resolver;
 mod whole_column_sumifs;
 mod wildcard_star_semantics;
+mod xnpv_xirr_dates;
 
 mod aggregate_visibility_options;
 mod row_visibility_mask;
@@ -174,6 +174,7 @@ mod subtotal_visibility;
 mod visibility_mask_cache;
 
 mod csr_rebuild_amortization;
+mod date_cells_are_numbers;
 mod demand_subgraph_named_range;
 mod dn_range_xlsx_subgraph;
 mod iferror_ifna_lazy;
