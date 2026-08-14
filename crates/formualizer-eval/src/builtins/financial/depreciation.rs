@@ -1,21 +1,18 @@
 //! Depreciation functions: SLN, SYD, DB, DDB
 
 use crate::args::ArgSchema;
+use crate::coercion::to_serial_strict;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_macros::func_caps;
 
+/// Numeric coercion for depreciation arguments. Shares the crate-central
+/// value -> number policy with the rest of the financial builtins so a date
+/// cell resolves to its serial instead of `#VALUE!`.
 fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
-    match v {
-        LiteralValue::Number(f) => Ok(f),
-        LiteralValue::Int(i) => Ok(i as f64),
-        LiteralValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
-        LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e),
-        _ => Err(ExcelError::new_value()),
-    }
+    to_serial_strict(&v, arg.date_system())
 }
 
 /// Returns straight-line depreciation for a single period.

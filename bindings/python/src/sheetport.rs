@@ -312,25 +312,62 @@ impl PySheetPortSession {
         Ok(Self { workbook, bindings })
     }
 
+    /// Run `f` against a `SheetPort` bound to the session's workbook **with the
+    /// GIL released**.
+    ///
+    /// `evaluate_once` drives a full engine evaluation, which fans out onto
+    /// rayon workers; if one of those workers reaches a Python-backed custom
+    /// function it blocks in `PyGILState_Ensure` while this thread waits for
+    /// the parallel layer to finish — the exact deadlock #327 fixed on
+    /// `Workbook.evaluate_*`. `PySheetPortSession` owns a `PyWorkbook` and
+    /// `from_manifest_yaml` takes a user-supplied one, so Python custom
+    /// functions are fully reachable here and the same treatment is required.
+    ///
+    /// Everything inside the detached region is plain Rust: the workbook lock,
+    /// the SheetPort run, and a `SheetPortError` carried back out. Errors are
+    /// converted to Python exceptions only after the GIL is re-attached.
     fn with_sheetport<'py, F, T>(&mut self, py: Python<'py>, f: F) -> PyResult<T>
     where
-        F: FnOnce(&mut SheetPort<'_>) -> RuntimeResult<T>,
+        F: FnOnce(&mut SheetPort<'_>) -> RuntimeResult<T> + Send,
+        T: Send,
     {
         let bindings_clone = self.bindings.clone();
-        let mut updated: Option<ManifestBindings> = None;
-        let result = self.workbook.with_workbook_mut(|workbook| {
-            let mut sheetport = SheetPort::from_bindings(workbook, bindings_clone)
-                .map_err(|err| map_sheetport_err(py, err))?;
-            let output = f(&mut sheetport).map_err(|err| map_sheetport_err(py, err))?;
-            let (_, bindings) = sheetport.into_parts();
-            updated = Some(bindings);
-            Ok(output)
-        })?;
-        if let Some(new_bindings) = updated {
-            self.bindings = new_bindings;
+        let workbook = self.workbook.clone();
+        let outcome = py.detach(
+            move || -> Result<(T, ManifestBindings), SheetPortCallError> {
+                let mut guard = workbook
+                    .write_inner_detached()
+                    .map_err(|err| SheetPortCallError::Runtime(err.into()))?;
+                // Internal mutations bypass the legacy `sheets` compatibility
+                // cache, so it is invalidated alongside the write (mirrors
+                // `PyWorkbook::with_workbook_mut`).
+                let mut sheetport = SheetPort::from_bindings(&mut guard, bindings_clone)
+                    .map_err(SheetPortCallError::Runtime)?;
+                let output = f(&mut sheetport).map_err(SheetPortCallError::Runtime)?;
+                let (_, bindings) = sheetport.into_parts();
+                Ok((output, bindings))
+            },
+        );
+
+        // The cache is cleared regardless of outcome: a failed write may still
+        // have mutated cells before erroring.
+        self.workbook.clear_sheet_cache();
+
+        match outcome {
+            Ok((output, bindings)) => {
+                self.bindings = bindings;
+                Ok(output)
+            }
+            Err(SheetPortCallError::Runtime(err)) => Err(map_sheetport_err(py, err)),
         }
-        Ok(result)
     }
+}
+
+/// Error escaping the detached region in [`PySheetPortSession::with_sheetport`].
+/// It must not reference Python state, so lock failures ride along as the
+/// runtime error's `Workbook` variant.
+enum SheetPortCallError {
+    Runtime(RuntimeSheetPortError),
 }
 
 fn bind_manifest(

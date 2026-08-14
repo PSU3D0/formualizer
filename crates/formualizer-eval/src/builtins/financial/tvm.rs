@@ -1,35 +1,33 @@
 //! Time Value of Money functions: PMT, PV, FV, NPV, NPER, RATE, IPMT, PPMT, XNPV, XIRR, DOLLARDE, DOLLARFR
 
 use crate::args::ArgSchema;
+use crate::coercion::to_serial_strict;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
-use formualizer_common::{
-    DateSystem, ExcelError, ExcelErrorKind, LiteralValue, date_to_serial_for,
-    datetime_to_serial_for,
-};
+use formualizer_common::{DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
 
+/// Numeric coercion for financial arguments.
+///
+/// Excel has no separate date type on the sheet: a date cell holds a number
+/// and is only *formatted* as a date, so every date/time literal reaching a
+/// financial builtin must coerce to its serial in the workbook's date system.
+/// This delegates to the crate-central [`crate::coercion::to_serial_strict`]
+/// rather than re-implementing the value -> number policy locally; the old
+/// private `coerce_literal_num`/`coerce_literal_date_serial` pair silently
+/// dropped `Date`/`DateTime`/`Time`/`Duration` cells (see #328).
 fn coerce_num(arg: &ArgumentHandle) -> Result<f64, ExcelError> {
     let v = arg.value()?.into_literal();
-    coerce_literal_num(&v)
+    to_serial_strict(&v, arg.date_system())
 }
 
-fn coerce_literal_num(v: &LiteralValue) -> Result<f64, ExcelError> {
-    match v {
-        LiteralValue::Number(f) => Ok(*f),
-        LiteralValue::Int(i) => Ok(*i as f64),
-        LiteralValue::Boolean(b) => Ok(if *b { 1.0 } else { 0.0 }),
-        LiteralValue::Empty => Ok(0.0),
-        LiteralValue::Error(e) => Err(e.clone()),
-        _ => Err(ExcelError::new_value()),
-    }
-}
-
-fn coerce_literal_date_serial(v: &LiteralValue, system: DateSystem) -> Result<f64, ExcelError> {
-    match v {
-        LiteralValue::Date(d) => Ok(date_to_serial_for(system, d)),
-        LiteralValue::DateTime(dt) => Ok(datetime_to_serial_for(system, dt)),
-        other => coerce_literal_num(other),
+/// Excel truncates date serials to whole days inside XNPV/XIRR: a cell holding
+/// `2024-01-01 12:00` (serial 45292.5) discounts as day 45292. Documented in
+/// Microsoft's XNPV/XIRR remarks ("numbers in dates are truncated to
+/// integers") and reproduced by LibreOffice 24.2.7.
+fn truncate_date_serials(dates: &mut [f64]) {
+    for d in dates.iter_mut() {
+        *d = d.trunc();
     }
 }
 
@@ -400,13 +398,14 @@ impl Function for NpvFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
         if args.len() > 255 {
             return Err(ExcelError::new_value()
                 .with_message("NPV accepts at most 255 total arguments (rate plus 254 values)"));
         }
 
+        let date_system = ctx.date_system();
         let rate = coerce_num(&args[0])?;
         let mut npv = 0.0;
         let mut period = 1;
@@ -433,6 +432,7 @@ impl Function for NpvFn {
                                 rate,
                                 &mut npv,
                                 &mut period,
+                                date_system,
                             )?;
                         }
                     }
@@ -446,6 +446,7 @@ impl Function for NpvFn {
                                 rate,
                                 &mut npv,
                                 &mut period,
+                                date_system,
                             )?;
                         }
                     }
@@ -456,6 +457,7 @@ impl Function for NpvFn {
                     rate,
                     &mut npv,
                     &mut period,
+                    date_system,
                 )?,
                 CalcValue::Callable(_) => {
                     return Ok(CalcValue::Scalar(LiteralValue::Error(
@@ -482,6 +484,7 @@ fn accumulate_npv_cash_flow(
     rate: f64,
     npv: &mut f64,
     period: &mut i32,
+    date_system: DateSystem,
 ) -> Result<(), ExcelError> {
     let numeric = match value {
         LiteralValue::Number(n) => Some(n),
@@ -492,6 +495,18 @@ fn accumulate_npv_cash_flow(
         LiteralValue::Boolean(b) => Some(if b { 1.0 } else { 0.0 }),
         LiteralValue::Text(_) | LiteralValue::Empty if reference_argument => None,
         LiteralValue::Error(error) => return Err(error),
+        // A date cell is a number on the sheet; take its serial rather than #VALUE!.
+        ref other
+            if matches!(
+                other,
+                LiteralValue::Date(_)
+                    | LiteralValue::DateTime(_)
+                    | LiteralValue::Time(_)
+                    | LiteralValue::Duration(_)
+            ) =>
+        {
+            Some(to_serial_strict(other, date_system)?)
+        }
         _ => return Err(ExcelError::new_value()),
     };
 
@@ -1389,8 +1404,9 @@ impl Function for IrrFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
         // Collect cash flows
         let mut cashflows = Vec::new();
         let val = args[0].value()?;
@@ -1400,20 +1416,20 @@ impl Function for IrrFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_num(&cell) {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
                                 cashflows.push(n);
                             }
                         }
                     }
                 }
-                other => cashflows.push(coerce_literal_num(&other)?),
+                other => cashflows.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_num(&cell) {
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
                             cashflows.push(n);
                         }
                     }
@@ -1513,8 +1529,9 @@ impl Function for MirrFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
         // Collect cash flows
         let mut cashflows = Vec::new();
         let val = args[0].value()?;
@@ -1524,20 +1541,20 @@ impl Function for MirrFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_num(&cell) {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
                                 cashflows.push(n);
                             }
                         }
                     }
                 }
-                other => cashflows.push(coerce_literal_num(&other)?),
+                other => cashflows.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_num(&cell) {
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
                             cashflows.push(n);
                         }
                     }
@@ -1891,6 +1908,7 @@ impl Function for XnpvFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
         let rate = coerce_num(&args[0])?;
 
         // Collect values
@@ -1902,20 +1920,20 @@ impl Function for XnpvFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_num(&cell) {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
                                 values.push(n);
                             }
                         }
                     }
                 }
-                other => values.push(coerce_literal_num(&other)?),
+                other => values.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_num(&cell) {
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
                             values.push(n);
                         }
                     }
@@ -1938,20 +1956,20 @@ impl Function for XnpvFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
                                 dates.push(n);
                             }
                         }
                     }
                 }
-                other => dates.push(coerce_literal_date_serial(&other, ctx.date_system())?),
+                other => dates.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
                             dates.push(n);
                         }
                     }
@@ -1964,6 +1982,8 @@ impl Function for XnpvFn {
                 )));
             }
         }
+
+        truncate_date_serials(&mut dates);
 
         // Validate that values and dates have the same length
         if values.len() != dates.len() || values.is_empty() {
@@ -2085,6 +2105,7 @@ impl Function for XirrFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
+        let date_system = ctx.date_system();
         // Collect values
         let mut values = Vec::new();
         let val = args[0].value()?;
@@ -2094,20 +2115,20 @@ impl Function for XirrFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_num(&cell) {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
                                 values.push(n);
                             }
                         }
                     }
                 }
-                other => values.push(coerce_literal_num(&other)?),
+                other => values.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_num(&cell) {
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
                             values.push(n);
                         }
                     }
@@ -2130,20 +2151,20 @@ impl Function for XirrFn {
                 LiteralValue::Array(arr) => {
                     for row in arr {
                         for cell in row {
-                            if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
+                            if let Ok(n) = to_serial_strict(&cell, date_system) {
                                 dates.push(n);
                             }
                         }
                     }
                 }
-                other => dates.push(coerce_literal_date_serial(&other, ctx.date_system())?),
+                other => dates.push(to_serial_strict(&other, date_system)?),
             },
             CalcValue::Range(range) => {
                 let (rows, cols) = range.dims();
                 for r in 0..rows {
                     for c in 0..cols {
                         let cell = range.get_cell(r, c);
-                        if let Ok(n) = coerce_literal_date_serial(&cell, ctx.date_system()) {
+                        if let Ok(n) = to_serial_strict(&cell, date_system) {
                             dates.push(n);
                         }
                     }
@@ -2156,6 +2177,8 @@ impl Function for XirrFn {
                 )));
             }
         }
+
+        truncate_date_serials(&mut dates);
 
         // Validate
         if values.len() != dates.len() || values.len() < 2 {

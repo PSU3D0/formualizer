@@ -45,13 +45,66 @@ fn lock_error_to_io<E: std::fmt::Display>(e: &E) -> formualizer::workbook::IoErr
     }
 }
 
+/// Tracks, per OS thread, which workbooks are currently inside one of their own
+/// Python custom-function callbacks.
+///
+/// `Workbook`'s state lives behind a plain `std::sync::RwLock`, which is not
+/// reentrant: a callback that calls back into the workbook it is registered on
+/// blocks forever on a lock its own evaluation already holds. The callback runs
+/// on whichever thread the engine dispatched it to (the main thread serially,
+/// or a rayon worker in parallel mode), and any re-entrant call necessarily
+/// happens on that same thread, so a thread-local marker sees every case.
+mod reentrancy {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static ACTIVE: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Marks `id` as evaluating on this thread for the guard's lifetime.
+    pub(super) struct ActiveCallback(usize);
+
+    impl ActiveCallback {
+        pub(super) fn enter(id: usize) -> Self {
+            ACTIVE.with(|active| active.borrow_mut().push(id));
+            Self(id)
+        }
+    }
+
+    impl Drop for ActiveCallback {
+        fn drop(&mut self) {
+            ACTIVE.with(|active| {
+                let mut active = active.borrow_mut();
+                if let Some(pos) = active.iter().rposition(|id| *id == self.0) {
+                    active.remove(pos);
+                }
+            });
+        }
+    }
+
+    pub(super) fn is_active(id: usize) -> bool {
+        ACTIVE.with(|active| active.borrow().contains(&id))
+    }
+}
+
+pub(crate) const REENTRANCY_MESSAGE: &str = "cannot use this Workbook from inside one of its own \
+     custom functions: the evaluation that invoked the callback already holds the workbook lock, so \
+     the call would deadlock. Only cancel() and reset_cancel() are safe from a callback.";
+
 struct PyCustomFnHandler {
     callback: PyObject,
+    /// Identity of the workbook this handler is registered on, used to detect
+    /// re-entrant access. The handler is owned by that workbook, so the `Arc`
+    /// is always alive while the handler runs and the address is stable.
+    workbook_id: usize,
 }
 
 impl PyCustomFnHandler {
-    fn new(callback: PyObject) -> Self {
-        Self { callback }
+    fn new(callback: PyObject, workbook_id: usize) -> Self {
+        Self {
+            callback,
+            workbook_id,
+        }
     }
 
     fn pyerr_to_excel_value(err: pyo3::PyErr, py: Python<'_>) -> ExcelError {
@@ -86,6 +139,9 @@ impl PyCustomFnHandler {
 
 impl formualizer::workbook::CustomFnHandler for PyCustomFnHandler {
     fn call(&self, args: &[LiteralValue]) -> Result<LiteralValue, ExcelError> {
+        // Held for the whole callback so any workbook method this callback
+        // reaches raises instead of deadlocking on the non-reentrant lock.
+        let _active = reentrancy::ActiveCallback::enter(self.workbook_id);
         Python::attach(|py| {
             let callback = self.callback.bind(py);
             let py_args = args
@@ -264,9 +320,7 @@ impl PyWorkbook {
     pub fn sheet(&self, name: &str) -> PyResult<crate::sheet::PySheet> {
         // Ensure sheet exists
         {
-            let mut wb = self.inner.write().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
-            })?;
+            let mut wb = self.write_inner()?;
             // add_sheet is idempotent on duplicate names
             wb.add_sheet(name)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -389,9 +443,7 @@ impl PyWorkbook {
     ) -> PyResult<Bound<'py, PyBytes>> {
         match backend.unwrap_or("umya") {
             "umya" => {
-                let wb = self.inner.read().map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
-                })?;
+                let wb = self.read_inner()?;
                 let bytes = wb.to_xlsx_bytes().map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("save failed: {e}"))
                 })?;
@@ -419,10 +471,7 @@ impl PyWorkbook {
     ///     wb.add_sheet("Outputs")
     /// ```
     pub fn add_sheet(&self, name: &str) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.add_sheet(name)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         let mut sheets = self.sheets.write().unwrap();
@@ -460,9 +509,7 @@ impl PyWorkbook {
         header_row: bool,
         totals_row: bool,
     ) -> PyResult<()> {
-        self.inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?
+        self.write_inner()?
             .define_table(name, sheet, cell_range, headers, header_row, totals_row)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))
     }
@@ -473,10 +520,7 @@ impl PyWorkbook {
     /// `(first_row, first_col, last_row, last_col)` tuple), `headers`,
     /// `header_row` and `totals_row`.
     pub fn tables(&self, py: Python<'_>) -> PyResult<Vec<PyObject>> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let wb = self.read_inner()?;
         let mut out = Vec::new();
         for table in wb.tables() {
             let dict = pyo3::types::PyDict::new(py);
@@ -501,14 +545,46 @@ impl PyWorkbook {
 
     #[getter]
     pub fn sheet_names(&self) -> PyResult<Vec<String>> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let wb = self.read_inner()?;
         Ok(wb.sheet_names())
     }
 
     /// Register a workbook-local custom function backed by a Python callable.
+    ///
+    /// Re-entrancy contract
+    /// --------------------
+    /// **The callback must not touch the workbook it is registered on.** While
+    /// a custom function runs, the evaluation that invoked it holds the
+    /// workbook's lock, and that lock is not reentrant — a call back into the
+    /// same workbook can never be granted. Only `cancel()` and
+    /// `reset_cancel()` are safe from inside a callback: they flip an atomic
+    /// flag and never take the lock.
+    ///
+    /// Every other method (`get_value`, `set_value`, `sheet_names`,
+    /// `evaluate_cell`, `to_xlsx_bytes`, `Sheet.get_cell`, ...) now raises
+    /// `RuntimeError` when called from a callback rather than hanging forever.
+    /// `get_value` may still return from the compatibility cache without
+    /// raising, but that is a cache hit, not a supported operation — do not
+    /// rely on it.
+    ///
+    /// A callback *may* use a different `Workbook` instance, and may of course
+    /// use any non-formualizer Python state.
+    ///
+    /// The callback receives the evaluated arguments as Python values and must
+    /// return a Python value; raising an exception yields `#VALUE!` carrying
+    /// the exception text.
+    ///
+    /// Example:
+    /// ```python
+    ///     import formualizer as fz
+    ///
+    ///     wb = fz.Workbook()
+    ///     wb.register_function("double", lambda x: x * 2, min_args=1, max_args=1)
+    ///     s = wb.sheet("S")
+    ///     s.set_value(1, 1, 21)
+    ///     s.set_formula(1, 2, "=DOUBLE(A1)")
+    ///     print(wb.evaluate_cell("S", 1, 2))  # 42.0
+    /// ```
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (name, callback, *, min_args = 0, max_args = None, volatile = false, thread_safe = false, deterministic = true, allow_override_builtin = false))]
     pub fn register_function(
@@ -528,7 +604,10 @@ impl PyWorkbook {
             ));
         }
 
-        let handler = std::sync::Arc::new(PyCustomFnHandler::new(callback.clone().unbind()));
+        let handler = std::sync::Arc::new(PyCustomFnHandler::new(
+            callback.clone().unbind(),
+            self.workbook_id(),
+        ));
         let options = formualizer::workbook::CustomFnOptions {
             min_args,
             max_args,
@@ -538,30 +617,21 @@ impl PyWorkbook {
             allow_override_builtin,
         };
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.register_custom_function(name, options, handler)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// Unregister a previously registered workbook-local custom function.
     pub fn unregister_function(&self, name: &str) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.unregister_custom_function(name)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
     }
 
     /// List registered workbook-local custom functions and their options.
     pub fn list_functions(&self, py: Python<'_>) -> PyResult<PyObject> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let wb = self.read_inner()?;
         let out = PyList::empty(py);
 
         for info in wb.list_custom_functions() {
@@ -597,10 +667,7 @@ impl PyWorkbook {
     ///     - address fields for `cell`/`range` kinds
     #[pyo3(signature = (sheet=None))]
     pub fn get_named_ranges(&self, py: Python<'_>, sheet: Option<&str>) -> PyResult<PyObject> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let wb = self.read_inner()?;
 
         let engine = wb.engine();
         let entries = if let Some(sheet_name) = sheet {
@@ -699,10 +766,7 @@ impl PyWorkbook {
         validate_cell_coords(row, col)?;
 
         let literal = py_to_literal(value)?;
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.set_value(sheet, row, col, literal.clone())
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
@@ -737,10 +801,7 @@ impl PyWorkbook {
     pub fn set_formula(&self, sheet: &str, row: u32, col: u32, formula: &str) -> PyResult<()> {
         validate_cell_coords(row, col)?;
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.set_formula(sheet, row, col, formula)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         // Update compatibility cache
@@ -785,12 +846,7 @@ impl PyWorkbook {
     ) -> PyResult<PyObject> {
         validate_cell_coords(row, col)?;
 
-        let res = py.detach(|| {
-            self.inner
-                .write()
-                .map_err(|e| lock_error_to_io(&e))?
-                .evaluate_cell(sheet, row, col)
-        });
+        let res = py.detach(|| self.write_inner_detached()?.evaluate_cell(sheet, row, col));
         let v = res.map_err(workbook_error_to_pyerr)?;
         literal_to_py(py, &v)
     }
@@ -801,12 +857,9 @@ impl PyWorkbook {
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
         py.detach(|| {
-            self.inner
-                .write()
-                .map_err(|e| lock_error_to_io(&e))?
-                .evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
-                    self.cancel_flag.clone(),
-                ))
+            self.write_inner_detached()?.evaluate_all_cancellable(
+                formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+            )
         })
         .map_err(workbook_error_to_pyerr)?;
         Ok(())
@@ -835,10 +888,7 @@ impl PyWorkbook {
     ///     print(t.iterated_sccs, t.converged_sccs, t.capped_sccs)
     /// ```
     pub fn last_cycle_telemetry(&self) -> PyResult<PyCycleTelemetry> {
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let wb = self.read_inner()?;
         Ok(PyCycleTelemetry::from_engine(
             wb.engine().last_cycle_telemetry(),
         ))
@@ -871,13 +921,10 @@ impl PyWorkbook {
 
         let results = py
             .detach(|| {
-                self.inner
-                    .write()
-                    .map_err(|e| lock_error_to_io(&e))?
-                    .evaluate_cells_cancellable(
-                        &refs,
-                        formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
-                    )
+                self.write_inner_detached()?.evaluate_cells_cancellable(
+                    &refs,
+                    formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+                )
             })
             .map_err(workbook_error_to_pyerr)?;
 
@@ -909,10 +956,7 @@ impl PyWorkbook {
             .map(|(s, r, c)| (s.as_str(), *r, *c))
             .collect();
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         let plan = wb
             .get_eval_plan_with_options(&refs, build_graph_if_needed)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
@@ -946,10 +990,7 @@ impl PyWorkbook {
                 return Ok(Some(literal_to_py(py, &value)?));
             }
         }
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let wb = self.read_inner()?;
         Ok(match wb.get_value(sheet, row, col) {
             Some(v) => Some(literal_to_py(py, &v)?),
             None => None,
@@ -959,19 +1000,13 @@ impl PyWorkbook {
     pub fn get_formula(&self, sheet: &str, row: u32, col: u32) -> PyResult<Option<String>> {
         validate_cell_coords(row, col)?;
 
-        let wb = self
-            .inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let wb = self.read_inner()?;
         Ok(wb.get_formula(sheet, row, col))
     }
 
     // Changelog controls
     pub fn set_changelog_enabled(&self, enabled: bool) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.set_changelog_enabled(enabled);
         Ok(())
     }
@@ -979,30 +1014,21 @@ impl PyWorkbook {
     // Changelog metadata
     #[pyo3(signature = (actor_id=None))]
     pub fn set_actor_id(&self, actor_id: Option<String>) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.set_actor_id(actor_id);
         Ok(())
     }
 
     #[pyo3(signature = (correlation_id=None))]
     pub fn set_correlation_id(&self, correlation_id: Option<String>) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.set_correlation_id(correlation_id);
         Ok(())
     }
 
     #[pyo3(signature = (reason=None))]
     pub fn set_reason(&self, reason: Option<String>) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.set_reason(reason);
         Ok(())
     }
@@ -1027,30 +1053,21 @@ impl PyWorkbook {
     ///     wb.undo()  # reverts both values at once
     /// ```
     pub fn begin_action(&self, description: &str) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.begin_action(description.to_string());
         Ok(())
     }
 
     /// End the current grouped undo/redo action.
     pub fn end_action(&self) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.end_action();
         Ok(())
     }
 
     /// Undo the most recent workbook edit.
     pub fn undo(&self) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         {
             let mut sheets = self.sheets.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
@@ -1064,10 +1081,7 @@ impl PyWorkbook {
 
     /// Redo the most recently undone edit.
     pub fn redo(&self) -> PyResult<()> {
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         {
             let mut sheets = self.sheets.write().map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
@@ -1099,10 +1113,7 @@ impl PyWorkbook {
             }
             rows_vec.push(row_vals);
         }
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         // Auto-group batch changes into a single undoable action when changelog is enabled
         wb.begin_action("batch: set values".to_string());
         let res = wb
@@ -1150,10 +1161,7 @@ impl PyWorkbook {
             }
             rows_vec.push(row_vals);
         }
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         wb.begin_action("batch: set formulas".to_string());
         let res = wb
             .set_formulas(sheet, start_row, start_col, &rows_vec)
@@ -1184,9 +1192,7 @@ impl PyWorkbook {
     /// Indexing to get a Sheet view (compatibility)
     fn __getitem__(&self, name: &str) -> PyResult<crate::sheet::PySheet> {
         {
-            let mut wb = self.inner.write().map_err(|e| {
-                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}"))
-            })?;
+            let mut wb = self.write_inner()?;
             wb.add_sheet(name)
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
         }
@@ -1459,6 +1465,72 @@ impl PyWorkbook {
         }
     }
 
+    /// Drop the legacy `sheets` compatibility cache. Mutations made through
+    /// internal helpers (e.g. SheetPort) bypass it, so it must be invalidated
+    /// for `get_value()` to stay correct.
+    pub(crate) fn clear_sheet_cache(&self) {
+        if let Ok(mut sheets) = self.sheets.write() {
+            sheets.clear();
+        }
+    }
+
+    /// Stable identity for this workbook, shared by every clone of the handle
+    /// (`PyWorkbook` is `Clone` and `PySheet` holds one).
+    pub(crate) fn workbook_id(&self) -> usize {
+        std::sync::Arc::as_ptr(&self.inner) as usize
+    }
+
+    /// Fail fast when a Python custom-function callback re-enters the workbook
+    /// it is registered on. Without this the call would block forever on the
+    /// non-reentrant `RwLock` the running evaluation already holds.
+    pub(crate) fn check_reentrancy(&self) -> PyResult<()> {
+        if reentrancy::is_active(self.workbook_id()) {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                REENTRANCY_MESSAGE,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Shared access to the engine state, re-entrancy checked.
+    pub(crate) fn read_inner(
+        &self,
+    ) -> PyResult<std::sync::RwLockReadGuard<'_, formualizer::workbook::Workbook>> {
+        self.check_reentrancy()?;
+        self.inner
+            .read()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))
+    }
+
+    /// Exclusive access to the engine state, re-entrancy checked.
+    pub(crate) fn write_inner(
+        &self,
+    ) -> PyResult<std::sync::RwLockWriteGuard<'_, formualizer::workbook::Workbook>> {
+        self.check_reentrancy()?;
+        self.inner
+            .write()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))
+    }
+
+    /// Exclusive access from inside a `py.detach` region: the error type must
+    /// not touch Python, so lock failures and re-entrancy both surface as
+    /// `IoError::Backend`, which `workbook_error_to_pyerr` maps to
+    /// `RuntimeError` exactly as the direct paths above do.
+    pub(crate) fn write_inner_detached(
+        &self,
+    ) -> Result<
+        std::sync::RwLockWriteGuard<'_, formualizer::workbook::Workbook>,
+        formualizer::workbook::IoError,
+    > {
+        if reentrancy::is_active(self.workbook_id()) {
+            return Err(formualizer::workbook::IoError::Backend {
+                backend: "workbook".to_string(),
+                message: REENTRANCY_MESSAGE.to_string(),
+            });
+        }
+        self.inner.write().map_err(|e| lock_error_to_io(&e))
+    }
+
     pub(crate) fn with_workbook_mut<T, F>(&self, f: F) -> PyResult<T>
     where
         F: FnOnce(&mut formualizer::workbook::Workbook) -> PyResult<T>,
@@ -1467,10 +1539,7 @@ impl PyWorkbook {
         // legacy `sheets` cache; invalidate it so `get_value()` stays correct.
         self.sheets.write().unwrap().clear();
 
-        let mut wb = self
-            .inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))?;
+        let mut wb = self.write_inner()?;
         f(&mut wb)
     }
 }

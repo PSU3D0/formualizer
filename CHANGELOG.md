@@ -4,6 +4,18 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Date-typed cells are treated as the numbers they are throughout the financial and statistical builtins. Excel has no separate date type on the sheet — a date cell holds a serial and is only formatted as a date — but three copy-pasted private coercion helpers plus two range collectors had no date arm, so `Date`/`DateTime`/`Time`/`Duration` cells were dropped or rejected. The consequences ranged from loud to invisible: `PRICE`, `YIELD`, `ACCRINT`, `ACCRINTM`, `TBILLPRICE`, `TBILLEQ`, `TBILLYIELD` returned `#VALUE!` when handed the date cells a workbook loaded from XLSX actually contains in their `settlement`/`maturity`/`issue` arguments; `NPV` returned `#VALUE!`; `XNPV`/`XIRR` returned `#NUM!` on their `values` argument; and `IRR`, `MIRR`, `MEDIAN`, `STDEV`, `VAR`, `LARGE`, `SMALL`, `PRODUCT`, `DEVSQ`, `PERCENTILE`, `QUARTILE`, `CORREL`, `SLOPE`, `RSQ`, `COVARIANCE`, `MAXA`, `MINA`, `AVERAGEA`, `STDEVA`, `VARA` and their siblings returned a *different number* with no error at all — while `SUM`, `AVERAGE` and `COUNT` over the very same range counted the date. All of these now agree with the numerically identical serial. (#328)
+- `XNPV` and `XIRR` truncate date serials to whole days. A cell holding `2024-01-01 12:00` (serial 45292.5) now discounts as day 45292, matching Microsoft's documented remark that numbers in dates are truncated to integers, and reproduced against LibreOffice 24.2.7.2, which returns `308.187137202582` where formualizer previously returned `308.357947738306`. (#328)
+- The date-serial conversion used by the financial builtins is now the crate-central `coercion::to_serial_strict` rather than three local duplicates, so it honours the workbook's date system and covers `Time`/`Duration` as well as `Date`/`DateTime`. (#328)
+
+### Python bindings
+
+- `SheetPortSession.evaluate_once`, `write_inputs`, `read_inputs` and `read_outputs` release the GIL while the engine runs. `SheetPortSession` owns a `Workbook` and `from_manifest_yaml` accepts a user-supplied one, so Python-backed custom functions are reachable from a SheetPort evaluation and hit exactly the deadlock fixed on `Workbook.evaluate_*`: the calling thread held the GIL waiting for the parallel layer while rayon workers blocked in `PyGILState_Ensure`. (#327)
+- Using a `Workbook` from inside one of its own Python custom functions raises `RuntimeError` instead of hanging forever. The engine holds a non-reentrant lock for the duration of an evaluation, so `get_value` on an uncached cell, `set_value`, `sheet_names`, a nested `evaluate_*`, `Sheet.get_cell` and every other workbook operation could never be granted and blocked permanently — non-deterministically, since `get_value` served from the compatibility cache returned normally. `cancel()` and `reset_cancel()` remain safe from a callback, and a callback may still drive a *different* workbook. The contract is documented on `register_function`. (#327)
+- The Python test suite is bounded by `faulthandler_timeout` with `faulthandler_exit_on_timeout`, and every CI job has a `timeout-minutes`. A deadlock regression now fails in 90 seconds with every thread's stack dumped, instead of running until GitHub's six-hour default. Measured: neither pytest-timeout's `thread` nor its `signal` method fires during a GIL deadlock, because both need to execute Python. (#327)
+
 ## [0.8.3] - 2026-08-13
 
 ### Fixed

@@ -39,6 +39,9 @@ Repository = "https://github.com/PSU3D0/formualizer"
 dev = [
     "pytest>=9.0.3",
     "pytest-cov>=4.0",
+    # A deadlock regression must fail the suite, not hang the runner: the GIL
+    # deadlock fixed in #327 produced a test that ran >180s with no output.
+    "pytest-timeout>=2.3",
     "ruff>=0.1.0",
     "mypy>=1.0",
     "openpyxl"
@@ -92,6 +95,24 @@ known-first-party = ["formualizer"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "*_test.py"]
+# Two independent bounds, because they fail in different situations.
+#
+# `faulthandler_timeout` is the one that matters for this extension. pytest
+# arms it with `faulthandler.dump_traceback_later(..., exit=True)`, whose
+# watchdog is a *native* thread that never takes the GIL, so it still fires
+# when the interpreter is fully deadlocked (the GIL holder blocked in native
+# code while native threads wait for the GIL - the #327 bug). It dumps every
+# thread's stack and kills the process. MEASURED: neither pytest-timeout's
+# "thread" nor its "signal" method fires in that state, because both need to
+# execute Python.
+faulthandler_timeout = 60
+# Dumping alone is not enough: without this pytest passes `exit=False` and the
+# deadlocked process keeps running until the CI job's own limit. MEASURED.
+faulthandler_exit_on_timeout = true
+# pytest-timeout gives per-test bounds and a proper failure report for hangs
+# that *are* interruptible (a pure-Python loop, a stuck socket). Tests bound
+# themselves more tightly with @pytest.mark.timeout(...).
+timeout = 300
 addopts = [
     "--strict-markers",
     "--strict-config",
@@ -146,4 +167,5 @@ dev = [
     "openpyxl>=3.1.5",
     "pytest>=9.0.3",
     "pytest-cov>=5.0.0",
+    "pytest-timeout>=2.3",
 ]

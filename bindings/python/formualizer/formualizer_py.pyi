@@ -1655,6 +1655,41 @@ class Workbook:
     def register_function(self, name: builtins.str, callback: typing.Any, *, min_args: builtins.int = 0, max_args: typing.Optional[builtins.int] = None, volatile: builtins.bool = False, thread_safe: builtins.bool = False, deterministic: builtins.bool = True, allow_override_builtin: builtins.bool = False) -> None:
         r"""
         Register a workbook-local custom function backed by a Python callable.
+        
+        Re-entrancy contract
+        --------------------
+        **The callback must not touch the workbook it is registered on.** While
+        a custom function runs, the evaluation that invoked it holds the
+        workbook's lock, and that lock is not reentrant — a call back into the
+        same workbook can never be granted. Only `cancel()` and
+        `reset_cancel()` are safe from inside a callback: they flip an atomic
+        flag and never take the lock.
+        
+        Every other method (`get_value`, `set_value`, `sheet_names`,
+        `evaluate_cell`, `to_xlsx_bytes`, `Sheet.get_cell`, ...) now raises
+        `RuntimeError` when called from a callback rather than hanging forever.
+        `get_value` may still return from the compatibility cache without
+        raising, but that is a cache hit, not a supported operation — do not
+        rely on it.
+        
+        A callback *may* use a different `Workbook` instance, and may of course
+        use any non-formualizer Python state.
+        
+        The callback receives the evaluated arguments as Python values and must
+        return a Python value; raising an exception yields `#VALUE!` carrying
+        the exception text.
+        
+        Example:
+        ```python
+            import formualizer as fz
+        
+            wb = fz.Workbook()
+            wb.register_function("double", lambda x: x * 2, min_args=1, max_args=1)
+            s = wb.sheet("S")
+            s.set_value(1, 1, 21)
+            s.set_formula(1, 2, "=DOUBLE(A1)")
+            print(wb.evaluate_cell("S", 1, 2))  # 42.0
+        ```
         """
     def unregister_function(self, name: builtins.str) -> None:
         r"""
