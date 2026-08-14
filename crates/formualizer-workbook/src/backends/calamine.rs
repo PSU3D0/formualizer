@@ -1498,13 +1498,19 @@ where
         if debug {
             eprintln!("[fz][load] calamine: {} sheets", names.len());
         }
-        for n in &names {
-            #[cfg(feature = "tracing")]
-            let _span_sheet = tracing::info_span!("io_load_sheet", sheet = n.as_str()).entered();
-            engine
-                .add_sheet(n.as_str())
-                .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
-        }
+        // Single seam for sheet registration across every backend: folds the
+        // engine's seeded default sheet into the file's first sheet on a fresh
+        // engine and rejects duplicate names (#332). Registration is one bulk
+        // call now, so the former per-sheet `io_load_sheet` span becomes one
+        // `io_load_sheets` span over the whole registration.
+        #[cfg(feature = "tracing")]
+        let _span_sheets =
+            tracing::info_span!("io_load_sheets", sheet_count = names.len()).entered();
+        engine
+            .adopt_file_sheets(names.iter().map(|n| n.as_str()))
+            .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?;
+        #[cfg(feature = "tracing")]
+        drop(_span_sheets);
 
         let prev_index_mode = engine.config.sheet_index_mode;
         engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);

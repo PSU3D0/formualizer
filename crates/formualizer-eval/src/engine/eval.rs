@@ -5321,6 +5321,12 @@ where
         &self.arrow_sheets
     }
 
+    /// True when any sheet carries manual/filter row-visibility state.
+    /// Used by load-time freshness checks (see `Engine::adopt_file_sheets`).
+    pub(crate) fn has_row_visibility_state(&self) -> bool {
+        !self.row_visibility.is_empty()
+    }
+
     /// Access Arrow sheet store (mutable)
     pub fn sheet_store_mut(&mut self) -> &mut SheetStore {
         &mut self.arrow_sheets

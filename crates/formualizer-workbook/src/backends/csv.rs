@@ -627,8 +627,12 @@ where
     ) -> Result<(), Self::Error> {
         // CSV is values only; keep engine date system default.
         let sheet_name = self.sheet_name.clone();
+        // Single seam for sheet registration across every backend: folds the
+        // engine's seeded default sheet into the file's first sheet on a fresh
+        // engine and rejects duplicate names (#332). CSV happens to use the
+        // default sheet name today, but it no longer depends on that.
         engine
-            .add_sheet(&sheet_name)
+            .adopt_file_sheets([sheet_name.as_str()])
             .map_err(|e| IoError::from_backend("csv", e))?;
 
         let Some((rows_u32, cols_u32)) = self.sheet.bounds() else {

@@ -23,6 +23,8 @@ mod row_visibility;
 #[cfg(feature = "umya")]
 mod save;
 #[cfg(feature = "umya")]
+mod sheet_load;
+#[cfg(feature = "umya")]
 mod tables;
 #[cfg(feature = "umya")]
 mod write;

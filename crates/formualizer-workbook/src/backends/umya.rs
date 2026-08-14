@@ -1185,9 +1185,12 @@ where
                 t_names.elapsed().as_secs_f64() * 1000.0,
             );
         }
-        for n in &names {
-            engine.add_sheet(n).map_err(IoError::Engine)?;
-        }
+        // Single seam for sheet registration across every backend: folds the
+        // engine's seeded default sheet into the file's first sheet on a fresh
+        // engine and rejects duplicate names (#332).
+        engine
+            .adopt_file_sheets(names.iter().map(|n| n.as_str()))
+            .map_err(IoError::Engine)?;
 
         let prev_index_mode = engine.config.sheet_index_mode;
         engine.set_sheet_index_mode(formualizer_eval::engine::SheetIndexMode::Lazy);

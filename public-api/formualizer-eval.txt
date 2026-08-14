@@ -1434,6 +1434,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::virtual_dep_fallback_activatio
 pub fn formualizer_eval::engine::eval::Engine<R>::with_thread_pool(R, formualizer_eval::engine::EvalConfig, alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>) -> Self
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_load_limits(&self) -> &formualizer_eval::engine::WorkbookLoadLimits
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
+pub fn formualizer_eval::engine::eval::Engine<R>::adopt_file_sheets<'a, I>(&mut self, I) -> core::result::Result<alloc::vec::Vec<formualizer_eval::reference::SheetId>, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = &'a str>
+impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
@@ -6034,6 +6036,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::vertex_value(&self, formualize
 pub fn formualizer_eval::engine::eval::Engine<R>::virtual_dep_fallback_activations(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::with_thread_pool(R, formualizer_eval::engine::EvalConfig, alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>) -> Self
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_load_limits(&self) -> &formualizer_eval::engine::WorkbookLoadLimits
+impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
+pub fn formualizer_eval::engine::eval::Engine<R>::adopt_file_sheets<'a, I>(&mut self, I) -> core::result::Result<alloc::vec::Vec<formualizer_eval::reference::SheetId>, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = &'a str>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
