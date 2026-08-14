@@ -4,6 +4,11 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- A name scoped to a single sheet no longer answers a query that asked for no scope. `has_name(name, None)` and `resolved_name_value(name, None)` mapped the absent scope to the *default* sheet, and sheet-scoped names are resolved before workbook-scoped ones, so a name scoped only to `Sheet1` was indistinguishable from a workbook-scoped name — while the same query against any other sheet correctly reported it absent. An unscoped query now means workbook scope, and nothing else. (#110)
+- Target preparation no longer pulls in the default sheet for range dependencies that carry an unresolved sheet locator. A `Current` locator means "the sheet this reference lives on", and two sites substituted the workbook default instead — one of them via a `_` wildcard that also swallowed named-sheet locators, so a sheet name that failed to resolve silently became the default sheet. A named formula scoped to `Alpha` with a whole-column dependency selected cells on both `Alpha` and `Sheet1`; it now selects `Alpha` alone. Sheet resolution for these paths is now a single derivation that requires an explicit context sheet, and every locator variant is matched exhaustively so a new variant is a compile error rather than a silent default. (#110)
+
 ### Changed
 
 - **Loading a file no longer leaves a phantom default sheet, so sheet indices shift.** A freshly constructed `Workbook`/`Engine` is seeded with one default sheet (`Sheet1`), and every backend loader appended the file's sheets alongside it. Loading a workbook whose sheets were `Data` and `Extra` produced `sheet_names() == ["Sheet1", "Data", "Extra"]` — a sheet that does not exist in the file — and `SHEET()` on the file's first sheet returned `2` instead of `1`. The default sheet is now folded into the file's first sheet, so the same load produces `["Data", "Extra"]` with `SHEET()` returning `1` and `2`. This affects the calamine, umya, json and csv backends alike; previously only csv was accidentally immune, because its sheet name is `Sheet1` by default and so always collided with the seeded one. (#332)

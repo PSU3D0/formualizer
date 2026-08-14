@@ -199,9 +199,14 @@ impl PreparedLegacyGraphPlan {
             let target_row = target.row0();
             let target_col = target.col0();
             let range_contains_target = formula.plan.range_deps.iter().any(|range| {
+                // `Current` is the formula's own sheet. This plan carries no
+                // sheet registry, so an unresolved `Name` is interpreted the
+                // same way rather than dropping the range from the count.
                 let sheet_id = match range.sheet {
                     SharedSheetLocator::Id(id) => id,
-                    _ => formula.current_sheet_id,
+                    SharedSheetLocator::Current | SharedSheetLocator::Name(_) => {
+                        formula.current_sheet_id
+                    }
                 };
                 sheet_id == target.sheet_id()
                     && range
@@ -370,10 +375,12 @@ impl DependencyGraph {
                         .entry(id)
                         .or_insert(self.checked_sheet_name(id)?);
                 }
-                let range_sheet = match range.sheet {
-                    SharedSheetLocator::Id(id) => id,
-                    _ => *sheet_id,
-                };
+                // `Current` is the formula's own sheet; an unresolvable name
+                // is bounds-checked against it rather than skipped.
+                let range_sheet = self
+                    .sheet_reg
+                    .resolve_locator(&range.sheet, *sheet_id)
+                    .unwrap_or(*sheet_id);
                 for bound in [range.start_row, range.end_row].into_iter().flatten() {
                     if bound.index > PackedSheetCell::MAX_ROW0 {
                         return Err(PreparedLegacyGraphError::InvalidCoordinate {

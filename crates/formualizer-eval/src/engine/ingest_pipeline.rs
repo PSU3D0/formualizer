@@ -519,16 +519,8 @@ impl<'a> IngestPipeline<'a> {
         sheet: SharedSheetLocator<'static>,
         current_sheet_id: SheetId,
     ) -> Result<SheetId, ExcelError> {
-        match sheet {
-            SharedSheetLocator::Id(id) => Ok(id),
-            SharedSheetLocator::Current => Ok(current_sheet_id),
-            SharedSheetLocator::Name(name) => {
-                self.sheet_registry.get_id(name.as_ref()).ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::Ref)
-                        .with_message(format!("Sheet not found: {name}"))
-                })
-            }
-        }
+        self.sheet_registry
+            .resolve_locator(&sheet, current_sheet_id)
     }
 
     fn rewrite_structured_references_for_cell(

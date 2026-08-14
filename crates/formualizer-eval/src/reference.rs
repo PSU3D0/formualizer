@@ -247,11 +247,16 @@ impl CellRef {
         )
     }
 
+    /// A `CellRef` is sheet-resolved by construction, so an unresolved locator
+    /// is `#REF!` rather than something to guess at: there is no context sheet
+    /// here to interpret `Current` against (issue #110).
     pub fn try_from_shared(cell: SharedCellRef<'_>) -> Result<Self, ExcelError> {
         let owned = cell.into_owned();
         let sheet_id = match owned.sheet {
             SharedSheetLocator::Id(id) => id,
-            _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+            SharedSheetLocator::Current | SharedSheetLocator::Name(_) => {
+                return Err(ExcelError::new(ExcelErrorKind::Ref));
+            }
         };
         Ok(Self::new(sheet_id, Coord(owned.coord)))
     }
@@ -296,11 +301,14 @@ impl RangeRef {
             .map_err(|_| ExcelError::new(ExcelErrorKind::Ref))
     }
 
+    /// See [`CellRef::try_from_shared`]: an unresolved locator is `#REF!`.
     pub fn try_from_shared(range: SharedRangeRef<'_>) -> Result<Self, ExcelError> {
         let owned = range.into_owned();
         let sheet_id = match owned.sheet {
             SharedSheetLocator::Id(id) => id,
-            _ => return Err(ExcelError::new(ExcelErrorKind::Ref)),
+            SharedSheetLocator::Current | SharedSheetLocator::Name(_) => {
+                return Err(ExcelError::new(ExcelErrorKind::Ref));
+            }
         };
         let (sr, sc, er, ec) = match (
             owned.start_row,

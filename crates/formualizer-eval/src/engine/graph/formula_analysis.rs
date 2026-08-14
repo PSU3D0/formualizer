@@ -104,13 +104,11 @@ fn collect_graph_reference(
         SemanticReference::OpenRange(range) => {
             if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
                 let owned = range.into_owned();
-                let sheet_id = match owned.sheet {
-                    SharedSheetLocator::Id(id) => id,
-                    SharedSheetLocator::Current => context.current_sheet_id,
-                    SharedSheetLocator::Name(name) => {
-                        context.graph.resolve_existing_sheet_id(name.as_ref())?
-                    }
-                };
+                // `Current` is the sheet the formula lives on.
+                let sheet_id = context
+                    .graph
+                    .sheet_reg()
+                    .resolve_locator(&owned.sheet, context.current_sheet_id)?;
                 context.range_dependencies.push(SharedRangeRef {
                     sheet: SharedSheetLocator::Id(sheet_id),
                     start_row: owned.start_row,
@@ -149,13 +147,11 @@ fn collect_graph_reference(
                 }
             } else if let Some(SharedRef::Range(range)) = range.original.to_sheet_ref_lossy() {
                 let owned = range.into_owned();
-                let sheet_id = match owned.sheet {
-                    SharedSheetLocator::Id(id) => id,
-                    SharedSheetLocator::Current => context.current_sheet_id,
-                    SharedSheetLocator::Name(name) => {
-                        context.graph.resolve_existing_sheet_id(name.as_ref())?
-                    }
-                };
+                // `Current` is the sheet the formula lives on.
+                let sheet_id = context
+                    .graph
+                    .sheet_reg()
+                    .resolve_locator(&owned.sheet, context.current_sheet_id)?;
                 context.range_dependencies.push(SharedRangeRef {
                     sheet: SharedSheetLocator::Id(sheet_id),
                     start_row: owned.start_row,

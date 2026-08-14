@@ -1749,10 +1749,11 @@ impl DependencyGraph {
             let target_row = target.row0();
             let target_col = target.col0();
             if plan.range_deps.iter().any(|range| {
-                let range_sheet = match range.sheet {
-                    SharedSheetLocator::Id(id) => id,
-                    _ => *sheet_id,
-                };
+                // `Current` is the formula's own sheet.
+                let range_sheet = self
+                    .sheet_reg
+                    .resolve_locator(&range.sheet, *sheet_id)
+                    .unwrap_or(*sheet_id);
                 range_sheet == *sheet_id
                     && range
                         .start_row
@@ -3199,10 +3200,11 @@ impl DependencyGraph {
             let old_sheet_id = self.store.sheet_id(vertex);
 
             for range in &old_ranges {
-                let sheet_id = match range.sheet {
-                    SharedSheetLocator::Id(id) => id,
-                    _ => old_sheet_id,
-                };
+                // `Current` is the sheet the moved formula used to live on.
+                let sheet_id = self
+                    .sheet_reg
+                    .resolve_locator(&range.sheet, old_sheet_id)
+                    .unwrap_or(old_sheet_id);
                 let s_row = range.start_row.map(|b| b.index);
                 let e_row = range.end_row.map(|b| b.index);
                 let s_col = range.start_col.map(|b| b.index);
@@ -3847,10 +3849,12 @@ impl DependencyGraph {
             };
             let mut hit = false;
             for range in ranges {
-                let range_sheet_id = match range.sheet {
-                    SharedSheetLocator::Id(id) => id,
-                    _ => sheet_id,
-                };
+                // `Current` is the dependent formula's own sheet; an
+                // unresolvable name keeps the dependent in the candidate set.
+                let range_sheet_id = self
+                    .sheet_reg
+                    .resolve_locator(&range.sheet, self.get_vertex_sheet_id(dep_id))
+                    .unwrap_or(sheet_id);
                 if range_sheet_id != sheet_id {
                     continue;
                 }

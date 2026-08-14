@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
+use formualizer_common::{ExcelError, ExcelErrorKind};
+
 use crate::SheetId;
+use crate::reference::SharedSheetLocator;
 
 #[derive(Default, Debug)]
 pub struct SheetRegistry {
@@ -38,6 +41,35 @@ impl SheetRegistry {
     pub fn get_id(&self, name: &str) -> Option<SheetId> {
         // Case-insensitive (Excel): e.g. INDIRECT("Config!B8") must find the sheet named "CONFIG".
         self.id_by_name.get(&name.to_lowercase()).copied()
+    }
+
+    /// Resolve a [`SharedSheetLocator`] against an explicit context sheet.
+    ///
+    /// This is the single owned derivation from a locator to a [`SheetId`].
+    /// Every variant is matched explicitly so that adding a variant is a
+    /// compile error rather than a silent default:
+    ///
+    /// * `Id` is already resolved.
+    /// * `Current` means "the sheet this reference lives on" and is taken from
+    ///   `context_sheet`. It is never the workbook's default sheet: a caller
+    ///   without a context sheet has lost the information the reference needs,
+    ///   and substituting the default sheet leaks the reference onto an
+    ///   unrelated sheet (issue #110). Such callers must supply the context or
+    ///   surface an error.
+    /// * `Name` must name a registered sheet; an unknown name is `#REF!`.
+    pub fn resolve_locator(
+        &self,
+        locator: &SharedSheetLocator<'_>,
+        context_sheet: SheetId,
+    ) -> Result<SheetId, ExcelError> {
+        match locator {
+            SharedSheetLocator::Id(id) => Ok(*id),
+            SharedSheetLocator::Current => Ok(context_sheet),
+            SharedSheetLocator::Name(name) => self.get_id(name.as_ref()).ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Ref)
+                    .with_message(format!("Sheet not found: {name}"))
+            }),
+        }
     }
 
     /// Count active sheets without cloning sheet names.

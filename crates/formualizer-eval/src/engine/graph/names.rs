@@ -282,22 +282,53 @@ impl DependencyGraph {
         self.sheet_named_ranges.iter()
     }
 
-    pub fn resolve_name_entry(&self, name: &str, current_sheet: SheetId) -> Option<&NamedRange> {
-        if self.config.case_sensitive_names {
-            self.sheet_named_ranges
-                .get(&(current_sheet, name.to_string()))
-                .or_else(|| self.named_ranges.get(name))
-        } else {
-            let key = self.name_lookup_key(name);
-            self.sheet_named_ranges_lookup
-                .get(&(current_sheet, key.clone()))
-                .and_then(|canon| self.sheet_named_ranges.get(&(current_sheet, canon.clone())))
-                .or_else(|| {
-                    self.named_ranges_lookup
-                        .get(&key)
-                        .and_then(|canon| self.named_ranges.get(canon))
-                })
+    /// Resolve a name in an explicit [`NameScope`].
+    ///
+    /// [`NameScope::Sheet`] looks in that sheet's names first and falls back to
+    /// workbook scope, matching Excel's shadowing rules. [`NameScope::Workbook`]
+    /// looks in workbook-scoped names **only**: a sheet-scoped name is invisible
+    /// to a workbook-scope query even when it is scoped to the default sheet.
+    ///
+    /// This is the single owned derivation for name scoping. A caller with no
+    /// sheet context asks for [`NameScope::Workbook`], never for the default
+    /// sheet's scope - substituting the default sheet for missing context is
+    /// what leaked references onto unrelated sheets in issue #110.
+    pub fn resolve_name_entry_in_scope(&self, name: &str, scope: NameScope) -> Option<&NamedRange> {
+        let workbook_entry = || {
+            if self.config.case_sensitive_names {
+                self.named_ranges.get(name)
+            } else {
+                self.named_ranges_lookup
+                    .get(&self.name_lookup_key(name))
+                    .and_then(|canon| self.named_ranges.get(canon))
+            }
+        };
+
+        match scope {
+            NameScope::Workbook => workbook_entry(),
+            NameScope::Sheet(current_sheet) => {
+                if self.config.case_sensitive_names {
+                    self.sheet_named_ranges
+                        .get(&(current_sheet, name.to_string()))
+                        .or_else(workbook_entry)
+                } else {
+                    let key = self.name_lookup_key(name);
+                    self.sheet_named_ranges_lookup
+                        .get(&(current_sheet, key))
+                        .and_then(|canon| {
+                            self.sheet_named_ranges.get(&(current_sheet, canon.clone()))
+                        })
+                        .or_else(workbook_entry)
+                }
+            }
         }
+    }
+
+    /// Resolve a name as seen from `current_sheet`: sheet scope shadows
+    /// workbook scope. Equivalent to [`Self::resolve_name_entry_in_scope`] with
+    /// [`NameScope::Sheet`].
+    pub fn resolve_name_entry(&self, name: &str, current_sheet: SheetId) -> Option<&NamedRange> {
+        self.resolve_name_entry_in_scope(name, NameScope::Sheet(current_sheet))
     }
 
     /// Resolve a named range to its definition
