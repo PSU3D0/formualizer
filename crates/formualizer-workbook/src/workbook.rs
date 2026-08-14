@@ -2578,6 +2578,19 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
+        // Pre-allocate the Arrow sheet to the full batch extent ONCE, so the
+        // per-cell `mirror_value_to_overlay` → `ensure_row_capacity` → `grow_len_to`
+        // (which rebuilds the whole column's type-tag/lanes on every call) is
+        // amortized to O(N) instead of O(N²). Mirrors set_formulas_inner.
+        let height = rows.len();
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if height == 0 || width == 0 {
+            return Ok(());
+        }
+        let end_row = start_row.saturating_add((height - 1) as u32);
+        let end_col = start_col.saturating_add((width - 1) as u32);
+        self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
+
         if self.enable_changelog {
             let sheet_id = self
                 .engine
