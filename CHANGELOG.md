@@ -4,10 +4,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
-### Fixed
-
-- A name scoped to a single sheet no longer answers a query that asked for no scope. `has_name(name, None)` and `resolved_name_value(name, None)` mapped the absent scope to the *default* sheet, and sheet-scoped names are resolved before workbook-scoped ones, so a name scoped only to `Sheet1` was indistinguishable from a workbook-scoped name — while the same query against any other sheet correctly reported it absent. An unscoped query now means workbook scope, and nothing else. (#110)
-- Target preparation no longer pulls in the default sheet for range dependencies that carry an unresolved sheet locator. A `Current` locator means "the sheet this reference lives on", and two sites substituted the workbook default instead — one of them via a `_` wildcard that also swallowed named-sheet locators, so a sheet name that failed to resolve silently became the default sheet. A named formula scoped to `Alpha` with a whole-column dependency selected cells on both `Alpha` and `Sheet1`; it now selects `Alpha` alone. Sheet resolution for these paths is now a single derivation that requires an explicit context sheet, and every locator variant is matched exhaustively so a new variant is a compile error rather than a silent default. (#110)
+## [0.8.4] - 2026-08-14
 
 ### Changed
 
@@ -24,6 +21,9 @@ All notable changes to Formualizer will be documented in this file.
 - `Workbook::set_values` — the batch path behind `Sheet.setValues` in the JS/WASM binding — pre-allocates the Arrow sheet to the batch extent once instead of growing it a row at a time. Each per-cell growth rebuilt the whole column's type-tag array and every present lane, so a batch of N cells did O(N²) work. Measured natively on a single numeric column: 20,000 rows went from 835 ms to 126 ms, a 6.6× improvement, with per-cell cost flat rather than growing with N. Contributed externally. (#335)
 
 ### Fixed
+
+- A name scoped to a single sheet no longer answers a query that asked for no scope. `has_name(name, None)` and `resolved_name_value(name, None)` mapped the absent scope to the *default* sheet, and sheet-scoped names are resolved before workbook-scoped ones, so a name scoped only to `Sheet1` was indistinguishable from a workbook-scoped name — while the same query against any other sheet correctly reported it absent. An unscoped query now means workbook scope, and nothing else. (#110)
+- Target preparation no longer pulls in the default sheet for range dependencies that carry an unresolved sheet locator. A `Current` locator means "the sheet this reference lives on", and two sites substituted the workbook default instead — one of them via a `_` wildcard that also swallowed named-sheet locators, so a sheet name that failed to resolve silently became the default sheet. A named formula scoped to `Alpha` with a whole-column dependency selected cells on both `Alpha` and `Sheet1`; it now selects `Alpha` alone. Sheet resolution for these paths is now a single derivation that requires an explicit context sheet, and every locator variant is matched exhaustively so a new variant is a compile error rather than a silent default. (#110)
 
 - Batch writes no longer report a sheet extent larger than the cells they wrote. `set_formulas` computed its pre-allocation from the row count including trailing empty rows, which write nothing, so a batch ending in an empty row reported one row too many — and a batch anchored at the last grid row reported row 1,048,577, which cannot exist. `set_values` inherited the same computation when it gained pre-allocation. Both now derive the extent from the last row that actually contains cells. (#335)
 
@@ -470,7 +470,8 @@ All notable changes to Formualizer will be documented in this file.
 
 - Incomplete product release due to partial publication during the release workflow. Superseded by `0.5.1`.
 
-[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/PSU3D0/formualizer/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/PSU3D0/formualizer/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/PSU3D0/formualizer/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/PSU3D0/formualizer/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/PSU3D0/formualizer/compare/v0.8.0...v0.8.1
