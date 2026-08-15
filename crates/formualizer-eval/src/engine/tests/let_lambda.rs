@@ -228,3 +228,73 @@ fn nested_let_lambda_dependency_recalc_engine() {
         Some(LiteralValue::Number(22.0))
     );
 }
+
+#[test]
+fn let_range_binding_feeds_aggregates_engine() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+
+    for (row, v) in [(1u32, 1.0), (2, 2.0), (3, 3.0)] {
+        engine
+            .set_cell_value("Sheet1", row, 2, LiteralValue::Number(v))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=LET(r,B1:B3,SUM(r))").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            parse("=LET(r,B1:B3,SUM(r)+COUNT(r))").unwrap(),
+        )
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(6.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(9.0))
+    );
+}
+
+#[test]
+fn let_range_binding_shadows_workbook_name_engine() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+
+    engine
+        .define_name(
+            "r",
+            NamedDefinition::Literal(LiteralValue::Number(100.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    for (row, v) in [(1u32, 1.0), (2, 2.0), (3, 3.0)] {
+        engine
+            .set_cell_value("Sheet1", row, 2, LiteralValue::Number(v))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=LET(r,B1:B3,SUM(r))").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 2, 1, parse("=SUM(r)").unwrap())
+        .unwrap();
+
+    engine.evaluate_all().unwrap();
+
+    // The LET-local binding wins inside the LET body...
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(6.0))
+    );
+    // ...while the workbook name still resolves outside it.
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(100.0))
+    );
+}
