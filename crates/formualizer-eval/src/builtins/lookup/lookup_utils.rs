@@ -112,6 +112,9 @@ impl<'a> PreparedLookupMatcher<'a> {
                 let folded_candidate = candidate_text.to_lowercase();
                 compiled.matches_folded(&folded_candidate)
             }
+            // Excel exact lookups never match a text needle against a
+            // non-text candidate: "20" does not find the number 20.
+            (Some(_), _) => false,
             _ => cmp_for_lookup(self.needle, candidate, self.date_system)
                 .map(|o| o == 0)
                 .unwrap_or(false),
@@ -534,6 +537,10 @@ fn find_exact_text_in_view(
     let compiled_wildcard = (wildcard && (s.contains('*') || s.contains('?') || s.contains('~')))
         .then(|| CompiledWildcardPattern::from_folded(&needle_folded));
 
+    // The lowered-text lane can carry text renderings of non-text cells
+    // (some load paths materialize them), so a lane hit is only a match
+    // when the underlying cell value really is text: Excel exact lookups
+    // never match a text needle against a number/boolean/date cell.
     if vertical {
         for res in view.lowered_text_slices() {
             let (row_start, _row_len, cols) = res?;
@@ -542,11 +549,12 @@ fn find_exact_text_in_view(
                 for i in 0..arr.len() {
                     if !arr.is_null(i) {
                         let val = arr.value(i);
-                        if let Some(pattern) = &compiled_wildcard {
-                            if pattern.matches_folded(val) {
-                                return Ok(Some(row_start + i));
-                            }
-                        } else if val == needle_folded {
+                        let hit = if let Some(pattern) = &compiled_wildcard {
+                            pattern.matches_folded(val)
+                        } else {
+                            val == needle_folded
+                        };
+                        if hit && matches!(view.get_cell(row_start + i, 0), LiteralValue::Text(_)) {
                             return Ok(Some(row_start + i));
                         }
                     }
@@ -559,11 +567,12 @@ fn find_exact_text_in_view(
             for (c, arr) in cols.iter().enumerate() {
                 if !arr.is_null(0) {
                     let val = arr.value(0);
-                    if let Some(pattern) = &compiled_wildcard {
-                        if pattern.matches_folded(val) {
-                            return Ok(Some(c));
-                        }
-                    } else if val == needle_folded {
+                    let hit = if let Some(pattern) = &compiled_wildcard {
+                        pattern.matches_folded(val)
+                    } else {
+                        val == needle_folded
+                    };
+                    if hit && matches!(view.get_cell(0, c), LiteralValue::Text(_)) {
                         return Ok(Some(c));
                     }
                 }
