@@ -288,7 +288,7 @@ impl PySheetPortSession {
     }
 }
 
-fn parse_timezone_spec(obj: &Bound<'_, PyAny>) -> PyResult<TimeZoneSpec> {
+pub(crate) fn parse_timezone_spec(obj: &Bound<'_, PyAny>) -> PyResult<TimeZoneSpec> {
     if let Ok(s) = obj.extract::<String>() {
         match s.to_ascii_lowercase().as_str() {
             "utc" => Ok(TimeZoneSpec::Utc),
