@@ -191,6 +191,10 @@ impl LookupIndex {
         {
             return self.first_empty;
         }
+        // Excel: an empty-string needle matches a blank cell.
+        if matches!(needle, LiteralValue::Text(s) if s.is_empty()) {
+            return self.first_empty;
+        }
         None
     }
 
