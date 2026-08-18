@@ -213,18 +213,63 @@ fn unregister_js_callback(callback_id: u64) {
     JS_CALLBACK_REGISTRY.with(|registry| registry.borrow_mut().remove(callback_id));
 }
 
-fn cell_coords_are_valid(row: u32, col: u32) -> bool {
-    row != 0 && col != 0
-}
+/// Excel's grid limits, mirroring `formualizer_common::coord`.
+const MAX_ROW: u32 = 1_048_576;
+const MAX_COL: u32 = 16_384;
 
 fn validate_cell_coords(row: u32, col: u32) -> Result<(), JsValue> {
-    if cell_coords_are_valid(row, col) {
-        Ok(())
-    } else {
-        Err(js_error(format!(
+    if row == 0 || col == 0 {
+        return Err(js_error(format!(
             "row/col are 1-based (row={row}, col={col})"
-        )))
+        )));
     }
+    // The engine packs coordinates into 20-bit row / 14-bit column fields and
+    // asserts on overflow. In WASM a panic aborts the whole module, so reject
+    // out-of-grid coordinates as an ordinary JS error instead.
+    if row > MAX_ROW || col > MAX_COL {
+        return Err(js_error(format!(
+            "row/col exceed the maximum supported cell {MAX_ROW}x{MAX_COL} (row={row}, col={col})"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate the top-left anchor of a batch write plus the block extent,
+/// so a batch that would run off the end of the grid is rejected up front.
+fn validate_block(
+    start_row: u32,
+    start_col: u32,
+    rows: usize,
+    cols: usize,
+) -> Result<(), JsValue> {
+    validate_cell_coords(start_row, start_col)?;
+    let last_row = (start_row as u64) + rows.saturating_sub(1) as u64;
+    let last_col = (start_col as u64) + cols.saturating_sub(1) as u64;
+    if last_row > MAX_ROW as u64 {
+        return Err(js_error(format!(
+            "block ending at row {last_row} exceeds maximum {MAX_ROW}"
+        )));
+    }
+    if last_col > MAX_COL as u64 {
+        return Err(js_error(format!(
+            "block ending at col {last_col} exceeds maximum {MAX_COL}"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate a table range tuple (start_row, start_col, end_row, end_col).
+/// All coordinates must be 1-based, within grid limits, and start <= end.
+fn validate_table_range(range: (u32, u32, u32, u32)) -> Result<(), JsValue> {
+    let (start_row, start_col, end_row, end_col) = range;
+    validate_cell_coords(start_row, start_col)?;
+    validate_cell_coords(end_row, end_col)?;
+    if start_row > end_row || start_col > end_col {
+        return Err(js_error(format!(
+            "table range must have start <= end (got start=({start_row},{start_col}), end=({end_row},{end_col}))"
+        )));
+    }
+    Ok(())
 }
 
 fn parse_target_coord(raw: Option<f64>, label: &str, index: u32) -> Result<u32, JsValue> {
@@ -378,77 +423,31 @@ pub(crate) fn js_to_literal(value: &JsValue) -> formualizer::LiteralValue {
     LiteralValue::Text(format!("{value:?}"))
 }
 
-pub(crate) enum BindingValue {
-    Empty,
-    Boolean(bool),
-    Number(f64),
-    Text(String),
-    Array(Vec<Vec<BindingValue>>),
-    Date(String),
-    DateTime(String),
-    Time(String),
-    Duration(String),
-    Pending,
-    Error {
-        display: String,
-        code: String,
-        message: Option<String>,
-    },
-}
-
-pub(crate) fn binding_value(value: &formualizer::LiteralValue) -> BindingValue {
-    match value {
-        formualizer::LiteralValue::Empty => BindingValue::Empty,
-        formualizer::LiteralValue::Boolean(value) => BindingValue::Boolean(*value),
-        formualizer::LiteralValue::Int(value) => BindingValue::Number(*value as f64),
-        formualizer::LiteralValue::Number(value) => BindingValue::Number(*value),
-        formualizer::LiteralValue::Text(value) => BindingValue::Text(value.clone()),
-        formualizer::LiteralValue::Array(rows) => BindingValue::Array(
-            rows.iter()
-                .map(|row| row.iter().map(binding_value).collect())
-                .collect(),
-        ),
-        formualizer::LiteralValue::Date(value) => BindingValue::Date(value.to_string()),
-        formualizer::LiteralValue::DateTime(value) => BindingValue::DateTime(value.to_string()),
-        formualizer::LiteralValue::Time(value) => BindingValue::Time(value.to_string()),
-        formualizer::LiteralValue::Duration(value) => BindingValue::Duration(format!("{value:?}")),
-        formualizer::LiteralValue::Pending => BindingValue::Pending,
-        formualizer::LiteralValue::Error(error) => BindingValue::Error {
-            display: error.to_string(),
-            code: error.kind.to_string(),
-            message: error.message.clone(),
-        },
-    }
-}
-
-fn binding_value_to_js(value: BindingValue) -> JsValue {
-    match value {
-        BindingValue::Empty => JsValue::NULL,
-        BindingValue::Boolean(value) => JsValue::from_bool(value),
-        BindingValue::Number(value) => JsValue::from_f64(value),
-        BindingValue::Text(value)
-        | BindingValue::Date(value)
-        | BindingValue::DateTime(value)
-        | BindingValue::Time(value)
-        | BindingValue::Duration(value) => JsValue::from_str(&value),
-        BindingValue::Array(rows) => {
+pub(crate) fn literal_to_js(v: &formualizer::LiteralValue) -> JsValue {
+    match v {
+        formualizer::LiteralValue::Empty => JsValue::NULL,
+        formualizer::LiteralValue::Boolean(b) => JsValue::from_bool(*b),
+        formualizer::LiteralValue::Int(i) => JsValue::from_f64(*i as f64),
+        formualizer::LiteralValue::Number(n) => JsValue::from_f64(*n),
+        formualizer::LiteralValue::Text(s) => JsValue::from_str(s),
+        formualizer::LiteralValue::Date(d) => JsValue::from_str(&d.to_string()),
+        formualizer::LiteralValue::DateTime(dt) => JsValue::from_str(&dt.to_string()),
+        formualizer::LiteralValue::Time(t) => JsValue::from_str(&t.to_string()),
+        formualizer::LiteralValue::Duration(dur) => JsValue::from_str(&format!("{dur:?}")),
+        formualizer::LiteralValue::Array(values) => {
             let outer = js_sys::Array::new();
-            for row in rows {
-                let array = js_sys::Array::new();
+            for row in values {
+                let arr = js_sys::Array::new();
                 for cell in row {
-                    array.push(&binding_value_to_js(cell));
+                    arr.push(&literal_to_js(cell));
                 }
-                outer.push(&array);
+                outer.push(&arr);
             }
             outer.into()
         }
-        BindingValue::Pending => JsValue::from_str("Pending"),
-        BindingValue::Error { display, .. } => JsValue::from_str(&display),
+        formualizer::LiteralValue::Pending => JsValue::from_str("Pending"),
+        formualizer::LiteralValue::Error(err) => JsValue::from_str(&err.to_string()),
     }
-}
-
-pub(crate) fn literal_to_js(value: &formualizer::LiteralValue) -> JsValue {
-    binding_value_to_js(binding_value(value))
 }
 
 fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
@@ -497,11 +496,7 @@ extern "C" {
 }
 
 /// Reject own enumerable keys that are not in `allowed`.
-pub(crate) fn reject_unknown_keys(
-    value: &JsValue,
-    context: &str,
-    allowed: &[&str],
-) -> Result<(), JsValue> {
+fn reject_unknown_keys(value: &JsValue, context: &str, allowed: &[&str]) -> Result<(), JsValue> {
     if !value.is_object() {
         return Err(js_error(format!("{context}: expected an object")));
     }
@@ -764,18 +759,17 @@ impl Workbook {
     }
 
     #[wasm_bindgen(js_name = "sheetNames")]
-    pub fn sheet_names(&self) -> js_sys::Array {
+    pub fn sheet_names(&self) -> Result<js_sys::Array, JsValue> {
         let arr = js_sys::Array::new();
         let names = self
             .inner
             .read()
-            .ok()
-            .map(|w| w.sheet_names())
-            .unwrap_or_default();
+            .map_err(|_| js_error("failed to lock workbook for read"))?
+            .sheet_names();
         for s in names.into_iter() {
             arr.push(&JsValue::from_str(&s));
         }
-        arr
+        Ok(arr)
     }
 
     /// Register a workbook-local custom function backed by a JavaScript callback.
@@ -919,6 +913,8 @@ impl Workbook {
         )?;
         let definition: JsTableDefinition = serde_wasm_bindgen::from_value(definition)
             .map_err(|err| js_error(format!("invalid table definition: {err}")))?;
+        // Validate the table range coordinates
+        validate_table_range(definition.range)?;
         self.inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
@@ -1206,11 +1202,7 @@ impl Workbook {
                 .ok_or_else(|| js_error(format!("invalid sheet name at index {i}")))?;
             let row = parse_target_coord(arr.get(1).as_f64(), "row", i)?;
             let col = parse_target_coord(arr.get(2).as_f64(), "col", i)?;
-            if !cell_coords_are_valid(row, col) {
-                return Err(js_error(format!(
-                    "row/col are 1-based at index {i} (row={row}, col={col})"
-                )));
-            }
+            validate_cell_coords(row, col)?;
             target_vec.push((sheet, row, col));
         }
 
@@ -1425,11 +1417,13 @@ impl Sheet {
     }
 
     #[wasm_bindgen(js_name = "getFormula")]
-    pub fn get_formula(&self, row: u32, col: u32) -> Option<String> {
-        if !cell_coords_are_valid(row, col) {
-            return None;
-        }
-        self.wb.read().ok()?.get_formula(&self.name, row, col)
+    pub fn get_formula(&self, row: u32, col: u32) -> Result<Option<String>, JsValue> {
+        validate_cell_coords(row, col)?;
+        Ok(self
+            .wb
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?
+            .get_formula(&self.name, row, col))
     }
 
     #[wasm_bindgen(js_name = "setValues")]
@@ -1439,8 +1433,6 @@ impl Sheet {
         start_col: u32,
         data: js_sys::Array,
     ) -> Result<(), JsValue> {
-        validate_cell_coords(start_row, start_col)?;
-
         // data: Array<Array<any>>
         let mut rows: Vec<Vec<formualizer::LiteralValue>> =
             Vec::with_capacity(data.length() as usize);
@@ -1453,6 +1445,9 @@ impl Sheet {
             }
             rows.push(row_vec);
         }
+        let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
+        validate_block(start_row, start_col, rows.len(), widest)?;
+
         let mut wb = self
             .wb
             .write()
@@ -1477,8 +1472,6 @@ impl Sheet {
         start_col: u32,
         data: js_sys::Array,
     ) -> Result<(), JsValue> {
-        validate_cell_coords(start_row, start_col)?;
-
         // data: Array<Array<string>>
         let mut rows: Vec<Vec<String>> = Vec::with_capacity(data.length() as usize);
         for r in 0..data.length() {
@@ -1491,6 +1484,9 @@ impl Sheet {
             }
             rows.push(row_vec);
         }
+        let widest = rows.iter().map(Vec::len).max().unwrap_or(0);
+        validate_block(start_row, start_col, rows.len(), widest)?;
+
         let mut wb = self
             .wb
             .write()
