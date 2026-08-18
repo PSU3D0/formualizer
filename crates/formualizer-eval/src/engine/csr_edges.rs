@@ -1,9 +1,15 @@
+use super::addr::VertexAddr;
 use super::vertex::VertexId;
-use formualizer_common::Coord as AbsCoord;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use super::super::addr::GridAddr;
+
+    fn grid(row: u32, col: u32) -> VertexAddr {
+        VertexAddr::grid(GridAddr::new(row, col))
+    }
 
     #[test]
     fn test_csr_construction() {
@@ -14,12 +20,7 @@ mod tests {
             (3u32, vec![]),
         ];
 
-        let coords = vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(1, 0),
-            AbsCoord::new(1, 1),
-        ];
+        let coords = vec![grid(0, 0), grid(0, 1), grid(1, 0), grid(1, 1)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -37,7 +38,7 @@ mod tests {
         for i in 0..10_000u32 {
             let targets: Vec<_> = (0..4).map(|j| (i + j + 1) % 10_000).collect();
             edges.push((i, targets));
-            coords.push(AbsCoord::new(i, i));
+            coords.push(grid(i, i));
         }
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
@@ -54,10 +55,10 @@ mod tests {
         ];
 
         let coords = vec![
-            AbsCoord::new(0, 0), // vertex 0
-            AbsCoord::new(0, 5), // vertex 1
-            AbsCoord::new(0, 3), // vertex 2
-            AbsCoord::new(1, 0), // vertex 3
+            grid(0, 0), // vertex 0
+            grid(0, 5), // vertex 1
+            grid(0, 3), // vertex 2
+            grid(1, 0), // vertex 3
         ];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
@@ -73,7 +74,7 @@ mod tests {
     #[test]
     fn test_csr_empty_graph() {
         let edges: Vec<(u32, Vec<u32>)> = vec![];
-        let coords: Vec<AbsCoord> = vec![];
+        let coords: Vec<VertexAddr> = vec![];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -86,7 +87,7 @@ mod tests {
     #[test]
     fn test_csr_single_vertex() {
         let edges = vec![(0u32, vec![])];
-        let coords = vec![AbsCoord::new(0, 0)];
+        let coords = vec![grid(0, 0)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -98,7 +99,7 @@ mod tests {
     #[test]
     fn test_csr_self_loop() {
         let edges = vec![(0u32, vec![0u32])]; // Self loop
-        let coords = vec![AbsCoord::new(0, 0)];
+        let coords = vec![grid(0, 0)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -110,11 +111,7 @@ mod tests {
     fn test_csr_duplicate_edges() {
         // CSR should preserve duplicates (formulas can reference same cell multiple times)
         let edges = vec![(0u32, vec![1u32, 1u32, 2u32, 1u32])];
-        let coords = vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(0, 2),
-        ];
+        let coords = vec![grid(0, 0), grid(0, 1), grid(0, 2)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -134,12 +131,7 @@ mod tests {
             (3u32, vec![0u32, 1u32]),
         ];
 
-        let coords = vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(1, 0),
-            AbsCoord::new(1, 1),
-        ];
+        let coords = vec![grid(0, 0), grid(0, 1), grid(1, 0), grid(1, 1)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -152,7 +144,7 @@ mod tests {
     #[test]
     fn test_out_of_bounds_access() {
         let edges = vec![(0u32, vec![])];
-        let coords = vec![AbsCoord::new(0, 0)];
+        let coords = vec![grid(0, 0)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -169,12 +161,7 @@ mod tests {
             (3u32, vec![]),
         ];
 
-        let coords = vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(1, 0),
-            AbsCoord::new(1, 1),
-        ];
+        let coords = vec![grid(0, 0), grid(0, 1), grid(1, 0), grid(1, 1)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -194,12 +181,7 @@ mod tests {
             (3u32, vec![0u32]), // Back edge
         ];
 
-        let coords = vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(1, 0),
-            AbsCoord::new(1, 1),
-        ];
+        let coords = vec![grid(0, 0), grid(0, 1), grid(1, 0), grid(1, 1)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -221,12 +203,7 @@ mod tests {
             (base_id + 3, vec![]),
         ];
 
-        let coords = vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(1, 0),
-            AbsCoord::new(1, 1),
-        ];
+        let coords = vec![grid(0, 0), grid(0, 1), grid(1, 0), grid(1, 1)];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
 
@@ -263,11 +240,11 @@ mod tests {
         ];
 
         let coords = vec![
-            AbsCoord::new(0, 0), // For vertex 100 (index 0)
-            AbsCoord::new(0, 0), // Padding (index 100-199)
-            AbsCoord::new(1, 0), // For vertex 300 (index 200)
-            AbsCoord::new(0, 0), // Padding (index 300-399)
-            AbsCoord::new(2, 0), // For vertex 500 (index 400)
+            grid(0, 0), // For vertex 100 (index 0)
+            grid(0, 0), // Padding (index 100-199)
+            grid(1, 0), // For vertex 300 (index 200)
+            grid(0, 0), // Padding (index 300-399)
+            grid(2, 0), // For vertex 500 (index 400)
         ];
 
         let csr = CsrEdges::from_adjacency(edges, &coords);
@@ -326,7 +303,7 @@ impl CsrEdges {
     /// # Edge Ordering
     /// Edges are sorted by (row, col, vertex_id) to ensure deterministic
     /// evaluation order for formulas (important for functions with side effects)
-    pub fn from_adjacency(adj: Vec<(u32, Vec<u32>)>, coords: &[AbsCoord]) -> Self {
+    pub fn from_adjacency(adj: Vec<(u32, Vec<u32>)>, coords: &[VertexAddr]) -> Self {
         if adj.is_empty() {
             return Self {
                 offsets: vec![0],
@@ -378,8 +355,8 @@ impl CsrEdges {
                 // Convert vertex ID to index in coords array
                 let coord_idx = (t - min_id) as usize;
                 if coord_idx < coords.len() {
-                    let coord = coords[coord_idx];
-                    (coord.row(), coord.col(), t)
+                    let (major, minor) = coords[coord_idx].order_key();
+                    (major, minor, t)
                 } else {
                     // Handle out-of-bounds gracefully for construction
                     (u32::MAX, u32::MAX, t)
@@ -412,8 +389,8 @@ impl CsrEdges {
             sources.sort_by_key(|&s| {
                 let coord_idx = (s - min_id) as usize;
                 if coord_idx < coords.len() {
-                    let coord = coords[coord_idx];
-                    (coord.row(), coord.col(), s)
+                    let (major, minor) = coords[coord_idx].order_key();
+                    (major, minor, s)
                 } else {
                     (u32::MAX, u32::MAX, s)
                 }
@@ -582,7 +559,7 @@ impl<'a> Iterator for CsrIterator<'a> {
 /// Builder for incremental CSR construction
 pub struct CsrBuilder {
     adjacency: Vec<Vec<usize>>,
-    coords: Vec<AbsCoord>,
+    coords: Vec<VertexAddr>,
 }
 
 impl Default for CsrBuilder {
@@ -600,10 +577,10 @@ impl CsrBuilder {
     }
 
     /// Add a vertex with its coordinate
-    pub fn add_vertex(&mut self, coord: AbsCoord) -> usize {
+    pub fn add_vertex(&mut self, addr: VertexAddr) -> usize {
         let idx = self.adjacency.len();
         self.adjacency.push(Vec::new());
-        self.coords.push(coord);
+        self.coords.push(addr);
         idx
     }
 

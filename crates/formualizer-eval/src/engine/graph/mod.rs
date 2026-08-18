@@ -38,6 +38,7 @@ mod sources;
 mod tables;
 pub(crate) use tables::TableEntry;
 
+use super::addr::{GridAddr, SymbolAddr, VertexAddr};
 use super::arena::{AstNodeId, DataStore, ValueRef};
 use super::delta_edges::CsrMutableEdges;
 use super::ingest_pipeline::{DependencyPlanRow, FormulaAstInput};
@@ -281,11 +282,12 @@ pub struct DependencyGraph {
     source_tables: FxHashMap<String, sources::SourceTableEntry>,
     source_vertex_lookup: FxHashMap<VertexId, String>,
 
-    /// Monotonic counter to assign synthetic coordinates to name vertices
-    name_vertex_seq: u32,
-
-    /// Monotonic counter to assign synthetic coordinates to source vertices
-    source_vertex_seq: u32,
+    /// Monotonic allocator for the symbol address space.
+    ///
+    /// Names, tables and external sources are identified by name and have no position, so
+    /// they are addressed by a dense index here rather than by fabricated grid coordinates
+    /// on a real sheet (#302, #304).
+    symbol_vertex_seq: u32,
 
     /// Mapping from cell vertices to named range vertices that depend on them
     cell_to_name_dependents: FxHashMap<VertexId, FxHashSet<VertexId>>,
@@ -521,7 +523,7 @@ impl DependencyGraph {
     pub fn ensure_vertices_batch(
         &mut self,
         coords: &[(SheetId, AbsCoord)],
-    ) -> Vec<(AbsCoord, u32)> {
+    ) -> Vec<(VertexAddr, u32)> {
         self.ensure_vertices_batch_ordered(coords).1
     }
 
@@ -531,7 +533,7 @@ impl DependencyGraph {
     pub fn ensure_vertices_batch_packed_ordered(
         &mut self,
         packed_cells: &[PackedSheetCell],
-    ) -> (Vec<VertexId>, Vec<(AbsCoord, u32)>) {
+    ) -> (Vec<VertexId>, Vec<(VertexAddr, u32)>) {
         #[cfg(feature = "perf_instrumentation")]
         use crate::instant::FzInstant as PerfInstant;
         use rustc_hash::FxHashMap;
@@ -550,7 +552,7 @@ impl DependencyGraph {
 
         let first_sid = packed_cells[0].sheet_id();
         let single_sheet = packed_cells.iter().all(|cell| cell.sheet_id() == first_sid);
-        let mut add_batch: Vec<(AbsCoord, u32)> = Vec::new();
+        let mut add_batch: Vec<(VertexAddr, u32)> = Vec::new();
 
         #[cfg(feature = "perf_instrumentation")]
         let mut packed_hits = 0usize;
@@ -624,9 +626,9 @@ impl DependencyGraph {
             if !missing_items.is_empty() {
                 self.ensure_touched_sheets.insert(sid);
 
-                let mut pcs: Vec<AbsCoord> = Vec::with_capacity(missing_items.len());
+                let mut pcs: Vec<VertexAddr> = Vec::with_capacity(missing_items.len());
                 for (_, packed) in &missing_items {
-                    pcs.push(AbsCoord::new(packed.row0(), packed.col0()));
+                    pcs.push(GridAddr::new(packed.row0(), packed.col0()).into());
                 }
 
                 #[cfg(feature = "perf_instrumentation")]
@@ -646,7 +648,7 @@ impl DependencyGraph {
                         {
                             let pc = AbsCoord::new(packed.row0(), packed.col0());
                             ordered[input_idx] = Some(vid);
-                            add_batch.push((pc, vid.0));
+                            add_batch.push((VertexAddr::grid(GridAddr::from_coord(pc)), vid.0));
 
                             #[cfg(feature = "perf_instrumentation")]
                             let tm0 = PerfInstant::now();
@@ -664,7 +666,8 @@ impl DependencyGraph {
 
                             #[cfg(feature = "perf_instrumentation")]
                             let ti0 = PerfInstant::now();
-                            self.sheet_index_mut(sid).add_vertex(pc, vid);
+                            self.sheet_index_mut(sid)
+                                .add_vertex(GridAddr::from_coord(pc), vid);
                             #[cfg(feature = "perf_instrumentation")]
                             {
                                 t_index_insert_us += ti0.elapsed().as_micros();
@@ -677,7 +680,7 @@ impl DependencyGraph {
                         {
                             let pc = AbsCoord::new(packed.row0(), packed.col0());
                             ordered[input_idx] = Some(vid);
-                            add_batch.push((pc, vid.0));
+                            add_batch.push((VertexAddr::grid(GridAddr::from_coord(pc)), vid.0));
 
                             #[cfg(feature = "perf_instrumentation")]
                             let tm0 = PerfInstant::now();
@@ -752,9 +755,9 @@ impl DependencyGraph {
                 }
                 self.ensure_touched_sheets.insert(sid);
 
-                let mut pcs: Vec<AbsCoord> = Vec::with_capacity(items.len());
+                let mut pcs: Vec<VertexAddr> = Vec::with_capacity(items.len());
                 for (_, packed) in &items {
-                    pcs.push(AbsCoord::new(packed.row0(), packed.col0()));
+                    pcs.push(GridAddr::new(packed.row0(), packed.col0()).into());
                 }
 
                 #[cfg(feature = "perf_instrumentation")]
@@ -768,7 +771,7 @@ impl DependencyGraph {
                 for ((input_idx, packed), vid) in items.into_iter().zip(vids.into_iter()) {
                     let pc = AbsCoord::new(packed.row0(), packed.col0());
                     ordered[input_idx] = Some(vid);
-                    add_batch.push((pc, vid.0));
+                    add_batch.push((VertexAddr::grid(GridAddr::from_coord(pc)), vid.0));
 
                     #[cfg(feature = "perf_instrumentation")]
                     let tm0 = PerfInstant::now();
@@ -788,7 +791,8 @@ impl DependencyGraph {
                         | crate::engine::SheetIndexMode::FastBatch => {
                             #[cfg(feature = "perf_instrumentation")]
                             let ti0 = PerfInstant::now();
-                            self.sheet_index_mut(sid).add_vertex(pc, vid);
+                            self.sheet_index_mut(sid)
+                                .add_vertex(GridAddr::from_coord(pc), vid);
                             #[cfg(feature = "perf_instrumentation")]
                             {
                                 t_index_insert_us += ti0.elapsed().as_micros();
@@ -843,7 +847,7 @@ impl DependencyGraph {
     pub fn ensure_vertices_batch_ordered(
         &mut self,
         coords: &[(SheetId, AbsCoord)],
-    ) -> (Vec<VertexId>, Vec<(AbsCoord, u32)>) {
+    ) -> (Vec<VertexId>, Vec<(VertexAddr, u32)>) {
         let mut packed: Vec<PackedSheetCell> = Vec::with_capacity(coords.len());
         for &(sid, coord) in coords {
             packed.push(Self::packed_cell_key(sid, coord));
@@ -993,9 +997,15 @@ impl DependencyGraph {
         self.store.all_vertices()
     }
 
-    /// Get current AbsCoord for a vertex
-    pub fn vertex_coord(&self, vid: VertexId) -> AbsCoord {
-        self.store.coord(vid)
+    /// Get the current address of a vertex: a grid position, or a symbol identity for
+    /// names, tables and external sources.
+    pub fn vertex_addr(&self, vid: VertexId) -> VertexAddr {
+        self.store.addr(vid)
+    }
+
+    /// Get the current grid position of a vertex, or `None` when it is a symbol.
+    pub fn vertex_grid_addr(&self, vid: VertexId) -> Option<GridAddr> {
+        self.store.grid_addr(vid)
     }
 
     /// Total number of allocated vertices (including deleted)
@@ -1007,7 +1017,7 @@ impl DependencyGraph {
     pub fn build_edges_from_adjacency(
         &mut self,
         adjacency: Vec<(u32, Vec<u32>)>,
-        coords: Vec<AbsCoord>,
+        coords: Vec<VertexAddr>,
         vertex_ids: Vec<u32>,
     ) {
         // Merge in base/delta out-edges for vertices the formula-target
@@ -1031,7 +1041,9 @@ impl DependencyGraph {
             let mut min_r: Option<u32> = None;
             let mut max_r: Option<u32> = None;
             for vid in index.vertices_in_col_range(start_col, end_col) {
-                let r = self.store.coord(vid).row();
+                let Some(r) = self.store.grid_addr(vid).map(|addr| addr.row()) else {
+                    continue;
+                };
                 min_r = Some(min_r.map(|m| m.min(r)).unwrap_or(r));
                 max_r = Some(max_r.map(|m| m.max(r)).unwrap_or(r));
             }
@@ -1079,18 +1091,18 @@ impl DependencyGraph {
 
     fn rebuild_sheet_index(&mut self, sheet_id: SheetId) {
         let mut idx = SheetIndex::new();
-        let mut batch: Vec<(AbsCoord, VertexId)> =
+        let mut batch: Vec<(GridAddr, VertexId)> =
             Vec::with_capacity(self.cell_to_vertex.len() + self.load_packed_to_vertex.len());
         for (cref, vid) in &self.cell_to_vertex {
             if cref.sheet_id == sheet_id {
-                batch.push((AbsCoord::new(cref.coord.row(), cref.coord.col()), *vid));
+                batch.push((GridAddr::new(cref.coord.row(), cref.coord.col()), *vid));
             }
         }
         for (&packed, &vid) in &self.load_packed_to_vertex {
             if packed.sheet_id() != sheet_id {
                 continue;
             }
-            let coord = AbsCoord::new(packed.row0(), packed.col0());
+            let coord = GridAddr::new(packed.row0(), packed.col0());
             let addr = CellRef::new(sheet_id, Coord::new(coord.row(), coord.col(), true, true));
             if self.cell_to_vertex.contains_key(&addr) {
                 continue;
@@ -1131,7 +1143,9 @@ impl DependencyGraph {
             let mut min_c: Option<u32> = None;
             let mut max_c: Option<u32> = None;
             for vid in index.vertices_in_row_range(start_row, end_row) {
-                let c = self.store.coord(vid).col();
+                let Some(c) = self.store.grid_addr(vid).map(|addr| addr.col()) else {
+                    continue;
+                };
                 min_c = Some(min_c.map(|m| m.min(c)).unwrap_or(c));
                 max_c = Some(max_c.map(|m| m.max(c)).unwrap_or(c));
             }
@@ -1225,8 +1239,7 @@ impl DependencyGraph {
             source_scalars: FxHashMap::default(),
             source_tables: FxHashMap::default(),
             source_vertex_lookup: FxHashMap::default(),
-            name_vertex_seq: 0,
-            source_vertex_seq: 0,
+            symbol_vertex_seq: 0,
             cell_to_name_dependents: FxHashMap::default(),
             name_to_cell_dependencies: FxHashMap::default(),
             config: config.clone(),
@@ -1879,15 +1892,18 @@ impl DependencyGraph {
         } else {
             // Create new vertex
             created_placeholders.push(addr);
-            let packed_coord = AbsCoord::from_excel(row, col);
-            let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x01); // dirty flag
+            let position = GridAddr::from_coord(AbsCoord::from_excel(row, col));
+            let vertex_id = self
+                .store
+                .allocate(VertexAddr::grid(position), sheet_id, 0x01); // dirty flag
 
             // Add vertex coordinate for CSR
-            self.edges.add_vertex(packed_coord, vertex_id.0);
+            self.edges
+                .add_vertex(VertexAddr::grid(position), vertex_id.0);
 
             // Add to sheet index for O(log n + k) range queries
             self.sheet_index_mut(sheet_id)
-                .add_vertex(packed_coord, vertex_id);
+                .add_vertex(position, vertex_id);
 
             self.store.set_kind(vertex_id, VertexKind::Cell);
             if self.value_cache_enabled {
@@ -1956,11 +1972,14 @@ impl DependencyGraph {
             self.ref_error_vertices.remove(&existing_id);
             return Ok(());
         }
-        let packed_coord = AbsCoord::from_excel(row, col);
-        let vertex_id = self.store.allocate(packed_coord, sheet_id, 0x00); // not dirty
-        self.edges.add_vertex(packed_coord, vertex_id.0);
+        let position = GridAddr::from_coord(AbsCoord::from_excel(row, col));
+        let vertex_id = self
+            .store
+            .allocate(VertexAddr::grid(position), sheet_id, 0x00); // not dirty
+        self.edges
+            .add_vertex(VertexAddr::grid(position), vertex_id.0);
         self.sheet_index_mut(sheet_id)
-            .add_vertex(packed_coord, vertex_id);
+            .add_vertex(position, vertex_id);
         self.store.set_kind(vertex_id, VertexKind::Cell);
         self.ref_error_vertices.remove(&vertex_id);
         if self.value_cache_enabled {
@@ -1996,10 +2015,10 @@ impl DependencyGraph {
         }
         self.reserve_cells(collected.len());
         let t_reserve = Instant::now();
-        let mut new_vertices: Vec<(AbsCoord, u32)> = Vec::with_capacity(collected.len());
-        let mut index_items: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
+        let mut new_vertices: Vec<(VertexAddr, u32)> = Vec::with_capacity(collected.len());
+        let mut index_items: Vec<(GridAddr, VertexId)> = Vec::with_capacity(collected.len());
         // For new allocations, accumulate values and assign after a single batch store
-        let mut new_value_coords: Vec<(AbsCoord, VertexId)> = Vec::with_capacity(collected.len());
+        let mut new_value_coords: Vec<(GridAddr, VertexId)> = Vec::with_capacity(collected.len());
         let mut new_value_literals: Vec<LiteralValue> = Vec::with_capacity(collected.len());
         // Detect fast path: during initial ingest, caller may guarantee most cells are new.
         let assume_new = self.first_load_assume_new
@@ -2031,14 +2050,16 @@ impl DependencyGraph {
                 self.store.set_kind(existing_id, VertexKind::Cell);
                 continue;
             }
-            let packed = AbsCoord::from_excel(row, col);
-            let vertex_id = self.store.allocate(packed, sheet_id, 0x00);
+            let packed = GridAddr::from_coord(AbsCoord::from_excel(row, col));
+            let vertex_id = self
+                .store
+                .allocate(VertexAddr::grid(packed), sheet_id, 0x00);
             self.store.set_kind(vertex_id, VertexKind::Cell);
             // Defer value arena storage to a single batch
             new_value_coords.push((packed, vertex_id));
             new_value_literals.push(value);
             self.cell_to_vertex.insert(addr, vertex_id);
-            new_vertices.push((packed, vertex_id.0));
+            new_vertices.push((VertexAddr::grid(packed), vertex_id.0));
             index_items.push((packed, vertex_id));
         }
         // Perform a single batch store for newly allocated values
@@ -2859,15 +2880,18 @@ impl DependencyGraph {
         }
 
         created_placeholders.push(*addr);
-        let packed_coord = AbsCoord::new(addr.coord.row(), addr.coord.col());
-        let vertex_id = self.store.allocate(packed_coord, addr.sheet_id, 0x00);
+        let position = GridAddr::new(addr.coord.row(), addr.coord.col());
+        let vertex_id = self
+            .store
+            .allocate(VertexAddr::grid(position), addr.sheet_id, 0x00);
 
         // Add vertex coordinate for CSR
-        self.edges.add_vertex(packed_coord, vertex_id.0);
+        self.edges
+            .add_vertex(VertexAddr::grid(position), vertex_id.0);
 
         // Add to sheet index for O(log n + k) range queries
         self.sheet_index_mut(addr.sheet_id)
-            .add_vertex(packed_coord, vertex_id);
+            .add_vertex(position, vertex_id);
 
         self.store.set_kind(vertex_id, VertexKind::Empty);
         self.cell_to_vertex.insert(*addr, vertex_id);
@@ -3304,20 +3328,11 @@ impl DependencyGraph {
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
-        if !self.value_cache_enabled {
-            // Canonical mode: cell/formula vertices must not store values in the graph.
-            match self.store.kind(vertex_id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    self.vertex_values.remove(&vertex_id);
-                    return;
-                }
-                _ => {
-                    // Allow non-cell vertices to cache values (e.g. named-range formulas).
-                }
-            }
+        if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
+            // Canonical mode: grid-backed vertices must not store values in the graph.
+            // Symbols (e.g. named-range formulas) may still cache theirs.
+            self.vertex_values.remove(&vertex_id);
+            return;
         }
         let value_ref = self.data_store.store_value(normalize_stored_literal(value));
         self.vertex_values.insert(vertex_id, value_ref);
@@ -3771,22 +3786,17 @@ impl DependencyGraph {
     }
 
     fn collect_range_dependents_for_vertex(&self, vertex_id: VertexId) -> Vec<VertexId> {
-        match self.store.kind(vertex_id) {
-            VertexKind::Cell
-            | VertexKind::Empty
-            | VertexKind::FormulaScalar
-            | VertexKind::FormulaArray => {
-                let view = self.store.view(vertex_id);
-                self.collect_range_dependents_for_rect(
-                    view.sheet_id(),
-                    view.row(),
-                    view.col(),
-                    view.row(),
-                    view.col(),
-                )
-            }
-            _ => Vec::new(),
-        }
+        // Only a vertex with a position can sit inside a range. A symbol has none.
+        let Some(position) = self.store.grid_addr(vertex_id) else {
+            return Vec::new();
+        };
+        self.collect_range_dependents_for_rect(
+            self.store.sheet_id(vertex_id),
+            position.row(),
+            position.col(),
+            position.row(),
+            position.col(),
+        )
     }
 
     fn collect_range_dependents_for_rect(
@@ -3934,36 +3944,40 @@ impl DependencyGraph {
 
     /// Get the value stored for a vertex
     pub fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
-        if !self.value_cache_enabled {
-            // In canonical mode, cell/formula values must not be read from the graph.
-            // Non-cell vertices (e.g. named ranges, external sources) may still use graph storage.
-            match self.store.kind(vertex_id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    #[cfg(debug_assertions)]
-                    {
-                        self.graph_value_read_attempts
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                    return None;
-                }
-                _ => {
-                    // Allow non-cell vertices to use vertex_values.
-                }
+        if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
+            // In canonical mode, grid-backed values must not be read from the graph.
+            // Symbols (named ranges, tables, external sources) may still use graph storage.
+            #[cfg(debug_assertions)]
+            {
+                self.graph_value_read_attempts
+                    .fetch_add(1, Ordering::Relaxed);
             }
+            return None;
         }
         self.vertex_values
             .get(&vertex_id)
             .map(|&value_ref| self.data_store.retrieve_value(value_ref))
     }
 
-    /// Get the cell reference for a vertex
+    /// True when the vertex occupies the grid, i.e. it is a cell, formula or empty
+    /// placeholder rather than a symbol.
+    ///
+    /// This replaces the `VertexKind` enumerations that used to spell out the grid-backed
+    /// kinds. "Has a position" is now a structural property of the address, so it cannot
+    /// drift out of step with the set of kinds.
+    #[inline]
+    fn is_grid_backed(&self, vertex_id: VertexId) -> bool {
+        self.store.grid_addr(vertex_id).is_some()
+    }
+
+    /// Get the cell reference for a vertex.
+    ///
+    /// Returns `None` for symbol vertices (names, tables, external sources): they are
+    /// identified by name and have no position, so there is no address to return.
     pub(crate) fn get_cell_ref(&self, vertex_id: VertexId) -> Option<CellRef> {
-        let packed_coord = self.store.coord(vertex_id);
+        let grid = self.store.grid_addr(vertex_id)?;
         let sheet_id = self.store.sheet_id(vertex_id);
-        let coord = Coord::new(packed_coord.row(), packed_coord.col(), true, true);
+        let coord = Coord::new(grid.row(), grid.col(), true, true);
         Some(CellRef::new(sheet_id, coord))
     }
 
@@ -4063,7 +4077,7 @@ impl DependencyGraph {
     /// Internal: Create a snapshot of vertex state for rollback
     #[doc(hidden)]
     pub fn snapshot_vertex(&self, id: VertexId) -> crate::engine::VertexSnapshot {
-        let coord = self.store.coord(id);
+        let coord = self.store.grid_addr(id).unwrap_or_default();
         let sheet_id = self.store.sheet_id(id);
         let kind = self.store.kind(id);
         let flags = self.store.flags(id);
@@ -4117,23 +4131,13 @@ impl DependencyGraph {
     /// Internal: Mark vertex as having #REF! error
     #[doc(hidden)]
     pub fn mark_as_ref_error(&mut self, id: VertexId) {
-        if !self.value_cache_enabled {
-            match self.store.kind(id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    self.ref_error_vertices.insert(id);
-                    // Canonical-only: graph does not cache cell/formula values.
-                    // Ensure the dependent subgraph is dirtied so evaluation updates Arrow truth.
-                    self.vertex_values.remove(&id);
-                    let _ = self.mark_dirty(id);
-                    return;
-                }
-                _ => {
-                    // Allow non-cell vertices to use cached values.
-                }
-            }
+        if !self.value_cache_enabled && self.is_grid_backed(id) {
+            self.ref_error_vertices.insert(id);
+            // Canonical-only: graph does not cache grid-backed values.
+            // Ensure the dependent subgraph is dirtied so evaluation updates Arrow truth.
+            self.vertex_values.remove(&id);
+            let _ = self.mark_dirty(id);
+            return;
         }
         let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
         let value_ref = self.data_store.store_value(error);
@@ -4143,18 +4147,8 @@ impl DependencyGraph {
 
     /// Check if a vertex has a #REF! error
     pub fn is_ref_error(&self, id: VertexId) -> bool {
-        if !self.value_cache_enabled {
-            match self.store.kind(id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    return self.ref_error_vertices.contains(&id);
-                }
-                _ => {
-                    // Non-cell vertices may still have cached values.
-                }
-            }
+        if !self.value_cache_enabled && self.is_grid_backed(id) {
+            return self.ref_error_vertices.contains(&id);
         }
         if let Some(value_ref) = self.vertex_values.get(&id) {
             let value = self.data_store.retrieve_value(*value_ref);
@@ -4186,16 +4180,19 @@ impl DependencyGraph {
         }
     }
 
-    /// Update vertex coordinate
+    /// Move a vertex to a new grid position.
+    ///
+    /// Takes a `GridAddr`, so a symbol vertex cannot be shifted onto the grid by a
+    /// structural edit (#304).
     #[doc(hidden)]
-    pub fn set_coord(&mut self, id: VertexId, coord: AbsCoord) {
-        self.store.set_coord(id, coord);
+    pub fn set_grid_addr(&mut self, id: VertexId, coord: GridAddr) {
+        self.store.set_addr(id, VertexAddr::grid(coord));
     }
 
     /// Update edge cache coordinate
     #[doc(hidden)]
-    pub fn update_edge_coord(&mut self, id: VertexId, coord: AbsCoord) {
-        self.edges.update_coord(id, coord);
+    pub fn update_edge_grid_addr(&mut self, id: VertexId, coord: GridAddr) {
+        self.edges.update_addr(id, VertexAddr::grid(coord));
     }
 
     /// Mark vertex as deleted (tombstone)
@@ -4272,9 +4269,12 @@ impl DependencyGraph {
         self.cell_to_vertex.get(addr).copied()
     }
 
-    /// Get coord for a vertex (public for VertexEditor)
-    pub fn get_coord(&self, id: VertexId) -> AbsCoord {
-        self.store.coord(id)
+    /// Get the grid position of a vertex (public for VertexEditor).
+    ///
+    /// `None` for symbol vertices, which have no position. Structural operations iterate
+    /// grid positions, so this is what keeps them away from names, tables and sources.
+    pub fn get_grid_addr(&self, id: VertexId) -> Option<GridAddr> {
+        self.store.grid_addr(id)
     }
 
     /// Get sheet_id for a vertex (public for VertexEditor)
@@ -4282,11 +4282,22 @@ impl DependencyGraph {
         self.store.sheet_id(id)
     }
 
-    /// Get all vertices in a sheet
-    pub fn vertices_in_sheet(&self, sheet_id: SheetId) -> impl Iterator<Item = VertexId> + '_ {
-        self.store
-            .all_vertices()
-            .filter(move |&id| self.vertex_exists(id) && self.store.sheet_id(id) == sheet_id)
+    /// Get every grid-resident vertex on a sheet, paired with its position.
+    ///
+    /// Symbol vertices (names, tables, external sources) are structurally absent: they have
+    /// no grid position, so they cannot be produced here. Structural edits drive off this
+    /// iterator, which is why a row or column operation can no longer delete or shift a
+    /// name vertex (#302, #304).
+    pub fn grid_vertices_in_sheet(
+        &self,
+        sheet_id: SheetId,
+    ) -> impl Iterator<Item = (VertexId, GridAddr)> + '_ {
+        self.store.all_vertices().filter_map(move |id| {
+            if !self.vertex_exists(id) || self.store.sheet_id(id) != sheet_id {
+                return None;
+            }
+            self.store.grid_addr(id).map(|addr| (id, addr))
+        })
     }
 
     /// Does a vertex have a formula associated
@@ -4385,7 +4396,7 @@ impl DependencyGraph {
 
     /// Get the cell reference for a vertex
     pub fn get_cell_ref_for_vertex(&self, id: VertexId) -> Option<CellRef> {
-        let coord = self.store.coord(id);
+        let coord = self.store.grid_addr(id)?;
         let sheet_id = self.store.sheet_id(id);
         // Find the cell reference in the mapping
         let cell_ref = CellRef::new(sheet_id, Coord::new(coord.row(), coord.col(), true, true));

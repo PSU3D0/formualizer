@@ -4008,8 +4008,11 @@ where
             Ok(_) => {
                 self.rename_staged_formula_sheet(&old_name, new_name);
                 // Success! Invalidate cache for the moved sheet
-                let sheet_vertices: Vec<VertexId> =
-                    self.graph.vertices_in_sheet(sheet_id).collect();
+                let sheet_vertices: Vec<VertexId> = self
+                    .graph
+                    .grid_vertices_in_sheet(sheet_id)
+                    .map(|(id, _)| id)
+                    .collect();
                 for v_id in sheet_vertices {
                     self.graph.mark_vertex_dirty(v_id);
                 }
@@ -9828,22 +9831,17 @@ where
                     .get_cell_ref(vertex)
                     .and_then(|cell| engine.graph.spill_registry_anchor_for_cell(cell))
                     .unwrap_or(vertex);
-                match engine.graph.get_vertex_kind(vertex) {
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                        roots.push(TargetProducer::Legacy(vertex)).map_err(|_| {
-                            target_root_allocation_error(roots.len() + 1, request_id)
-                        })?;
-                    }
-                    VertexKind::NamedScalar
-                    | VertexKind::NamedArray
-                    | VertexKind::Range
-                    | VertexKind::InfiniteRange
-                    | VertexKind::Table => {
-                        roots.push(TargetProducer::Symbol(vertex)).map_err(|_| {
-                            target_root_allocation_error(roots.len() + 1, request_id)
-                        })?;
-                    }
-                    VertexKind::Empty | VertexKind::Cell | VertexKind::External => {}
+                // `vertices_in_region` is a sheet-index query and a sheet index holds only
+                // grid-addressed vertices, so a region can never yield a symbol: names,
+                // tables and external sources have no position for a region to cover.
+                // Symbol roots come from the by-name lookups below instead.
+                if matches!(
+                    engine.graph.get_vertex_kind(vertex),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                ) {
+                    roots
+                        .push(TargetProducer::Legacy(vertex))
+                        .map_err(|_| target_root_allocation_error(roots.len() + 1, request_id))?;
                 }
             }
             if roots.len() == before
@@ -15153,19 +15151,20 @@ where
                 ) {
                     continue;
                 }
-                let row0 = self.graph.vertex_coord(vid).row();
+                let Some(row0) = self.graph.vertex_grid_addr(vid).map(|addr| addr.row()) else {
+                    continue;
+                };
                 min_r0 = Some(min_r0.map(|m| m.min(row0)).unwrap_or(row0));
                 max_r0 = Some(max_r0.map(|m| m.max(row0)).unwrap_or(row0));
             }
         } else {
-            for vid in self.graph.vertices_in_sheet(sheet_id) {
+            for (vid, coord) in self.graph.grid_vertices_in_sheet(sheet_id) {
                 if !matches!(
                     self.graph.get_vertex_kind(vid),
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
                 ) {
                     continue;
                 }
-                let coord = self.graph.vertex_coord(vid);
                 let col0 = coord.col();
                 if col0 < sc0 || col0 > ec0 {
                     continue;
@@ -15202,19 +15201,20 @@ where
                 ) {
                     continue;
                 }
-                let col0 = self.graph.vertex_coord(vid).col();
+                let Some(col0) = self.graph.vertex_grid_addr(vid).map(|addr| addr.col()) else {
+                    continue;
+                };
                 min_c0 = Some(min_c0.map(|m| m.min(col0)).unwrap_or(col0));
                 max_c0 = Some(max_c0.map(|m| m.max(col0)).unwrap_or(col0));
             }
         } else {
-            for vid in self.graph.vertices_in_sheet(sheet_id) {
+            for (vid, coord) in self.graph.grid_vertices_in_sheet(sheet_id) {
                 if !matches!(
                     self.graph.get_vertex_kind(vid),
                     VertexKind::FormulaScalar | VertexKind::FormulaArray
                 ) {
                     continue;
                 }
-                let coord = self.graph.vertex_coord(vid);
                 let row0 = coord.row();
                 if row0 < sr0 || row0 > er0 {
                     continue;
@@ -21580,10 +21580,13 @@ where
             .map_err(|_| target_root_allocation_error(root_count, request_id))?;
         for region in regions {
             for vertex in self.graph.formula_vertices() {
+                let Some(position) = self.graph.vertex_grid_addr(vertex) else {
+                    continue;
+                };
                 let key = crate::formula_plane::region_index::RegionKey {
                     sheet_id: self.graph.get_vertex_sheet_id(vertex),
-                    row: self.graph.vertex_coord(vertex).row(),
-                    col: self.graph.vertex_coord(vertex).col(),
+                    row: position.row(),
+                    col: position.col(),
                 };
                 if region.contains_key(key) {
                     extended.push(TargetProducer::Legacy(vertex)).map_err(|_| {

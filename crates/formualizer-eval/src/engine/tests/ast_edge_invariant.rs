@@ -22,14 +22,20 @@
 //! names, or tables; reversed ranges; and external, three-dimensional, or unsupported references.
 //! It is therefore vacuous for those references, while the phantom-edge direction remains covered.
 //!
-//! Pinned T2 findings, each an `#[ignore]`d test asserting the intended invariant and failing on
-//! the live divergence: `AST_EDGE_UNDO_STRUCTURAL_ADJUSTMENT` (undo of a populated row insert
-//! leaves data shifted and the edge one row above the AST reference),
-//! `AST_EDGE_UNRELATED_DELETE_NAME` (a default-sheet row or column delete drops a cross-sheet
-//! workbook-name edge), `AST_EDGE_UNDO_EMPTY_PLACEHOLDER` (undo and redo of a write to a
-//! referenced empty placeholder drop its edge), and `AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID`
-//! (a default-sheet insert shifts a name vertex onto an addressable cell, so later references to
-//! that address bind to the name vertex instead of the cell).
+//! Two T2 findings remain pinned as `#[ignore]`d tests asserting the intended invariant and
+//! failing on the live divergence: `AST_EDGE_UNDO_STRUCTURAL_ADJUSTMENT` (undo of a populated row
+//! insert leaves data shifted and the edge one row above the AST reference) and
+//! `AST_EDGE_UNDO_EMPTY_PLACEHOLDER` (undo and redo of a write to a referenced empty placeholder
+//! drop its edge).
+//!
+//! Two are fixed and now run as ordinary regression tests: `AST_EDGE_UNRELATED_DELETE_NAME`
+//! (issue #302 — a default-sheet row or column delete dropped a cross-sheet workbook-name edge)
+//! and `AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID` (issue #304 — a default-sheet insert
+//! shifted a name vertex onto an addressable cell, so later references to that address bound to
+//! the name vertex instead of the cell). Both had one root cause: symbol vertices held fabricated
+//! grid coordinates on a real sheet. They now hold a `SymbolAddr` in their own address space, so
+//! no grid operation can reach them, and the campaigns below no longer steer their default-sheet
+//! inserts clear of the name vertex.
 //!
 //! Campaign seeds are fixed constants below. They are intentionally not persisted: a failure
 //! prints its seed and operation index, which is enough to replay the deterministic campaign while
@@ -412,38 +418,6 @@ fn random_formula(rng: &mut SmallRng, sheets: &[String], current_sheet: &str) ->
     }
 }
 
-/// The workbook name's vertex physically occupies a cell on the default sheet. A default-sheet
-/// insert at or above that cell shifts the vertex onto an addressable grid cell, after which any
-/// later reference to that address binds to the name vertex instead of the cell — finding
-/// `AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID`, pinned by
-/// `default_sheet_insertion_keeps_the_name_vertex_off_the_addressable_grid`. Campaigns keep their
-/// default-sheet inserts strictly below and to the right of the name vertex so they exercise the
-/// healthy shape; every other default-sheet edit, including formula and value overwrite of shifted
-/// formulas, stays in play.
-fn insert_clear_of_name_vertex(
-    engine: &Engine<TestWorkbook>,
-    sheet: &str,
-    row: u32,
-    col: u32,
-) -> (u32, u32) {
-    let Some(sheet_id) = engine.sheet_id(sheet) else {
-        return (row, col);
-    };
-    let Some(named) = engine.graph.resolve_name_entry("Tracked", sheet_id) else {
-        return (row, col);
-    };
-    let Some(anchor) = engine.graph.get_cell_ref(named.vertex) else {
-        return (row, col);
-    };
-    if anchor.sheet_id != sheet_id {
-        return (row, col);
-    }
-    (
-        row.max(anchor.coord.row() + 2),
-        col.max(anchor.coord.col() + 2),
-    )
-}
-
 fn reset_history(log: &mut ChangeLog, undo: &mut UndoEngine, can_redo: &mut bool) {
     log.clear();
     *undo = UndoEngine::new();
@@ -527,10 +501,9 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 can_redo = false;
             }
             30..=40 => {
-                let (insert_row, _) = insert_clear_of_name_vertex(&engine, &sheet, row, col);
                 engine
                     .action_with_logger(&mut log, "campaign-insert-rows", |action| {
-                        action.insert_rows(&sheet, insert_row, 1).map(|_| ())
+                        action.insert_rows(&sheet, row, 1).map(|_| ())
                     })
                     .unwrap();
                 reset_history(&mut log, &mut undo, &mut can_redo);
@@ -541,10 +514,9 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                 reset_history(&mut log, &mut undo, &mut can_redo);
             }
             52..=61 => {
-                let (_, insert_col) = insert_clear_of_name_vertex(&engine, &sheet, row, col);
                 engine
                     .action_with_logger(&mut log, "campaign-insert-columns", |action| {
-                        action.insert_columns(&sheet, insert_col, 1).map(|_| ())
+                        action.insert_columns(&sheet, col, 1).map(|_| ())
                     })
                     .unwrap();
                 reset_history(&mut log, &mut undo, &mut can_redo);
@@ -703,13 +675,14 @@ fn undoing_populated_row_insertion_restores_data_ast_and_edge_together() {
     );
 }
 
-// T2 finding AST_EDGE_UNRELATED_DELETE_NAME: see the matching entry in the T2 worker report.
-// GitHub issue #302's review extension covers both default-sheet row and column deletes. Either
-// shape removes a workbook-name edge and strands formulas on another sheet.
+// Regression pin for GitHub issue #302 (finding AST_EDGE_UNRELATED_DELETE_NAME).
+// A structural edit on a completely unrelated sheet used to drop the formula->name edge,
+// because the workbook name's vertex was parked on the default sheet's grid at `$A$1` and a
+// row-1/column-1 delete swept it up as an ordinary resident. Symbol vertices now live in
+// their own address space and cannot be reached by a grid operation.
 #[test]
-#[ignore = "known T2 divergence: unrelated default-sheet row or column delete drops a name edge"]
 fn deleting_unrelated_default_sheet_row_or_column_preserves_cross_sheet_name_edge() {
-    fn dependencies_after_delete(delete_row: bool) -> usize {
+    fn dependencies_around_delete(delete_row: bool) -> (usize, usize) {
         let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
         engine.add_sheet("Sheet2").unwrap();
         let target = CellRef::new(
@@ -730,24 +703,90 @@ fn deleting_unrelated_default_sheet_row_or_column_preserves_cross_sheet_name_edg
             .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
             .unwrap();
         assert_structural_parity(&engine, 0xc0de_0006, 0);
+        let before = engine
+            .graph
+            .get_dependencies(engine.graph.formula_vertices()[0])
+            .len();
         if delete_row {
             engine.delete_rows("Sheet1", 1, 1).unwrap();
         } else {
             engine.delete_columns("Sheet1", 1, 1).unwrap();
         }
-        engine
+        assert_structural_parity(&engine, 0xc0de_0006, 1);
+        let after = engine
             .graph
             .get_dependencies(engine.graph.formula_vertices()[0])
-            .len()
+            .len();
+        (before, after)
     }
 
-    let after_column_delete = dependencies_after_delete(false);
-    let after_row_delete = dependencies_after_delete(true);
-    assert_eq!(after_column_delete, 0);
-    assert_eq!(after_row_delete, 0);
+    let (before_column_delete, after_column_delete) = dependencies_around_delete(false);
+    let (before_row_delete, after_row_delete) = dependencies_around_delete(true);
+    assert_eq!(
+        before_column_delete, 1,
+        "the cross-sheet formula must start with exactly its name edge"
+    );
+    assert_eq!(before_row_delete, 1);
+    assert_eq!(
+        after_column_delete, before_column_delete,
+        "a default-sheet column delete must preserve the cross-sheet name edge"
+    );
+    assert_eq!(
+        after_row_delete, before_row_delete,
+        "a default-sheet row delete must preserve the cross-sheet name edge"
+    );
+}
+
+// The consequence #302 named: once the edge survives, the name's target still dirties and
+// still recomputes the formula that consumes it.
+#[test]
+fn name_target_still_drives_recalculation_after_an_unrelated_default_sheet_delete() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.add_sheet("Sheet2").unwrap();
+    let sheet2 = engine.sheet_id("Sheet2").unwrap();
+    engine
+        .set_cell_value("Sheet2", 2, 6, LiteralValue::Number(5.0))
+        .unwrap();
+    engine
+        .define_name(
+            "Tracked",
+            NamedDefinition::Cell(CellRef::new(sheet2, Coord::from_excel(2, 6, true, true))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet2", 10, 6, parse("=Tracked+1").unwrap())
+        .unwrap();
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet2", 10, 6),
+        Some(LiteralValue::Number(6.0))
+    );
+
+    engine.delete_columns("Sheet1", 1, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    let consumer = engine
+        .graph
+        .get_vertex_for_cell(&CellRef::new(sheet2, Coord::from_excel(10, 6, true, true)))
+        .expect("the name-consuming formula must exist");
+    let formulas = engine.graph.formula_vertices();
+    engine.graph.clear_dirty_flags(&formulas);
+    engine
+        .set_cell_value("Sheet2", 2, 6, LiteralValue::Number(50.0))
+        .unwrap();
     assert!(
-        after_column_delete > 0 && after_row_delete > 0,
-        "default-sheet row and column deletes must both preserve the cross-sheet name edge"
+        engine.graph.is_dirty(consumer),
+        "editing the name target must still dirty its consumer"
+    );
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet2", 10, 6),
+        Some(LiteralValue::Number(51.0)),
+        "the consumer must serve a fresh value, not a silently stale one"
     );
 }
 
@@ -790,129 +829,438 @@ fn undoing_value_write_to_referenced_empty_placeholder_preserves_formula_edge() 
     );
 }
 
-// T2 finding AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID: see the matching T2 worker-report entry.
-// A workbook name's vertex physically occupies `Sheet1!$A$1` and is deliberately kept out of the
-// cell index while it sits there. A default-sheet insert at or above it shifts the vertex onto an
-// addressable grid cell and publishes it in the cell index, so every reference resolved afterwards
-// binds to the name vertex instead of the cell: a phantom symbol edge plus a missing direct cell
-// edge. No overwrite is involved, and the referring formula need not be one the insert shifted.
+// Regression pin for GitHub issue #304 (finding AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID).
+//
+// A workbook name's vertex used to physically occupy `Sheet1!$A$1`, kept off the grid only by
+// its deliberate absence from the cell index. A default-sheet insert at or above it shifted the
+// vertex onto an addressable cell *and* published it in that index, so every dependency resolved
+// afterwards against the address bound to the name instead of the cell. Symbol vertices now hold
+// a `SymbolAddr`, so no insert can give them a position and no cell lookup can reach them.
+//
+// The scenario below is the issue's full characterisation, with its matched control: a second
+// engine that differs only in the insert row (5 instead of 1, below the vertex's former home),
+// which was clean at every step on unmodified `main`. Every observation must now agree.
 #[test]
-#[ignore = "known T2 divergence: a default-sheet insert shifts a name vertex onto an addressable cell"]
 fn default_sheet_insertion_keeps_the_name_vertex_off_the_addressable_grid() {
+    // `insert_before_row` is the only difference between the subject and the control.
+    fn scenario(insert_before_row: u32) -> (bool, VertexKind, Option<LiteralValue>) {
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        engine.add_sheet("Sheet2").unwrap();
+        let sheet1 = engine.sheet_id("Sheet1").unwrap();
+        let sheet2 = engine.sheet_id("Sheet2").unwrap();
+        // The name's target lives on Sheet2, so the default-sheet insert cannot move the target
+        // and every value below is attributable to the vertex placement alone.
+        engine
+            .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(7.0))
+            .unwrap();
+        engine
+            .define_name(
+                "Tracked",
+                NamedDefinition::Cell(CellRef::new(sheet2, Coord::from_excel(4, 4, true, true))),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet2", 1, 1, parse("=Tracked+1").unwrap())
+            .unwrap();
+        assert_structural_parity(&engine, 0xc0de_0007, 0);
+
+        let name_vertex = engine
+            .graph
+            .resolve_name_entry("Tracked", sheet2)
+            .expect("workbook name must resolve")
+            .vertex;
+        let a1 = CellRef::new(sheet1, Coord::from_excel(1, 1, true, true));
+        let a2 = CellRef::new(sheet1, Coord::from_excel(2, 1, true, true));
+
+        // A symbol has no position, before or after any structural edit.
+        assert_eq!(engine.graph.get_cell_ref(name_vertex), None);
+        assert_eq!(engine.graph.get_vertex_for_cell(&a1), None);
+
+        engine.insert_rows("Sheet1", insert_before_row, 1).unwrap();
+        assert_eq!(engine.graph.get_cell_ref(name_vertex), None);
+        assert_eq!(engine.graph.get_vertex_for_cell(&a1), None);
+        assert_eq!(engine.graph.get_vertex_for_cell(&a2), None);
+
+        // A brand-new formula on a cell the insertion never touched, referencing the address the
+        // name vertex would formerly have been shifted onto.
+        engine
+            .set_cell_formula("Sheet1", 7, 7, parse("=A2+1").unwrap())
+            .unwrap();
+        let referring = engine
+            .graph
+            .get_vertex_for_cell(&CellRef::new(sheet1, Coord::from_excel(7, 7, true, true)))
+            .expect("the referring formula must exist");
+        let actual = graph_shape(&engine.graph, referring);
+        assert!(
+            actual.symbols.is_empty(),
+            "`=A2+1` must not acquire a phantom edge to the name vertex"
+        );
+        assert_eq!(
+            actual.cells,
+            BTreeSet::from([a2]),
+            "`=A2+1` must take a direct cell edge to Sheet1!A2"
+        );
+        assert_structural_parity(&engine, 0xc0de_0007, 1);
+
+        // Consequence 1 (was: spurious recompute). Editing the name's target must not dirty a
+        // formula that never mentions the name.
+        engine.evaluate_all().unwrap();
+        assert_eq!(
+            engine.get_cell_value("Sheet1", 7, 7),
+            Some(LiteralValue::Number(1.0))
+        );
+        let formulas = engine.graph.formula_vertices();
+        engine.graph.clear_dirty_flags(&formulas);
+        engine
+            .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(70.0))
+            .unwrap();
+        let spuriously_dirty = engine.graph.is_dirty(referring);
+        engine.evaluate_all().unwrap();
+
+        // Consequence 2 (was: silent name destruction). An ordinary data write at the address the
+        // vertex would have been shifted onto must not rewrite the name's own vertex.
+        engine
+            .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(500.0))
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        let kind_after_write = engine.graph.get_vertex_kind(name_vertex);
+
+        // Consequence 3 (was: stale served value). Deleting that row must leave `=Tracked+1`
+        // tracking its own target.
+        engine.delete_rows("Sheet1", 2, 1).unwrap();
+        engine.evaluate_all().unwrap();
+        let tracked_formula = engine
+            .graph
+            .get_vertex_for_cell(&CellRef::new(sheet2, Coord::from_excel(1, 1, true, true)))
+            .expect("the name-consuming formula must exist");
+        assert!(
+            !engine.graph.get_dependencies(tracked_formula).is_empty(),
+            "`=Tracked+1` must retain its edge to the name vertex"
+        );
+        let formulas = engine.graph.formula_vertices();
+        engine.graph.clear_dirty_flags(&formulas);
+        engine
+            .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(700.0))
+            .unwrap();
+        assert!(
+            engine.graph.is_dirty(tracked_formula),
+            "the name target must still dirty `=Tracked+1`"
+        );
+        engine.evaluate_all().unwrap();
+        (
+            spuriously_dirty,
+            kind_after_write,
+            engine.get_cell_value("Sheet2", 1, 1),
+        )
+    }
+
+    // Subject: the insert that used to shift the name vertex onto `Sheet1!$A$2`.
+    let subject = scenario(1);
+    // Matched control: identical but for the insert row, and clean at every step on `main`.
+    let control = scenario(5);
+
+    assert_eq!(
+        subject, control,
+        "the insert row must make no observable difference to a name that has no position"
+    );
+    let (spuriously_dirty, kind_after_write, tracked_value) = subject;
+    assert!(
+        !spuriously_dirty,
+        "editing the name target must not dirty the unrelated default-sheet formula Sheet1!G7"
+    );
+    assert_eq!(
+        kind_after_write,
+        VertexKind::NamedScalar,
+        "a write to Sheet1!A2 must not overwrite the name's own vertex"
+    );
+    assert_eq!(
+        tracked_value,
+        Some(LiteralValue::Number(701.0)),
+        "`=Tracked+1` must recompute from Sheet2!D4 rather than serve a stale 71"
+    );
+}
+
+// The remaining #304 shapes: sheet-scoped names, tables, expanded ranges that merely *cover* the
+// address the symbol would have occupied, and repeated inserts. Each one used to bind a formula
+// to a symbol vertex through a grid address.
+#[test]
+fn default_sheet_inserts_never_bind_a_reference_to_a_symbol_vertex() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine.add_sheet("Sheet2").unwrap();
     let sheet1 = engine.sheet_id("Sheet1").unwrap();
     let sheet2 = engine.sheet_id("Sheet2").unwrap();
-    // The name's target lives on Sheet2, so the default-sheet insert cannot move the target and
-    // every value below is attributable to the vertex placement alone.
+    let target = CellRef::new(sheet2, Coord::from_excel(4, 4, true, true));
     engine
         .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(7.0))
         .unwrap();
     engine
         .define_name(
             "Tracked",
-            NamedDefinition::Cell(CellRef::new(sheet2, Coord::from_excel(4, 4, true, true))),
+            NamedDefinition::Cell(target),
             NameScope::Workbook,
         )
         .unwrap();
     engine
-        .set_cell_formula("Sheet2", 1, 1, parse("=Tracked+1").unwrap())
+        .define_name(
+            "Local",
+            NamedDefinition::Cell(target),
+            NameScope::Sheet(sheet1),
+        )
         .unwrap();
-    assert_structural_parity(&engine, 0xc0de_0007, 0);
+    engine
+        .define_table(
+            "Sales",
+            RangeRef::new(
+                CellRef::new(sheet2, Coord::from_excel(1, 3, true, true)),
+                CellRef::new(sheet2, Coord::from_excel(3, 4, true, true)),
+            ),
+            true,
+            vec!["Item".into(), "Amount".into()],
+            false,
+        )
+        .unwrap();
+    engine.define_source_scalar("Feed", Some(1)).unwrap();
 
+    // Repeated inserts: on `main` each one moved the symbol vertices one row further down the
+    // default sheet's grid and republished them at their new addresses.
+    for _ in 0..3 {
+        engine.insert_rows("Sheet1", 1, 1).unwrap();
+        engine.insert_columns("Sheet1", 1, 1).unwrap();
+    }
+
+    // A formula whose expanded range merely *covers* the addresses the symbols would now occupy.
+    engine
+        .set_cell_formula("Sheet1", 20, 1, parse("=SUM(A1:E5)").unwrap())
+        .unwrap();
+    let covering = engine
+        .graph
+        .get_vertex_for_cell(&CellRef::new(sheet1, Coord::from_excel(20, 1, true, true)))
+        .expect("the covering formula must exist");
+    assert!(
+        graph_shape(&engine.graph, covering).symbols.is_empty(),
+        "an expanded range must not pick up a symbol vertex"
+    );
+
+    // Every address a symbol would have been shifted onto resolves to a cell-like vertex — the
+    // empty placeholders the range above created — never to a symbol.
+    for (row, col) in [(1u32, 1u32), (2, 2), (3, 3), (4, 4), (5, 5)] {
+        let cell = CellRef::new(sheet1, Coord::from_excel(row, col, true, true));
+        let resolved = engine
+            .graph
+            .get_vertex_for_cell(&cell)
+            .expect("the covering range materialised a placeholder here");
+        assert!(
+            !engine.graph.vertex_addr(resolved).is_symbol(),
+            "Sheet1 row {row} col {col} must not resolve to a symbol vertex"
+        );
+        assert_eq!(
+            engine.graph.get_vertex_kind(resolved),
+            VertexKind::Empty,
+            "Sheet1 row {row} col {col} must resolve to an empty placeholder"
+        );
+    }
+    engine
+        .set_cell_formula("Sheet1", 21, 1, parse("=A1+B2+C3+D4+E5").unwrap())
+        .unwrap();
+    let direct = engine
+        .graph
+        .get_vertex_for_cell(&CellRef::new(sheet1, Coord::from_excel(21, 1, true, true)))
+        .expect("the direct formula must exist");
+    assert!(
+        graph_shape(&engine.graph, direct).symbols.is_empty(),
+        "direct cell references must not bind to a symbol vertex"
+    );
+    assert_structural_parity(&engine, 0xc0de_0304, 0);
+}
+
+/// The last hole the type system cannot close on its own: `VertexEditor::move_vertex` is public
+/// and takes an untyped `VertexId`, so it must refuse a symbol explicitly rather than parking it
+/// on the grid the way a default-sheet insert used to (#304).
+#[test]
+fn a_symbol_vertex_cannot_be_moved_onto_the_grid() {
+    use crate::engine::addr::GridAddr;
+    use crate::engine::graph::editor::vertex_editor::VertexEditor;
+
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let sheet1 = engine.sheet_id("Sheet1").unwrap();
+    engine
+        .define_name(
+            "Tracked",
+            NamedDefinition::Cell(CellRef::new(sheet1, Coord::from_excel(4, 4, true, true))),
+            NameScope::Workbook,
+        )
+        .unwrap();
     let name_vertex = engine
         .graph
-        .resolve_name_entry("Tracked", sheet2)
+        .resolve_name_entry("Tracked", sheet1)
         .expect("workbook name must resolve")
         .vertex;
-    let a1 = CellRef::new(sheet1, Coord::from_excel(1, 1, true, true));
-    let a2 = CellRef::new(sheet1, Coord::from_excel(2, 1, true, true));
-    assert_eq!(engine.graph.get_cell_ref(name_vertex), Some(a1));
-    assert_eq!(engine.graph.get_vertex_for_cell(&a1), None);
+
+    let mut editor = VertexEditor::new(&mut engine.graph);
+    assert!(
+        editor
+            .move_vertex(name_vertex, GridAddr::new(0, 0))
+            .is_err(),
+        "moving a symbol vertex onto A1 must be refused"
+    );
+    drop(editor);
+
+    assert_eq!(engine.graph.get_cell_ref(name_vertex), None);
+    assert_eq!(
+        engine
+            .graph
+            .get_vertex_for_cell(&CellRef::new(sheet1, Coord::from_excel(1, 1, true, true))),
+        None
+    );
+}
+
+/// The structural property the two issues share: a symbol vertex is never in `cell_to_vertex`,
+/// for any symbol kind, under any grid operation.
+#[test]
+fn symbol_vertices_are_absent_from_the_cell_index_under_every_grid_operation() {
+    fn symbol_vertices(engine: &Engine<TestWorkbook>) -> Vec<(&'static str, VertexId)> {
+        let sheet1 = engine.sheet_id("Sheet1").unwrap();
+        vec![
+            (
+                "NamedScalar",
+                engine
+                    .graph
+                    .resolve_name_entry("Tracked", sheet1)
+                    .expect("workbook name")
+                    .vertex,
+            ),
+            (
+                "NamedArray",
+                engine
+                    .graph
+                    .resolve_name_entry("Block", sheet1)
+                    .expect("workbook range name")
+                    .vertex,
+            ),
+            (
+                "SheetScopedName",
+                engine
+                    .graph
+                    .resolve_name_entry("Local", sheet1)
+                    .expect("sheet-scoped name")
+                    .vertex,
+            ),
+            (
+                "Table",
+                engine
+                    .graph
+                    .resolve_table_entry("Sales")
+                    .expect("table")
+                    .vertex,
+            ),
+            (
+                "External",
+                engine
+                    .graph
+                    .resolve_source_scalar_entry("Feed")
+                    .expect("external source")
+                    .vertex,
+            ),
+        ]
+    }
+
+    fn assert_off_the_grid(engine: &Engine<TestWorkbook>, stage: &str) {
+        let indexed: BTreeSet<VertexId> = engine.graph.cell_to_vertex().values().copied().collect();
+        for (label, vertex) in symbol_vertices(engine) {
+            assert!(
+                !indexed.contains(&vertex),
+                "{label} vertex {vertex:?} appeared in cell_to_vertex after {stage}"
+            );
+            assert_eq!(
+                engine.graph.get_cell_ref(vertex),
+                None,
+                "{label} vertex must have no address after {stage}"
+            );
+            assert!(
+                engine.graph.vertex_grid_addr(vertex).is_none(),
+                "{label} vertex must have no grid position after {stage}"
+            );
+            assert!(
+                engine.graph.vertex_addr(vertex).is_symbol(),
+                "{label} vertex must hold a symbol address after {stage}"
+            );
+        }
+    }
+
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.add_sheet("Sheet2").unwrap();
+    let sheet1 = engine.sheet_id("Sheet1").unwrap();
+    let sheet2 = engine.sheet_id("Sheet2").unwrap();
+    let target = CellRef::new(sheet2, Coord::from_excel(4, 4, true, true));
+    engine
+        .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(7.0))
+        .unwrap();
+    engine
+        .define_name(
+            "Tracked",
+            NamedDefinition::Cell(target),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "Block",
+            NamedDefinition::Range(RangeRef::new(
+                CellRef::new(sheet2, Coord::from_excel(1, 1, true, true)),
+                CellRef::new(sheet2, Coord::from_excel(2, 2, true, true)),
+            )),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "Local",
+            NamedDefinition::Cell(target),
+            NameScope::Sheet(sheet1),
+        )
+        .unwrap();
+    engine
+        .define_table(
+            "Sales",
+            RangeRef::new(
+                CellRef::new(sheet2, Coord::from_excel(1, 3, true, true)),
+                CellRef::new(sheet2, Coord::from_excel(3, 4, true, true)),
+            ),
+            true,
+            vec!["Item".into(), "Amount".into()],
+            false,
+        )
+        .unwrap();
+    engine.define_source_scalar("Feed", Some(1)).unwrap();
+    assert_off_the_grid(&engine, "definition");
 
     engine.insert_rows("Sheet1", 1, 1).unwrap();
-    assert_eq!(engine.graph.get_cell_ref(name_vertex), Some(a2));
-    assert_eq!(engine.graph.get_vertex_for_cell(&a2), Some(name_vertex));
+    assert_off_the_grid(&engine, "a default-sheet row insert");
 
-    // A brand-new formula on a cell the insertion never touched, referencing the shifted address.
-    engine
-        .set_cell_formula("Sheet1", 7, 7, parse("=A2+1").unwrap())
-        .unwrap();
-    let referring = engine
-        .graph
-        .get_vertex_for_cell(&CellRef::new(sheet1, Coord::from_excel(7, 7, true, true)))
-        .expect("the referring formula must exist");
-    let actual = graph_shape(&engine.graph, referring);
-    let expected_cells = {
-        let expected = ast_shape(&engine.graph, referring);
-        assert!(expected.shape.symbols.is_empty());
-        expected.shape.cells.clone()
-    };
-    assert_eq!(actual.symbols, BTreeSet::from([name_vertex]));
-    assert!(actual.cells.is_empty());
-    assert_eq!(expected_cells, BTreeSet::from([a2]));
-    let structural_failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        assert_structural_parity(&engine, 0xc0de_0007, 1);
-    }));
-    assert!(
-        structural_failure.is_err(),
-        "the structural checker must detect the phantom name edge and the missing A2 edge"
-    );
+    engine.insert_columns("Sheet1", 1, 1).unwrap();
+    assert_off_the_grid(&engine, "a default-sheet column insert");
 
-    // Consequence 1: the referring formula is now a dependent of the name, so editing the name's
-    // target spuriously dirties a formula that never mentions the name.
-    engine.evaluate_all().unwrap();
-    assert_eq!(
-        engine.get_cell_value("Sheet1", 7, 7),
-        Some(LiteralValue::Number(1.0))
-    );
-    let formulas = engine.graph.formula_vertices();
-    engine.graph.clear_dirty_flags(&formulas);
     engine
-        .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(70.0))
+        .set_cell_value("Sheet2", 1, 1, LiteralValue::Number(1.0))
         .unwrap();
-    let spuriously_dirty = engine.graph.is_dirty(referring);
-    assert!(spuriously_dirty);
-    engine.evaluate_all().unwrap();
+    engine.delete_columns("Sheet2", 1, 1).unwrap();
+    assert_off_the_grid(&engine, "a structural edit on an unrelated sheet");
 
-    // Consequence 2: an ordinary data write at the shifted address overwrites the name's own
-    // vertex, so the name entry now resolves to a plain default-sheet cell.
-    engine
-        .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(500.0))
-        .unwrap();
-    engine.evaluate_all().unwrap();
-    assert_eq!(engine.graph.get_vertex_kind(name_vertex), VertexKind::Cell);
-
-    // Consequence 3: deleting the row the hijacked vertex now occupies strands the name, and
-    // `=Tracked+1` stops tracking its own target.
-    engine.delete_rows("Sheet1", 2, 1).unwrap();
-    engine.evaluate_all().unwrap();
-    let tracked_formula = engine
-        .graph
-        .get_vertex_for_cell(&CellRef::new(sheet2, Coord::from_excel(1, 1, true, true)))
-        .expect("the name-consuming formula must exist");
-    assert!(engine.graph.get_dependencies(tracked_formula).is_empty());
-    let formulas = engine.graph.formula_vertices();
-    engine.graph.clear_dirty_flags(&formulas);
-    engine
-        .set_cell_value("Sheet2", 4, 4, LiteralValue::Number(700.0))
-        .unwrap();
-    assert!(!engine.graph.is_dirty(tracked_formula));
-    engine.evaluate_all().unwrap();
-    let evaluated = engine.get_cell_value("Sheet2", 1, 1);
-    eprintln!(
-        "AST_EDGE_INSERT_SHIFTS_NAME_VERTEX_ONTO_GRID: name vertex Sheet1!$A$1 -> Sheet1!$A$2; \
-Sheet1!G7 deps={:?} AST cells={:?}; name-target edit dirties Sheet1!G7={spuriously_dirty}; \
-name vertex kind after Sheet1!A2=500 is Cell; Sheet2!A1={evaluated:?}; correct Sheet2!A1=701",
-        actual.symbols, expected_cells,
-    );
-    assert_eq!(
-        evaluated,
-        Some(LiteralValue::Number(701.0)),
-        "a default-sheet insert must not park the name vertex on an addressable cell: \
-Sheet1!G7 must take a direct Sheet1!A2 edge, the name target must not dirty it, and \
-`=Tracked+1` must still recompute from Sheet2!D4"
-    );
+    // A write to every address a symbol would formerly have occupied.
+    for row in 1..=4u32 {
+        for col in 1..=4u32 {
+            engine
+                .set_cell_value(
+                    "Sheet1",
+                    row,
+                    col,
+                    LiteralValue::Number(f64::from(row * col)),
+                )
+                .unwrap();
+        }
+    }
+    assert_off_the_grid(&engine, "writes to the addresses symbols formerly occupied");
 }
 
 #[test]

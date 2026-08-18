@@ -1,5 +1,7 @@
 //! Tests for the standalone ChangeLog implementation
 
+use crate::engine::addr::GridAddr;
+
 use crate::engine::graph::editor::change_log::{
     ChangeEvent, ChangeLog, ChangeLogger, NullChangeLogger,
 };
@@ -195,7 +197,6 @@ fn test_change_log_with_formula_events() {
 #[test]
 fn test_granular_change_events() {
     use crate::engine::vertex::VertexId;
-    use formualizer_common::Coord as AbsCoord;
     use formualizer_parse::parser::parse;
 
     let mut log = ChangeLog::new();
@@ -204,8 +205,8 @@ fn test_granular_change_events() {
     let move_event = ChangeEvent::VertexMoved {
         id: VertexId(1),
         sheet_id: 0,
-        old_coord: AbsCoord::new(5, 1),
-        new_coord: AbsCoord::new(7, 1),
+        old_coord: GridAddr::new(5, 1),
+        new_coord: GridAddr::new(7, 1),
     };
     log.record(move_event);
 

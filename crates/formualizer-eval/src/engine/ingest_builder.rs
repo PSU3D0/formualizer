@@ -368,7 +368,7 @@ impl<'g> BulkIngestBuilder<'g> {
         // Materialize per-sheet to keep caches warm and reduce cross-sheet churn
         // Accumulate a flat adjacency for a single-shot CSR build
         let mut edges_adj: Vec<(u32, Vec<u32>)> = Vec::new();
-        let mut coord_accum: Vec<AbsCoord> = Vec::new();
+        let mut coord_accum: Vec<crate::engine::addr::VertexAddr> = Vec::new();
         let mut id_accum: Vec<u32> = Vec::new();
         for (_sid, mut stage) in self.sheets.drain() {
             let t_sheet0 = Instant::now();
@@ -666,7 +666,7 @@ impl<'g> BulkIngestBuilder<'g> {
                     }
                     let t_coords0 = Instant::now();
                     for vid in self.g.iter_vertex_ids() {
-                        coord_accum.push(self.g.vertex_coord(vid));
+                        coord_accum.push(self.g.vertex_addr(vid));
                         id_accum.push(vid.0);
                     }
                     t_coords_ms = t_coords0.elapsed().as_millis();

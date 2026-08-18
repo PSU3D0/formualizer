@@ -4,6 +4,16 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- **A structural edit no longer reaches a defined name, table or external source.** Those three, plus sheet-scoped names, are identified by name and have no position on any sheet, but the graph gave them fabricated grid coordinates on a real user-visible sheet: the first workbook name landed on `Sheet1!$A$1`, the second on `$B$1`, and a table on its range's anchor cell. The only thing separating such a vertex from the actual cell at that address was its deliberate absence from the cell index — a convention, not a structural property. Two code paths broke it, and both are fixed by giving symbols their own address space. (#302, #304)
+
+  A **default-sheet row or column insert** shifted a name's vertex onto an addressable cell *and* published it in the cell index at the new address. Every dependency resolved afterwards against that address then bound to the name instead of the cell. Three consequences followed, each measured against a matched control that varied only the insert row: a formula written later as `=A2+1` acquired `deps == ["NamedScalar@Sheet1!$A$2"]` rather than a direct cell edge, so editing the *name's* target dirtied an unrelated default-sheet formula; an ordinary data write at the hijacked address rewrote the name's own vertex from `NamedScalar` to `Cell`, silently destroying the name while `resolve_name_entry` kept returning it; and deleting the row the vertex then occupied stranded the name, after which `=Tracked+1` served `71` where `701` was correct. The same happened for sheet-scoped names, for tables, for expanded ranges that merely *covered* the address, and for the vertex's later positions after repeated inserts. (#304)
+
+  A **structural edit on a completely unrelated sheet** dropped formula→name edges. Deleting row 1 or column 1 of the default sheet swept up any name vertex parked at `$A$1` as an ordinary resident of that row or column and deleted it, taking its edges with it — even when both the formula and the name's target lived on another sheet entirely. Subsequent changes to the name's target no longer dirtied the formula, which then served silently stale values. (#302)
+
+  Symbol vertices now hold a `SymbolAddr` in an address space disjoint from the grid's, and the structures keyed by position — the cell index, the per-sheet range index, and the iteration that drives every structural edit — accept a `GridAddr`, which a symbol cannot produce. `NameScope` is now purely lookup metadata and no longer decides where a vertex lives. Evaluation results are unchanged; a name's scope, resolution and dirty propagation all behave exactly as before.
+
 ## [0.8.4] - 2026-08-14
 
 ### Changed

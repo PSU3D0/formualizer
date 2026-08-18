@@ -1,17 +1,22 @@
+use super::addr::{GridAddr, VertexAddr};
 use super::vertex::{VertexId, VertexKind};
 use crate::SheetId;
-use formualizer_common::Coord as AbsCoord;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::addr::SymbolAddr;
+
+    fn grid(row: u32, col: u32) -> VertexAddr {
+        VertexAddr::grid(GridAddr::new(row, col))
+    }
 
     #[test]
     fn test_vertex_store_allocation() {
         let mut store = VertexStore::new();
-        let id = store.allocate(AbsCoord::new(10, 20), 1, 0x01);
-        assert_eq!(store.coord(id), AbsCoord::new(10, 20));
+        let id = store.allocate(grid(10, 20), 1, 0x01);
+        assert_eq!(store.addr(id), grid(10, 20));
         assert_eq!(store.sheet_id(id), 1);
         assert_eq!(store.flags(id), 0x01);
     }
@@ -26,10 +31,7 @@ mod tests {
             store.flags.len(),
         );
         assert_eq!(
-            store.try_allocate_batch(
-                &[(AbsCoord::new(0, 0), 0, 0)],
-                &[VertexId(FIRST_NORMAL_VERTEX)],
-            ),
+            store.try_allocate_batch(&[(grid(0, 0), 0, 0)], &[VertexId(FIRST_NORMAL_VERTEX)],),
             Err(VertexBatchAllocationError::IdExhausted)
         );
         assert_eq!(
@@ -47,10 +49,7 @@ mod tests {
         let mut store = VertexStore::new();
         let before = (store.len(), store.coords.len(), store.flags.len());
         assert_eq!(
-            store.try_allocate_batch(
-                &[(AbsCoord::new(0, 0), 0, 0)],
-                &[VertexId(FIRST_NORMAL_VERTEX + 1)],
-            ),
+            store.try_allocate_batch(&[(grid(0, 0), 0, 0)], &[VertexId(FIRST_NORMAL_VERTEX + 1)],),
             Err(VertexBatchAllocationError::ReservedIdsMismatch)
         );
         assert_eq!(before, (store.len(), store.coords.len(), store.flags.len()));
@@ -60,7 +59,7 @@ mod tests {
     fn test_vertex_store_grow() {
         let mut store = VertexStore::with_capacity(1000);
         for i in 0..10_000 {
-            store.allocate(AbsCoord::new(i, i), 0, 0);
+            store.allocate(grid(i, i), 0, 0);
         }
         assert_eq!(store.len(), 10_000);
         // Note: While VertexStore itself is 64-byte aligned,
@@ -81,11 +80,14 @@ mod tests {
     #[test]
     fn test_vertex_store_accessors() {
         let mut store = VertexStore::new();
-        let id = store.allocate(AbsCoord::new(5, 10), 3, 0x03);
+        let id = store.allocate(grid(5, 10), 3, 0x03);
 
         // Test coord access
-        assert_eq!(store.coord(id).row(), 5);
-        assert_eq!(store.coord(id).col(), 10);
+        let position = store
+            .grid_addr(id)
+            .expect("cell vertices carry a grid position");
+        assert_eq!(position.row(), 5);
+        assert_eq!(position.col(), 10);
 
         // Test sheet_id access
         assert_eq!(store.sheet_id(id), 3);
@@ -101,17 +103,40 @@ mod tests {
     }
 
     #[test]
+    fn symbol_vertices_have_no_grid_position() {
+        let mut store = VertexStore::new();
+        let cell = store.allocate(grid(3, 4), 0, 0);
+        let symbol = store.allocate(VertexAddr::symbol(SymbolAddr::new(0)), 0, 0);
+
+        assert_eq!(store.grid_addr(cell), Some(GridAddr::new(3, 4)));
+        assert_eq!(store.grid_addr(symbol), None);
+        assert!(store.addr(symbol).is_symbol());
+        assert_eq!(store.addr(symbol).as_symbol(), Some(SymbolAddr::new(0)));
+    }
+
+    /// The edge coordinate arrays and the vertex store hold one address per vertex,
+    /// parallel to adjacency. Tagging the symbol space must not widen that slot.
+    #[test]
+    fn stored_address_element_size_is_unchanged() {
+        assert_eq!(std::mem::size_of::<VertexAddr>(), 8);
+        assert_eq!(
+            std::mem::size_of::<VertexAddr>(),
+            std::mem::size_of::<formualizer_common::Coord>(),
+        );
+    }
+
+    #[test]
     fn test_reserved_vertex_range() {
         let mut store = VertexStore::new();
         // First allocation should be >= FIRST_NORMAL_VERTEX
-        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
+        let id = store.allocate(grid(0, 0), 0, 0);
         assert!(id.0 >= FIRST_NORMAL_VERTEX);
     }
 
     #[test]
     fn test_atomic_flag_operations() {
         let mut store = VertexStore::new();
-        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
+        let id = store.allocate(grid(0, 0), 0, 0);
 
         // Test atomic flag updates
         store.set_dirty(id, true);
@@ -125,19 +150,19 @@ mod tests {
     }
 
     #[test]
-    fn test_vertex_store_set_coord() {
+    fn test_vertex_store_set_addr() {
         let mut store = VertexStore::new();
-        let id = store.allocate(AbsCoord::new(1, 1), 0, 0);
+        let id = store.allocate(grid(1, 1), 0, 0);
 
         // Update coordinate
-        store.set_coord(id, AbsCoord::new(5, 10));
-        assert_eq!(store.coord(id), AbsCoord::new(5, 10));
+        store.set_addr(id, grid(5, 10));
+        assert_eq!(store.addr(id), grid(5, 10));
     }
 
     #[test]
     fn test_vertex_store_atomic_flags() {
         let mut store = VertexStore::new();
-        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
+        let id = store.allocate(grid(0, 0), 0, 0);
 
         // Test atomic flag operations
         store.set_dirty(id, true);
@@ -156,7 +181,7 @@ mod tests {
         let mut store = VertexStore::new();
 
         // Verify first allocation is >= FIRST_NORMAL_VERTEX
-        let id = store.allocate(AbsCoord::new(0, 0), 0, 0);
+        let id = store.allocate(grid(0, 0), 0, 0);
         assert!(id.0 >= FIRST_NORMAL_VERTEX);
 
         // Verify deletion uses tombstone, not physical removal
@@ -187,11 +212,11 @@ pub(crate) enum VertexBatchAllocationError {
 #[derive(Debug)]
 pub struct VertexStore {
     // Dense columnar arrays - 21B per vertex logical
-    coords: Vec<AbsCoord>, // 8B (packed row/col)
-    sheet_kind: Vec<u32>,  // 4B (16-bit sheet, 8-bit kind, 8-bit reserved)
-    flags: Vec<AtomicU8>,  // 1B (dirty|volatile|deleted|...)
-    value_ref: Vec<u32>,   // 4B (2-bit tag, 4-bit error, 26-bit index)
-    edge_offset: Vec<u32>, // 4B (CSR offset)
+    coords: Vec<VertexAddr>, // 8B (packed grid position or symbol identity)
+    sheet_kind: Vec<u32>,    // 4B (16-bit sheet, 8-bit kind, 8-bit reserved)
+    flags: Vec<AtomicU8>,    // 1B (dirty|volatile|deleted|...)
+    value_ref: Vec<u32>,     // 4B (2-bit tag, 4-bit error, 26-bit index)
+    edge_offset: Vec<u32>,   // 4B (CSR offset)
 
     // Length tracking
     len: usize,
@@ -252,11 +277,11 @@ impl VertexStore {
 
     /// Allocate a new vertex, returning its ID
     /// IDs start at FIRST_NORMAL_VERTEX to reserve 0-1023 for special vertices
-    pub fn allocate(&mut self, coord: AbsCoord, sheet: SheetId, flags: u8) -> VertexId {
+    pub fn allocate(&mut self, addr: VertexAddr, sheet: SheetId, flags: u8) -> VertexId {
         let id = VertexId(self.len as u32 + FIRST_NORMAL_VERTEX);
         debug_assert!(id.0 >= FIRST_NORMAL_VERTEX);
 
-        self.coords.push(coord);
+        self.coords.push(addr);
         self.sheet_kind.push((sheet as u32) << 16);
         self.flags.push(AtomicU8::new(flags));
         self.value_ref.push(0);
@@ -268,7 +293,7 @@ impl VertexStore {
 
     pub(crate) fn try_allocate_batch(
         &mut self,
-        vertices: &[(AbsCoord, SheetId, u8)],
+        vertices: &[(VertexAddr, SheetId, u8)],
         expected_ids: &[VertexId],
     ) -> Result<Vec<VertexId>, VertexBatchAllocationError> {
         if vertices.len() != expected_ids.len() {
@@ -290,8 +315,8 @@ impl VertexStore {
             return Err(VertexBatchAllocationError::ReservedIdsMismatch);
         }
         self.reserve(vertices.len());
-        for &(coord, sheet, flags) in vertices {
-            self.coords.push(coord);
+        for &(addr, sheet, flags) in vertices {
+            self.coords.push(addr);
             self.sheet_kind.push((u32::from(sheet)) << 16);
             self.flags.push(AtomicU8::new(flags));
             self.value_ref.push(0);
@@ -303,10 +328,10 @@ impl VertexStore {
 
     /// Allocate a batch whose identifiers were checked against the current
     /// store length by an exclusively-held prepared transaction.
-    pub(crate) fn allocate_prevalidated_batch(&mut self, vertices: &[(AbsCoord, SheetId, u8)]) {
+    pub(crate) fn allocate_prevalidated_batch(&mut self, vertices: &[(VertexAddr, SheetId, u8)]) {
         self.reserve(vertices.len());
-        for &(coord, sheet, flags) in vertices {
-            self.allocate(coord, sheet, flags);
+        for &(addr, sheet, flags) in vertices {
+            self.allocate(addr, sheet, flags);
         }
     }
 
@@ -315,16 +340,16 @@ impl VertexStore {
     pub fn allocate_contiguous(
         &mut self,
         sheet: SheetId,
-        coords: &[AbsCoord],
+        addrs: &[VertexAddr],
         flags: u8,
     ) -> Vec<VertexId> {
-        if coords.is_empty() {
+        if addrs.is_empty() {
             return Vec::new();
         }
-        self.reserve(coords.len());
-        let mut ids = Vec::with_capacity(coords.len());
-        for &coord in coords {
-            ids.push(self.allocate(coord, sheet, flags));
+        self.reserve(addrs.len());
+        let mut ids = Vec::with_capacity(addrs.len());
+        for &addr in addrs {
+            ids.push(self.allocate(addr, sheet, flags));
         }
         ids
     }
@@ -353,13 +378,23 @@ impl VertexStore {
     }
 
     // Accessors
+    /// The vertex's address: a grid position for cells and formulas, a symbol identity
+    /// for names, tables and external sources.
     #[inline]
-    pub fn coord(&self, id: VertexId) -> AbsCoord {
+    pub fn addr(&self, id: VertexId) -> VertexAddr {
         if let Some(idx) = self.vertex_id_to_index(id) {
             self.coords[idx]
         } else {
-            AbsCoord::new(0, 0) // Default for invalid vertices
+            VertexAddr::INVALID // Invalid vertices have no address at all
         }
+    }
+
+    /// The vertex's grid position, or `None` when it is a symbol.
+    ///
+    /// Grid-keyed structures go through this, so a symbol cannot reach them.
+    #[inline]
+    pub fn grid_addr(&self, id: VertexId) -> Option<GridAddr> {
+        self.addr(id).as_grid()
     }
 
     #[inline]
@@ -494,13 +529,13 @@ impl VertexStore {
         }
     }
 
-    /// Update the coordinate of a vertex
+    /// Update the address of a vertex
     /// # Safety
-    /// Caller must ensure CSR edge cache is updated via CsrMutableEdges::update_coord
+    /// Caller must ensure CSR edge cache is updated via CsrMutableEdges::update_addr
     #[doc(hidden)]
-    pub fn set_coord(&mut self, id: VertexId, coord: AbsCoord) {
+    pub fn set_addr(&mut self, id: VertexId, addr: VertexAddr) {
         if let Some(idx) = self.vertex_id_to_index(id) {
-            self.coords[idx] = coord;
+            self.coords[idx] = addr;
         }
     }
 

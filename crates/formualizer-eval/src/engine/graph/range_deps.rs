@@ -221,7 +221,10 @@ impl DependencyGraph {
         if self.store.sheet_id(dependent) != sheet_id {
             return false;
         }
-        let coord = self.store.coord(dependent);
+        // A symbol vertex has no position, so no range region can contain it.
+        let Some(coord) = self.store.grid_addr(dependent) else {
+            return false;
+        };
         let r0 = coord.row();
         let c0 = coord.col();
         s_row.is_none_or(|s| r0 >= s)
@@ -347,7 +350,8 @@ impl DependencyGraph {
             if row < 0 || col < 0 {
                 return Some(false);
             }
-            let coord = graph.store.coord(dependent);
+            // A symbol vertex has no position, so no range region can contain it.
+            let coord = graph.store.grid_addr(dependent)?;
             let contains = if row == 0 && col == 0 {
                 coord.row() >= sr && coord.row() <= er && coord.col() >= sc && coord.col() <= ec
             } else if col == 0 {

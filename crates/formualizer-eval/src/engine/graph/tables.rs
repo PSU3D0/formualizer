@@ -92,14 +92,12 @@ impl DependencyGraph {
             )));
         }
 
-        let anchor = range.start;
-        let sheet_id = anchor.sheet_id;
-        let packed_coord = formualizer_common::Coord::new(anchor.coord.row(), anchor.coord.col());
-        let vertex = self.store.allocate(packed_coord, sheet_id, 0x01);
-        self.edges.add_vertex(packed_coord, vertex.0);
-        self.sheet_index_mut(sheet_id)
-            .add_vertex(packed_coord, vertex);
-        self.store.set_kind(vertex, VertexKind::Table);
+        // A table has a range, but the *vertex* that represents the table symbol has no
+        // position: it is identified by name. Parking it on the range's anchor cell put it
+        // in the sheet index, where grid queries and structural edits could reach it (#304).
+        // Dependencies on the table's cells are carried by the stripe registration below.
+        let sheet_id = range.start.sheet_id;
+        let vertex = self.allocate_symbol_vertex(VertexKind::Table, sheet_id);
 
         // Register stripes for the full table region so cell edits inside the table
         // propagate to formulas that depend on the table.

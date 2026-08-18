@@ -91,7 +91,12 @@ where
         if sheets.len() != 1 || sheets[0].0 != default_id {
             return false;
         }
-        if self.graph.vertices_in_sheet(default_id).next().is_some() {
+        if self
+            .graph
+            .grid_vertices_in_sheet(default_id)
+            .next()
+            .is_some()
+        {
             return false;
         }
         if self.graph.named_ranges_iter().next().is_some()
