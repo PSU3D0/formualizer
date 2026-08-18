@@ -3,12 +3,11 @@
 //! Implementation notes:
 //! - MATCH supports match_type: 0 exact, 1 approximate (largest <= lookup), -1 approximate (smallest >= lookup)
 //! - Approximate modes assume data sorted ascending (1) or descending (-1).
-//! - Unsorted-data behavior differs by function and is deliberate: MATCH performs a lightweight
-//!   ascending-order check and returns #N/A when the data is not ordered, while VLOOKUP/HLOOKUP
-//!   bisect without a sortedness guard and can therefore return a row Excel would also return
-//!   incorrectly. Excel documents approximate results on unsorted data as "may not be correct"
-//!   rather than an error, so the unguarded path matches Excel; LibreOffice instead returns #N/A.
-//!   See issue #283 before changing either behavior.
+//! - Unsorted-data behavior: both MATCH and VLOOKUP/HLOOKUP approximate modes
+//!   validate ascending/descending order and return #N/A when the data is not
+//!   sorted. This matches LibreOffice behavior and prevents silently wrong
+//!   results. Excel documents approximate results on unsorted data as "may not
+//!   be correct" rather than erroring; we choose safety. See issue #283.
 //! - Binary search used for approximate modes for efficiency; linear scan for exact or when data has fewer than 8 searchable elements to avoid overhead.
 //! - VLOOKUP/HLOOKUP wrap MATCH logic; VLOOKUP: vertical first column; HLOOKUP: horizontal first row.
 //! - Error propagation: if the lookup value or any entry in an approximate lookup vector is an error, that error propagates.
@@ -41,6 +40,21 @@ fn binary_search_match(
         return Ok(None);
     }
     let searched = SearchedVector::new(slice, needle, date_system)?;
+
+    // Guard: approximate search requires sorted data. Return None (surfaces
+    // as #N/A) when the projected lookup vector is not ordered in the expected
+    // direction. This matches MATCH's existing behavior and LibreOffice Calc.
+    // Excel documents approximate results on unsorted data as "may not be
+    // correct"; we choose the safer #N/A over silently wrong results. (#283)
+    let is_sorted = if mode == 1 {
+        searched.is_sorted_ascending()
+    } else {
+        searched.is_sorted_descending()
+    };
+    if !is_sorted {
+        return Ok(None);
+    }
+
     Ok(binary_search_searched(&searched, needle, mode, date_system)
         .map(|i| searched.original_position(i)))
 }
@@ -1534,5 +1548,94 @@ mod tests {
             .unwrap()
             .into_literal();
         assert_eq!(v, LiteralValue::Number(0.0));
+    }
+
+    #[test]
+    fn vlookup_approximate_returns_na_on_unsorted_data() {
+        // Regression test for #283: VLOOKUP with range_lookup=TRUE on unsorted
+        // data must return #N/A rather than silently wrong results.
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(VLookupFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(30))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(50))
+            .with_cell_a1("Sheet1", "A4", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "A5", LiteralValue::Int(40))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Text("b".into()))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Text("c".into()))
+            .with_cell_a1("Sheet1", "B4", LiteralValue::Text("d".into()))
+            .with_cell_a1("Sheet1", "B5", LiteralValue::Text("e".into()));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
+
+        let needle = lit(LiteralValue::Int(25));
+        let table = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:B5".into(),
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(5), Some(2)),
+            },
+            None,
+        );
+        let two = lit(LiteralValue::Int(2));
+        let true_lit = lit(LiteralValue::Boolean(true));
+
+        let args = vec![
+            ArgumentHandle::new(&needle, &ctx),
+            ArgumentHandle::new(&table, &ctx),
+            ArgumentHandle::new(&two, &ctx),
+            ArgumentHandle::new(&true_lit, &ctx),
+        ];
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        assert!(
+            matches!(v, LiteralValue::Error(ref e) if e.kind == ExcelErrorKind::Na),
+            "VLOOKUP on unsorted data should return #N/A, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn vlookup_approximate_works_on_sorted_data() {
+        // Sanity check: VLOOKUP approximate still works on properly sorted data.
+        let wb = TestWorkbook::new()
+            .with_function(Arc::new(VLookupFn))
+            .with_cell_a1("Sheet1", "A1", LiteralValue::Int(10))
+            .with_cell_a1("Sheet1", "A2", LiteralValue::Int(20))
+            .with_cell_a1("Sheet1", "A3", LiteralValue::Int(30))
+            .with_cell_a1("Sheet1", "A4", LiteralValue::Int(40))
+            .with_cell_a1("Sheet1", "A5", LiteralValue::Int(50))
+            .with_cell_a1("Sheet1", "B1", LiteralValue::Text("a".into()))
+            .with_cell_a1("Sheet1", "B2", LiteralValue::Text("b".into()))
+            .with_cell_a1("Sheet1", "B3", LiteralValue::Text("c".into()))
+            .with_cell_a1("Sheet1", "B4", LiteralValue::Text("d".into()))
+            .with_cell_a1("Sheet1", "B5", LiteralValue::Text("e".into()));
+        let ctx = wb.interpreter();
+        let f = ctx.context.get_function("", "VLOOKUP").unwrap();
+
+        let needle = lit(LiteralValue::Int(25));
+        let table = ASTNode::new(
+            ASTNodeType::Reference {
+                original: "A1:B5".into(),
+                reference: ReferenceType::range(None, Some(1), Some(1), Some(5), Some(2)),
+            },
+            None,
+        );
+        let two = lit(LiteralValue::Int(2));
+        let true_lit = lit(LiteralValue::Boolean(true));
+
+        let args = vec![
+            ArgumentHandle::new(&needle, &ctx),
+            ArgumentHandle::new(&table, &ctx),
+            ArgumentHandle::new(&two, &ctx),
+            ArgumentHandle::new(&true_lit, &ctx),
+        ];
+        let v = f
+            .dispatch(&args, &ctx.function_context(None))
+            .unwrap()
+            .into_literal();
+        // 25 is between 20 and 30; approximate match returns largest <= needle = 20 at row 2
+        assert_eq!(v, LiteralValue::Text("b".into()));
     }
 }
