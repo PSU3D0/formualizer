@@ -514,12 +514,8 @@ fn find_exact_number_in_view(
         }
     }
 
-    // Excel-like semantics: Empty cells compare equal to numeric zero.
-    if n.abs() < 1e-12
-        && let Some(idx) = find_exact_empty_in_view(view, vertical)?
-    {
-        return Ok(Some(idx));
-    }
+    // Excel exact-match semantics: blank cells are NOT equal to numeric
+    // zero. MATCH(0, {blank,1,2}, 0) returns #N/A, not a position. (#319)
 
     Ok(None)
 }
@@ -797,6 +793,52 @@ mod tests {
         );
         assert_eq!(
             find_exact_index_in_view(&view, &wildcard, true, DateSystem::Excel1900).unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn find_exact_number_in_view_does_not_match_blank_as_zero() {
+        // Regression test for #319: MATCH(0, {blank, 1, 2}, 0) must return
+        // None (which surfaces as #N/A), not match the blank cell.
+        let values = vec![
+            LiteralValue::Empty,
+            LiteralValue::Number(1.0),
+            LiteralValue::Number(2.0),
+        ];
+        let engine = build_vertical_text_engine(&values, 8);
+        let range = ReferenceType::range(
+            Some("Sheet1".to_string()),
+            Some(1),
+            Some(1),
+            Some(3),
+            Some(1),
+        );
+        let view = engine.resolve_range_view(&range, "Sheet1").unwrap();
+
+        // Searching for 0 must NOT match the blank cell at index 0.
+        assert_eq!(
+            find_exact_index_in_view(&view, &LiteralValue::Number(0.0), false, DateSystem::Excel1900)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            find_exact_index_in_view(&view, &LiteralValue::Int(0), false, DateSystem::Excel1900)
+                .unwrap(),
+            None
+        );
+
+        // Searching for Empty should still find the blank cell.
+        assert_eq!(
+            find_exact_index_in_view(&view, &LiteralValue::Empty, false, DateSystem::Excel1900)
+                .unwrap(),
+            Some(0)
+        );
+
+        // Searching for 1 still works normally.
+        assert_eq!(
+            find_exact_index_in_view(&view, &LiteralValue::Number(1.0), false, DateSystem::Excel1900)
+                .unwrap(),
             Some(1)
         );
     }
