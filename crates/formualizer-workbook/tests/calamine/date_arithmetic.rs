@@ -1,15 +1,17 @@
 use crate::common::build_workbook;
-use chrono::NaiveDate;
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
 use formualizer_workbook::{CalamineAdapter, SpreadsheetReader};
 
 #[test]
-fn calamine_date_arithmetic_propagates_date_tag() {
+fn calamine_date_arithmetic_returns_number() {
     // C107 = 2024-10-18 (serial 45583)
     // C108 = 1
-    // C109 = C107 + (ROUND(C108,0) * 14) => 2024-11-01
+    // C109 = C107 + (ROUND(C108,0) * 14) => serial 45597
+    //
+    // Excel returns a plain number from date arithmetic; display formatting
+    // (not the value type) is what makes it look like a date. (#312)
     let path = build_workbook(|book| {
         let sh = book.get_sheet_by_name_mut("Sheet1").unwrap();
 
@@ -37,12 +39,13 @@ fn calamine_date_arithmetic_propagates_date_tag() {
     engine.evaluate_all().expect("evaluate");
 
     match engine.get_cell_value("Sheet1", 109, 3) {
-        Some(LiteralValue::Date(d)) => {
-            assert_eq!(d, NaiveDate::from_ymd_opt(2024, 11, 1).unwrap());
+        Some(LiteralValue::Number(n)) => {
+            // 45583 + 14 = 45597
+            assert!(
+                (n - 45597.0).abs() < 1e-9,
+                "expected serial 45597, got {n}"
+            );
         }
-        Some(LiteralValue::DateTime(dt)) => {
-            assert_eq!(dt.date(), NaiveDate::from_ymd_opt(2024, 11, 1).unwrap());
-        }
-        other => panic!("expected date-like at Sheet1!C109, got {other:?}"),
+        other => panic!("expected Number(45597) at Sheet1!C109, got {other:?}"),
     }
 }

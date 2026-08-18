@@ -3,10 +3,8 @@
 //!
 //! Excel has no date type at the formula level. A date cell holds a serial
 //! number carrying a date number format, so `=A1-B1` with `A1 < B1` is just a
-//! negative number. Formualizer keeps a first-class temporal tag so typed date
-//! values survive a round trip, and propagating that tag through `+`/`-` is a
-//! deliberate convenience -- but it must never turn arithmetic Excel performs
-//! happily into a numeric-domain error.
+//! negative number. All date arithmetic now returns plain `Number` values,
+//! matching Excel's value semantics (#312).
 //!
 //! Each test pins exactly the property it names.
 
@@ -53,14 +51,8 @@ fn date_minus_larger_number_returns_negative_number_not_num_error() {
 #[test]
 fn date_minus_number_at_serial_zero_boundary_stays_representable() {
     let mut engine = engine_with_date_anchor();
-    // Serial 0 is representable as a date, so the temporal tag is preserved.
-    // This pins the boundary the fix must not move.
-    match eval(&mut engine, "=A1-45627") {
-        LiteralValue::Date(d) => {
-            assert_eq!(d, NaiveDate::from_ymd_opt(1899, 12, 31).unwrap())
-        }
-        other => panic!("expected Date at serial 0, got {other:?}"),
-    }
+    // Serial 0 is plain arithmetic: 45627 - 45627 = 0. Excel returns a number.
+    assert_eq!(eval(&mut engine, "=A1-45627"), LiteralValue::Number(0.0));
 }
 
 #[test]
