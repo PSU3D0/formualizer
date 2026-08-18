@@ -1074,6 +1074,47 @@ fn default_sheet_inserts_never_bind_a_reference_to_a_symbol_vertex() {
     assert_structural_parity(&engine, 0xc0de_0304, 0);
 }
 
+/// The last hole the type system cannot close on its own: `VertexEditor::move_vertex` is public
+/// and takes an untyped `VertexId`, so it must refuse a symbol explicitly rather than parking it
+/// on the grid the way a default-sheet insert used to (#304).
+#[test]
+fn a_symbol_vertex_cannot_be_moved_onto_the_grid() {
+    use crate::engine::addr::GridAddr;
+    use crate::engine::graph::editor::vertex_editor::VertexEditor;
+
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let sheet1 = engine.sheet_id("Sheet1").unwrap();
+    engine
+        .define_name(
+            "Tracked",
+            NamedDefinition::Cell(CellRef::new(sheet1, Coord::from_excel(4, 4, true, true))),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    let name_vertex = engine
+        .graph
+        .resolve_name_entry("Tracked", sheet1)
+        .expect("workbook name must resolve")
+        .vertex;
+
+    let mut editor = VertexEditor::new(&mut engine.graph);
+    assert!(
+        editor
+            .move_vertex(name_vertex, GridAddr::new(0, 0))
+            .is_err(),
+        "moving a symbol vertex onto A1 must be refused"
+    );
+    drop(editor);
+
+    assert_eq!(engine.graph.get_cell_ref(name_vertex), None);
+    assert_eq!(
+        engine
+            .graph
+            .get_vertex_for_cell(&CellRef::new(sheet1, Coord::from_excel(1, 1, true, true))),
+        None
+    );
+}
+
 /// The structural property the two issues share: a symbol vertex is never in `cell_to_vertex`,
 /// for any symbol kind, under any grid operation.
 #[test]

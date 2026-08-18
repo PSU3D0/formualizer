@@ -3328,20 +3328,11 @@ impl DependencyGraph {
 
     /// Updates the cached value of a formula vertex.
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
-        if !self.value_cache_enabled {
-            // Canonical mode: cell/formula vertices must not store values in the graph.
-            match self.store.kind(vertex_id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    self.vertex_values.remove(&vertex_id);
-                    return;
-                }
-                _ => {
-                    // Allow non-cell vertices to cache values (e.g. named-range formulas).
-                }
-            }
+        if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
+            // Canonical mode: grid-backed vertices must not store values in the graph.
+            // Symbols (e.g. named-range formulas) may still cache theirs.
+            self.vertex_values.remove(&vertex_id);
+            return;
         }
         let value_ref = self.data_store.store_value(normalize_stored_literal(value));
         self.vertex_values.insert(vertex_id, value_ref);
@@ -3795,22 +3786,17 @@ impl DependencyGraph {
     }
 
     fn collect_range_dependents_for_vertex(&self, vertex_id: VertexId) -> Vec<VertexId> {
-        match self.store.kind(vertex_id) {
-            VertexKind::Cell
-            | VertexKind::Empty
-            | VertexKind::FormulaScalar
-            | VertexKind::FormulaArray => {
-                let view = self.store.view(vertex_id);
-                self.collect_range_dependents_for_rect(
-                    view.sheet_id(),
-                    view.row(),
-                    view.col(),
-                    view.row(),
-                    view.col(),
-                )
-            }
-            _ => Vec::new(),
-        }
+        // Only a vertex with a position can sit inside a range. A symbol has none.
+        let Some(position) = self.store.grid_addr(vertex_id) else {
+            return Vec::new();
+        };
+        self.collect_range_dependents_for_rect(
+            self.store.sheet_id(vertex_id),
+            position.row(),
+            position.col(),
+            position.row(),
+            position.col(),
+        )
     }
 
     fn collect_range_dependents_for_rect(
@@ -3958,29 +3944,30 @@ impl DependencyGraph {
 
     /// Get the value stored for a vertex
     pub fn get_value(&self, vertex_id: VertexId) -> Option<LiteralValue> {
-        if !self.value_cache_enabled {
-            // In canonical mode, cell/formula values must not be read from the graph.
-            // Non-cell vertices (e.g. named ranges, external sources) may still use graph storage.
-            match self.store.kind(vertex_id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    #[cfg(debug_assertions)]
-                    {
-                        self.graph_value_read_attempts
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
-                    return None;
-                }
-                _ => {
-                    // Allow non-cell vertices to use vertex_values.
-                }
+        if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
+            // In canonical mode, grid-backed values must not be read from the graph.
+            // Symbols (named ranges, tables, external sources) may still use graph storage.
+            #[cfg(debug_assertions)]
+            {
+                self.graph_value_read_attempts
+                    .fetch_add(1, Ordering::Relaxed);
             }
+            return None;
         }
         self.vertex_values
             .get(&vertex_id)
             .map(|&value_ref| self.data_store.retrieve_value(value_ref))
+    }
+
+    /// True when the vertex occupies the grid, i.e. it is a cell, formula or empty
+    /// placeholder rather than a symbol.
+    ///
+    /// This replaces the `VertexKind` enumerations that used to spell out the grid-backed
+    /// kinds. "Has a position" is now a structural property of the address, so it cannot
+    /// drift out of step with the set of kinds.
+    #[inline]
+    fn is_grid_backed(&self, vertex_id: VertexId) -> bool {
+        self.store.grid_addr(vertex_id).is_some()
     }
 
     /// Get the cell reference for a vertex.
@@ -4144,23 +4131,13 @@ impl DependencyGraph {
     /// Internal: Mark vertex as having #REF! error
     #[doc(hidden)]
     pub fn mark_as_ref_error(&mut self, id: VertexId) {
-        if !self.value_cache_enabled {
-            match self.store.kind(id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    self.ref_error_vertices.insert(id);
-                    // Canonical-only: graph does not cache cell/formula values.
-                    // Ensure the dependent subgraph is dirtied so evaluation updates Arrow truth.
-                    self.vertex_values.remove(&id);
-                    let _ = self.mark_dirty(id);
-                    return;
-                }
-                _ => {
-                    // Allow non-cell vertices to use cached values.
-                }
-            }
+        if !self.value_cache_enabled && self.is_grid_backed(id) {
+            self.ref_error_vertices.insert(id);
+            // Canonical-only: graph does not cache grid-backed values.
+            // Ensure the dependent subgraph is dirtied so evaluation updates Arrow truth.
+            self.vertex_values.remove(&id);
+            let _ = self.mark_dirty(id);
+            return;
         }
         let error = LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref));
         let value_ref = self.data_store.store_value(error);
@@ -4170,18 +4147,8 @@ impl DependencyGraph {
 
     /// Check if a vertex has a #REF! error
     pub fn is_ref_error(&self, id: VertexId) -> bool {
-        if !self.value_cache_enabled {
-            match self.store.kind(id) {
-                VertexKind::Cell
-                | VertexKind::FormulaScalar
-                | VertexKind::FormulaArray
-                | VertexKind::Empty => {
-                    return self.ref_error_vertices.contains(&id);
-                }
-                _ => {
-                    // Non-cell vertices may still have cached values.
-                }
-            }
+        if !self.value_cache_enabled && self.is_grid_backed(id) {
+            return self.ref_error_vertices.contains(&id);
         }
         if let Some(value_ref) = self.vertex_values.get(&id) {
             let value = self.data_store.retrieve_value(*value_ref);

@@ -738,11 +738,24 @@ impl<'g> VertexEditor<'g> {
     }
 
     /// Move a vertex to a new position
+    ///
+    /// The `GridAddr` argument says where the vertex is going, but the `VertexId` says
+    /// nothing about whether it is somewhere to begin with. A symbol has no position, so
+    /// moving one is meaningless: it is what turned a default-sheet insert into a
+    /// name-hijacked cell (#304). Every in-tree caller iterates `grid_vertices_in_sheet`
+    /// and so cannot reach this, but the method is public, so refuse explicitly.
     pub fn move_vertex(&mut self, id: VertexId, new_coord: GridAddr) -> Result<(), EditorError> {
         // Check if vertex exists
         if !self.graph.vertex_exists(id) {
             return Err(EditorError::Excel(
                 ExcelError::new(ExcelErrorKind::Ref).with_message("Vertex does not exist"),
+            ));
+        }
+        if self.graph.get_grid_addr(id).is_none() {
+            return Err(EditorError::Excel(
+                ExcelError::new(ExcelErrorKind::Ref).with_message(
+                    "Symbol vertices have no position and cannot be moved onto the grid",
+                ),
             ));
         }
 
@@ -787,6 +800,14 @@ impl<'g> VertexEditor<'g> {
         let mut summary = MetaUpdateSummary::default();
 
         if let Some(coord) = patch.coord {
+            // Same reasoning as `move_vertex`: a symbol has no position to patch.
+            if self.graph.get_grid_addr(id).is_none() {
+                return Err(EditorError::Excel(
+                    ExcelError::new(ExcelErrorKind::Ref).with_message(
+                        "Symbol vertices have no position and cannot be moved onto the grid",
+                    ),
+                ));
+            }
             self.graph.set_grid_addr(id, coord);
             self.graph.update_edge_grid_addr(id, coord);
             summary.coord_changed = true;

@@ -168,7 +168,7 @@ impl VertexAddr {
     #[inline]
     pub fn as_symbol(self) -> Option<SymbolAddr> {
         (self.0 & RESERVED_HIGH_MASK == SYMBOL_TAG)
-            .then(|| SymbolAddr((self.0 & SYMBOL_PAYLOAD_MASK) as u32))
+            .then_some(SymbolAddr((self.0 & SYMBOL_PAYLOAD_MASK) as u32))
     }
 
     #[inline]

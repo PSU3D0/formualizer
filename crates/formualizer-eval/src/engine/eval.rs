@@ -9831,22 +9831,17 @@ where
                     .get_cell_ref(vertex)
                     .and_then(|cell| engine.graph.spill_registry_anchor_for_cell(cell))
                     .unwrap_or(vertex);
-                match engine.graph.get_vertex_kind(vertex) {
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray => {
-                        roots.push(TargetProducer::Legacy(vertex)).map_err(|_| {
-                            target_root_allocation_error(roots.len() + 1, request_id)
-                        })?;
-                    }
-                    VertexKind::NamedScalar
-                    | VertexKind::NamedArray
-                    | VertexKind::Range
-                    | VertexKind::InfiniteRange
-                    | VertexKind::Table => {
-                        roots.push(TargetProducer::Symbol(vertex)).map_err(|_| {
-                            target_root_allocation_error(roots.len() + 1, request_id)
-                        })?;
-                    }
-                    VertexKind::Empty | VertexKind::Cell | VertexKind::External => {}
+                // `vertices_in_region` is a sheet-index query and a sheet index holds only
+                // grid-addressed vertices, so a region can never yield a symbol: names,
+                // tables and external sources have no position for a region to cover.
+                // Symbol roots come from the by-name lookups below instead.
+                if matches!(
+                    engine.graph.get_vertex_kind(vertex),
+                    VertexKind::FormulaScalar | VertexKind::FormulaArray
+                ) {
+                    roots
+                        .push(TargetProducer::Legacy(vertex))
+                        .map_err(|_| target_root_allocation_error(roots.len() + 1, request_id))?;
                 }
             }
             if roots.len() == before
