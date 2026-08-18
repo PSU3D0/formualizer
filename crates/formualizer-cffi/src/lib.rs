@@ -6,9 +6,11 @@ use serde::Serialize;
 use std::ptr;
 use std::slice;
 
+pub mod guard;
 pub mod parse;
 pub mod workbook;
 
+pub use guard::*;
 pub use workbook::*;
 
 /// A buffer owned by Rust, to be freed by `fz_buffer_free`.
