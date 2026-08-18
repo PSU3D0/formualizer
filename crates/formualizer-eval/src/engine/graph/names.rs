@@ -131,24 +131,44 @@ impl DependencyGraph {
         }
     }
 
-    fn next_name_coord(&mut self) -> AbsCoord {
-        let seq = self.name_vertex_seq;
-        self.name_vertex_seq = self.name_vertex_seq.wrapping_add(1);
-        let row = (seq / 16_384).min(0x000F_FFFF);
-        let col = seq % 16_384;
-        AbsCoord::new(row, col)
+    /// Allocate the next address in the symbol space.
+    ///
+    /// Symbols are identified by name and have no position. They used to be handed
+    /// fabricated grid coordinates on a real sheet, which let grid operations reach them
+    /// (#302, #304); a `SymbolAddr` is not a position and cannot be reached that way.
+    pub(super) fn next_symbol_addr(&mut self) -> VertexAddr {
+        let seq = self.symbol_vertex_seq;
+        self.symbol_vertex_seq = self.symbol_vertex_seq.wrapping_add(1);
+        VertexAddr::symbol(SymbolAddr::new(seq))
+    }
+
+    /// Allocate a vertex in the symbol address space.
+    ///
+    /// `scope_sheet_id` is recorded as lookup metadata only: it says which scope the symbol
+    /// answers queries for, never where it lives. Symbol vertices are absent from
+    /// `cell_to_vertex` and from every sheet index by construction, because they have no
+    /// grid address to key them by.
+    pub(super) fn allocate_symbol_vertex(
+        &mut self,
+        kind: VertexKind,
+        scope_sheet_id: SheetId,
+    ) -> VertexId {
+        let addr = self.next_symbol_addr();
+        let vertex_id = self.store.allocate(addr, scope_sheet_id, 0x01);
+        self.store.set_kind(vertex_id, kind);
+        self.edges.add_vertex(addr, vertex_id.0);
+        vertex_id
     }
 
     pub(super) fn allocate_name_vertex(&mut self, scope: NameScope) -> VertexId {
-        let coord = self.next_name_coord();
-        let sheet_id = match scope {
+        // Scope is lookup metadata, not an address: a workbook-scoped name is not a
+        // resident of the default sheet.
+        let scope_sheet_id = match scope {
             NameScope::Sheet(id) => id,
             NameScope::Workbook => self.default_sheet_id,
         };
-        let vertex_id = self.store.allocate(coord, sheet_id, 0x01);
-        self.store.set_kind(vertex_id, VertexKind::NamedScalar);
+        let vertex_id = self.allocate_symbol_vertex(VertexKind::NamedScalar, scope_sheet_id);
         self.mark_vertex_dirty(vertex_id);
-        self.edges.add_vertex(coord, vertex_id.0);
         vertex_id
     }
 

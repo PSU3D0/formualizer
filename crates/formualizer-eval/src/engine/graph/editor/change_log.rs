@@ -6,11 +6,11 @@
 //! - ChangeLogger: Trait for pluggable logging strategies
 
 use crate::SheetId;
+use crate::engine::addr::GridAddr;
 use crate::engine::named_range::{NameScope, NamedDefinition};
 use crate::engine::row_visibility::RowVisibilitySource;
 use crate::engine::vertex::VertexId;
 use crate::reference::CellRef;
-use formualizer_common::Coord as AbsCoord;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::ASTNode;
 
@@ -59,7 +59,7 @@ pub enum ChangeEvent {
     /// Vertex creation snapshot (for undo). Minimal for now.
     AddVertex {
         id: VertexId,
-        coord: AbsCoord,
+        coord: GridAddr,
         sheet_id: SheetId,
         value: Option<LiteralValue>,
         formula: Option<ASTNode>,
@@ -73,7 +73,7 @@ pub enum ChangeEvent {
         old_formula: Option<ASTNode>,
         old_dependencies: Vec<VertexId>, // outgoing
         old_dependents: Vec<VertexId>,   // incoming
-        coord: Option<AbsCoord>,
+        coord: Option<GridAddr>,
         sheet_id: Option<SheetId>,
         kind: Option<crate::engine::vertex::VertexKind>,
         flags: Option<u8>,
@@ -92,8 +92,8 @@ pub enum ChangeEvent {
     VertexMoved {
         id: VertexId,
         sheet_id: SheetId,
-        old_coord: AbsCoord,
-        new_coord: AbsCoord,
+        old_coord: GridAddr,
+        new_coord: GridAddr,
     },
     FormulaAdjusted {
         id: VertexId,

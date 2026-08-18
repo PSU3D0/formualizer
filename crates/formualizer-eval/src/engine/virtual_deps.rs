@@ -58,7 +58,9 @@ impl<'a, R: EvaluationContext> DynamicRefCollector<'a, R> {
 
         let mut out = self.collected.lock().unwrap();
         for u in index.vertices_in_col_range(sc0, ec0) {
-            let row0 = self.engine.graph.vertex_coord(u).row();
+            let Some(row0) = self.engine.graph.vertex_grid_addr(u).map(|addr| addr.row()) else {
+                continue;
+            };
             if row0 < sr0 || row0 > er0 {
                 continue;
             }
@@ -325,7 +327,9 @@ impl RangeVirtualDepProvider {
                     let sc0 = sc.saturating_sub(1);
                     let ec0 = ec.saturating_sub(1);
                     for u in index.vertices_in_col_range(sc0, ec0) {
-                        let pc = engine.graph.vertex_coord(u);
+                        let Some(pc) = engine.graph.vertex_grid_addr(u) else {
+                            continue;
+                        };
                         let row0 = pc.row();
                         if row0 < sr0 || row0 > er0 {
                             continue;

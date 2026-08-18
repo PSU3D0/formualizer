@@ -1,22 +1,23 @@
+use super::addr::VertexAddr;
 use super::csr_edges::CsrEdges;
 use super::vertex::VertexId;
-use formualizer_common::Coord as AbsCoord;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 #[cfg(test)]
 mod tests {
+    use super::super::addr::GridAddr;
+
+    fn grid(row: u32, col: u32) -> VertexAddr {
+        VertexAddr::grid(GridAddr::new(row, col))
+    }
+
     use super::*;
-    use formualizer_common::Coord as AbsCoord;
 
     #[test]
     fn test_delta_slab_add_edge() {
         let csr = CsrEdges::from_adjacency(
             vec![(0u32, vec![1u32])],
-            &[
-                AbsCoord::new(0, 0),
-                AbsCoord::new(0, 1),
-                AbsCoord::new(0, 2),
-            ],
+            &[grid(0, 0), grid(0, 1), grid(0, 2)],
         );
         let mut delta = DeltaEdgeSlab::new();
 
@@ -30,12 +31,7 @@ mod tests {
     fn test_delta_slab_remove_edge() {
         let csr = CsrEdges::from_adjacency(
             vec![(0u32, vec![1u32, 2u32, 3u32])],
-            &[
-                AbsCoord::new(0, 0),
-                AbsCoord::new(0, 1),
-                AbsCoord::new(0, 2),
-                AbsCoord::new(0, 3),
-            ],
+            &[grid(0, 0), grid(0, 1), grid(0, 2), grid(0, 3)],
         );
         let mut delta = DeltaEdgeSlab::new();
 
@@ -62,12 +58,7 @@ mod tests {
     fn test_delta_slab_multiple_operations() {
         let csr = CsrEdges::from_adjacency(
             vec![(0u32, vec![1u32, 2u32]), (1u32, vec![3u32])],
-            &[
-                AbsCoord::new(0, 0),
-                AbsCoord::new(0, 1),
-                AbsCoord::new(0, 2),
-                AbsCoord::new(1, 0),
-            ],
+            &[grid(0, 0), grid(0, 1), grid(0, 2), grid(1, 0)],
         );
         let mut delta = DeltaEdgeSlab::new();
 
@@ -82,11 +73,7 @@ mod tests {
 
     #[test]
     fn test_mutable_edges_exact_edge_count_includes_delta() {
-        let mut edges = CsrMutableEdges::with_coords(vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(0, 2),
-        ]);
+        let mut edges = CsrMutableEdges::with_coords(vec![grid(0, 0), grid(0, 1), grid(0, 2)]);
         edges.add_edge(VertexId(0), VertexId(1));
         edges.add_edge(VertexId(0), VertexId(2));
         assert_eq!(edges.num_edges_exact(), 2);
@@ -109,10 +96,7 @@ mod tests {
 
     #[test]
     fn test_delta_slab_remove_nonexistent() {
-        let csr = CsrEdges::from_adjacency(
-            vec![(0u32, vec![1u32])],
-            &[AbsCoord::new(0, 0), AbsCoord::new(0, 1)],
-        );
+        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![1u32])], &[grid(0, 0), grid(0, 1)]);
         let mut delta = DeltaEdgeSlab::new();
 
         // Remove edge that doesn't exist
@@ -126,11 +110,7 @@ mod tests {
     fn test_delta_slab_apply_to_csr() {
         let csr = CsrEdges::from_adjacency(
             vec![(0u32, vec![1u32]), (1u32, vec![2u32]), (2u32, vec![])],
-            &[
-                AbsCoord::new(0, 0),
-                AbsCoord::new(0, 1),
-                AbsCoord::new(1, 0),
-            ],
+            &[grid(0, 0), grid(0, 1), grid(1, 0)],
         );
 
         let mut delta = DeltaEdgeSlab::new();
@@ -139,11 +119,7 @@ mod tests {
         delta.add_edge(VertexId(2), VertexId(0));
 
         // Apply delta and get new CSR
-        let coords = vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(1, 0),
-        ];
+        let coords = vec![grid(0, 0), grid(0, 1), grid(1, 0)];
         let vertex_ids = vec![0u32, 1u32, 2u32];
         let new_csr = delta.apply_to_csr(&csr, &coords, &vertex_ids);
 
@@ -154,11 +130,7 @@ mod tests {
 
     #[test]
     fn test_mutable_edges_auto_rebuild() {
-        let mut edges = CsrMutableEdges::with_coords(vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(1, 0),
-        ]);
+        let mut edges = CsrMutableEdges::with_coords(vec![grid(0, 0), grid(0, 1), grid(1, 0)]);
 
         // Add initial edges
         edges.add_edge(VertexId(0), VertexId(1));
@@ -186,9 +158,9 @@ mod tests {
 
         // Add vertices with IDs starting at FIRST_NORMAL_VERTEX (1024)
         let base_id = FIRST_NORMAL_VERTEX;
-        edges.add_vertex(AbsCoord::new(0, 0), base_id);
-        edges.add_vertex(AbsCoord::new(0, 1), base_id + 1);
-        edges.add_vertex(AbsCoord::new(1, 0), base_id + 2);
+        edges.add_vertex(grid(0, 0), base_id);
+        edges.add_vertex(grid(0, 1), base_id + 1);
+        edges.add_vertex(grid(1, 0), base_id + 2);
 
         // Add edges using offset IDs
         edges.add_edge(VertexId(base_id), VertexId(base_id + 1));
@@ -229,12 +201,12 @@ mod tests {
     fn test_csr_coord_update() {
         let mut edges = CsrMutableEdges::new();
 
-        edges.add_vertex(AbsCoord::new(1, 1), 1024);
-        edges.add_vertex(AbsCoord::new(2, 2), 1025);
+        edges.add_vertex(grid(1, 1), 1024);
+        edges.add_vertex(grid(2, 2), 1025);
         edges.add_edge(VertexId(1024), VertexId(1025));
 
         // Update coordinate
-        edges.update_coord(VertexId(1024), AbsCoord::new(5, 5));
+        edges.update_addr(VertexId(1024), grid(5, 5));
 
         // Verify sorting remains correct after rebuild
         edges.rebuild();
@@ -245,14 +217,12 @@ mod tests {
     #[test]
     fn update_coord_uses_vertex_position_index() {
         let mut edges = CsrMutableEdges::new();
-        let items: Vec<_> = (0..20_000u32)
-            .map(|id| (AbsCoord::new(id, id % 17), id))
-            .collect();
+        let items: Vec<_> = (0..20_000u32).map(|id| (grid(id, id % 17), id)).collect();
         edges.add_vertices_batch(&items);
 
         let started = std::time::Instant::now();
         for id in 15_000..20_000u32 {
-            edges.update_coord(VertexId(id), AbsCoord::new(id + 1, (id + 2) % 100));
+            edges.update_addr(VertexId(id), grid(id + 1, (id + 2) % 100));
         }
         let elapsed = started.elapsed();
 
@@ -266,13 +236,13 @@ mod tests {
         for id in 15_000..20_000u32 {
             let pos = edges.vertex_pos[&id];
             assert_eq!(edges.vertex_ids[pos], id);
-            assert_eq!(edges.coords[pos], AbsCoord::new(id + 1, (id + 2) % 100));
+            assert_eq!(edges.coords[pos], grid(id + 1, (id + 2) % 100));
         }
     }
 
     #[test]
     fn test_last_op_wins_add_then_remove() {
-        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![])], &[AbsCoord::new(0, 0)]);
+        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![])], &[grid(0, 0)]);
         let mut delta = DeltaEdgeSlab::new();
         delta.add_edge(VertexId(0), VertexId(1));
         delta.remove_edge(VertexId(0), VertexId(1));
@@ -282,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_last_op_wins_remove_then_add() {
-        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![])], &[AbsCoord::new(0, 0)]);
+        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![])], &[grid(0, 0)]);
         let mut delta = DeltaEdgeSlab::new();
         delta.remove_edge(VertexId(0), VertexId(1));
         delta.add_edge(VertexId(0), VertexId(1));
@@ -294,11 +264,7 @@ mod tests {
     fn test_dedup_additions_and_sorted() {
         let csr = CsrEdges::from_adjacency(
             vec![(0u32, vec![2u32])],
-            &[
-                AbsCoord::new(0, 0),
-                AbsCoord::new(0, 1),
-                AbsCoord::new(0, 2),
-            ],
+            &[grid(0, 0), grid(0, 1), grid(0, 2)],
         );
         let mut delta = DeltaEdgeSlab::new();
         // Add duplicates and out-of-order ids
@@ -314,12 +280,7 @@ mod tests {
     fn test_merged_in_view_add_and_remove() {
         let csr = CsrEdges::from_adjacency(
             vec![(0u32, vec![2u32]), (1u32, vec![2u32])],
-            &[
-                AbsCoord::new(0, 0),
-                AbsCoord::new(0, 1),
-                AbsCoord::new(0, 2),
-                AbsCoord::new(0, 3),
-            ],
+            &[grid(0, 0), grid(0, 1), grid(0, 2), grid(0, 3)],
         );
         let mut delta = DeltaEdgeSlab::new();
 
@@ -333,10 +294,7 @@ mod tests {
 
     #[test]
     fn test_merged_in_view_last_op_wins() {
-        let csr = CsrEdges::from_adjacency(
-            vec![(0u32, vec![1u32])],
-            &[AbsCoord::new(0, 0), AbsCoord::new(0, 1)],
-        );
+        let csr = CsrEdges::from_adjacency(vec![(0u32, vec![1u32])], &[grid(0, 0), grid(0, 1)]);
         let mut delta = DeltaEdgeSlab::new();
 
         delta.remove_edge(VertexId(0), VertexId(1));
@@ -350,11 +308,7 @@ mod tests {
 
     #[test]
     fn test_end_batch_below_threshold_defers_rebuild() {
-        let mut edges = CsrMutableEdges::with_coords(vec![
-            AbsCoord::new(0, 0),
-            AbsCoord::new(0, 1),
-            AbsCoord::new(0, 2),
-        ]);
+        let mut edges = CsrMutableEdges::with_coords(vec![grid(0, 0), grid(0, 1), grid(0, 2)]);
         let before = edges.rebuild_count();
 
         edges.begin_batch();
@@ -372,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_end_batch_rebuilds_at_threshold() {
-        let coords: Vec<AbsCoord> = (0..1200u32).map(|i| AbsCoord::new(i, 0)).collect();
+        let coords: Vec<VertexAddr> = (0..1200u32).map(|i| grid(i, 0)).collect();
         let mut edges = CsrMutableEdges::with_coords(coords);
         let before = edges.rebuild_count();
 
@@ -391,8 +345,8 @@ mod tests {
     #[test]
     fn test_add_vertex_defers_rebuild() {
         let mut edges = CsrMutableEdges::new();
-        edges.add_vertex(AbsCoord::new(0, 0), 1024);
-        edges.add_vertex(AbsCoord::new(0, 1), 1025);
+        edges.add_vertex(grid(0, 0), 1024);
+        edges.add_vertex(grid(0, 1), 1025);
         assert_eq!(edges.rebuild_count(), 0);
 
         edges.add_edge(VertexId(1024), VertexId(1025));
@@ -408,10 +362,9 @@ mod tests {
 
     #[test]
     fn test_end_batch_rebuilds_on_coord_change_only() {
-        let mut edges =
-            CsrMutableEdges::with_coords(vec![AbsCoord::new(0, 0), AbsCoord::new(0, 1)]);
+        let mut edges = CsrMutableEdges::with_coords(vec![grid(0, 0), grid(0, 1)]);
         edges.begin_batch();
-        edges.update_coord(VertexId(0), AbsCoord::new(0, 2));
+        edges.update_addr(VertexId(0), grid(0, 2));
         // No ops, only coord changed; end_batch should rebuild due to coord_dirty
         edges.end_batch();
         // Smoke: out_edges call should not panic and reflect empty edges
@@ -572,7 +525,7 @@ impl DeltaEdgeSlab {
     pub fn apply_to_csr(
         &self,
         base: &CsrEdges,
-        coords: &[AbsCoord],
+        coords: &[VertexAddr],
         vertex_ids: &[u32],
     ) -> CsrEdges {
         let mut adjacency = Vec::with_capacity(vertex_ids.len());
@@ -610,8 +563,8 @@ pub struct CsrMutableEdges {
     /// Delta slab for mutations
     delta: DeltaEdgeSlab,
 
-    /// Vertex coordinates for deterministic ordering
-    coords: Vec<AbsCoord>,
+    /// Vertex addresses (grid position or symbol identity) for deterministic ordering
+    coords: Vec<VertexAddr>,
 
     /// Vertex IDs corresponding to coords array
     vertex_ids: Vec<u32>,
@@ -641,7 +594,7 @@ impl CsrMutableEdges {
     }
 
     /// Create with initial vertex coordinates
-    pub fn with_coords(coords: Vec<AbsCoord>) -> Self {
+    pub fn with_coords(coords: Vec<VertexAddr>) -> Self {
         let num_vertices = coords.len();
         let vertex_ids: Vec<u32> = (0..num_vertices as u32).collect();
         let adjacency: Vec<_> = vertex_ids.iter().map(|&id| (id, Vec::new())).collect();
@@ -852,25 +805,25 @@ impl CsrMutableEdges {
     /// base yet gracefully resolve to "no edges" plus any pending delta
     /// mutations, and the next rebuild picks the vertex up from
     /// `coords`/`vertex_ids` (#125).
-    pub fn add_vertex(&mut self, coord: AbsCoord, vertex_id: u32) -> usize {
+    pub fn add_vertex(&mut self, addr: VertexAddr, vertex_id: u32) -> usize {
         let idx = self.coords.len();
-        self.coords.push(coord);
+        self.coords.push(addr);
         self.vertex_ids.push(vertex_id);
         self.vertex_pos.insert(vertex_id, idx);
         idx
     }
 
     /// Add many vertices at once; single rebuild at end.
-    pub fn add_vertices_batch(&mut self, items: &[(AbsCoord, u32)]) {
+    pub fn add_vertices_batch(&mut self, items: &[(VertexAddr, u32)]) {
         if items.is_empty() {
             return;
         }
         let start_len = self.coords.len();
         self.coords.reserve(items.len());
         self.vertex_ids.reserve(items.len());
-        for (coord, vid) in items {
+        for (addr, vid) in items {
             let idx = self.coords.len();
-            self.coords.push(*coord);
+            self.coords.push(*addr);
             self.vertex_ids.push(*vid);
             self.vertex_pos.insert(*vid, idx);
         }
@@ -879,15 +832,15 @@ impl CsrMutableEdges {
         debug_assert_eq!(self.coords.len(), start_len + items.len());
     }
 
-    /// Update coordinate for a vertex in the cache
+    /// Update the stored address for a vertex in the cache
     /// Marks for rebuild to maintain sort order
-    pub fn update_coord(&mut self, vertex_id: VertexId, new_coord: AbsCoord) {
+    pub fn update_addr(&mut self, vertex_id: VertexId, new_addr: VertexAddr) {
         if let Some(&pos) = self.vertex_pos.get(&vertex_id.0) {
             debug_assert_eq!(
                 self.vertex_ids[pos], vertex_id.0,
                 "vertex_pos out of sync with vertex_ids at position {pos}"
             );
-            self.coords[pos] = new_coord;
+            self.coords[pos] = new_addr;
             // Force rebuild on next access to maintain sort invariants
             self.delta.mark_dirty();
         }
@@ -969,7 +922,7 @@ impl CsrMutableEdges {
     pub fn build_from_adjacency(
         &mut self,
         adjacency: Vec<(u32, Vec<u32>)>,
-        coords: Vec<AbsCoord>,
+        coords: Vec<VertexAddr>,
         vertex_ids: Vec<u32>,
     ) {
         self.base = CsrEdges::from_adjacency(adjacency, &coords);

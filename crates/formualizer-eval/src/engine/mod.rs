@@ -2,6 +2,7 @@
 //!
 //! Provides incremental formula evaluation with dependency tracking.
 
+pub mod addr;
 pub mod arrow_ingest;
 pub mod cancel;
 pub(crate) mod convergence;

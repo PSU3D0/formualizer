@@ -1,6 +1,6 @@
+use super::addr::GridAddr;
 use super::interval_tree::IntervalTree;
 use super::vertex::VertexId;
-use formualizer_common::Coord as AbsCoord;
 use std::collections::HashSet;
 use std::ops::ControlFlow;
 #[cfg(test)]
@@ -76,7 +76,7 @@ impl SheetIndex {
     }
 
     /// Fast path build from sorted coordinates. Assumes items are row-major sorted.
-    pub fn build_from_sorted(&mut self, items: &[(AbsCoord, VertexId)]) {
+    pub fn build_from_sorted(&mut self, items: &[(GridAddr, VertexId)]) {
         self.add_vertices_batch(items);
     }
 
@@ -84,7 +84,7 @@ impl SheetIndex {
     ///
     /// ## Complexity
     /// O(log n) where n is the number of vertices in the index
-    pub fn add_vertex(&mut self, coord: AbsCoord, vertex_id: VertexId) {
+    pub fn add_vertex(&mut self, coord: GridAddr, vertex_id: VertexId) {
         let row = coord.row();
         let col = coord.col();
 
@@ -106,7 +106,7 @@ impl SheetIndex {
     }
 
     /// Add many vertices in a single pass. Assumes coords belong to same sheet index.
-    pub fn add_vertices_batch(&mut self, items: &[(AbsCoord, VertexId)]) {
+    pub fn add_vertices_batch(&mut self, items: &[(GridAddr, VertexId)]) {
         if items.is_empty() {
             return;
         }
@@ -148,7 +148,7 @@ impl SheetIndex {
     ///
     /// ## Complexity
     /// O(log n) where n is the number of vertices in the index
-    pub fn remove_vertex(&mut self, coord: AbsCoord, vertex_id: VertexId) {
+    pub fn remove_vertex(&mut self, coord: GridAddr, vertex_id: VertexId) {
         let row = coord.row();
         let col = coord.col();
 
@@ -164,7 +164,7 @@ impl SheetIndex {
     ///
     /// ## Complexity
     /// O(log n) for removal + O(log n) for insertion = O(log n)
-    pub fn update_vertex(&mut self, old_coord: AbsCoord, new_coord: AbsCoord, vertex_id: VertexId) {
+    pub fn update_vertex(&mut self, old_coord: GridAddr, new_coord: GridAddr, vertex_id: VertexId) {
         self.remove_vertex(old_coord, vertex_id);
         self.add_vertex(new_coord, vertex_id);
     }
@@ -343,7 +343,7 @@ mod tests {
     #[test]
     fn test_add_and_query_single_vertex() {
         let mut index = SheetIndex::new();
-        let coord = AbsCoord::new(5, 10);
+        let coord = GridAddr::new(5, 10);
         let vertex_id = VertexId(1024);
 
         index.add_vertex(coord, vertex_id);
@@ -364,7 +364,7 @@ mod tests {
     #[test]
     fn vertex_count_is_unique_and_consistent_across_incremental_and_batch_builds() {
         let vertex = VertexId(1024);
-        let items = [(AbsCoord::new(1, 1), vertex), (AbsCoord::new(1, 1), vertex)];
+        let items = [(GridAddr::new(1, 1), vertex), (GridAddr::new(1, 1), vertex)];
         let mut incremental = SheetIndex::new();
         for (coord, vertex) in items {
             incremental.add_vertex(coord, vertex);
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn test_remove_vertex() {
         let mut index = SheetIndex::new();
-        let coord = AbsCoord::new(5, 10);
+        let coord = GridAddr::new(5, 10);
         let vertex_id = VertexId(1024);
 
         index.add_vertex(coord, vertex_id);
@@ -395,8 +395,8 @@ mod tests {
     #[test]
     fn test_update_vertex_position() {
         let mut index = SheetIndex::new();
-        let old_coord = AbsCoord::new(5, 10);
-        let new_coord = AbsCoord::new(15, 20);
+        let old_coord = GridAddr::new(5, 10);
+        let new_coord = GridAddr::new(15, 20);
         let vertex_id = VertexId(1024);
 
         index.add_vertex(old_coord, vertex_id);
@@ -421,7 +421,7 @@ mod tests {
         // Add vertices in a pattern
         for row in 0..10 {
             for col in 0..5 {
-                let coord = AbsCoord::new(row, col);
+                let coord = GridAddr::new(row, col);
                 let vertex_id = VertexId(1024 + row * 5 + col);
                 index.add_vertex(coord, vertex_id);
             }
@@ -445,11 +445,11 @@ mod tests {
         let mut index = SheetIndex::new();
 
         // Simulate sparse sheet - only a few cells in a million-row range
-        index.add_vertex(AbsCoord::new(100, 5), VertexId(1024));
-        index.add_vertex(AbsCoord::new(50_000, 10), VertexId(1025));
-        index.add_vertex(AbsCoord::new(100_000, 15), VertexId(1026));
-        index.add_vertex(AbsCoord::new(500_000, 20), VertexId(1027));
-        index.add_vertex(AbsCoord::new(999_999, 25), VertexId(1028));
+        index.add_vertex(GridAddr::new(100, 5), VertexId(1024));
+        index.add_vertex(GridAddr::new(50_000, 10), VertexId(1025));
+        index.add_vertex(GridAddr::new(100_000, 15), VertexId(1026));
+        index.add_vertex(GridAddr::new(500_000, 20), VertexId(1027));
+        index.add_vertex(GridAddr::new(999_999, 25), VertexId(1028));
 
         assert_eq!(index.len(), 5);
 
@@ -468,7 +468,7 @@ mod tests {
 
         // Setup: cells at rows 10, 20, 30, 40, 50
         for row in [10, 20, 30, 40, 50] {
-            index.add_vertex(AbsCoord::new(row, 0), VertexId(1024 + row));
+            index.add_vertex(GridAddr::new(row, 0), VertexId(1024 + row));
         }
 
         // Simulate "insert 5 rows at row 25" - need to find all vertices with row >= 25
@@ -477,7 +477,7 @@ mod tests {
 
         // Simulate "delete columns B:D" - need to find all vertices in columns 1-3
         for col in 1..=3 {
-            index.add_vertex(AbsCoord::new(5, col), VertexId(2000 + col));
+            index.add_vertex(GridAddr::new(5, col), VertexId(2000 + col));
         }
 
         let vertices_to_delete = index.vertices_in_col_range(1, 3);
@@ -491,7 +491,7 @@ mod tests {
         // Simulate a spreadsheet with scattered data
         for row in (0..10000).step_by(100) {
             for col in 0..10 {
-                index.add_vertex(AbsCoord::new(row, col), VertexId(row * 10 + col));
+                index.add_vertex(GridAddr::new(row, col), VertexId(row * 10 + col));
             }
         }
 
@@ -506,7 +506,7 @@ mod tests {
     fn exact_cell_query_visits_only_exact_coordinate_buckets() {
         let mut index = SheetIndex::new();
         for row in 0..10_000 {
-            index.add_vertex(AbsCoord::new(row, 7), VertexId(1024 + row));
+            index.add_vertex(GridAddr::new(row, 7), VertexId(1024 + row));
         }
 
         index.reset_query_stats();
@@ -530,7 +530,7 @@ mod tests {
 
     fn assert_query_parity(
         index: &SheetIndex,
-        model: &[(AbsCoord, VertexId)],
+        model: &[(GridAddr, VertexId)],
         start_row: u32,
         end_row: u32,
         start_col: u32,
@@ -589,7 +589,7 @@ mod tests {
                     next() % 2_000
                 };
                 let col = if offset < 5 { offset * 20 } else { next() % 80 };
-                (AbsCoord::new(row, col), VertexId(1024 + offset))
+                (GridAddr::new(row, col), VertexId(1024 + offset))
             })
             .collect::<Vec<_>>();
 
@@ -611,7 +611,7 @@ mod tests {
 
         for (offset, entry) in model.iter_mut().take(40).enumerate() {
             let (old_coord, vertex) = *entry;
-            let new_coord = AbsCoord::new(3_000 + offset as u32, 100 + offset as u32 % 7);
+            let new_coord = GridAddr::new(3_000 + offset as u32, 100 + offset as u32 % 7);
             incremental.update_vertex(old_coord, new_coord, vertex);
             bulk.update_vertex(old_coord, new_coord, vertex);
             entry.0 = new_coord;

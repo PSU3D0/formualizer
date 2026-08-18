@@ -661,16 +661,17 @@ impl DependencyGraph {
             .iter()
             .map(|(packed, _)| {
                 (
-                    AbsCoord::new(packed.row0(), packed.col0()),
+                    VertexAddr::grid(GridAddr::new(packed.row0(), packed.col0())),
                     packed.sheet_id(),
-                    0,
+                    0u8,
                 )
             })
             .collect();
         self.store.allocate_prevalidated_batch(&allocations);
-        for ((packed, id), (coord, _, _)) in plan.new_vertices.iter().zip(allocations) {
+        for ((packed, id), (addr, _, _)) in plan.new_vertices.iter().zip(allocations) {
             let id = *id;
-            self.edges.add_vertex(coord, id.0);
+            let coord = GridAddr::new(packed.row0(), packed.col0());
+            self.edges.add_vertex(addr, id.0);
             self.sheet_index_mut(packed.sheet_id())
                 .add_vertex(coord, id);
             self.store.set_kind(id, VertexKind::Empty);

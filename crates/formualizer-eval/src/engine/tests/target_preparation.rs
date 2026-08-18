@@ -2017,7 +2017,7 @@ fn replay_admission_deduplicates_vertex_and_cell_event_keys() {
     let events = vec![
         ChangeEvent::AddVertex {
             id: crate::engine::VertexId::new(10_000),
-            coord: formualizer_common::Coord::new(0, 0),
+            coord: crate::engine::addr::GridAddr::new(0, 0),
             sheet_id,
             value: None,
             formula: Some(ast.clone()),

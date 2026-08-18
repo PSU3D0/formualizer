@@ -2,7 +2,7 @@ use crate::SheetId;
 use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::NameScope;
 use crate::engine::vertex::{VertexId, VertexKind};
-use formualizer_common::{Coord as AbsCoord, ExcelError, ExcelErrorKind};
+use formualizer_common::{ExcelError, ExcelErrorKind};
 
 #[derive(Debug, Clone)]
 pub struct SourceScalarEntry {
@@ -19,27 +19,11 @@ pub struct SourceTableEntry {
 }
 
 impl DependencyGraph {
-    fn next_source_coord(&mut self) -> AbsCoord {
-        const COLS: u32 = 16_384;
-        const SOURCE_ROW_OFFSET: u32 = 524_288;
-
-        let seq = self.source_vertex_seq;
-        self.source_vertex_seq = self.source_vertex_seq.wrapping_add(1);
-
-        let row = (seq / COLS)
-            .saturating_add(SOURCE_ROW_OFFSET)
-            .min(0x000F_FFFF);
-        let col = seq % COLS;
-        AbsCoord::new(row, col)
-    }
-
     fn allocate_source_vertex(&mut self) -> VertexId {
-        let coord = self.next_source_coord();
-        let sheet_id: SheetId = self.default_sheet_id;
-        let vertex = self.store.allocate(coord, sheet_id, 0x01);
-        self.edges.add_vertex(coord, vertex.0);
-        self.store.set_kind(vertex, VertexKind::External);
-        vertex
+        // External sources are identified by name and have no position; the default sheet
+        // is recorded only as the scope their lookups answer for.
+        let scope_sheet_id: SheetId = self.default_sheet_id;
+        self.allocate_symbol_vertex(VertexKind::External, scope_sheet_id)
     }
 
     pub fn resolve_source_scalar_entry(&self, name: &str) -> Option<&SourceScalarEntry> {
