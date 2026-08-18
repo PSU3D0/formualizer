@@ -13,8 +13,9 @@ fn xlookup_whole_column_empty_lookup_matches_first_cell() {
         .set_cell_value("Sheet1", 1, 2, LiteralValue::Int(42))
         .unwrap();
 
-    // Lookup column A has no used rows; XLOOKUP should still be able to resolve A:A without
-    // materializing the entire million-row range.
+    // Lookup column A has no used rows; XLOOKUP(0,...) should NOT match blank
+    // cells because Excel's exact match distinguishes blank from zero (#319).
+    // The "not found" value "NF" is returned.
     engine
         .set_cell_formula("Sheet1", 1, 3, parse("=XLOOKUP(0,A:A,B:B,\"NF\")").unwrap())
         .unwrap();
@@ -22,7 +23,7 @@ fn xlookup_whole_column_empty_lookup_matches_first_cell() {
     engine.evaluate_all().unwrap();
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 3),
-        Some(LiteralValue::Number(42.0))
+        Some(LiteralValue::Text("NF".to_string()))
     );
 }
 
