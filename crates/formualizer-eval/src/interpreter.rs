@@ -1190,63 +1190,47 @@ impl<'a> Interpreter<'a> {
                 )
             };
 
-            // Excel has no date type at the formula level: `date + number` is
-            // plain numeric addition, and the result only *displays* as a date
-            // because the cell inherits a date number format. We keep the
-            // temporal tag when the result is representable, because that is
-            // what lets typed date values survive a round trip, but a serial no
-            // date can represent is still an ordinary number. Erroring there
-            // invents a numeric-domain failure out of arithmetic Excel performs
-            // without complaint -- notably every negative serial, which the
-            // standard `end_date - start_date` accrual idiom produces whenever
-            // the period runs backwards.
-            let serial_to_literal = |serial: f64| -> LiteralValue {
+            // Excel has no date type at the formula level: a date cell holds
+            // a serial number carrying a date number format, arithmetic on it
+            // yields a plain number, and the result only *displays* as a date
+            // because the cell inherits the source's number format.
+            //
+            // Formualizer therefore returns Number from all date arithmetic,
+            // matching Excel's value semantics. The Date/DateTime tags are
+            // preserved only in the storage layer for round-trip fidelity; they
+            // do not leak into formula results. (#312)
+            let serial_or_error = |serial: f64| -> LiteralValue {
                 match crate::coercion::sanitize_numeric(serial) {
-                    Ok(serial) => {
-                        match formualizer_common::try_serial_to_datetime_for(date_system, serial) {
-                            Ok(dt) => {
-                                if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-                                    Date(dt.date())
-                                } else {
-                                    DateTime(dt)
-                                }
-                            }
-                            // Not representable as a date: degrade to the
-                            // plain serial rather than manufacturing #NUM!.
-                            Err(_) => Number(serial),
-                        }
-                    }
-                    // NaN and infinity are genuine numeric-domain failures and
-                    // keep their error.
+                    Ok(n) => Number(n),
                     Err(e) => Error(e),
                 }
             };
 
-            // Date +/- number => date (propagate temporal tag)
+            // Date +/- number => Number (plain serial arithmetic)
             if let Some(ls) = date_like_serial(&l) {
                 match op {
                     '+' => {
                         let rn = to_num(&r)?;
-                        return Ok(serial_to_literal(ls + rn));
+                        return Ok(serial_or_error(ls + rn));
                     }
                     '-' => {
-                        // Date - Date => numeric day delta (Excel-compatible)
+                        // Date - Date => numeric day delta
                         if let Some(rs) = date_like_serial(&r) {
-                            return Ok(Number(ls - rs));
+                            return Ok(serial_or_error(ls - rs));
                         }
                         let rn = to_num(&r)?;
-                        return Ok(serial_to_literal(ls - rn));
+                        return Ok(serial_or_error(ls - rn));
                     }
                     _ => unreachable!(),
                 }
             }
 
-            // Number + Date => date (commutative)
+            // Number + Date => Number (commutative)
             if op == '+'
                 && let Some(rs) = date_like_serial(&r)
             {
                 let ln = to_num(&l)?;
-                return Ok(serial_to_literal(ln + rs));
+                return Ok(serial_or_error(ln + rs));
             }
 
             // Fallback: regular numeric operation
