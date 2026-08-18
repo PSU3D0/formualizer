@@ -292,6 +292,88 @@ pub mod formualizer_eval::engine
 pub use formualizer_eval::engine::DateSystem
 pub use formualizer_eval::engine::ResourceExhaustionDetail
 pub use formualizer_eval::engine::ResourceExhaustionReason
+pub mod formualizer_eval::engine::addr
+#[repr(transparent)] pub struct formualizer_eval::engine::addr::GridAddr(_)
+impl formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::col(self) -> u32
+pub const fn formualizer_eval::engine::addr::GridAddr::coord(self) -> formualizer_common::coord::Coord
+pub const fn formualizer_eval::engine::addr::GridAddr::from_coord(formualizer_common::coord::Coord) -> Self
+pub fn formualizer_eval::engine::addr::GridAddr::new(u32, u32) -> Self
+pub fn formualizer_eval::engine::addr::GridAddr::row(self) -> u32
+impl core::clone::Clone for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::clone(&self) -> formualizer_eval::engine::addr::GridAddr
+impl core::cmp::Eq for formualizer_eval::engine::addr::GridAddr
+impl core::cmp::Ord for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::cmp(&self, &Self) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::eq(&self, &formualizer_eval::engine::addr::GridAddr) -> bool
+impl core::cmp::PartialOrd for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::partial_cmp(&self, &Self) -> core::option::Option<core::cmp::Ordering>
+impl core::convert::From<formualizer_common::coord::Coord> for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::from(formualizer_common::coord::Coord) -> Self
+impl core::convert::From<formualizer_eval::engine::addr::GridAddr> for formualizer_common::coord::Coord
+pub fn formualizer_common::coord::Coord::from(formualizer_eval::engine::addr::GridAddr) -> Self
+impl core::convert::From<formualizer_eval::engine::addr::GridAddr> for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::from(formualizer_eval::engine::addr::GridAddr) -> Self
+impl core::default::Default for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::addr::GridAddr
+pub fn formualizer_eval::engine::addr::GridAddr::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::addr::GridAddr
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::addr::GridAddr
+#[repr(transparent)] pub struct formualizer_eval::engine::addr::SymbolAddr(_)
+impl formualizer_eval::engine::addr::SymbolAddr
+pub const fn formualizer_eval::engine::addr::SymbolAddr::index(self) -> u32
+pub const fn formualizer_eval::engine::addr::SymbolAddr::new(u32) -> Self
+impl core::clone::Clone for formualizer_eval::engine::addr::SymbolAddr
+pub fn formualizer_eval::engine::addr::SymbolAddr::clone(&self) -> formualizer_eval::engine::addr::SymbolAddr
+impl core::cmp::Eq for formualizer_eval::engine::addr::SymbolAddr
+impl core::cmp::Ord for formualizer_eval::engine::addr::SymbolAddr
+pub fn formualizer_eval::engine::addr::SymbolAddr::cmp(&self, &formualizer_eval::engine::addr::SymbolAddr) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_eval::engine::addr::SymbolAddr
+pub fn formualizer_eval::engine::addr::SymbolAddr::eq(&self, &formualizer_eval::engine::addr::SymbolAddr) -> bool
+impl core::cmp::PartialOrd for formualizer_eval::engine::addr::SymbolAddr
+pub fn formualizer_eval::engine::addr::SymbolAddr::partial_cmp(&self, &formualizer_eval::engine::addr::SymbolAddr) -> core::option::Option<core::cmp::Ordering>
+impl core::convert::From<formualizer_eval::engine::addr::SymbolAddr> for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::from(formualizer_eval::engine::addr::SymbolAddr) -> Self
+impl core::fmt::Debug for formualizer_eval::engine::addr::SymbolAddr
+pub fn formualizer_eval::engine::addr::SymbolAddr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::addr::SymbolAddr
+pub fn formualizer_eval::engine::addr::SymbolAddr::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::addr::SymbolAddr
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::addr::SymbolAddr
+#[repr(transparent)] pub struct formualizer_eval::engine::addr::VertexAddr(_)
+impl formualizer_eval::engine::addr::VertexAddr
+pub const formualizer_eval::engine::addr::VertexAddr::INVALID: Self
+pub fn formualizer_eval::engine::addr::VertexAddr::as_grid(self) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
+pub fn formualizer_eval::engine::addr::VertexAddr::as_symbol(self) -> core::option::Option<formualizer_eval::engine::addr::SymbolAddr>
+pub const fn formualizer_eval::engine::addr::VertexAddr::as_u64(self) -> u64
+pub fn formualizer_eval::engine::addr::VertexAddr::grid(formualizer_eval::engine::addr::GridAddr) -> Self
+pub fn formualizer_eval::engine::addr::VertexAddr::is_grid(self) -> bool
+pub fn formualizer_eval::engine::addr::VertexAddr::is_symbol(self) -> bool
+pub fn formualizer_eval::engine::addr::VertexAddr::order_key(self) -> (u32, u32)
+pub const fn formualizer_eval::engine::addr::VertexAddr::symbol(formualizer_eval::engine::addr::SymbolAddr) -> Self
+impl core::clone::Clone for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::clone(&self) -> formualizer_eval::engine::addr::VertexAddr
+impl core::cmp::Eq for formualizer_eval::engine::addr::VertexAddr
+impl core::cmp::PartialEq for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::eq(&self, &formualizer_eval::engine::addr::VertexAddr) -> bool
+impl core::convert::From<formualizer_common::coord::Coord> for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::from(formualizer_common::coord::Coord) -> Self
+impl core::convert::From<formualizer_eval::engine::addr::GridAddr> for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::from(formualizer_eval::engine::addr::GridAddr) -> Self
+impl core::convert::From<formualizer_eval::engine::addr::SymbolAddr> for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::from(formualizer_eval::engine::addr::SymbolAddr) -> Self
+impl core::default::Default for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::engine::addr::VertexAddr
+pub fn formualizer_eval::engine::addr::VertexAddr::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for formualizer_eval::engine::addr::VertexAddr
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::addr::VertexAddr
 pub mod formualizer_eval::engine::arena
 pub mod formualizer_eval::engine::arena::array
 pub struct formualizer_eval::engine::arena::array::ArrayArena
@@ -1148,7 +1230,7 @@ pub mod formualizer_eval::engine::csr_edges
 pub struct formualizer_eval::engine::csr_edges::CsrBuilder
 impl formualizer_eval::engine::csr_edges::CsrBuilder
 pub fn formualizer_eval::engine::csr_edges::CsrBuilder::add_edge(&mut self, usize, usize)
-pub fn formualizer_eval::engine::csr_edges::CsrBuilder::add_vertex(&mut self, formualizer_common::coord::Coord) -> usize
+pub fn formualizer_eval::engine::csr_edges::CsrBuilder::add_vertex(&mut self, formualizer_eval::engine::addr::VertexAddr) -> usize
 pub fn formualizer_eval::engine::csr_edges::CsrBuilder::build(self) -> formualizer_eval::engine::csr_edges::CsrEdges
 pub fn formualizer_eval::engine::csr_edges::CsrBuilder::new() -> Self
 impl core::default::Default for formualizer_eval::engine::csr_edges::CsrBuilder
@@ -1157,7 +1239,7 @@ pub struct formualizer_eval::engine::csr_edges::CsrEdges
 impl formualizer_eval::engine::csr_edges::CsrEdges
 pub fn formualizer_eval::engine::csr_edges::CsrEdges::builder() -> formualizer_eval::engine::csr_edges::CsrBuilder
 pub fn formualizer_eval::engine::csr_edges::CsrEdges::empty() -> Self
-pub fn formualizer_eval::engine::csr_edges::CsrEdges::from_adjacency(alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, &[formualizer_common::coord::Coord]) -> Self
+pub fn formualizer_eval::engine::csr_edges::CsrEdges::from_adjacency(alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, &[formualizer_eval::engine::addr::VertexAddr]) -> Self
 pub fn formualizer_eval::engine::csr_edges::CsrEdges::has_edge(&self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::csr_edges::CsrEdges::in_degree(&self, formualizer_eval::engine::vertex::VertexId) -> usize
 pub fn formualizer_eval::engine::csr_edges::CsrEdges::in_edges(&self, formualizer_eval::engine::vertex::VertexId) -> &[formualizer_eval::engine::vertex::VertexId]
@@ -1215,11 +1297,11 @@ pub mod formualizer_eval::engine::delta_edges
 pub struct formualizer_eval::engine::delta_edges::CsrMutableEdges
 impl formualizer_eval::engine::delta_edges::CsrMutableEdges
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_vertex(&mut self, formualizer_common::coord::Coord, u32) -> usize
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_vertices_batch(&mut self, &[(formualizer_common::coord::Coord, u32)])
+pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_vertex(&mut self, formualizer_eval::engine::addr::VertexAddr, u32) -> usize
+pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::add_vertices_batch(&mut self, &[(formualizer_eval::engine::addr::VertexAddr, u32)])
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::adjacency_with_carried_forward_edges(&self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>) -> alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::begin_batch(&mut self)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::build_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_common::coord::Coord>, alloc::vec::Vec<u32>)
+pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::build_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>, alloc::vec::Vec<u32>)
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::delta_size(&self) -> usize
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::end_batch(&mut self)
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::in_edges(&self, formualizer_eval::engine::vertex::VertexId) -> &[formualizer_eval::engine::vertex::VertexId]
@@ -1232,8 +1314,8 @@ pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::out_edges_ref(&se
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::rebuild(&mut self)
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::rebuild_count(&self) -> u64
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::update_coord(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_common::coord::Coord)
-pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::with_coords(alloc::vec::Vec<formualizer_common::coord::Coord>) -> Self
+pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::update_addr(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::VertexAddr)
+pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::with_coords(alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>) -> Self
 impl core::default::Default for formualizer_eval::engine::delta_edges::CsrMutableEdges
 pub fn formualizer_eval::engine::delta_edges::CsrMutableEdges::default() -> Self
 impl core::fmt::Debug for formualizer_eval::engine::delta_edges::CsrMutableEdges
@@ -1242,7 +1324,7 @@ pub struct formualizer_eval::engine::delta_edges::DeltaEdgeSlab
 impl formualizer_eval::engine::delta_edges::DeltaEdgeSlab
 pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::add_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId)
 pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::additions_iter(&self) -> impl core::iter::traits::iterator::Iterator<Item = (&formualizer_eval::engine::vertex::VertexId, &rustc_hash::FxHashSet<formualizer_eval::engine::vertex::VertexId>)>
-pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::apply_to_csr(&self, &formualizer_eval::engine::csr_edges::CsrEdges, &[formualizer_common::coord::Coord], &[u32]) -> formualizer_eval::engine::csr_edges::CsrEdges
+pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::apply_to_csr(&self, &formualizer_eval::engine::csr_edges::CsrEdges, &[formualizer_eval::engine::addr::VertexAddr], &[u32]) -> formualizer_eval::engine::csr_edges::CsrEdges
 pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::clear(&mut self)
 pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::mark_dirty(&mut self)
 pub fn formualizer_eval::engine::delta_edges::DeltaEdgeSlab::merged_in_view(&self, &formualizer_eval::engine::csr_edges::CsrEdges, formualizer_eval::engine::vertex::VertexId) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
@@ -1795,7 +1877,7 @@ pub mod formualizer_eval::engine::graph::editor
 pub mod formualizer_eval::engine::graph::editor::change_log
 pub enum formualizer_eval::engine::graph::editor::change_log::ChangeEvent
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::AddVertex
-pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::AddVertex::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::AddVertex::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::AddVertex::flags: core::option::Option<u8>
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::AddVertex::formula: core::option::Option<formualizer_parse::parser::ASTNode>
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::AddVertex::id: formualizer_eval::engine::vertex::VertexId
@@ -1832,7 +1914,7 @@ pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::NamedRange
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::NamedRangeAdjusted::old_definition: formualizer_eval::engine::named_range::NamedDefinition
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::NamedRangeAdjusted::scope: formualizer_eval::engine::named_range::NameScope
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::RemoveVertex
-pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::RemoveVertex::coord: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::RemoveVertex::coord: core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::RemoveVertex::flags: core::option::Option<u8>
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::RemoveVertex::id: formualizer_eval::engine::vertex::VertexId
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::RemoveVertex::kind: core::option::Option<formualizer_eval::engine::vertex::VertexKind>
@@ -1877,8 +1959,8 @@ pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName::scope: formualizer_eval::engine::named_range::NameScope
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::VertexMoved
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::VertexMoved::id: formualizer_eval::engine::vertex::VertexId
-pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::VertexMoved::new_coord: formualizer_common::coord::Coord
-pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::VertexMoved::old_coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::VertexMoved::new_coord: formualizer_eval::engine::addr::GridAddr
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::VertexMoved::old_coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::VertexMoved::sheet_id: formualizer_eval::reference::SheetId
 impl core::clone::Clone for formualizer_eval::engine::graph::editor::change_log::ChangeEvent
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeEvent::clone(&self) -> formualizer_eval::engine::graph::editor::change_log::ChangeEvent
@@ -2131,7 +2213,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::insert_columns(&mut self, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::insert_rows(&mut self, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_range(&mut self, formualizer_eval::reference::SheetId, u32, u32, u32, u32, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
-pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_common::coord::Coord) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::new(&'g mut formualizer_eval::engine::graph::DependencyGraph) -> Self
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::patch_vertex_data(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::graph::editor::vertex_editor::VertexDataPatch) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::DataUpdateSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::patch_vertex_meta(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::MetaUpdateSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -2152,7 +2234,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 impl<'g> core::ops::drop::Drop for formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::drop(&mut self)
 pub struct formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta
-pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::flags: u8
 pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::kind: formualizer_eval::engine::vertex::VertexKind
 pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::sheet_id: formualizer_eval::reference::SheetId
@@ -2166,7 +2248,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::clone
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch
-pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::coord: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::coord: core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::dirty: core::option::Option<bool>
 pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::kind: core::option::Option<formualizer_eval::engine::vertex::VertexKind>
 pub formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::volatile: core::option::Option<bool>
@@ -2282,7 +2364,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::insert_columns(&mut self, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::insert_rows(&mut self, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_range(&mut self, formualizer_eval::reference::SheetId, u32, u32, u32, u32, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
-pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_common::coord::Coord) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::new(&'g mut formualizer_eval::engine::graph::DependencyGraph) -> Self
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::patch_vertex_data(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::graph::editor::vertex_editor::VertexDataPatch) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::DataUpdateSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::patch_vertex_meta(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::MetaUpdateSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -2303,7 +2385,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 impl<'g> core::ops::drop::Drop for formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::drop(&mut self)
 pub struct formualizer_eval::engine::graph::editor::VertexMeta
-pub formualizer_eval::engine::graph::editor::VertexMeta::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::graph::editor::VertexMeta::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::graph::editor::VertexMeta::flags: u8
 pub formualizer_eval::engine::graph::editor::VertexMeta::kind: formualizer_eval::engine::vertex::VertexKind
 pub formualizer_eval::engine::graph::editor::VertexMeta::sheet_id: formualizer_eval::reference::SheetId
@@ -2317,7 +2399,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::clone
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::graph::editor::VertexMetaPatch
-pub formualizer_eval::engine::graph::editor::VertexMetaPatch::coord: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::graph::editor::VertexMetaPatch::coord: core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub formualizer_eval::engine::graph::editor::VertexMetaPatch::dirty: core::option::Option<bool>
 pub formualizer_eval::engine::graph::editor::VertexMetaPatch::kind: core::option::Option<formualizer_eval::engine::vertex::VertexKind>
 pub formualizer_eval::engine::graph::editor::VertexMetaPatch::volatile: core::option::Option<bool>
@@ -2327,7 +2409,7 @@ impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_eval::engine::graph::snapshot
 pub struct formualizer_eval::engine::graph::snapshot::VertexSnapshot
-pub formualizer_eval::engine::graph::snapshot::VertexSnapshot::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::graph::snapshot::VertexSnapshot::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::graph::snapshot::VertexSnapshot::flags: u8
 pub formualizer_eval::engine::graph::snapshot::VertexSnapshot::formula_ref: core::option::Option<formualizer_eval::engine::arena::ast::AstNodeId>
 pub formualizer_eval::engine::graph::snapshot::VertexSnapshot::kind: formualizer_eval::engine::vertex::VertexKind
@@ -2340,7 +2422,7 @@ impl core::fmt::Debug for formualizer_eval::engine::graph::snapshot::VertexSnaps
 pub fn formualizer_eval::engine::graph::snapshot::VertexSnapshot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub enum formualizer_eval::engine::graph::ChangeEvent
 pub formualizer_eval::engine::graph::ChangeEvent::AddVertex
-pub formualizer_eval::engine::graph::ChangeEvent::AddVertex::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::graph::ChangeEvent::AddVertex::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::graph::ChangeEvent::AddVertex::flags: core::option::Option<u8>
 pub formualizer_eval::engine::graph::ChangeEvent::AddVertex::formula: core::option::Option<formualizer_parse::parser::ASTNode>
 pub formualizer_eval::engine::graph::ChangeEvent::AddVertex::id: formualizer_eval::engine::vertex::VertexId
@@ -2377,7 +2459,7 @@ pub formualizer_eval::engine::graph::ChangeEvent::NamedRangeAdjusted::new_defini
 pub formualizer_eval::engine::graph::ChangeEvent::NamedRangeAdjusted::old_definition: formualizer_eval::engine::named_range::NamedDefinition
 pub formualizer_eval::engine::graph::ChangeEvent::NamedRangeAdjusted::scope: formualizer_eval::engine::named_range::NameScope
 pub formualizer_eval::engine::graph::ChangeEvent::RemoveVertex
-pub formualizer_eval::engine::graph::ChangeEvent::RemoveVertex::coord: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::graph::ChangeEvent::RemoveVertex::coord: core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub formualizer_eval::engine::graph::ChangeEvent::RemoveVertex::flags: core::option::Option<u8>
 pub formualizer_eval::engine::graph::ChangeEvent::RemoveVertex::id: formualizer_eval::engine::vertex::VertexId
 pub formualizer_eval::engine::graph::ChangeEvent::RemoveVertex::kind: core::option::Option<formualizer_eval::engine::vertex::VertexKind>
@@ -2422,8 +2504,8 @@ pub formualizer_eval::engine::graph::ChangeEvent::UpdateName::old_definition: fo
 pub formualizer_eval::engine::graph::ChangeEvent::UpdateName::scope: formualizer_eval::engine::named_range::NameScope
 pub formualizer_eval::engine::graph::ChangeEvent::VertexMoved
 pub formualizer_eval::engine::graph::ChangeEvent::VertexMoved::id: formualizer_eval::engine::vertex::VertexId
-pub formualizer_eval::engine::graph::ChangeEvent::VertexMoved::new_coord: formualizer_common::coord::Coord
-pub formualizer_eval::engine::graph::ChangeEvent::VertexMoved::old_coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::graph::ChangeEvent::VertexMoved::new_coord: formualizer_eval::engine::addr::GridAddr
+pub formualizer_eval::engine::graph::ChangeEvent::VertexMoved::old_coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::graph::ChangeEvent::VertexMoved::sheet_id: formualizer_eval::reference::SheetId
 impl core::clone::Clone for formualizer_eval::engine::graph::editor::change_log::ChangeEvent
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeEvent::clone(&self) -> formualizer_eval::engine::graph::editor::change_log::ChangeEvent
@@ -2512,7 +2594,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::assign_formula_vertex_l
 pub fn formualizer_eval::engine::graph::DependencyGraph::baseline_stats(&self) -> formualizer_eval::engine::graph::GraphBaselineStats
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_batch(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_deferred_dirty(&mut self)
-pub fn formualizer_eval::engine::graph::DependencyGraph::build_edges_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_common::coord::Coord>, alloc::vec::Vec<u32>)
+pub fn formualizer_eval::engine::graph::DependencyGraph::build_edges_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>, alloc::vec::Vec<u32>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_insert_values<I>(&mut self, &str, I) -> core::result::Result<(), formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_common::value::LiteralValue)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas_with_volatility(&mut self, &str, alloc::vec::Vec<(u32, u32, formualizer_parse::parser::ASTNode)>, alloc::vec::Vec<bool>) -> core::result::Result<usize, formualizer_common::error::ExcelError>
@@ -2526,26 +2608,27 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::default_sheet_name(&sel
 pub fn formualizer_eval::engine::graph::DependencyGraph::deferred_dirty_active(&self) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::end_batch(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::end_deferred_dirty(&mut self) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> alloc::vec::Vec<(formualizer_common::coord::Coord, u32)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_common::coord::Coord, u32)>)
-pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_common::coord::Coord, u32)>)
+pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
+pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::finalize_sheet_index(&mut self, &str)
 pub fn formualizer_eval::engine::graph::DependencyGraph::flush_pending_edge_deltas(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_ref_for_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_config(&self) -> &formualizer_eval::engine::EvalConfig
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_coord(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_common::coord::Coord
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_evaluation_vertices(&self) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_parse::parser::ASTNode>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::arena::ast::AstNodeId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(formualizer_eval::engine::arena::ast::AstNodeId, bool)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(&formualizer_eval::engine::arena::ast::AstNodeData, bool)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_for_cell(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<&formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::graph::DependencyGraph::grid_vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = (formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr)> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::is_ref_error(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::iter_vertex_ids(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::make_cell_ref(&self, &str, u32, u32) -> formualizer_eval::reference::CellRef
@@ -2585,10 +2668,10 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::update_cell_mapping(&mu
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_vertex_formula(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_parse::parser::ASTNode) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::used_col_bounds_for_rows(&self, formualizer_eval::reference::SheetId, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::used_row_bounds_for_columns(&self, formualizer_eval::reference::SheetId, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_coord(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_common::coord::Coord
+pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_addr(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::engine::addr::VertexAddr
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_count(&self) -> usize
+pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_grid_addr(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_has_formula(&self, formualizer_eval::engine::vertex::VertexId) -> bool
-pub fn formualizer_eval::engine::graph::DependencyGraph::vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertices_with_formulas(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_plan_idx(&self, &formualizer_eval::engine::plan::DependencyPlan, u32) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_sid_pc(&self, formualizer_eval::reference::SheetId, formualizer_common::coord::Coord) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
@@ -4387,15 +4470,15 @@ pub fn formualizer_eval::engine::scheduler::Scheduler<'a>::tarjan_scc(&self, &[f
 pub mod formualizer_eval::engine::sheet_index
 pub struct formualizer_eval::engine::sheet_index::SheetIndex
 impl formualizer_eval::engine::sheet_index::SheetIndex
-pub fn formualizer_eval::engine::sheet_index::SheetIndex::add_vertex(&mut self, formualizer_common::coord::Coord, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::sheet_index::SheetIndex::add_vertices_batch(&mut self, &[(formualizer_common::coord::Coord, formualizer_eval::engine::vertex::VertexId)])
-pub fn formualizer_eval::engine::sheet_index::SheetIndex::build_from_sorted(&mut self, &[(formualizer_common::coord::Coord, formualizer_eval::engine::vertex::VertexId)])
+pub fn formualizer_eval::engine::sheet_index::SheetIndex::add_vertex(&mut self, formualizer_eval::engine::addr::GridAddr, formualizer_eval::engine::vertex::VertexId)
+pub fn formualizer_eval::engine::sheet_index::SheetIndex::add_vertices_batch(&mut self, &[(formualizer_eval::engine::addr::GridAddr, formualizer_eval::engine::vertex::VertexId)])
+pub fn formualizer_eval::engine::sheet_index::SheetIndex::build_from_sorted(&mut self, &[(formualizer_eval::engine::addr::GridAddr, formualizer_eval::engine::vertex::VertexId)])
 pub fn formualizer_eval::engine::sheet_index::SheetIndex::clear(&mut self)
 pub fn formualizer_eval::engine::sheet_index::SheetIndex::is_empty(&self) -> bool
 pub fn formualizer_eval::engine::sheet_index::SheetIndex::len(&self) -> usize
 pub fn formualizer_eval::engine::sheet_index::SheetIndex::new() -> Self
-pub fn formualizer_eval::engine::sheet_index::SheetIndex::remove_vertex(&mut self, formualizer_common::coord::Coord, formualizer_eval::engine::vertex::VertexId)
-pub fn formualizer_eval::engine::sheet_index::SheetIndex::update_vertex(&mut self, formualizer_common::coord::Coord, formualizer_common::coord::Coord, formualizer_eval::engine::vertex::VertexId)
+pub fn formualizer_eval::engine::sheet_index::SheetIndex::remove_vertex(&mut self, formualizer_eval::engine::addr::GridAddr, formualizer_eval::engine::vertex::VertexId)
+pub fn formualizer_eval::engine::sheet_index::SheetIndex::update_vertex(&mut self, formualizer_eval::engine::addr::GridAddr, formualizer_eval::engine::addr::GridAddr, formualizer_eval::engine::vertex::VertexId)
 pub fn formualizer_eval::engine::sheet_index::SheetIndex::vertices_in_col_range(&self, u32, u32) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::sheet_index::SheetIndex::vertices_in_rect(&self, u32, u32, u32, u32) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::sheet_index::SheetIndex::vertices_in_row_range(&self, u32, u32) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
@@ -4604,12 +4687,13 @@ pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::successors(&self, formu
 pub mod formualizer_eval::engine::vertex_store
 #[repr(C, align(64))] pub struct formualizer_eval::engine::vertex_store::VertexStore
 impl formualizer_eval::engine::vertex_store::VertexStore
+pub fn formualizer_eval::engine::vertex_store::VertexStore::addr(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::engine::addr::VertexAddr
 pub fn formualizer_eval::engine::vertex_store::VertexStore::all_vertices(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
-pub fn formualizer_eval::engine::vertex_store::VertexStore::allocate(&mut self, formualizer_common::coord::Coord, formualizer_eval::reference::SheetId, u8) -> formualizer_eval::engine::vertex::VertexId
-pub fn formualizer_eval::engine::vertex_store::VertexStore::allocate_contiguous(&mut self, formualizer_eval::reference::SheetId, &[formualizer_common::coord::Coord], u8) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::vertex_store::VertexStore::coord(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_common::coord::Coord
+pub fn formualizer_eval::engine::vertex_store::VertexStore::allocate(&mut self, formualizer_eval::engine::addr::VertexAddr, formualizer_eval::reference::SheetId, u8) -> formualizer_eval::engine::vertex::VertexId
+pub fn formualizer_eval::engine::vertex_store::VertexStore::allocate_contiguous(&mut self, formualizer_eval::reference::SheetId, &[formualizer_eval::engine::addr::VertexAddr], u8) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::vertex_store::VertexStore::edge_offset(&self, formualizer_eval::engine::vertex::VertexId) -> u32
 pub fn formualizer_eval::engine::vertex_store::VertexStore::flags(&self, formualizer_eval::engine::vertex::VertexId) -> u8
+pub fn formualizer_eval::engine::vertex_store::VertexStore::grid_addr(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub fn formualizer_eval::engine::vertex_store::VertexStore::is_deleted(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::vertex_store::VertexStore::is_dirty(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::vertex_store::VertexStore::is_dynamic(&self, formualizer_eval::engine::vertex::VertexId) -> bool
@@ -4741,7 +4825,7 @@ pub fn formualizer_eval::engine::journal::ArrowOp::fmt(&self, &mut core::fmt::Fo
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::journal::ArrowOp
 pub enum formualizer_eval::engine::ChangeEvent
 pub formualizer_eval::engine::ChangeEvent::AddVertex
-pub formualizer_eval::engine::ChangeEvent::AddVertex::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::ChangeEvent::AddVertex::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::ChangeEvent::AddVertex::flags: core::option::Option<u8>
 pub formualizer_eval::engine::ChangeEvent::AddVertex::formula: core::option::Option<formualizer_parse::parser::ASTNode>
 pub formualizer_eval::engine::ChangeEvent::AddVertex::id: formualizer_eval::engine::vertex::VertexId
@@ -4778,7 +4862,7 @@ pub formualizer_eval::engine::ChangeEvent::NamedRangeAdjusted::new_definition: f
 pub formualizer_eval::engine::ChangeEvent::NamedRangeAdjusted::old_definition: formualizer_eval::engine::named_range::NamedDefinition
 pub formualizer_eval::engine::ChangeEvent::NamedRangeAdjusted::scope: formualizer_eval::engine::named_range::NameScope
 pub formualizer_eval::engine::ChangeEvent::RemoveVertex
-pub formualizer_eval::engine::ChangeEvent::RemoveVertex::coord: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::ChangeEvent::RemoveVertex::coord: core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub formualizer_eval::engine::ChangeEvent::RemoveVertex::flags: core::option::Option<u8>
 pub formualizer_eval::engine::ChangeEvent::RemoveVertex::id: formualizer_eval::engine::vertex::VertexId
 pub formualizer_eval::engine::ChangeEvent::RemoveVertex::kind: core::option::Option<formualizer_eval::engine::vertex::VertexKind>
@@ -4823,8 +4907,8 @@ pub formualizer_eval::engine::ChangeEvent::UpdateName::old_definition: formualiz
 pub formualizer_eval::engine::ChangeEvent::UpdateName::scope: formualizer_eval::engine::named_range::NameScope
 pub formualizer_eval::engine::ChangeEvent::VertexMoved
 pub formualizer_eval::engine::ChangeEvent::VertexMoved::id: formualizer_eval::engine::vertex::VertexId
-pub formualizer_eval::engine::ChangeEvent::VertexMoved::new_coord: formualizer_common::coord::Coord
-pub formualizer_eval::engine::ChangeEvent::VertexMoved::old_coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::ChangeEvent::VertexMoved::new_coord: formualizer_eval::engine::addr::GridAddr
+pub formualizer_eval::engine::ChangeEvent::VertexMoved::old_coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::ChangeEvent::VertexMoved::sheet_id: formualizer_eval::reference::SheetId
 impl core::clone::Clone for formualizer_eval::engine::graph::editor::change_log::ChangeEvent
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeEvent::clone(&self) -> formualizer_eval::engine::graph::editor::change_log::ChangeEvent
@@ -5782,7 +5866,7 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::assign_formula_vertex_l
 pub fn formualizer_eval::engine::graph::DependencyGraph::baseline_stats(&self) -> formualizer_eval::engine::graph::GraphBaselineStats
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_batch(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::begin_deferred_dirty(&mut self)
-pub fn formualizer_eval::engine::graph::DependencyGraph::build_edges_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_common::coord::Coord>, alloc::vec::Vec<u32>)
+pub fn formualizer_eval::engine::graph::DependencyGraph::build_edges_from_adjacency(&mut self, alloc::vec::Vec<(u32, alloc::vec::Vec<u32>)>, alloc::vec::Vec<formualizer_eval::engine::addr::VertexAddr>, alloc::vec::Vec<u32>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_insert_values<I>(&mut self, &str, I) -> core::result::Result<(), formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_common::value::LiteralValue)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::bulk_set_formulas_with_volatility(&mut self, &str, alloc::vec::Vec<(u32, u32, formualizer_parse::parser::ASTNode)>, alloc::vec::Vec<bool>) -> core::result::Result<usize, formualizer_common::error::ExcelError>
@@ -5796,26 +5880,27 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::default_sheet_name(&sel
 pub fn formualizer_eval::engine::graph::DependencyGraph::deferred_dirty_active(&self) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::end_batch(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::end_deferred_dirty(&mut self) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
-pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> alloc::vec::Vec<(formualizer_common::coord::Coord, u32)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_common::coord::Coord, u32)>)
-pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_common::coord::Coord, u32)>)
+pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_ordered(&mut self, &[(formualizer_eval::reference::SheetId, formualizer_common::coord::Coord)]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
+pub fn formualizer_eval::engine::graph::DependencyGraph::ensure_vertices_batch_packed_ordered(&mut self, &[formualizer_common::address::PackedSheetCell]) -> (alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>, alloc::vec::Vec<(formualizer_eval::engine::addr::VertexAddr, u32)>)
 pub fn formualizer_eval::engine::graph::DependencyGraph::finalize_sheet_index(&mut self, &str)
 pub fn formualizer_eval::engine::graph::DependencyGraph::flush_pending_edge_deltas(&mut self)
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_ref_for_vertex(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_config(&self) -> &formualizer_eval::engine::EvalConfig
-pub fn formualizer_eval::engine::graph::DependencyGraph::get_coord(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_common::coord::Coord
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_evaluation_vertices(&self) -> alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_parse::parser::ASTNode>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::arena::ast::AstNodeId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_id_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(formualizer_eval::engine::arena::ast::AstNodeId, bool)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<&formualizer_eval::engine::arena::ast::AstNodeData>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_formula_node_and_volatile(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<(&formualizer_eval::engine::arena::ast::AstNodeData, bool)>
+pub fn formualizer_eval::engine::graph::DependencyGraph::get_grid_addr(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_sheet_id(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::reference::SheetId
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_value(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_for_cell(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::get_vertex_id_for_address(&self, &formualizer_eval::reference::CellRef) -> core::option::Option<&formualizer_eval::engine::vertex::VertexId>
+pub fn formualizer_eval::engine::graph::DependencyGraph::grid_vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = (formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr)> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::is_ref_error(&self, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::DependencyGraph::iter_vertex_ids(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::make_cell_ref(&self, &str, u32, u32) -> formualizer_eval::reference::CellRef
@@ -5855,10 +5940,10 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::update_cell_mapping(&mu
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_vertex_formula(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_parse::parser::ASTNode) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::used_col_bounds_for_rows(&self, formualizer_eval::reference::SheetId, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::graph::DependencyGraph::used_row_bounds_for_columns(&self, formualizer_eval::reference::SheetId, u32, u32) -> core::option::Option<(u32, u32)>
-pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_coord(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_common::coord::Coord
+pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_addr(&self, formualizer_eval::engine::vertex::VertexId) -> formualizer_eval::engine::addr::VertexAddr
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_count(&self) -> usize
+pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_grid_addr(&self, formualizer_eval::engine::vertex::VertexId) -> core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertex_has_formula(&self, formualizer_eval::engine::vertex::VertexId) -> bool
-pub fn formualizer_eval::engine::graph::DependencyGraph::vertices_in_sheet(&self, formualizer_eval::reference::SheetId) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::vertices_with_formulas(&self) -> impl core::iter::traits::iterator::Iterator<Item = formualizer_eval::engine::vertex::VertexId> + '_
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_plan_idx(&self, &formualizer_eval::engine::plan::DependencyPlan, u32) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
 pub fn formualizer_eval::engine::graph::DependencyGraph::vid_for_sid_pc(&self, formualizer_eval::reference::SheetId, formualizer_common::coord::Coord) -> core::option::Option<formualizer_eval::engine::vertex::VertexId>
@@ -6948,7 +7033,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::insert_columns(&mut self, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::insert_rows(&mut self, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_range(&mut self, formualizer_eval::reference::SheetId, u32, u32, u32, u32, formualizer_eval::reference::SheetId, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
-pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_common::coord::Coord) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::move_vertex(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::addr::GridAddr) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::new(&'g mut formualizer_eval::engine::graph::DependencyGraph) -> Self
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::patch_vertex_data(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::graph::editor::vertex_editor::VertexDataPatch) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::DataUpdateSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::patch_vertex_meta(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::MetaUpdateSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -6989,7 +7074,7 @@ pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::exists(&self, formualiz
 pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::predecessors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
 pub fn formualizer_eval::engine::topo::GraphAdapter<'_>::successors(&self, formualizer_eval::engine::vertex::VertexId, &mut alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>)
 pub struct formualizer_eval::engine::VertexMeta
-pub formualizer_eval::engine::VertexMeta::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::VertexMeta::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::VertexMeta::flags: u8
 pub formualizer_eval::engine::VertexMeta::kind: formualizer_eval::engine::vertex::VertexKind
 pub formualizer_eval::engine::VertexMeta::sheet_id: formualizer_eval::reference::SheetId
@@ -7003,7 +7088,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::clone
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMeta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::VertexMetaPatch
-pub formualizer_eval::engine::VertexMetaPatch::coord: core::option::Option<formualizer_common::coord::Coord>
+pub formualizer_eval::engine::VertexMetaPatch::coord: core::option::Option<formualizer_eval::engine::addr::GridAddr>
 pub formualizer_eval::engine::VertexMetaPatch::dirty: core::option::Option<bool>
 pub formualizer_eval::engine::VertexMetaPatch::kind: core::option::Option<formualizer_eval::engine::vertex::VertexKind>
 pub formualizer_eval::engine::VertexMetaPatch::volatile: core::option::Option<bool>
@@ -7012,7 +7097,7 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexMetaPatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::VertexSnapshot
-pub formualizer_eval::engine::VertexSnapshot::coord: formualizer_common::coord::Coord
+pub formualizer_eval::engine::VertexSnapshot::coord: formualizer_eval::engine::addr::GridAddr
 pub formualizer_eval::engine::VertexSnapshot::flags: u8
 pub formualizer_eval::engine::VertexSnapshot::formula_ref: core::option::Option<formualizer_eval::engine::arena::ast::AstNodeId>
 pub formualizer_eval::engine::VertexSnapshot::kind: formualizer_eval::engine::vertex::VertexKind
