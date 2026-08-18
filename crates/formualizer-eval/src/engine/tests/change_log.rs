@@ -197,7 +197,6 @@ fn test_change_log_with_formula_events() {
 #[test]
 fn test_granular_change_events() {
     use crate::engine::vertex::VertexId;
-    use formualizer_common::Coord as AbsCoord;
     use formualizer_parse::parser::parse;
 
     let mut log = ChangeLog::new();

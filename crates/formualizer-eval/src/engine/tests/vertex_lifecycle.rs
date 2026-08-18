@@ -5,7 +5,6 @@ use crate::engine::graph::editor::{
 };
 use crate::engine::vertex::{VertexId, VertexKind};
 use crate::reference::{CellRef, Coord};
-use formualizer_common::Coord as AbsCoord;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parse;
 

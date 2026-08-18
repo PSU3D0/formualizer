@@ -1,6 +1,5 @@
 use crate::engine::addr::GridAddr;
 use crate::engine::*;
-use formualizer_common::Coord as AbsCoord;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 
