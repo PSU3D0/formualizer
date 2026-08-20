@@ -1803,18 +1803,17 @@ fn test_named_range_delete_causes_ref_error() {
         count: 1,
     };
 
-    // Adjusting should fail with REF error
-    let result = graph.adjust_named_ranges(&op);
-    assert!(result.is_err());
-    if let Err(e) = result {
-        assert!(matches!(e.kind, ExcelErrorKind::Ref));
+    graph.adjust_named_ranges(&op).unwrap();
+    match graph.resolve_name("Target", 0).unwrap() {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=#REF!"),
+        other => panic!("expected invalidated formula definition, got {other:?}"),
     }
 }
 
 // ============ Tests for Absolute vs Relative References ============
 
 #[test]
-fn test_absolute_references_dont_move() {
+fn test_absolute_references_track_row_inserts() {
     use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
@@ -1834,11 +1833,15 @@ fn test_absolute_references_dont_move() {
 
     graph.adjust_named_ranges(&op).unwrap();
 
-    // Check that AbsoluteTarget still points to B5 (row 4, col 1)
+    // AbsoluteTarget tracks the value to B7 (row 6, col 1).
     let adjusted = graph.resolve_name("AbsoluteTarget", 0).unwrap();
     match adjusted {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row(), 4, "Absolute row should not change");
+            assert_eq!(
+                cell_ref.coord.row(),
+                6,
+                "Absolute row should track the insert"
+            );
             assert_eq!(cell_ref.coord.col(), 1, "Absolute column should not change");
             assert!(cell_ref.coord.row_abs(), "Should still be absolute row");
             assert!(cell_ref.coord.col_abs(), "Should still be absolute column");
@@ -1890,11 +1893,15 @@ fn test_mixed_references_partial_adjustment() {
         _ => panic!("Expected Cell definition"),
     }
 
-    // Check B$5 - row should not move, column stays same
+    // B$5 also tracks the structural row insert; `$` only affects copy/fill.
     let mixed2 = graph.resolve_name("MixedRef2", 0).unwrap();
     match mixed2 {
         NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(cell_ref.coord.row(), 4, "Absolute row should remain 4");
+            assert_eq!(
+                cell_ref.coord.row(),
+                6,
+                "Absolute row should track from 4 to 6"
+            );
             assert_eq!(cell_ref.coord.col(), 1, "Column should remain 1");
             assert!(cell_ref.coord.row_abs(), "Row should be absolute");
             assert!(!cell_ref.coord.col_abs(), "Column should be relative");
@@ -1930,12 +1937,16 @@ fn test_mixed_references_column_operations() {
 
     graph.adjust_named_ranges(&op).unwrap();
 
-    // Check $E3 - column should not move
+    // $E3 tracks the structural column insert; `$` only affects copy/fill.
     let mixed1 = graph.resolve_name("ColMixed1", 0).unwrap();
     match mixed1 {
         NamedDefinition::Cell(cell_ref) => {
             assert_eq!(cell_ref.coord.row(), 2, "Row should remain 2");
-            assert_eq!(cell_ref.coord.col(), 4, "Absolute column should remain 4");
+            assert_eq!(
+                cell_ref.coord.col(),
+                6,
+                "Absolute column should track from 4 to 6"
+            );
             assert!(!cell_ref.coord.row_abs(), "Row should be relative");
             assert!(cell_ref.coord.col_abs(), "Column should be absolute");
         }
@@ -1987,11 +1998,11 @@ fn test_range_with_mixed_references() {
     let adjusted = graph.resolve_name("MixedRange", 0).unwrap();
     match adjusted {
         NamedDefinition::Range(range_ref) => {
-            // Start ($B$2) should not move
+            // Start ($B$2) is above the structural insert and remains unchanged.
             assert_eq!(
                 range_ref.start.coord.row(),
                 1,
-                "Absolute start row should remain 1"
+                "Start row above the insert should remain 1"
             );
             assert_eq!(
                 range_ref.start.coord.col(),
@@ -2012,7 +2023,7 @@ fn test_range_with_mixed_references() {
 }
 
 #[test]
-fn test_absolute_ref_deleted_no_error() {
+fn test_absolute_ref_deleted_returns_ref_error() {
     use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
 
     let mut graph = DependencyGraph::new();
@@ -2030,26 +2041,10 @@ fn test_absolute_ref_deleted_no_error() {
         count: 1,
     };
 
-    // Absolute references don't adjust, so they don't get deleted
-    // The reference remains valid even though the row it points to is deleted
-    let result = graph.adjust_named_ranges(&op);
-    assert!(
-        result.is_ok(),
-        "Absolute references should not cause errors when their row is deleted"
-    );
-
-    // The reference should still point to row 2 (which is now what was row 3)
-    let adjusted = graph.resolve_name("AbsoluteRef", 0).unwrap();
-    match adjusted {
-        NamedDefinition::Cell(cell_ref) => {
-            assert_eq!(
-                cell_ref.coord.row(),
-                2,
-                "Absolute reference should not change"
-            );
-            assert_eq!(cell_ref.coord.col(), 1, "Column should not change");
-        }
-        _ => panic!("Expected Cell definition"),
+    graph.adjust_named_ranges(&op).unwrap();
+    match graph.resolve_name("AbsoluteRef", 0).unwrap() {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=#REF!"),
+        other => panic!("expected invalidated formula definition, got {other:?}"),
     }
 }
 
@@ -2342,4 +2337,576 @@ fn test_vertex_editor_change_log() {
         }
         _ => panic!("Expected DeleteName event"),
     }
+}
+
+// Issue #170 mutation matrix:
+// Cell Pin -> sheet_scoped_absolute_cell_name_tracks_row_insert_and_column_delete.
+// Range-start Pin -> absolute_named_range_start_tracks_column_insert_at_its_boundary.
+// Range-end Pin -> absolute_named_range_end_tracks_column_insert_inside_the_range.
+// Formula Pin -> sheet_scoped_named_formula_delete_of_target_renders_ref_and_evaluates_ref.
+
+#[test]
+fn sheet_scoped_absolute_cell_name_tracks_row_insert_and_column_delete() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine
+        .set_cell_value("Data", 5, 5, LiteralValue::Number(55.0))
+        .unwrap();
+    engine
+        .define_name(
+            "TrackedCell",
+            NamedDefinition::Cell(CellRef::new(data, Coord::new(4, 4, true, true))),
+            NameScope::Sheet(data),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Data", 1, 1, parse("=TrackedCell").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(55.0)));
+
+    engine.insert_rows("Data", 3, 2).unwrap();
+    engine.delete_columns("Data", 2, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(55.0)));
+    let entry = engine.resolve_name_entry("TrackedCell", data).unwrap();
+    match &entry.definition {
+        NamedDefinition::Cell(reference) => {
+            assert_eq!((reference.coord.row(), reference.coord.col()), (6, 3));
+            assert!(reference.coord.row_abs() && reference.coord.col_abs());
+        }
+        other => panic!("expected tracked cell definition, got {other:?}"),
+    }
+
+    engine
+        .set_cell_value("Data", 7, 4, LiteralValue::Number(66.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(66.0)));
+}
+
+#[test]
+fn absolute_named_range_start_tracks_column_insert_at_its_boundary() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    for (col, value) in [(4, 40.0), (5, 50.0), (6, 60.0)] {
+        engine
+            .set_cell_value("Data", 2, col, lit_num(value))
+            .unwrap();
+    }
+    engine
+        .define_name(
+            "TrackedRangeStart",
+            NamedDefinition::Range(RangeRef::new(
+                CellRef::new(data, Coord::new(1, 3, true, true)),
+                CellRef::new(data, Coord::new(1, 5, true, true)),
+            )),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            parse("=COLUMNS(TrackedRangeStart)").unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(3.0)));
+
+    engine.insert_columns("Data", 4, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(3.0)));
+    let entry = engine
+        .resolve_name_entry("TrackedRangeStart", data)
+        .unwrap();
+    match &entry.definition {
+        NamedDefinition::Range(range) => {
+            assert_eq!((range.start.coord.col(), range.end.coord.col()), (4, 6))
+        }
+        other => panic!("expected tracked range definition, got {other:?}"),
+    }
+}
+
+#[test]
+fn absolute_named_range_end_tracks_column_insert_inside_the_range() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    for (col, value) in [(4, 40.0), (5, 50.0), (6, 60.0)] {
+        engine
+            .set_cell_value("Data", 2, col, lit_num(value))
+            .unwrap();
+    }
+    engine
+        .define_name(
+            "TrackedRangeEnd",
+            NamedDefinition::Range(RangeRef::new(
+                CellRef::new(data, Coord::new(1, 3, true, true)),
+                CellRef::new(data, Coord::new(1, 5, true, true)),
+            )),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=SUM(TrackedRangeEnd)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(150.0)));
+
+    engine.insert_columns("Data", 5, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(150.0)));
+    let entry = engine.resolve_name_entry("TrackedRangeEnd", data).unwrap();
+    match &entry.definition {
+        NamedDefinition::Range(range) => {
+            assert_eq!((range.start.coord.col(), range.end.coord.col()), (3, 6))
+        }
+        other => panic!("expected tracked range definition, got {other:?}"),
+    }
+
+    engine
+        .set_cell_value("Data", 2, 4, LiteralValue::Number(400.0))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(510.0)));
+}
+
+#[test]
+fn sheet_scoped_named_formula_delete_of_target_renders_ref_and_evaluates_ref() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine.set_cell_value("Data", 3, 2, lit_num(30.0)).unwrap();
+    engine.set_cell_value("Data", 4, 2, lit_num(40.0)).unwrap();
+    engine
+        .define_name(
+            "TrackedFormula",
+            NamedDefinition::Formula {
+                ast: parse("=$B$3").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Sheet(data),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Data", 1, 1, parse("=TrackedFormula").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(30.0)));
+
+    engine.delete_rows("Data", 3, 1).unwrap();
+    engine.evaluate_all().unwrap();
+
+    let entry = engine.resolve_name_entry("TrackedFormula", data).unwrap();
+    match &entry.definition {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=#REF!"),
+        other => panic!("expected tracked formula definition, got {other:?}"),
+    }
+    assert!(matches!(
+        engine.get_cell_value("Data", 1, 1),
+        Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Ref
+    ));
+}
+
+#[test]
+fn workbook_formula_name_reindexes_cell_dependency_after_row_insert() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine.set_cell_value("Data", 5, 2, lit_num(100.0)).unwrap();
+    engine
+        .define_name(
+            "TF",
+            NamedDefinition::Formula {
+                ast: parse("=Data!$B$5").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=TF").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(100.0)));
+
+    engine.set_cell_value("Data", 5, 2, lit_num(101.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(101.0)));
+
+    engine.insert_rows("Data", 2, 2).unwrap();
+    engine.evaluate_all().unwrap();
+    match &engine.resolve_name_entry("TF", data).unwrap().definition {
+        NamedDefinition::Formula { ast, .. } => {
+            assert_eq!(canonical_formula(ast), "=Data!$B$7")
+        }
+        other => panic!("expected tracked formula definition, got {other:?}"),
+    }
+    assert_eq!(engine.get_cell_value("Data", 7, 2), Some(lit_num(101.0)));
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(101.0)));
+
+    engine.set_cell_value("Data", 7, 2, lit_num(555.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(555.0)));
+}
+
+#[test]
+fn workbook_formula_name_reindexes_range_dependency_after_row_delete() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    for (row, value) in [(2, 1.0), (3, 3.0), (4, 4.0), (5, 5.0)] {
+        engine
+            .set_cell_value("Data", row, 2, lit_num(value))
+            .unwrap();
+    }
+    engine
+        .define_name(
+            "TF",
+            NamedDefinition::Formula {
+                ast: parse("=SUM(Data!$B$2:$B$5)").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=TF").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(13.0)));
+
+    engine.set_cell_value("Data", 2, 2, lit_num(2.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(14.0)));
+
+    engine.delete_rows("Data", 3, 2).unwrap();
+    engine.evaluate_all().unwrap();
+    match &engine.resolve_name_entry("TF", data).unwrap().definition {
+        NamedDefinition::Formula { ast, .. } => {
+            assert_eq!(canonical_formula(ast), "=SUM(Data!$B$2:$B$3)")
+        }
+        other => panic!("expected tracked formula definition, got {other:?}"),
+    }
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(7.0)));
+
+    engine.set_cell_value("Data", 2, 2, lit_num(200.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Sheet1", 1, 1), Some(lit_num(205.0)));
+}
+
+#[test]
+fn sheet_formula_name_reindexes_cell_dependency_after_column_insert() {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine.set_cell_value("Data", 2, 4, lit_num(40.0)).unwrap();
+    engine
+        .define_name(
+            "TF",
+            NamedDefinition::Formula {
+                ast: parse("=$D$2").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Sheet(data),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Data", 1, 1, parse("=TF").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(40.0)));
+
+    engine.set_cell_value("Data", 2, 4, lit_num(50.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(50.0)));
+
+    engine.insert_columns("Data", 2, 2).unwrap();
+    engine.evaluate_all().unwrap();
+    match &engine.resolve_name_entry("TF", data).unwrap().definition {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=$F$2"),
+        other => panic!("expected tracked formula definition, got {other:?}"),
+    }
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(50.0)));
+
+    engine.set_cell_value("Data", 2, 6, lit_num(66.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(66.0)));
+}
+
+fn engine_with_dangling_name_reference() -> Engine<TestWorkbook> {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    engine.set_cell_value("Data", 1, 20, lit_num(1.0)).unwrap();
+    engine.set_cell_value("Data", 2, 20, lit_num(2.0)).unwrap();
+    engine
+        .define_name(
+            "Data_",
+            NamedDefinition::Range(RangeRef::new(
+                CellRef::new(data, Coord::new(0, 19, true, true)),
+                CellRef::new(data, Coord::new(1, 19, true, true)),
+            )),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "Total",
+            NamedDefinition::Formula {
+                ast: parse("=SUM(Data_)").unwrap(),
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=Total").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    engine.delete_name("Data_", NameScope::Workbook).unwrap();
+    engine
+}
+
+#[test]
+fn dangling_name_reference_allows_all_structural_ops_to_shift_grid() {
+    let mut outcomes = Vec::new();
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (row, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", row, 1, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.insert_rows("Data", 1, 1);
+    outcomes.push(("insert_rows", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), None);
+        assert_eq!(engine.get_cell_value("Data", 2, 1), Some(lit_num(11.0)));
+        assert_eq!(engine.get_cell_value("Data", 3, 1), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 4, 1), Some(lit_num(33.0)));
+    }
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (row, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", row, 1, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.delete_rows("Data", 1, 1);
+    outcomes.push(("delete_rows", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 2, 1), Some(lit_num(33.0)));
+        assert_eq!(engine.get_cell_value("Data", 3, 1), None);
+    }
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (col, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", 1, col, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.insert_columns("Data", 1, 1);
+    outcomes.push(("insert_columns", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), None);
+        assert_eq!(engine.get_cell_value("Data", 1, 2), Some(lit_num(11.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 3), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 4), Some(lit_num(33.0)));
+    }
+
+    let mut engine = engine_with_dangling_name_reference();
+    for (col, value) in [(1, 11.0), (2, 22.0), (3, 33.0)] {
+        engine
+            .set_cell_value("Data", 1, col, lit_num(value))
+            .unwrap();
+    }
+    let result = engine.delete_columns("Data", 1, 1);
+    outcomes.push(("delete_columns", result.is_ok(), format!("{result:?}")));
+    if result.is_ok() {
+        assert_eq!(engine.get_cell_value("Data", 1, 1), Some(lit_num(22.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 2), Some(lit_num(33.0)));
+        assert_eq!(engine.get_cell_value("Data", 1, 3), None);
+    }
+
+    assert!(
+        outcomes.iter().all(|(_, ok, _)| *ok),
+        "structural operations failed: {outcomes:#?}"
+    );
+}
+
+#[test]
+fn dangling_name_reference_insert_rows_keeps_grid_and_formula_consistent() {
+    let mut engine = engine_with_dangling_name_reference();
+    engine.set_cell_value("Data", 1, 1, lit_num(11.0)).unwrap();
+    engine.set_cell_value("Data", 2, 1, lit_num(22.0)).unwrap();
+    engine
+        .set_cell_formula("Data", 3, 1, parse("=A1+A2").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 3, 1), Some(lit_num(33.0)));
+
+    let result = engine.insert_rows("Data", 1, 1);
+    assert!(result.is_ok(), "insert_rows failed: {result:?}");
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(engine.get_cell_value("Data", 1, 1), None);
+    assert_eq!(engine.get_cell_value("Data", 2, 1), Some(lit_num(11.0)));
+    assert_eq!(engine.get_cell_value("Data", 3, 1), Some(lit_num(22.0)));
+    assert_eq!(engine.get_cell_value("Data", 4, 1), Some(lit_num(33.0)));
+
+    engine.set_cell_value("Data", 2, 1, lit_num(5.0)).unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(engine.get_cell_value("Data", 4, 1), Some(lit_num(27.0)));
+}
+
+#[derive(Clone, Copy)]
+enum DeleteTargetKind {
+    Cell,
+    Range,
+    Formula,
+}
+
+fn assert_public_delete_of_named_target(axis_is_row: bool, kind: DeleteTargetKind) {
+    let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());
+    let data = engine.sheet_id_mut("Data");
+    let delete_count = if matches!(kind, DeleteTargetKind::Range) {
+        2
+    } else {
+        1
+    };
+
+    if axis_is_row {
+        for (row, value) in [(3, 30.0), (4, 40.0), (5, 50.0)] {
+            engine
+                .set_cell_value("Data", row, 2, lit_num(value))
+                .unwrap();
+        }
+    } else {
+        for (col, value) in [(3, 30.0), (4, 40.0), (5, 50.0)] {
+            engine
+                .set_cell_value("Data", 2, col, lit_num(value))
+                .unwrap();
+        }
+    }
+
+    let definition = match (axis_is_row, kind) {
+        (true, DeleteTargetKind::Cell) => {
+            NamedDefinition::Cell(CellRef::new(data, Coord::new(2, 1, true, true)))
+        }
+        (false, DeleteTargetKind::Cell) => {
+            NamedDefinition::Cell(CellRef::new(data, Coord::new(1, 2, true, true)))
+        }
+        (true, DeleteTargetKind::Range) => NamedDefinition::Range(RangeRef::new(
+            CellRef::new(data, Coord::new(2, 1, true, true)),
+            CellRef::new(data, Coord::new(3, 1, true, true)),
+        )),
+        (false, DeleteTargetKind::Range) => NamedDefinition::Range(RangeRef::new(
+            CellRef::new(data, Coord::new(1, 2, true, true)),
+            CellRef::new(data, Coord::new(1, 3, true, true)),
+        )),
+        (true, DeleteTargetKind::Formula) => NamedDefinition::Formula {
+            ast: parse("=Data!$B$3").unwrap(),
+            dependencies: Vec::new(),
+            range_deps: Vec::new(),
+        },
+        (false, DeleteTargetKind::Formula) => NamedDefinition::Formula {
+            ast: parse("=Data!$C$2").unwrap(),
+            dependencies: Vec::new(),
+            range_deps: Vec::new(),
+        },
+    };
+    engine
+        .define_name("DeleteTarget", definition, NameScope::Workbook)
+        .unwrap();
+    let named_reader = if matches!(kind, DeleteTargetKind::Range) {
+        "=SUM(DeleteTarget)"
+    } else {
+        "=DeleteTarget"
+    };
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse(named_reader).unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            2,
+            1,
+            parse(if axis_is_row { "=Data!B5" } else { "=Data!E2" }).unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    if axis_is_row {
+        engine.delete_rows("Data", 3, delete_count).unwrap();
+    } else {
+        engine.delete_columns("Data", 3, delete_count).unwrap();
+    }
+    engine.evaluate_all().unwrap();
+
+    match &engine
+        .resolve_name_entry("DeleteTarget", data)
+        .unwrap()
+        .definition
+    {
+        NamedDefinition::Formula { ast, .. } => assert_eq!(canonical_formula(ast), "=#REF!"),
+        other => panic!("expected invalidated formula definition, got {other:?}"),
+    }
+    assert!(matches!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Ref
+    ));
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 1), Some(lit_num(50.0)));
+
+    let shifted_target = 5 - delete_count;
+    if axis_is_row {
+        engine
+            .set_cell_value("Data", shifted_target, 2, lit_num(777.0))
+            .unwrap();
+    } else {
+        engine
+            .set_cell_value("Data", 2, shifted_target, lit_num(777.0))
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(lit_num(777.0)),
+        "the shifted formula must remain bound to its textual target"
+    );
+}
+
+#[test]
+fn public_delete_rows_of_named_cell_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(true, DeleteTargetKind::Cell);
+}
+
+#[test]
+fn public_delete_columns_of_named_cell_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(false, DeleteTargetKind::Cell);
+}
+
+#[test]
+fn public_delete_rows_of_named_range_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(true, DeleteTargetKind::Range);
+}
+
+#[test]
+fn public_delete_columns_of_named_range_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(false, DeleteTargetKind::Range);
+}
+
+#[test]
+fn public_delete_rows_of_named_formula_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(true, DeleteTargetKind::Formula);
+}
+
+#[test]
+fn public_delete_columns_of_named_formula_target_invalidates_to_ref_atomically() {
+    assert_public_delete_of_named_target(false, DeleteTargetKind::Formula);
 }

@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Changed
 
+- Named-range definitions now track structural inserts and deletes like all other references; previously they stayed pinned to their original coordinates. Deleting a band containing a name target now invalidates the definition to `#REF!`. (#170)
 - Computed temporals are numeric during evaluation (`ISNUMBER`/`TYPE` now match Excel). Native scalar, range, table, Python, and SheetPort egress materializes date/time values from the cell's effective format; callers can opt into uniform raw serials. A known datetime class preserves midnight datetimes, while calamine's code-lossy date-ish signal can only classify pure fractions as time, day-plus-fraction serials as datetime, and integers as date.
 - Arrow dependencies upgraded 58.2 → 59.2 across `formualizer-eval` (`arrow`, `arrow-array`, `arrow-buffer`, `arrow-schema`, `arrow-select`, `arrow-cast`). No API or behaviour change; full suite green on the pinned surface, native and wasm32.
 
