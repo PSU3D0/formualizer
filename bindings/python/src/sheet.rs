@@ -82,13 +82,12 @@ impl PySheet {
             ));
         }
 
-        // `handle` shares the workbook's `RwLock`, so a callback reaching a
-        // Sheet obtained before evaluation deadlocks the same way the workbook
-        // methods do. Fail fast instead.
-        self.workbook.check_reentrancy()?;
-
         let cached = {
-            let sheets = self.workbook.sheets.read().unwrap();
+            let sheets = self.workbook.sheets.read().map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                    "sheets cache lock: {e}"
+                ))
+            })?;
             sheets
                 .get(&self.name)
                 .and_then(|m| m.get(&(row, col)).cloned())
@@ -186,7 +185,6 @@ impl PySheet {
             range.end_col,
         )
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        self.workbook.check_reentrancy()?;
         let vals = self.handle.read_range(&ra);
         vals.into_iter()
             .map(|row| {
@@ -210,7 +208,6 @@ impl PySheet {
             range.end_col,
         )
         .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
-        self.workbook.check_reentrancy()?;
         let height = ra.height();
         let width = ra.width();
         let mut out = Vec::with_capacity(height as usize);

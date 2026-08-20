@@ -80,14 +80,12 @@ impl PyToken {
         )
     }
 
-    fn to_dict(&self, py: Python<'_>) -> PyObject {
+    fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let dict = PyDict::new(py);
-        dict.set_item("value", self.value()).unwrap();
-        dict.set_item("token_type", self.token_type().to_string())
-            .unwrap();
-        dict.set_item("subtype", self.subtype().to_string())
-            .unwrap();
-        dict.into()
+        dict.set_item("value", self.value())?;
+        dict.set_item("token_type", self.token_type().to_string())?;
+        dict.set_item("subtype", self.subtype().to_string())?;
+        Ok(dict.into())
     }
 
     /// Check if this token is an operator
