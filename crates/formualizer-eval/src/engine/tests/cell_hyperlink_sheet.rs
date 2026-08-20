@@ -27,7 +27,10 @@ fn eval_formula(formula: &str) -> LiteralValue {
 fn assert_text(formula: &str, expected: &str) {
     match eval_formula(formula) {
         LiteralValue::Text(actual) => {
-            assert_eq!(actual, expected, "{formula}: expected {expected:?}, got {actual:?}")
+            assert_eq!(
+                actual, expected,
+                "{formula}: expected {expected:?}, got {actual:?}"
+            )
         }
         other => panic!("{formula}: expected {expected:?}, got {other:?}"),
     }
@@ -58,7 +61,10 @@ fn hyperlink_returns_friendly_name() {
 
 #[test]
 fn hyperlink_returns_link_location_without_name() {
-    assert_text(r#"=HYPERLINK("https://example.com")"#, "https://example.com");
+    assert_text(
+        r#"=HYPERLINK("https://example.com")"#,
+        "https://example.com",
+    );
     // Numbers are text-coerced, like Excel's friendly-name fallback.
     assert_text("=HYPERLINK(42)", "42");
 }
