@@ -1815,7 +1815,7 @@ impl Function for CellFn {
                 return Ok(scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Calc)
                         .with_message("LAMBDA value must be invoked"),
-                )))
+                )));
             }
         };
 

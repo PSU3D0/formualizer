@@ -961,14 +961,18 @@ impl Function for HyperlinkFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let link = match args[0].value()?.into_literal() {
-            LiteralValue::Error(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             other => crate::coercion::to_text_invariant(&other),
         };
         if args.len() < 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(link)));
         }
         let name = match args[1].value()?.into_literal() {
-            LiteralValue::Error(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Error(e) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            }
             other => crate::coercion::to_text_invariant(&other),
         };
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(name)))
