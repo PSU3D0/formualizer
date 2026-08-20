@@ -99,6 +99,7 @@ fn parse_numeric_slash_date(text: &str) -> Option<NaiveDate> {
 fn parse_excel_year(text: &str) -> Option<i32> {
     let year = text.parse::<i32>().ok()?;
     match text.len() {
+        1 => Some(2000 + year),
         2 if year <= 29 => Some(2000 + year),
         2 => Some(1900 + year),
         4 => Some(year),
@@ -117,19 +118,55 @@ fn parse_iso_date(text: &str) -> Option<NaiveDate> {
 
 fn parse_month_name_date(text: &str) -> Option<NaiveDate> {
     const FORMATS: &[&str] = &["%B %d, %Y", "%b %d, %Y", "%d-%b-%Y"];
-    FORMATS.iter().find_map(|format| {
+    if let Some(date) = FORMATS.iter().find_map(|format| {
         let separator = if *format == "%d-%b-%Y" { '-' } else { ' ' };
         let (prefix, year_text) = text.rsplit_once(separator)?;
         let year = parse_excel_year(year_text)?;
         let normalized = format!("{prefix}{separator}{year:04}");
         NaiveDate::parse_from_str(&normalized, format).ok()
-    })
+    }) {
+        return Some(date);
+    }
+
+    // Month-year only: "Jan 2024", "January 2024" → first day of month.
+    // Excel accepts these and returns serial for the 1st of that month.
+    parse_month_year_only(text)
+}
+
+/// Parse "Jan 2024" or "January 2024" as the first day of that month.
+fn parse_month_year_only(text: &str) -> Option<NaiveDate> {
+    let (month_text, year_text) = text.rsplit_once(' ')?;
+    let year = parse_excel_year(year_text.trim())?;
+    // Try abbreviated and full month names
+    let month = parse_month_name(month_text.trim())?;
+    NaiveDate::from_ymd_opt(year, month, 1)
+}
+
+fn parse_month_name(text: &str) -> Option<u32> {
+    const MONTHS_FULL: &[&str] = &[
+        "january", "february", "march", "april", "may", "june",
+        "july", "august", "september", "october", "november", "december",
+    ];
+    const MONTHS_ABBR: &[&str] = &[
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let lower = text.to_lowercase();
+    if let Some(pos) = MONTHS_FULL.iter().position(|&m| m == lower) {
+        return Some(pos as u32 + 1);
+    }
+    if let Some(pos) = MONTHS_ABBR.iter().position(|&m| m == lower) {
+        return Some(pos as u32 + 1);
+    }
+    None
 }
 
 /// Parse time text using fixed 24-hour or English AM/PM formats.
 ///
 /// Parsing has no locale parameter, uses English AM/PM markers, and never
 /// consults the host locale. ASCII whitespace around separators is ignored.
+/// Fractional seconds (e.g. `12:30:45.5`) are truncated to whole seconds.
+/// `24:00` and `24:00:00` are accepted as midnight (Excel compatibility).
 pub fn parse_excel_time_text(input: &str) -> Option<NaiveTime> {
     let text = input.trim();
     let mut normalized = String::with_capacity(text.len());
@@ -145,10 +182,44 @@ pub fn parse_excel_time_text(input: &str) -> Option<NaiveTime> {
             pending_space = false;
         }
     }
+
+    // Handle 24:00 and 24:00:00 as midnight (Excel treats this as end-of-day = 0:00)
+    if normalized == "24:00" || normalized == "24:00:00" {
+        return Some(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    }
+
+    // Strip fractional seconds: "12:30:45.5" → "12:30:45"
+    // Find the seconds decimal point (after the second colon) and truncate
+    let normalized = strip_fractional_seconds(&normalized);
+
     const FORMATS: &[&str] = &["%H:%M:%S", "%H:%M", "%I:%M:%S %p", "%I:%M %p"];
     FORMATS
         .iter()
         .find_map(|format| NaiveTime::parse_from_str(&normalized, format).ok())
+}
+
+/// Strip fractional seconds from a time string: "12:30:45.123" → "12:30:45"
+fn strip_fractional_seconds(text: &str) -> String {
+    // Find pattern: digits followed by '.' followed by digits, where this
+    // appears after the second ':' (seconds position) or before a space/AM/PM
+    if let Some(dot_pos) = text.find('.') {
+        // Verify the dot is in a seconds position (preceded by digits, followed by digits)
+        let before_dot = &text[..dot_pos];
+        let after_dot = &text[dot_pos + 1..];
+        if before_dot.ends_with(|c: char| c.is_ascii_digit()) {
+            // Find where the fractional digits end
+            let frac_end = after_dot
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(after_dot.len());
+            if frac_end > 0 {
+                // Reconstruct without the fractional part
+                let mut result = before_dot.to_string();
+                result.push_str(&after_dot[frac_end..]);
+                return result;
+            }
+        }
+    }
+    text.to_string()
 }
 
 /// Parse an en-US date and time separated by whitespace or an ISO `T`.
@@ -570,5 +641,55 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn single_digit_year_uses_2000_window() {
+        // "1/2/5" → January 2, 2005
+        assert_eq!(parse_excel_date_text("1/2/5"), Some(date(2005, 1, 2)));
+        // "3/15/9" → March 15, 2009
+        assert_eq!(parse_excel_date_text("3/15/9"), Some(date(2009, 3, 15)));
+        // "12/31/0" → December 31, 2000
+        assert_eq!(parse_excel_date_text("12/31/0"), Some(date(2000, 12, 31)));
+    }
+
+    #[test]
+    fn time_24_00_parses_as_midnight() {
+        assert_eq!(
+            parse_excel_time_text("24:00"),
+            Some(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+        );
+        assert_eq!(
+            parse_excel_time_text("24:00:00"),
+            Some(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn fractional_seconds_are_truncated() {
+        // "12:30:45.5" → 12:30:45 (fractional part ignored)
+        assert_eq!(
+            parse_excel_time_text("12:30:45.5"),
+            Some(NaiveTime::from_hms_opt(12, 30, 45).unwrap())
+        );
+        // "08:15:30.999" → 08:15:30
+        assert_eq!(
+            parse_excel_time_text("08:15:30.999"),
+            Some(NaiveTime::from_hms_opt(8, 15, 30).unwrap())
+        );
+        // "2:05:00.0" → 02:05:00
+        assert_eq!(
+            parse_excel_time_text("2:05:00.0"),
+            Some(NaiveTime::from_hms_opt(2, 5, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn month_year_only_parses_as_first_of_month() {
+        assert_eq!(parse_excel_date_text("Jan 2024"), Some(date(2024, 1, 1)));
+        assert_eq!(parse_excel_date_text("February 2024"), Some(date(2024, 2, 1)));
+        assert_eq!(parse_excel_date_text("Dec 99"), Some(date(1999, 12, 1)));
+        assert_eq!(parse_excel_date_text("Mar 05"), Some(date(2005, 3, 1)));
+        assert_eq!(parse_excel_date_text("July 2000"), Some(date(2000, 7, 1)));
     }
 }
