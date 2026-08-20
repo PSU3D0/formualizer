@@ -1530,6 +1530,8 @@ where
                 asheet.insert_rows(before0 as usize, count as usize);
             }
             self.engine
+                .purge_derived_formats_after_row(sheet_id, before0);
+            self.engine
                 .shift_row_visibility_insert(sheet_id, before0, count);
             self.engine.mark_moved_formula_vertices_dirty(&summary);
             self.engine
@@ -1603,6 +1605,8 @@ where
             if let Some(asheet) = self.engine.arrow_sheets.sheet_mut(sheet) {
                 asheet.insert_columns(before0 as usize, count as usize);
             }
+            self.engine
+                .purge_derived_formats_after_col(sheet_id, before0);
             self.engine.mark_moved_formula_vertices_dirty(&summary);
             self.engine
                 .clear_computed_overlay_after_col(sheet, before0 as usize);
@@ -3987,6 +3991,7 @@ where
         // lifecycle operations do not collapse the whole FormulaPlane.
         self.demote_spans_preserving_computed_overlays(sheet_id, Region::whole_sheet(sheet_id))
             .map_err(Self::editor_error_to_excel)?;
+        self.purge_derived_formats_for_sheet(sheet_id);
         self.graph.remove_sheet(sheet_id)?;
         self.arrow_sheets.sheets.retain(|s| s.name.as_ref() != name);
         // Sheet removal can change cross-sheet refs, names, and default-sheet
@@ -4923,6 +4928,7 @@ where
 
         // Mirror value-impacting graph events to Arrow for forward edits.
         // This keeps Arrow overlays (delta + computed) consistent when edits clear/commit spills.
+        self.clear_logged_cell_format_states(&new_events);
         for ev in &new_events {
             self.mirror_forward_change_to_arrow(ev);
         }
@@ -5055,6 +5061,13 @@ where
             self.apply_inverse_row_visibility_event(&item.event);
             self.apply_inverse_staged_formula_event(&item.event);
         }
+        if !batch.is_empty() {
+            let events = batch
+                .iter()
+                .map(|item| item.event.clone())
+                .collect::<Vec<_>>();
+            self.clear_logged_cell_format_states(&events);
+        }
         self.mirror_undo_batch_to_arrow(&batch);
         if !batch.is_empty() {
             for item in &batch {
@@ -5082,6 +5095,13 @@ where
         for item in &batch {
             self.apply_forward_row_visibility_event(&item.event);
             self.apply_forward_staged_formula_event(&item.event);
+        }
+        if !batch.is_empty() {
+            let events = batch
+                .iter()
+                .map(|item| item.event.clone())
+                .collect::<Vec<_>>();
+            self.clear_logged_cell_format_states(&events);
         }
         self.mirror_redo_batch_to_arrow(&batch);
         if !batch.is_empty() {
@@ -14729,6 +14749,7 @@ where
             let before0 = before0 as usize;
             asheet.insert_rows(before0, count as usize);
         }
+        self.purge_derived_formats_after_row(sheet_id, before0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, before0 as usize);
         self.shift_row_visibility_insert(sheet_id, before0, count);
@@ -14769,6 +14790,7 @@ where
             let start0 = start0 as usize;
             asheet.delete_rows(start0, count as usize);
         }
+        self.purge_derived_formats_after_row(sheet_id, start0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, start0 as usize);
         self.shift_row_visibility_delete(sheet_id, start0, count);
@@ -14814,6 +14836,7 @@ where
             let before0 = before0 as usize;
             asheet.insert_columns(before0, count as usize);
         }
+        self.purge_derived_formats_after_col(sheet_id, before0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, before0 as usize);
         self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
@@ -14858,6 +14881,7 @@ where
             let start0 = start0 as usize;
             asheet.delete_columns(start0, count as usize);
         }
+        self.purge_derived_formats_after_col(sheet_id, start0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, start0 as usize);
         self.record_formula_plane_structural_change(StructuralScope::Region(affected_region));
@@ -15808,6 +15832,7 @@ where
                             asheet.insert_rows(*before0 as usize, *count as usize);
                         }
                     }
+                    self.purge_derived_formats_after_row(*sheet_id, *before0);
                 }
                 ArrowOp::InsertCols {
                     sheet_id,
@@ -15823,6 +15848,7 @@ where
                             asheet.insert_columns(*before0 as usize, *count as usize);
                         }
                     }
+                    self.purge_derived_formats_after_col(*sheet_id, *before0);
                 }
             }
         }
@@ -15949,6 +15975,43 @@ where
         if let Some(arrow) = self.arrow_sheets.sheet_mut(sheet) {
             arrow.clear_format(cell.coord.row() as usize, cell.coord.col() as usize);
         }
+    }
+
+    fn clear_logged_cell_format_states(&mut self, events: &[ChangeEvent]) {
+        let cells = events
+            .iter()
+            .filter_map(|event| match event {
+                ChangeEvent::SetValue { addr, .. } | ChangeEvent::SetFormula { addr, .. } => {
+                    Some(*addr)
+                }
+                _ => None,
+            })
+            .collect::<FxHashSet<_>>();
+        for cell in cells {
+            let sheet = self.graph.sheet_name(cell.sheet_id).to_string();
+            self.clear_cell_format_state(&sheet, cell);
+        }
+    }
+
+    fn purge_derived_formats_after_row(&mut self, sheet_id: SheetId, start0: u32) {
+        self.derived_formats
+            .write()
+            .unwrap()
+            .retain(|cell, _| cell.sheet_id != sheet_id || cell.coord.row() < start0);
+    }
+
+    fn purge_derived_formats_after_col(&mut self, sheet_id: SheetId, start0: u32) {
+        self.derived_formats
+            .write()
+            .unwrap()
+            .retain(|cell, _| cell.sheet_id != sheet_id || cell.coord.col() < start0);
+    }
+
+    fn purge_derived_formats_for_sheet(&mut self, sheet_id: SheetId) {
+        self.derived_formats
+            .write()
+            .unwrap()
+            .retain(|cell, _| cell.sheet_id != sheet_id);
     }
 
     fn write_computed_overlay_format_0based(
@@ -17098,6 +17161,65 @@ where
             self.config.temporal_egress,
             self.config.date_system,
         ))
+    }
+
+    /// Read a rectangular range through the temporal egress boundary.
+    pub fn get_range_values(
+        &self,
+        sheet: &str,
+        sr: u32,
+        sc: u32,
+        er: u32,
+        ec: u32,
+    ) -> Vec<Vec<LiteralValue>> {
+        let height = er.saturating_sub(sr).saturating_add(1) as usize;
+        let width = ec.saturating_sub(sc).saturating_add(1) as usize;
+        let Some(asheet) = self.sheet_store().sheet(sheet) else {
+            return vec![vec![LiteralValue::Empty; width]; height];
+        };
+        let view = asheet.range_view(
+            sr.saturating_sub(1) as usize,
+            sc.saturating_sub(1) as usize,
+            er.saturating_sub(1) as usize,
+            ec.saturating_sub(1) as usize,
+        );
+        let sheet_id = self.graph.sheet_id(sheet);
+        let derived_formats = self.derived_formats.read().unwrap();
+        let has_derived_formats = sheet_id
+            .is_some_and(|sheet_id| derived_formats.keys().any(|cell| cell.sheet_id == sheet_id));
+        let mut out = Vec::with_capacity(height);
+        if !asheet.has_formats() && !has_derived_formats {
+            for rr in 0..height {
+                let mut row = Vec::with_capacity(width);
+                for cc in 0..width {
+                    row.push(view.get_cell(rr, cc));
+                }
+                out.push(row);
+            }
+            return out;
+        }
+        let format_registry = &self.format_registry;
+        for rr in 0..height {
+            let mut row = Vec::with_capacity(width);
+            for cc in 0..width {
+                let raw = view.get_cell(rr, cc);
+                let row0 = sr.saturating_sub(1).saturating_add(rr as u32);
+                let col0 = sc.saturating_sub(1).saturating_add(cc as u32);
+                let format = asheet.format_id(row0 as usize, col0 as usize).or_else(|| {
+                    let cell = CellRef::new(sheet_id?, Coord::new(row0, col0, true, true));
+                    derived_formats.get(&cell).copied()
+                });
+                let class = format.and_then(|id| format_registry.class(id));
+                row.push(Self::materialize_temporal_egress(
+                    raw,
+                    class,
+                    self.config.temporal_egress,
+                    self.config.date_system,
+                ));
+            }
+            out.push(row);
+        }
+        out
     }
 
     /// Unified internal read API for a single cell value (Arrow-truth).

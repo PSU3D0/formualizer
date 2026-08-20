@@ -2018,6 +2018,11 @@ impl Overlay {
     }
 
     #[inline]
+    fn has_formats(&self) -> bool {
+        !self.format_points.is_empty()
+    }
+
+    #[inline]
     pub fn set_format(&mut self, off: usize, format: Option<FormatId>) {
         match format.filter(|id| *id != FormatId::GENERAL) {
             Some(id) => {
@@ -3650,6 +3655,20 @@ impl ArrowSheet {
             rows,
             cols,
         )
+    }
+
+    pub(crate) fn has_formats(&self) -> bool {
+        self.columns.iter().any(|column| {
+            column
+                .chunks
+                .iter()
+                .chain(column.sparse_chunks.values())
+                .any(|chunk| {
+                    chunk.format.is_some()
+                        || chunk.overlay.has_formats()
+                        || chunk.computed_overlay.has_formats()
+                })
+        })
     }
 
     /// Return the effective explicit/derived format for a cell.

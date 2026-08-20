@@ -2352,19 +2352,13 @@ impl Workbook {
 
     // Ranges
     pub fn read_range(&self, addr: &RangeAddress) -> Vec<Vec<LiteralValue>> {
-        let mut out = Vec::with_capacity(addr.height() as usize);
-        for row in addr.start_row..=addr.end_row {
-            let mut values = Vec::with_capacity(addr.width() as usize);
-            for col in addr.start_col..=addr.end_col {
-                values.push(
-                    self.engine
-                        .get_cell_value(&addr.sheet, row, col)
-                        .unwrap_or(LiteralValue::Empty),
-                );
-            }
-            out.push(values);
-        }
-        out
+        self.engine.get_range_values(
+            &addr.sheet,
+            addr.start_row,
+            addr.start_col,
+            addr.end_row,
+            addr.end_col,
+        )
     }
     pub fn write_range(
         &mut self,

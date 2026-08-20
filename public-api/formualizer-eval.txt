@@ -1465,6 +1465,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::formula_parse_diagnostics(&sel
 pub fn formualizer_eval::engine::eval::Engine<R>::get_cell(&self, &str, u32, u32) -> core::option::Option<(core::option::Option<formualizer_parse::parser::ASTNode>, core::option::Option<formualizer_common::value::LiteralValue>)>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>, &str) -> core::result::Result<core::option::Option<formualizer_common::value::LiteralValue>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::get_range_values(&self, &str, u32, u32, u32, u32) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_staged_formula_text(&self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::graph_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::eval::Engine<R>::handle_formula_parse_error(&mut self, &str, u32, u32, &str, alloc::string::String) -> core::result::Result<core::option::Option<formualizer_parse::parser::ASTNode>, formualizer_common::error::ExcelError>
@@ -6099,6 +6100,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::formula_parse_diagnostics(&sel
 pub fn formualizer_eval::engine::eval::Engine<R>::get_cell(&self, &str, u32, u32) -> core::option::Option<(core::option::Option<formualizer_parse::parser::ASTNode>, core::option::Option<formualizer_common::value::LiteralValue>)>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_cell_value_ref(&self, formualizer_common::address::SheetCellRef<'_>, &str) -> core::result::Result<core::option::Option<formualizer_common::value::LiteralValue>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::get_range_values(&self, &str, u32, u32, u32, u32) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_staged_formula_text(&self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::graph_cell_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_eval::engine::eval::Engine<R>::handle_formula_parse_error(&mut self, &str, u32, u32, &str, alloc::string::String) -> core::result::Result<core::option::Option<formualizer_parse::parser::ASTNode>, formualizer_common::error::ExcelError>
