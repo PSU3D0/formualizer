@@ -58,9 +58,10 @@ fn start_instant() -> NaiveDateTime {
 }
 
 fn serial_config() -> EvalConfig {
-    let mut config = EvalConfig::default();
-    config.temporal_egress = crate::engine::TemporalEgress::Serial;
-    config
+    EvalConfig {
+        temporal_egress: crate::engine::TemporalEgress::Serial,
+        ..Default::default()
+    }
 }
 
 fn set_formula(engine: &mut Engine<TestWorkbook>, sheet: &str, row: u32, col: u32, f: &str) {

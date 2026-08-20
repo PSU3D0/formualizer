@@ -6,8 +6,10 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
 fn issue_312_engine(policy: TemporalEgress) -> Engine<TestWorkbook> {
-    let mut config = EvalConfig::default();
-    config.temporal_egress = policy;
+    let config = EvalConfig {
+        temporal_egress: policy,
+        ..Default::default()
+    };
     let mut engine = Engine::new(TestWorkbook::new(), config);
     engine
         .set_cell_value(
