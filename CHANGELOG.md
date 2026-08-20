@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Arrow dependencies upgraded 58.2 → 59.2 across `formualizer-eval` (`arrow`, `arrow-array`, `arrow-buffer`, `arrow-schema`, `arrow-select`, `arrow-cast`). No API or behaviour change; full suite green on the pinned surface, native and wasm32.
+
 ### Fixed
 
 - **A structural edit no longer reaches a defined name, table or external source.** Those three, plus sheet-scoped names, are identified by name and have no position on any sheet, but the graph gave them fabricated grid coordinates on a real user-visible sheet: the first workbook name landed on `Sheet1!$A$1`, the second on `$B$1`, and a table on its range's anchor cell. The only thing separating such a vertex from the actual cell at that address was its deliberate absence from the cell index — a convention, not a structural property. Two code paths broke it, and both are fixed by giving symbols their own address space. (#302, #304)
