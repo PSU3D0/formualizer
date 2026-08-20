@@ -13,6 +13,8 @@ mod deltas;
 #[cfg(feature = "calamine")]
 mod engine;
 #[cfg(feature = "calamine")]
+mod format_channel;
+#[cfg(feature = "calamine")]
 mod formulas;
 #[cfg(feature = "calamine")]
 mod issue162_unbounded_index;
@@ -36,3 +38,5 @@ mod semantic_epoch_replay;
 mod shared_formulas;
 #[cfg(feature = "calamine")]
 mod sheet_load;
+#[cfg(feature = "umya")]
+mod temporal_roundtrip;

@@ -27,7 +27,7 @@ benchmark_internal = []
 [dependencies]
 sheetport-spec = { path = "../sheetport-spec", version = "0.3.1" }
 formualizer-workbook = { path = "../formualizer-workbook", version = "0.8.4", default-features = false }
-formualizer-common = { path = "../formualizer-common", version = "3.0.0" }
+formualizer-common = { path = "../formualizer-common", version = "3.1.0" }
 formualizer-parse = { path = "../formualizer-parse", version = "3.0.0" }
 formualizer-eval = { path = "../formualizer-eval", version = "0.8.4", default-features = false }
 serde = { workspace = true, features = ["derive"] }

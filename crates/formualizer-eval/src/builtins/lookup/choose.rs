@@ -65,6 +65,13 @@ pub struct ChooseRowsFn;
 /// Caps: PURE, LOOKUP, RETURNS_REFERENCE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for ChooseFn {
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
+
     fn name(&self) -> &'static str {
         "CHOOSE"
     }

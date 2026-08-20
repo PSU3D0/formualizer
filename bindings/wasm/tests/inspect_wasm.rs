@@ -444,10 +444,7 @@ fn snapshot_precedent_dependent_and_range_page_reports_have_exact_shapes() {
             .inspect_cell_js(address("Model", 4, 1), None)
             .unwrap(),
     );
-    assert_eq!(
-        date["cell"]["value"],
-        json!({"kind": "date", "value": "2025-01-15"})
-    );
+    assert_eq!(date["cell"]["value"], 45_672.0);
     let error = json_value(
         workbook
             .inspect_cell_js(address("Model", 5, 1), None)
@@ -1154,14 +1151,8 @@ fn reachable_reference_and_value_variants_are_pinned() {
     }
 
     for (row, expected) in [
-        (
-            6,
-            json!({"kind": "datetime", "value": "2025-01-15 12:34:56"}),
-        ),
-        (
-            7,
-            json!({"kind": "duration", "value": "TimeDelta { secs: 3661, nanos: 0 }"}),
-        ),
+        (6, json!(45_672.524_259_259_26)),
+        (7, json!(0.042_372_685_185_185_19)),
         (8, json!(true)),
         (9, json!({"kind": "pending"})),
         (30, Value::Null),

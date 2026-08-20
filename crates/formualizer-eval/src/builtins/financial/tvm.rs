@@ -451,14 +451,16 @@ impl Function for NpvFn {
                         }
                     }
                 }
-                CalcValue::Scalar(value) => accumulate_npv_cash_flow(
-                    value,
-                    reference_argument,
-                    rate,
-                    &mut npv,
-                    &mut period,
-                    date_system,
-                )?,
+                CalcValue::Scalar(value) | CalcValue::AnnotatedScalar(value, _) => {
+                    accumulate_npv_cash_flow(
+                        value,
+                        reference_argument,
+                        rate,
+                        &mut npv,
+                        &mut period,
+                        date_system,
+                    )?
+                }
                 CalcValue::Callable(_) => {
                     return Ok(CalcValue::Scalar(LiteralValue::Error(
                         ExcelError::new(ExcelErrorKind::Calc)
@@ -1411,7 +1413,7 @@ impl Function for IrrFn {
         let mut cashflows = Vec::new();
         let val = args[0].value()?;
         match val {
-            CalcValue::Scalar(lit) => match lit {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
                 LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
                 LiteralValue::Array(arr) => {
                     for row in arr {
@@ -1536,7 +1538,7 @@ impl Function for MirrFn {
         let mut cashflows = Vec::new();
         let val = args[0].value()?;
         match val {
-            CalcValue::Scalar(lit) => match lit {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
                 LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
                 LiteralValue::Array(arr) => {
                     for row in arr {
@@ -1915,7 +1917,7 @@ impl Function for XnpvFn {
         let mut values = Vec::new();
         let val = args[1].value()?;
         match val {
-            CalcValue::Scalar(lit) => match lit {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
                 LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
                 LiteralValue::Array(arr) => {
                     for row in arr {
@@ -1951,7 +1953,7 @@ impl Function for XnpvFn {
         let mut dates = Vec::new();
         let date_val = args[2].value()?;
         match date_val {
-            CalcValue::Scalar(lit) => match lit {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
                 LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
                 LiteralValue::Array(arr) => {
                     for row in arr {
@@ -2110,7 +2112,7 @@ impl Function for XirrFn {
         let mut values = Vec::new();
         let val = args[0].value()?;
         match val {
-            CalcValue::Scalar(lit) => match lit {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
                 LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
                 LiteralValue::Array(arr) => {
                     for row in arr {
@@ -2146,7 +2148,7 @@ impl Function for XirrFn {
         let mut dates = Vec::new();
         let date_val = args[1].value()?;
         match date_val {
-            CalcValue::Scalar(lit) => match lit {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => match lit {
                 LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
                 LiteralValue::Array(arr) => {
                     for row in arr {

@@ -973,6 +973,22 @@ impl PyWorkbook {
             .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Choose temporal output as native Python datetime values (default) or floats.
+    pub fn set_temporal_egress(&self, policy: &str) -> PyResult<()> {
+        let policy = match policy.to_ascii_lowercase().as_str() {
+            "native" => formualizer::eval::engine::TemporalEgress::Native,
+            "serial" => formualizer::eval::engine::TemporalEgress::Serial,
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "temporal egress must be 'native' or 'serial'",
+                ));
+            }
+        };
+        self.write_inner()?.engine_mut().set_temporal_egress(policy);
+        self.sheets.write().unwrap().clear();
+        Ok(())
+    }
+
     pub fn get_value(
         &self,
         py: Python<'_>,

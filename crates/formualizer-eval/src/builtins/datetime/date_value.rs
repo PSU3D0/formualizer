@@ -74,6 +74,13 @@ pub struct DateValueFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for DateValueFn {
+    fn propagate_format(
+        &self,
+        _result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        Some(crate::format::FormatId::DATE)
+    }
+
     func_caps!(PURE);
 
     fn name(&self) -> &'static str {
@@ -164,6 +171,13 @@ pub struct TimeValueFn;
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for TimeValueFn {
+    fn propagate_format(
+        &self,
+        _result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        Some(crate::format::FormatId::TIME)
+    }
+
     func_caps!(PURE);
 
     fn name(&self) -> &'static str {

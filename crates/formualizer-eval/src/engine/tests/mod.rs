@@ -72,6 +72,7 @@ mod engine_atomic_actions_618;
 mod index_unbounded_ranges;
 mod infinite_ranges;
 mod issue_306_structural_delete_dirty;
+mod issue_313_insert_invalidation;
 mod spill_atomic;
 mod spill_basic;
 mod spill_config_defaults;
@@ -195,3 +196,5 @@ mod short_circuit_dispatch;
 
 mod approximate_lookup_ignored_entries;
 mod temporal_lookup_semantics;
+
+mod format_channel_t1;

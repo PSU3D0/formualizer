@@ -491,6 +491,93 @@ impl<'a> Interpreter<'a> {
         offset.evaluate_arena_ast(node_id, data_store, sheet_registry)
     }
 
+    fn annotate_cell_value(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    ) -> crate::traits::CalcValue<'a> {
+        match self
+            .context
+            .resolve_cell_format(sheet, row, col, self.current_sheet)
+        {
+            Some(format) => crate::traits::CalcValue::AnnotatedScalar(value, format),
+            None => crate::traits::CalcValue::Scalar(value),
+        }
+    }
+
+    fn binary_format(
+        &self,
+        op: char,
+        left: Option<crate::format::FormatId>,
+        right: Option<crate::format::FormatId>,
+    ) -> Option<crate::format::FormatId> {
+        use formualizer_common::numfmt::FormatClass;
+        let class =
+            |id: Option<crate::format::FormatId>| id.and_then(|id| self.context.format_class(id));
+        let left = class(left);
+        let right = class(right);
+        let is_plain = |class: &Option<FormatClass>| {
+            matches!(
+                class,
+                None | Some(FormatClass::General | FormatClass::Number { .. })
+            )
+        };
+        // This table is intentionally closed. LibreOffice measurement establishes
+        // Date+Time and Date+Percent; unlisted pairs (including Date+Date,
+        // Duration+Date, Date+Currency, DateTime+Time, and Date+Text) drop the
+        // annotation rather than guessing a display class.
+        match (op, left.as_ref(), right.as_ref()) {
+            ('+', Some(FormatClass::Date), Some(FormatClass::Time))
+            | ('+', Some(FormatClass::Time), Some(FormatClass::Date)) => {
+                Some(crate::format::FormatId::DATETIME)
+            }
+            ('+', Some(FormatClass::Date), Some(FormatClass::Percent { .. }))
+            | ('+', Some(FormatClass::Percent { .. }), Some(FormatClass::Date)) => {
+                Some(crate::format::FormatId::DATE)
+            }
+            ('+' | '-', Some(FormatClass::Date), r) if is_plain(&r.cloned()) => {
+                Some(crate::format::FormatId::DATE)
+            }
+            ('+', l, Some(FormatClass::Date)) if is_plain(&l.cloned()) => {
+                Some(crate::format::FormatId::DATE)
+            }
+            ('+' | '-', Some(FormatClass::Time), r) if is_plain(&r.cloned()) => {
+                Some(crate::format::FormatId::TIME)
+            }
+            ('+', l, Some(FormatClass::Time)) if is_plain(&l.cloned()) => {
+                Some(crate::format::FormatId::TIME)
+            }
+            ('+' | '-', Some(FormatClass::DateTime), r) if is_plain(&r.cloned()) => {
+                Some(crate::format::FormatId::DATETIME)
+            }
+            ('+', l, Some(FormatClass::DateTime)) if is_plain(&l.cloned()) => {
+                Some(crate::format::FormatId::DATETIME)
+            }
+            ('+' | '-', Some(FormatClass::Duration), r) if is_plain(&r.cloned()) => {
+                Some(crate::format::FormatId::DURATION)
+            }
+            ('+', l, Some(FormatClass::Duration)) if is_plain(&l.cloned()) => {
+                Some(crate::format::FormatId::DURATION)
+            }
+            _ => None,
+        }
+    }
+
+    fn annotate_numeric_result(
+        &self,
+        value: LiteralValue,
+        format: Option<crate::format::FormatId>,
+    ) -> crate::traits::CalcValue<'a> {
+        match (value, format) {
+            (value @ LiteralValue::Number(_), Some(format)) => {
+                crate::traits::CalcValue::AnnotatedScalar(value, format)
+            }
+            (value, _) => crate::traits::CalcValue::Scalar(value),
+        }
+    }
+
     pub(crate) fn evaluate_arena_ast(
         &self,
         node_id: AstNodeId,
@@ -541,7 +628,7 @@ impl<'a> Interpreter<'a> {
                         col,
                         self.current_sheet,
                     )?;
-                    Ok(crate::traits::CalcValue::Scalar(value))
+                    Ok(self.annotate_cell_value(sheet_name, row, col, value))
                 } else {
                     let reference =
                         data_store.reconstruct_reference_type_for_eval(ref_type, sheet_registry);
@@ -606,12 +693,12 @@ impl<'a> Interpreter<'a> {
                     };
                 }
 
-                let left = self
-                    .evaluate_arena_ast(*left_id, data_store, sheet_registry)?
-                    .into_literal();
-                let right = self
-                    .evaluate_arena_ast(*right_id, data_store, sheet_registry)?
-                    .into_literal();
+                let left_calc = self.evaluate_arena_ast(*left_id, data_store, sheet_registry)?;
+                let left_format = left_calc.format_id();
+                let left = left_calc.into_literal();
+                let right_calc = self.evaluate_arena_ast(*right_id, data_store, sheet_registry)?;
+                let right_format = right_calc.format_id();
+                let right = right_calc.into_literal();
 
                 if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
                     return self
@@ -620,12 +707,18 @@ impl<'a> Interpreter<'a> {
                 }
 
                 match op {
-                    "+" => self
-                        .add_sub_date_aware('+', left, right)
-                        .map(crate::traits::CalcValue::Scalar),
-                    "-" => self
-                        .add_sub_date_aware('-', left, right)
-                        .map(crate::traits::CalcValue::Scalar),
+                    "+" => self.numeric_binary(left, right, |a, b| a + b).map(|value| {
+                        self.annotate_numeric_result(
+                            value,
+                            self.binary_format('+', left_format, right_format),
+                        )
+                    }),
+                    "-" => self.numeric_binary(left, right, |a, b| a - b).map(|value| {
+                        self.annotate_numeric_result(
+                            value,
+                            self.binary_format('-', left_format, right_format),
+                        )
+                    }),
                     "*" => self
                         .numeric_binary(left, right, |a, b| a * b)
                         .map(crate::traits::CalcValue::Scalar),
@@ -752,9 +845,7 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::UnaryOp { op, expr } => self
                 .eval_unary(op, expr)
                 .map(crate::traits::CalcValue::Scalar),
-            ASTNodeType::BinaryOp { op, left, right } => self
-                .eval_binary(op, left, right)
-                .map(crate::traits::CalcValue::Scalar),
+            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
             ASTNodeType::Function { name, args } => self.eval_function_to_calc(name, args),
             ASTNodeType::Call { .. } => Err(ExcelError::new(ExcelErrorKind::NImpl)
                 .with_message("Immediate-invocation calls are not yet supported")),
@@ -777,9 +868,7 @@ impl<'a> Interpreter<'a> {
                 self.eval_unary(op, expr)
                     .map(crate::traits::CalcValue::Scalar)
             }
-            ASTNodeType::BinaryOp { op, left, right } => self
-                .eval_binary(op, left, right)
-                .map(crate::traits::CalcValue::Scalar),
+            ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(op, left, right),
             ASTNodeType::Function { name, args } => {
                 let strategy = plan_node.strategy;
                 if let Some(fun) = self.context.get_function("", name) {
@@ -850,14 +939,13 @@ impl<'a> Interpreter<'a> {
         {
             let row = shift_axis_for_offset(*row, self.reference_row_delta, *row_abs)?;
             let col = shift_axis_for_offset(*col, self.reference_col_delta, *col_abs)?;
-            return Ok(crate::traits::CalcValue::Scalar(
-                self.context.resolve_cell_reference_value(
-                    sheet.as_deref(),
-                    row,
-                    col,
-                    self.current_sheet,
-                )?,
-            ));
+            let value = self.context.resolve_cell_reference_value(
+                sheet.as_deref(),
+                row,
+                col,
+                self.current_sheet,
+            )?;
+            return Ok(self.annotate_cell_value(sheet.as_deref(), row, col, value));
         }
 
         let reference = self.effective_reference(reference)?;
@@ -872,14 +960,13 @@ impl<'a> Interpreter<'a> {
             sheet, row, col, ..
         } = reference
         {
-            return Ok(crate::traits::CalcValue::Scalar(
-                self.context.resolve_cell_reference_value(
-                    sheet.as_deref(),
-                    *row,
-                    *col,
-                    self.current_sheet,
-                )?,
-            ));
+            let value = self.context.resolve_cell_reference_value(
+                sheet.as_deref(),
+                *row,
+                *col,
+                self.current_sheet,
+            )?;
+            return Ok(self.annotate_cell_value(sheet.as_deref(), *row, *col, value));
         }
 
         let view = self
@@ -937,7 +1024,8 @@ impl<'a> Interpreter<'a> {
         };
 
         match cv {
-            crate::traits::CalcValue::Scalar(v) => match v {
+            crate::traits::CalcValue::Scalar(v)
+            | crate::traits::CalcValue::AnnotatedScalar(v, _) => match v {
                 LiteralValue::Array(arr) => {
                     if arr.is_empty() || arr.first().map(|r| r.is_empty()).unwrap_or(true) {
                         return LiteralValue::Error(ExcelError::new(ExcelErrorKind::Value));
@@ -1117,39 +1205,57 @@ impl<'a> Interpreter<'a> {
     fn eval_binary(
         &self,
         op: &str,
-        left: &ASTNode,
-        right: &ASTNode,
-    ) -> Result<LiteralValue, ExcelError> {
-        // Comparisons use dedicated path.
+        left_node: &ASTNode,
+        right_node: &ASTNode,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        let left_calc = self.evaluate_ast(left_node)?;
+        let left_format = left_calc.format_id();
+        let left = left_calc.into_literal();
+        let right_calc = self.evaluate_ast(right_node)?;
+        let right_format = right_calc.format_id();
+        let right = right_calc.into_literal();
         if matches!(op, "=" | "<>" | ">" | "<" | ">=" | "<=") {
-            let l = self.evaluate_ast(left)?.into_literal();
-            let r = self.evaluate_ast(right)?.into_literal();
-            return self.compare(op, l, r);
+            return self
+                .compare(op, left, right)
+                .map(crate::traits::CalcValue::Scalar);
         }
-
-        let l_val = self.evaluate_ast(left)?.into_literal();
-        let r_val = self.evaluate_ast(right)?.into_literal();
-
         match op {
-            "+" => self.add_sub_date_aware('+', l_val, r_val),
-            "-" => self.add_sub_date_aware('-', l_val, r_val),
-            "*" => self.numeric_binary(l_val, r_val, |a, b| a * b),
-            "/" => self.divide(l_val, r_val),
-            "^" => self.power(l_val, r_val),
-            "&" => Ok(LiteralValue::Text(format!(
-                "{}{}",
-                crate::coercion::to_text_invariant(&l_val),
-                crate::coercion::to_text_invariant(&r_val)
+            "+" => self.numeric_binary(left, right, |a, b| a + b).map(|value| {
+                self.annotate_numeric_result(
+                    value,
+                    self.binary_format('+', left_format, right_format),
+                )
+            }),
+            "-" => self.numeric_binary(left, right, |a, b| a - b).map(|value| {
+                self.annotate_numeric_result(
+                    value,
+                    self.binary_format('-', left_format, right_format),
+                )
+            }),
+            "*" => self
+                .numeric_binary(left, right, |a, b| a * b)
+                .map(crate::traits::CalcValue::Scalar),
+            "/" => self
+                .divide(left, right)
+                .map(crate::traits::CalcValue::Scalar),
+            "^" => self
+                .power(left, right)
+                .map(crate::traits::CalcValue::Scalar),
+            "&" => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(
+                format!(
+                    "{}{}",
+                    crate::coercion::to_text_invariant(&left),
+                    crate::coercion::to_text_invariant(&right)
+                ),
             ))),
             ":" => {
-                // Compute a combined reference; in value context return #REF! for now.
-                let lref = self.evaluate_ast_as_reference(left)?;
-                let rref = self.evaluate_ast_as_reference(right)?;
-                match crate::reference::combine_references(&lref, &rref) {
-                    Ok(_r) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
+                let left_ref = self.evaluate_ast_as_reference(left_node)?;
+                let right_ref = self.evaluate_ast_as_reference(right_node)?;
+                match crate::reference::combine_references(&left_ref, &right_ref) {
+                    Ok(_) => Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
                         "Reference produced by ':' cannot be used directly as a value",
                     )),
-                    Err(e) => Ok(LiteralValue::Error(e)),
+                    Err(error) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error))),
                 }
             }
             _ => {
@@ -1157,101 +1263,6 @@ impl<'a> Interpreter<'a> {
                     .with_message(format!("Binary op '{op}'")))
             }
         }
-    }
-
-    fn add_sub_date_aware(
-        &self,
-        op: char,
-        left: LiteralValue,
-        right: LiteralValue,
-    ) -> Result<LiteralValue, ExcelError> {
-        debug_assert!(op == '+' || op == '-');
-
-        self.broadcast_apply(left, right, |l, r| {
-            use LiteralValue::*;
-
-            let date_system = self.context.date_system();
-
-            let date_like_serial = |v: &LiteralValue| -> Option<f64> {
-                match v {
-                    Date(d) => Some(formualizer_common::date_to_serial_for(date_system, d)),
-                    DateTime(dt) => {
-                        Some(formualizer_common::datetime_to_serial_for(date_system, dt))
-                    }
-                    _ => None,
-                }
-            };
-
-            let to_num = |v: &LiteralValue| -> Result<f64, ExcelError> {
-                crate::coercion::to_arithmetic_number_with_locale(
-                    v,
-                    &self.context.locale(),
-                    date_system,
-                )
-            };
-
-            // Excel has no date type at the formula level: `date + number` is
-            // plain numeric addition, and the result only *displays* as a date
-            // because the cell inherits a date number format. We keep the
-            // temporal tag when the result is representable, because that is
-            // what lets typed date values survive a round trip, but a serial no
-            // date can represent is still an ordinary number. Erroring there
-            // invents a numeric-domain failure out of arithmetic Excel performs
-            // without complaint -- notably every negative serial, which the
-            // standard `end_date - start_date` accrual idiom produces whenever
-            // the period runs backwards.
-            let serial_to_literal = |serial: f64| -> LiteralValue {
-                match crate::coercion::sanitize_numeric(serial) {
-                    Ok(serial) => {
-                        match formualizer_common::try_serial_to_datetime_for(date_system, serial) {
-                            Ok(dt) => {
-                                if dt.time() == chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap() {
-                                    Date(dt.date())
-                                } else {
-                                    DateTime(dt)
-                                }
-                            }
-                            // Not representable as a date: degrade to the
-                            // plain serial rather than manufacturing #NUM!.
-                            Err(_) => Number(serial),
-                        }
-                    }
-                    // NaN and infinity are genuine numeric-domain failures and
-                    // keep their error.
-                    Err(e) => Error(e),
-                }
-            };
-
-            // Date +/- number => date (propagate temporal tag)
-            if let Some(ls) = date_like_serial(&l) {
-                match op {
-                    '+' => {
-                        let rn = to_num(&r)?;
-                        return Ok(serial_to_literal(ls + rn));
-                    }
-                    '-' => {
-                        // Date - Date => numeric day delta (Excel-compatible)
-                        if let Some(rs) = date_like_serial(&r) {
-                            return Ok(Number(ls - rs));
-                        }
-                        let rn = to_num(&r)?;
-                        return Ok(serial_to_literal(ls - rn));
-                    }
-                    _ => unreachable!(),
-                }
-            }
-
-            // Number + Date => date (commutative)
-            if op == '+'
-                && let Some(rs) = date_like_serial(&r)
-            {
-                let ln = to_num(&l)?;
-                return Ok(serial_to_literal(ln + rs));
-            }
-
-            // Fallback: regular numeric operation
-            self.numeric_binary(l, r, |a, b| if op == '+' { a + b } else { a - b })
-        })
     }
 
     /* ===================  function calls  =================== */
@@ -1318,7 +1329,6 @@ impl<'a> Interpreter<'a> {
             .map(|cv| cv.into_literal())
     }
 
-    /* ===================  helpers  =================== */
     fn numeric_binary<F>(
         &self,
         left: LiteralValue,
@@ -1703,4 +1713,49 @@ fn shift_axis_for_offset(value: u32, delta: i64, is_absolute: bool) -> Result<u3
 fn unsupported_reference_relocation_error() -> ExcelError {
     ExcelError::new(ExcelErrorKind::Ref)
         .with_message("Unsupported reference relocation for FormulaPlane span evaluation")
+}
+
+#[cfg(test)]
+mod format_algebra_tests {
+    use super::*;
+    use crate::engine::{EvalConfig, eval::Engine};
+    use crate::format::FormatId;
+    use crate::test_workbook::TestWorkbook;
+
+    #[test]
+    fn temporal_binary_format_algebra_pins_positive_and_negative_cases() {
+        let engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        let interpreter = Interpreter::new(&engine, "Sheet1");
+
+        assert_eq!(
+            interpreter.binary_format('+', Some(FormatId::DATE), Some(FormatId::TIME)),
+            Some(FormatId::DATETIME)
+        );
+        assert_eq!(
+            interpreter.binary_format('+', Some(FormatId::DATE), Some(FormatId(9))),
+            Some(FormatId::DATE),
+            "Date + Percent follows the measured temporal-wins rule"
+        );
+        assert_eq!(
+            interpreter.binary_format('-', Some(FormatId::DATE), Some(FormatId::DATE)),
+            None,
+            "Date - Date is an unformatted duration in days"
+        );
+        assert_eq!(
+            interpreter.binary_format('+', Some(FormatId::DATE), Some(FormatId(49))),
+            None,
+            "Date + Text must not acquire a temporal annotation"
+        );
+        for (left, right) in [
+            (FormatId::DATE, FormatId::DATE),
+            (FormatId::DURATION, FormatId::DATE),
+            (FormatId::DATE, FormatId(5)),
+            (FormatId::DATETIME, FormatId::TIME),
+        ] {
+            assert_eq!(
+                interpreter.binary_format('+', Some(left), Some(right)),
+                None
+            );
+        }
+    }
 }

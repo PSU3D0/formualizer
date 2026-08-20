@@ -5,16 +5,12 @@ use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
-fn assert_date_like(v: Option<LiteralValue>, expected: NaiveDate) {
-    match v {
-        Some(LiteralValue::Date(d)) => assert_eq!(d, expected),
-        Some(LiteralValue::DateTime(dt)) => assert_eq!(dt.date(), expected),
-        other => panic!("expected date-like {expected:?}, got {other:?}"),
-    }
+fn assert_native_date(v: Option<LiteralValue>, expected: NaiveDate) {
+    assert_eq!(v, Some(LiteralValue::Date(expected)));
 }
 
 #[test]
-fn date_plus_number_returns_date() {
+fn date_plus_number_materializes_from_its_separate_format() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine
         .set_cell_value(
@@ -31,20 +27,22 @@ fn date_plus_number_returns_date() {
         .set_cell_formula("Sheet1", 1, 3, parse("=A1+B1").unwrap())
         .unwrap();
 
-    assert_date_like(
+    assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
-        NaiveDate::from_ymd_opt(2024, 10, 18).unwrap(),
+        Some(LiteralValue::Date(
+            NaiveDate::from_ymd_opt(2024, 10, 18).unwrap()
+        ))
     );
 
     engine.evaluate_all().unwrap();
-    assert_date_like(
+    assert_native_date(
         engine.get_cell_value("Sheet1", 1, 3),
         NaiveDate::from_ymd_opt(2024, 11, 1).unwrap(),
     );
 }
 
 #[test]
-fn date_minus_number_returns_date() {
+fn date_minus_number_materializes_from_its_separate_format() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     engine
         .set_cell_value(
@@ -61,7 +59,7 @@ fn date_minus_number_returns_date() {
         .set_cell_formula("Sheet1", 1, 3, parse("=A1-B1").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
-    assert_date_like(
+    assert_native_date(
         engine.get_cell_value("Sheet1", 1, 3),
         NaiveDate::from_ymd_opt(2024, 10, 18).unwrap(),
     );
@@ -97,7 +95,7 @@ fn date_minus_date_returns_number_delta() {
 }
 
 #[test]
-fn round_days_times_14_preserves_date_tag() {
+fn round_days_times_14_propagates_only_the_format_annotation() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
 
     // Mimic the pattern: C107 + (ROUND(C108,0) * 14)
@@ -117,7 +115,7 @@ fn round_days_times_14_preserves_date_tag() {
         .unwrap();
 
     engine.evaluate_all().unwrap();
-    assert_date_like(
+    assert_native_date(
         engine.get_cell_value("Sheet1", 109, 3),
         NaiveDate::from_ymd_opt(2024, 11, 1).unwrap(),
     );

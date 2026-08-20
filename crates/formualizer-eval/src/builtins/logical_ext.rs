@@ -290,6 +290,13 @@ pub struct IfErrorFn; // IFERROR(value, fallback)
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfErrorFn {
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
+
     // SHORT_CIRCUIT: dispatch must not eagerly evaluate the fallback arm —
     // the eval body below evaluates arg0 first and touches arg1 only when
     // arg0 produced an error (same defect class as the IF fix in #118).
@@ -321,10 +328,8 @@ impl Function for IfErrorFn {
             )));
         }
         match args[0].value() {
-            Ok(cv) => match cv.into_literal() {
-                LiteralValue::Error(_) => args[1].value(),
-                other => Ok(crate::traits::CalcValue::Scalar(other)),
-            },
+            Ok(cv) if matches!(cv.as_scalar(), Some(LiteralValue::Error(_))) => args[1].value(),
+            Ok(cv) => Ok(cv),
             Err(_) => args[1].value(),
         }
     }
@@ -376,6 +381,13 @@ pub struct IfNaFn; // IFNA(value, fallback)
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfNaFn {
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
+
     // SHORT_CIRCUIT: the fallback arm is evaluated only when arg0 is #N/A;
     // all other values/errors pass through without touching arg1.
     func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
@@ -404,12 +416,12 @@ impl Function for IfNaFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        match v {
-            LiteralValue::Error(ref e) if e.kind == formualizer_common::ExcelErrorKind::Na => {
+        let value = args[0].value()?;
+        match value.as_scalar() {
+            Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Na => {
                 args[1].value()
             }
-            other => Ok(crate::traits::CalcValue::Scalar(other)),
+            _ => Ok(value),
         }
     }
 }
@@ -460,6 +472,13 @@ pub struct IfsFn; // IFS(cond1, val1, cond2, val2, ...)
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for IfsFn {
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
+
     func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
     fn name(&self) -> &'static str {
         "IFS"
@@ -573,6 +592,13 @@ pub struct SwitchFn;
 /// Caps: PURE, SHORT_CIRCUIT
 /// [formualizer-docgen:schema:end]
 impl Function for SwitchFn {
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        result.format_id()
+    }
+
     func_caps!(PURE, SHORT_CIRCUIT, MAY_SPILL);
     fn name(&self) -> &'static str {
         "SWITCH"

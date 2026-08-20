@@ -570,7 +570,8 @@ fn shadow_inspection_remains_on_the_legacy_authority_path() {
 }
 
 #[test]
-fn structural_insert_conservative_staleness_is_documented_and_converges_after_evaluation() {
+fn structural_insert_open_range_staleness_is_dirty_in_both_engines_and_converges_after_evaluation()
+{
     let (mut off, mut authoritative) = build_pair(7);
     off.insert_rows(SHEET, 60, 1).unwrap();
     authoritative.insert_rows(SHEET, 60, 1).unwrap();
@@ -584,7 +585,7 @@ fn structural_insert_conservative_staleness_is_documented_and_converges_after_ev
             .inspect_cell(&address(row, 4), &SnapshotOptions::default())
             .unwrap()
             .cell;
-        assert_eq!(legacy.staleness, Staleness::Current);
+        assert_eq!(legacy.staleness, Staleness::Dirty);
         assert_eq!(plane.staleness, Staleness::Dirty);
         assert_eq!(legacy.formula, plane.formula);
         assert_eq!(legacy.value, plane.value);

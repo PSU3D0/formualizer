@@ -57,6 +57,13 @@ fn start_instant() -> NaiveDateTime {
         .naive_utc()
 }
 
+fn serial_config() -> EvalConfig {
+    EvalConfig {
+        temporal_egress: crate::engine::TemporalEgress::Serial,
+        ..Default::default()
+    }
+}
+
 fn set_formula(engine: &mut Engine<TestWorkbook>, sheet: &str, row: u32, col: u32, f: &str) {
     engine
         .set_cell_formula(sheet, row, col, parse(f).expect("parse"))
@@ -76,7 +83,7 @@ fn num(engine: &Engine<TestWorkbook>, sheet: &str, row: u32, col: u32) -> f64 {
 /// across recalcs).
 #[test]
 fn now_agrees_across_cells_within_one_recalc_and_advances_across_recalcs() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let mut engine = Engine::new(TestWorkbook::new(), serial_config());
     // Each now() call advances a full day, far above any rounding noise.
     engine.set_clock(Arc::new(TickingClock::new(
         start_instant(),
@@ -116,7 +123,7 @@ fn now_agrees_across_cells_within_one_recalc_and_advances_across_recalcs() {
 fn now_is_stable_across_iteration_passes_within_one_recalc() {
     let mut engine = Engine::new(
         TestWorkbook::new(),
-        EvalConfig::default().with_cycle(CycleConfig::iterate(100, 0.001)),
+        serial_config().with_cycle(CycleConfig::iterate(100, 0.001)),
     );
     engine.set_clock(Arc::new(TickingClock::new(
         start_instant(),
@@ -164,7 +171,7 @@ fn now_is_stable_across_iteration_passes_within_one_recalc() {
 /// recalc is impossible.
 #[test]
 fn today_and_now_share_one_sample_per_recalc() {
-    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    let mut engine = Engine::new(TestWorkbook::new(), serial_config());
     // Start just before midnight; one clock step crosses the date boundary.
     let start = chrono::Utc
         .with_ymd_and_hms(2025, 6, 1, 23, 59, 59)

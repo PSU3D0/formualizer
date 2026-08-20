@@ -13,7 +13,7 @@ use formualizer_macros::func_caps;
 
 fn scalar_like_value(arg: &ArgumentHandle<'_, '_>) -> Result<LiteralValue, ExcelError> {
     Ok(match arg.value()? {
-        CalcValue::Scalar(v) => v,
+        CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => v,
         CalcValue::Range(rv) => rv.get_cell(0, 0),
         CalcValue::Callable(_) => LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
@@ -44,7 +44,7 @@ fn coerce_text(v: &LiteralValue) -> String {
 fn get_delimiters(arg: &ArgumentHandle<'_, '_>) -> Result<Vec<String>, ExcelError> {
     let cv = arg.value_for_text()?;
     match cv {
-        CalcValue::Scalar(v) => match v {
+        CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => match v {
             LiteralValue::Error(e) => Err(e),
             LiteralValue::Array(arr) => {
                 let mut delims = Vec::new();

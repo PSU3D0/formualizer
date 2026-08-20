@@ -145,6 +145,24 @@ pub trait Function: Send + Sync + 'static {
         crate::rng::fnv1a64(full_name.as_bytes())
     }
 
+    /// Derive an eval-internal scalar format annotation for this call.
+    /// Functions drop annotations by default; selection and temporal constructors override it.
+    fn propagate_format(
+        &self,
+        result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        let _ = result;
+        None
+    }
+
+    fn apply_format_propagation<'a>(
+        &self,
+        result: crate::traits::CalcValue<'a>,
+    ) -> crate::traits::CalcValue<'a> {
+        let format = self.propagate_format(&result);
+        result.with_format(format)
+    }
+
     /// The unified evaluation path.
     ///
     /// This method replaces the separate scalar, fold, and map paths.
@@ -197,7 +215,9 @@ pub trait Function: Send + Sync + 'static {
                     ),
                 )));
             }
-            return self.eval(args, ctx);
+            return self
+                .eval(args, ctx)
+                .map(|result| self.apply_format_propagation(result));
         }
 
         // Central argument validation (includes min-arity check)
@@ -217,5 +237,6 @@ pub trait Function: Send + Sync + 'static {
         }
 
         self.eval(args, ctx)
+            .map(|result| self.apply_format_propagation(result))
     }
 }

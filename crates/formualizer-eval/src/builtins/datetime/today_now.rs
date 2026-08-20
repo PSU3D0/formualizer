@@ -48,6 +48,13 @@ pub struct TodayFn;
 /// Caps: VOLATILE
 /// [formualizer-docgen:schema:end]
 impl Function for TodayFn {
+    fn propagate_format(
+        &self,
+        _result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        Some(crate::format::FormatId::DATE)
+    }
+
     func_caps!(VOLATILE);
 
     fn name(&self) -> &'static str {
@@ -114,6 +121,13 @@ pub struct NowFn;
 /// Caps: VOLATILE
 /// [formualizer-docgen:schema:end]
 impl Function for NowFn {
+    fn propagate_format(
+        &self,
+        _result: &crate::traits::CalcValue<'_>,
+    ) -> Option<crate::format::FormatId> {
+        Some(crate::format::FormatId::DATETIME)
+    }
+
     func_caps!(VOLATILE);
 
     fn name(&self) -> &'static str {

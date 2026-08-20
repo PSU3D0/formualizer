@@ -293,6 +293,12 @@ impl<'a> SpanEvaluator<'a> {
             ));
             let value = match interpreter.evaluate_ast(&ast_tree) {
                 Ok(calc) => {
+                    self.context.record_cell_derived_format(
+                        self.current_sheet,
+                        first_writable_placement.row + 1,
+                        first_writable_placement.col + 1,
+                        calc.format_id(),
+                    );
                     formula_result_to_overlay(calc.into_literal(), self.context.date_system())
                 }
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
@@ -426,6 +432,12 @@ impl<'a> SpanEvaluator<'a> {
                 self.sheet_registry,
             ) {
                 Ok(calc) => {
+                    self.context.record_cell_derived_format(
+                        self.current_sheet,
+                        placement.row + 1,
+                        placement.col + 1,
+                        calc.format_id(),
+                    );
                     formula_result_to_overlay(calc.into_literal(), self.context.date_system())
                 }
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
@@ -439,6 +451,12 @@ impl<'a> SpanEvaluator<'a> {
                 self.sheet_registry,
             ) {
                 Ok(calc) => {
+                    self.context.record_cell_derived_format(
+                        self.current_sheet,
+                        placement.row + 1,
+                        placement.col + 1,
+                        calc.format_id(),
+                    );
                     formula_result_to_overlay(calc.into_literal(), self.context.date_system())
                 }
                 Err(err) => OverlayValue::Error(map_error_code(err.kind)),
@@ -713,7 +731,15 @@ impl<'a> SpanEvaluator<'a> {
             self.data_store,
             self.sheet_registry,
         ) {
-            Ok(calc) => formula_result_to_overlay(calc.into_literal(), self.context.date_system()),
+            Ok(calc) => {
+                self.context.record_cell_derived_format(
+                    self.current_sheet,
+                    placement.row + 1,
+                    placement.col + 1,
+                    calc.format_id(),
+                );
+                formula_result_to_overlay(calc.into_literal(), self.context.date_system())
+            }
             Err(err) => OverlayValue::Error(map_error_code(err.kind)),
         };
         Ok(value)
