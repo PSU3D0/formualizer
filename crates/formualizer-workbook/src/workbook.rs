@@ -873,14 +873,9 @@ impl formualizer_eval::traits::SourceResolver for WBResolver {
     }
 
     fn resolve_source_scalar(&self, name: &str) -> Result<LiteralValue, ExcelError> {
-        self.source_values
-            .read()
-            .get(name)
-            .cloned()
-            .ok_or_else(|| {
-                ExcelError::new(ExcelErrorKind::Name)
-                    .with_message(format!("Undefined name: {name}"))
-            })
+        self.source_values.read().get(name).cloned().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Name).with_message(format!("Undefined name: {name}"))
+        })
     }
 }
 impl formualizer_eval::traits::FunctionProvider for WBResolver {
@@ -3505,9 +3500,7 @@ impl Workbook {
         // external links). `new_with_config` seeded the resolver with the same
         // `source_values` map the Workbook holds, so this populates it directly.
         for (name, value) in backend.external_cached_sources() {
-            wb.source_values
-                .write()
-                .insert(name.clone(), value.clone());
+            wb.source_values.write().insert(name.clone(), value.clone());
         }
         let stats = backend.load_stats();
         Ok((wb, stats))

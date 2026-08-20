@@ -1243,9 +1243,17 @@ impl CalamineAdapter {
                         let mut idx = None;
                         for attr in e.attributes().filter_map(Result::ok) {
                             match attr.key {
-                                QName(b"Id") => id = attr.decode_and_unescape_value(reader.decoder()).map(|s| s.into_owned()).unwrap_or_default(),
+                                QName(b"Id") => {
+                                    id = attr
+                                        .decode_and_unescape_value(reader.decoder())
+                                        .map(|s| s.into_owned())
+                                        .unwrap_or_default()
+                                }
                                 QName(b"Target") => {
-                                    let target = attr.decode_and_unescape_value(reader.decoder()).map(|s| s.into_owned()).unwrap_or_default();
+                                    let target = attr
+                                        .decode_and_unescape_value(reader.decoder())
+                                        .map(|s| s.into_owned())
+                                        .unwrap_or_default();
                                     if let Some(num) = target
                                         .rsplit('/')
                                         .next()
@@ -1304,10 +1312,14 @@ impl CalamineAdapter {
         /// without a cached value are not recoverable and are skipped.
         fn external_link_cached_cells(xml: &str, book_index: u32) -> Vec<(String, LiteralValue)> {
             fn quote_sheet(sheet: &str) -> String {
-                if sheet
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '\\' || c == '(' || c == ')')
-                    && !sheet.is_empty()
+                if sheet.chars().all(|c| {
+                    c.is_ascii_alphanumeric()
+                        || c == '_'
+                        || c == '.'
+                        || c == '\\'
+                        || c == '('
+                        || c == ')'
+                }) && !sheet.is_empty()
                 {
                     sheet.to_string()
                 } else {
@@ -1406,7 +1418,9 @@ impl CalamineAdapter {
                         let qname = e.local_name();
                         let name = qname.as_ref();
                         if name == b"v" || name == b"t" {
-                            let (Some(cell_ref), Some(sheet_id)) = (cur_cell_ref.as_deref(), cur_sheet_id) else {
+                            let (Some(cell_ref), Some(sheet_id)) =
+                                (cur_cell_ref.as_deref(), cur_sheet_id)
+                            else {
                                 capturing = None;
                                 continue;
                             };
@@ -1419,12 +1433,17 @@ impl CalamineAdapter {
                             };
                             let value = match cur_cell_type.as_str() {
                                 "b" => Some(LiteralValue::Boolean(
-                                    text_buf.trim() == "1" || text_buf.trim().eq_ignore_ascii_case("true"),
+                                    text_buf.trim() == "1"
+                                        || text_buf.trim().eq_ignore_ascii_case("true"),
                                 )),
                                 "str" | "inlineStr" => Some(LiteralValue::Text(text_buf.clone())),
                                 "e" => None,
                                 "s" => None,
-                                _ => text_buf.trim().parse::<f64>().ok().map(LiteralValue::Number),
+                                _ => text_buf
+                                    .trim()
+                                    .parse::<f64>()
+                                    .ok()
+                                    .map(LiteralValue::Number),
                             };
                             if let Some(value) = value {
                                 out.push((

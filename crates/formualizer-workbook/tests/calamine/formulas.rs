@@ -2,7 +2,9 @@
 use crate::common::build_workbook;
 use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::{Engine, EvalConfig};
-use formualizer_workbook::{CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookConfig};
+use formualizer_workbook::{
+    CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, WorkbookConfig,
+};
 use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -130,7 +132,11 @@ fn calamine_loads_external_link_index_formulas_from_bytes() {
 /// `xl/externalLinks/externalLink1.xml` part with cached `sheetData` values,
 /// plus the `<externalReferences>` entry and the matching workbook relationship.
 /// `cells` maps cell refs to cached string values (e.g. `("A1", "42")`).
-fn inject_inbook_external_link(bytes: Vec<u8>, sheet_name: &str, cells: &[(&str, &str)]) -> Vec<u8> {
+fn inject_inbook_external_link(
+    bytes: Vec<u8>,
+    sheet_name: &str,
+    cells: &[(&str, &str)],
+) -> Vec<u8> {
     let reader = Cursor::new(bytes);
     let mut archive = ZipArchive::new(reader).unwrap();
 
@@ -188,7 +194,9 @@ fn inject_inbook_external_link(bytes: Vec<u8>, sheet_name: &str, cells: &[(&str,
         writer.write_all(&data).unwrap();
     }
     let _ = writer.add_directory("xl/externalLinks/".to_string(), options);
-    writer.start_file("xl/externalLinks/externalLink1.xml", options).unwrap();
+    writer
+        .start_file("xl/externalLinks/externalLink1.xml", options)
+        .unwrap();
     writer.write_all(ext_xml.as_bytes()).unwrap();
     writer.finish().unwrap().into_inner()
 }
